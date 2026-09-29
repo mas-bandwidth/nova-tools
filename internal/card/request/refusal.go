@@ -1,153 +1,34 @@
 package request
 
 import (
-	"fmt"
-	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
-// Cause is the named reason a request or a batch refuses.
-type Cause string
-
-// Causes of a request refusal, found by Parse and Validate before any store call.
-const (
-	CauseSyntax            Cause = "syntax"
-	CauseTrailingData      Cause = "trailing-data"
-	CauseDuplicateKey      Cause = "duplicate-key"
-	CauseUnknownField      Cause = "unknown-field"
-	CauseNotApplicable     Cause = "not-applicable"
-	CauseWrongType         Cause = "wrong-type"
-	CauseTooDeep           Cause = "too-deep"
-	CauseRequired          Cause = "required"
-	CauseBadValue          Cause = "bad-value"
-	CauseInvalidUTF8       Cause = "invalid-utf8"
-	CauseControlChar       Cause = "control-character"
-	CauseTooLong           Cause = "too-long"
-	CauseTooMany           Cause = "too-many"
-	CauseTooLarge          Cause = "too-large"
-	CauseEmptyArray        Cause = "empty-array"
-	CauseRepeatedID        Cause = "repeated-id"
-	CauseConflictingEvents Cause = "conflicting-events"
-	CauseEventChain        Cause = "event-chain"
-	CauseNoTransition      Cause = "no-transition"
-	CauseNotEligible       Cause = "not-eligible"
-)
-
-// Causes of a store-side refusal, named here so the manager and its receipts
-// share one closed set. Nothing in this package produces them.
-const (
-	CauseInvalidRequest    Cause = "invalid-request"
-	CauseStaleEpoch        Cause = "stale-epoch"
-	CauseStaleTableRev     Cause = "stale-table-revision"
-	CauseStaleCardRev      Cause = "stale-card-revision"
-	CausePlaceMismatch     Cause = "place-mismatch"
-	CauseDigestMismatch    Cause = "digest-mismatch"
-	CauseOperationConflict Cause = "operation-conflict"
-	CauseUnknownRowCol     Cause = "unknown-row-or-column"
-	CauseGuardFailed       Cause = "guard-failed"
-	CauseOverLimit         Cause = "over-limit"
-	CauseTransport         Cause = "transport-failure"
-)
-
-// Refusal is one thing wrong with a request: the operation, the index of the
-// entry in its array (-1 for the envelope or a scope), the card ID where known,
-// the field (a dotted path within the entry), the cause, what was found and,
-// for a bound, the limit and the remedy.
-type Refusal struct {
-	Operation Operation
-	Index     int
-	ID        string
-	Field     string
-	Cause     Cause
-	Found     string
-	Limit     string
-	Remedy    string
-}
-
-// Line renders the refusal on one line.
-func (r Refusal) Line() string {
-	var b strings.Builder
-	b.WriteString("refused ")
-	if r.Operation == "" {
-		b.WriteString("request")
-	} else {
-		b.WriteString(string(r.Operation))
-	}
-	if r.Index >= 0 {
-		b.WriteString("[" + strconv.Itoa(r.Index) + "]")
-	}
-	if r.ID != "" {
-		b.WriteString(" card=" + oneLine(r.ID))
-	}
-	if r.Field != "" {
-		b.WriteString(" field=" + r.Field)
-	}
-	b.WriteString(": " + string(r.Cause))
-	if r.Found != "" {
-		b.WriteString("; found " + oneLine(r.Found))
-	}
-	if r.Limit != "" {
-		b.WriteString("; limit " + r.Limit)
-	}
-	if r.Remedy != "" {
-		b.WriteString("; remedy: " + r.Remedy)
-	}
-	return b.String()
-}
-
-// oneLine keeps a rendered value on one line, whatever it holds.
-func oneLine(s string) string {
-	if !strings.ContainsAny(s, "\r\n") {
-		return s
-	}
-	return strings.NewReplacer("\r", `\r`, "\n", `\n`).Replace(s)
-}
+// Refusal is one thing wrong with a request: the card layer's one refusal shape.
+// Index is the entry's index in its array (-1 for the envelope or a scope), ID
+// the card ID where it is safe to print, Field the key or dotted path within the
+// entry, Found the offending value, quoted and bounded, Limit the bound for a
+// bound and Next the remedy.
+type Refusal = card.Refusal
 
 // Refusals is every refusal found in one request, at most MaxRefusals, and the
 // count of further ones left out. It is the error Parse and Validate return: a
 // request that has any refusal is refused whole.
-type Refusals struct {
-	List    []Refusal
-	Omitted int
-}
+type Refusals = card.Refusals
 
-// Error is the first refusal and the count of the rest.
-func (r *Refusals) Error() string {
-	if r == nil || len(r.List) == 0 {
-		return "request refused"
-	}
-	more := len(r.List) - 1 + r.Omitted
-	if more == 0 {
-		return r.List[0].Line()
-	}
-	return fmt.Sprintf("%s (and %d more)", r.List[0].Line(), more)
-}
+// quote renders a value from the caller's input for a refusal: quoted, bounded
+// and on one line.
+func quote(s string) string { return card.Value(s) }
 
-// Lines renders every refusal, one line each, and a last line counting the
-// ones left out when there are some.
-func (r *Refusals) Lines() []string {
-	out := make([]string, 0, len(r.List)+1)
-	for _, f := range r.List {
-		out = append(out, f.Line())
+// knownID returns s for a refusal's card ID when it is a valid ID, and "" when
+// it is not: an ID that may hold anything is never printed as one.
+func knownID(s string) string {
+	if !card.ValidID(s) {
+		return ""
 	}
-	if r.Omitted > 0 {
-		out = append(out, fmt.Sprintf("refused: %d further refusals omitted after the first %d", r.Omitted, MaxRefusals))
-	}
-	return out
-}
-
-// Has reports whether some refusal has the given index, field and cause;
-// an index of -2 matches any index and an empty field matches any field.
-func (r *Refusals) Has(index int, field string, cause Cause) bool {
-	if r == nil {
-		return false
-	}
-	for _, f := range r.List {
-		if (index == -2 || f.Index == index) && (field == "" || f.Field == field) && f.Cause == cause {
-			return true
-		}
-	}
-	return false
+	return s
 }
 
 type refKey struct {
@@ -157,10 +38,9 @@ type refKey struct {
 
 // collector gathers refusals for one request.
 type collector struct {
-	op      Operation
-	list    []Refusal
-	omitted int
-	seen    map[refKey]bool
+	card.Collector
+	op   Operation
+	seen map[refKey]bool
 	// typed holds the fields refused as the wrong JSON type: whatever they were
 	// meant to hold is absent, and refusing that absence again is noise.
 	typed []refKey
@@ -184,7 +64,7 @@ func (c *collector) underTyped(index int, field string) bool {
 
 // add records one refusal. A required refusal for a field that already has one
 // is dropped: the field is already refused for what it is.
-func (c *collector) add(index int, id, field string, cause Cause, found, limit, remedy string) {
+func (c *collector) add(index int, id, field string, cause Cause, found, limit, next string) {
 	k := refKey{index, field}
 	if cause != CauseWrongType && c.underTyped(index, field) {
 		return
@@ -196,16 +76,16 @@ func (c *collector) add(index int, id, field string, cause Cause, found, limit, 
 	if cause == CauseWrongType {
 		c.typed = append(c.typed, k)
 	}
-	if len(c.list) >= MaxRefusals {
-		c.omitted++
+	if c.Full() {
+		c.Skip()
 		return
 	}
-	c.list = append(c.list, Refusal{Operation: c.op, Index: index, ID: id, Field: field, Cause: cause, Found: found, Limit: limit, Remedy: remedy})
+	c.Add(Refusal{Operation: card.Operation(c.op), Index: index, ID: id, Field: field, Cause: cause, Found: found, Limit: limit, Next: next})
 }
 
 func (c *collector) err() error {
-	if len(c.list) == 0 {
-		return nil
+	if e := c.Err(); e != nil {
+		return e
 	}
-	return &Refusals{List: c.list, Omitted: c.omitted}
+	return nil
 }

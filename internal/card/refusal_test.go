@@ -160,7 +160,7 @@ func TestCauseVocabularyIsClosedAndUnique(t *testing.T) {
 		t.Error("an unlisted cause is known")
 	}
 	// One name per fact: the pairs the two packages spelled apart are one name.
-	for _, old := range []Cause{"duplicate-id", "bad-value", "unknown-field", "required-missing", "nul-byte", "invalid-identity"} {
+	for _, old := range []Cause{"duplicate-id", "bad-value", "unknown-field", "required-missing", "nul-byte", "invalid-identity", "conflicting-events", "event-chain"} {
 		if old.Known() {
 			t.Errorf("%q is a second name for a fact that has one", old)
 		}

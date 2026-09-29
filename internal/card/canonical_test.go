@@ -74,6 +74,12 @@ func TestSetIsSortedByTheEncoder(t *testing.T) {
 	if got := string(Encode(Strings([]string{"b", "a", "c"}))); got != `["a","b","c"]` {
 		t.Fatalf("strings set: %s", got)
 	}
+	// A key function names the sort key of an item that has none of its own.
+	nested := func(id string) Obj { return Obj{"old": Obj{"id": id}} }
+	ks := Set{KeyOf: func(v any) string { return v.(Obj)["old"].(Obj)["id"].(string) }, Items: []any{nested("b"), nested("a")}}
+	if got := string(Encode(ks)); got != `[{"old":{"id":"a"}},{"old":{"id":"b"}}]` {
+		t.Fatalf("KeyOf: %s", got)
+	}
 	// Equal keys tie-break on the bytes, so the encoding is total.
 	x := Set{Key: "id", Items: []any{Obj{"id": "a", "v": "2"}, Obj{"id": "a", "v": "1"}}}
 	y := Set{Key: "id", Items: []any{Obj{"id": "a", "v": "1"}, Obj{"id": "a", "v": "2"}}}

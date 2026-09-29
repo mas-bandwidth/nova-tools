@@ -1,0 +1,1 @@
+refused apply_events[1] card=c1 field=expect.place.col: input-chain; found "result@working"; limit the source state is reachable only through another lifecycle input of this request; next: one lifecycle input per card per request: send the later input in a request after the earlier one is applied

@@ -1,1 +1,1 @@
-{"card":"c1","cause":"stale-card-revision","changed":"no","expected":"revision 2","next":"read the card again and send the event with the observed revision","observed":"revision 3","operation":"apply_events","operation_id":"op-17","scope":"card"}
+{"card":"c1","cause":"stale-card-revision","changed":"no","expected":"revision 2","next":"read the card again and send the lifecycle input with the observed revision","observed":"revision 3","operation":"apply_events","operation_id":"op-17","scope":"card"}

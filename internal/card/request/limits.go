@@ -1,57 +1,45 @@
 package request
 
+import "github.com/mas-bandwidth/nova-tools/internal/card"
+
 // SchemaVersion is the one request schema version.
 const SchemaVersion = 1
 
-// Count bounds. Each names the limit a refusal cites; exceeding one refuses
-// the whole request and never splits it into several.
+// The bounds of a request are the card layer's, defined once in internal/card
+// with the arithmetic that shows any request valid here fits one table manifest.
+// They are named here so a refusal and a caller cite the package they use.
 const (
-	// MaxChangedEntries bounds an array whose entries change cards: admissions,
-	// events, evidence entries. It is the table batch's bound on entries with
-	// changes.
-	MaxChangedEntries = 128
-	// MaxReplacementPairs bounds a replacement array: each pair is two table
-	// members (the old one terminated, the new one created), so 64 pairs fit
-	// the 128 changed entries of one table batch.
-	MaxReplacementPairs = MaxChangedEntries / 2
-	// MaxGuardOnlyEntries bounds a scope's ID array and a selection's declared
-	// bound: cards read or guarded without a change.
-	MaxGuardOnlyEntries = 1024
-	// MaxEvidenceRecordsPerCard bounds the records one evidence entry carries.
-	MaxEvidenceRecordsPerCard = 8
-	// MaxRefusals bounds the refusals one validation reports; further ones are
-	// counted in Refusals.Omitted.
-	MaxRefusals = 64
-	// MaxDepth bounds JSON nesting.
-	MaxDepth = 8
+	MaxChangedEntries         = card.MaxChangedEntries
+	MaxReplacementPairs       = card.MaxReplacementPairs
+	MaxGuardOnlyEntries       = card.MaxGuardOnlyEntries
+	MaxScopeCards             = card.MaxScopeCards
+	MaxResolveCards           = card.MaxResolveCards
+	MaxScopeRows              = card.MaxScopeRows
+	MaxDependsOn              = card.MaxDependsOn
+	MaxOutsideDependencies    = card.MaxOutsideDependencies
+	MaxEvidenceRecordsPerCard = card.MaxEvidenceRecordsPerCard
+	MaxEvidenceRecords        = card.MaxEvidenceRecords
+	MaxRefusals               = card.MaxRefusals
+	MaxDepth                  = card.MaxDepth
+
+	MaxCanonicalBytes = card.MaxCanonicalBytes
+	MaxInputBytes     = card.MaxInputBytes
+	MaxIDBytes        = card.MaxIDBytes
+	MaxNameBytes      = card.MaxNameBytes
+	MaxIdentityBytes  = card.MaxIdentityBytes
+	MaxRefBytes       = card.MaxRefBytes
+	MaxReasonBytes    = card.MaxReasonBytes
+	MaxTitleBytes     = card.MaxTitleBytes
+	MaxEntryBytes     = card.MaxEntryBytes
+	MaxCounterDigits  = card.MaxCounterDigits
+	MaxReceiptCards   = card.MaxReceiptCards
+	MaxDetailBytes    = card.MaxDetailBytes
+	MaxNoteBytes      = card.MaxNoteBytes
+	MaxFoundBytes     = card.MaxFoundBytes
 )
 
-// Byte bounds.
-const (
-	// MaxCanonicalBytes bounds the canonical encoded request.
-	MaxCanonicalBytes = 1 << 20
-	// MaxInputBytes bounds the document Parse reads, before parsing: room for
-	// indentation around a request whose canonical form fits MaxCanonicalBytes.
-	MaxInputBytes = 4 << 20
-	// MaxIDBytes bounds a card ID and an evidence ID.
-	MaxIDBytes = 64
-	// MaxNameBytes bounds a table name and a row name.
-	MaxNameBytes = 64
-	// MaxIdentityBytes bounds an operation ID, an actor and an issuer.
-	MaxIdentityBytes = 128
-	// MaxRefBytes bounds an opaque reference: a repository identity, a source
-	// artifact identity, a landing identity.
-	MaxRefBytes = 256
-	// MaxPathBytes bounds a repository-relative path.
-	MaxPathBytes = 512
-	// MaxReasonBytes bounds a one-line reason.
-	MaxReasonBytes = 512
-	// MaxCounterDigits bounds a decimal counter (epoch, table revision, card
-	// revision): the digits of the largest uint64.
-	MaxCounterDigits = 20
-	// MaxFoundBytes bounds the text a refusal quotes as what it found.
-	MaxFoundBytes = 48
-	// MaxReceiptCards bounds each card list of a receipt: the changed cards and
-	// each declared selection outcome list.
-	MaxReceiptCards = MaxGuardOnlyEntries
-)
+// MaxVerifierBytes bounds a verifier name in an evidence record.
+const MaxVerifierBytes = 32
+
+// MaxHeadBytes bounds a code head: a git object id, or a tagged digest.
+const MaxHeadBytes = 71

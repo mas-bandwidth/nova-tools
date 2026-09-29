@@ -15,31 +15,32 @@ type Cause string
 // Causes of a refusal found in the bytes of a definition or a request, before
 // any store call.
 const (
-	CauseSyntax            Cause = "syntax"
-	CauseTrailingData      Cause = "trailing-data"
-	CauseDuplicateKey      Cause = "duplicate-key"
-	CauseUnknownKey        Cause = "unknown-key"
-	CauseNotApplicable     Cause = "not-applicable"
-	CauseWrongType         Cause = "wrong-type"
-	CauseTooDeep           Cause = "too-deep"
-	CauseRequired          Cause = "required"
-	CauseInvalidValue      Cause = "invalid-value"
-	CauseReservedWord      Cause = "reserved-word"
-	CauseInvalidUTF8       Cause = "invalid-utf8"
-	CauseControlChar       Cause = "control-character"
-	CauseTooLong           Cause = "too-long"
-	CauseTooMany           Cause = "too-many"
-	CauseTooLarge          Cause = "too-large"
-	CauseEmptyArray        Cause = "empty-array"
-	CauseRepeatedID        Cause = "repeated-id"
-	CauseConflictingEvents Cause = "conflicting-events"
-	CauseEventChain        Cause = "event-chain"
-	CauseNoTransition      Cause = "no-transition"
-	CauseNotEligible       Cause = "not-eligible"
-	CauseInvalidRepository Cause = "invalid-repository"
-	CauseInvalidCommit     Cause = "invalid-commit"
-	CauseInvalidPath       Cause = "invalid-path"
-	CausePathEscapes       Cause = "path-escapes"
+	CauseSyntax             Cause = "syntax"
+	CauseTrailingData       Cause = "trailing-data"
+	CauseDuplicateKey       Cause = "duplicate-key"
+	CauseUnknownKey         Cause = "unknown-key"
+	CauseNotApplicable      Cause = "not-applicable"
+	CauseWrongType          Cause = "wrong-type"
+	CauseTooDeep            Cause = "too-deep"
+	CauseRequired           Cause = "required"
+	CauseInvalidValue       Cause = "invalid-value"
+	CauseReservedWord       Cause = "reserved-word"
+	CauseInvalidUTF8        Cause = "invalid-utf8"
+	CauseControlChar        Cause = "control-character"
+	CauseTooLong            Cause = "too-long"
+	CauseTooMany            Cause = "too-many"
+	CauseTooLarge           Cause = "too-large"
+	CauseEmptyArray         Cause = "empty-array"
+	CauseRepeatedID         Cause = "repeated-id"
+	CauseConflictingInputs  Cause = "conflicting-inputs"
+	CauseInputChain         Cause = "input-chain"
+	CauseConflictingRecords Cause = "conflicting-records"
+	CauseNoTransition       Cause = "no-transition"
+	CauseNotEligible        Cause = "not-eligible"
+	CauseInvalidRepository  Cause = "invalid-repository"
+	CauseInvalidCommit      Cause = "invalid-commit"
+	CauseInvalidPath        Cause = "invalid-path"
+	CausePathEscapes        Cause = "path-escapes"
 )
 
 // Causes of a refusal found reading a definition file or an array of them.
@@ -112,8 +113,8 @@ const (
 var allCauses = []Cause{
 	CauseSyntax, CauseTrailingData, CauseDuplicateKey, CauseUnknownKey, CauseNotApplicable, CauseWrongType,
 	CauseTooDeep, CauseRequired, CauseInvalidValue, CauseReservedWord, CauseInvalidUTF8, CauseControlChar,
-	CauseTooLong, CauseTooMany, CauseTooLarge, CauseEmptyArray, CauseRepeatedID, CauseConflictingEvents,
-	CauseEventChain, CauseNoTransition, CauseNotEligible, CauseInvalidRepository, CauseInvalidCommit,
+	CauseTooLong, CauseTooMany, CauseTooLarge, CauseEmptyArray, CauseRepeatedID, CauseConflictingInputs,
+	CauseInputChain, CauseConflictingRecords, CauseNoTransition, CauseNotEligible, CauseInvalidRepository, CauseInvalidCommit,
 	CauseInvalidPath, CausePathEscapes,
 	CauseEmptyFile, CauseDuplicateFile, CauseBOM, CauseCarriageReturn, CauseContractLine, CauseContractSHA,
 	CauseAmbiguousSpelling, CauseUnsupportedSchema, CauseStranded, CauseIDMismatch, CauseEmptyValue,

@@ -27,12 +27,14 @@ func (o Obj) OptSet(key string, s Set) {
 }
 
 // Set is an array whose order carries no meaning. The encoder sorts its items:
-// objects by the string value of their Key field, strings by themselves, ties
+// objects by the string value of their Key field (or by KeyOf, for an item whose
+// key is not one of its own fields), strings by themselves, ties
 // by the items' own canonical bytes, so a request that lists its entries in
 // another order has the same bytes and the same hash. An []any is an array whose
 // order does mean something and is written as given.
 type Set struct {
 	Key   string
+	KeyOf func(item any) string // when set, the sort key of an item, in place of Key
 	Items []any
 }
 
@@ -98,6 +100,9 @@ func write(buf *bytes.Buffer, v any) {
 				if s, ok := x[t.Key].(string); ok {
 					it.key = s
 				}
+			}
+			if t.KeyOf != nil {
+				it.key = t.KeyOf(e)
 			}
 			items[i] = it
 		}

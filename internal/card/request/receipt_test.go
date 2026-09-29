@@ -1,34 +1,54 @@
 package request
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 )
+
+func counters(c Counters) Counters { return c }
 
 func sampleReceipt() *Receipt {
 	return &Receipt{
 		Schema: SchemaVersion, Operation: OpApplyEvents, OperationID: "op-17", RequestHash: Digest(dig2),
 		Table: "work", Epoch: "3", RevisionBefore: "12", RevisionAfter: "13", Actor: "coordinator", Result: ResultChanged,
 		Changed: []CardChange{
-			{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Working, Revision: "3"}},
-			{ID: "c2", Before: &CardState{Row: "build", State: Review, Revision: "5"}, After: CardState{Row: "build", State: Done, Revision: "6", Outcome: Completed}},
-			{ID: "c3", After: CardState{Row: "docs", State: Waiting, Revision: "1"}},
+			{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Working, Revision: "3", Counters: Counters{Starts: "1"}},
+				Notifications: []Notification{{Kind: NoteStarted, Judgment: No, Escalation: EscalationNone, Counters: Counters{Starts: "1"}}}},
+			{ID: "c2", Before: &CardState{Row: "build", State: Review, Revision: "5"}, After: CardState{Row: "build", State: Done, Revision: "6", Outcome: Completed},
+				Notifications: []Notification{{Kind: NoteCompleted, Judgment: No, Readiness: "two reads and ci:unit at the head", Escalation: EscalationNone}}},
+			{ID: "c3", Before: &CardState{Row: "build", State: Merging, Revision: "9", Counters: Counters{MergeReturns: "1"}}, After: CardState{Row: "build", State: Landed, Revision: "10", Counters: Counters{MergeReturns: "1"}}, Landing: "land:" + g40},
 		},
-		Blocked:    []Named{{ID: "c4", Reason: "waits on c9"}},
-		Ineligible: []Named{{ID: "c5", Reason: "already landed"}},
-		Missing:    []ID{"c6"},
-		Counts:     Counts{Selected: 7, Eligible: 3, Changed: 3, Blocked: 1, Ineligible: 1, Missing: 1, Guards: 2},
+		Blocked:      []Named{{ID: "c5", Reason: "waits on c9"}},
+		Ineligible:   []Named{{ID: "c6", Reason: "already landed"}},
+		Already:      []Named{{ID: "c7", Reason: "recorded by op-1"}},
+		Inapplicable: []Named{{ID: "c8", Reason: "ci for a waiting card"}},
+		Missing:      []ID{"c9"},
+		Counts:       Counts{Selected: 8, Eligible: 3, Changed: 3, Blocked: 1, Ineligible: 1, Missing: 1, Already: 1, Inapplicable: 1, Guards: 2},
 	}
 }
 
 func sampleRejection() *Rejection {
 	return &Rejection{Operation: OpApplyEvents, OperationID: "op-17", Scope: ScopeCard, Card: "c1", Cause: CauseStaleCardRev,
-		Expected: "revision 2", Observed: "revision 3", Changed: ChangedNo, Next: "read the card again and send the event with the observed revision"}
+		Expected: "revision 2", Observed: "revision 3", Next: "read the card again and send the lifecycle input with the observed revision"}
 }
 
-func TestValidReceiptAndRejectionPass(t *testing.T) {
+func sampleInspect() *InspectResult {
+	return &InspectResult{Schema: SchemaVersion, Table: "work", Epoch: "3", Revision: "13",
+		Cards: []InspectCard{
+			{ID: "c2", Place: Place{Row: "build", Col: Review}, Revision: "5", Pin: pin(), Head: g40, Standing: "2 of 2 reads, ci:unit green",
+				Missing: []string{"sweep"}, Drift: []Drift{DriftStanding}, Counters: Counters{Rework: "1", Red: "2", RedSameHead: "1"}, Escalation: EscalationEscalated, Marks: []Mark{MarkRedTotal}},
+			{ID: "c1", Place: Place{Row: "build", Col: Ready}, Revision: "2", Pin: pin(), Escalation: EscalationNone},
+			{ID: "c3", Place: Place{Row: "build", Col: Done}, Outcome: Cancelled, Revision: "8", Pin: pin(), Escalation: EscalationNone},
+		},
+		Missing: []ID{"c9"}}
+}
+
+func pin() Pin {
+	return Pin{Digest: Digest(dig), ObjectID: g40, Commit: g40, Repository: "example.org/team/repo", Path: "cards/x.md", Kind: "fix-red"}
+}
+
+func TestValidReceiptRejectionAndInspectPass(t *testing.T) {
 	t.Parallel()
 	if err := ValidateReceipt(sampleReceipt()); err != nil {
 		t.Fatal(err)
@@ -36,56 +56,156 @@ func TestValidReceiptAndRejectionPass(t *testing.T) {
 	if err := ValidateRejection(sampleRejection()); err != nil {
 		t.Fatal(err)
 	}
+	if err := ValidateInspectResult(sampleInspect()); err != nil {
+		t.Fatal(err)
+	}
 	noop := sampleReceipt()
-	noop.Result, noop.Changed, noop.Counts = ResultNoop, nil, Counts{Selected: 3, Eligible: 0, Blocked: 1, Ineligible: 1, Missing: 1, Guards: 2}
+	noop.Result, noop.Changed, noop.Counts = ResultNoop, nil, Counts{Selected: 5, Blocked: 1, Ineligible: 1, Missing: 1, Already: 1, Inapplicable: 1, Guards: 2}
 	if err := ValidateReceipt(noop); err != nil {
 		t.Fatalf("noop receipt: %v", err)
+	}
+	r := sampleReceipt()
+	if !strings.Contains(r.Line(), "hash="+string(dig2)) || !strings.Contains(r.Line(), "receipt="+string(r.Digest())) {
+		t.Fatalf("the one-line form lacks the request hash or the receipt digest: %s", r.Line())
 	}
 }
 
 func TestReceiptRefusals(t *testing.T) {
 	t.Parallel()
+	one := func(op Operation, ch ...CardChange) func(*Receipt) {
+		return func(r *Receipt) {
+			r.Operation = op
+			r.Changed = ch
+			r.Blocked, r.Ineligible, r.Already, r.Inapplicable, r.Missing = nil, nil, nil, nil, nil
+			r.Counts = Counts{Selected: len(ch), Eligible: len(ch), Changed: len(ch)}
+		}
+	}
+	st := func(s State, rev string) CardState { return CardState{Row: "build", State: s, Revision: rev} }
+	move := func(id string, from, to State) CardChange {
+		return CardChange{ID: ID(id), Before: &CardState{Row: "build", State: from, Revision: "2"}, After: st(to, "3")}
+	}
 	cases := []struct {
 		name string
 		edit func(r *Receipt)
 		want []string
 	}{
-		{"schema", func(r *Receipt) { r.Schema = 9 }, wantTriples("-1|schema|bad-value")},
-		{"read-only operation", func(r *Receipt) { r.Operation = OpInspect }, wantTriples("-1|operation|bad-value")},
-		{"operation unknown", func(r *Receipt) { r.Operation = "x" }, wantTriples("-1|operation|bad-value")},
+		{"schema", func(r *Receipt) { r.Schema = 9 }, wantTriples("-1|schema|invalid-value")},
+		{"read-only operation", func(r *Receipt) { r.Operation = OpInspect }, wantTriples("-1|operation|invalid-value")},
+		{"check is read-only", func(r *Receipt) { r.Operation = OpCheck }, wantTriples("-1|operation|invalid-value")},
+		{"operation unknown", func(r *Receipt) { r.Operation = "x" }, wantTriples("-1|operation|invalid-value")},
+		{"operation id empty", func(r *Receipt) { r.OperationID = "" }, wantTriples("-1|operation_id|required")},
 		{"hash missing", func(r *Receipt) { r.RequestHash = "" }, wantTriples("-1|request_hash|required")},
-		{"hash malformed", func(r *Receipt) { r.RequestHash = "abc" }, wantTriples("-1|request_hash|bad-value")},
-		{"epoch", func(r *Receipt) { r.Epoch = "1.5" }, wantTriples("-1|epoch|bad-value")},
-		{"revision does not advance", func(r *Receipt) { r.RevisionAfter = "12" }, wantTriples("-1|revision_after|bad-value")},
-		{"revision advances twice", func(r *Receipt) { r.RevisionAfter = "14" }, wantTriples("-1|revision_after|bad-value")},
-		{"revision overflow", func(r *Receipt) { r.RevisionBefore, r.RevisionAfter = "18446744073709551615", "0" }, wantTriples("-1|revision_after|bad-value")},
-		{"noop advances by one too", func(r *Receipt) {
-			r.Result, r.Changed, r.Counts = ResultNoop, nil, Counts{Selected: 3, Blocked: 1, Ineligible: 1, Missing: 1}
-			r.RevisionAfter = "12"
-		}, wantTriples("-1|revision_after|bad-value")},
-		{"changed with none changed", func(r *Receipt) { r.Changed, r.Counts.Changed = nil, 0 }, wantTriples("-1|result|bad-value")},
-		{"noop with changes", func(r *Receipt) { r.Result = ResultNoop }, wantTriples("-1|result|bad-value")},
-		{"result unknown", func(r *Receipt) { r.Result = "maybe" }, wantTriples("-1|result|bad-value")},
-		{"card revision skips", func(r *Receipt) { r.Changed[0].After.Revision = "5" }, wantTriples("0|after.revision|bad-value")},
-		{"created card revision", func(r *Receipt) { r.Changed[2].After.Revision = "2" }, wantTriples("2|after.revision|bad-value")},
-		{"created card not waiting", func(r *Receipt) { r.Changed[2].After.State = Ready }, wantTriples("2|after.state|bad-value")},
+		{"hash malformed", func(r *Receipt) { r.RequestHash = "abc" }, wantTriples("-1|request_hash|invalid-value")},
+		{"epoch", func(r *Receipt) { r.Epoch = "1.5" }, wantTriples("-1|epoch|invalid-value")},
+		{"revision does not advance", func(r *Receipt) { r.RevisionAfter = "12" }, wantTriples("-1|revision_after|invalid-value")},
+		{"revision advances twice", func(r *Receipt) { r.RevisionAfter = "14" }, wantTriples("-1|revision_after|invalid-value")},
+		{"revision overflow", func(r *Receipt) { r.RevisionBefore, r.RevisionAfter = "18446744073709551615", "0" }, wantTriples("-1|revision_after|invalid-value")},
+		{"changed with none changed", func(r *Receipt) { r.Changed, r.Counts.Changed = nil, 0 }, wantTriples("-1|result|invalid-value")},
+		{"noop with changes", func(r *Receipt) { r.Result = ResultNoop }, wantTriples("-1|result|invalid-value")},
+		{"result unknown", func(r *Receipt) { r.Result = "maybe" }, wantTriples("-1|result|invalid-value")},
+		{"card revision skips", func(r *Receipt) { r.Changed[0].After.Revision = "5" }, wantTriples("0|after.revision|invalid-value")},
+		{"created card revision", one(OpAdmit, CardChange{ID: "c1", After: st(Waiting, "2")}), wantTriples("0|after.revision|invalid-value")},
 		{"done without outcome", func(r *Receipt) { r.Changed[1].After.Outcome = "" }, wantTriples("1|after.outcome|required")},
 		{"outcome without done", func(r *Receipt) { r.Changed[0].After.Outcome = Cancelled }, wantTriples("0|after.outcome|not-applicable")},
 		{"outcome unknown", func(r *Receipt) { r.Changed[1].After.Outcome = "vanished" }, wantTriples("1|after.outcome|required")},
 		{"card repeated", func(r *Receipt) { r.Changed[1].ID = "c1" }, wantTriples("1|id|repeated-id")},
-		{"card id bad", func(r *Receipt) { r.Changed[0].ID = "a b" }, wantTriples("0|id|bad-value")},
-		{"before state unknown", func(r *Receipt) { r.Changed[0].Before.State = "limbo" }, wantTriples("0|before.state|bad-value")},
-		{"count changed", func(r *Receipt) { r.Counts.Changed = 2 }, wantTriples("-1|counts.changed|bad-value")},
-		{"count blocked", func(r *Receipt) { r.Counts.Blocked = 0 }, wantTriples("-1|counts.blocked|bad-value")},
-		{"count ineligible", func(r *Receipt) { r.Counts.Ineligible = 4 }, wantTriples("-1|counts.ineligible|bad-value")},
-		{"count missing", func(r *Receipt) { r.Counts.Missing = 0 }, wantTriples("-1|counts.missing|bad-value")},
-		{"selected below the parts", func(r *Receipt) { r.Counts.Selected = 3 }, wantTriples("-1|counts.selected|bad-value")},
-		{"eligible over selected", func(r *Receipt) { r.Counts.Eligible = 8 }, wantTriples("-1|counts.eligible|bad-value")},
-		{"negative guards", func(r *Receipt) { r.Counts.Guards = -1 }, wantTriples("-1|counts.guards|bad-value")},
+		{"card id bad", func(r *Receipt) { r.Changed[0].ID = "a b" }, wantTriples("0|id|invalid-value")},
+		{"before state unknown", func(r *Receipt) { r.Changed[0].Before.State = "limbo" }, wantTriples("0|before.state|invalid-value")},
+		{"count changed", func(r *Receipt) { r.Counts.Changed = 2 }, wantTriples("-1|counts.changed|invalid-value")},
+		{"count blocked", func(r *Receipt) { r.Counts.Blocked = 0 }, wantTriples("-1|counts.blocked|invalid-value")},
+		{"count ineligible", func(r *Receipt) { r.Counts.Ineligible = 4 }, wantTriples("-1|counts.ineligible|invalid-value")},
+		{"count missing", func(r *Receipt) { r.Counts.Missing = 0 }, wantTriples("-1|counts.missing|invalid-value")},
+		{"count already", func(r *Receipt) { r.Counts.Already = 0 }, wantTriples("-1|counts.already|invalid-value")},
+		{"count inapplicable", func(r *Receipt) { r.Counts.Inapplicable = 0 }, wantTriples("-1|counts.inapplicable|invalid-value")},
+		{"selected below the parts", func(r *Receipt) { r.Counts.Selected = 3 }, wantTriples("-1|counts.selected|invalid-value")},
+		{"eligible over selected", func(r *Receipt) { r.Counts.Eligible = 9 }, wantTriples("-1|counts.eligible|invalid-value")},
+		{"negative guards", func(r *Receipt) { r.Counts.Guards = -1 }, wantTriples("-1|counts.guards|invalid-value")},
 		{"blocked reason empty", func(r *Receipt) { r.Blocked[0].Reason = "" }, wantTriples("-1|blocked[0].reason|required")},
 		{"blocked reason newline", func(r *Receipt) { r.Blocked[0].Reason = "a\nb" }, wantTriples("-1|blocked[0].reason|control-character")},
+		{"blocked reason bidi", func(r *Receipt) { r.Blocked[0].Reason = "a‮b" }, wantTriples("-1|blocked[0].reason|control-character")},
 		{"ineligible id", func(r *Receipt) { r.Ineligible[0].ID = "" }, wantTriples("-1|ineligible[0].id|required")},
-		{"missing id", func(r *Receipt) { r.Missing[0] = "x y" }, wantTriples("-1|missing[0]|bad-value")},
+		{"missing id", func(r *Receipt) { r.Missing[0] = "x y" }, wantTriples("-1|missing[0]|invalid-value")},
+
+		// what no operation could produce
+		{"resolve moves waiting to ready", one(OpResolve, move("c1", Waiting, Ready)), nil},
+		{"resolve moves ready to working", one(OpResolve, move("c1", Ready, Working)), wantTriples("0|after.state|invalid-value")},
+		{"resolve moves waiting to landed", one(OpResolve, move("c1", Waiting, Landed)), wantTriples("0|after.state|invalid-value", "0|landing|required")},
+		{"resolve moves waiting to done", one(OpResolve, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Waiting, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"}), wantTriples("0|after.state|invalid-value")},
+		{"resolve creates a card", one(OpResolve, CardChange{ID: "c1", After: st(Ready, "1")}), wantTriples("0|after.state|invalid-value")},
+		{"resolve changes the row", one(OpResolve, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Waiting, Revision: "2"}, After: CardState{Row: "docs", State: Ready, Revision: "3"}}), wantTriples("0|after.state|invalid-value")},
+		{"apply creates a card", one(OpApplyEvents, CardChange{ID: "c1", After: st(Waiting, "1")}), wantTriples("0|after.state|invalid-value")},
+		{"apply moves ready to working", one(OpApplyEvents, move("c1", Ready, Working)), nil},
+		{"apply moves ready to review", one(OpApplyEvents, move("c1", Ready, Review)), wantTriples("0|after.state|invalid-value")},
+		{"apply moves review to review (a new head)", one(OpApplyEvents, move("c1", Review, Review)), nil},
+		{"apply moves merging to review", one(OpApplyEvents, move("c1", Merging, Review)), nil},
+		{"apply moves review to ready", one(OpApplyEvents, move("c1", Review, Ready)), nil},
+		{"apply moves landed anywhere", one(OpApplyEvents, move("c1", Landed, Working)), wantTriples("0|after.state|invalid-value")},
+		{"apply ends done as replaced", one(OpApplyEvents, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"}), wantTriples("0|after.state|invalid-value")},
+		{"apply ends done as cancelled", one(OpApplyEvents, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Merging, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Cancelled}}), nil},
+		{"admit moves a card", one(OpAdmit, move("c1", Waiting, Ready)), wantTriples("0|after.state|invalid-value")},
+		{"admit creates in ready", one(OpAdmit, CardChange{ID: "c1", After: st(Ready, "1")}), wantTriples("0|after.state|invalid-value")},
+		{"admit creates in waiting", one(OpAdmit, CardChange{ID: "c1", After: st(Waiting, "1")}), nil},
+		{"evidence leaves the state", one(OpRecordEvidence, move("c1", Review, Review)), nil},
+		{"evidence forces merging to review", one(OpRecordEvidence, move("c1", Merging, Review)), nil},
+		{"evidence moves review to ready", one(OpRecordEvidence, move("c1", Review, Ready)), wantTriples("0|after.state|invalid-value")},
+		{"evidence moves review to merging", one(OpRecordEvidence, move("c1", Review, Merging)), wantTriples("0|after.state|invalid-value")},
+		{"evidence creates a card", one(OpRecordEvidence, CardChange{ID: "c1", After: st(Waiting, "1")}), wantTriples("0|after.state|invalid-value")},
+		{"replace creates without ending", one(OpReplace, CardChange{ID: "c1", After: st(Waiting, "1")}), wantTriples("-1|changed|invalid-value")},
+		{"replace ends a working card", one(OpReplace,
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Working, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"},
+			CardChange{ID: "c2", After: st(Waiting, "1")}), wantTriples("0|after.state|invalid-value")},
+		{"replace without a successor link", one(OpReplace,
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}},
+			CardChange{ID: "c2", After: st(Waiting, "1")}), wantTriples("0|successor|required")},
+		{"replace successor is not created here", one(OpReplace,
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "zz"},
+			CardChange{ID: "c2", After: st(Waiting, "1")}), wantTriples("0|successor|invalid-value")},
+		{"replace ready to replaced and a new card", one(OpReplace,
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"},
+			CardChange{ID: "c2", After: st(Waiting, "1")}), nil},
+
+		// links
+		{"successor on a card that is not replaced", func(r *Receipt) { r.Changed[0].Successor = "c9" }, wantTriples("0|successor|not-applicable")},
+		{"landing missing on a landed card", func(r *Receipt) { r.Changed[2].Landing = "" }, wantTriples("2|landing|required")},
+		{"landing on a card that is not landed", func(r *Receipt) { r.Changed[0].Landing = "land:x" }, wantTriples("0|landing|not-applicable")},
+		{"landing not a token", func(r *Receipt) { r.Changed[2].Landing = "a b" }, wantTriples("2|landing|invalid-value")},
+
+		// cycle counters
+		{"counter is not a decimal", func(r *Receipt) { r.Changed[0].After.Counters.Starts = "one" }, wantTriples("0|after.counters.starts|invalid-value")},
+		{"counter over uint64", func(r *Receipt) { r.Changed[0].After.Counters.Starts = "18446744073709551616" }, wantTriples("0|after.counters.starts|invalid-value")},
+		{"a counter never decreases", func(r *Receipt) { r.Changed[2].After.Counters.MergeReturns = "0" }, wantTriples("2|after.counters.merge_returns|invalid-value")},
+		{"an absent counter reads as zero and may stay", func(r *Receipt) { r.Changed[2].After.Counters.MergeReturns = "" }, wantTriples("2|after.counters.merge_returns|invalid-value")},
+		{"a counter may grow", func(r *Receipt) { r.Changed[2].After.Counters.MergeReturns = "2" }, nil},
+		{"the same-head red count may reset", func(r *Receipt) {
+			r.Changed[2].Before.Counters.RedSameHead = "3"
+			r.Changed[2].After.Counters.RedSameHead = "0"
+		}, nil},
+
+		// notifications
+		{"notification kind unknown", func(r *Receipt) { r.Changed[0].Notifications[0].Kind = "shout" }, wantTriples("0|notifications[0].kind|invalid-value")},
+		{"notification judgment", func(r *Receipt) { r.Changed[0].Notifications[0].Judgment = "maybe" }, wantTriples("0|notifications[0].judgment|invalid-value")},
+		{"a returned notification is always judgment", func(r *Receipt) {
+			r.Changed[0].Notifications[0] = Notification{Kind: NoteReturned, Judgment: No, Escalation: EscalationNone}
+		}, wantTriples("0|notifications[0].judgment|invalid-value")},
+		{"a started notification is never judgment", func(r *Receipt) { r.Changed[0].Notifications[0].Judgment = Yes }, wantTriples("0|notifications[0].judgment|invalid-value")},
+		{"a result notification may be either", func(r *Receipt) {
+			r.Changed[0].Notifications[0] = Notification{Kind: NoteResult, Judgment: Yes, Escalation: EscalationNone}
+		}, nil},
+		{"escalation unknown", func(r *Receipt) { r.Changed[0].Notifications[0].Escalation = "loud" }, wantTriples("0|notifications[0].escalation|invalid-value")},
+		{"escalation empty", func(r *Receipt) { r.Changed[0].Notifications[0].Escalation = "" }, wantTriples("0|notifications[0].escalation|invalid-value")},
+		{"only judgment is escalated", func(r *Receipt) { r.Changed[0].Notifications[0].Escalation = EscalationEscalated }, wantTriples("0|notifications[0].escalation|invalid-value")},
+		{"a judgment may be escalated", func(r *Receipt) {
+			r.Changed[0].Notifications[0] = Notification{Kind: NoteReturned, Judgment: Yes, Escalation: EscalationEscalated}
+		}, nil},
+		{"readiness text at the bound", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = longString(MaxNoteBytes) }, nil},
+		{"readiness text over the bound", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = longString(MaxNoteBytes + 1) }, wantTriples("0|notifications[0].readiness|too-long")},
+		{"readiness text newline", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = "a\nb" }, wantTriples("0|notifications[0].readiness|control-character")},
+		{"readiness text bidi", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = "a‮b" }, wantTriples("0|notifications[0].readiness|control-character")},
+		{"notification counter", func(r *Receipt) { r.Changed[0].Notifications[0].Counters.Red = "x" }, wantTriples("0|notifications[0].counters.red|invalid-value")},
+		{"too many notifications", func(r *Receipt) {
+			n := r.Changed[0].Notifications[0]
+			r.Changed[0].Notifications = []Notification{n, n, n, n, n, n, n, n, n}
+		}, wantTriples("0|notifications|too-many")},
 	}
 	for _, c := range cases {
 		c := c
@@ -110,23 +230,28 @@ func TestRejectionRefusals(t *testing.T) {
 		edit func(r *Rejection)
 		want []string
 	}{
-		{"transport is unknown never no", func(r *Rejection) { r.Cause, r.Changed = CauseTransport, ChangedNo }, wantTriples("-1|changed|bad-value")},
-		{"transport unknown ok", func(r *Rejection) { r.Cause, r.Changed = CauseTransport, ChangedUnknown }, nil},
-		{"guard refusal cannot be unknown", func(r *Rejection) { r.Changed = ChangedUnknown }, wantTriples("-1|changed|bad-value")},
-		{"changed yes is not a refusal", func(r *Rejection) { r.Changed = "yes" }, wantTriples("-1|changed|bad-value")},
-		{"changed empty", func(r *Rejection) { r.Changed = "" }, wantTriples("-1|changed|required")},
-		{"operation", func(r *Rejection) { r.Operation = "x" }, wantTriples("-1|operation|bad-value")},
+		{"operation", func(r *Rejection) { r.Operation = "x" }, wantTriples("-1|operation|invalid-value")},
 		{"operation id", func(r *Rejection) { r.OperationID = "" }, wantTriples("-1|operation_id|required")},
-		{"scope", func(r *Rejection) { r.Scope = "everything" }, wantTriples("-1|scope|bad-value")},
+		{"an inspect needs no operation id", func(r *Rejection) {
+			r.Operation, r.OperationID, r.Scope, r.Card, r.Cause = OpInspect, "", ScopeBatch, "", CauseStaleEpoch
+		}, nil},
+		{"a check needs no operation id", func(r *Rejection) {
+			r.Operation, r.OperationID, r.Scope, r.Card, r.Cause = OpCheck, "", ScopeBatch, "", CauseOverLimit
+		}, nil},
+		{"an inspect has none", func(r *Rejection) { r.Operation, r.Scope, r.Card = OpInspect, ScopeBatch, "" }, wantTriples("-1|operation_id|not-applicable")},
+		{"scope", func(r *Rejection) { r.Scope = "everything" }, wantTriples("-1|scope|invalid-value")},
 		{"card scope without card", func(r *Rejection) { r.Card = "" }, wantTriples("-1|card|required")},
 		{"batch scope with card", func(r *Rejection) { r.Scope = ScopeBatch }, wantTriples("-1|card|not-applicable")},
 		{"batch scope ok", func(r *Rejection) { r.Scope, r.Card = ScopeBatch, "" }, nil},
-		{"unknown cause", func(r *Rejection) { r.Cause = "because" }, wantTriples("-1|cause|bad-value")},
+		{"unknown cause", func(r *Rejection) { r.Cause = "because" }, wantTriples("-1|cause|invalid-value")},
+		{"the old names are not causes", func(r *Rejection) { r.Cause = "duplicate-id" }, wantTriples("-1|cause|invalid-value")},
 		{"expected empty", func(r *Rejection) { r.Expected = "" }, wantTriples("-1|expected|required")},
 		{"observed too long", func(r *Rejection) { r.Observed = longString(MaxDetailBytes + 1) }, wantTriples("-1|observed|too-long")},
 		{"next empty", func(r *Rejection) { r.Next = "" }, wantTriples("-1|next|required")},
 		{"next multi-line", func(r *Rejection) { r.Next = "a\nb" }, wantTriples("-1|next|control-character")},
 		{"stale epoch batch", func(r *Rejection) { r.Scope, r.Card, r.Cause = ScopeBatch, "", CauseStaleEpoch }, nil},
+		{"transport failure", func(r *Rejection) { r.Scope, r.Card, r.Cause = ScopeBatch, "", CauseTransport }, nil},
+		{"store error", func(r *Rejection) { r.Scope, r.Card, r.Cause = ScopeBatch, "", CauseStoreError }, nil},
 	}
 	for _, c := range cases {
 		c := c
@@ -144,113 +269,111 @@ func TestRejectionRefusals(t *testing.T) {
 	}
 }
 
-func TestEveryNamedCauseIsAcceptedByARejection(t *testing.T) {
+// Whether anything changed is derived from the cause, never stored: there is no
+// field to set inconsistently.
+func TestRejectionChangedIsDerived(t *testing.T) {
 	t.Parallel()
-	for c := range knownCauses {
+	for _, c := range []struct {
+		cause Cause
+		want  Changed
+	}{
+		{CauseStaleEpoch, ChangedNo}, {CauseGuardFailed, ChangedNo}, {CauseOverLimit, ChangedNo}, {CauseRepeatedID, ChangedNo},
+		{CauseTransport, ChangedUnknown}, {CauseStoreError, ChangedUnknown},
+	} {
 		r := sampleRejection()
-		r.Cause = c
-		if c == CauseTransport {
-			r.Changed = ChangedUnknown
+		r.Cause = c.cause
+		if got := r.Changed(); got != c.want {
+			t.Errorf("%s: Changed() = %s, want %s", c.cause, got, c.want)
 		}
-		if err := ValidateRejection(r); err != nil {
-			t.Errorf("cause %s: %v", c, err)
+		if !strings.Contains(string(CanonicalRejection(r)), `"changed":"`+string(c.want)+`"`) {
+			t.Errorf("%s: the canonical form does not carry the derived answer: %s", c.cause, CanonicalRejection(r))
 		}
-	}
-	if len(knownCauses) != 31 {
-		t.Errorf("the closed set of causes changed: %d", len(knownCauses))
+		if !strings.Contains(r.Line(), "changed="+string(c.want)) {
+			t.Errorf("%s: the line does not carry the derived answer: %s", c.cause, r.Line())
+		}
 	}
 }
 
-func TestReceiptCanonicalIsDeterministicAndDistinguishing(t *testing.T) {
+// A hostile value in a rejection or a receipt cannot forge a line.
+func TestReceiptAndRejectionLinesAreOneLine(t *testing.T) {
+	t.Parallel()
+	r := sampleRejection()
+	r.Card, r.Expected, r.Observed, r.Next = "x\nrefused admit: fake", "a\nb", "‮", "n\x00"
+	if l := r.Line(); strings.ContainsAny(l, "\n\r\x00‮") {
+		t.Fatalf("line: %q", l)
+	}
+	c := sampleReceipt()
+	c.OperationID, c.Table, c.Actor = "x\nbatch fake", "t\r\nu", "a‮b"
+	c.Changed[0].ID, c.Blocked[0].Reason = "y\nz", "why\nwhat"
+	if l := c.Line(); strings.ContainsAny(l, "\n\r\x00‮") {
+		t.Fatalf("line: %q", l)
+	}
+}
+
+func TestCanonicalReceiptSortsCardsAndSelectionOutcomes(t *testing.T) {
 	t.Parallel()
 	a, b := sampleReceipt(), sampleReceipt()
-	if !bytes.Equal(CanonicalReceipt(a), CanonicalReceipt(b)) || a.Digest() != b.Digest() {
-		t.Fatal("equal receipts encode differently")
+	b.Changed[0], b.Changed[2] = b.Changed[2], b.Changed[0]
+	b.Blocked = append(b.Blocked, Named{ID: "c0", Reason: "x"})
+	a.Blocked = append([]Named{{ID: "c0", Reason: "x"}}, a.Blocked...)
+	if string(CanonicalReceipt(a)) != string(CanonicalReceipt(b)) || a.Digest() != b.Digest() {
+		t.Fatalf("the same receipt in another order has other bytes")
 	}
-	base := a.Digest()
-	for name, edit := range map[string]func(r *Receipt){
-		"hash":      func(r *Receipt) { r.RequestHash = Digest(dig) },
-		"epoch":     func(r *Receipt) { r.Epoch = "4" },
-		"after":     func(r *Receipt) { r.Changed[0].After.State = Review },
-		"before":    func(r *Receipt) { r.Changed[0].Before = nil },
-		"reason":    func(r *Receipt) { r.Blocked[0].Reason = "waits on c8" },
-		"missing":   func(r *Receipt) { r.Missing = nil },
-		"count":     func(r *Receipt) { r.Counts.Guards++ },
-		"outcome":   func(r *Receipt) { r.Changed[1].After.Outcome = Cancelled },
-		"operation": func(r *Receipt) { r.Operation = OpAdmit },
-	} {
-		c := sampleReceipt()
-		edit(c)
-		if c.Digest() == base {
-			t.Errorf("editing %s left the receipt digest unchanged", name)
-		}
-	}
-	s := string(CanonicalReceipt(a))
-	if !strings.HasPrefix(s, `{"actor":"coordinator","blocked":[{"id":"c4","reason":"waits on c9"}],"changed":[{"after":`) || strings.Contains(s, "\n") {
-		t.Fatalf("canonical receipt %s", s)
-	}
-	// Every list is present even when empty.
-	e := &Receipt{}
-	if got := string(CanonicalReceipt(e)); !strings.Contains(got, `"blocked":[]`) || !strings.Contains(got, `"changed":[]`) || !strings.Contains(got, `"missing":[]`) {
-		t.Fatalf("empty lists absent: %s", got)
-	}
-	if string(CanonicalReceipt(nil)) != "null" || string(CanonicalRejection(nil)) != "null" {
-		t.Fatal("nil encodes as something else")
+	if !a.Digest().Valid() {
+		t.Fatal("digest")
 	}
 }
 
-func TestRejectionCanonicalDistinguishes(t *testing.T) {
+func TestInspectResultRefusals(t *testing.T) {
 	t.Parallel()
-	a := sampleRejection()
-	base := CanonicalRejection(a)
-	if !bytes.Equal(base, CanonicalRejection(sampleRejection())) {
-		t.Fatal("equal rejections encode differently")
+	cases := []struct {
+		name string
+		edit func(r *InspectResult)
+		want []string
+	}{
+		{"schema", func(r *InspectResult) { r.Schema = 2 }, wantTriples("-1|schema|invalid-value")},
+		{"table", func(r *InspectResult) { r.Table = "" }, wantTriples("-1|table|required")},
+		{"card repeated", func(r *InspectResult) { r.Cards[1].ID = r.Cards[0].ID }, wantTriples("1|id|repeated-id")},
+		{"place col", func(r *InspectResult) { r.Cards[0].Place.Col = "limbo" }, wantTriples("0|place.col|invalid-value")},
+		{"done without outcome", func(r *InspectResult) { r.Cards[2].Outcome = "" }, wantTriples("2|outcome|required")},
+		{"outcome without done", func(r *InspectResult) { r.Cards[0].Outcome = Cancelled }, wantTriples("0|outcome|not-applicable")},
+		{"pin digest", func(r *InspectResult) { r.Cards[0].Pin.Digest = "x" }, wantTriples("0|pin.digest|invalid-value")},
+		{"pin repository is a URL", func(r *InspectResult) { r.Cards[0].Pin.Repository = "https://u:secret@h/o/r" }, wantTriples("0|pin.repository|invalid-repository")},
+		{"pin path", func(r *InspectResult) { r.Cards[0].Pin.Path = "../x" }, wantTriples("0|pin.path|path-escapes")},
+		{"head", func(r *InspectResult) { r.Cards[0].Head = "main" }, wantTriples("0|head|invalid-value")},
+		{"standing over the bound", func(r *InspectResult) { r.Cards[0].Standing = longString(MaxStandingBytes + 1) }, wantTriples("0|standing|too-long")},
+		{"standing newline", func(r *InspectResult) { r.Cards[0].Standing = "a\nb" }, wantTriples("0|standing|control-character")},
+		{"missing over the bound", func(r *InspectResult) {
+			for i := 0; i <= MaxMissingItems; i++ {
+				r.Cards[0].Missing = append(r.Cards[0].Missing, fmt.Sprintf("m%d", i))
+			}
+		}, wantTriples("0|missing|too-many")},
+		{"missing item", func(r *InspectResult) { r.Cards[0].Missing = []string{"a b"} }, wantTriples("0|missing[0]|invalid-value")},
+		{"drift unknown", func(r *InspectResult) { r.Cards[0].Drift = []Drift{"rot"} }, wantTriples("0|drift[0]|invalid-value")},
+		{"counter", func(r *InspectResult) { r.Cards[0].Counters.Red = "-1" }, wantTriples("0|counters.red|invalid-value")},
+		{"mark unknown", func(r *InspectResult) { r.Cards[0].Marks = []Mark{"loud"} }, wantTriples("0|marks[0]|invalid-value")},
+		{"escalated without a mark", func(r *InspectResult) { r.Cards[0].Marks = nil }, wantTriples("0|escalation|invalid-value")},
+		{"a mark without escalation", func(r *InspectResult) { r.Cards[1].Marks = []Mark{MarkStale} }, wantTriples("1|escalation|invalid-value")},
+		{"escalation empty", func(r *InspectResult) { r.Cards[1].Escalation = "" }, wantTriples("1|escalation|invalid-value")},
+		{"a card both found and missing", func(r *InspectResult) { r.Missing = []ID{"c1"} }, wantTriples("-1|missing[0]|invalid-value")},
 	}
-	for name, edit := range map[string]func(r *Rejection){
-		"cause":    func(r *Rejection) { r.Cause = CauseStaleEpoch },
-		"changed":  func(r *Rejection) { r.Changed = ChangedUnknown },
-		"expected": func(r *Rejection) { r.Expected = "revision 9" },
-		"card":     func(r *Rejection) { r.Card = "c2" },
-		"next":     func(r *Rejection) { r.Next = "other" },
-	} {
-		c := sampleRejection()
-		edit(c)
-		if bytes.Equal(CanonicalRejection(c), base) {
-			t.Errorf("editing %s left the canonical bytes unchanged", name)
-		}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := sampleInspect()
+			c.edit(r)
+			if got := triples(ValidateInspectResult(r)); !equalStrings(got, c.want) {
+				t.Fatalf("refusals\n got  %v\n want %v", got, c.want)
+			}
+		})
 	}
-}
-
-func TestLineRenderings(t *testing.T) {
-	t.Parallel()
-	r := sampleReceipt()
-	want := "batch apply_events op=op-17 table=work epoch=3 rev 12->13 actor=coordinator result=changed: selected=7 eligible=3 changed=3 blocked=1 ineligible=1 missing=1 guards=2; c1 ready r2 -> working r3; c2 review r5 -> done/completed r6; c3 new -> waiting r1; blocked c4: waits on c9"
-	if got := r.Line(); got != want {
-		t.Fatalf("receipt line\n got  %s\n want %s", got, want)
+	if ValidateInspectResult(nil) == nil {
+		t.Fatal("nil result accepted")
 	}
-	j := sampleRejection()
-	wantJ := "refused apply_events op=op-17 card c1: stale-card-revision; expected revision 2; observed revision 3; changed=no; next: read the card again and send the event with the observed revision"
-	if got := j.Line(); got != wantJ {
-		t.Fatalf("rejection line\n got  %s\n want %s", got, wantJ)
-	}
-	batch := &Rejection{Operation: OpAdmit, OperationID: "op-1", Scope: ScopeBatch, Cause: CauseTransport, Expected: "a reply", Observed: "connection reset", Changed: ChangedUnknown, Next: "reconcile operation op-1"}
-	if got := batch.Line(); !strings.Contains(got, "batch: transport-failure") || !strings.Contains(got, "changed=unknown") {
-		t.Fatalf("batch line %s", got)
-	}
-	// Whatever a value holds, a line stays one line.
-	evil := sampleReceipt()
-	evil.Table, evil.Blocked[0].Reason = "a\nb", "x\r\ny"
-	evil.Changed = evil.Changed[:0]
-	for i := 0; i < 20; i++ {
-		evil.Changed = append(evil.Changed, CardChange{ID: ID(fmt.Sprintf("c%d", i)), After: CardState{State: Waiting, Revision: "1"}})
-	}
-	l := evil.Line()
-	if strings.ContainsAny(l, "\r\n") || !strings.Contains(l, "+12 more") {
-		t.Fatalf("line %q", l)
-	}
-	ej := sampleRejection()
-	ej.Expected, ej.Next = "a\nb", "c\rd"
-	if strings.ContainsAny(ej.Line(), "\r\n") {
-		t.Fatal("rejection line breaks")
+	a, b := sampleInspect(), sampleInspect()
+	b.Cards[0], b.Cards[2] = b.Cards[2], b.Cards[0]
+	if string(a.Canonical()) != string(b.Canonical()) || a.Digest() != b.Digest() || !a.Digest().Valid() {
+		t.Fatal("inspect cards are not sorted by the encoder")
 	}
 }

@@ -2,17 +2,25 @@ package request
 
 import (
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
 // Validate checks a request that is already a value and reports every refusal
-// found, not only the first. It returns nil, or a *Refusals. Parse runs it after
-// reading a document; a caller that builds a Request runs it before Canonical.
-func Validate(req *Request) error {
+// found, not only the first: it returns the validated request, which carries its
+// canonical bytes and hash, or nil and a *Refusals. Parse runs it after reading a
+// document. A request that is not a *Valid has not been checked, and nothing
+// above this package takes one.
+func Validate(req *Request) (*Valid, error) {
 	c := newCollector()
 	validate(req, c)
-	return c.err()
+	if err := c.err(); err != nil {
+		return nil, err
+	}
+	return newValid(req), nil
 }
 
 type validator struct{ c *collector }
@@ -25,87 +33,105 @@ func joinStrings[T ~string](list []T) string {
 	return strings.Join(parts, ", ")
 }
 
-// knownID returns s for a refusal's card ID when it is safe to print.
-func knownID(s string) string {
-	if s == "" {
-		return ""
+// fault adds the refusal a text fault names.
+func (v validator) fault(index int, id, field, s string, cause Cause, max int, want string) {
+	limit, next := want, "send a valid value"
+	found := quote(s)
+	if cause == CauseTooLong {
+		limit, next, found = strconv.Itoa(max)+" bytes", "shorten the value", quote(s)
 	}
-	if cause, _ := textFault(s, MaxIDBytes); cause != "" {
-		return ""
-	}
-	return s
+	v.c.add(index, id, field, cause, found, limit, next)
 }
 
-// text checks one string field: present, clean, within max bytes, and of the
-// grammar ok describes as want.
+// text checks one free-text value: present, clean of controls, bidi and
+// zero-width characters, within max bytes, and of the form ok describes as want.
 func (v validator) text(index int, id, field, s string, max int, ok func(string) bool, want string) {
 	if s == "" {
 		v.c.add(index, id, field, CauseRequired, "", want, "set the field")
 		return
 	}
-	if cause, found := textFault(s, max); cause != "" {
-		limit, remedy := want, "send a valid value"
-		if cause == CauseTooLong {
-			limit, remedy = strconv.Itoa(max)+" bytes", "shorten the value"
-		}
-		v.c.add(index, id, field, cause, found, limit, remedy)
+	if cause := card.TextFault(s, max); cause != "" {
+		v.fault(index, id, field, s, cause, max, want)
 		return
 	}
 	if !ok(s) {
-		v.c.add(index, id, field, CauseBadValue, quote(s), want, "send a value of that form")
+		v.c.add(index, id, field, CauseInvalidValue, quote(s), want, "send a value of that form")
 	}
 }
 
 func (v validator) cardID(index int, id, field string, s ID) {
-	v.text(index, id, field, string(s), MaxIDBytes, ValidID, "ASCII letters, digits, underscore and hyphen")
+	if cause, why := card.IDFault(string(s)); cause != "" {
+		switch cause {
+		case CauseRequired:
+			v.c.add(index, id, field, cause, "", why, "set the field")
+		case CauseTooLong:
+			v.c.add(index, id, field, cause, quote(string(s)), "64 bytes", "shorten the value")
+		default:
+			v.c.add(index, id, field, cause, quote(string(s)), why, "send a valid card ID")
+		}
+	}
 }
 
 func (v validator) digest(index int, id, field string, d Digest) {
-	v.text(index, id, field, string(d), 64, func(s string) bool { return Digest(s).Valid() }, "64 lowercase hexadecimal characters (SHA-256)")
+	v.text(index, id, field, string(d), 64, func(s string) bool { return Digest(s).Valid() }, "64 lower-case hexadecimal characters (SHA-256)")
 }
 
-func (v validator) gitID(index int, id, field, s string) {
-	v.text(index, id, field, s, 64, validGitID, "40 or 64 lowercase hexadecimal characters (git object id)")
+func (v validator) objectID(index int, id, field, s string) {
+	v.text(index, id, field, s, 64, card.ValidObjectID, "40 or 64 lower-case hexadecimal characters (git object id)")
+}
+
+func (v validator) head(index int, id, field, s string) {
+	v.text(index, id, field, s, MaxHeadBytes, card.ValidHead, "a git object id (40 or 64 lower-case hex) or a sha256: digest")
 }
 
 func (v validator) name(index int, id, field, s string) {
-	v.text(index, id, field, s, MaxNameBytes, func(s string) bool { return nameRE.MatchString(s) }, "letters, digits, underscore, dot and hyphen, starting with a letter, digit or underscore")
+	v.text(index, id, field, s, MaxNameBytes, func(s string) bool { return card.ValidName(s, MaxNameBytes) },
+		"letters, digits, underscore, dot and hyphen, starting with a letter, digit or underscore")
 }
 
-func (v validator) identity(index int, id, field, s string) {
-	v.text(index, id, field, s, MaxIdentityBytes, func(s string) bool { return nameRE.MatchString(s) }, "letters, digits, underscore, dot and hyphen, starting with a letter, digit or underscore")
-}
-
-func (v validator) ref(index int, id, field, s string) {
-	v.text(index, id, field, s, MaxRefBytes, validRef, "a reference with no whitespace")
+// token checks a reference: an issuer, actor, operation ID, source artifact,
+// landing identity or verifier. It is printable ASCII with no space, comma or
+// quote (card.TokenChars).
+func (v validator) token(index int, id, field, s string, max int) {
+	v.text(index, id, field, s, max, func(s string) bool { return card.ValidToken(s, max) },
+		"a token of at most "+strconv.Itoa(max)+" bytes: "+card.TokenChars)
 }
 
 func (v validator) counter(index int, id, field, s string, atLeastOne bool) {
 	want := "a decimal integer within uint64"
-	ok := validCounter
+	ok := card.ValidCounter
 	if atLeastOne {
-		want, ok = "a decimal integer from 1 within uint64", counterAtLeastOne
+		want, ok = "a decimal integer from 1 within uint64", card.CounterAtLeastOne
 	}
 	v.text(index, id, field, s, MaxCounterDigits, ok, want)
 }
 
 func (v validator) enum(index int, id, field, s string, allowed []string) {
+	want := "one of " + strings.Join(allowed, ", ")
 	if s == "" {
-		v.c.add(index, id, field, CauseRequired, "", "one of "+strings.Join(allowed, ", "), "set the field")
+		v.c.add(index, id, field, CauseRequired, "", want, "set the field")
 		return
 	}
-	if cause, found := textFault(s, MaxIdentityBytes); cause != "" {
-		v.c.add(index, id, field, cause, found, "one of "+strings.Join(allowed, ", "), "send a valid value")
+	if cause := card.TextFault(s, MaxIdentityBytes); cause != "" {
+		v.fault(index, id, field, s, cause, MaxIdentityBytes, want)
 		return
 	}
 	if !contains(allowed, s) {
-		v.c.add(index, id, field, CauseBadValue, quote(s), "one of "+strings.Join(allowed, ", "), "send one of the listed values")
+		v.c.add(index, id, field, CauseInvalidValue, quote(s), want, "send one of the listed values")
 	}
 }
 
 func stateNames() []string {
-	out := make([]string, len(States))
-	for i, s := range States {
+	out := make([]string, len(allStates))
+	for i, s := range allStates {
+		out[i] = string(s)
+	}
+	return out
+}
+
+func toStrings[T ~string](list []T) []string {
+	out := make([]string, len(list))
+	for i, s := range list {
 		out[i] = string(s)
 	}
 	return out
@@ -126,10 +152,18 @@ func (v validator) count(field string, n, max int, unit string) int {
 	return n
 }
 
-func (v validator) expect(index int, id, prefix string, e Expect) {
-	v.counter(index, id, prefix+".revision", e.Revision, true)
+// expect checks a guard; the revision is optional only when revOptional says so.
+func (v validator) expect(index int, id, prefix string, e Expect, revOptional bool) {
+	if !(revOptional && e.Revision == "") {
+		v.counter(index, id, prefix+".revision", e.Revision, true)
+	}
 	v.name(index, id, prefix+".place.row", e.Place.Row)
 	v.enum(index, id, prefix+".place.col", string(e.Place.Col), stateNames())
+}
+
+func (v validator) reason(index int, id, field, s string) {
+	v.text(index, id, field, s, card.MaxReasonBytes, func(s string) bool { return s == strings.TrimSpace(s) },
+		"one line with no leading or trailing blank")
 }
 
 func validate(req *Request, c *collector) {
@@ -148,55 +182,57 @@ func validate(req *Request, c *collector) {
 	}
 	v := validator{c}
 	if req.Schema != SchemaVersion {
-		c.add(-1, "", "schema", CauseBadValue, strconv.Itoa(req.Schema), strconv.Itoa(SchemaVersion), "send schema "+strconv.Itoa(SchemaVersion))
+		c.add(-1, "", "schema", CauseInvalidValue, strconv.Itoa(req.Schema), strconv.Itoa(SchemaVersion), "send schema "+strconv.Itoa(SchemaVersion))
 	}
-	ops := make([]string, len(Operations))
-	for i, o := range Operations {
-		ops[i] = string(o)
-	}
-	v.enum(-1, "", "operation", string(req.Operation), ops)
+	v.enum(-1, "", "operation", string(req.Operation), toStrings(allOperations[:]))
 	v.name(-1, "", "table", req.Table)
 	if req.Operation.Mutating() || !req.Operation.Valid() {
 		v.counter(-1, "", "epoch", req.Epoch, false)
 		v.counter(-1, "", "expected_table_revision", req.TableRevision, false)
-		v.identity(-1, "", "operation_id", req.OperationID)
-		v.identity(-1, "", "actor", req.Actor)
+		if req.OperationID != "" {
+			v.token(-1, "", "operation_id", req.OperationID, card.MaxOperationIDBytes)
+		}
+		v.token(-1, "", "actor", req.Actor, MaxIdentityBytes)
 	} else {
 		for _, f := range [][2]string{{"epoch", req.Epoch}, {"expected_table_revision", req.TableRevision}, {"operation_id", req.OperationID}, {"actor", req.Actor}} {
 			if f[1] != "" {
-				c.add(-1, "", f[0], CauseNotApplicable, quote(f[1]), "", "an inspect reads only; remove the field")
+				c.add(-1, "", f[0], CauseNotApplicable, quote(f[1]), "", "a read has no epoch, revision, operation ID or actor; remove the field")
 			}
 		}
 	}
 
 	present := map[string]bool{
 		"admissions":   req.Admissions != nil,
-		"events":       req.Events != nil,
+		"inputs":       req.Inputs != nil,
 		"evidence":     req.Evidence != nil,
 		"replacements": req.Replacements != nil,
 		"scope":        req.Scope != nil,
 	}
-	want := map[Operation]string{OpAdmit: "admissions", OpResolve: "scope", OpApplyEvents: "events", OpRecordEvidence: "evidence", OpReplace: "replacements", OpInspect: "scope"}[req.Operation]
-	for _, name := range []string{"admissions", "events", "evidence", "replacements", "scope"} {
+	want := payloadOf(req.Operation)
+	for _, name := range []string{"admissions", "inputs", "evidence", "replacements", "scope"} {
 		if present[name] && name != want && req.Operation.Valid() {
-			c.add(-1, "", name, CauseNotApplicable, "", "", string(req.Operation)+" takes "+want+"; remove "+name)
+			takes := want
+			if takes == "" {
+				takes = "no payload"
+			}
+			c.add(-1, "", name, CauseNotApplicable, "", "", string(req.Operation)+" takes "+takes+"; remove "+name)
 		}
 	}
-	if want != "" && !present[want] {
+	if want != "" && !present[want] && req.Operation != OpCheck {
 		c.add(-1, "", want, CauseRequired, "", "", string(req.Operation)+" takes "+want)
 	}
 	switch req.Operation {
 	case OpAdmit:
 		v.admissions(req.Admissions)
 	case OpApplyEvents:
-		v.events(req.Events)
+		v.inputs(req.Inputs)
 	case OpRecordEvidence:
 		v.evidence(req.Evidence)
 	case OpReplace:
 		v.replacements(req.Replacements)
-	case OpResolve, OpInspect:
+	case OpResolve, OpInspect, OpCheck:
 		if req.Scope != nil {
-			v.scope(req.Scope)
+			v.scope(req.Scope, req.Operation)
 		}
 	}
 }
@@ -205,11 +241,66 @@ func (v validator) admission(index int, prefix string, a *Admission) {
 	id := knownID(string(a.ID))
 	v.cardID(index, id, prefix+"id", a.ID)
 	v.digest(index, id, prefix+"digest", a.Digest)
-	v.gitID(index, id, prefix+"object_id", a.ObjectID)
-	v.gitID(index, id, prefix+"commit", a.Commit)
-	v.ref(index, id, prefix+"repository", a.Repository)
-	v.text(index, id, prefix+"path", a.Path, MaxPathBytes, validRepoPath, "a clean repository-relative path: slash separated, no empty, . or .. segment, no backslash")
+	v.objectID(index, id, prefix+"object_id", a.ObjectID)
+	v.objectID(index, id, prefix+"commit", a.Commit)
+	v.repository(index, id, prefix+"repository", a.Repository)
+	v.path(index, id, prefix+"path", a.Path)
+	v.text(index, id, prefix+"kind", a.Kind, 32, card.ValidKind, "lower-case letters, digits and hyphen, starting with a letter")
+	v.dependsOn(index, id, prefix+"depends_on", a.ID, a.DependsOn)
+	if a.Entry != "" {
+		v.text(index, id, prefix+"entry", a.Entry, MaxEntryBytes, func(s string) bool {
+			return !strings.Contains(s, ",") && s == strings.TrimSpace(s)
+		}, "one entry path with no comma and no padding")
+	}
+	v.text(index, id, prefix+"title", a.Title, MaxTitleBytes, func(s string) bool { return s == strings.TrimSpace(s) }, "one line with no leading or trailing blank")
 	v.name(index, id, prefix+"row", a.Row)
+	v.counter(index, id, prefix+"policy_version", a.PolicyVersion, true)
+	v.digest(index, id, prefix+"policy_digest", a.PolicyDigest)
+}
+
+// repository checks an identity. A refusal names the rule it broke and never
+// quotes the value: a caller may have sent an origin URL that carries a
+// credential.
+func (v validator) repository(index int, id, field string, r card.Repository) {
+	if r == "" {
+		v.c.add(index, id, field, CauseRequired, "", "a repository identity host[:port]/owner/name", "set the field")
+		return
+	}
+	if why := card.RepositoryWhy(string(r)); why != "" {
+		v.c.add(index, id, field, CauseInvalidRepository, "the value "+why+" (not quoted)", "a repository identity host[:port]/owner/name, no scheme, no user, no .git",
+			"send the identity, not the remote URL")
+	}
+}
+
+// path checks a repository-relative path.
+func (v validator) path(index int, id, field, p string) {
+	if cause, why := card.PathFault(p); cause != "" {
+		found := quote(p)
+		if cause == CauseRequired {
+			found = ""
+		}
+		v.c.add(index, id, field, cause, found, why, "send a clean repository-relative path")
+	}
+}
+
+func (v validator) dependsOn(index int, id, field string, self ID, deps []ID) {
+	if len(deps) > MaxDependsOn {
+		v.c.add(index, id, field, CauseTooMany, strconv.Itoa(len(deps))+" dependencies", strconv.Itoa(MaxDependsOn), "name at most "+strconv.Itoa(MaxDependsOn)+" prerequisites")
+		deps = deps[:MaxDependsOn]
+	}
+	seen := map[ID]bool{}
+	for i, d := range deps {
+		f := field + "[" + strconv.Itoa(i) + "]"
+		v.cardID(index, id, f, d)
+		switch {
+		case d == "":
+		case d == self:
+			v.c.add(index, id, f, CauseInvalidValue, quote(string(d)), "a card other than this one", "remove the card's own ID")
+		case seen[d]:
+			v.c.add(index, id, f, CauseRepeatedID, quote(string(d)), "each dependency once", "name each prerequisite once")
+		}
+		seen[d] = true
+	}
 }
 
 func (v validator) admissions(list []Admission) {
@@ -230,15 +321,27 @@ func (v validator) admissions(list []Admission) {
 		}
 		first[a.ID] = i
 	}
+	outside := map[ID]bool{}
+	for i := 0; i < n; i++ {
+		for _, d := range list[i].DependsOn {
+			if _, in := first[d]; !in && d != "" {
+				outside[d] = true
+			}
+		}
+	}
+	if len(outside) > MaxOutsideDependencies {
+		v.c.add(-1, "", "admissions", CauseTooMany, strconv.Itoa(len(outside))+" outside dependencies", strconv.Itoa(MaxOutsideDependencies),
+			"admit fewer cards, or cards with fewer prerequisites, in one request")
+	}
 }
 
-func (v validator) events(list []Event) {
+func (v validator) inputs(list []Input) {
 	if list == nil {
 		return
 	}
-	n := v.count("events", len(list), MaxChangedEntries, "event")
+	n := v.count("inputs", len(list), MaxChangedEntries, "lifecycle input")
 	for i := 0; i < n; i++ {
-		v.event(i, &list[i])
+		v.input(i, &list[i])
 	}
 	for b := 1; b < n; b++ {
 		eb := &list[b]
@@ -255,11 +358,11 @@ func (v validator) events(list []Event) {
 			var cc Cause
 			switch {
 			case chains(ea, eb) || chains(eb, ea):
-				cc = CauseEventChain
+				cc = CauseInputChain
 			case reflect.DeepEqual(*ea, *eb):
 				cc = CauseRepeatedID
 			default:
-				cc = CauseConflictingEvents
+				cc = CauseConflictingInputs
 			}
 			if rank(cc) > rank(cause) {
 				cause = cc
@@ -270,13 +373,13 @@ func (v validator) events(list []Event) {
 		}
 		id := knownID(string(eb.ID))
 		switch cause {
-		case CauseEventChain:
+		case CauseInputChain:
 			v.c.add(b, id, "expect.place.col", cause, quote(string(eb.Type)+"@"+string(eb.Expect.Place.Col)),
-				"the source state is reachable only through another event of this request",
-				"one event per card per request: send the later event in a request after the earlier one is applied")
-		case CauseConflictingEvents:
-			v.c.add(b, id, "id", cause, quote(string(eb.ID)), "one event per card per request",
-				"keep the one event that should apply and send any other in a later request")
+				"the source state is reachable only through another lifecycle input of this request",
+				"one lifecycle input per card per request: send the later input in a request after the earlier one is applied")
+		case CauseConflictingInputs:
+			v.c.add(b, id, "id", cause, quote(string(eb.ID)), "one lifecycle input per card per request",
+				"keep the one input that should apply and send any other in a later request")
 		default:
 			v.c.add(b, id, "id", cause, quote(string(eb.ID)), "one entry per card", "list each card once in a request")
 		}
@@ -285,9 +388,9 @@ func (v validator) events(list []Event) {
 
 func rank(c Cause) int {
 	switch c {
-	case CauseEventChain:
+	case CauseInputChain:
 		return 3
-	case CauseConflictingEvents:
+	case CauseConflictingInputs:
 		return 2
 	case CauseRepeatedID:
 		return 1
@@ -296,32 +399,31 @@ func rank(c Cause) int {
 }
 
 // chains says the source state of b is the destination of a.
-func chains(a, b *Event) bool {
+func chains(a, b *Input) bool {
 	dst, ok := Destination(a.Type, a.Expect.Place.Col)
 	return ok && dst == b.Expect.Place.Col
 }
 
-func (v validator) event(i int, e *Event) {
+func (v validator) input(i int, e *Input) {
 	id := knownID(string(e.ID))
 	v.cardID(i, id, "id", e.ID)
-	types := sortedTypes()
-	v.enum(i, id, "type", string(e.Type), types)
-	v.expect(i, id, "expect", e.Expect)
+	v.enum(i, id, "type", string(e.Type), sortedTypes())
+	v.expect(i, id, "expect", e.Expect, false)
 	v.digest(i, id, "digest", e.Digest)
-	v.identity(i, id, "issuer", e.Issuer)
-	v.ref(i, id, "source", e.Source)
-	spec, known := eventSpecs[e.Type]
+	v.token(i, id, "issuer", e.Issuer, MaxIdentityBytes)
+	v.token(i, id, "source", e.Source, MaxRefBytes)
+	spec, known := inputSpecs[e.Type]
 	if !known {
 		return
 	}
-	for _, f := range eventFields {
+	for _, f := range inputFields {
 		val := e.field(f)
 		switch {
 		case contains(spec.required, f):
-			v.eventField(i, id, e, f, val)
+			v.inputField(i, id, e, f, val)
 		case contains(spec.allowed, f):
 			if val != "" {
-				v.eventField(i, id, e, f, val)
+				v.inputField(i, id, e, f, val)
 			}
 		case val != "":
 			v.c.add(i, id, f, CauseNotApplicable, quote(val), "", string(e.Type)+" does not carry "+f+"; remove it")
@@ -330,31 +432,40 @@ func (v validator) event(i int, e *Event) {
 	if e.Expect.Place.Col.Valid() {
 		if _, ok := Destination(e.Type, e.Expect.Place.Col); !ok {
 			limit := "no source state: the type has no listed transition"
-			remedy := "record this observation as evidence; an event of this type moves no card"
+			next := "record this observation as evidence; a lifecycle input of this type moves no card"
 			if src := SourceStates(e.Type); len(src) > 0 {
 				limit = "source state one of " + joinStrings(src)
-				remedy = "declare a source state the type moves from; the destination is derived, never sent"
+				next = "declare a source state the type moves from; the destination is derived, never sent"
 			}
-			v.c.add(i, id, "expect.place.col", CauseNoTransition, quote(string(e.Type)+"@"+string(e.Expect.Place.Col)), limit, remedy)
+			v.c.add(i, id, "expect.place.col", CauseNoTransition, quote(string(e.Type)+"@"+string(e.Expect.Place.Col)), limit, next)
 		}
 	}
 }
 
-func (v validator) eventField(i int, id string, e *Event, f, val string) {
+func sortedTypes() []string {
+	out := make([]string, 0, len(inputSpecs))
+	for t := range inputSpecs {
+		out = append(out, string(t))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (v validator) inputField(i int, id string, e *Input, f, val string) {
 	switch f {
 	case "head":
-		v.gitID(i, id, f, val)
+		v.head(i, id, f, val)
 	case "result":
-		v.enum(i, id, f, val, []string{ResultSuccess, ResultFailure, ResultReturn})
+		v.enum(i, id, f, val, toStrings(ResultValues()))
 	case "reason":
-		v.text(i, id, f, val, MaxReasonBytes, validReason, "one line with no leading or trailing blank")
+		v.reason(i, id, f, val)
 	case "dependency":
 		v.cardID(i, id, f, ID(val))
 		if val == string(e.ID) && val != "" {
-			v.c.add(i, id, f, CauseBadValue, quote(val), "a card other than this one", "name the failed prerequisite")
+			v.c.add(i, id, f, CauseInvalidValue, quote(val), "a card other than this one", "name the failed prerequisite")
 		}
 	case "landing":
-		v.ref(i, id, f, val)
+		v.token(i, id, f, val, MaxRefBytes)
 	}
 }
 
@@ -364,13 +475,13 @@ func (v validator) evidence(list []Evidence) {
 	}
 	n := v.count("evidence", len(list), MaxChangedEntries, "evidence entry")
 	first := map[ID]int{}
-	evSeen := map[ID]bool{}
+	total := 0
+	recIDs := map[string]bool{}
 	for i := 0; i < n; i++ {
 		e := &list[i]
 		id := knownID(string(e.ID))
 		v.cardID(i, id, "id", e.ID)
-		v.digest(i, id, "digest", e.Digest)
-		v.expect(i, id, "expect", e.Expect)
+		v.expect(i, id, "expect", e.Expect, true)
 		if e.ID != "" {
 			if _, dup := first[e.ID]; dup {
 				v.c.add(i, id, "id", CauseRepeatedID, quote(string(e.ID)), "one entry per card",
@@ -390,44 +501,68 @@ func (v validator) evidence(list []Evidence) {
 			v.c.add(i, id, "records", CauseTooMany, strconv.Itoa(len(e.Records))+" records", strconv.Itoa(MaxEvidenceRecordsPerCard)+" records",
 				"send at most that many records for one card in one request")
 		}
+		total += len(e.Records)
+		keys := map[string]int{}
 		for j := 0; j < len(e.Records) && j < MaxEvidenceRecordsPerCard; j++ {
-			v.record(i, id, j, &e.Records[j], evSeen)
+			v.record(i, id, j, &e.Records[j], recIDs, keys)
 		}
+	}
+	if total > MaxEvidenceRecords {
+		v.c.add(-1, "", "evidence", CauseTooMany, strconv.Itoa(total)+" records", strconv.Itoa(MaxEvidenceRecords)+" records in all",
+			"send at most that many records in one request; narrow it, and the narrower request is a separate operation with its own ID")
 	}
 }
 
-func (v validator) record(i int, id string, j int, r *EvidenceRecord, seen map[ID]bool) {
+// record checks one submitted record. Within one entry at most one record has a
+// kind, issuer and head: two observations of one check, or by one reader, at one
+// head cannot be ordered inside one batch.
+func (v validator) record(i int, id string, j int, r *Record, seen map[string]bool, keys map[string]int) {
 	p := "records[" + strconv.Itoa(j) + "]."
-	v.cardID(i, id, p+"evidence_id", r.EvidenceID)
-	if r.EvidenceID != "" {
-		if seen[r.EvidenceID] {
-			v.c.add(i, id, p+"evidence_id", CauseRepeatedID, quote(string(r.EvidenceID)), "each evidence ID once per request", "give each record its own evidence ID")
-		}
-		seen[r.EvidenceID] = true
-	}
-	v.enum(i, id, p+"kind", r.Kind, []string{KindRead, KindCI})
-	switch r.Kind {
-	case KindRead:
-		v.enum(i, id, p+"disposition", r.Disposition, []string{DispAccept, DispReject})
-		if r.Head != "" {
-			v.gitID(i, id, p+"head", r.Head)
-		}
-	case KindCI:
-		v.enum(i, id, p+"disposition", r.Disposition, []string{DispGreen, DispRed})
-		v.gitID(i, id, p+"head", r.Head)
-	default:
-		if r.Disposition != "" {
-			v.enum(i, id, p+"disposition", r.Disposition, []string{DispAccept, DispReject, DispGreen, DispRed})
+	bad := false
+	if !r.Kind.valid() || r.Kind == KindQueue {
+		if r.Kind == "" {
+			v.c.add(i, id, p+"kind", CauseRequired, "", "one of read, ci, sweep, landing", "set the field")
+		} else if r.Kind == KindQueue {
+			v.c.add(i, id, p+"kind", CauseNotApplicable, quote(string(r.Kind)), "read, ci, sweep or landing", "a queue rejection is written by the queue-rejected lifecycle input, never submitted")
 		} else {
-			v.c.add(i, id, p+"disposition", CauseRequired, "", "", "set the disposition")
+			v.text(i, id, p+"kind", string(r.Kind), MaxIdentityBytes, func(string) bool { return false }, "one of read, ci, sweep, landing")
 		}
-		if r.Head != "" {
-			v.gitID(i, id, p+"head", r.Head)
-		}
+		bad = true
 	}
-	v.identity(i, id, p+"issuer", r.Issuer)
-	v.ref(i, id, p+"source", r.Source)
+	if r.Kind.valid() && r.Kind != KindQueue {
+		var allowed []string
+		for _, d := range DispositionsOf(r.Kind) {
+			allowed = append(allowed, string(d))
+		}
+		v.enum(i, id, p+"disposition", string(r.Disposition), allowed)
+	} else if r.Disposition == "" {
+		v.c.add(i, id, p+"disposition", CauseRequired, "", "", "set the disposition")
+	}
+	v.token(i, id, p+"issuer", r.Issuer, MaxIdentityBytes)
+	v.head(i, id, p+"head", r.Head)
+	v.digest(i, id, p+"digest", r.Def)
+	v.token(i, id, p+"verifier", r.Verifier, MaxVerifierBytes)
+	v.token(i, id, p+"artifact", r.Artifact, MaxRefBytes)
+	if bad || field(r) != "" {
+		return
+	}
+	rid := id + "|" + r.ID()
+	if seen[rid] {
+		v.c.add(i, id, strings.TrimSuffix(p, "."), CauseRepeatedID, quote(r.ID()), "each record once per request", "submit each observation once")
+		return
+	}
+	seen[rid] = true
+	key := string(r.Kind) + "|" + r.Issuer + "|" + r.Head
+	if first, dup := keys[key]; dup {
+		v.c.add(i, id, strings.TrimSuffix(p, "."), CauseConflictingRecords, "records["+strconv.Itoa(first)+"] and records["+strconv.Itoa(j)+"] name one kind, issuer and head",
+			"one record per kind, issuer and head in one entry", "keep the observation that should apply and send the other in a later request")
+		return
+	}
+	keys[key] = j
 }
+
+// field is the first faulty field of a submitted record, or "".
+func field(r *Record) string { f, _, _ := recordFault(*r, true); return f }
 
 func (v validator) replacements(list []Replacement) {
 	if list == nil {
@@ -450,10 +585,10 @@ func (v validator) replacements(list []Replacement) {
 		oid := knownID(string(r.Old.ID))
 		v.cardID(i, oid, "old.id", r.Old.ID)
 		v.digest(i, oid, "old.digest", r.Old.Digest)
-		v.expect(i, oid, "old.expect", r.Old.Expect)
+		v.expect(i, oid, "old.expect", r.Old.Expect, false)
 		if col := r.Old.Expect.Place.Col; col.Valid() && col != Waiting && col != Ready {
 			v.c.add(i, oid, "old.expect.place.col", CauseNotEligible, quote(string(col)), "waiting or ready",
-				"only a card that is waiting or ready is replaced; end a card in any other state with an event")
+				"only a card that is waiting or ready is replaced; end a card in any other state with a lifecycle input")
 		}
 		v.admission(i, "new.", &r.New)
 		note(i, "old.id", r.Old.ID)
@@ -461,19 +596,33 @@ func (v validator) replacements(list []Replacement) {
 	}
 }
 
-func (v validator) scope(s *Scope) {
+func (v validator) scope(s *Scope, op Operation) {
 	const f = "scope"
-	hasSel := s.Row != "" || s.Col != "" || s.Bound != 0
+	forms := 0
+	if s.IDs != nil {
+		forms++
+	}
+	if s.Rows != nil {
+		forms++
+	}
+	if s.All {
+		forms++
+	}
 	switch {
-	case s.IDs != nil && hasSel:
-		v.c.add(-1, "", f, CauseBadValue, "ids with row, col or bound", "either an ID array or a selection", "send one form")
+	case forms > 1:
+		v.c.add(-1, "", f, CauseInvalidValue, "more than one of ids, rows and all", "one form: card IDs, whole rows, or the whole table", "send one form")
 		return
-	case s.IDs == nil && !hasSel:
-		v.c.add(-1, "", f, CauseRequired, "", "an ID array or a selection", "name the cards by ID or by a row and column with a bound")
+	case forms == 0:
+		v.c.add(-1, "", f, CauseRequired, "", "one of ids, rows, all", "name the cards by ID, by whole rows, or the whole table")
 		return
 	}
-	if s.IDs != nil {
-		n := v.count(f+".ids", len(s.IDs), MaxGuardOnlyEntries, "ID")
+	switch {
+	case s.IDs != nil:
+		max := MaxScopeCards
+		if op == OpResolve {
+			max = MaxResolveCards
+		}
+		n := v.count(f+".ids", len(s.IDs), max, "ID")
 		first := map[ID]bool{}
 		for i := 0; i < n; i++ {
 			field := f + ".ids[" + strconv.Itoa(i) + "]"
@@ -483,24 +632,16 @@ func (v validator) scope(s *Scope) {
 			}
 			first[s.IDs[i]] = true
 		}
-		return
-	}
-	if s.Row == "" && s.Col == "" {
-		v.c.add(-1, "", f, CauseRequired, "a bound alone", "a row, a column or both", "declare the selection's row, column or both")
-	}
-	if s.Row != "" {
-		v.name(-1, "", f+".row", s.Row)
-	}
-	if s.Col != "" {
-		v.enum(-1, "", f+".col", string(s.Col), stateNames())
-	}
-	switch {
-	case s.Bound == 0:
-		v.c.add(-1, "", f+".bound", CauseRequired, "", "1 to "+strconv.Itoa(MaxGuardOnlyEntries), "declare the most cards the selection may hold")
-	case s.Bound < 0:
-		v.c.add(-1, "", f+".bound", CauseBadValue, strconv.Itoa(s.Bound), "1 to "+strconv.Itoa(MaxGuardOnlyEntries), "declare a positive bound")
-	case s.Bound > MaxGuardOnlyEntries:
-		v.c.add(-1, "", f+".bound", CauseTooMany, strconv.Itoa(s.Bound), strconv.Itoa(MaxGuardOnlyEntries),
-			"declare a bound within the limit; a larger selection is narrowed by row or column")
+	case s.Rows != nil:
+		n := v.count(f+".rows", len(s.Rows), MaxScopeRows, "row")
+		first := map[string]bool{}
+		for i := 0; i < n; i++ {
+			field := f + ".rows[" + strconv.Itoa(i) + "]"
+			v.name(-1, "", field, s.Rows[i])
+			if s.Rows[i] != "" && first[s.Rows[i]] {
+				v.c.add(-1, "", field, CauseRepeatedID, quote(s.Rows[i]), "each row once", "list each row once")
+			}
+			first[s.Rows[i]] = true
+		}
 	}
 }

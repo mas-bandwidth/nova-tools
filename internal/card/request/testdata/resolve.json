@@ -7,8 +7,9 @@
   "operation_id": "op-resolve",
   "actor": "coordinator",
   "scope": {
-    "row": "build",
-    "col": "waiting",
-    "bound": 100
+    "rows": [
+      "build",
+      "docs"
+    ]
   }
 }

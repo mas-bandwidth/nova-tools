@@ -12,21 +12,28 @@
         "id": "card-old",
         "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "expect": {
-          "revision": "2",
           "place": {
             "row": "build",
             "col": "ready"
-          }
+          },
+          "revision": "2"
         }
       },
       "new": {
         "id": "card-new",
-        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "object_id": "cccccccccccccccccccccccccccccccccccccccc",
         "commit": "cccccccccccccccccccccccccccccccccccccccc",
-        "repository": "example.org/team/repo",
+        "repository": "github.com/example/cards",
         "path": "cards/card-new.md",
-        "row": "build"
+        "kind": "fix-red",
+        "title": "Title of card-new",
+        "row": "build",
+        "policy_version": "1",
+        "policy_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "depends_on": [
+          "card-01"
+        ]
       }
     }
   ]

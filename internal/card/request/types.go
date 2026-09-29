@@ -1,21 +1,27 @@
 package request
 
 import (
-	"fmt"
-	"regexp"
-	"strconv"
-	"strings"
-	"unicode"
-	"unicode/utf8"
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
-// ID is a card ID: nonempty ASCII letters, digits, underscore and hyphen, at
-// most MaxIDBytes. It holds no comma, colon or storage prefix.
-type ID string
+// ID is a card ID: nonempty ASCII letters, digits, underscore and hyphen, at most
+// 64 bytes, never the reserved words "-" and "none". It is the card layer's one
+// ID type.
+type ID = card.ID
 
-// Digest is a SHA-256 in 64 lowercase hexadecimal characters: a card's
-// definition digest, a request hash.
-type Digest string
+// Digest is a SHA-256 in 64 lower-case hexadecimal characters: a definition
+// digest, a request hash, a receipt identity. It is the card layer's one Digest.
+type Digest = card.Digest
+
+// Changed is the answer a refusal gives to "did anything change", derived from
+// its cause (Cause.Changed) and never stored beside it.
+type Changed = card.Changed
+
+// The values of Changed.
+const (
+	ChangedNo      = card.ChangedNo
+	ChangedUnknown = card.ChangedUnknown
+)
 
 // State is a card state, the column a card is placed in.
 type State string
@@ -31,12 +37,14 @@ const (
 	Done    State = "done"
 )
 
-// States lists every state in lifecycle order.
-var States = []State{Waiting, Ready, Working, Review, Merging, Landed, Done}
+var allStates = [...]State{Waiting, Ready, Working, Review, Merging, Landed, Done}
+
+// States lists every state in lifecycle order, as a new slice.
+func States() []State { return append([]State(nil), allStates[:]...) }
 
 // Valid reports whether s is one of the seven states.
 func (s State) Valid() bool {
-	for _, v := range States {
+	for _, v := range allStates {
 		if s == v {
 			return true
 		}
@@ -55,12 +63,14 @@ const (
 	Replaced         Outcome = "replaced"
 )
 
-// Outcomes lists every outcome.
-var Outcomes = []Outcome{Completed, Cancelled, DependencyFailed, Replaced}
+var allOutcomes = [...]Outcome{Completed, Cancelled, DependencyFailed, Replaced}
+
+// Outcomes lists every outcome, as a new slice.
+func Outcomes() []Outcome { return append([]Outcome(nil), allOutcomes[:]...) }
 
 // Valid reports whether o is one of the four outcomes.
 func (o Outcome) Valid() bool {
-	for _, v := range Outcomes {
+	for _, v := range allOutcomes {
 		if o == v {
 			return true
 		}
@@ -71,7 +81,7 @@ func (o Outcome) Valid() bool {
 // Operation names what a request asks of the manager.
 type Operation string
 
-// The operations. Inspect only reads.
+// The operations. Inspect and check only read.
 const (
 	OpAdmit          Operation = "admit"
 	OpResolve        Operation = "resolve"
@@ -79,14 +89,17 @@ const (
 	OpRecordEvidence Operation = "record_evidence"
 	OpReplace        Operation = "replace"
 	OpInspect        Operation = "inspect"
+	OpCheck          Operation = "check"
 )
 
-// Operations lists every operation.
-var Operations = []Operation{OpAdmit, OpResolve, OpApplyEvents, OpRecordEvidence, OpReplace, OpInspect}
+var allOperations = [...]Operation{OpAdmit, OpResolve, OpApplyEvents, OpRecordEvidence, OpReplace, OpInspect, OpCheck}
+
+// Operations lists every operation, as a new slice.
+func Operations() []Operation { return append([]Operation(nil), allOperations[:]...) }
 
 // Valid reports whether o is a known operation.
 func (o Operation) Valid() bool {
-	for _, v := range Operations {
+	for _, v := range allOperations {
 		if o == v {
 			return true
 		}
@@ -94,154 +107,212 @@ func (o Operation) Valid() bool {
 	return false
 }
 
-// Mutating reports whether the operation writes; every mutating operation
-// carries the full envelope.
-func (o Operation) Mutating() bool { return o.Valid() && o != OpInspect }
+// Mutating reports whether the operation writes. Every mutating operation
+// carries the full envelope; inspect and check carry the table and their scope.
+func (o Operation) Mutating() bool { return o.Valid() && o != OpInspect && o != OpCheck }
 
 // Place is where a card sits: its stream row and its column, which is its state.
 type Place struct {
-	Row string `json:"row"`
-	Col State  `json:"col"`
+	Row string
+	Col State
 }
 
-// Expect is the guard an entry declares about a card that exists: its exact
-// revision (a decimal counter, at least 1) and its place.
+// Expect is the guard an entry declares about a card that exists: its place and
+// its exact revision (a decimal counter, at least 1). An evidence entry may leave
+// the revision out: the revision is then a freshness guard the observer did not
+// take, and the place alone is guarded.
 type Expect struct {
-	Revision string `json:"revision"`
-	Place    Place  `json:"place"`
+	Revision string
+	Place    Place
 }
 
 // Admission asks the manager to admit one committed definition as a new card in
-// waiting, in the stream row Row. The card must be absent; the guard is
-// implied. Digest is the definition's SHA-256; ObjectID, Commit, Repository and
-// Path pin where the definition was read.
+// waiting, in the stream row Row. It is the pinned admission of the definition
+// package plus the row: the card's ID, the definition's Digest and where it was
+// read (ObjectID, Commit, Repository, Path), its Kind, its DependsOn (sorted and
+// unique, none of them the card), its Entry and Title, and the identity of the
+// review policy the card is pinned to at admission (PolicyVersion, a decimal
+// counter of at least 1, and PolicyDigest). The card must be absent; the guard is
+// implied. The policy itself belongs to the manager.
 type Admission struct {
-	ID         ID     `json:"id"`
-	Digest     Digest `json:"digest"`
-	ObjectID   string `json:"object_id"`
-	Commit     string `json:"commit"`
-	Repository string `json:"repository"`
-	Path       string `json:"path"`
-	Row        string `json:"row"`
+	ID            ID
+	Digest        Digest
+	ObjectID      string
+	Commit        string
+	Repository    card.Repository
+	Path          string
+	Kind          string
+	DependsOn     []ID
+	Entry         string
+	Title         string
+	Row           string
+	PolicyVersion string
+	PolicyDigest  Digest
 }
 
-// EventType is one of the closed set of typed events. It is split where the
-// destination depends on the variant (a verdict, a CI result), so that
-// Destination is a pure function of the type and the source state.
-type EventType string
+// InputType is one of the closed set of lifecycle input types. It is split where
+// the destination depends on the variant (a verdict), so that Destination is a
+// pure function of the type and the source state.
+type InputType string
 
-// The event types.
+// The lifecycle input types. A CI result is not among them: it is evidence.
 const (
-	EvStart            EventType = "start"
-	EvResult           EventType = "result"
-	EvVerdictAccept    EventType = "verdict-accept"
-	EvVerdictRetry     EventType = "verdict-retry"
-	EvVerdictRework    EventType = "verdict-rework"
-	EvHead             EventType = "head"
-	EvCIGreen          EventType = "ci-green"
-	EvCIRed            EventType = "ci-red"
-	EvCancel           EventType = "cancel"
-	EvLanding          EventType = "landing"
-	EvExternalLanding  EventType = "external-landing"
-	EvDependencyFailed EventType = "dependency-failed"
-	EvCompleted        EventType = "completed"
+	InStart            InputType = "start"
+	InResult           InputType = "result"
+	InVerdictAccept    InputType = "verdict-accept"
+	InVerdictRetry     InputType = "verdict-retry"
+	InVerdictRework    InputType = "verdict-rework"
+	InHead             InputType = "head"
+	InQueueRejected    InputType = "queue-rejected"
+	InCancel           InputType = "cancel"
+	InLanding          InputType = "landing"
+	InExternalLanding  InputType = "external-landing"
+	InDependencyFailed InputType = "dependency-failed"
+	InCompleted        InputType = "completed"
 )
 
-// EventTypes lists every event type.
-var EventTypes = []EventType{
-	EvStart, EvResult, EvVerdictAccept, EvVerdictRetry, EvVerdictRework, EvHead,
-	EvCIGreen, EvCIRed, EvCancel, EvLanding, EvExternalLanding, EvDependencyFailed, EvCompleted,
+var allInputTypes = [...]InputType{
+	InStart, InResult, InVerdictAccept, InVerdictRetry, InVerdictRework, InHead, InQueueRejected,
+	InCancel, InLanding, InExternalLanding, InDependencyFailed, InCompleted,
 }
 
-// The values of an event's Result field.
+// InputTypes lists every lifecycle input type, as a new slice.
+func InputTypes() []InputType { return append([]InputType(nil), allInputTypes[:]...) }
+
+// ResultValue is the value of a result input: what the worker reports.
+type ResultValue string
+
+// The values of an input's result.
 const (
-	ResultSuccess = "success"
-	ResultFailure = "failure"
-	ResultReturn  = "return"
+	ResultSuccess ResultValue = "success"
+	ResultFailure ResultValue = "failure"
+	ResultReturn  ResultValue = "return"
 )
 
-// Event is one typed event for one card. Expect.Place.Col is the source state
-// the event declares; the destination is derived by Destination and is not a
-// field. Digest, Issuer and Source bind every event to the card's definition,
-// to who issued it and to the artifact it came from. The other fields apply to
-// some types only (see the event table in docs/SPEC-CARD-REQUESTS.md).
-type Event struct {
-	ID         ID        `json:"id"`
-	Type       EventType `json:"type"`
-	Expect     Expect    `json:"expect"`
-	Digest     Digest    `json:"digest"`
-	Issuer     string    `json:"issuer"`
-	Source     string    `json:"source"`
-	Head       string    `json:"head,omitempty"`
-	Result     string    `json:"result,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	Dependency ID        `json:"dependency,omitempty"`
-	Landing    string    `json:"landing,omitempty"`
+// ResultValues lists the result values, as a new slice.
+func ResultValues() []ResultValue { return []ResultValue{ResultSuccess, ResultFailure, ResultReturn} }
+
+// Input is one lifecycle input for one card: a request that may move it.
+// Expect.Place.Col is the source state the input declares; the destination is
+// derived by Destination and is not a field. Digest, Issuer and Source bind every
+// input to the card's definition, to who issued it and to the artifact it came
+// from. The other fields apply to some types only (see the table in
+// docs/SPEC-CARD-REQUESTS.md).
+type Input struct {
+	ID         ID
+	Type       InputType
+	Expect     Expect
+	Digest     Digest
+	Issuer     string
+	Source     string
+	Head       string
+	Result     ResultValue
+	Reason     string
+	Dependency ID
+	Landing    string
 }
 
-// The kinds and dispositions of an evidence record.
-const (
-	KindRead = "read"
-	KindCI   = "ci"
+// EvidenceKind is the kind of an evidence record.
+type EvidenceKind string
 
-	DispAccept = "accept"
-	DispReject = "reject"
-	DispGreen  = "green"
-	DispRed    = "red"
+// The kinds of evidence a request may submit, and the one only a lifecycle input
+// writes.
+const (
+	KindRead    EvidenceKind = "read"
+	KindCI      EvidenceKind = "ci"
+	KindSweep   EvidenceKind = "sweep"
+	KindLanding EvidenceKind = "landing"
+	// KindQueue is a queue rejection. It is written by the queue-rejected
+	// lifecycle input and is never submitted as evidence.
+	KindQueue EvidenceKind = "queue"
 )
 
-// EvidenceRecord is one observation bound to the entry's card digest and
-// revision: a reader's disposition (accept or reject) or a CI result (green or
-// red), with the code head it applies to (required for CI), the issuer and the
-// source artifact identity.
-type EvidenceRecord struct {
-	EvidenceID  ID     `json:"evidence_id"`
-	Kind        string `json:"kind"`
-	Disposition string `json:"disposition"`
-	Head        string `json:"head,omitempty"`
-	Issuer      string `json:"issuer"`
-	Source      string `json:"source"`
+var allEvidenceKinds = [...]EvidenceKind{KindRead, KindCI, KindSweep, KindLanding, KindQueue}
+
+// EvidenceKinds lists every evidence kind, as a new slice.
+func EvidenceKinds() []EvidenceKind { return append([]EvidenceKind(nil), allEvidenceKinds[:]...) }
+
+// Disposition is what an evidence record says.
+type Disposition string
+
+// The dispositions.
+const (
+	DispAccept   Disposition = "accept"
+	DispReject   Disposition = "reject"
+	DispGreen    Disposition = "green"
+	DispRed      Disposition = "red"
+	DispClean    Disposition = "clean"
+	DispNegative Disposition = "negative"
+	DispLanded   Disposition = "landed"
+)
+
+var allDispositions = [...]Disposition{DispAccept, DispReject, DispGreen, DispRed, DispClean, DispNegative, DispLanded}
+
+// Dispositions lists every disposition, as a new slice.
+func Dispositions() []Disposition { return append([]Disposition(nil), allDispositions[:]...) }
+
+// DispositionsOf lists the dispositions a kind takes.
+func DispositionsOf(k EvidenceKind) []Disposition {
+	switch k {
+	case KindRead:
+		return []Disposition{DispAccept, DispReject}
+	case KindCI:
+		return []Disposition{DispGreen, DispRed}
+	case KindSweep:
+		return []Disposition{DispClean, DispNegative}
+	case KindLanding:
+		return []Disposition{DispLanded}
+	case KindQueue:
+		return []Disposition{DispReject}
+	}
+	return nil
 }
 
-// Evidence is the evidence recorded for one card: the card's exact digest and
-// revision and place, and one to MaxEvidenceRecordsPerCard records. A card
-// appears once in an array; its several observations are its Records.
+// Negative reports whether the disposition is an observation against the card:
+// a rejection, a red result, a negative sweep.
+func (d Disposition) Negative() bool { return d == DispReject || d == DispRed || d == DispNegative }
+
+// Evidence is the evidence recorded for one card: the card, its expected place
+// (and revision, when the observer read it) and one to MaxEvidenceRecordsPerCard
+// records. A card appears once in an array; its several observations are its
+// Records. Every record binds the card's definition digest and the code head it
+// was observed at, so the evidence binds to definition digest plus head; the
+// revision of Expect is a freshness guard and binds nothing.
 type Evidence struct {
-	ID      ID               `json:"id"`
-	Digest  Digest           `json:"digest"`
-	Expect  Expect           `json:"expect"`
-	Records []EvidenceRecord `json:"records"`
+	ID      ID
+	Expect  Expect
+	Records []Record
 }
 
 // Retired names the old card of a replacement: its ID, the definition digest
 // admitted for it and its expected revision and place.
 type Retired struct {
-	ID     ID     `json:"id"`
-	Digest Digest `json:"digest"`
-	Expect Expect `json:"expect"`
+	ID     ID
+	Digest Digest
+	Expect Expect
 }
 
 // Replacement pairs an old card, to end done/replaced, with the new admission
 // that succeeds it.
 type Replacement struct {
-	Old Retired   `json:"old"`
-	New Admission `json:"new"`
+	Old Retired
+	New Admission
 }
 
-// Scope selects the cards a resolve or an inspect works on: an explicit ID
-// array, or a complete declared selection of a row, a column or both, with the
-// bound the selection may not exceed. A selection larger than its bound
-// refuses at the store; it never returns a prefix.
+// Scope selects the cards a resolve, an inspect or a check works on, in one of
+// three forms: explicit card IDs, whole rows, or the whole table. A scope is
+// complete: it never returns a prefix.
 type Scope struct {
-	IDs   []ID   `json:"ids,omitempty"`
-	Row   string `json:"row,omitempty"`
-	Col   State  `json:"col,omitempty"`
-	Bound int    `json:"bound,omitempty"`
+	IDs  []ID
+	Rows []string
+	All  bool
 }
 
-// Request is one operation over an array of cards. Exactly one payload is set,
-// the one its Operation names. Epoch and TableRevision are decimal strings
-// bounded as uint64; they never pass through a float. An inspect carries only
+// Request is one operation over an array of cards, as a document: the raw form
+// Parse reads and Validate checks. Exactly one payload is set, the one its
+// Operation names. Epoch and TableRevision are decimal strings bounded as
+// uint64; they never pass through a float. OperationID is optional: when absent,
+// a Valid request derives one from its hash. An inspect and a check carry only
 // Schema, Operation, Table and Scope.
 type Request struct {
 	Schema        int
@@ -253,7 +324,7 @@ type Request struct {
 	Actor         string
 
 	Admissions   []Admission
-	Events       []Event
+	Inputs       []Input
 	Evidence     []Evidence
 	Replacements []Replacement
 	Scope        *Scope
@@ -269,102 +340,3 @@ type Identity struct {
 
 // String renders the identity on one line.
 func (i Identity) String() string { return i.Table + "/" + i.Epoch + "/" + i.OperationID }
-
-// Identity returns the request's operation identity.
-func (r *Request) Identity() Identity {
-	return Identity{Table: r.Table, Epoch: r.Epoch, OperationID: r.OperationID}
-}
-
-var (
-	nameRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
-	idRE   = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	hexRE  = regexp.MustCompile(`^[0-9a-f]+$`)
-	ctrRE  = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
-)
-
-// checkString reports the first fault of a text value: invalid UTF-8 or a
-// replacement character, a control character, or a length over max bytes.
-// Empty is not a fault here.
-func textFault(s string, max int) (cause Cause, found string) {
-	if !utf8.ValidString(s) || strings.ContainsRune(s, utf8.RuneError) {
-		return CauseInvalidUTF8, quote(s)
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) {
-			return CauseControlChar, quote(s)
-		}
-	}
-	if len(s) > max {
-		return CauseTooLong, fmt.Sprintf("%s (%d bytes)", quote(s), len(s))
-	}
-	return "", ""
-}
-
-// quote renders s for a refusal: quoted, bounded, on one line.
-func quote(s string) string {
-	if len(s) > MaxFoundBytes {
-		cut := MaxFoundBytes
-		for cut > 0 && !utf8.RuneStart(s[cut]) {
-			cut--
-		}
-		return strconv.Quote(s[:cut]) + "..."
-	}
-	return strconv.Quote(s)
-}
-
-// ValidID reports whether s is a valid card ID.
-func ValidID(s string) bool {
-	return s != "" && len(s) <= MaxIDBytes && idRE.MatchString(s)
-}
-
-// Valid reports whether the ID is valid.
-func (i ID) Valid() bool { return ValidID(string(i)) }
-
-// Valid reports whether the digest is 64 lowercase hexadecimal characters.
-func (d Digest) Valid() bool { return len(d) == 64 && hexRE.MatchString(string(d)) }
-
-// validGitID says s is a git object ID in lowercase hex, SHA-1 or SHA-256 form.
-func validGitID(s string) bool {
-	return (len(s) == 40 || len(s) == 64) && hexRE.MatchString(s)
-}
-
-// validCounter says s is a decimal counter bounded as uint64.
-func validCounter(s string) bool {
-	if len(s) == 0 || len(s) > MaxCounterDigits || !ctrRE.MatchString(s) {
-		return false
-	}
-	_, err := strconv.ParseUint(s, 10, 64)
-	return err == nil
-}
-
-// counterAtLeastOne says s is a valid counter that is not zero.
-func counterAtLeastOne(s string) bool { return validCounter(s) && s != "0" }
-
-// validRepoPath says p is a clean repository-relative path: slash separated,
-// no empty, dot or dot-dot segment, no backslash, not absolute.
-func validRepoPath(p string) bool {
-	if p == "" || strings.HasPrefix(p, "/") || strings.HasSuffix(p, "/") || strings.Contains(p, `\`) {
-		return false
-	}
-	for _, seg := range strings.Split(p, "/") {
-		if seg == "" || seg == "." || seg == ".." {
-			return false
-		}
-	}
-	return true
-}
-
-// validRef says s is an opaque reference: no whitespace.
-func validRef(s string) bool {
-	for _, r := range s {
-		if unicode.IsSpace(r) {
-			return false
-		}
-	}
-	return s != ""
-}
-
-// validReason says s is a one-line reason with no leading or trailing blank.
-func validReason(s string) bool {
-	return s != "" && s == strings.TrimSpace(s)
-}

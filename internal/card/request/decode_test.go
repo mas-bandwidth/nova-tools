@@ -15,12 +15,12 @@ const admitDoc = `{
   "operation_id": "op-17",
   "actor": "coordinator",
   "admissions": [
-    {"id":"c1","digest":"` + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","object_id":"cccccccccccccccccccccccccccccccccccccccc","commit":"cccccccccccccccccccccccccccccccccccccccc","repository":"example.org/team/repo","path":"cards/c1.md","row":"build"}
+    {"id":"c1","digest":"` + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `","object_id":"cccccccccccccccccccccccccccccccccccccccc","commit":"cccccccccccccccccccccccccccccccccccccccc","repository":"example.org/team/repo","path":"cards/c1.md","kind":"fix-red","title":"T","row":"build","policy_version":"1","policy_digest":"` + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" + `"}
   ]
 }`
 
-const eventsDoc = `{"schema":1,"operation":"apply_events","table":"work","epoch":"3","expected_table_revision":"12","operation_id":"op-17","actor":"coordinator",
-"events":[{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"build","col":"ready"}},"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","issuer":"coord","source":"start/1"}]}`
+const inputsDoc = `{"schema":1,"operation":"apply_events","table":"work","epoch":"3","expected_table_revision":"12","operation_id":"op-17","actor":"coordinator",
+"inputs":[{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"build","col":"ready"}},"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","issuer":"coord","source":"start/1"}]}`
 
 func TestParseValidDocument(t *testing.T) {
 	t.Parallel()
@@ -28,8 +28,8 @@ func TestParseValidDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Operation != OpAdmit || len(r.Admissions) != 1 || r.Admissions[0].ID != "c1" || r.Epoch != "3" {
-		t.Fatalf("request = %+v", r)
+	if q := r.Request(); r.Kind() != OpAdmit || len(q.Admissions) != 1 || q.Admissions[0].ID != "c1" || r.Epoch() != "3" || r.OperationID() != "op-17" {
+		t.Fatalf("request = %+v", q)
 	}
 	if _, err := Parse([]byte(admitDoc + "\n\n  \n")); err != nil {
 		t.Fatalf("trailing whitespace refused: %v", err)
@@ -56,7 +56,7 @@ func parseRefusals(t *testing.T, doc string) []string {
 func TestParseRefusals(t *testing.T) {
 	t.Parallel()
 	events := func(mid string) string {
-		return `{"schema":1,"operation":"apply_events","table":"work","epoch":"3","expected_table_revision":"12","operation_id":"op-17","actor":"coordinator","events":[` + mid + `]}`
+		return `{"schema":1,"operation":"apply_events","table":"work","epoch":"3","expected_table_revision":"12","operation_id":"op-17","actor":"coordinator","inputs":[` + mid + `]}`
 	}
 	ev := `"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"build","col":"ready"}},"digest":"` + dig + `","issuer":"coord","source":"start/1"`
 	cases := []struct {
@@ -68,16 +68,16 @@ func TestParseRefusals(t *testing.T) {
 		{"duplicate schema", strings.Replace(admitDoc, `"schema": 1,`, `"schema": 1, "schema": 1,`, 1), wantTriples("-1|schema|duplicate-key")},
 		{"duplicate key in entry", events(`{` + ev + `,"id":"c2"}`), wantTriples("0|id|duplicate-key")},
 		{"duplicate key deep in entry", events(`{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"a","row":"b","col":"ready"}},"digest":"` + dig + `","issuer":"coord","source":"s"}`), wantTriples("0|expect.place.row|duplicate-key")},
-		{"duplicate key with different case is unknown", events(`{` + ev + `,"ID":"c2"}`), wantTriples("0|ID|unknown-field")},
+		{"duplicate key with different case is unknown", events(`{` + ev + `,"ID":"c2"}`), wantTriples("0|ID|unknown-key")},
 		{"trailing object", admitDoc + ` {}`, wantTriples("-1||trailing-data")},
 		{"trailing garbage", admitDoc + ` x`, wantTriples("-1||trailing-data")},
 		{"trailing second document", admitDoc + admitDoc, wantTriples("-1||trailing-data")},
 		{"trailing bracket", admitDoc + `]`, wantTriples("-1||trailing-data")},
-		{"unknown envelope field", strings.Replace(admitDoc, `"actor": "coordinator",`, `"actor": "coordinator", "extra": 1,`, 1), wantTriples("-1|extra|unknown-field")},
-		{"destination is not a field", events(`{` + ev + `,"destination":"working"}`), wantTriples("0|destination|unknown-field")},
-		{"to is not a field", events(`{` + ev + `,"to":"working"}`), wantTriples("0|to|unknown-field")},
-		{"unknown nested field", events(`{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"a","col":"ready","x":1}},"digest":"` + dig + `","issuer":"coord","source":"s"}`), wantTriples("0|expect.place.x|unknown-field")},
-		{"several unknown fields sorted", events(`{` + ev + `,"zeta":1,"alpha":2}`), wantTriples("0|alpha|unknown-field", "0|zeta|unknown-field")},
+		{"unknown envelope field", strings.Replace(admitDoc, `"actor": "coordinator",`, `"actor": "coordinator", "extra": 1,`, 1), wantTriples("-1|extra|unknown-key")},
+		{"destination is not a field", events(`{` + ev + `,"destination":"working"}`), wantTriples("0|destination|unknown-key")},
+		{"to is not a field", events(`{` + ev + `,"to":"working"}`), wantTriples("0|to|unknown-key")},
+		{"unknown nested field", events(`{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"a","col":"ready","x":1}},"digest":"` + dig + `","issuer":"coord","source":"s"}`), wantTriples("0|expect.place.x|unknown-key")},
+		{"several unknown fields sorted", events(`{` + ev + `,"zeta":1,"alpha":2}`), wantTriples("0|alpha|unknown-key", "0|zeta|unknown-key")},
 		{"float schema", strings.Replace(admitDoc, `"schema": 1,`, `"schema": 1.0,`, 1), wantTriples("-1|schema|wrong-type")},
 		{"exponent schema", strings.Replace(admitDoc, `"schema": 1,`, `"schema": 1e0,`, 1), wantTriples("-1|schema|wrong-type")},
 		{"string schema", strings.Replace(admitDoc, `"schema": 1,`, `"schema": "1",`, 1), wantTriples("-1|schema|wrong-type")},
@@ -108,13 +108,14 @@ func TestParseRefusalDetails(t *testing.T) {
 		name, doc string
 		want      []string
 	}{
-		{"expect not an object", strings.Replace(eventsDoc, `"expect":{"revision":"2","place":{"row":"build","col":"ready"}}`, `"expect":"x"`, 1),
+		{"expect not an object", strings.Replace(inputsDoc, `"expect":{"revision":"2","place":{"row":"build","col":"ready"}}`, `"expect":"x"`, 1),
 			wantTriples("0|expect|wrong-type")},
-		{"bound as float", `{"schema":1,"operation":"resolve","table":"w","epoch":"1","expected_table_revision":"1","operation_id":"o","actor":"a","scope":{"row":"r","bound":1e2}}`,
-			wantTriples("-1|scope.bound|wrong-type")},
-		{"missing operation", `{"schema":1,"table":"w"}`, wantTriples("-1|operation|required", "-1|epoch|required", "-1|expected_table_revision|required", "-1|operation_id|required", "-1|actor|required")},
-		{"operation not a string", `{"schema":1,"operation":7,"table":"w"}`, wantTriples("-1|operation|wrong-type", "-1|epoch|required", "-1|expected_table_revision|required", "-1|operation_id|required", "-1|actor|required")},
-		{"payload of the wrong operation", strings.Replace(admitDoc, `"admissions"`, `"events"`, 1), wantTriples("-1|events|not-applicable", "-1|admissions|required")},
+		{"scope all as number", `{"schema":1,"operation":"resolve","table":"w","epoch":"1","expected_table_revision":"1","operation_id":"o","actor":"a","scope":{"all":1}}`,
+			wantTriples("-1|scope.all|wrong-type", "-1|scope|required")},
+		{"missing operation", `{"schema":1,"table":"w"}`, wantTriples("-1|operation|required", "-1|epoch|required", "-1|expected_table_revision|required", "-1|actor|required")},
+		{"operation not a string", `{"schema":1,"operation":7,"table":"w"}`, wantTriples("-1|operation|wrong-type", "-1|epoch|required", "-1|expected_table_revision|required", "-1|actor|required")},
+		{"payload of the wrong operation", strings.Replace(admitDoc, `"admissions"`, `"inputs"`, 1), wantTriples("-1|inputs|not-applicable", "-1|admissions|required")},
+		{"the old event key is unknown", strings.Replace(admitDoc, `"admissions"`, `"events"`, 1), wantTriples("-1|events|unknown-key", "-1|admissions|required")},
 		{"admissions is an object", `{"schema":1,"operation":"admit","table":"w","epoch":"1","expected_table_revision":"1","operation_id":"o","actor":"a","admissions":{}}`, wantTriples("-1|admissions|wrong-type")},
 	} {
 		c := c
@@ -130,11 +131,11 @@ func TestParseRefusalDetails(t *testing.T) {
 func TestParseReportsEveryFaultTogether(t *testing.T) {
 	t.Parallel()
 	doc := `{"schema":1,"schema":1,"operation":"apply_events","table":"work","epoch":3,"expected_table_revision":"12","operation_id":"op-17","actor":"c","extra":true,
-"events":[{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"build","col":"working"}},"digest":"` + dig + `","issuer":"i","source":"s","to":"x"},
+"inputs":[{"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"build","col":"working"}},"digest":"` + dig + `","issuer":"i","source":"s","to":"x"},
 {"id":"c1","type":"start","expect":{"revision":"2","place":{"row":"build","col":"ready"}},"digest":"` + dig + `","issuer":"i","source":"s"}]} x`
 	got := parseRefusals(t, doc)
-	want := wantTriples("-1|schema|duplicate-key", "-1|epoch|wrong-type", "-1|extra|unknown-field", "0|to|unknown-field",
-		"0|expect.place.col|no-transition", "1|expect.place.col|event-chain", "-1||trailing-data")
+	want := wantTriples("-1|schema|duplicate-key", "-1|epoch|wrong-type", "-1|extra|unknown-key", "0|to|unknown-key",
+		"0|expect.place.col|no-transition", "1|expect.place.col|input-chain", "-1||trailing-data")
 	if !equalStrings(got, want) {
 		t.Fatalf("refusals\n got  %v\n want %v", got, want)
 	}
@@ -210,14 +211,14 @@ func TestParseRefusesControlAndReplacementCharactersInValues(t *testing.T) {
 
 func TestParseKeepsHTMLCharactersUnescaped(t *testing.T) {
 	t.Parallel()
-	doc := strings.Replace(eventsDoc, `"type":"start"`, `"type":"verdict-retry"`, 1)
+	doc := strings.Replace(inputsDoc, `"type":"start"`, `"type":"verdict-retry"`, 1)
 	doc = strings.Replace(doc, `"col":"ready"`, `"col":"review"`, 1)
 	doc = strings.Replace(doc, `"source":"start/1"`, `"source":"start/1","reason":"a<b> & \"c\" <"`, 1)
 	r := mustParse(t, doc)
-	if r.Events[0].Reason != `a<b> & "c" <` {
-		t.Fatalf("reason %q", r.Events[0].Reason)
+	if got := r.Request().Inputs[0].Reason; got != `a<b> & "c" <` {
+		t.Fatalf("reason %q", got)
 	}
-	b := string(Canonical(r))
+	b := string(r.Canonical())
 	if !strings.Contains(b, `"reason":"a<b> & \"c\" <"`) || strings.Contains(b, `\u003`) {
 		t.Fatalf("canonical escapes HTML: %s", b)
 	}

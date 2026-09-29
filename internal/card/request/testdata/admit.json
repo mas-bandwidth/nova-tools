@@ -1,29 +1,55 @@
 {
+  "schema": 1,
+  "operation": "admit",
+  "table": "work",
+  "epoch": "3",
+  "expected_table_revision": "12",
+  "operation_id": "op-admit",
+  "actor": "coordinator",
   "admissions": [
     {
-      "row": "build",
-      "path": "cards/card-alpha.md",
-      "repository": "example.org/team/repo",
-      "commit": "cccccccccccccccccccccccccccccccccccccccc",
-      "object_id": "cccccccccccccccccccccccccccccccccccccccc",
+      "id": "card-01",
       "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "id": "card-alpha"
+      "object_id": "cccccccccccccccccccccccccccccccccccccccc",
+      "commit": "cccccccccccccccccccccccccccccccccccccccc",
+      "repository": "github.com/example/cards",
+      "path": "cards/card-01.md",
+      "kind": "fix-red",
+      "title": "Title of card-01",
+      "row": "build",
+      "policy_version": "1",
+      "policy_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     {
-      "id": "card-beta",
+      "id": "card-02",
       "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "object_id": "cccccccccccccccccccccccccccccccccccccccc",
       "commit": "cccccccccccccccccccccccccccccccccccccccc",
-      "repository": "example.org/team/repo",
-      "path": "cards/card-beta.md",
-      "row": "docs"
+      "repository": "github.com/example/cards",
+      "path": "cards/card-02.md",
+      "kind": "fix-red",
+      "title": "Title of card-02",
+      "row": "build",
+      "policy_version": "1",
+      "policy_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "depends_on": [
+        "card-01",
+        "card-00"
+      ],
+      "entry": "work/one"
+    },
+    {
+      "id": "card-03",
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "object_id": "cccccccccccccccccccccccccccccccccccccccc",
+      "commit": "cccccccccccccccccccccccccccccccccccccccc",
+      "repository": "github.com/example/cards",
+      "path": "cards/card-03.md",
+      "kind": "fix-red",
+      "title": "Title of card-03",
+      "row": "build",
+      "policy_version": "1",
+      "policy_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
-  ],
-  "actor": "coordinator",
-  "operation_id": "op-admit-1",
-  "expected_table_revision": "12",
-  "epoch": "3",
-  "table": "work",
-  "operation": "admit",
-  "schema": 1
+  ]
 }

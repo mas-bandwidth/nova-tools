@@ -10,6 +10,15 @@ import (
 	"testing"
 )
 
+func mustValid(t testing.TB, r *Request) *Valid {
+	t.Helper()
+	v, err := Validate(r)
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, Canonical(r))
+	}
+	return v
+}
+
 func TestCanonicalRoundTripProperty(t *testing.T) {
 	t.Parallel()
 	for _, seed := range seeds {
@@ -17,24 +26,25 @@ func TestCanonicalRoundTripProperty(t *testing.T) {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
 			rng := rand.New(rand.NewSource(seed))
-			for _, op := range Operations {
+			for _, op := range Operations() {
 				for i := 0; i < 25; i++ {
 					x := genRequest(rng, op)
-					if err := Validate(x); err != nil {
+					vx, err := Validate(x)
+					if err != nil {
 						t.Fatalf("seed %d %s #%d: generator built an invalid request: %v\n%s", seed, op, i, err, Canonical(x))
 					}
 					b := Canonical(x)
-					y, err := Parse(b)
+					if !bytes.Equal(vx.Canonical(), b) {
+						t.Fatalf("seed %d %s #%d: Valid.Canonical differs from Canonical", seed, op, i)
+					}
+					vy, err := Parse(b)
 					if err != nil {
 						t.Fatalf("seed %d %s #%d: parse of canonical: %v\n%s", seed, op, i, err, b)
 					}
-					if !reflect.DeepEqual(x, y) {
-						t.Fatalf("seed %d %s #%d: decode(canonical(x)) != x\n%s", seed, op, i, b)
-					}
-					if b2 := Canonical(y); !bytes.Equal(b, b2) {
+					if b2 := vy.Canonical(); !bytes.Equal(b, b2) {
 						t.Fatalf("seed %d %s #%d: canonical not stable\n%s\n%s", seed, op, i, b, b2)
 					}
-					if Hash(x) != Hash(y) || !Hash(x).Valid() {
+					if vx.Hash() != vy.Hash() || !vx.Hash().Valid() || Hash(x) != vx.Hash() {
 						t.Fatalf("seed %d %s #%d: hash", seed, op, i)
 					}
 				}
@@ -50,7 +60,7 @@ func TestCanonicalIgnoresKeyOrderWhitespaceAndEscapes(t *testing.T) {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
 			rng := rand.New(rand.NewSource(seed))
-			for _, op := range Operations {
+			for _, op := range Operations() {
 				x := genRequest(rng, op)
 				want := Canonical(x)
 				dec := json.NewDecoder(bytes.NewReader(want))
@@ -66,10 +76,10 @@ func TestCanonicalIgnoresKeyOrderWhitespaceAndEscapes(t *testing.T) {
 					if err != nil {
 						t.Fatalf("seed %d %s: variant does not parse: %v\n%s", seed, op, err, sb.String())
 					}
-					if got := Canonical(y); !bytes.Equal(got, want) {
+					if got := y.Canonical(); !bytes.Equal(got, want) {
 						t.Fatalf("seed %d %s: variant changed the canonical bytes\n%s\n%s", seed, op, got, want)
 					}
-					if Hash(y) != Hash(x) {
+					if y.Hash() != Hash(x) {
 						t.Fatalf("seed %d %s: variant changed the hash", seed, op)
 					}
 				}
@@ -82,7 +92,7 @@ func TestCanonicalFormIsCompactSortedAndFloatFree(t *testing.T) {
 	t.Parallel()
 	r := validRequest(OpResolve)
 	got := string(Canonical(r))
-	want := `{"actor":"coordinator","epoch":"3","expected_table_revision":"12","operation":"resolve","operation_id":"op-17","schema":1,"scope":{"bound":100,"col":"waiting","row":"build"},"table":"work"}`
+	want := `{"actor":"coordinator","epoch":"3","expected_table_revision":"12","operation":"resolve","operation_id":"op-17","schema":1,"scope":{"rows":["build"]},"table":"work"}`
 	if got != want {
 		t.Fatalf("canonical\n got  %s\n want %s", got, want)
 	}
@@ -123,7 +133,7 @@ func TestAnySingleValueMutationChangesTheHash(t *testing.T) {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
 			rng := rand.New(rand.NewSource(seed))
-			for _, op := range Operations {
+			for _, op := range Operations() {
 				base := genRequest(rng, op)
 				baseCanon := Canonical(base)
 				baseHash := Hash(base)
@@ -149,243 +159,133 @@ func TestAnySingleValueMutationChangesTheHash(t *testing.T) {
 	}
 }
 
-func TestOmittedOptionalFieldsChangeTheHashWhenSet(t *testing.T) {
+// Arrays whose order carries no meaning are sorted by the encoder: two requests
+// that list the same entries in another order are the same request.
+func TestOrderFreeArraysHaveOneEncoding(t *testing.T) {
 	t.Parallel()
-	// A field that is empty and omitted differs from the same field set.
-	base := validRequest(OpApplyEvents)
-	h := Hash(base)
-	c := clone(t, base)
-	c.Events[0].Reason = "r"
-	if Hash(c) == h {
-		t.Fatal("setting an omitted field left the hash unchanged")
-	}
-}
-
-func TestArrayOrderAndMembershipChangeTheHash(t *testing.T) {
-	t.Parallel()
-	base := validRequest(OpAdmit)
-	h := Hash(base)
-	swapped := clone(t, base)
-	swapped.Admissions[0], swapped.Admissions[1] = swapped.Admissions[1], swapped.Admissions[0]
-	if Hash(swapped) == h {
-		t.Fatal("array order is part of the request and the hash ignored it")
-	}
-	dropped := clone(t, base)
-	dropped.Admissions = dropped.Admissions[:1]
-	if Hash(dropped) == h {
-		t.Fatal("dropping an entry left the hash unchanged")
-	}
-	added := clone(t, base)
-	added.Admissions = append(added.Admissions, adm("c9"))
-	if Hash(added) == h {
-		t.Fatal("adding an entry left the hash unchanged")
-	}
-	// An empty array and an absent one differ; both are refused, neither is the same request.
-	empty := clone(t, validRequest(OpInspect))
-	empty.Scope.IDs = []ID{}
-	if bytes.Equal(Canonical(empty), Canonical(validRequest(OpInspect))) {
-		t.Fatal("empty and non-empty arrays share canonical bytes")
-	}
-}
-
-func TestSameRequestComparesCanonicalBytes(t *testing.T) {
-	t.Parallel()
-	a := validRequest(OpApplyEvents)
-	recorded := Canonical(a)
-	// The same request, reached through a differently ordered and spaced document.
-	reordered := `{ "events": ` + string(mustJSON(t, a)["events"]) + `, "actor":"coordinator","table":"work","schema":1,"operation":"apply_events","operation_id":"op-17","expected_table_revision":"12","epoch":"3" }`
-	b := mustParse(t, reordered)
-	if !SameRequest(recorded, Canonical(b)) {
-		t.Fatal("the same request through a different document is not the same request")
-	}
-	c := clone(t, a)
-	c.Events[1].Source = "other/artifact"
-	if SameRequest(recorded, Canonical(c)) {
-		t.Fatal("a changed value is the same request")
-	}
-	c = clone(t, a)
-	c.OperationID = "op-18"
-	if SameRequest(recorded, Canonical(c)) {
-		t.Fatal("a changed operation ID is the same request")
-	}
-	if SameRequest(nil, nil) || SameRequest(recorded, nil) || SameRequest(nil, recorded) || SameRequest([]byte{}, []byte{}) {
-		t.Fatal("empty bytes are never the same request")
-	}
-	// Non-canonical bytes are not normalised: the caller canonicalises first.
-	if SameRequest(recorded, []byte(string(recorded)+" ")) {
-		t.Fatal("SameRequest normalised its input")
-	}
-	if a.Identity() != c.Identity() && a.Identity().OperationID == c.Identity().OperationID {
-		t.Fatal("identity mismatch")
-	}
-}
-
-func mustJSON(t *testing.T, r *Request) map[string]json.RawMessage {
-	t.Helper()
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(Canonical(r), &m); err != nil {
-		t.Fatal(err)
-	}
-	return m
-}
-
-func TestParseNeverPanicsOnRandomInput(t *testing.T) {
-	t.Parallel()
-	for _, seed := range seeds {
-		seed := seed
-		t.Run(fmt.Sprint(seed), func(t *testing.T) {
-			t.Parallel()
-			rng := rand.New(rand.NewSource(seed))
-			check := func(in []byte) {
-				defer func() {
-					if p := recover(); p != nil {
-						t.Fatalf("seed %d: panic %v on input %q", seed, p, in)
-					}
-				}()
-				r, err := Parse(in)
-				if err == nil {
-					if verr := Validate(r); verr != nil {
-						t.Fatalf("seed %d: Parse accepted what Validate refuses: %v\n%q", seed, verr, in)
-					}
-					y, err := Parse(Canonical(r))
-					if err != nil || !reflect.DeepEqual(r, y) {
-						t.Fatalf("seed %d: accepted input does not round trip: %v\n%q", seed, err, in)
-					}
-				} else if r != nil {
-					t.Fatalf("seed %d: refused input returned a request", seed)
-				}
-			}
-			// random bytes
-			for i := 0; i < 200; i++ {
-				b := make([]byte, rng.Intn(300))
-				rng.Read(b)
-				check(b)
-			}
-			// random JSON-ish text from the request's own vocabulary
-			for i := 0; i < 200; i++ {
-				check([]byte(randomJSON(rng, 0)))
-			}
-			// mutated valid documents
-			for _, op := range Operations {
-				valid := Canonical(genRequest(rng, op))
-				for i := 0; i < 60; i++ {
-					check(mutateBytes(rng, valid))
-				}
-			}
-		})
-	}
-}
-
-var vocab = []string{"schema", "operation", "table", "epoch", "expected_table_revision", "operation_id", "actor",
-	"admissions", "events", "evidence", "replacements", "scope", "id", "type", "expect", "revision", "place", "row", "col",
-	"digest", "issuer", "source", "head", "result", "reason", "dependency", "landing", "records", "ids", "bound", "old", "new",
-	"admit", "apply_events", "inspect", "start", "ready", "work", "1", "0", "", "x y", "é", "<", "\\u0000"}
-
-func randomJSON(rng *rand.Rand, depth int) string {
-	pick := func() string { return vocab[rng.Intn(len(vocab))] }
-	switch n := rng.Intn(9); {
-	case depth > 6 || n < 3:
-		return []string{`"` + strings.ReplaceAll(pick(), `\`, `\\`) + `"`, "1", "1.5", "-2", "1e9", "true", "null", "123456789012345678901234567890"}[rng.Intn(8)]
-	case n < 6:
-		var parts []string
-		for i := rng.Intn(6); i > 0; i-- {
-			parts = append(parts, `"`+pick()+`":`+randomJSON(rng, depth+1))
+	swap := func(name string, build func() *Request, reorder func(*Request)) {
+		a := build()
+		b := build()
+		reorder(b)
+		if reflect.DeepEqual(a, b) {
+			t.Fatalf("%s: the reordering changed nothing", name)
 		}
-		return "{" + strings.Join(parts, ",") + "}"
-	default:
-		var parts []string
-		for i := rng.Intn(5); i > 0; i-- {
-			parts = append(parts, randomJSON(rng, depth+1))
+		if !bytes.Equal(Canonical(a), Canonical(b)) || Hash(a) != Hash(b) {
+			t.Errorf("%s: the same entries in another order have other bytes\n%s\n%s", name, Canonical(a), Canonical(b))
 		}
-		return "[" + strings.Join(parts, ",") + "]"
+		// and both are valid requests with one hash
+		if mustValid(t, a).Hash() != mustValid(t, b).Hash() {
+			t.Errorf("%s: validated hashes differ", name)
+		}
+	}
+	swap("admissions", func() *Request { return validRequest(OpAdmit) }, func(r *Request) { r.Admissions[0], r.Admissions[1] = r.Admissions[1], r.Admissions[0] })
+	swap("inputs", func() *Request { return validRequest(OpApplyEvents) }, func(r *Request) { r.Inputs[0], r.Inputs[2] = r.Inputs[2], r.Inputs[0] })
+	swap("evidence entries", func() *Request {
+		r := validRequest(OpRecordEvidence)
+		r.Evidence = append(r.Evidence, evidenceEntry("c2"))
+		return r
+	}, func(r *Request) { r.Evidence[0], r.Evidence[1] = r.Evidence[1], r.Evidence[0] })
+	swap("evidence records", func() *Request { return validRequest(OpRecordEvidence) }, func(r *Request) {
+		rs := r.Evidence[0].Records
+		rs[0], rs[1] = rs[1], rs[0]
+	})
+	swap("replacements", func() *Request {
+		r := validRequest(OpReplace)
+		r.Replacements = append(r.Replacements, Replacement{Old: Retired{ID: "old2", Digest: Digest(dig), Expect: expect("2", "build", Waiting)}, New: adm("new2")})
+		return r
+	}, func(r *Request) { r.Replacements[0], r.Replacements[1] = r.Replacements[1], r.Replacements[0] })
+	swap("scope ids", func() *Request { return validRequest(OpInspect) }, func(r *Request) { r.Scope.IDs[0], r.Scope.IDs[1] = r.Scope.IDs[1], r.Scope.IDs[0] })
+	swap("scope rows", func() *Request {
+		r := validRequest(OpResolve)
+		r.Scope.Rows = []string{"build", "docs"}
+		return r
+	}, func(r *Request) { r.Scope.Rows[0], r.Scope.Rows[1] = r.Scope.Rows[1], r.Scope.Rows[0] })
+	swap("dependencies", func() *Request {
+		r := validRequest(OpAdmit)
+		r.Admissions[0].DependsOn = []ID{"x1", "x2", "x3"}
+		return r
+	}, func(r *Request) { d := r.Admissions[0].DependsOn; d[0], d[2] = d[2], d[0] })
+	// An array whose order does mean something is not sorted: there is none in a
+	// request, so a receipt's notifications are the one place to check.
+	rc := &Receipt{Changed: []CardChange{{ID: "a", Notifications: []Notification{{Kind: NoteReady}, {Kind: NoteStarted}}}}}
+	rd := &Receipt{Changed: []CardChange{{ID: "a", Notifications: []Notification{{Kind: NoteStarted}, {Kind: NoteReady}}}}}
+	if bytes.Equal(CanonicalReceipt(rc), CanonicalReceipt(rd)) {
+		t.Error("the order of a card's notifications is the manager's derivation order and is kept")
 	}
 }
 
-func mutateBytes(rng *rand.Rand, in []byte) []byte {
-	b := append([]byte(nil), in...)
-	if len(b) == 0 {
-		return b
-	}
-	switch rng.Intn(6) {
-	case 0:
-		b[rng.Intn(len(b))] = byte(rng.Intn(256))
-	case 1:
-		b = b[:rng.Intn(len(b))]
-	case 2:
-		i := rng.Intn(len(b))
-		b = append(b[:i], b[i+1:]...)
-	case 3:
-		i := rng.Intn(len(b))
-		b = append(b[:i], append([]byte{byte(rng.Intn(256))}, b[i:]...)...)
-	case 4:
-		i, j := rng.Intn(len(b)), rng.Intn(len(b))
-		if i > j {
-			i, j = j, i
-		}
-		b = append(b[:j], append(append([]byte(nil), b[i:j]...), b[j:]...)...)
-	default:
-		b = append(b, []byte(vocab[rng.Intn(len(vocab))])...)
-	}
-	return b
-}
-
-var nasty = []string{"", "\x00", "\xff", "é", "a b", strings.Repeat("x", 300), " ", "<>&", `"`, `\`, "0", "18446744073709551616", "�", "\n", "a,b", "..", "a/b"}
-
-func TestValidateAndCanonicalNeverPanicOnGarbageValues(t *testing.T) {
+// An empty optional field and an absent one are the same bytes, and the doc says so.
+func TestEmptyOptionalFieldIsAbsent(t *testing.T) {
 	t.Parallel()
-	for _, seed := range seeds {
-		seed := seed
-		t.Run(fmt.Sprint(seed), func(t *testing.T) {
-			t.Parallel()
-			rng := rand.New(rand.NewSource(seed))
-			for _, op := range Operations {
-				for i := 0; i < 40; i++ {
-					x := genRequest(rng, op)
-					// set up to three values to garbage, sometimes drop or empty an array
-					for k := rng.Intn(4); k > 0; k-- {
-						var n int
-						leaves(reflect.ValueOf(x), func(reflect.Value) { n++ })
-						if n == 0 {
-							break
-						}
-						target, idx := rng.Intn(n), 0
-						leaves(reflect.ValueOf(x), func(v reflect.Value) {
-							if idx == target {
-								if v.Kind() == reflect.String {
-									v.SetString(nasty[rng.Intn(len(nasty))])
-								} else {
-									v.SetInt(int64(rng.Intn(3000) - 500))
-								}
-							}
-							idx++
-						})
-					}
-					switch rng.Intn(6) {
-					case 0:
-						x.Events, x.Admissions, x.Evidence, x.Replacements = []Event{}, []Admission{}, []Evidence{}, []Replacement{}
-					case 1:
-						x.Scope = &Scope{IDs: []ID{}}
-					case 2:
-						x.Operation = Operation(nasty[rng.Intn(len(nasty))])
-					}
-					func() {
-						defer func() {
-							if p := recover(); p != nil {
-								t.Fatalf("seed %d: panic %v on %+v", seed, p, x)
-							}
-						}()
-						err := Validate(x)
-						b := Canonical(x)
-						_ = Hash(x)
-						if err == nil {
-							y, perr := Parse(b)
-							if perr != nil || !reflect.DeepEqual(x, y) {
-								t.Fatalf("seed %d: a valid request does not round trip: %v\n%s", seed, perr, b)
-							}
-						}
-					}()
-				}
-			}
-		})
+	base := func() *Request {
+		r := validRequest(OpApplyEvents)
+		r.Inputs[0].Head = ""
+		return r
+	}
+	a := Canonical(base())
+	// an explicit empty string in the document: the same bytes as the key left out
+	doc := strings.Replace(string(Canonical(base())), `"id":"c1"`, `"id":"c1","head":"","reason":"","landing":"","dependency":"","result":""`, 1)
+	v, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("explicit empty optional fields refused: %v", err)
+	}
+	if !bytes.Equal(v.Canonical(), a) {
+		t.Fatalf("explicit empty differs from absent:\n%s\n%s", v.Canonical(), a)
+	}
+	// operation_id, entry, depends_on, expect.revision of evidence
+	adm := validRequest(OpAdmit)
+	adm.OperationID = ""
+	adm.Admissions[0].Entry = ""
+	adm.Admissions[0].DependsOn = []ID{}
+	adm2 := validRequest(OpAdmit)
+	adm2.OperationID = ""
+	adm2.Admissions[0].DependsOn = nil
+	if !bytes.Equal(Canonical(adm), Canonical(adm2)) {
+		t.Errorf("an empty depends_on and an absent one differ")
+	}
+	ev := validRequest(OpRecordEvidence)
+	ev.Evidence[0].Expect.Revision = ""
+	if strings.Contains(string(Canonical(ev)), `"revision"`) {
+		t.Errorf("an empty revision is written: %s", Canonical(ev))
+	}
+	sc := validRequest(OpInspect)
+	sc.Scope = &Scope{IDs: []ID{"a"}, Rows: []string{}}
+	sc2 := validRequest(OpInspect)
+	sc2.Scope = &Scope{IDs: []ID{"a"}}
+	if !bytes.Equal(Canonical(sc), Canonical(sc2)) {
+		t.Errorf("an empty rows array and an absent one differ")
+	}
+}
+
+// The hash without the operation ID ignores the ID and nothing else.
+func TestHashWithoutOperationID(t *testing.T) {
+	t.Parallel()
+	a, b := validRequest(OpAdmit), validRequest(OpAdmit)
+	b.OperationID = "op-other"
+	if Hash(a) == Hash(b) {
+		t.Fatal("the full hash ignores the operation ID")
+	}
+	if HashWithoutOperationID(a) != HashWithoutOperationID(b) {
+		t.Fatal("the hash without the operation ID depends on it")
+	}
+	if bytes.Contains(CanonicalWithoutOperationID(a), []byte("operation_id")) {
+		t.Fatal("operation_id in the canonical bytes without it")
+	}
+	// Absent operation ID: the two hashes are the same bytes.
+	c := validRequest(OpAdmit)
+	c.OperationID = ""
+	if Hash(c) != HashWithoutOperationID(c) {
+		t.Fatal("with no operation ID the two hashes are one")
+	}
+	if HashWithoutOperationID(a) != HashWithoutOperationID(c) {
+		t.Fatal("the same ask differs by operation ID")
+	}
+	d := validRequest(OpAdmit)
+	d.Admissions[0].Title = "another"
+	if HashWithoutOperationID(a) == HashWithoutOperationID(d) {
+		t.Fatal("a different ask has the same hash")
+	}
+	if HashWithoutOperationID(nil) == "" || string(CanonicalWithoutOperationID(nil)) != "null" {
+		t.Fatal("nil")
 	}
 }

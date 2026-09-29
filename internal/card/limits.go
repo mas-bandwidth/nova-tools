@@ -170,3 +170,20 @@ const (
 	ManifestEvidenceMax = ManifestEnvelopeBytes + MaxChangedEntries*ManifestEvidenceEntryBytes + MaxEvidenceRecords*ManifestEvidenceRecordBytes + ManifestOperationRecordBytes
 	ManifestResolveMax  = ManifestEnvelopeBytes + MaxResolveCards*ManifestResolveBytes + MaxResolveCards*(1+MaxDependsOn)*ManifestGuardBytes + ManifestOperationRecordBytes
 )
+
+// EscapedSize is the size of b once it is stored as a string inside a manifest:
+// each quote and backslash costs one byte more, and nothing else changes (the
+// canonical bytes hold no raw control character). The card layer's tokens (the
+// issuers, sources, landings, verifiers and artifacts of a request) hold neither
+// character, so an evidence request, made of tokens and digests, has an escaping
+// factor of exactly 1; only the free text of a reason, a title and an entry can
+// double.
+func EscapedSize(b []byte) int {
+	n := len(b)
+	for _, c := range b {
+		if c == '"' || c == '\\' {
+			n++
+		}
+	}
+	return n
+}

@@ -9,37 +9,81 @@
   "evidence": [
     {
       "id": "card-01",
-      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "expect": {
-        "revision": "4",
         "place": {
           "row": "build",
           "col": "review"
+        },
+        "revision": "4"
+      },
+      "records": [
+        {
+          "kind": "read",
+          "issuer": "reader-1",
+          "disposition": "accept",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifier": "forge",
+          "artifact": "review:1"
+        },
+        {
+          "kind": "ci",
+          "issuer": "ci:unit",
+          "disposition": "green",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifier": "forge",
+          "artifact": "run:9"
+        },
+        {
+          "kind": "sweep",
+          "issuer": "sweeper",
+          "disposition": "clean",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifier": "forge",
+          "artifact": "obs:abc"
+        }
+      ]
+    },
+    {
+      "id": "card-02",
+      "expect": {
+        "place": {
+          "row": "build",
+          "col": "merging"
         }
       },
       "records": [
         {
-          "evidence_id": "ev-1",
-          "kind": "read",
-          "disposition": "accept",
-          "head": "cccccccccccccccccccccccccccccccccccccccc",
-          "issuer": "reader-1",
-          "source": "review/1"
-        },
-        {
-          "evidence_id": "ev-2",
-          "kind": "read",
-          "disposition": "reject",
-          "issuer": "reader-2",
-          "source": "review/2"
-        },
-        {
-          "evidence_id": "ev-3",
           "kind": "ci",
-          "disposition": "green",
+          "issuer": "ci:unit",
+          "disposition": "red",
+          "head": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifier": "forge",
+          "artifact": "run:10"
+        }
+      ]
+    },
+    {
+      "id": "card-03",
+      "expect": {
+        "place": {
+          "row": "build",
+          "col": "working"
+        },
+        "revision": "7"
+      },
+      "records": [
+        {
+          "kind": "landing",
+          "issuer": "git",
+          "disposition": "landed",
           "head": "cccccccccccccccccccccccccccccccccccccccc",
-          "issuer": "ci",
-          "source": "run/9"
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifier": "forge",
+          "artifact": "land:cccccccccccccccccccccccccccccccccccccccc"
         }
       ]
     }

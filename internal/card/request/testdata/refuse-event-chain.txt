@@ -1,1 +1,0 @@
-refused apply_events[1] card=a field=expect.place.col: event-chain; found "result@working"; limit the source state is reachable only through another event of this request; remedy: one event per card per request: send the later event in a request after the earlier one is applied

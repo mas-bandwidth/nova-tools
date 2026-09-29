@@ -49,3 +49,18 @@ func TestWorstCaseManifestSums(t *testing.T) {
 		t.Errorf("the evidence margin is %d bytes", TableManifestBytes-ManifestEvidenceMax)
 	}
 }
+
+func TestEscapedSize(t *testing.T) {
+	t.Parallel()
+	if got := EscapedSize([]byte(`a"b\c`)); got != 7 {
+		t.Errorf("EscapedSize = %d, want 7", got)
+	}
+	if got := EscapedSize(nil); got != 0 {
+		t.Errorf("EscapedSize(nil) = %d", got)
+	}
+	// The payload as a manifest string really is that size.
+	s := `{"k":"a\"b"}`
+	if got, want := len(Encode(s)), EscapedSize([]byte(s))+2; got != want {
+		t.Errorf("encoded string is %d bytes, EscapedSize says %d", got, want)
+	}
+}

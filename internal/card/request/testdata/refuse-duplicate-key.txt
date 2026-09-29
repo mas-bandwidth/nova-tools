@@ -1,1 +1,1 @@
-refused admit field=table: duplicate-key; found "table"; limit each key once; remedy: remove the repeated key
+refused apply_events field=table: duplicate-key; found "table"; limit each key once; next: remove the repeated key

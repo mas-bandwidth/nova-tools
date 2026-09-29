@@ -10,22 +10,24 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
 // Parse reads one request document. It is strict where encoding/json is
 // lenient: a duplicate key at any depth refuses (the standard decoder keeps the
 // last silently), an unknown field refuses, trailing data after the document
 // refuses, a number where a string is required refuses (a counter is never a
-// float), and the document is bounded before it is read. It then runs Validate.
-// It returns the request, or nil and a *Refusals naming everything found; a
+// float), and the document is bounded before it is read. It then runs the same checks as Validate.
+// It returns the validated request, or nil and a *Refusals naming everything found; a
 // syntax error stops the read, so it is the one refusal then reported.
-func Parse(data []byte) (*Request, error) {
+func Parse(data []byte) (*Valid, error) {
 	c := newCollector()
 	req := parse(data, c)
 	if err := c.err(); err != nil {
 		return nil, err
 	}
-	return req, nil
+	return newValid(req), nil
 }
 
 func parse(data []byte, c *collector) *Request {
@@ -67,9 +69,9 @@ func parse(data []byte, c *collector) *Request {
 	req := b.request(root)
 	if req.Operation.Valid() {
 		// Faults found before the operation was read carry it now.
-		for i := range c.list {
-			if c.list[i].Operation == "" {
-				c.list[i].Operation = req.Operation
+		for i := range c.List {
+			if c.List[i].Operation == "" {
+				c.List[i].Operation = card.Operation(req.Operation)
 			}
 		}
 	}
@@ -96,6 +98,7 @@ func (k nodeKind) String() string {
 // repeated key is refused as it is read.
 type node struct {
 	kind  nodeKind
+	b     bool
 	s     string
 	keys  []string
 	vals  map[string]*node
@@ -124,7 +127,7 @@ func pathField(path []string) string {
 	return b.String()
 }
 
-var payloadKeys = map[string]bool{"admissions": true, "events": true, "evidence": true, "replacements": true}
+var payloadKeys = map[string]bool{"admissions": true, "inputs": true, "evidence": true, "replacements": true}
 
 // locate turns a path into an entry index and a field within the entry: a path
 // under a payload array is the entry at that index, anything else is the
@@ -196,7 +199,7 @@ func (p *parser) value(depth int, path []string) (*node, bool) {
 	case json.Number:
 		return &node{kind: nNumber, s: t.String()}, true
 	case bool:
-		return &node{kind: nBool}, true
+		return &node{kind: nBool, b: t}, true
 	default:
 		return &node{kind: nNull}, true
 	}
@@ -308,9 +311,25 @@ func (o *objReader) finish() {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if !o.used[k] {
-			o.b.c.add(o.index, o.id, o.field(k), CauseUnknownField, quote(k), "the fields of the schema", "remove the field")
+			o.b.c.add(o.index, o.id, o.field(k), CauseUnknownKey, quote(k), "the fields of the schema", "remove the field")
 		}
 	}
+}
+
+func payloadOf(op Operation) string {
+	switch op {
+	case OpAdmit:
+		return "admissions"
+	case OpResolve, OpInspect, OpCheck:
+		return "scope"
+	case OpApplyEvents:
+		return "inputs"
+	case OpRecordEvidence:
+		return "evidence"
+	case OpReplace:
+		return "replacements"
+	}
+	return ""
 }
 
 func (b *binder) request(root *node) *Request {
@@ -332,8 +351,8 @@ func (b *binder) request(root *node) *Request {
 	o.str("operation_id", &req.OperationID)
 	o.str("actor", &req.Actor)
 
-	want := map[Operation]string{OpAdmit: "admissions", OpResolve: "scope", OpApplyEvents: "events", OpRecordEvidence: "evidence", OpReplace: "replacements", OpInspect: "scope"}[req.Operation]
-	for _, name := range []string{"admissions", "events", "evidence", "replacements", "scope"} {
+	want := payloadOf(req.Operation)
+	for _, name := range []string{"admissions", "inputs", "evidence", "replacements", "scope"} {
 		if o.n.vals[name] == nil {
 			continue
 		}
@@ -350,11 +369,11 @@ func (b *binder) request(root *node) *Request {
 					b.admission(e, i, "", &req.Admissions[i])
 				}
 			}
-		case "events":
+		case "inputs":
 			if elems, ok := o.array(name); ok {
-				req.Events = make([]Event, len(elems))
+				req.Inputs = make([]Input, len(elems))
 				for i, e := range elems {
-					b.event(e, i, &req.Events[i])
+					b.input(e, i, &req.Inputs[i])
 				}
 			}
 		case "evidence":
@@ -401,8 +420,24 @@ func (b *binder) admission(n *node, index int, prefix string, a *Admission) {
 	o.readAdmission(a)
 }
 
+// idList reads an array of card ID strings.
+func (o *objReader) idList(key string, dst *[]ID) {
+	elems, ok := o.array(key)
+	if !ok {
+		return
+	}
+	*dst = make([]ID, len(elems))
+	for i, e := range elems {
+		if e.kind != nString {
+			o.b.c.add(o.index, o.id, o.field(key)+"["+strconv.Itoa(i)+"]", CauseWrongType, e.kind.String(), "a string", "send a card ID string")
+			continue
+		}
+		(*dst)[i] = ID(e.s)
+	}
+}
+
 func (o *objReader) readAdmission(a *Admission) {
-	var id, digest string
+	var id, digest, repo, policy string
 	o.str("id", &id)
 	a.ID = ID(id)
 	o.id = knownID(id)
@@ -410,27 +445,36 @@ func (o *objReader) readAdmission(a *Admission) {
 	a.Digest = Digest(digest)
 	o.str("object_id", &a.ObjectID)
 	o.str("commit", &a.Commit)
-	o.str("repository", &a.Repository)
+	o.str("repository", &repo)
+	a.Repository = card.Repository(repo)
 	o.str("path", &a.Path)
+	o.str("kind", &a.Kind)
+	o.idList("depends_on", &a.DependsOn)
+	o.str("entry", &a.Entry)
+	o.str("title", &a.Title)
 	o.str("row", &a.Row)
+	o.str("policy_version", &a.PolicyVersion)
+	o.str("policy_digest", &policy)
+	a.PolicyDigest = Digest(policy)
 	o.finish()
 }
 
-func (b *binder) event(n *node, index int, e *Event) {
+func (b *binder) input(n *node, index int, e *Input) {
 	o := b.object(n, index, "", "")
-	var id, typ, digest, dep string
+	var id, typ, digest, dep, result string
 	o.str("id", &id)
 	e.ID = ID(id)
 	o.id = knownID(id)
 	o.str("type", &typ)
-	e.Type = EventType(typ)
+	e.Type = InputType(typ)
 	b.expect(o, "expect", &e.Expect)
 	o.str("digest", &digest)
 	e.Digest = Digest(digest)
 	o.str("issuer", &e.Issuer)
 	o.str("source", &e.Source)
 	o.str("head", &e.Head)
-	o.str("result", &e.Result)
+	o.str("result", &result)
+	e.Result = ResultValue(result)
 	o.str("reason", &e.Reason)
 	o.str("dependency", &dep)
 	e.Dependency = ID(dep)
@@ -440,26 +484,27 @@ func (b *binder) event(n *node, index int, e *Event) {
 
 func (b *binder) evidence(n *node, index int, e *Evidence) {
 	o := b.object(n, index, "", "")
-	var id, digest string
+	var id string
 	o.str("id", &id)
 	e.ID = ID(id)
 	o.id = knownID(id)
-	o.str("digest", &digest)
-	e.Digest = Digest(digest)
 	b.expect(o, "expect", &e.Expect)
 	if elems, ok := o.array("records"); ok {
-		e.Records = make([]EvidenceRecord, len(elems))
+		e.Records = make([]Record, len(elems))
 		for j, re := range elems {
 			ro := b.object(re, index, o.id, "records["+strconv.Itoa(j)+"]")
 			r := &e.Records[j]
-			var eid string
-			ro.str("evidence_id", &eid)
-			r.EvidenceID = ID(eid)
-			ro.str("kind", &r.Kind)
-			ro.str("disposition", &r.Disposition)
-			ro.str("head", &r.Head)
+			var kind, disp, def string
+			ro.str("kind", &kind)
+			r.Kind = EvidenceKind(kind)
 			ro.str("issuer", &r.Issuer)
-			ro.str("source", &r.Source)
+			ro.str("disposition", &disp)
+			r.Disposition = Disposition(disp)
+			ro.str("head", &r.Head)
+			ro.str("digest", &def)
+			r.Def = Digest(def)
+			ro.str("verifier", &r.Verifier)
+			ro.str("artifact", &r.Artifact)
 			ro.finish()
 		}
 	}
@@ -484,20 +529,24 @@ func (b *binder) replacement(n *node, index int, r *Replacement) {
 
 func (b *binder) scope(n *node, s *Scope) {
 	o := b.object(n, -1, "", "scope")
-	if elems, ok := o.array("ids"); ok {
-		s.IDs = make([]ID, len(elems))
+	o.idList("ids", &s.IDs)
+	if elems, ok := o.array("rows"); ok {
+		s.Rows = make([]string, len(elems))
 		for i, e := range elems {
 			if e.kind != nString {
-				b.c.add(-1, "", "scope.ids["+strconv.Itoa(i)+"]", CauseWrongType, e.kind.String(), "a string", "send a card ID string")
+				b.c.add(-1, "", "scope.rows["+strconv.Itoa(i)+"]", CauseWrongType, e.kind.String(), "a string", "send a row name string")
 				continue
 			}
-			s.IDs[i] = ID(e.s)
+			s.Rows[i] = e.s
 		}
 	}
-	o.str("row", &s.Row)
-	var col string
-	o.str("col", &col)
-	s.Col = State(col)
-	o.integer("bound", &s.Bound)
+	if n := o.get("all"); n != nil {
+		switch {
+		case n.kind != nBool:
+			o.wrong("all", n, "a boolean")
+		default:
+			s.All = n.b
+		}
+	}
 	o.finish()
 }

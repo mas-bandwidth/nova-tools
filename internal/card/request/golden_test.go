@@ -39,7 +39,7 @@ func TestGoldenRequests(t *testing.T) {
 			inputs = append(inputs, in)
 		}
 	}
-	if err != nil || len(inputs) != 6 {
+	if err != nil || len(inputs) != 7 {
 		t.Fatalf("golden inputs: %v %v", inputs, err)
 	}
 	for _, in := range inputs {
@@ -51,42 +51,59 @@ func TestGoldenRequests(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r, err := Parse(data)
+			v, err := Parse(data)
 			if err != nil {
 				t.Fatalf("golden request refused: %v", err)
 			}
-			canon := Canonical(r)
+			canon := v.Canonical()
 			expectFile(t, "testdata/"+name+".canonical", append(canon, '\n'))
-			expectFile(t, "testdata/"+name+".sha256", []byte(Hash(r)+"\n"))
+			expectFile(t, "testdata/"+name+".sha256", []byte(v.Hash()+"\n"))
 			// The canonical form is a fixed point of parse and canonicalise.
-			r2, err := Parse(canon)
-			if err != nil || string(Canonical(r2)) != string(canon) {
+			v2, err := Parse(canon)
+			if err != nil || string(v2.Canonical()) != string(canon) {
 				t.Fatalf("canonical form is not a fixed point: %v", err)
 			}
-			if !SameRequest(canon, Canonical(r2)) {
+			if !SameRequest(canon, v2) {
 				t.Fatal("a request differs from itself")
 			}
 		})
 	}
 }
 
-func TestGoldenEventsCoverEveryEventTypeWithATransition(t *testing.T) {
+func TestGoldenInputsCoverEveryLifecycleInputType(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("testdata/events.json")
+	data, err := os.ReadFile("testdata/inputs.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := mustParse(t, string(data))
-	seen := map[EventType]bool{}
-	for _, e := range r.Events {
+	r := mustParse(t, string(data)).Request()
+	seen := map[InputType]bool{}
+	for _, e := range r.Inputs {
 		seen[e.Type] = true
 	}
-	for _, et := range EventTypes {
-		if len(SourceStates(et)) == 0 {
-			continue // ci-green has no transition, so no valid request carries it
+	for _, it := range InputTypes() {
+		if !seen[it] {
+			t.Errorf("golden inputs lack a %s input", it)
 		}
-		if !seen[et] {
-			t.Errorf("golden events lack a %s event", et)
+	}
+}
+
+func TestGoldenEvidenceCoversEveryKindSubmitted(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("testdata/evidence.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := mustParse(t, string(data)).Request()
+	seen := map[EvidenceKind]bool{}
+	for _, e := range r.Evidence {
+		for _, rc := range e.Records {
+			seen[rc.Kind] = true
+		}
+	}
+	for _, k := range EvidenceKinds() {
+		if k != KindQueue && !seen[k] {
+			t.Errorf("golden evidence lacks a %s record", k)
 		}
 	}
 }
@@ -106,21 +123,28 @@ func TestGoldenRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r, err := Parse(data)
-			if err == nil || r != nil {
-				t.Fatalf("document accepted: %+v", r)
+			v, err := Parse(data)
+			if err == nil || v != nil {
+				t.Fatalf("document accepted: %+v", v)
 			}
 			rs := err.(*Refusals)
-			expectFile(t, "testdata/"+name+".txt", []byte(strings.Join(rs.Lines(), "\n")+"\n"))
+			out := strings.Join(rs.Lines(), "\n") + "\n"
+			if strings.Contains(out, "secret") {
+				t.Fatalf("a refusal echoes the credential of an origin URL:\n%s", out)
+			}
+			expectFile(t, "testdata/"+name+".txt", []byte(out))
 		})
 	}
 }
 
 func TestGoldenReceipts(t *testing.T) {
 	t.Parallel()
-	r, j := sampleReceipt(), sampleRejection()
+	r, j, ir := sampleReceipt(), sampleRejection(), sampleInspect()
 	expectFile(t, "testdata/receipt.canonical", append(CanonicalReceipt(r), '\n'))
 	expectFile(t, "testdata/receipt.line", []byte(r.Line()+"\n"))
 	expectFile(t, "testdata/rejection.canonical", append(CanonicalRejection(j), '\n'))
 	expectFile(t, "testdata/rejection.line", []byte(j.Line()+"\n"))
+	expectFile(t, "testdata/inspect-result.canonical", append(ir.Canonical(), '\n'))
+	rc := rec(KindCI, DispRed, "ci:unit", g40, "run:9003")
+	expectFile(t, "testdata/record.line", []byte(rc.Line()+"\n"+rc.ID()+"\n"))
 }
