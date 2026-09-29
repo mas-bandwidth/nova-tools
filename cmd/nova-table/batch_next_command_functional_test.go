@@ -124,6 +124,15 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("seed: %d %s", code, stderr)
 	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "bnd", ntable.RowSpec{Binds: map[string]string{"ready": "ext:ready"}, Owner: "o"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set(ctx, ntable.MemberKey("junk"), "s", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err(); err != nil {
+		t.Fatal(err)
+	}
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 	manifest := func(table, epoch, revision, op, members string) string {
 		return `{"schema":1,"table":"` + table + `","epoch":"` + epoch + `","expected_table_revision":"` + revision + `","operation_id":"` + op + `","members":[` + members + `]}`
@@ -141,6 +150,11 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 		{"unknown row", manifest("demo", "0", rev, "n9", `{"id":"n","expect":{"absent":true},"create":{"row":"nope","col":"ready","score":1}}`)},
 		{"unknown column", manifest("demo", "0", rev, "n10", `{"id":"n","expect":{"absent":true},"create":{"row":"build","col":"nope","score":1}}`)},
 		{"missing table", manifest("ghost", "0", "0", "n12", `{"id":"a","expect":{}}`)},
+		{"bound cell", manifest("demo", "0", rev, "n13", `{"id":"n","expect":{"absent":true},"create":{"row":"bnd","col":"ready","score":1}}`)},
+		{"wrong type member", manifest("demo", "0", rev, "n14", `{"id":"junk","expect":{}}`)},
+		{"hidden placement", manifest("demo", "0", rev, "n15", `{"id":"ghost","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)},
+		{"operation id holds another request", manifest("demo", "0", rev, "seed", `{"id":"a","expect":{}}`)},
+		{"member id that starts with a hyphen and holds a quote", manifest("demo", "0", rev, "n16", `{"id":"-it's","expect":{"revision":"9"}}`)},
 	}
 	for _, tc := range cases {
 		code, stdout, stderr := runTable("batch", "--redis", addr, tc.manifest)

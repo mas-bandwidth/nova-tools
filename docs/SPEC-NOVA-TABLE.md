@@ -505,8 +505,9 @@ its first 32 and its length. The next command is one that runs when pasted; for 
 member it is `nova-table member read <table> <id>`, for a limit the sentence says
 which part of the request to narrow, and for a conflicting operation id it says to
 use a new one. A drift says whether a record exists: an owned set that holds a member
-no record places there is not described as a record's claim, and `nova-table check`
-is the command that finds every such disagreement (nova-table has no repair verb).
+no record places there is not described as a record's claim; the next command lists that cell
+(`nova-table cell members <table> <row> <col>`), and `nova-table check` finds every
+such disagreement (nova-table has no repair verb).
 A request for an epoch behind the active one refuses `STALE`; one for an epoch
 ahead of it refuses `EPOCHAHEAD`, naming the requested and the active epoch and
 suggesting `nova-table show <table>`, which prints the active epoch. Existence

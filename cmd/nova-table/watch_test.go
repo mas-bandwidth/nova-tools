@@ -264,7 +264,7 @@ func TestWatchCheckViewFailureProducesStallRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	wantStall := "stall: demo: requested epoch is stale, behind the active epoch: requested 1, active 2\n"
+	wantStall := "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2\n"
 	if !strings.Contains(got, "Work View") {
 		t.Fatalf("expected view title in output:\n%s", got)
 	}
@@ -345,7 +345,7 @@ func TestFormatStall(t *testing.T) {
 		t.Fatalf("unexpected format: %q", got)
 	}
 	err2 := fmt.Errorf("table demo: %w: requested 1, active 2; run: nova-table show 'demo'", ntable.ErrStale)
-	if got := formatStall("demo", err2); got != "stall: demo: requested epoch is stale, behind the active epoch: requested 1, active 2" {
+	if got := formatStall("demo", err2); got != "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2" {
 		t.Fatalf("unexpected format: %q", got)
 	}
 	err3 := errors.New("connection failed")

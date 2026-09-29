@@ -47,3 +47,43 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 		t.Errorf("Check: %v; want the store's ACL error, once prefixed", err)
 	}
 }
+
+// The store's own errors (memory, a read-only replica, a missing permission)
+// leave the script as the store wrote them, once prefixed.
+func TestStoreErrorsPassThroughTheScriptUnchanged(t *testing.T) {
+	t.Parallel()
+	var grants []string
+	for _, g := range tableGrants {
+		if g != "+type" {
+			grants = append(grants, g)
+		}
+	}
+	extra := append([]string{"--user", "default", "on", "nopass", "~*", "&*", "+@all", "--user", "nt", "on", ">pw", "resetkeys", "resetchannels", "-@all", "+ping"}, grants...)
+	addr, admin := live(t, extra...)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, admin, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, admin, "demo", "r", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	nt := redis.NewClient(&redis.Options{Addr: addr, Username: "nt", Password: "pw"})
+	defer nt.Close()
+	_, err := ntable.CellAdd(ctx, nt, "demo", "r", "ready", "x", 1)
+	if err == nil || !strings.Contains(err.Error(), "ERR ACL failure in script: User nt has no permissions to run the 'type' command") || strings.Contains(err.Error(), "ERR ERR") {
+		t.Errorf("a missing +type: %v", err)
+	}
+	if err := admin.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.ConfigSet(ctx, "maxmemory", "1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ntable.RowAdd(ctx, admin, "demo", "r9", ntable.RowSpec{})
+	if err == nil || !strings.Contains(err.Error(), "OOM command not allowed") || strings.Contains(err.Error(), "ERR ERR") {
+		t.Errorf("out of memory: %v", err)
+	}
+	if err := admin.ConfigSet(ctx, "maxmemory", "0").Err(); err != nil {
+		t.Fatal(err)
+	}
+}

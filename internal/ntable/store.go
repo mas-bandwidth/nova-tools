@@ -42,7 +42,7 @@ var (
 	ErrExists            = errors.New("exists with another definition")
 	ErrOccupied          = errors.New("shape would delete or hide placed members")
 	ErrOwnedAlias        = errors.New("binding target is table-owned storage")
-	ErrStale             = errors.New("requested epoch is stale, behind the active epoch")
+	ErrStale             = errors.New("requested epoch is stale, not the active epoch")
 	ErrEpochAhead        = errors.New("requested epoch is ahead of the active epoch")
 	ErrMemberEpoch       = errors.New("member belongs to another epoch")
 	ErrPlaced            = errors.New("member already has a place in this table")
@@ -293,12 +293,12 @@ func (o operation) refused(reply []any) error {
 		switch {
 		case o.guarded() && len(reply) == 6 && fmt.Sprint(reply[5]) == "set-only":
 			o.member = fmt.Sprint(reply[4])
-			cause = say(ErrDrift, "record and owned set disagree: the owned set at row %q column %q holds member %q, and no record places it there; inspect with check, then remove the stray entry from that cell or restore the member's record (nova-table has no repair verb)", reply[2], reply[3], reply[4])
-			remedy = "nova-table check " + shellWord(o.table)
+			cause = say(ErrDrift, "record and owned set disagree: the owned set at row %q column %q holds member %q, and no record places it there; list the cell, and run check for every such disagreement, then remove the stray entry or restore the member's record (nova-table has no repair verb)", reply[2], reply[3], reply[4])
+			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[2])) + " " + shellWord(fmt.Sprint(reply[3]))
 		case o.guarded() && len(reply) == 5:
 			o.member = fmt.Sprint(reply[4])
-			cause = say(ErrDrift, "record and owned set disagree: the record places member %q at row %q column %q, and the owned set there does not hold it; inspect with check", reply[4], reply[2], reply[3])
-			remedy = "nova-table check " + shellWord(o.table)
+			cause = say(ErrDrift, "record and owned set disagree: the record places member %q at row %q column %q, and the owned set there does not hold it; list the cell, and run check for every such disagreement", reply[4], reply[2], reply[3])
+			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[2])) + " " + shellWord(fmt.Sprint(reply[3]))
 		case o.guarded() && len(reply) == 4:
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: the record says place %q, which is not a usable owned cell", ErrDrift, reply[3])

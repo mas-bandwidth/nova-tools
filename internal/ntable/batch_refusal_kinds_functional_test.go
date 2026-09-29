@@ -140,7 +140,7 @@ func TestBatchRefusalsNameTheMemberOfAWrongTypeAndTheStateOfADrift(t *testing.T)
 	if !errors.Is(err, ntable.ErrDrift) {
 		t.Fatalf("a hidden placement: %v", err)
 	}
-	for _, w := range []string{`member "ghost"`, `owned set at row "test" column "done" holds member "ghost", and no record places it there`, "nova-table has no repair verb", "; run: nova-table check 'demo'"} {
+	for _, w := range []string{`member "ghost"`, `owned set at row "test" column "done" holds member "ghost", and no record places it there`, "nova-table has no repair verb", "; run: nova-table cell members 'demo' 'test' 'done'"} {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("the drift refusal lacks %q: %v", w, err)
 		}
