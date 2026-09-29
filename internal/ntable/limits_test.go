@@ -227,3 +227,16 @@ func TestReceiptBoundIsTheManifestBound(t *testing.T) {
 		t.Errorf("receipt bound %d, manifest bound %d", LimitReceiptBytes, LimitManifestBytes)
 	}
 }
+
+// A count that stopped where it passed its bound says its size is at least that.
+func TestLimitErrorSaysAtLeastForAStoppedCount(t *testing.T) {
+	t.Parallel()
+	exact := (&LimitError{Name: "receipt bytes", Bound: 10, Observed: 12}).Error()
+	least := (&LimitError{Name: "receipt bytes", Bound: 10, Observed: 12, AtLeast: true}).Error()
+	if !strings.Contains(exact, "observed 12") || strings.Contains(exact, "at least") {
+		t.Errorf("exact: %s", exact)
+	}
+	if !strings.Contains(least, "observed at least 12") {
+		t.Errorf("stopped count: %s", least)
+	}
+}

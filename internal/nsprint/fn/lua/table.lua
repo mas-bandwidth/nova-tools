@@ -155,6 +155,14 @@ do
     if observed <= bound then return nil end
     return T.refuse('LIMIT', T.limit_names[key], bound, observed, member)
   end
+  -- T.over_least(key, observed, member): the same refusal for a count the call
+  -- stopped at when it passed the bound, so the true size is at least this: the
+  -- sixth element of the refusal names the member ('' for none), the seventh says so.
+  function T.over_least(key, observed, member)
+    local bound = T.limits[key]
+    if observed <= bound then return nil end
+    return T.refuse('LIMIT', T.limit_names[key], bound, observed, member or '', 'at least')
+  end
   -- T.excerpt(s): s as a refusal may carry it: a value over 64 bytes is its first
   -- 32 and its length, so a refusal never echoes a long input.
   function T.excerpt(s)
@@ -2224,9 +2232,21 @@ do
         local counted = {}
         local function before_length(f)
           if counted[f] == nil then
+            -- Only a record of the wrong type counts as empty here (it is refused
+            -- below); any other error, a missing permission first, is raised.
             local n = redis.pcall('HSTRLEN', mkey, f)
-            if type(n) == 'table' then n = 0 end -- a wrong-type record is refused below
-            if n == 0 and redis.pcall('HEXISTS', mkey, f) ~= 1 then n = false end
+            if type(n) == 'table' then
+              if not (n.err and string.find(n.err, 'WRONGTYPE')) then T.rethrow(n) end
+              n = 0
+            end
+            if n == 0 then
+              local present = redis.pcall('HEXISTS', mkey, f)
+              if type(present) == 'table' then
+                if not (present.err and string.find(present.err, 'WRONGTYPE')) then T.rethrow(present) end
+                present = 0
+              end
+              if present ~= 1 then n = false end
+            end
             counted[f] = n
             touched = touched + (n or 0)
           end
@@ -2247,7 +2267,7 @@ do
           receipt_least = receipt_least + #f + 9 + side('before', n) + side('after', false)
         end
         for f in pairs((entry.expect and entry.expect.fields) or {}) do before_length(f) end
-        local over = T.over('batch_value_bytes', touched, id) or T.over('receipt_bytes', receipt_least, id)
+        local over = T.over_least('batch_value_bytes', touched, id) or T.over_least('receipt_bytes', receipt_least, id)
         if over then return over end
       end
     end
@@ -2484,7 +2504,9 @@ do
         before_place = item.before_place,
         after_place = item.after_place,
         before_score = item.before_score,
-        after_score = item.after_score,
+        -- never nil: the score the store holds is read back after the writes, and
+        -- a key that comes and goes can change the order the encoder writes it in
+        after_score = item.after_score == nil and '' or item.after_score,
         before_rev = item.before_rev,
         after_rev = item.after_rev,
         fields_set = T.smallvalues(entry.set),
