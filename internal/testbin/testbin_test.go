@@ -84,6 +84,8 @@ func TestPlaceHardLinksInTheSameDirectory(t *testing.T) {
 // fail. The link function is injected so the fallback is exercised on any
 // filesystem.
 func TestPlaceFallsBackToCopyWhenLinkFails(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
@@ -91,10 +93,7 @@ func TestPlaceFallsBackToCopyWhenLinkFails(t *testing.T) {
 	if err := os.WriteFile(src, raw, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	orig := link
-	link = func(oldname, newname string) error { return os.ErrInvalid }
-	defer func() { link = orig }()
-	if err := Place(src, dst); err != nil {
+	if err := placeWithLink(src, dst, func(oldname, newname string) error { return os.ErrInvalid }); err != nil {
 		t.Fatalf("Place with a failing link: %v", err)
 	}
 	got, err := os.ReadFile(dst)

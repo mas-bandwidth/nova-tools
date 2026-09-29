@@ -15,21 +15,24 @@ import (
 	"syscall"
 )
 
-// link is os.Link by default. A test swaps it to exercise the copy fallback
-// without needing a filesystem where Link fails.
-var link = os.Link
-
 // Place puts the program at src at dst. It removes dst first, then hard-links
 // src to dst where the platform and filesystem allow it and returns nil; the
 // fallback is a byte copy with the executable bit set (mode 0o755). Windows
 // always takes the copy, because a link there needs a privilege the CI path
 // does not have.
 func Place(src, dst string) error {
+	return placeWithLink(src, dst, os.Link)
+}
+
+func placeWithLink(src, dst string, linkFn func(string, string) error) error {
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if runtime.GOOS != "windows" {
-		if err := link(src, dst); err == nil {
+		if linkFn == nil {
+			linkFn = os.Link
+		}
+		if err := linkFn(src, dst); err == nil {
 			return nil
 		}
 	}
