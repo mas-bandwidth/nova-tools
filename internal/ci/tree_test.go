@@ -6,12 +6,15 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // tree_test.go is the shared repository tree the class tests read: ONE walk and
@@ -453,4 +456,27 @@ type treeParse struct {
 	fset *token.FileSet
 	file *ast.File
 	err  error
+}
+
+var (
+	repoGoListOnce sync.Once
+	repoGoListOut  []byte
+	repoGoListErr  error
+)
+
+// repoGoList runs `go list ./...` over the repository root once per test process
+// and returns its output. The tests in this package are read-only over the tree,
+// so package membership never changes between tests.
+func repoGoList(t *testing.T) []byte {
+	t.Helper()
+	repoGoListOnce.Do(func() {
+		cmd := exec.Command("go", "list", "./...")
+		cmd.Dir = repoRoot(t)
+		cmd.Env = goenv.Clean(os.Environ())
+		repoGoListOut, repoGoListErr = cmd.Output()
+	})
+	if repoGoListErr != nil {
+		t.Fatal(repoGoListErr)
+	}
+	return repoGoListOut
 }

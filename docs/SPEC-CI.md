@@ -2309,9 +2309,11 @@ this rule having run on it, and a main run excuses it all the same.
 ### `tlc` — bounded model evidence
 
 `make tlc` runs one declared `TLC_GROUP` on a Linux bench, using explicit
-`TLC_JAR` and `TLC_OUT` paths. It downloads nothing, uses at most two TLC
-workers and two JVM processors, and caps the whole group at 110 seconds.
-Each case has an owned temporary state directory. Expected counterexamples
+`TLC_JAR` and `TLC_OUT` paths; it is `tlacheck run` (tools/tlacheck, over
+internal/tlc). It downloads nothing, uses at most two TLC workers and two JVM
+processors, and caps the whole group at 110 seconds. Each case has an owned
+temporary state directory, and TLC runs in a private copy of the models under
+`TLC_OUT`, so the error-trace files it writes never land in `tla/`. Expected counterexamples
 must name the selected invariant, action or temporal property and return its
 expected TLC exit; a timeout, parse failure or unrelated violation is a failure.
 Final liveness checking remains enabled.
@@ -2328,7 +2330,9 @@ proofs or silently replaced by smaller configurations.
 `tla/RUNS.tsv` retains each measured module/configuration, generated and distinct
 states, elapsed time, result, exit, declared expectation, budget and run mode.
 It also records the bench, UTC start, installed jar hash and an input fingerprint
-covering all TLA modules, MC configurations, case declarations and runner bytes.
+covering all TLA modules, MC configurations, case declarations and the runner's
+Go files (`internal/tlc`, without its tests); `tlacheck merge` joins the records of
+the group runs into the committed file.
 Unknown state counts on a failed timeout stay unknown, never zero-state success.
 Updating any fingerprinted input requires refreshing the records on a bench.
 
@@ -2337,6 +2341,9 @@ without executing Java or making a network call. Required models cannot become
 bench debt to evade their gate. Only the two named deferred models may retain
 failed or missing measurements, and the class lists that debt explicitly; any
 existing debt record must still have a current fingerprint and honest provenance.
+It also holds `internal/tlc`'s own fingerprint, computed from the bytes the runner was
+built with, to the one the class computes from the checkout's files, so a record the
+runner writes is stale only because an input changed.
 `TestTLCRecordFreshnessAndCoverageWitnesses` proves changed models, changed bounds,
 changed runners, omitted/added cases, wrong exits and invalid gate waivers refuse,
 while a declared failed bench measurement is retained as debt, never PASS.
@@ -2344,7 +2351,7 @@ while a declared failed bench measurement is retained as debt, never PASS.
 The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
 from the case plan and runs only on self-hosted Linux runners, with two-minute
 job timeouts and a 110-second group limit. The repository's `TLC_JAR` variable
-names the preinstalled jar; Java and Python must already be on PATH. Logs and
+names the preinstalled jar; Java and Go must already be on PATH. Logs and
 TSV records are uploaded even on failure. This workflow does not accept PR events.
 The ordinary change gate checks the committed records; the nightly repeats the
 actual model runs. A failing or absent nightly is not evidence of a checked model.

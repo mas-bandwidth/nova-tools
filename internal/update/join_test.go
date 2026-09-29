@@ -34,8 +34,10 @@ import (
 
 var (
 	joinOnce     sync.Once
+	joinBusOnce  sync.Once
 	joinDir      string
 	joinBuildErr error
+	joinBusErr   error
 	joinPrepared bool
 )
 
@@ -53,14 +55,29 @@ func exeName(n string) string {
 func joinBinaries(t *testing.T) string {
 	t.Helper()
 	dir := buildTreeBinaries(t)
+	joinBusOnce.Do(func() {
+		pkg := "./cmd/nova-bus"
+		build := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, exeName(filepath.Base(pkg))), pkg)
+		build.Dir = filepath.Join("..", "..")
+		build.Env = goenv.Clean(os.Environ())
+		if out, err := build.CombinedOutput(); err != nil {
+			joinBusErr = fmt.Errorf("go build %s: %v\n%s", pkg, err, out)
+			return
+		}
+		out, _ := exec.Command(filepath.Join(dir, exeName("nova-bus")), "help").CombinedOutput()
+		joinPrepared = bytes.Contains(out, []byte("--prepared-stdin")) && bytes.Contains(out, []byte("prepare --bus"))
+	})
+	if joinBusErr != nil {
+		t.Fatal(joinBusErr)
+	}
 	if !joinPrepared {
 		t.Skip("waits on #138: nova-bus in this tree has no prepared verbs (no --prepared-stdin in help)")
 	}
 	return dir
 }
 
-// buildTreeBinaries builds this tree's nova-bus and nova-update once per package
-// run, without deciding anything about them. A test that needs a real reporter
+// buildTreeBinaries builds this tree's nova-update once per package
+// run, without deciding anything about it. A test that needs a real reporter
 // process but no bus uses this; the join uses joinBinaries, which adds the
 // capability probe and the skip.
 func buildTreeBinaries(t *testing.T) string {
@@ -72,17 +89,14 @@ func buildTreeBinaries(t *testing.T) string {
 			return
 		}
 		joinDir = dir
-		for _, pkg := range []string{"./cmd/nova-bus", "./cmd/nova-update"} {
-			build := exec.Command("go", "build", "-o", filepath.Join(dir, exeName(filepath.Base(pkg))), pkg)
-			build.Dir = filepath.Join("..", "..")
-			build.Env = goenv.Clean(os.Environ())
-			if out, err := build.CombinedOutput(); err != nil {
-				joinBuildErr = fmt.Errorf("go build %s: %v\n%s", pkg, err, out)
-				return
-			}
+		pkg := "./cmd/nova-update"
+		build := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, exeName(filepath.Base(pkg))), pkg)
+		build.Dir = filepath.Join("..", "..")
+		build.Env = goenv.Clean(os.Environ())
+		if out, err := build.CombinedOutput(); err != nil {
+			joinBuildErr = fmt.Errorf("go build %s: %v\n%s", pkg, err, out)
+			return
 		}
-		out, _ := exec.Command(filepath.Join(dir, exeName("nova-bus")), "help").CombinedOutput()
-		joinPrepared = bytes.Contains(out, []byte("--prepared-stdin")) && bytes.Contains(out, []byte("prepare --bus"))
 	})
 	if joinBuildErr != nil {
 		t.Fatal(joinBuildErr)
