@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -324,7 +326,7 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	}
 
 	hangs := filepath.Join(dir, "hangs")
-	if err := testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	line, err = readVersionLineWithin(hangs, 200*time.Millisecond, 50*time.Millisecond)
@@ -387,10 +389,10 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		contains    []string
 		absent      []string
 	}{
-		{"hang", "exec sleep 300", good, 2,
+		{"hang", "exec sleep 30", good, 2,
 			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 1s", "stamp=nova-swarm good-stamp", "by hand"},
 			[]string{"DOCTOR DRIFT", "shadows"}},
-		{"print then hang: the stamp is compared and the hang reported", "echo 'nova-swarm stale-stamp'; exec sleep 300", good, 2,
+		{"print then hang: the stamp is compared and the hang reported", "echo 'nova-swarm stale-stamp'; exec sleep 30", good, 2,
 			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 1s"}, nil},
 		{"print then exit 3: the stamp is compared and the exit reported", "echo 'nova-swarm stale-stamp'; exit 3", good, 2,
 			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "exited 3"}, nil},
@@ -400,7 +402,7 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 			[]string{"DOCTOR UNREADABLE", "printed nothing", "stamp=nova-swarm good-stamp"}, nil},
 		{"missing where PATH names it", "", good, 2,
 			[]string{"DOCTOR UNREADABLE", "not found", "stamp=nova-swarm good-stamp"}, nil},
-		{"the local copy hangs", good, "exec sleep 300", 2,
+		{"the local copy hangs", good, "exec sleep 30", 2,
 			[]string{"DOCTOR UNREADABLE", "local=", "timed out after 1s", "stamp=nova-swarm good-stamp"}, []string{"DOCTOR DRIFT"}},
 		{"both answer and agree", good, good, 0, nil, []string{"DOCTOR"}},
 		{"no local copy is tolerated", good, "", 0, nil, []string{"DOCTOR"}},
@@ -442,22 +444,51 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 	}
 }
 
+// reapRecordedChildren ends every process a stub recorded in pidFile (one pid per line, one
+// line per run of the stub) and fails the test if any of them is still alive afterwards. The
+// stub's children are orphans, so they cannot be waited for; a process that is gone answers a
+// signal-0 with ESRCH, and the check spins on that under a bound rather than sleeping.
+func reapRecordedChildren(t *testing.T, pidFile string) {
+	t.Helper()
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Errorf("the stub recorded no child pid: %v", err)
+		return
+	}
+	var pids []int
+	for _, field := range strings.Fields(string(raw)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil || pid <= 1 {
+			t.Errorf("the pid file holds %q, want one pid per line", field)
+			continue
+		}
+		pids = append(pids, pid)
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, pid := range pids {
+		for syscall.Kill(pid, 0) == nil && ctx.Err() == nil {
+			runtime.Gosched()
+		}
+		if syscall.Kill(pid, 0) == nil {
+			t.Errorf("the stub's background child %d is still alive after it was killed", pid)
+		}
+	}
+}
+
 // A binary that prints its stamp, exits 0 and leaves a background child holding the output
 // pipe has answered: the wait for the pipe gives up after the grace and the stamp is read.
+// The stub runs once for the preflight and once for the doctor verb, and each run appends
+// its child's pid, so the cleanup ends every child, not the last; the child's own sleep is
+// short, so a test process that dies before its cleanup leaves nothing for long.
 func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	t.Parallel()
-	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	pidFile := filepath.Join(t.TempDir(), "children.pid")
 	env, _, _ := doctorStubs(t,
-		"echo 'nova-swarm good-stamp'; sleep 300 & echo $! > "+pidFile,
+		"echo 'nova-swarm good-stamp'; sleep 5 & echo $! >> "+pidFile,
 		"echo 'nova-swarm good-stamp'")
-	t.Cleanup(func() {
-		// The stub's own background child: end it.
-		if raw, err := os.ReadFile(pidFile); err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
-	})
+	t.Cleanup(func() { reapRecordedChildren(t, pidFile) })
 	var errOut bytes.Buffer
 	if code, stop := env.preflight([]string{"native", "--card", "c"}, &errOut); stop || code != 0 {
 		t.Fatalf("preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
@@ -465,5 +496,8 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	var out, derr bytes.Buffer
 	if code := env.cmdDoctor(nil, &out, &derr); code != 0 || out.String() != "DOCTOR OK stamp=nova-swarm good-stamp\n" {
 		t.Errorf("doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
+	}
+	if raw, err := os.ReadFile(pidFile); err != nil || len(strings.Fields(string(raw))) != 2 {
+		t.Errorf("the stub ran twice and should have recorded two children, got %q (%v)", raw, err)
 	}
 }
