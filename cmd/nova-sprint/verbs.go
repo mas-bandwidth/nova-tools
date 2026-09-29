@@ -169,6 +169,7 @@ one answer to each judgment (every one prints its own, filled in):
   sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
+  stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
 `
 
 func versionLine() string { return buildinfo.Line(prog, version) }

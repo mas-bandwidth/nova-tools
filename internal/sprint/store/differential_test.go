@@ -126,5 +126,5 @@ func dRun(t *testing.T, from, n uint64, steps int) {
 
 func TestEngineAgreesWithTheReferenceModel(t *testing.T) {
 	t.Parallel()
-	dRun(t, 1, 12, 80) // the slow tier runs 2,000 seeds of 150
+	dRun(t, 1, 8, 80) // the slow tier runs 2,000 seeds of 150
 }

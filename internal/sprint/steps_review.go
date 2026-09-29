@@ -111,9 +111,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
-			u.Closes = closesFor(s.Open, []string{NStranded}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
 		asked := map[string]string{}
 		for _, rd := range chosenReaders {
@@ -524,7 +524,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -656,7 +656,7 @@ type ReturnReq struct {
 // ReturnResolves is the judgments a return is a decision for: a red CI on the
 // primary is discharged; a stream's red or rejected batch is answered and stays
 // open while the stream is stopped.
-var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped}
+var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped, NStalled}
 
 func answeredIn(notes []Note, id string) bool {
 	for _, n := range notes {

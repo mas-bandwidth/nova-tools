@@ -76,6 +76,7 @@ var TickDecisions = map[string][]string{
 	NWorkLate:  {"fleet down <member>", "wait", "drop"},
 	NReadLate:  {"ask --another", "wait", "drop"},
 	NMergeLate: {"merge --stream <s>", "look", "wait"},
+	NStalled:   {"look at the card", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -308,7 +309,10 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 
 // T6. TickCheck holds the state to what is always true (section 9): each
 // violation is one judgment (N8), with the rule and the cards, closed by the
-// tick when the rule holds again.
+// tick when the rule holds again. Its duty is the no-stall rule too (rule 12):
+// each stall nothing holds is one judgment "stalled", with the decisions open
+// to it, not written again while it stays and closed when it clears; a stall
+// that waits behind another is told by the other's.
 func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
@@ -325,7 +329,19 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
-	due := notify(&p, s, conds, []string{NInvariant}, r)
+	for _, f := range Unheld(HeldState{Snap: s, Running: true, Stopped: r.Stopped}, s.Now) {
+		if f.Root != "" {
+			continue
+		}
+		c := cond{typ: NStalled, stream: f.Stream, what: f.What + ": " + f.Why, decisions: f.Decisions}
+		if strings.HasPrefix(f.Subject, "stream:") {
+			c.streamLevel = true
+		} else {
+			c.primaries = []string{f.Subject}
+		}
+		conds = append(conds, c)
+	}
+	due := notify(&p, s, conds, []string{NInvariant, NStalled}, r)
 	return p, due
 }
 
@@ -570,9 +586,25 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		}
 		p.Notes = append(p.Notes, n)
 	}
+	closing := map[string]bool{}
 	for _, o := range held {
 		if contains(types, o.Note.Type) && !holds[condKey(o.Note.Type, o.Subject(), o.Note.What)] {
 			p.Closes = append(p.Closes, o)
+			closing[o.Note.ID] = true
+		}
+	}
+	// A primary in review whose last judgment the tick closes (its late read
+	// reported, say) gets the judgment it needs after it, as every step that
+	// leaves a primary in review does.
+	seen := map[string]bool{}
+	for _, o := range p.Closes {
+		pr := s.Work.Placed(o.Subject())
+		if pr == nil || seen[pr.ID] {
+			continue
+		}
+		seen[pr.ID] = true
+		if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, writes: p.Notes, who: who}); ok {
+			p.Notes = append(p.Notes, j)
 		}
 	}
 	return due

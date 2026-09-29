@@ -316,7 +316,8 @@ the tick would make, no other open judgment on it).
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
 | an invariant is broken | card (look at the card), repair, wait | no |
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
-| a stream has made no progress past its deadline (stalled) | where, queue (look) | no |
+| a stream has made no progress past its deadline (stale) | where, queue (look) | no |
+| stalled: nothing holds a card (rule 12) | the decisions its place allows, card (look at the card), wait | no, while the stall stands |
 
 A condition the tick keeps (cannot ask, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -330,7 +331,9 @@ overdue.
 
 The machine's tick writes its own judgments (section 14): cannot ask, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
-merge step past its deadline, an invariant is broken.
+merge step past its deadline, an invariant is broken, a stall (rule 12: one
+judgment for each card nothing holds, or for the stall a chain of waiting
+cards ends at; the stall judgment itself holds nothing).
 
 The step that lands or drops the last open primary of the sprint (every
 primary landed or off the table) writes one judgment, the
@@ -367,7 +370,11 @@ same run is recorded once. Stream-batch CI in merging is the merge step's fact.
 
 Each carries: id, kind, type, stream, the primaries (a set, bounded, with the
 count), what happened, who reported it, attempt, how many times before, the
-clock time, the decisions. Notifications of one type, stream and cause are
+clock time, the decisions. A judgment about particular cards names them in
+fields of its own: the card a stream stopped on (a conflict, a cross stop), the
+card a cross stop needs and its stream, the sentinel reached, the suspects of a
+red branch. Its printed commands read those fields, never a card's place in its
+set of primaries. Notifications of one type, stream and cause are
 grouped into one line with a count; a subject is listed and counted once.
 Each group has an id that does not move while it is open: the id of its oldest
 open notification (a stalled stream's is `stale:<stream>`); overdue marks a
@@ -450,8 +457,23 @@ exactly, member by member, never by their counts.
     was dropped or missing and acknowledged is recorded on the card as waived,
     by whom and when, and counts as satisfied; nothing else does. add refuses needs that
     would make a cycle, naming it.
+12. Nothing stalls. Every primary on the table that has not landed is held by
+    one of: (a) an outside actor before its deadline (its live work card in an
+    up member's ready or working cell, a read card asked or reading, its merge
+    card queued in a stream that merges); (b) the next tick, whose own parts,
+    called on the state, move it or write a judgment naming it; (c) an open
+    judgment naming it, or its stream while the stream is stopped or it merges
+    there, or the tick's judgment on it that the coordinator acknowledged; (d)
+    what it waits on, itself held, followed through the chain (a need not
+    landed, a sentinel not released, a place in the ready queues); (e) with
+    the machine STOPPED, the next tick. A chain that ends in nothing or in a
+    cycle holds nothing. A judgment past its due time that no overdue mark
+    holds, a stopped stream with no open judgment, and an operation pending
+    past its grace that a tick since has not finished are stalls too. `card`
+    prints what holds a primary (`HELD`).
 
-Rules 2, 3, 4, 5 and 9 hold whenever no operation is pending; 1, 6, 7, 8 and
+Rules 2, 3, 4, 5, 9 and 12 hold whenever no operation is pending (while one
+is, 12 judges only the operation); 1, 6, 7, 8 and
 11 always; 5 and 6 skip sentinels, which land by release and are never read or
 merged. A rank is the one step that changes scores: while a rank is pending, a
 copy may carry the rank's own new score, and any other difference breaks
@@ -471,8 +493,12 @@ and after it reads the tables), before evaluating any guard: if an operation is
 pending, the verb first finishes it (repair) and reads again, or, when that
 operation's writer is still at it or it cannot finish, refuses naming it; it
 never acts on a partial state. The verb takes the fence only at the generation
-it read, so no other operation applied anything since its read. Its manifests
-apply in order; a table's changes over the table layer's bound are several
+it read, so no other operation applied anything since its read. A step changes
+each card once: two changes of one card in one plan that agree (one
+expectation, at most one place change, no field set to two values or both set
+and unset) are one entry; two that disagree refuse the step whole before
+anything is written, naming both causes. Its manifests apply in order; a
+table's changes over the table layer's bound are several
 manifests of that table under one operation id family, so a verb over a large
 set is one invocation. The release of the fence is the logical commit: in one
 step it writes the notifications, opens and closes the judgments, records the
@@ -671,20 +697,23 @@ every stream's waiting cards in score order; a card whose needs have all landed 
 moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), level
 (T4), ask (T2: two different readers for each primary in review with no read
-card at its attempt and work not failed), check (T6), deadlines. Each part is
+card at its attempt and work not failed), check (T6: section 9, and the
+no-stall rule 12), deadlines. Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
 catch up, and the machine line says so. A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.
 
 The tick writes a judgment once while its condition holds and closes it when
-the condition clears: cannot ask (fewer than two different readers are free;
+the condition clears (closing a primary's last judgment in review, it writes
+the judgment the primary needs next, as every step that leaves one in review
+does): cannot ask (fewer than two different readers are free;
 one condition per primary whatever its count of free readers),
 no fleet member is up, a work card past its deadline (15 minutes dealt and not
 taken, 2 hours taken and not finished, or 2 hours from its first deal and not
 finished, however often it was dealt again), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
-and the cards). Deadlines count running time: time spent STOPPED does not
+and the cards), stalled (rule 12: what nothing holds, and why). Deadlines count running time: time spent STOPPED does not
 count. A judgment the tick keeps is answered by its decisions or held by `wait`
 (section 8), never by `ack`, except a failing reminder, whose ack is held on
 the condition in no inbox until the condition clears and comes back.
