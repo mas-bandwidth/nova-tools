@@ -145,8 +145,8 @@ func TestModelNoMemberJudgmentAfterAClear(t *testing.T) {
 	h.setup(1)
 	h.startMachine()
 	h.machine()
-	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
 	h.machine()
 	if len(h.openOf(sprint.NNoMember)) != 1 {
 		t.Fatalf("no member before the clear: %d", len(h.openOf(sprint.NNoMember)))

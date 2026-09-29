@@ -269,6 +269,7 @@ func TestCannotAskIsWrittenOncePerPrimary(t *testing.T) {
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 	h.startMachine()

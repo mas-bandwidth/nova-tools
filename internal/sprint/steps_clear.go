@@ -1,13 +1,14 @@
 package sprint
 
 // Shape is what a sprint keeps across a clear: its streams, its readers, and
-// its fleet members with their status. The tables, their columns and the view
+// its fleet members with their status and the coordinator's holds. The tables, their columns and the view
 // are the table layer's and carry across by themselves.
 type Shape struct {
 	Streams []string          `json:"streams"`
 	Readers []string          `json:"readers"`
 	Members []string          `json:"members"`
 	Status  map[string]string `json:"status"` // member -> up or down
+	Held    []string          `json:"held,omitempty"`
 }
 
 // ShapeOf is a snapshot's shape.
@@ -24,6 +25,9 @@ func ShapeOf(s *Snapshot) Shape {
 			st = Down
 		}
 		sh.Status[m] = st
+		if s.MemberCtl(m).F("held") != "" {
+			sh.Held = append(sh.Held, m)
+		}
 	}
 	return sh
 }
@@ -45,8 +49,11 @@ func RestoreShape(s *Snapshot, sh Shape) Plan {
 		if s.Fleet.Card(CtlID(m)) != nil {
 			continue
 		}
-		p.Units = append(p.Units, Unit{Key: CtlID(m), Changes: []Change{change(Fleet, createEntry(CtlID(m), m, Ctl, 0,
-			map[string]string{"kind": "member", "status": sh.Status[m], "since": now}))}, Moved: "member " + m + " " + sh.Status[m]})
+		fields := map[string]string{"kind": "member", "status": sh.Status[m], "since": now}
+		if contains(sh.Held, m) {
+			fields["held"] = now
+		}
+		p.Units = append(p.Units, Unit{Key: CtlID(m), Changes: []Change{change(Fleet, createEntry(CtlID(m), m, Ctl, 0, fields))}, Moved: "member " + m + " " + sh.Status[m]})
 	}
 	return p
 }

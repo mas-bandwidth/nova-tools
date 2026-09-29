@@ -32,8 +32,8 @@ func TestFleetDoneAndOkPctAreTableFormulas(t *testing.T) {
 	}
 	want := "fleet | ready | working | done | ok%   | status | load\n" +
 		"------+-------+---------+------+-------+--------+-----\n" +
-		"m1    |     0 |       0 |    4 | 75.0% | up     | 0\n" +
-		"m2    |     0 |       0 |    0 | 0.0%  | up     | 0\n" +
+		"m1    |     0 |       0 |    4 | 75.0% | up     | 0.0%\n" +
+		"m2    |     0 |       0 |    0 | 0.0%  | up     | 0.0%\n" +
 		"------+-------+---------+------+-------+--------+-----\n" +
 		"      |     0 |       0 |    4 | 75.0% |        |\n"
 	if fleet != want {

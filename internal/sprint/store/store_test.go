@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -22,11 +23,15 @@ type harness struct {
 	ctx context.Context
 	mu  sync.Mutex
 	now time.Time
+	// live is the members that beat, at the start and at every step of the
+	// clock: the fleet machines alive (a test that has one fall silent takes
+	// it out).
+	live []string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0}
+	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0, live: []string{"m1", "m2"}}
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
@@ -38,10 +43,25 @@ func newHarness(t *testing.T) *harness {
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	return h
 }
 
-func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.mu.Unlock() }
+func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.mu.Unlock(); h.beat() }
+
+// beat is one beat of every live member, at load 0.
+func (h *harness) beat() {
+	h.t.Helper()
+	h.mu.Lock()
+	live := append([]string(nil), h.live...)
+	h.mu.Unlock()
+	zero := 0.0
+	for _, m := range live {
+		if _, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{}); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+}
 
 func (h *harness) run(step Step) Result {
 	h.t.Helper()

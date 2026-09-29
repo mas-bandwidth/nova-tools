@@ -21,7 +21,7 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyNotes, keyOpen, keyCurs
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // identity, revision, definition record and change log; and its operation
@@ -35,6 +35,9 @@ var residueSuffixes = []string{":identity", ":revision", ":definition", ":change
 type Epochs struct {
 	Last uint64
 	Old  map[uint64][]ntable.Table
+	// Beating is every machine that may have a beat record: the fleet's
+	// members of every epoch, and the unknown machines that beat.
+	Beating []string
 }
 
 // TeardownKeys is every key a deployment leaves after its tables are dropped
@@ -87,6 +90,9 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	for _, k := range machineKeys {
 		keys = append(keys, names.Key(k))
 	}
+	for _, m := range epochs.Beating {
+		keys = append(keys, names.Key(beatKey(m)))
+	}
 	return append(keys, names.EpochKey())
 }
 
@@ -122,6 +128,30 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 		}
 		epochs.Old[e] = shapes
 	}
+	beating := map[string]bool{}
+	current, err := st.B.AtEpoch(es.N, false).Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	if err != nil && refusalCode(err) != "NOTABLE" {
+		return 0, err
+	}
+	for _, shapes := range append([][]ntable.Table{current}, mapValues(epochs.Old)...) {
+		for _, sh := range shapes {
+			if sh.Name != st.Names.Table(sprint.Fleet) {
+				continue
+			}
+			for _, r := range sh.Rows {
+				beating[r.Key] = true
+			}
+		}
+	}
+	if s, err := st.strangers(ctx); err == nil {
+		for m := range s {
+			beating[m] = true
+		}
+	}
+	for m := range beating {
+		epochs.Beating = append(epochs.Beating, m)
+	}
+	sort.Strings(epochs.Beating)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {
 		if err := st.B.AtEpoch(es.N, false).DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
@@ -348,8 +378,8 @@ func (m *Mem) deleteKey(k string) bool {
 			}
 		}
 	}
-	for _, s := range machineKeys {
-		if _, held := m.kv[s]; held && strings.HasSuffix(k, "sprint:"+s) {
+	for s := range m.kv {
+		if strings.HasSuffix(k, "sprint:"+s) {
 			delete(m.kv, s)
 			return true
 		}
@@ -462,11 +492,17 @@ func (m *Mem) Keys(names sprint.Names) []string {
 			}
 		}
 	}
-	for _, s := range machineKeys {
-		if _, held := m.kv[s]; held {
-			keys = append(keys, names.Key(s))
-		}
+	for s := range m.kv {
+		keys = append(keys, names.Key(s))
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func mapValues(m map[uint64][]ntable.Table) [][]ntable.Table {
+	var out [][]ntable.Table
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
 }

@@ -134,8 +134,33 @@ and it is the coordinator's decision, receipted.
   card is ready, never working.
 - A member coming up: ready queues are levelled in one call; the newest cards move.
 - done and ok% are computed by the table from the member's `ok` and `failed`
-  cells. load and status are reported, never typed by the coordinator except
-  `fleet up|down` to override.
+  cells.
+- A fleet member says it is there by beating: `nova-sprint fleet beat
+  <member>`, run on the machine every few seconds, writes its last beat time
+  (to the second) and its load in one write of its own record, outside the
+  tables, whether the machine is RUNNING or STOPPED. The load is the machine's
+  CPU busy percent of all its cores, measured between beats; where that cannot
+  be measured, the one-minute load average over the logical cores, capped at
+  1000%. `--load <percent>` gives it instead.
+- A member's status is derived, never typed: up while its last beat is at
+  most 15 s old, down past that or when it has never beaten, and held while
+  the coordinator holds it, whatever it beats. `fleet down <member>` holds a
+  member and takes it down; `fleet up <member>` releases the hold, adding a
+  member the sprint does not know, and brings it up at once when its beat is
+  fresh.
+- The tick's first part (presence) applies one change of derived status a
+  tick, ups first: a member going down has its unfinished work cards dealt to
+  the members up, or withdrawn when none is; a member coming up levels the
+  ready queues; each change writes one happened notification that says why.
+  While STOPPED, beats are accepted and the fleet's cells show the derived
+  status, but nothing is dealt; the first tick after `start` applies what
+  changed.
+- The status cell shows held, up or down. The load cell shows the highest load
+  of the last 10 s with one decimal while the beat is fresh, and is empty
+  otherwise, never a zero.
+- A beat from a machine the sprint does not know writes one happened
+  notification, "an unknown machine is beating: <name>; add it with nova-sprint
+  fleet up <name>". Teardown removes every beat record.
 
 Every work card carries an assignment generation bound to its identity, attempt
 and member. It is 1 when the card is cut and changes on every redeal, drain,
@@ -277,7 +302,7 @@ the tick would make, no other open judgment on it).
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask | reader add, rework, drop, wait | no |
-| no fleet member is up | fleet up, wait | no |
+| no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a work card is past its deadline | fleet down (the member), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
@@ -528,7 +553,10 @@ cleared and naming the new epoch.
 (`--seed`) so a run repeats: workers taking and finishing work cards (`--fail`),
 readers reporting read cards (`--broken`), each stream's merge step with its
 facts (`--batch`, `--stuck`, `--cross`, `--red`), members going down and up
-(`--flap`). The mechanical moves are the machine's (section 14): the driver
+(`--flap`: a member's machine falls silent, stops beating, and beats again
+later; `--hold` plays those as the coordinator's hold instead;
+`--silent <member>@<from>+<for>` silences one member for a while). The driver
+beats every member it plays. The mechanical moves are the machine's (section 14): the driver
 plays only the outside actors, and refuses to play (exit 2) while no machine is
 running. Everything it does is a nova-sprint verb run
 through the command's own entry point, printed as the line to type with its
@@ -537,10 +565,10 @@ never runs accept, rework, drop, rank, return, resume, release, resolve, ask,
 start, stop, tick or run. It keeps running while
 things wait for the coordinator, says what waits and for how long, tolerates
 the coordinator writing at the same time, and stops when every stream has
-landed. It reads a stream's merge queue just before that stream's merge step,
-and the other streams' queues only when a fact needs them; `--flap` takes an up
-member down and brings a down member up with the same chance, and the driver
-brings up every member it took down before it stops. Its facts come through one interface (a worker's result, a reader's
+landed (every primary on the table landed). It reads a stream's merge queue just before that stream's merge step,
+and the other streams' queues only when a fact needs them; `--flap` silences an
+up member's machine and brings a silent one back with the same chance; with
+`--hold` the driver releases every hold it took before it stops. Its facts come through one interface (a worker's result, a reader's
 finding, a merge batch's outcome, which members are up); the seeded source is
 one implementation.
 

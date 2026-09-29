@@ -413,6 +413,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"reader add '<reader>'")
 		case d == "fleet up":
 			add(d, cmd+"fleet up '<member>'")
+		case d == "fleet beat":
+			add(d, cmd+"fleet beat '<member>'")
 		case d == "ask --another":
 			add(d, cmd+"ask"+grp+" --another"+ans)
 		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "merge --stream ") || strings.HasPrefix(d, "goal "):

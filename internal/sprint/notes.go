@@ -40,6 +40,7 @@ const (
 	NWorkOK         = "work came back ok"
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
+	NUnknownMachine = "an unknown machine is beating"
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"

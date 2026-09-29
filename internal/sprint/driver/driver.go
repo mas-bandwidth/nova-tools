@@ -61,6 +61,19 @@ type Config struct {
 	TakeLimit int           // work cards a member takes a tick
 	ReadLimit int           // read cards a reader reports a tick
 	Ticks     int           // stop after this many ticks; 0 is until every stream lands
+	// Hold plays the facts' downs as the coordinator's hold (fleet down and
+	// fleet up); without it a member the facts take down falls silent (its
+	// machine stops beating) and comes back by beating again.
+	Hold bool
+	// Silent is members silent for a while: each stops beating From after
+	// the driver starts, for For.
+	Silent []Silence
+}
+
+// Silence is one member's machine not beating for a while.
+type Silence struct {
+	Member    string
+	From, For time.Duration
 }
 
 // Driver runs the loop. Run is the command's entry point; Base is the flags
@@ -73,7 +86,9 @@ type Driver struct {
 	Clock  Clock
 	Out    io.Writer
 	Config Config
-	downed map[string]bool // members this driver took down and has not brought up
+	downed map[string]bool // members this driver held down and has not released
+	silent map[string]bool // members whose machines the facts have silenced
+	start  time.Time
 	// held is the sprint's epoch the driver read at its start: every verb it
 	// runs that writes carries it. cleared says a verb was refused because
 	// the sprint left it: the driver stops, running nothing more.
@@ -307,27 +322,56 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	// Every verb that writes holds the driver's epoch: a clear since refuses
 	// it, naming the clear, and nothing of the old epoch lands in the new one.
 	held := []string{"--epoch", strconv.FormatUint(d.held, 10)}
-	// Members up and down, as the facts say.
+	// Members up and down, as the facts say. A member's machine beats while
+	// it is alive: its status follows its beat. The facts' downs are a
+	// machine falling silent, or, with Hold, the coordinator's hold.
 	fleet := w.Tables["fleet"]
 	members := sortedRows(fleet)
 	up := map[string]bool{}
 	for _, m := range members {
-		up[m] = fleet[m]["status"] == "up"
+		if c.Hold {
+			up[m] = fleet[m]["status"] == "up"
+		} else {
+			up[m] = !d.silent[m]
+		}
 	}
 	next := d.Facts.Up(tick, members, up)
+	if d.start.IsZero() {
+		d.start = d.Clock.Now()
+	}
+	since := d.Clock.Now().Sub(d.start)
+	for _, sl := range c.Silent {
+		if since >= sl.From && since < sl.From+sl.For {
+			next[sl.Member] = false
+		}
+	}
 	for _, m := range members {
 		switch {
-		case next[m] && !up[m]:
+		case c.Hold && next[m] && !up[m]:
 			if code, _ := d.run(false, append([]string{"fleet", "up", m}, held...)...); code == 0 {
 				delete(d.downed, m)
 			}
-		case !next[m] && up[m]:
+		case c.Hold && !next[m] && up[m]:
 			if code, _ := d.run(false, append([]string{"fleet", "down", m}, held...)...); code == 0 {
 				if d.downed == nil {
 					d.downed = map[string]bool{}
 				}
 				d.downed[m] = true
 			}
+		case !c.Hold:
+			if d.silent == nil {
+				d.silent = map[string]bool{}
+			}
+			if !next[m] && !d.silent[m] {
+				fmt.Fprintf(d.Out, "  (%s falls silent: its machine stops beating)\n", m)
+			}
+			if next[m] && d.silent[m] {
+				fmt.Fprintf(d.Out, "  (%s beats again)\n", m)
+			}
+			d.silent[m] = !next[m]
+		}
+		if c.Hold || next[m] {
+			d.run(true, "fleet", "beat", m, "--load", "0")
 		}
 	}
 	// Workers: finish what they took last tick, then take the oldest ready

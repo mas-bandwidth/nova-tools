@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -101,22 +100,24 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 	return rep, nil, fmt.Errorf("the sprint kept changing through %d reads; run check again", rep.Reads)
 }
 
-// SyncMirrors brings the display cells up to date: a fleet member's status
-// and load (its unfinished work cards), and a stream's ci, state and since.
-// They are display only: the state is the control cards', written with the
-// moves. A fleet member's done and ok% are the table's own formulas over its
-// finished cells, never written here.
+// SyncMirrors brings the display cells up to date: the fleet's (SyncFleet:
+// a member's derived status and measured load), and a stream's ci, state and
+// since. They are display only: the state is the control cards', written with
+// the moves. A fleet member's done and ok% are the table's own formulas over
+// its finished cells, never written here.
 func (st *Store) SyncMirrors(ctx context.Context) error {
+	if _, err := st.SyncFleet(ctx); err != nil {
+		return err
+	}
 	st, err := st.pin(ctx)
 	if err != nil {
 		return err
 	}
-	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet), st.Names.Table(sprint.Merge)})
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Merge)})
 	if err != nil {
 		return err
 	}
 	for _, shape := range shapes {
-		logical := st.Names.Logical(shape.Name)
 		var ids []string
 		for _, r := range shape.Rows {
 			ids = append(ids, st.sid(sprint.CtlID(r.Key)))
@@ -130,25 +131,13 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		}
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
-			want := map[string]string{}
-			if logical == sprint.Fleet {
-				want[sprint.Status] = dash(ctl.Fields["status"])
-				want[sprint.Load] = strconv.FormatInt(count(shape, row, sprint.Ready)+count(shape, row, sprint.Working), 10)
-			} else {
-				want[sprint.CI] = dash(ctl.Fields["ci"])
-				want[sprint.StateCol] = dash(ctl.Fields["state"])
-				want[sprint.Since] = clock(ctl.Fields["since"])
+			want := map[string]string{
+				sprint.CI:       dash(ctl.Fields["ci"]),
+				sprint.StateCol: dash(ctl.Fields["state"]),
+				sprint.Since:    clock(ctl.Fields["since"]),
 			}
-			diff := map[string]string{}
-			for k, v := range want {
-				if row.Texts[k] != v {
-					diff[k] = v
-				}
-			}
-			if len(diff) > 0 {
-				if err := st.B.RowSet(ctx, shape.Name, row.Key, diff); err != nil {
-					return err
-				}
+			if _, err := syncRow(ctx, st, shape, row, want); err != nil {
+				return err
 			}
 		}
 	}

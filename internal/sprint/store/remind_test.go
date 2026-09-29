@@ -189,7 +189,7 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 		refused += len(p.Refused)
 	}
 	open := h.openOf(sprint.NRemindFailed)
-	if refused != 1 || len(open) != 1 || res.Notes() != 1 {
+	if refused != 1 || len(open) != 1 || h.written(sprint.NRemindFailed) != 1 {
 		t.Fatalf("the first failure: refused %d, open %d, notes %d", refused, len(open), res.Notes())
 	}
 	n := open[0].Note

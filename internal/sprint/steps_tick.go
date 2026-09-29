@@ -71,7 +71,7 @@ const Sentinel = "sentinel"
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
 	NCannotAsk: {"reader add", "rework", "drop", "wait"},
-	NNoMember:  {"fleet up", "wait"},
+	NNoMember:  {"fleet beat", "fleet up", "wait"},
 	NInvariant: {"look at the card", "repair", "wait"},
 	NWorkLate:  {"fleet down <member>", "wait", "drop"},
 	NReadLate:  {"ask --another", "wait", "drop"},
@@ -84,6 +84,10 @@ type TickReq struct {
 	// Stopped is the time the machine was STOPPED between two clock readings:
 	// a deadline compares running time only. nil is none.
 	Stopped func(from, to time.Time) time.Duration
+	// Beats is each fleet member's last beat, read by the binding with the
+	// tick: the presence part applies the status it derives. nil is none
+	// read, and the presence part does nothing.
+	Beats map[string]Beat
 }
 
 func (r TickReq) who() string {
@@ -126,6 +130,7 @@ var TickParts = []struct {
 	Name string
 	Fn   TickPartFn
 }{
+	{"presence", TickPresence},
 	{"resolve", TickResolve},
 	{"resume", TickResume},
 	{"deal", TickDeal},
@@ -248,7 +253,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var conds []cond
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
-			what: fmt.Sprintf("%d primaries wait to be dealt; bring a member up: nova-sprint fleet up <member>", len(ready))})
+			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
 	}
 	if len(up) > 0 {
 		room := 0

@@ -217,8 +217,8 @@ func TestCRAllMembersDownThenOneUp(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
 	h.crTicks(3, "all down")
 	s := h.snap()
 	if n := len(s.Work.Column(sprint.Working)); n != 0 {
@@ -227,11 +227,11 @@ func TestCRAllMembersDownThenOneUp(t *testing.T) {
 	if len(h.openOf(sprint.NNoMember)) != 1 {
 		t.Fatalf("no-member judgment: %d", len(h.openOf(sprint.NNoMember)))
 	}
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	up := h.must(FleetStep(sprint.FleetReq{Op: "release", Member: "m2"}))
 	h.crTicks(2, "one up")
 	s = h.snap()
 	if n := s.Fleet.Count("m2", sprint.Ready); n != sprint.MaxReadyPerMember {
-		t.Fatalf("m2 ready %d", n)
+		t.Fatalf("m2 ready %d; the up: %+v; m2 %v; ready %d", n, up.Moved, s.MemberCtl("m2").Fields, len(s.Work.Column(sprint.Ready)))
 	}
 	if len(h.openOf(sprint.NNoMember)) != 0 {
 		t.Fatalf("no-member still open")
@@ -294,13 +294,14 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 // PROBE 4: fewer than two readers, then one added: asked without a verb.
 func TestCROneReaderThenTwo(t *testing.T) {
 	t.Parallel()
-	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0}
+	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0, live: []string{"m1"}}
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
 		Now: func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now }, NewID: func() string { n++; return fmt.Sprint(n) }, Sleep: func(time.Duration) {}}
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
 	h.startMachine()
