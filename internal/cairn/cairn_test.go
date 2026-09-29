@@ -181,4 +181,44 @@ func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	if led.Sessions != 2 || led.Entries != 2 {
 		t.Fatalf("coverage ledger = %+v, want 2 sessions and 2 entries", led)
 	}
+	ledFromIdx := CoverageFromIndex(store, rows)
+	if ledFromIdx != led {
+		t.Fatalf("CoverageFromIndex = %+v, want matching Coverage %+v", ledFromIdx, led)
+	}
+}
+
+func TestCoverageFromIndex(t *testing.T) {
+	t.Parallel()
+
+	store := t.TempDir()
+	now := time.Now().UTC()
+	if err := Open(store, "s1", "", now, PublishNever); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open(store, "s2", "", now, PublishNever); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(store, "s1", "e1", "first note", "", now, PublishNever); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(store, "s1", "e2", "second note", "", now, PublishNever); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, total, err := Index(store, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
+	}
+
+	fromIndex := CoverageFromIndex(store, rows)
+	fromStore := Coverage(store)
+	if fromIndex != fromStore {
+		t.Fatalf("CoverageFromIndex = %+v, want %+v", fromIndex, fromStore)
+	}
+	if fromIndex.Sessions != 2 || fromIndex.Entries != 2 {
+		t.Fatalf("CoverageFromIndex: got %+v, want 2 sessions and 2 entries", fromIndex)
+	}
 }

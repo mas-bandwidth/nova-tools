@@ -288,10 +288,12 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // readWords reads the exact words from a file, or from stdin when the path
 // is -. The bytes are never trimmed: trimming would file different words
-// than the friend chose.
+// than the friend chose. When reading from stdin (-), the reader is capped
+// at 10 MiB (10<<20) via io.LimitReader to defend against runaway memory
+// exhaustion.
 func readWords(name string, stdin io.Reader) ([]byte, error) {
 	if name == "-" {
-		return io.ReadAll(stdin)
+		return io.ReadAll(io.LimitReader(stdin, 10<<20))
 	}
 	f, err := os.Open(name)
 	if err != nil {
@@ -330,7 +332,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " index", oneline.Err(err))
 	}
-	led := cairn.Coverage(*store)
+	led := cairn.CoverageFromIndex(*store, all)
 	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
 	for _, r := range all {
 		list.Line(fmt.Sprintf("INDEX ENTRY session=%s entry=%s stamp=%s bytes=%d source=%s",
