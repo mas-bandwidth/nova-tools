@@ -24,6 +24,7 @@ type GHSweep struct {
 	Branch  string
 	Timeout time.Duration
 	Runner  Runner
+	Events  *Events
 }
 
 // NewGHSweep returns a sweep host against one repository's merge queue.
@@ -133,7 +134,11 @@ func (h *GHSweep) HeadRun(branch string) (SweepRun, error) {
 // enqueued by itself would be a second entrance to the queue, which is the thing this
 // session took away.
 func (h *GHSweep) Enqueue(pr SweepPR) error {
-	return NewEnqueuer(NewGHEnqueue(h.Repo, h.Timeout, h.Runner)).Enqueue(
+	var evs []*Events
+	if h.Events != nil {
+		evs = append(evs, h.Events)
+	}
+	return NewEnqueuer(NewGHEnqueue(h.Repo, h.Timeout, h.Runner), evs...).Enqueue(
 		context.Background(), EnqueuePR{Number: pr.Number, HeadRef: pr.HeadRef}, false)
 }
 

@@ -246,17 +246,21 @@ func TestIssue2185ProductionSinkIsStderr(t *testing.T) {
 // the caller (land.go's and the ledger's shape), writes the enqueue line after the
 // mutation lands; a refused admission (the sweep's card branch) writes none.
 func TestIssue2185ProductionEnqueueEmits(t *testing.T) {
-	buf := swapDefaultEvents(t)
+	t.Parallel()
+	var buf bytes.Buffer
+	ev := &Events{Sink: &buf}
 	host := newFakeEnqueueHost()
 	host.ids[1341] = "PR_integration6"
 	head := strings.Repeat("b", 40)
 	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
-	if err := NewEnqueuer(host).Enqueue(context.Background(),
+	if err := NewEnqueuer(host, ev).Enqueue(context.Background(),
 		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-6", HeadSHA: head, Receipt: receipt}, true); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	r := &recordRunner{out: "PR_kwDO\n"}
-	if err := NewGHSweep("mas-bandwidth/nova-tools", "dev", 0, r).Enqueue(
+	sweep := NewGHSweep("mas-bandwidth/nova-tools", "dev", 0, r)
+	sweep.Events = ev
+	if err := sweep.Enqueue(
 		SweepPR{Number: 1207, HeadRef: "rowan/impl-something", MergeState: "CLEAN"}); err == nil {
 		t.Fatal("the sweep's host enqueued a card's branch; the queue takes batches only")
 	}
@@ -278,6 +282,7 @@ func TestIssue2185ProductionEnqueueEmits(t *testing.T) {
 // instant on the record. That production write emits one park line with the reason and
 // age "-"; a later write that parks nothing new emits none.
 func TestIssue2185SweepParkThroughUpdateQueueEmits(t *testing.T) {
+	t.Parallel()
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{
 		Repo:       "example.invalid/oak/repo",
@@ -290,7 +295,8 @@ func TestIssue2185SweepParkThroughUpdateQueueEmits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(lane): %v", err)
 	}
-	buf := swapDefaultEvents(t)
+	var buf bytes.Buffer
+	ev := &Events{Sink: &buf}
 	// The sweep's own shape, cmd/nova-merge/queue.go cmdQueueSweep.
 	p := Park{PR: 88, Test: "TestRefillCounts", Package: "internal/pulse", Runs: 2, Issue: "-"}
 	if _, err := UpdateQueue(lane, st, LockWait, func(q *Queue) error {
@@ -300,13 +306,13 @@ func TestIssue2185SweepParkThroughUpdateQueueEmits(t *testing.T) {
 		q.Skipped = append(q.Skipped, p.PR)
 		q.Queued = QueueRemove(q.Queued, p.PR)
 		return nil
-	}); err != nil {
+	}, ev); err != nil {
 		t.Fatalf("UpdateQueue (park): %v", err)
 	}
 	if _, err := UpdateQueue(lane, st, LockWait, func(q *Queue) error {
 		q.Queued = append(q.Queued, 90)
 		return nil
-	}); err != nil {
+	}, ev); err != nil {
 		t.Fatalf("UpdateQueue (no park): %v", err)
 	}
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")

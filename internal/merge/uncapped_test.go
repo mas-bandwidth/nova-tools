@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -59,20 +60,15 @@ exit 1
 	}
 }
 
-// putStubGHOnPath prepends dir to PATH for the lifetime of the test.
-func putStubGHOnPath(t *testing.T, dir string) {
-	t.Helper()
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
 
 // TestGHWholeReadsAPaginatedCommentsCaptureWhole is the positive control: a fake gh
 // answers 70,000-plus bytes of comments, the last of which is the typed line a merge
 // verdict is read from, and the fix must decode every one of them -- not a 64 KiB prefix
 // that ends mid-object.
 func TestGHWholeReadsAPaginatedCommentsCaptureWhole(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeStubGH(t, dir)
-	putStubGHOnPath(t, dir)
 
 	const fillerCount = 700
 	const disposition = "DISPOSITION who=emma head=" + "1111111111111111111111111111111111111111" + " verdict=APPROVE score=10"
@@ -115,10 +111,20 @@ func TestGHWholeReadsAPaginatedCommentsCaptureWhole(t *testing.T) {
 	if err := os.WriteFile(reviewsPath, []byte("[]"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MERGE_TEST_COMMENTS", commentsPath)
-	t.Setenv("NOVA_MERGE_TEST_REVIEWS", reviewsPath)
 
-	h := NewGH("o/n", 30*time.Second, Exec{})
+	e := Exec{
+		Env: append(os.Environ(),
+			"NOVA_MERGE_TEST_COMMENTS="+commentsPath,
+			"NOVA_MERGE_TEST_REVIEWS="+reviewsPath,
+		),
+		LookPath: func(file string) (string, error) {
+			if file == "gh" {
+				return filepath.Join(dir, "gh"), nil
+			}
+			return exec.LookPath(file)
+		},
+	}
+	h := NewGH("o/n", 30*time.Second, e)
 	raw, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, 5))
 	if err != nil {
 		t.Fatalf("h.ghWhole returned an error over a %d-byte capture: %v", len(blob), err)
@@ -155,9 +161,9 @@ func TestGHWholeReadsAPaginatedCommentsCaptureWhole(t *testing.T) {
 // TestGHPRReadsALargePullRequestBodyWhole is the third named capture: GH.PR's own JSON,
 // which can carry more typed history in its body than 64 KiB holds.
 func TestGHPRReadsALargePullRequestBodyWhole(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeStubGH(t, dir)
-	putStubGHOnPath(t, dir)
 
 	bigBody := "PR body start-marker\n" + strings.Repeat("evidence line, padding this out.\n", 3000) + "PR body end-marker"
 	pr := map[string]interface{}{
@@ -187,9 +193,17 @@ func TestGHPRReadsALargePullRequestBodyWhole(t *testing.T) {
 	if err := os.WriteFile(prPath, blob, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MERGE_TEST_PR", prPath)
 
-	h := NewGH("o/n", 30*time.Second, Exec{})
+	e := Exec{
+		Env: append(os.Environ(), "NOVA_MERGE_TEST_PR="+prPath),
+		LookPath: func(file string) (string, error) {
+			if file == "gh" {
+				return filepath.Join(dir, "gh"), nil
+			}
+			return exec.LookPath(file)
+		},
+	}
+	h := NewGH("o/n", 30*time.Second, e)
 	got, err := h.PR(5)
 	if err != nil {
 		t.Fatalf("h.PR returned an error over a %d-byte pull request: %v", len(blob), err)
@@ -216,9 +230,9 @@ func lastN(s string, n int) string {
 // must still come back whole and parse to the fixture's exact count, not a ceiling refusal
 // and not a cut prefix.
 func TestRunUncappedKeepsWholeSuccessfulCaptureAt3Point4MB(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeStubGH(t, dir)
-	putStubGHOnPath(t, dir)
 
 	type rawComment struct {
 		ID        int64                  `json:"id"`
@@ -269,10 +283,20 @@ func TestRunUncappedKeepsWholeSuccessfulCaptureAt3Point4MB(t *testing.T) {
 	if err := os.WriteFile(reviewsPath, []byte("[]"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MERGE_TEST_COMMENTS", commentsPath)
-	t.Setenv("NOVA_MERGE_TEST_REVIEWS", reviewsPath)
 
-	h := NewGH("o/n", 60*time.Second, Exec{})
+	e := Exec{
+		Env: append(os.Environ(),
+			"NOVA_MERGE_TEST_COMMENTS="+commentsPath,
+			"NOVA_MERGE_TEST_REVIEWS="+reviewsPath,
+		),
+		LookPath: func(file string) (string, error) {
+			if file == "gh" {
+				return filepath.Join(dir, "gh"), nil
+			}
+			return exec.LookPath(file)
+		},
+	}
+	h := NewGH("o/n", 60*time.Second, e)
 	raw, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, 2663))
 	if err != nil {
 		t.Fatalf("h.ghWhole returned an error over a %d-byte capture: %v", len(blob), err)
@@ -411,6 +435,7 @@ func TestRingBufferBelowCapacityKeepsEverythingUntruncated(t *testing.T) {
 //
 // Remove the cancel from ceilingWriter and this fails at the safety deadline instead.
 func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T) {
+	t.Parallel()
 	const ceiling = 4096
 	const ringSize = 256
 	const marker = "TAIL-written-just-past-the-ceiling-must-survive"
@@ -431,14 +456,18 @@ func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T
 		os.Exit(4)
 	}
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
-	t.Setenv("NOVA_MERGE_UNCAPPED_OVERCEILING_HELPER", "1")
-	t.Setenv("NOVA_MERGE_UNCAPPED_OVERCEILING_PIDFILE", pidFile)
 
 	// A safety deadline only: the helper never exits by itself, so reaching this deadline
 	// means the ceiling did NOT cancel the command, and the test fails on that below.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := runUncappedCapture(ctx, "", os.Args[0], ceiling, ringSize,
+	e := Exec{
+		Env: append(os.Environ(),
+			"NOVA_MERGE_UNCAPPED_OVERCEILING_HELPER=1",
+			"NOVA_MERGE_UNCAPPED_OVERCEILING_PIDFILE="+pidFile,
+		),
+	}
+	out, err := e.runUncappedCapture(ctx, "", os.Args[0], ceiling, ringSize,
 		"-test.run=TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand")
 
 	if ctx.Err() != nil {
@@ -485,6 +514,7 @@ func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T
 // back with an error tail that is EXACTLY the last 64 KiB -- not a marked, roughly-bounded
 // approximation, because the ring is a pure fixed window with nothing else written into it.
 func TestRunUncappedFailingCommandsStderrTailIsExactlyTheLast64KiB(t *testing.T) {
+	t.Parallel()
 	const headMarker = "STDERR-HEAD-marker-this-must-not-survive"
 	const tailMarker = "STDERR-TAIL-marker-this-must-survive"
 	if os.Getenv("NOVA_MERGE_UNCAPPED_STDERR_FAIL_HELPER") == "1" {
@@ -493,11 +523,13 @@ func TestRunUncappedFailingCommandsStderrTailIsExactlyTheLast64KiB(t *testing.T)
 		_, _ = io.WriteString(os.Stderr, tailMarker)
 		os.Exit(7)
 	}
-	t.Setenv("NOVA_MERGE_UNCAPPED_STDERR_FAIL_HELPER", "1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := (Exec{}).RunUncapped(ctx, "", os.Args[0],
+	e := Exec{
+		Env: append(os.Environ(), "NOVA_MERGE_UNCAPPED_STDERR_FAIL_HELPER=1"),
+	}
+	out, err := e.RunUncapped(ctx, "", os.Args[0],
 		"-test.run=TestRunUncappedFailingCommandsStderrTailIsExactlyTheLast64KiB")
 	if err == nil {
 		t.Fatal("a helper that exits 7 must be reported as an error")
@@ -521,6 +553,7 @@ func TestRunUncappedFailingCommandsStderrTailIsExactlyTheLast64KiB(t *testing.T)
 // TestExecRunCapsRunawayOutputAndMarksIt (guard_test.go) already does for Run -- because
 // the claim under test is about Exec, not about anything gh-shaped.
 func TestRunUncappedKeepsOnlyTheTailOfAFailingCommandsOutput(t *testing.T) {
+	t.Parallel()
 	const headMarker = "HEAD-MARKER-this-must-not-survive"
 	const tailMarker = "TAIL-MARKER-this-must-survive"
 	if os.Getenv("NOVA_MERGE_UNCAPPED_FAIL_HELPER") == "1" {
@@ -529,11 +562,13 @@ func TestRunUncappedKeepsOnlyTheTailOfAFailingCommandsOutput(t *testing.T) {
 		_, _ = io.WriteString(os.Stdout, tailMarker)
 		os.Exit(3)
 	}
-	t.Setenv("NOVA_MERGE_UNCAPPED_FAIL_HELPER", "1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := (Exec{}).RunUncapped(ctx, "", os.Args[0], "-test.run=TestRunUncappedKeepsOnlyTheTailOfAFailingCommandsOutput")
+	e := Exec{
+		Env: append(os.Environ(), "NOVA_MERGE_UNCAPPED_FAIL_HELPER=1"),
+	}
+	out, err := e.RunUncapped(ctx, "", os.Args[0], "-test.run=TestRunUncappedKeepsOnlyTheTailOfAFailingCommandsOutput")
 	if err == nil {
 		t.Fatalf("a helper that exits 3 must be reported as an error")
 	}

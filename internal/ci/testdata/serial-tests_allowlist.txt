@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 407
+# ceiling: 386
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -167,27 +167,6 @@ internal/decide/decide_test.go:TestRequestSendsDocumentedBody serial: t.Setenv
 internal/decide/decisions_test.go:TestDecideRecordsOneRowPerAnswer serial: t.Setenv
 internal/decide/questionfile_test.go:TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse serial: t.Setenv
 internal/decide/record_concurrent_test.go:TestOneClientRecordsFromManyGoroutinesWithoutARace serial: t.Setenv
-internal/merge/cisource_test.go:TestChecksMapsTheRecordWord serial: t.Setenv
-internal/merge/fetchedreporttip_test.go:TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision serial: swaps package var merge.newReportFetchNonce
-internal/merge/foldfetchedtip_test.go:TestFoldFetchedTipRereadsOnlyProblemPaths serial: swaps package var merge.Sleep
-internal/merge/foldfetchedtip_test.go:TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock serial: swaps package var merge.Sleep
-internal/merge/foldreadonly_test.go:TestAReadOnlyFoldKeepsARecordThatRefusesTwice serial: swaps package var merge.Sleep
-internal/merge/foldreadonly_test.go:TestAReadOnlyFoldReadsAgainARecordItCaughtHalfWritten serial: swaps package var merge.Sleep
-internal/merge/guard_test.go:TestExecRunCapsRunawayOutputAndMarksIt serial: t.Setenv
-internal/merge/guard_test.go:TestExecRunLeavesBelowCapSuccess serial: t.Setenv
-internal/merge/guard_test.go:TestExecRunReturnsErrorWhenChildEndsAtCaptureCap serial: t.Setenv
-internal/merge/issue2185_test.go:TestIssue2185ProductionEnqueueEmits serial: swaps package var merge.DefaultEvents
-internal/merge/issue2185_test.go:TestIssue2185SweepParkThroughUpdateQueueEmits serial: swaps package var merge.DefaultEvents
-internal/merge/landing_capture_test.go:TestCommentsCaptureOverSixtyFourKiBIsReadWhole serial: t.Setenv
-internal/merge/maintenance_test.go:TestAPushThisToolMakesLeavesNoGitInTheReceivingRepository serial: t.Setenv
-internal/merge/maintenance_test.go:TestNoGitThisToolRunsStartsABackgroundGit serial: t.Setenv
-internal/merge/state_test.go:TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable serial: swaps package var merge.replaceRefusal
-internal/merge/uncapped_test.go:TestGHPRReadsALargePullRequestBodyWhole serial: t.Setenv
-internal/merge/uncapped_test.go:TestGHWholeReadsAPaginatedCommentsCaptureWhole serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedFailingCommandsStderrTailIsExactlyTheLast64KiB serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedKeepsOnlyTheTailOfAFailingCommandsOutput serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedKeepsWholeSuccessfulCaptureAt3Point4MB serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand serial: t.Setenv
 internal/nsprint/card/claim_fn_test.go:TestCardPathMakesNoEvalCall serial: t.Setenv
 internal/nsprint/card/end_result_record_test.go:TestCardEndStoresResultOnRecord serial: t.Setenv
 internal/nsprint/card/mirror_test.go:TestCardPushPrivateRepoNoMirrorNamesRemedy serial: t.Setenv

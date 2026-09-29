@@ -60,9 +60,10 @@ type Runner interface {
 	Run(ctx context.Context, dir, name string, args ...string) (string, error)
 }
 
-// Exec is the production runner: the command, in a directory, under the context's
-// deadline.
-type Exec struct{}
+type Exec struct {
+	Env      []string
+	LookPath func(file string) (string, error)
+}
 
 // noBackgroundGit is the configuration every git this tool starts carries, and it is one
 // sentence: NO GIT THIS TOOL RUNS LEAVES A GIT BEHIND IT.
@@ -144,7 +145,7 @@ const execOutputCap = 64 * 1024
 // keeps at most execOutputCap bytes and cancels the command the moment the ceiling is
 // reached. A result that was cut says so, because a prefix read as the whole answer is
 // worse than a marked prefix.
-func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+func (e Exec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	// EVERY GIT THIS TOOL STARTS CARRIES noBackgroundGit. It is here rather than in
 	// Git.Run so that what the guard reads, and what a test's fake Runner is handed, is
 	// still the tool's own command -- and so that the one place that really starts a
@@ -155,8 +156,19 @@ func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := bounded.NewCapture(execOutputCap, cancel)
-	cmd := exec.CommandContext(runCtx, name, args...)
+	bin := name
+	if e.LookPath != nil {
+		resolved, err := e.LookPath(name)
+		if err != nil {
+			return "", err
+		}
+		bin = resolved
+	}
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
+	if e.Env != nil {
+		cmd.Env = e.Env
+	}
 	cmd.Stdout = out
 	cmd.Stderr = out
 	err := cmd.Run()
@@ -228,8 +240,8 @@ func runUncapped(ctx context.Context, runner Runner, dir, name string, args ...s
 //
 // Peak memory for one call is therefore bounded by uncappedStdoutCeiling plus
 // uncappedRingSize, however much the command actually writes or how long it runs.
-func (Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error) {
-	return runUncappedCapture(ctx, dir, name, uncappedStdoutCeiling, uncappedRingSize, args...)
+func (e Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error) {
+	return e.runUncappedCapture(ctx, dir, name, uncappedStdoutCeiling, uncappedRingSize, args...)
 }
 
 // runUncappedCapture is RunUncapped's body with the ceiling and ring size taken as
@@ -237,7 +249,7 @@ func (Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (
 // uncappedStdoutCeiling and uncappedRingSize; the tests call it directly with small
 // synthetic limits so the ceiling-exceeded path can be exercised deterministically,
 // through the real Exec/exec.Cmd machinery, without a fixture anywhere near 64 MiB.
-func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ringSize int, args ...string) (string, error) {
+func (e Exec) runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ringSize int, args ...string) (string, error) {
 	if filepath.Base(name) == "git" {
 		args = NoBackgroundGit(args...)
 	}
@@ -247,8 +259,19 @@ func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ri
 	ring := newRingBuffer(ringSize)
 	stdout := newCeilingWriter(stdoutCeiling, cancel)
 
-	cmd := exec.CommandContext(runCtx, name, args...)
+	bin := name
+	if e.LookPath != nil {
+		resolved, err := e.LookPath(name)
+		if err != nil {
+			return "", err
+		}
+		bin = resolved
+	}
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
+	if e.Env != nil {
+		cmd.Env = e.Env
+	}
 	// stdout feeds both: the ceiling writer, which is what a successful parse reads
 	// whole, and the ring, so a stdout-side failure still has a tail. stderr feeds only
 	// the ring -- git and gh write their own diagnostics there, and this tool has never
@@ -278,6 +301,10 @@ func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ri
 		return tail, fmt.Errorf("%s took longer than this run's --timeout allows: %w", name, ctx.Err())
 	}
 	return tail, runErr
+}
+
+func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ringSize int, args ...string) (string, error) {
+	return Exec{}.runUncappedCapture(ctx, dir, name, stdoutCeiling, ringSize, args...)
 }
 
 // uncappedStdoutCeiling is the hard bound on how much of a successful command's stdout

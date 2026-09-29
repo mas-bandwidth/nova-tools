@@ -344,7 +344,10 @@ func TestWithFetchedReportTipCleanupCASPreservesReplacement(t *testing.T) {
 }
 
 func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *testing.T) {
+	t.Parallel()
+
 	t.Run("invalid branch", func(t *testing.T) {
+		t.Parallel()
 		runner := &reportRunner{}
 		records := NewRecords(t.TempDir(), "refs/heads/nova-merge/lane", "origin", NewGit(t.TempDir(), time.Second, runner), time.Second)
 		err := records.WithFetchedReportTip(func(string) error { return nil })
@@ -356,14 +359,15 @@ func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *test
 		}
 	})
 	t.Run("reservation collision", func(t *testing.T) {
+		t.Parallel()
 		lane, _, _, _ := reportTipLab(t)
 		oldTip := tipGit(t, lane, "rev-parse", "HEAD")
 		nonce := strings.Repeat("a", 32)
-		reportNonce(t, nonce)
 		ref := reportFetchedRefPrefix + nonce
 		tipGit(t, lane, "update-ref", ref, oldTip)
 		runner := &reportRunner{}
 		records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
+		records.NewReportFetchNonce = func() (string, error) { return nonce, nil }
 		err := records.WithFetchedReportTip(func(string) error { return nil })
 		if err == nil || !strings.Contains(err.Error(), "could not reserve private") {
 			t.Fatalf("existing private destination must refuse, got %v", err)

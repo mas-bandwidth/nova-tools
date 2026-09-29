@@ -298,6 +298,7 @@ func h40(c byte) string { return strings.Repeat(string(c), 40) }
 // error. tmp is gone, dst is the original parseable state, the caller sees the rename
 // error, and a hand holding the lane at the keyboard sees it whole.
 func TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable(t *testing.T) {
+	t.Parallel()
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "l"}); err != nil {
 		t.Fatal(err)
@@ -309,10 +310,6 @@ func TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable(t *testing
 	if _, err := Decode(before); err != nil {
 		t.Fatalf("the prior state must decode: %v", err)
 	}
-
-	origRefusal := replaceRefusal
-	replaceRefusal = func(error) bool { return true }
-	defer func() { replaceRefusal = origRefusal }()
 
 	dst := filepath.Join(lane, StateName)
 	if err := os.Remove(dst); err != nil {
@@ -329,7 +326,7 @@ func TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable(t *testing
 	nowFn, sleepFn, at := waitClock(start)
 	st := &State{Version: Version, Repo: "o/n", Base: "main", LaneBranch: "l",
 		PRs: []*Entry{}, Branches: []*Entry{}, Gates: []Gate{}}
-	err = st.saveToWait(lane, nowFn, sleepFn)
+	err = st.saveToWaitRefusal(lane, nowFn, sleepFn, func(error) bool { return true })
 	elapsed := at.Sub(start)
 
 	if err == nil {
