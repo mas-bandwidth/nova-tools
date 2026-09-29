@@ -475,10 +475,8 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		if atoi(merge[s]["queued"]) > 0 {
 			batch = queued(s)
 		}
-		work := w.Tables["work"][s]
-		open := atoi(work["waiting"]) + atoi(work["ready"]) + atoi(work["working"]) + atoi(work["review"]) + atoi(work["merging"])
-		if len(batch) == 0 && !(open == 0 && atoi(work["landed"]) > 0) && st != "merging" {
-			continue
+		if len(batch) == 0 {
+			continue // a merge step wants something queued
 		}
 		if len(batch) > c.Batch {
 			batch = batch[:c.Batch]
