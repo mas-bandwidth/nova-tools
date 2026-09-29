@@ -287,3 +287,33 @@ func TestEveryTextFieldIsBounded(t *testing.T) {
 		t.Fatalf("a refused step moved something")
 	}
 }
+
+// the lifecycle at run time: an illegal move through Lawful is refused;
+// the engine holds a plan that did not go through Lawful to it anyway, creates included.
+func TestTheEngineHoldsEveryPlanToTheLifecycle(t *testing.T) {
+	t.Parallel()
+	p := newProbe(t)
+	p.setup(1)
+	p.toReview("h", "s1-1")
+	illegal := func(s *sprint.Snapshot) sprint.Plan {
+		c := s.Work.Card("s1-1")
+		e := ntable.BatchMemberEntry{ID: c.ID, Expect: &ntable.MemberExpect{Revision: strconv.FormatUint(c.Rev, 10), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}},
+			Move: &ntable.MemberMoveOp{Row: c.Row, Col: sprint.Landed}}
+		return sprint.Plan{Units: []sprint.Unit{{Key: c.ID, Stream: c.Row, Changes: []sprint.Change{{Table: sprint.Work, Entry: e}}, Moved: "review -> landed"}}}
+	}
+	r := p.do("through Lawful", Step{Verb: "mutant", Load: All, Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Lawful(illegal(s)) }})
+	if len(r.Moved) != 0 || p.state("s1-1") != sprint.Review {
+		t.Errorf("Lawful let review -> landed through: %+v", r)
+	}
+	r = p.do("not through Lawful", Step{Verb: "mutant", Load: All, Plan: illegal})
+	if len(r.Moved) != 0 || len(r.Refused) != 1 || p.state("s1-1") != sprint.Review {
+		t.Errorf("the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1"))
+	}
+	create := func(s *sprint.Snapshot) sprint.Plan {
+		e := ntable.BatchMemberEntry{ID: "zz", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "s1", Col: sprint.Merging, Score: 9}}
+		return sprint.Plan{Units: []sprint.Unit{{Key: "zz", Stream: "s1", Changes: []sprint.Change{{Table: sprint.Work, Entry: e}}}}}
+	}
+	if r := p.do("admitted merging", Step{Verb: "mutant", Load: All, Plan: create}); len(r.Moved) != 0 || p.snap().Work.Card("zz") != nil {
+		t.Errorf("a primary admitted merging: %+v", r)
+	}
+}

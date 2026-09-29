@@ -86,7 +86,10 @@ outcome and reason are kept.
 | merging -> landed | its batch, green on the stream branch, merged to the development branch | mechanical |
 | any open state -> off the table | drop, with the reason | the coordinator's verb |
 
-A primary is working if and only if it has a live work card. Nothing retries by
+The store holds every step's plan to this table before it applies it, whatever
+step built it: a primary is admitted waiting or ready, moves only by a row of
+the table, and leaves only from an open state; a unit that does not is refused,
+naming the move. A primary is working if and only if it has a live work card. Nothing retries by
 itself. Nothing leaves review except by the coordinator.
 
 ## 4. Order

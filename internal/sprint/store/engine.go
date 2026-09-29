@@ -262,7 +262,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return replay(step, raw)
 			}
 		}
-		plan := step.Plan(snap)
+		// Every plan is held to the lifecycle here, whatever step built it.
+		plan := sprint.Lawful(step.Plan(snap))
 		res.Refused = plan.Refused
 		res.Moved = nil
 		for _, u := range plan.Units {

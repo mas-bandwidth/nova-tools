@@ -83,10 +83,11 @@ func IsState(s string) bool {
 	return false
 }
 
-// Lawful holds a plan to the lifecycle: every unit that moves a primary in the
-// work table moves it by a row of Moves, and a primary leaves the table only
-// from an open state. A unit that does not is refused, naming the move; it is
-// never applied. Every step that moves a primary returns its plan through it.
+// Lawful holds a plan to the lifecycle: a primary is admitted waiting or
+// ready, every unit that moves a primary in the work table moves it by a row
+// of Moves, and a primary leaves the table only from an open state. A unit
+// that does not is refused, naming the move; it is never applied. The store
+// holds every plan to it before applying it, whatever step built it.
 func Lawful(p Plan) Plan {
 	var kept []Unit
 	for _, u := range p.Units {
@@ -103,6 +104,9 @@ func Lawful(p Plan) Plan {
 func unlawful(u Unit) string {
 	for _, c := range u.Changes {
 		e := c.Entry
+		if c.Table == Work && e.Create != nil && e.Create.Col != Waiting && e.Create.Col != Ready {
+			return "the lifecycle admits a primary waiting or ready, not " + e.Create.Col
+		}
 		if c.Table != Work || e.Expect == nil || e.Expect.Place == nil {
 			continue
 		}
