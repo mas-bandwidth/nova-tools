@@ -285,9 +285,9 @@ func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 // nothing; the same id with different words is a conflict, as it is in the
 // nested store. No index is written and no directory appears beside the file:
 // this store is read, not converted.
-func appendBench(path, id, text string, now time.Time, publish string) (AppendResult, error) {
+func appendBench(d *dirs, store, path, id, text string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
-	raw, err := os.ReadFile(path)
+	raw, err := readRecord(d, "append", store, path)
 	if err != nil {
 		return res, err
 	}
@@ -310,30 +310,12 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimRight(text, "\n"))
 	b.WriteString("\n")
-	if err := appendBytes(path, b.String()); err != nil {
+	if err := appendRecord(d, "append", store, path, b.String()); err != nil {
 		return res, err
 	}
 	// A bench section stores no pointer of its own, so what is reported is the
 	// session's, read from the header open wrote.
 	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw)}, nil
-}
-
-// appendBytes adds content to an existing file and fsyncs before return, so a
-// bench append is as durable as a nested one before success is reported.
-func appendBytes(name, content string) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 func entryPath(store, session, id string) string {
@@ -405,10 +387,20 @@ func SessionSource(store, session string) (string, error) {
 		return "", err
 	}
 	if sh == shapeBench {
-		// A bench record keeps its pointer in the header open wrote.
-		raw, err := os.ReadFile(benchFile(store, session))
-		if err != nil {
+		// A bench record keeps its pointer in the header open wrote, read
+		// through the same check as every other read of a record. Only a
+		// record that is not there means "no source"; one that is there and
+		// cannot be read is an error naming it, never a source of none.
+		raw, err := readRecord(newDirs(), "open", store, benchFile(store, session))
+		if os.IsNotExist(err) {
 			return "", nil
+		}
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			return "", fmt.Errorf("cannot read the session's source from %s: %v", benchFile(store, session), pe.Err)
+		}
+		if err != nil {
+			return "", err
 		}
 		return benchHeaderSource(raw), nil
 	}
@@ -520,7 +512,12 @@ func pointerLine(id string, stamp time.Time) string {
 // duplicating a line that is already there.
 func ensurePointer(store, session, id string, stamp time.Time) error {
 	name := sessionFile(store, session)
-	raw, err := os.ReadFile(name)
+	d := newDirs()
+	raw, err := readRecord(d, "append", store, name)
+	var changed *RecordPathError
+	if errors.As(err, &changed) {
+		return err
+	}
 	if err != nil {
 		return &NotFoundError{Msg: fmt.Sprintf("no such session %q; open first", session)}
 	}
@@ -530,7 +527,7 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 			return nil
 		}
 	}
-	return appendLine(name, want)
+	return appendRecord(d, "append", store, name, want+"\n")
 }
 
 // Append stores the friend's exact prose under a stable entry id with a real
@@ -563,7 +560,7 @@ func appendOn(c lockClock, wait time.Duration, store, session, id, text, source 
 	}
 	// A refusal (a mixed store, a record path holding a non-record, a session
 	// with no record) is decided without the lock and leaves nothing behind.
-	_, bench, err := appendTarget(store, session, publish)
+	_, _, bench, err := appendTarget(store, session, publish)
 	if err != nil {
 		return res, err
 	}
@@ -584,31 +581,31 @@ func appendOn(c lockClock, wait time.Duration, store, session, id, text, source 
 }
 
 // appendTarget finds the record an append addresses, or the refusal.
-func appendTarget(store, session, publish string) (path string, bench bool, err error) {
-	d := newDirs()
+func appendTarget(store, session, publish string) (d *dirs, path string, bench bool, err error) {
+	d = newDirs()
 	sh, err := storeShapeIn(d, "append", store)
 	if err != nil {
-		return "", false, err
+		return nil, "", false, err
 	}
 	path, bench, ok, err := locateRecord(d, "append", store, session, sh)
 	if err != nil {
-		return "", false, err
+		return nil, "", false, err
 	}
 	if !ok {
-		return "", false, noRecord(store, session, publish)
+		return nil, "", false, noRecord(store, session, publish)
 	}
-	return path, bench, nil
+	return d, path, bench, nil
 }
 
 func appendLocked(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
-	path, bench, err := appendTarget(store, session, publish)
+	d, path, bench, err := appendTarget(store, session, publish)
 	if err != nil {
 		return res, err
 	}
 	stamp := now.UTC()
 	if bench {
-		return appendBench(path, id, text, stamp, publish)
+		return appendBench(d, store, path, id, text, stamp, publish)
 	}
 	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
 	// where the record points back to; an append that names nothing else came
@@ -715,7 +712,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		return rc, err
 	}
 	if bench {
-		rows, err := benchReceipts(path, session)
+		rows, err := benchReceipts(d, "receipt", store, path, session)
 		if err != nil {
 			return rc, err
 		}
@@ -748,10 +745,13 @@ type IndexResult struct {
 	Rows     []IndexRow // at most max, in stamp order
 	Total    int        // every entry found, never capped
 	Sessions int        // session records counted
-	// Flagged holds one row per session whose record could not be read: the
-	// session's own defect (a record path that is a directory, a dangling or
-	// outside link, a case-folded twin, a damaged heading). Every other session
-	// is listed.
+	// Flagged holds one row per bench session whose record could not be read:
+	// the session's own defect (a record path that is a dangling or outside
+	// link or not a regular file, an invalid heading, a duplicate entry).
+	// Every other session is listed. A directory named <id>.md and a file
+	// named <id>.MD are not session files, so they are neither listed nor
+	// flagged. In the tool's own shape the entry files are what index reads,
+	// and a damaged entry file is an error for the whole call.
 	Flagged []FlaggedSession
 }
 

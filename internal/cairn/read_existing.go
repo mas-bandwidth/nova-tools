@@ -47,8 +47,8 @@ func recordForRead(d *dirs, op, store, session string, sh shape) (string, bool, 
 // Flat records store only a dated heading and prose. Source and publication
 // policy are not recoverable from this format; never infer them from a later
 // caller, unrelated log or prose. Body sizing matches benchSection's trimming.
-func benchReceipts(path, session string) ([]ReceiptInfo, error) {
-	raw, err := os.ReadFile(path)
+func benchReceipts(d *dirs, op, store, path, session string) ([]ReceiptInfo, error) {
+	raw, err := readRecord(d, op, store, path)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[st
 		path, _, err := recordForRead(d, "index", store, id, shapeBench)
 		if err == nil {
 			var receipts []ReceiptInfo
-			if receipts, err = benchReceipts(path, id); err == nil {
+			if receipts, err = benchReceipts(d, "index", store, path, id); err == nil {
 				for _, rc := range receipts {
 					rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
 				}
@@ -107,7 +107,9 @@ func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[st
 		}
 		if err != nil {
 			// This session's own defect: flag it and go on to the next.
-			flagged = append(flagged, FlaggedSession{Session: id, Cause: err.Error()})
+			// The cause is the session's; "cannot index the store" is not.
+			cause := strings.TrimPrefix(err.Error(), "cannot "+opPhrase("index")+": ")
+			flagged = append(flagged, FlaggedSession{Session: id, Cause: cause})
 		}
 	}
 	return rows, flat, flagged, sessions, nil
