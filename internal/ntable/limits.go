@@ -16,6 +16,8 @@ const (
 	LimitFieldGuards      = 1000 // guards per member
 	LimitOneOfOptions     = 1000 // options in one guard
 	LimitReadSetMembers   = 1024
+	LimitColumns          = 1000   // columns per table
+	LimitRows             = 100000 // rows per table
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"
@@ -26,6 +28,8 @@ const (
 	limitNameGuards       = "guards per member"
 	limitNameOneOf        = "one_of options"
 	limitNameReadSet      = "read set members"
+	limitNameColumns      = "columns per table"
+	limitNameRows         = "rows per table"
 )
 
 // LimitError is a named LIMIT refusal: the bound and the count found, and the

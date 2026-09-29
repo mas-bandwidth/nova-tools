@@ -295,6 +295,9 @@ func ValidateColumns(cols []Column) error {
 	if len(cols) == 0 {
 		return errors.New("a table wants at least one column")
 	}
+	if err := over(limitNameColumns, LimitColumns, len(cols), ""); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, c := range cols {
 		if seen[c.Name] {

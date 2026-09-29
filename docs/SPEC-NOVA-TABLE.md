@@ -390,6 +390,18 @@ compares them with this table:
 | guards per member | 1000 |
 | one_of options | 1000 |
 | read set members | 1024 |
+| columns per table | 1000 |
+| rows per table | 100000 |
+
+`columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
+`set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
+past the bound as `LIMIT`, naming the bound and the count, before any write. The
+column bound is chosen from what one call writes: a definition is written by one
+`HSET` of 2 x (columns + 8) arguments and a script's stack refuses past about 8000,
+which is about 3,990 columns measured, so 1,000 leaves a margin of four. The row bound
+is chosen from cost: rows are written in chunks of 256, and a table of 100,000 rows
+took about a second to write and 1.6 seconds to read whole on the bench, the longest a
+single call should hold the store.
 
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
 a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;

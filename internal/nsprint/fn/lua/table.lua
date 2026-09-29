@@ -138,12 +138,14 @@ do
     member_id_bytes = 256, field_value_bytes = 65536,
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
+    columns = 1000, rows = 100000,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
     member_id_bytes = 'member id bytes', field_value_bytes = 'field value bytes',
     set_fields = 'set fields per member', unset_fields = 'unset fields per member',
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
+    columns = 'columns per table', rows = 'rows per table',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -718,6 +720,16 @@ do
   function T.finish(d, verb, args, opts, reply)
     local after = T.next(d.revision)
     if not after then return T.refuse('REVISION', d.revision) end
+    -- the size of a table: a definition is written by one HSET and a row count
+    -- is read by whole-table verbs
+    if d.newtemplate or d.definition_changed then
+      local over = T.over('columns', #d.cols)
+      if over then return over end
+    end
+    if d.newrows then
+      local over = T.over('rows', redis.call('ZCARD', T.rowskey(d)) + d.newrows)
+      if over then return over end
+    end
     local stream = d.key .. ':changes'
     local source_stream = d.receipt_source or stream
     local kind = redis.call('TYPE', source_stream).ok
@@ -851,6 +863,7 @@ do
       local n = d.tailrank
       if n ~= n or n + 1 == n or n == math.huge then return nil, T.refuse('RANK') end
       d.tailrank, rank = n + 1, tostring(n + 1)
+      d.newrows = (d.newrows or 0) + 1
     end
     T.stage(d, 'DEL', T.rowkey(d, row))
     T.hset(d.commands, T.rowkey(d, row), h)
