@@ -394,6 +394,7 @@ compares them with this table:
 | columns per table | 1000 |
 | rows per table | 100000 |
 | receipt bytes | 1048576 |
+| value bytes per batch | 16777216 |
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
@@ -407,6 +408,26 @@ which is about 3,990 columns measured, so 1,000 leaves a margin of four. The row
 is chosen from cost: rows are written in chunks of 256, and a table of 100,000 rows
 took about a second to write and 1.6 seconds to read whole on the bench, the longest a
 single call should hold the store.
+
+A batch holds the store for a time its manifest bounds, not the store's content. It
+reads the head of each member (epoch, revision, place) and the fields its entries name
+(set, unset and guarded), never a whole record. Before any value is read or hashed it
+counts, from lengths (`HSTRLEN`), the bytes of every before-value and after-value of
+those fields, and the least size its receipt can have, and refuses at once as `LIMIT`
+over either: `value bytes per batch` (16 MiB) or `receipt bytes`. What the store holds
+in the fields a batch does not name costs the batch nothing. Measured on the bench, on
+four cores, a table of two rows, three runs each: unsetting 16 MiB of before-values
+(the most a batch may touch) held the store 0.045 s; a manifest of 873,735 bytes of
+guards, every one satisfied (the largest accepted batch measured), 0.47 s; a receipt
+near its bound (128 members, 48 fields each), 0.05 to 0.07 s; refused for its receipt
+(a manifest of 886,533 bytes), 0.40 s, which is the time to decode and check the
+manifest; refused for its value bytes over a store holding 256 MiB in the named
+fields, 0.013 s. Decoding and checking a manifest of about 1 MiB is most of the time of
+the larger figures. A create or move of an unplaced member also checks the table's
+cells for a stray placement, so the time of such a batch grows with the table's size,
+which the value bounds do not limit: 128 creates held the store 0.36 s on a table of
+1,000 rows and 4.1 s on a table of 10,000 rows. The figures above are for a table of
+two rows.
 
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
 a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;
@@ -463,7 +484,15 @@ receipt.
 
 Operation records do not expire. A table's operation records, of every epoch, are
 one hash, `table:<t>:ops`, whose fields are `<epoch>:<operation id>` and whose values
-are the records (the request bytes, at most 1 MiB, and the receipt). One key keeps the
+are the records (the request bytes, at most 1 MiB, and the result, which holds the
+receipt). The record holds the result's delta escaped a second time inside the record's
+own encoding, and the change event holds the actor twice (its own field and inside the
+delta), so both exceed the receipt bound. Measured at the largest batches the bounds
+allow: the change event at most 2 MiB (2,096,969 bytes, an actor of 1,048,232 bytes),
+the record at most 5 MiB (5,242,119 bytes, an actor of 524,116 `/` characters, which
+JSON escapes; 4,175,647 bytes for 128 members each setting 26 fields of 64 `/`
+characters). Records do not expire, so a record holds that much for as long as the
+table exists. One key keeps the
 work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
 them alike: each removes the whole hash in the same atomic call as the drop, so a table
 created again under the name is a new table and no operation of the old one replays
@@ -498,7 +527,9 @@ server) is recorded in full; a longer one, whether it is a before-value read fro
 store or a value the manifest sets, is recorded as its length and its SHA-1
 (`before_bytes`, `before_sha1`, `after_bytes`, `after_sha1`, with the value's own side
 null; a null side with no length is an absent field), in the receipt, in the change
-event's `batch_delta` and in the operation record alike, never in full. And the
+event's `batch_delta` and in the operation record's result alike, never in full. The
+record's request is the manifest as sent, in full, because replay compares bytes; a
+value a manifest sets is in the manifest, so the record holds it in full there. And the
 receipt's size, the byte length of its encoded batch delta, is at most `receipt bytes`,
 which is the manifest bound, 1 MiB. The size is computed before the first write, with
 each score the call reads back after its writes counted at its longest form (24 bytes),
