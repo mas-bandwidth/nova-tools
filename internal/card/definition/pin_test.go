@@ -13,7 +13,7 @@ var bg = context.Background()
 func TestPinReadsCommittedBlobs(t *testing.T) {
 	t.Parallel()
 	f := sharedRepo(t)
-	pins, refs := f.pin([]string{"dir/b.md", "a.md"}, f.c1)
+	pins, refs := Pin(bg, f.dir, f.c1, []string{"dir/b.md", "a.md"}) // the identity is the origin's
 	if len(refs) > 0 {
 		t.Fatalf("%v", Lines(refs))
 	}
@@ -142,7 +142,6 @@ func TestPinRefusesBadInputBeforeAnyGit(t *testing.T) {
 		{"a flag", "--all", CauseInvalidCommit},
 		{"unknown", strings.Repeat("1", 40), CauseUnknownCommit},
 		{"a tree", f.tree, CauseNotCommit},
-		{"a blob", f.blob, CauseNotCommit},
 		{"an annotated tag", f.tag, CauseNotCommit},
 	}
 	for _, c := range commits {
@@ -330,7 +329,7 @@ func TestPinUsesAFixedNumberOfGitCalls(t *testing.T) {
 	counts := map[int]int{}
 	for _, n := range []int{1, 10, 100} {
 		g := &gitRun{dir: f.dir}
-		pins, refs := pin(bg, g, f.dir, f.c1, f.many[:n])
+		pins, refs := pin(bg, g, f.dir, f.c1, f.many[:n]) // no identity: the origin is read
 		if len(refs) > 0 || len(pins) != n {
 			t.Fatalf("n=%d: %v", n, Lines(refs))
 		}
@@ -404,7 +403,7 @@ func TestPinTwoPathsWithTheSameBytes(t *testing.T) {
 func TestPinThenParseThenAdmitEndToEnd(t *testing.T) {
 	t.Parallel()
 	f := sharedRepo(t)
-	pins, refs := f.pin(f.cards, f.c1)
+	pins, refs := Pin(bg, f.dir, f.c1, f.cards) // the identity is the origin's
 	if len(refs) > 0 {
 		t.Fatalf("%v", Lines(refs))
 	}

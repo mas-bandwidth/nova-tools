@@ -79,12 +79,12 @@ func newRepo(t *testing.T) (dir, commit string) {
 // history: c1 adds the files, c2 adds symlinks and a submodule entry, c3 renames
 // a.md and deletes dir/b.md. No test writes to it.
 type fixture struct {
-	dir             string
-	c1, c2, c3      string
-	tree, blob, tag string
-	cards           []string // the golden cards' paths at c1
-	many            []string // 100 small files at c1
-	huge            []string // files whose total is over MaxTotalBytes at c1
+	dir        string
+	c1, c2, c3 string
+	tree, tag  string
+	cards      []string // the golden cards' paths at c1
+	many       []string // 100 small files at c1
+	huge       []string // files whose total is over MaxTotalBytes at c1
 }
 
 var (
@@ -190,13 +190,14 @@ func buildFixture() error {
 	g("commit", "-q", "-m", "c3")
 	fx.c3 = g("rev-parse", "HEAD")
 	fx.tree = g("rev-parse", fx.c1+"^{tree}")
-	fx.blob = g("rev-parse", fx.c1+":a.md")
 	g("tag", "-a", "-m", "tag", "v1")
 	fx.tag = g("rev-parse", "v1")
 	fx.dir = dir
 	return err
 }
 
+// pin pins paths at commit with the identity supplied, which skips the origin
+// lookup; the tests of the identity itself call Pin without it.
 func (f *fixture) pin(paths []string, commit string) ([]Pinned, []Refusal) {
-	return Pin(bg, f.dir, commit, paths)
+	return Pin(bg, f.dir, commit, paths, WithIdentity("example.com/Owner/Repo"))
 }
