@@ -664,7 +664,7 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 			t.Fatalf("verifyPhysical: member %s revision mismatch: got %s, want %s", mid, h["revision"], expectedRev)
 		}
 		if m.exists {
-			if h["epoch"] != "0" && h["epoch"] != "" {
+			if h["epoch"] != "0" {
 				t.Fatalf("verifyPhysical: member %s epoch unexpected: %q", mid, h["epoch"])
 			}
 		}
@@ -711,6 +711,18 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 		}
 	}
 
+	memKeys, err := c.Keys(ctx, "table::member:*").Result()
+	if err != nil {
+		t.Fatalf("verifyPhysical: KEYS table::member:*: %v", err)
+	}
+	for _, mk := range memKeys {
+		mid := strings.TrimPrefix(mk, "table::member:")
+		om, ok := o.members[mid]
+		if !ok || !om.exists {
+			t.Fatalf("verifyPhysical: unexpected global member key in store: %s", mk)
+		}
+	}
+
 	keys, err := c.Keys(ctx, "table:"+o.table.name+":*").Result()
 	if err != nil {
 		t.Fatalf("verifyPhysical: KEYS table:%s:*: %v", o.table.name, err)
@@ -720,6 +732,10 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 		switch {
 		case suffix == "definition" || suffix == "revision" || suffix == "identity" || suffix == "rows" || suffix == "changes" || suffix == "events":
 		case strings.HasPrefix(suffix, "row:"):
+			row := strings.TrimPrefix(suffix, "row:")
+			if !slices.Contains(o.table.rows, row) {
+				t.Fatalf("verifyPhysical: unexpected row key %s in store", k)
+			}
 		case strings.HasPrefix(suffix, "cell:"):
 			cell := strings.TrimPrefix(suffix, "cell:")
 			if _, ok := o.table.cells[cell]; !ok {
@@ -1127,9 +1143,16 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 						if rm.Revision != mState.revision {
 							t.Fatalf("seed %d step %d: member %s revision=%d, oracle=%d", seed, step, mid, rm.Revision, mState.revision)
 						}
+						if len(rm.Fields) != len(mState.fields) {
+							t.Fatalf("seed %d step %d: member %s fields count=%d, oracle=%d", seed, step, mid, len(rm.Fields), len(mState.fields))
+						}
 						for fk, fv := range mState.fields {
-							if rm.Fields[fk] != fv {
-								t.Fatalf("seed %d step %d: member %s field %s=%q, oracle=%q", seed, step, mid, fk, rm.Fields[fk], fv)
+							actualFv, exists := rm.Fields[fk]
+							if !exists {
+								t.Fatalf("seed %d step %d: member %s field %s missing, oracle=%q", seed, step, mid, fk, fv)
+							}
+							if actualFv != fv {
+								t.Fatalf("seed %d step %d: member %s field %s=%q, oracle=%q", seed, step, mid, fk, actualFv, fv)
 							}
 						}
 					}
@@ -1379,9 +1402,20 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 
 	replayDelta := func(delta *ntable.BatchDelta, targetTable string, rev uint64) {
 		t.Helper()
-		if err := clientB.HSet(ctx, ntable.DefKey(targetTable)+":revision", "n", rev).Err(); err != nil {
-			t.Fatalf("replay revision: %v", err)
+
+		// Verify previous table revision endpoint on clientB before advancing
+		prevRevStr, err := clientB.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Result()
+		if err != nil {
+			t.Fatalf("replayDelta: clientB get prev rev: %v", err)
 		}
+		var prevRev uint64
+		if _, err := fmt.Sscanf(prevRevStr, "%d", &prevRev); err != nil {
+			t.Fatalf("replayDelta: parse clientB prev rev %q: %v", prevRevStr, err)
+		}
+		if prevRev != rev-1 {
+			t.Fatalf("replayDelta: clientB table revision sequence error: got %d, expected %d before advancing to %d", prevRev, rev-1, rev)
+		}
+
 		for _, md := range delta.Members {
 			memKey := ntable.MemberKey(md.ID)
 			curHash, err := clientB.HGetAll(ctx, memKey).Result()
@@ -1411,13 +1445,16 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 
 			// Validate BeforeScore
 			if md.BeforePlace != "" {
+				if md.BeforeScore == nil {
+					t.Fatalf("replayDelta: member %s has BeforePlace %q but BeforeScore is nil", md.ID, md.BeforePlace)
+				}
 				parts := strings.Split(md.BeforePlace, ":")
 				cellKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, parts[0], parts[1])
 				score, err := clientB.ZScore(ctx, cellKey, md.ID).Result()
 				if err != nil {
 					t.Fatalf("replayDelta: member %s missing from before cell %s: %v", md.ID, cellKey, err)
 				}
-				if md.BeforeScore != nil && score != *md.BeforeScore {
+				if score != *md.BeforeScore {
 					t.Fatalf("replayDelta: member %s before score mismatch in %s: got %g, want %g", md.ID, cellKey, score, *md.BeforeScore)
 				}
 			} else {
@@ -1492,12 +1529,10 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			}
 		}
 
-		opKey := "table:" + targetTable + ":op:" + delta.OperationID
-		clientB.HSet(ctx, opKey, "digest", delta.Digest, "actor", delta.Actor, "rev", rev)
-		clientB.XAdd(ctx, &redis.XAddArgs{
-			Stream: "table:" + targetTable + ":events",
-			Values: map[string]any{"op": delta.OperationID, "rev": rev, "digest": delta.Digest},
-		})
+		// Advance table revision on clientB after checking all preconditions and applying mutations
+		if err := clientB.HSet(ctx, ntable.DefKey(targetTable)+":revision", "n", rev).Err(); err != nil {
+			t.Fatalf("replay revision: %v", err)
+		}
 	}
 
 	verifyTablesMatch := func() {
@@ -1608,6 +1643,46 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 				if hB[k] != v {
 					t.Fatalf("member %s hash key %s mismatch: A=%q, B=%q", mid, k, v, hB[k])
 				}
+			}
+		}
+
+		// Enumerate global member keys on clientA and clientB to verify identical keyspace and zero unexpected keys
+		memKeysA, err := clientA.Keys(ctx, "table::member:*").Result()
+		if err != nil {
+			t.Fatalf("keys clientA member: %v", err)
+		}
+		memKeysB, err := clientB.Keys(ctx, "table::member:*").Result()
+		if err != nil {
+			t.Fatalf("keys clientB member: %v", err)
+		}
+		if len(memKeysA) != len(memKeysB) {
+			t.Fatalf("global member keys count mismatch: A has %d, B has %d", len(memKeysA), len(memKeysB))
+		}
+		slices.Sort(memKeysA)
+		slices.Sort(memKeysB)
+		for i := range memKeysA {
+			if memKeysA[i] != memKeysB[i] {
+				t.Fatalf("global member keys mismatch at %d: A=%s, B=%s", i, memKeysA[i], memKeysB[i])
+			}
+		}
+
+		// Enumerate cell keys on clientA and clientB to verify identical cell keyspace
+		cellKeysA, err := clientA.Keys(ctx, "table:"+targetTable+":cell:*").Result()
+		if err != nil {
+			t.Fatalf("keys clientA cells: %v", err)
+		}
+		cellKeysB, err := clientB.Keys(ctx, "table:"+targetTable+":cell:*").Result()
+		if err != nil {
+			t.Fatalf("keys clientB cells: %v", err)
+		}
+		if len(cellKeysA) != len(cellKeysB) {
+			t.Fatalf("cell keys count mismatch: A has %d, B has %d", len(cellKeysA), len(cellKeysB))
+		}
+		slices.Sort(cellKeysA)
+		slices.Sort(cellKeysB)
+		for i := range cellKeysA {
+			if cellKeysA[i] != cellKeysB[i] {
+				t.Fatalf("cell keys mismatch at %d: A=%s, B=%s", i, cellKeysA[i], cellKeysB[i])
 			}
 		}
 	}

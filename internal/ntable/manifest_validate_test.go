@@ -151,6 +151,81 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 			raw:       `{"schema":1,"table":"demo","actor":"a","Actor":"b","members":[{"id":"m"}]}`,
 			errSubstr: `duplicate key "Actor" in manifest`,
 		},
+		{
+			name:      "stella case A: null revision rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"revision":null}}]}`,
+			errSubstr: `null value not allowed for revision`,
+		},
+		{
+			name:      "stella case B: null create score rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":"c","score":null}}]}`,
+			errSubstr: `null value not allowed for score`,
+		},
+		{
+			name:      "stella case C: null equals guard rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"fields":{"status":{"equals":null,"one_of":["ready"]}}}}]}`,
+			errSubstr: `null value not allowed for equals`,
+		},
+		{
+			name:      "type mismatch: non-number revision",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"revision":"abc"}}]}`,
+			errSubstr: `expected number for revision`,
+		},
+		{
+			name:      "type mismatch: non-string row",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":123,"col":"c","score":10}}]}`,
+			errSubstr: `expected string for row`,
+		},
+		{
+			name:      "type mismatch: non-string col",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":true,"score":10}}]}`,
+			errSubstr: `expected string for col`,
+		},
+		{
+			name:      "type mismatch: non-number score",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":"c","score":"ten"}}]}`,
+			errSubstr: `expected number for score`,
+		},
+		{
+			name:      "type mismatch: non-boolean remove",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","remove":"true"}]}`,
+			errSubstr: `remove must be true`,
+		},
+		{
+			name:      "type mismatch: non-boolean absent",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"absent":"true"}}]}`,
+			errSubstr: `expected boolean for absent`,
+		},
+		{
+			name:      "type mismatch: non-object expect",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":"invalid"}]}`,
+			errSubstr: `expected object for expect`,
+		},
+		{
+			name:      "type mismatch: non-array members",
+			raw:       `{"schema":1,"table":"demo","members":{"id":"m"}}`,
+			errSubstr: `expected array for members`,
+		},
+		{
+			name:      "type mismatch: non-array unset",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","unset":"field"}]}`,
+			errSubstr: `expected array for unset`,
+		},
+		{
+			name:      "null element in unset rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","unset":[null]}]}`,
+			errSubstr: `null value not allowed in unset`,
+		},
+		{
+			name:      "null element in one_of rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"fields":{"status":{"one_of":[null]}}}}]}`,
+			errSubstr: `null value not allowed in one_of`,
+		},
+		{
+			name:      "null root field actor rejected",
+			raw:       `{"schema":1,"table":"demo","actor":null,"members":[]}`,
+			errSubstr: `null value not allowed for actor`,
+		},
 	}
 
 	for _, tc := range tests {

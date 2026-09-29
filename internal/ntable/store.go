@@ -1001,12 +1001,15 @@ func ViewDelete(ctx context.Context, c redis.Cmdable, name string) (int64, error
 // BatchManifest specifies an atomic set of preconditions and mutations across
 // members in a table.
 type BatchManifest struct {
-	Schema                int                `json:"schema"`
+	Schema                int                `json:"schema,omitempty"`
+	Version               *string            `json:"version,omitempty"`
 	Table                 string             `json:"table"`
 	Epoch                 string             `json:"epoch"`
-	ExpectedTableRevision string             `json:"expected_table_revision"`
+	ExpectedTableRevision string             `json:"expected_table_revision,omitempty"`
+	ExpectRevision        *string            `json:"expect_revision,omitempty"`
 	OperationID           string             `json:"operation_id"`
 	Actor                 string             `json:"actor,omitempty"`
+	Receipt               *bool              `json:"receipt,omitempty"`
 	Members               []BatchMemberEntry `json:"members"`
 }
 
@@ -1027,6 +1030,7 @@ type MemberExpect struct {
 	Revision string                `json:"revision,omitempty"`
 	Place    *PlaceExpect          `json:"place,omitempty"`
 	Fields   map[string]FieldGuard `json:"fields,omitempty"`
+	Score    *float64              `json:"score,omitempty"`
 }
 
 // PlaceExpect checks the expected row and column of a placed member.
@@ -1040,6 +1044,7 @@ type FieldGuard struct {
 	Equals *string  `json:"equals,omitempty"`
 	Absent *bool    `json:"absent,omitempty"`
 	OneOf  []string `json:"one_of,omitempty"`
+	Exists *bool    `json:"exists,omitempty"`
 }
 
 // MemberCreateOp places a new member at row, column, and score.

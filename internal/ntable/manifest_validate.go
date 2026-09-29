@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -27,9 +28,11 @@ type containerState struct {
 
 var rootAllowedKeys = map[string]bool{
 	"schema":                  true,
+	"version":                 true,
 	"table":                   true,
 	"epoch":                   true,
 	"expected_table_revision": true,
+	"expect_revision":         true,
 	"operation_id":            true,
 	"actor":                   true,
 	"receipt":                 true,
@@ -51,6 +54,7 @@ var expectAllowedKeys = map[string]bool{
 	"revision": true,
 	"place":    true,
 	"fields":   true,
+	"score":    true,
 }
 
 var placeAllowedKeys = map[string]bool{
@@ -74,6 +78,30 @@ var fieldGuardAllowedKeys = map[string]bool{
 	"equals": true,
 	"absent": true,
 	"one_of": true,
+	"exists": true,
+}
+
+func isNumberToken(tok any) bool {
+	switch v := tok.(type) {
+	case json.Number:
+		_, err := v.Float64()
+		return err == nil
+	case float64:
+		return true
+	case int, int64, uint64:
+		return true
+	case string:
+		if len(v) == 0 {
+			return false
+		}
+		if (v[0] < '0' || v[0] > '9') && v[0] != '-' {
+			return false
+		}
+		_, err := strconv.ParseFloat(v, 64)
+		return err == nil
+	default:
+		return false
+	}
 }
 
 // ValidateBatchManifestRaw strictly validates raw batch manifest bytes according
@@ -83,8 +111,9 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 		return nil, errors.New("empty manifest")
 	}
 
-	// 1. Strict exact-case, path-aware tokenization pass: duplicate keys and type checks.
+	// 1. Strict exact-case, path-aware tokenization pass: duplicate keys, null checks, and type checks.
 	decToken := json.NewDecoder(bytes.NewReader(raw))
+	decToken.UseNumber()
 	var stack []containerState
 	sawRoot := false
 
@@ -184,22 +213,67 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 			}
 
 			// Value for top.lastKey in containerObject
+			if tok == nil {
+				if top.path == "set" {
+					return nil, fmt.Errorf("null value not allowed in set for field %q", top.lastKey)
+				}
+				return nil, fmt.Errorf("null value not allowed for %s", top.lastKey)
+			}
+
+			// 1. Keys that MUST be objects:
+			if (top.path == "member" && (top.lastKey == "expect" || top.lastKey == "create" || top.lastKey == "move" || top.lastKey == "set")) ||
+				(top.path == "expect" && (top.lastKey == "place" || top.lastKey == "fields")) ||
+				(top.path == "fields") {
+				delim, ok := tok.(json.Delim)
+				if !ok || delim != '{' {
+					return nil, fmt.Errorf("expected object for %s", top.lastKey)
+				}
+			}
+
+			// 2. Keys that MUST be arrays:
+			if (top.path == "root" && top.lastKey == "members") ||
+				(top.path == "member" && top.lastKey == "unset") ||
+				(top.path == "field_guard" && top.lastKey == "one_of") {
+				delim, ok := tok.(json.Delim)
+				if !ok || delim != '[' {
+					return nil, fmt.Errorf("expected array for %s", top.lastKey)
+				}
+			}
+
+			// 3. Keys that MUST be booleans:
 			if top.path == "member" && top.lastKey == "remove" {
 				b, ok := tok.(bool)
 				if !ok || !b {
 					return nil, errors.New("remove must be true")
 				}
+			} else if (top.path == "expect" && top.lastKey == "absent") ||
+				(top.path == "field_guard" && (top.lastKey == "absent" || top.lastKey == "exists")) ||
+				(top.path == "root" && top.lastKey == "receipt") {
+				if _, ok := tok.(bool); !ok {
+					return nil, fmt.Errorf("expected boolean for %s", top.lastKey)
+				}
 			}
 
-			if top.path == "set" {
-				if tok == nil {
-					return nil, fmt.Errorf("null value not allowed in set for field %q", top.lastKey)
-				}
-				if delim, ok := tok.(json.Delim); ok {
-					return nil, fmt.Errorf("value for field %q in set must be a string, got delimiter %c", top.lastKey, delim)
-				}
+			// 4. Keys that MUST be strings:
+			if (top.path == "root" && (top.lastKey == "table" || top.lastKey == "operation_id" || top.lastKey == "actor" || top.lastKey == "version")) ||
+				(top.path == "member" && top.lastKey == "id") ||
+				(top.path == "place" && (top.lastKey == "row" || top.lastKey == "col")) ||
+				(top.path == "create" && (top.lastKey == "row" || top.lastKey == "col")) ||
+				(top.path == "move" && (top.lastKey == "row" || top.lastKey == "col")) ||
+				(top.path == "field_guard" && top.lastKey == "equals") ||
+				(top.path == "set") {
 				if _, ok := tok.(string); !ok {
-					return nil, fmt.Errorf("value for field %q in set must be a string", top.lastKey)
+					return nil, fmt.Errorf("expected string for %s", top.lastKey)
+				}
+			}
+
+			// 5. Keys that MUST be numbers:
+			if (top.path == "root" && (top.lastKey == "schema" || top.lastKey == "epoch" || top.lastKey == "expected_table_revision" || top.lastKey == "expect_revision")) ||
+				(top.path == "expect" && (top.lastKey == "revision" || top.lastKey == "score")) ||
+				(top.path == "create" && top.lastKey == "score") ||
+				(top.path == "move" && top.lastKey == "score") {
+				if !isNumberToken(tok) {
+					return nil, fmt.Errorf("expected number for %s (non-number)", top.lastKey)
 				}
 			}
 
@@ -288,6 +362,19 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 				continue
 			}
 
+			if tok == nil {
+				if top.path == "unset" {
+					return nil, errors.New("null value not allowed in unset")
+				}
+				if top.path == "one_of" {
+					return nil, errors.New("null value not allowed in one_of")
+				}
+				if top.path == "members" {
+					return nil, errors.New("null value not allowed in members")
+				}
+				return nil, fmt.Errorf("null value not allowed in %s", top.path)
+			}
+
 			if top.path == "unset" {
 				if _, ok := tok.(string); !ok {
 					return nil, errors.New("field name in unset must be a string")
@@ -295,6 +382,10 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 			} else if top.path == "one_of" {
 				if _, ok := tok.(string); !ok {
 					return nil, errors.New("item in one_of must be a string")
+				}
+			} else if top.path == "members" {
+				if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+					return nil, errors.New("member entry must be an object")
 				}
 			}
 
@@ -341,7 +432,7 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 		return nil, errors.New("unexpected trailing content after JSON manifest")
 	}
 
-	// 4. Basic member entry sanity.
+	// 4. Basic member entry sanity and field guard validation.
 	seenMemberIDs := make(map[string]bool, len(manifest.Members))
 	for _, m := range manifest.Members {
 		id := m.ID
@@ -358,6 +449,37 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 			return nil, fmt.Errorf("duplicate member id %q in manifest", id)
 		}
 		seenMemberIDs[id] = true
+
+		if m.Expect != nil && m.Expect.Fields != nil {
+			for fName, fg := range m.Expect.Fields {
+				conds := 0
+				if fg.Equals != nil {
+					conds++
+				}
+				if fg.Absent != nil {
+					conds++
+				}
+				if fg.Exists != nil {
+					conds++
+				}
+				if fg.OneOf != nil {
+					conds++
+					if len(fg.OneOf) == 0 {
+						return nil, fmt.Errorf("one_of for %q must be nonempty array", fName)
+					}
+				}
+				if conds != 1 {
+					return nil, fmt.Errorf("field guard for %q must specify exactly one condition, got %d", fName, conds)
+				}
+			}
+		}
+	}
+
+	if manifest.ExpectedTableRevision == "" && manifest.ExpectRevision != nil {
+		manifest.ExpectedTableRevision = *manifest.ExpectRevision
+	}
+	if manifest.Schema == 0 && manifest.Version != nil {
+		manifest.Schema, _ = strconv.Atoi(*manifest.Version)
 	}
 
 	return &manifest, nil
