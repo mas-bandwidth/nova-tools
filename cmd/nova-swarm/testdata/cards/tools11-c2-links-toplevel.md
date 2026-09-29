@@ -181,8 +181,8 @@ notes-spec.md
 STEP 7. THE COMMIT. The card ends here; publication is the coordinator's.
 
 ```
-git config user.name "Rowan"
-git config user.email "rowan@mas-bandwidth.com"
+git config user.name "Worker"
+git config user.email "worker@example.com"
 git add notes-spec.md docs/SPEC.md docs/SPEC-CI.md internal/docs/toplevel_links_test.go
 git commit -q -m "docs: the seven top-level links that resolve nowhere (#1547)"
 git rev-parse HEAD

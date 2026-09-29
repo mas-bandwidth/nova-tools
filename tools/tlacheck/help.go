@@ -6,6 +6,9 @@ import "runtime"
 // start TLC anywhere but Linux; the tests set the env's own.
 var hostOS = runtime.GOOS
 
+// hostArch is the architecture the checks run on.
+var hostArch = runtime.GOARCH
+
 const helpRun = `tlacheck run: run the declared cases of tla/CASES.tsv under one budget and write the run records.
 
 usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--java <java>]
@@ -31,10 +34,14 @@ completion line; a counterexample case exits with TLC's code for its kind and na
 declared invariant, action or temporal property. A timeout, a parse failure or an unrelated
 violation is a failure. A case that ends the budget early fails the run.
 
-RUNS.tsv holds one record per case: config, module, the fingerprint of the inputs, the jar's
-digest, host, UTC start, states generated and distinct ("-" when unknown), seconds, exit,
-result, expected, property, budget and mode. It is written only if the fingerprint is the
-same when the cases are done as when they started.
+RUNS.tsv holds one record per case: config, module, the fingerprint of what the case reads,
+the number of files under it, the jar's digest, the java version, host (the platform label
+<goos>-<goarch> the tool computes, never a machine name), the logical CPU count, UTC start, the TLC workers, states generated and distinct
+("-" when unknown), seconds, exit, result, expected, property, budget and mode. The
+fingerprint covers the case's configuration, its module and the modules that one extends or
+instantiates, the case's own row of CASES.tsv and the runner's result files (tlacheck inputs prints
+them). It is written only if every case's fingerprint is the same when the cases are done as
+when they started.
 
 output: CASE OK|FAIL config= result= seconds= exit= generated= distinct=, then RUN OK|FAIL
         cases= records=. It runs only on Linux. Exit 0 all cases as declared, 1 a case or the
@@ -42,31 +49,51 @@ output: CASE OK|FAIL config= result= seconds= exit= generated= distinct=, then R
 first run: tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
 `
 
-const helpGroups = `tlacheck groups: print the required case groups as a JSON array.
+const helpGroups = `tlacheck groups: print the case groups as a JSON array.
 
-usage: tlacheck groups [--root <checkout>]
+usage: tlacheck groups [--root <checkout>] [--stale]
 
-  --root  the checkout whose tla/CASES.tsv is read (default .)
+  --root   the checkout whose tla/CASES.tsv is read (default .)
+  --stale  the groups to run again instead: those that hold a declared case whose record in
+           tla/RUNS.tsv is missing, or is not the fingerprint its case has now (tlacheck
+           inputs prints what a case's fingerprint covers)
 
-Payload: exactly one line of JSON on stdout, the sorted groups that hold a required case,
-the matrix a CI run derives. Nothing else is printed there; refusals go to stderr. Exit 0,
-or 2 when the case plan cannot be read or is refused.
+Payload: exactly one line of JSON on stdout, the sorted groups that hold a required case (the
+matrix a CI run derives), or with --stale the groups that need a run. Nothing else is printed
+there; refusals go to stderr. Exit 0, or 2 when the case plan or the records cannot be read or
+The result files this binary was built from must be the ones under --root (when --root holds
+internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+checkout would call the wrong records stale, so with --stale the verb refuses and says to build tlacheck from
+this tree.
+are refused.
 first run: tlacheck groups --root .
 `
 
 const helpMerge = `tlacheck merge: join the records of several runs into one records file.
 
-usage: tlacheck merge --out <file> [--root <checkout>] <RUNS.tsv>...
+usage: tlacheck merge --out <file> [--root <checkout>] [--keep <RUNS.tsv>] <RUNS.tsv>...
 
   --out   the records file to write (replaced whole, atomically) (required)
   --root  the checkout whose tla/CASES.tsv orders the records (default .)
+  --keep  a records file whose current records stay: those of cases no run measured again
+          (usually the committed tla/RUNS.tsv, so only the groups an edit staled run again)
 
 Each run of tlacheck run covers one group. The committed tla/RUNS.tsv holds every case, so
 the runs are merged in the order of the case plan. Refused: a record for a case the plan does
-not declare, a case recorded twice, a declared case with no record, and records measured on
-different inputs (their fingerprints differ).
+not declare, a case recorded twice, a declared case with no record, and a record whose
+fingerprint is not the one this checkout gives its case (a run on other models, another plan
+row or another runner than this binary was built from), and records measured with more than
+one jar. A record in --keep that is not current is not kept: the merge then names it as stale,
+with its group and the tlacheck run commands that measure it again. A --keep record of a case
+the plan no longer declares is dropped and named (DROP OK config= why=not-in-the-plan). A file in
+another column layout than this tool writes is refused naming both layouts.
 
-output: MERGE OK runs= records= out=
+The result files this binary was built from must be the ones under --root (when --root holds
+internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
+this tree.
+
+output: MERGE OK runs= records= out=, and DROP OK config= why= for each kept record dropped.
 first run: tlacheck merge --root . --out /tmp/RUNS.tsv /tmp/tlc-a/RUNS.tsv /tmp/tlc-b/RUNS.tsv
 `
 
@@ -172,6 +199,35 @@ first run: git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn
            tlacheck witnesses /tmp/table-pinned.lua
 `
 
+const helpInputs = `tlacheck inputs: print what a TLC run of one case reads, with the hash of each.
+
+usage: tlacheck inputs --case <config> [--root <checkout>]
+
+  --case  the case, as its config column of tla/CASES.tsv names it (MCFoo.cfg; MCFoo also
+          works) (required)
+  --root  the checkout whose tla/ holds CASES.tsv and the models (default .)
+
+The inputs are the case's configuration; the module CASES.tsv gives it and every module that
+one EXTENDS or INSTANCEs, transitively (a name with no file under tla/ must be one of TLC's
+standard modules, which read nothing from the tree: the ten the jar bundles, listed in
+standardModules in internal/tlc/inputs.go); the case's own row of CASES.tsv under
+its header; and the runner's result files (outcome.go, run.go and suite.go of internal/tlc: the command
+line, flags, workers and timeouts of a run and the reading of its output) as this binary was
+built. The package's other files are bookkeeping and in no fingerprint.
+The fingerprint in a record is the SHA-256 over the paths and hashes listed here, in path
+order, and the record's input_files is their count. A change to none of them leaves the
+record current. The jar is not an input: a record names it in its own column.
+The result files this binary was built from must be the ones under --root (when --root holds
+internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
+this tree.
+
+Payload: one INPUT OK path= sha256= line per input, sorted by path, then INPUTS OK case=
+files= fingerprint=, all on stdout. Refusals go to stderr. Exit 0, or 2 when the case is not
+declared, the plan is refused, or a configuration or module cannot be read or names a module
+that is neither a file nor a standard one.
+first run: tlacheck inputs --root . --case MCFileLock.cfg
+`
 const helpBatchReplay = `tlacheck batch-replay: capture bounded batch histories and check them against MCBatchMemberTable on a Linux bench.
 
 usage: tlacheck batch-replay --source <table.lua> --dir <dir> [--root <checkout>]

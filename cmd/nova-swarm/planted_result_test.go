@@ -48,7 +48,7 @@ func TestNativeDoesNotTreatAPlantedSymlinkAsAPublishedResult(t *testing.T) {
 	root, slot := aSlot(t)
 	label := "planted-result"
 	jobDir := filepath.Join(slot, "jobs", label)
-	outside := plantNativeResultSymlink(t, jobDir, "RESULT plant sha=aaa\nDONE\nBRANCH rowan/exfil-233\n")
+	outside := plantNativeResultSymlink(t, jobDir, "RESULT plant sha=aaa\nDONE\nBRANCH worker/exfil-233\n")
 
 	var errOut bytes.Buffer
 	res, code := nativeRun(nativeRunConfig{
@@ -66,7 +66,7 @@ func TestNativeDoesNotTreatAPlantedSymlinkAsAPublishedResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "rowan/exfil-233") {
+	if !strings.Contains(string(raw), "worker/exfil-233") {
 		t.Fatalf("the file outside the job was rewritten through the link: %q", string(raw))
 	}
 }

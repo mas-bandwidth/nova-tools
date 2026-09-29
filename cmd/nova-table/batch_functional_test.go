@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -289,7 +291,32 @@ func TestBatchCLIPrintsScoresWithoutLosingPrecision(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	for _, w := range []string{"MEMBER x1 place=-->build:done score=-->0.30000000000000004 ", "MEMBER x2 place=-->build:done score=-->0.3 "} {
+	// Redis's RESP2 ZSCORE text is the oracle: versions may spell 0.3 as
+	// 0.29999999999999999, while both inputs must remain distinguishable.
+	resp2 := redis.NewClient(&redis.Options{Addr: addr, Protocol: 2})
+	defer resp2.Close()
+	seen := map[string]string{}
+	for id, input := range map[string]string{"x1": "0.30000000000000004", "x2": "0.3"} {
+		score, err := resp2.Do(context.Background(), "ZSCORE", ntable.CellKey("demo", "build", "done"), id).Text()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := strconv.ParseFloat(score, 64)
+		if err != nil {
+			t.Fatalf("%s store score %q: %v", id, score, err)
+		}
+		want, err := strconv.ParseFloat(input, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if math.Float64bits(got) != math.Float64bits(want) {
+			t.Errorf("%s store score %q is not input %q", id, score, input)
+		}
+		if other, dup := seen[score]; dup {
+			t.Fatalf("adjacent input scores for %s and %s collapsed to %q", id, other, score)
+		}
+		seen[score] = id
+		w := "MEMBER " + id + " place=-->build:done score=-->" + score + " "
 		if !strings.Contains(stdout, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, stdout)
 		}
