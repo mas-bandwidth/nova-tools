@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -299,6 +300,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			rows[r.Key] = cells
 		}
 		v.Tables[logical] = rows
+		if logical == sprint.Merge && !slices.Contains(t.Hidden, sprint.Since) {
+			// the machine keeps a stream's since; the view does not show it
+			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
+		}
 		if out := ntable.Render(t, ntable.RenderOpts{Title: logical}); out != "" {
 			parts = append(parts, out)
 		}

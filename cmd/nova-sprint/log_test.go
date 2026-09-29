@@ -159,3 +159,20 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 		}
 	}
 }
+
+// where does not show the merge table's since column: the machine keeps
+// the cell, the view hides it, on a store made before the rule too.
+func TestWhereHidesTheMergeTablesSince(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1")
+	out := ta.ok("where")
+	i := strings.Index(out, "merge")
+	if i < 0 {
+		t.Fatalf("no merge table:\n%s", out)
+	}
+	if head := strings.SplitN(out[i:], "\n", 3); strings.Contains(strings.Join(head, "\n"), "since") {
+		t.Fatalf("where shows since:\n%s", out)
+	}
+}

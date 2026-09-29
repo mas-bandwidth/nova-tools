@@ -14,7 +14,7 @@ SPRINT TABLE
 
 work  | waiting | ready | working | review | merging | landed
 readers | asked | reading | ok | broken
-merge | queued | merged | stuck | ci | state | since
+merge | queued | merged | stuck | ci | state
 fleet | ready | working | done | ok% | status | load
 ```
 
@@ -41,7 +41,8 @@ Beside the columns shown, the merge table has two hidden columns: `returned`,
 where a primary sent back from merging waits (the table layer never places a
 removed member again, so an accept after a return moves it back), and `ctl`,
 where each stream's control card holds the stream's state, cause, ci and
-`since`. The fleet table has a hidden `ctl` column where each member's control
+`since`; the `since` cell is hidden too: the machine keeps it, `where` does not
+show it. The fleet table has a hidden `ctl` column where each member's control
 card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
 layer never places a removed member again), and hidden `ok` and `failed`

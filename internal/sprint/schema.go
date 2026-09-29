@@ -32,7 +32,8 @@ const (
 	Broken  = "broken"
 )
 
-// Merge table columns. returned (hidden) holds a primary sent back from
+// Merge table columns. since (hidden) is when the stream's state last
+// changed, for the machine. returned (hidden) holds a primary sent back from
 // merging, so that accepting it again moves it rather than creating it: the
 // table layer never places a removed member again. ctl (hidden) holds the
 // stream's control card, whose fields are the stream's state.
@@ -193,7 +194,7 @@ func (n Names) Definitions() []ntable.Table {
 	return []ntable.Table{
 		mk(Work, "waiting,ready,working,review,merging,landed"),
 		mk(Readers, "asked,reading,ok,broken"),
-		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Returned, Ctl),
+		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Since, Returned, Ctl),
 		mk(Fleet, "ready,working,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none",
 			Withdrawn, DoneOK, DoneFailed, Ctl),
 	}
