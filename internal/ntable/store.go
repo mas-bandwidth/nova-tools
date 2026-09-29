@@ -221,7 +221,7 @@ func runUnlessNamed(err error, remedy string) string {
 
 // memberReadCommand names the verb that shows a member's place, score,
 // revision and fields now.
-func memberReadCommand(table, member string) string {
+func memberReadCommand(table, member string, flags ...string) string {
 	args := []string{table, member}
 	endFlags := false
 	for i, arg := range args {
@@ -231,7 +231,7 @@ func memberReadCommand(table, member string) string {
 	if endFlags {
 		args = append([]string{"--"}, args...)
 	}
-	return "nova-table member read " + strings.Join(args, " ")
+	return "nova-table member read " + strings.Join(append(flags, args...), " ")
 }
 
 // words joins the detail elements of a refusal reply.
@@ -275,7 +275,12 @@ func (o operation) refused(reply []any) error {
 		if o.guarded() && len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: the member is of epoch %v, the active epoch is %v", ErrMemberEpoch, reply[3], reply[4])
-			remedy = memberReadCommand(o.table, o.member)
+			// A read at the active epoch repeats this refusal; the member is read at its own.
+			if theirs, err1 := strconv.ParseUint(fmt.Sprint(reply[3]), 10, 64); err1 == nil {
+				if active, err2 := strconv.ParseUint(fmt.Sprint(reply[4]), 10, 64); err2 == nil && theirs < active {
+					remedy = memberReadCommand(o.table, o.member, "--at-epoch", fmt.Sprint(reply[3]))
+				}
+			}
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
 		}
@@ -576,7 +581,10 @@ func (o operation) refused(reply []any) error {
 	}
 	if refusal == typedrec.TableRefusalNoRow && len(reply) >= 3 {
 		o.row = fmt.Sprint(reply[2])
-		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+		if !o.guarded() {
+			// a batch or a read set never prepares a write: it shows the table, whose rows it lists
+			remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+		}
 	}
 	if o.readSet && refusal == typedrec.TableRefusalNoRow {
 		remedy = o.remedy() // a read prepares nothing to write; show the table

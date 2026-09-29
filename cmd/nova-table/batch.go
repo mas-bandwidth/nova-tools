@@ -200,7 +200,9 @@ func scoreOrDash(v *string) string {
 // changedFields is the member's changed application fields: name to [before,
 // after], where a value is its string, null for absent, or {"bytes": n, "sha1":
 // "..."} for a value too long for a receipt to record. A field whose two sides
-// are equal changed nothing and is not listed.
+// are equal strings, or both absent, changed nothing and is not listed. Two long
+// sides are always listed with their digests: a digest identifies a value, it does
+// not prove two values equal, so equality is decided from bytes only.
 func changedFields(m ntable.BatchMemberDelta) map[string][2]any {
 	side := func(text *string, n int, sha string) (any, string) {
 		switch {
@@ -215,7 +217,7 @@ func changedFields(m ntable.BatchMemberDelta) map[string][2]any {
 	for name, c := range m.Fields {
 		before, bk := side(c.Before, c.BeforeBytes, c.BeforeSHA1)
 		after, ak := side(c.After, c.AfterBytes, c.AfterSHA1)
-		if bk == ak {
+		if bk == ak && !strings.HasPrefix(bk, "l:") {
 			continue
 		}
 		out[name] = [2]any{before, after}

@@ -891,8 +891,14 @@ do
       local edit = verb == 'set' and T.decode(args[2])
       local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil)
       if not d then return err end
-      if opts.epoch ~= d.active then return T.refuse('STALE', opts.epoch, d.active) end
-      if not d.present and not declaration and verb ~= 'drop_definition' then return T.refuse('NOTABLE') end
+      local missing = not d.present and not declaration and verb ~= 'drop_definition'
+      if opts.epoch ~= d.active then
+        -- a table that does not exist is missing whatever epoch is asked for
+        if missing and T.uintgt(opts.epoch, d.active) then return T.refuse('NOTABLE') end
+        if T.uintgt(opts.epoch, d.active) then return T.refuse('EPOCHAHEAD', opts.epoch, d.active) end
+        return T.refuse('STALE', opts.epoch, d.active)
+      end
+      if missing then return T.refuse('NOTABLE') end
       if declaration then d.present = true end
       local reply, why = handler(d, args, spec)
       if not reply then return why end

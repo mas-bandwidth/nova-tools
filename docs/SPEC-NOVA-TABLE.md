@@ -465,7 +465,7 @@ work of removing them bounded. `drop <table>` and `drop <table> --definition` tr
 them alike: each removes the whole hash in the same atomic call as the drop, so a table
 created again under the name is a new table and no operation of the old one replays
 against it; the two verbs differ only in what they always differed in, the saved
-column definition. `clear <table>`, the epoch advance, removes no record: an operation
+column definition. `clear <table>` removes no record: an operation
 recorded in an earlier epoch replays with its original receipt, epoch and revisions.
 Epoch snapshots that a drop keeps readable are not operation records and stay. A
 replay is guaranteed for as long as the table exists; nothing else removes a record.

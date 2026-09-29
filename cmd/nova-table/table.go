@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -14,6 +15,17 @@ import (
 )
 
 // The table verbs: create, drop, list, clear, show, render.
+
+// refuseColumns reports a column list that ParseColumns would not accept. A list
+// past the column bound is the store's kind of no, as `col add` past it is: exit
+// 1, the bound and the count, and how to get under it. Any other fault is usage.
+func refuseColumns(stderr io.Writer, verb string, err error) int {
+	var limit *ntable.LimitError
+	if errors.As(err, &limit) {
+		return refused(stderr, verb, "--columns: "+limit.Error()+"; "+limit.Advice())
+	}
+	return refuse(stderr, verb, "--columns: "+err.Error())
+}
 
 func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	const verb = "create"
@@ -38,7 +50,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	}
 	cols, err := ntable.ParseColumns(*columns)
 	if err != nil {
-		return refuse(stderr, verb, "--columns: "+err.Error())
+		return refuseColumns(stderr, verb, err)
 	}
 	if *widths != "" {
 		w, err := ntable.ParseWidths(*widths)
@@ -99,7 +111,7 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	o := ntable.SetOpts{Rename: *rename}
 	if *columns != "" {
 		if o.Columns, err = ntable.ParseColumns(*columns); err != nil {
-			return refuse(stderr, verb, err.Error())
+			return refuseColumns(stderr, verb, err)
 		}
 	}
 	if *footer != "\x00" {
