@@ -608,14 +608,14 @@ CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
 
 ```sh
 nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --as Ada --remote origin --branch main
-ARCHIVE OK archived=120 kept=15 target=archive commit=a1b2c3d4 pushed=true attempts=1
+ARCHIVE OK archived=120 kept=15 target=archive commit=a1b2c3d4
 ```
 
 If `--out <path>` ends in `.tar.gz` or `.tgz`, the archived notes are packaged into that tarball and removed from active lanes while `<bus>/archive/INDEX` is updated:
 
 ```sh
 nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --as Ada --out ~/bus-archive-20260901.tar.gz --remote origin --branch main
-ARCHIVE OK archived=120 kept=15 target=/home/ada/bus-archive-20260901.tar.gz commit=e5f6a7b8 pushed=true attempts=1
+ARCHIVE OK archived=120 kept=15 target=/home/ada/bus-archive-20260901.tar.gz commit=e5f6a7b8
 ```
 
 **`check`** is the gate: every note parses, every header resolves, every note sits in the lane its `From:` names, every id is well formed and unique, every `Re:` and receipt names something that exists, every lane has an owner and holds nothing but notes, its state files and a `README.md`. It reports every finding in one run and asserts nothing about a body. It refuses to guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.

@@ -224,7 +224,7 @@ test is proven able to fail before it is trusted. The verb groups are
 **The verb line, as help prints it.**
 
 ```
-nova-bus archive --bus <dir> --before <RFC3339 date> --as <name> [--out <path>] [--dry-run] [--remote <name> --branch <name>] [--attempts <n>] [--git-timeout <seconds>] [--no-push]
+nova-bus archive --bus <dir> --before <RFC3339> --as <name> [--out <path>] [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 ```
 
 **What it reads and writes.** `archive --before` reads all active lanes in `--bus` and selects all notes whose date is strictly before the given RFC 3339 instant. It copies or packages selected notes into the archive destination:
@@ -237,7 +237,7 @@ When pushing to `--remote` and `--branch`, the changes are committed with traile
 
 **What `archive` prints.** On success:
 ```
-ARCHIVE OK archived=<n> kept=<m> target=<target> [commit=<sha> pushed=<bool> attempts=<k>]
+ARCHIVE OK archived=<n> kept=<m> target=<target> [commit=<sha>]
 ```
 In `--dry-run` mode, it prints:
 ```
@@ -247,7 +247,7 @@ ARCHIVE OK archived=<n> kept=<m> target=<target> (dry run)
 **The refusals.**
 - Missing `--bus` or `--before`: exit 2 with state and next action.
 - Missing or empty `--as`: exit 2 with `want --as <name>; state: identity unset; next: supply --as <name>`.
-- Malformed `--before` (not valid RFC 3339): exit 2 with `archive: --before must be an RFC3339 instant (e.g. 2026-09-18T00:00:00Z); got "<value>"`.
-- Nonexistent bus directory: exit 1 naming the missing path.
-- Non-root bus repo or unrecognized arguments: exit 2 with remedy.
+- Malformed `--before` (not valid RFC 3339): exit 2 with `nova-bus archive: --before "<value>" is not an RFC 3339 instant; refusing to guess; run: nova-bus help`.
+- Nonexistent bus directory or not a repo root: exit 2 naming the problem.
+- Unrecognized arguments: exit 2 with remedy.
 

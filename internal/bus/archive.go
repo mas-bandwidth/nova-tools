@@ -36,10 +36,10 @@ type ArchiveExecutionResult struct {
 // PlanArchive inspects the bus and identifies notes older than the specified RFC 3339 instant.
 func PlanArchive(t *Bus, before time.Time, target string) (*ArchivePlan, error) {
 	plan := &ArchivePlan{
-		BusDir:  t.Root,
-		Before:  before,
-		Target:  target,
-		config:  t.Config,
+		BusDir: t.Root,
+		Before: before,
+		Target: target,
+		config: t.Config,
 	}
 
 	lower := strings.ToLower(target)

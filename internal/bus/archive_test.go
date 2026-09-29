@@ -14,6 +14,7 @@ import (
 )
 
 func TestPlanArchive(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, _ := LoadConfig(root)
 
@@ -47,6 +48,7 @@ func TestPlanArchive(t *testing.T) {
 }
 
 func TestArchiveExecutionDirectory(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, _ := LoadConfig(root)
 
@@ -195,6 +197,7 @@ func TestArchiveExecutionDirectory(t *testing.T) {
 }
 
 func TestArchiveExecutionTarball(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, _ := LoadConfig(root)
 
@@ -272,6 +275,7 @@ func TestArchiveExecutionTarball(t *testing.T) {
 }
 
 func TestPlanArchiveNoOldNotes(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, _ := LoadConfig(root)
 	writeNoteWithDate(t, root, "from-bo", "bo-333333333333", "2026-09-10T12:00:00Z", "Newer note")
@@ -298,6 +302,7 @@ func TestPlanArchiveNoOldNotes(t *testing.T) {
 }
 
 func TestPlanArchiveUnparsableDateKept(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, _ := LoadConfig(root)
 	// Write a note whose date cannot be parsed
@@ -321,6 +326,7 @@ func TestPlanArchiveUnparsableDateKept(t *testing.T) {
 }
 
 func TestArchiveMultipleRunsAccumulate(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, _ := LoadConfig(root)
 
