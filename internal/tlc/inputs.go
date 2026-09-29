@@ -205,19 +205,50 @@ func planRow(plan []byte, config string) (head, row, module string, err error) {
 var (
 	extendsRE  = regexp.MustCompile(`\bEXTENDS\b\s*([A-Za-z0-9_]+(?:\s*,\s*[A-Za-z0-9_]+)*)`)
 	instanceRE = regexp.MustCompile(`\bINSTANCE\s+([A-Za-z0-9_]+)`)
-	endModule  = regexp.MustCompile(`(?m)^={4,}`)
+	moduleOpen = regexp.MustCompile(`^\s*-{4,}\s*MODULE\s+([A-Za-z0-9_]+)\s*-{4,}`)
+	moduleEnd  = regexp.MustCompile(`^\s*={4,}`)
 )
 
 // ModuleReferences returns the names of the modules a module's text extends or
 // instantiates (`EXTENDS A, B`, `INSTANCE M`, `LOCAL INSTANCE M`,
-// `F(x) == INSTANCE M WITH ...`), each once, in order of appearance. Comments
-// and strings are not read, and neither is anything after the module's closing
-// line of `=` signs.
+// `F(x) == INSTANCE M WITH ...`), each once, in order of appearance, at every
+// depth of nesting: a module may hold modules (`---- MODULE X ----` opens one
+// and a line of `=` signs closes it), and each of them names modules of its
+// own. A name that a module of the same text declares is not a file and is left
+// out. Comments and strings are not read, neither is text before the first
+// module header, nor anything after the line that closes the outermost module.
+// A text with no module header is read up to its first closing line.
 func ModuleReferences(text []byte) []string {
-	clean := stripComments(text)
-	if loc := endModule.FindIndex(clean); loc != nil {
-		clean = clean[:loc[0]]
+	lines := strings.Split(string(stripComments(text)), "\n")
+	first := -1
+	for i, line := range lines {
+		if moduleOpen.MatchString(line) {
+			first = i
+			break
+		}
 	}
+	declared := map[string]bool{}
+	var body strings.Builder
+	depth := 0
+	for i := max(first, 0); i < len(lines); i++ {
+		line := lines[i]
+		switch m := moduleOpen.FindStringSubmatch(line); {
+		case m != nil:
+			depth++
+			declared[m[1]] = true
+			body.WriteByte('\n')
+		case moduleEnd.MatchString(line):
+			depth--
+			body.WriteByte('\n')
+			if depth <= 0 {
+				i = len(lines)
+			}
+		default:
+			body.WriteString(line)
+			body.WriteByte('\n')
+		}
+	}
+	clean := []byte(body.String())
 	type hit struct {
 		at    int
 		names []string
@@ -238,7 +269,7 @@ func ModuleReferences(text []byte) []string {
 	seen := map[string]bool{}
 	for _, h := range hits {
 		for _, n := range h.names {
-			if !seen[n] {
+			if !seen[n] && !declared[n] {
 				seen[n] = true
 				out = append(out, n)
 			}

@@ -35,6 +35,12 @@ func TestModuleReferencesReadsEveryFormAndNothingElse(t *testing.T) {
 		{"a string with an escaped quote", "Msg == \"a \\\" INSTANCE Hidden\"\nINSTANCE Shown\n", []string{"Shown"}},
 		{"after the end of the module", "EXTENDS A\n====\nEXTENDS Hidden\nINSTANCE Hidden\n", []string{"A"}},
 		{"a longer word is not the keyword", "MYEXTENDS B\nNOINSTANCE C\n_INSTANCE D\n", nil},
+		{"a nested module's end does not end the outer module", "---- MODULE Outer ----\nEXTENDS A\n---- MODULE Inner ----\nEXTENDS B\n====\nEXTENDS C\nINSTANCE D\n====\nEXTENDS Hidden\n", []string{"A", "B", "C", "D"}},
+		{"the reader's example", "---- MODULE Outer ----\n---- MODULE Inner ----\n====\nEXTENDS C\n====\n", []string{"C"}},
+		{"a module inside a module inside a module", "---- MODULE A ----\n---- MODULE B ----\n---- MODULE C ----\nEXTENDS X\n====\nEXTENDS Y\n====\nEXTENDS Z\n====\nEXTENDS Hidden\n", []string{"X", "Y", "Z"}},
+		{"a module the same text declares is not a file", "---- MODULE Outer ----\n---- MODULE Inner ----\n====\nEXTENDS Inner, Real\nX == INSTANCE Inner\n====\n", []string{"Real"}},
+		{"text before the first header is not read", "EXTENDS Hidden\n---- MODULE A ----\nEXTENDS Shown\n====\n", []string{"Shown"}},
+		{"a header inside a comment opens nothing", "---- MODULE A ----\n(* ---- MODULE Fake ---- *)\nEXTENDS Shown\n====\nEXTENDS Hidden\n", []string{"Shown"}},
 		{"nothing", "---- MODULE A ----\nVARIABLE x\n====\n", nil},
 	}
 	for _, tc := range tests {
@@ -319,5 +325,20 @@ func TestUnknownModuleRefusalNamesTheNextAction(t *testing.T) {
 	}
 	if len(standardModules) != 10 {
 		t.Errorf("standardModules holds %d names; the jar bundles ten", len(standardModules))
+	}
+}
+
+// A module reached through a nested module's closing line is still followed to
+// its file: the case reads what the outer module extends after the inner one.
+func TestInputsFollowAModuleNamedAfterANestedModule(t *testing.T) {
+	t.Parallel()
+	root := tree(t, map[string]string{
+		"CASES.tsv": header + row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-"),
+		"MCA.tla":   "---- MODULE MCA ----\n---- MODULE Inner ----\nEXTENDS Naturals\n====\nEXTENDS C\n====\n",
+		"C.tla":     "EXTENDS Naturals\n====\n", "MCA.cfg": "c\n",
+	})
+	got, err := testSource(t, root).Inputs("MCA.cfg")
+	if err != nil || !slicesContains(paths(got), "tla/C.tla") {
+		t.Fatalf("inputs %v, %v", paths(got), err)
 	}
 }
