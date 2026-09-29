@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cicost"
+	"github.com/mas-bandwidth/nova-tools/internal/cireceipt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	gheventwire "github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -57,6 +60,20 @@ type LandPROptions struct {
 	// Await returns what woke it: "head" (a check delivery for head), "pr"
 	// (a pull_request delivery for this PR) or "" (the time passed).
 	Await func(ctx context.Context, head string, d time.Duration) (string, error)
+
+	// Watch, when true, observes ev:github to the end: queue run, per-job seconds,
+	// red names, without polling GitHub (#4331).
+	Watch bool
+
+	// Cost, when true, appends the COST line to Log (#4328, #4331).
+	Cost bool
+
+	// StreamRead is an optional test seam to read from ev:github (or a mock stream)
+	// instead of calling rdb.XRead.
+	StreamRead func(ctx context.Context, tip string, block time.Duration) ([]redis.XMessage, error)
+
+	// Tip, if non-empty, sets the starting ev:github stream cursor (default is gh.Tip(rdb)).
+	Tip string
 }
 
 // LandPRWait runs LandPR, and while the pass is waiting and Wait allows,
@@ -67,6 +84,9 @@ type LandPROptions struct {
 // for this PR (its state moved); a red leg ends the wait with no call, and
 // a timeout or an unrelated delivery costs nothing.
 func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (LandPRReport, error) {
+	if o.Watch {
+		return LandPRWatch(ctx, gh, rdb, o)
+	}
 	await := o.Await
 	if await == nil && o.Wait > 0 && rdb != nil {
 		var err error
@@ -179,6 +199,7 @@ type LandPRReport struct {
 	Card     string
 	CardMove string
 	Pitstop  string
+	CostLine string // the appended COST line when Cost is true
 }
 
 // LandPR runs the pass. The error is a *Refusal for a refused input, else
@@ -455,4 +476,449 @@ func prCard(ctx context.Context, rdb redis.Cmdable, repo string, n int) (string,
 		}
 	}
 	return "", nil
+}
+
+// LandPRWatch (nova-tools#4331): watches ev:github to the end: queue run,
+// per-job seconds, red names, from the webhook stream, without polling.
+// It prints one line per transition:
+//
+//	checks green -> enqueued -> group run started -> job <name> done in <s>s -> merged <sha>
+//
+// On red, it prints the failing job and test names verbatim and returns
+// State "failed" (exit 1). Cost appends the COST line (internal/cicost).
+func LandPRWatch(ctx context.Context, forge *GitHub, rdb redis.Cmdable, o LandPROptions) (LandPRReport, error) {
+	var rep LandPRReport
+	if (forge == nil || forge.Token == "") && o.StreamRead == nil {
+		return rep, ErrNoToken
+	}
+	if o.N < 1 || !strings.Contains(o.Repo, "/") {
+		return rep, &Refusal{Why: "land pr wants <n> and --repo owner/name", Remedy: "nova-sprint land pr <n> --repo owner/name"}
+	}
+	if rdb == nil && o.StreamRead == nil {
+		return rep, &Refusal{Why: "land pr reads the check state from Redis and has no store", Remedy: "--redis <addr> or NOVA_REDIS_ADDR"}
+	}
+	if o.Log == nil {
+		o.Log = io.Discard
+	}
+	say := func(format string, a ...any) { fmt.Fprintf(o.Log, "PR %d "+format+"\n", append([]any{o.N}, a...)...) }
+
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	tick := o.Tick
+	if tick <= 0 {
+		tick = 30 * time.Second
+	}
+	wait := o.Wait
+	if wait <= 0 {
+		wait = 15 * time.Minute
+	}
+	deadline := now().Add(wait)
+
+	var headRef, baseRef string
+	if forge != nil && forge.Token != "" {
+		pr, err := forge.ViewPR(ctx, o.Repo, o.N)
+		if err != nil {
+			return rep, err
+		}
+		rep.Head = pr.Head.SHA
+		headRef = pr.Head.Ref
+		baseRef = pr.Base.Ref
+		switch {
+		case pr.Merged:
+			rep.State, rep.MergeSHA = "merged", pr.MergeCommitSHA
+			say("merged %s", pr.MergeCommitSHA)
+			appendCost(ctx, rdb, o, &rep, "ci", "", "success", nil)
+			return afterMerge(ctx, rdb, o, rep, pr.Head.Ref, pr.Base.Ref, say)
+		case pr.State == "closed":
+			rep.State = "closed"
+			say("FAILED closed without a merge")
+			return rep, nil
+		case pr.MergeableState == "dirty":
+			rep.State = "conflict"
+			say("FAILED conflict with the base (mergeable_state=dirty)")
+			return rep, nil
+		case pr.Head.SHA == "":
+			return rep, fmt.Errorf("GET pull %s#%d: no head sha in the reply", o.Repo, o.N)
+		}
+	}
+
+	checksGreenSaid := false
+	if rdb != nil && rep.Head != "" {
+		key := webhook.Key(o.Repo, rep.Head)
+		m, err := rdb.HGetAll(ctx, key).Result()
+		if err == nil && len(m) > 0 {
+			ci := webhook.Parse(m)
+			rep.CI = ci.Word
+			switch ci.Word {
+			case webhook.Green:
+				say("checks green")
+				checksGreenSaid = true
+			case webhook.Red:
+				fail := ci.Fail
+				if fail == "" {
+					fail = "gh red at " + short(rep.Head)
+				}
+				rep.State, rep.Failed = "failed", []string{fail}
+				say("FAILED %s", fail)
+				appendCost(ctx, rdb, o, &rep, "ci", "", "failure", nil)
+				return rep, nil
+			}
+		}
+	}
+
+	tip := "0-0"
+	if o.Tip != "" {
+		tip = o.Tip
+	} else if o.StreamRead == nil && rdb != nil {
+		var err error
+		tip, err = gh.Tip(ctx, rdb)
+		if err != nil {
+			return rep, err
+		}
+	}
+
+	enqueuedSaid := false
+	groupRunStartedSaid := false
+	var groupHead string
+	var groupStarted time.Time
+	jobStarts := make(map[string]time.Time)
+	completedJobs := make(map[string]bool)
+	var collectedJobs []cicost.Job
+	workflowName := "ci"
+	runID := ""
+	nStr := strconv.Itoa(o.N)
+
+	for {
+		left := deadline.Sub(now())
+		if left <= 0 {
+			if rep.State == "" {
+				rep.State = "waiting"
+			}
+			return rep, nil
+		}
+		d := tick
+		if left < d {
+			d = left
+		}
+
+		var msgs []redis.XMessage
+		if o.StreamRead != nil {
+			var err error
+			msgs, err = o.StreamRead(ctx, tip, d)
+			if err != nil {
+				return rep, err
+			}
+			if len(msgs) == 0 {
+				if rep.State == "" {
+					rep.State = "waiting"
+				}
+				return rep, nil
+			}
+		} else {
+			res, err := rdb.XRead(ctx, &redis.XReadArgs{
+				Streams: []string{gheventwire.Stream, tip},
+				Count:   100,
+				Block:   d,
+			}).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return rep, fmt.Errorf("XREAD %s: %w", gheventwire.Stream, err)
+			}
+			for _, s := range res {
+				msgs = append(msgs, s.Messages...)
+			}
+		}
+
+		for _, m := range msgs {
+			tip = m.ID
+			f := m.Values
+			kind := strVal(f["kind"])
+			num := strVal(f["number"])
+			action := strVal(f["action"])
+			head := strVal(f["head"])
+			status := strVal(f["status"])
+			conclusion := strVal(f["conclusion"])
+			atStr := strVal(f["at"])
+			headRefVal := strVal(f["head_ref"])
+			branchVal := strVal(f["branch"])
+			baseVal := strVal(f["base"])
+
+			if rep.Head == "" && (num == nStr || strings.Contains(headRefVal, "/pr-"+nStr+"-")) && head != "" {
+				rep.Head = head
+			}
+			if strVal(f["workflow"]) != "" {
+				workflowName = strVal(f["workflow"])
+			}
+			if strVal(f["run_id"]) != "" {
+				runID = strVal(f["run_id"])
+			}
+			if headRef == "" && branchVal != "" {
+				headRef = branchVal
+			}
+			if baseRef == "" && baseVal != "" {
+				baseRef = baseVal
+			}
+
+			isForPR := num == nStr || (rep.Head != "" && head == rep.Head) || strings.Contains(headRefVal, fmt.Sprintf("/pr-%s-", nStr))
+			if groupHead != "" && head == groupHead {
+				isForPR = true
+			}
+			if !isForPR && kind != "merge_group" && kind != "check_run" && kind != "pull_request" {
+				continue
+			}
+
+			// Check for PR checks becoming green
+			if !checksGreenSaid {
+				if kind == "check_run" || kind == "workflow_run" {
+					if rdb != nil && rep.Head != "" {
+						mKey := webhook.Key(o.Repo, rep.Head)
+						if mRes, err := rdb.HGetAll(ctx, mKey).Result(); err == nil && len(mRes) > 0 {
+							ci := webhook.Parse(mRes)
+							if ci.Word == webhook.Green {
+								say("checks green")
+								checksGreenSaid = true
+							} else if ci.Word == webhook.Red {
+								fail := ci.Fail
+								if fail == "" {
+									fail = "gh red at " + short(rep.Head)
+								}
+								rep.State, rep.Failed = "failed", []string{fail}
+								say("FAILED %s", fail)
+								appendCost(ctx, rdb, o, &rep, workflowName, runID, "failure", collectedJobs)
+								return rep, nil
+							}
+						}
+					}
+					if !checksGreenSaid && (action == "checks_green" || status == "checks_green" || strVal(f["checks"]) == "green") {
+						say("checks green")
+						checksGreenSaid = true
+					}
+				}
+			}
+
+			// Check for enqueued
+			if (kind == "pull_request" && (num == nStr || isForPR) && (action == "enqueued" || action == "queued")) ||
+				(kind == "merge_group" && (num == nStr || strings.Contains(headRefVal, fmt.Sprintf("/pr-%s-", nStr)))) {
+				if head != "" {
+					groupHead = head
+				}
+				if !checksGreenSaid {
+					say("checks green")
+					checksGreenSaid = true
+				}
+				if !enqueuedSaid {
+					say("enqueued")
+					enqueuedSaid = true
+				}
+			}
+
+			// Check for group run started
+			if (kind == "merge_group" && action == "checks_requested") ||
+				(kind == "workflow_run" && status == "in_progress" && (head == groupHead || strings.Contains(branchVal, "queue"))) ||
+				(kind == "check_run" && enqueuedSaid && (groupHead == "" || head == groupHead)) {
+				if head != "" && groupHead == "" {
+					groupHead = head
+				}
+				if !checksGreenSaid {
+					say("checks green")
+					checksGreenSaid = true
+				}
+				if !enqueuedSaid {
+					say("enqueued")
+					enqueuedSaid = true
+				}
+				if !groupRunStartedSaid {
+					say("group run started")
+					groupRunStartedSaid = true
+					if t, err := time.Parse(time.RFC3339, atStr); err == nil {
+						groupStarted = t
+					} else {
+						groupStarted = now()
+					}
+				}
+			}
+
+			// Check for check_run in progress or completed
+			if kind == "check_run" {
+				jobName := strVal(f["check"])
+				if jobName == "" {
+					jobName = strVal(f["name"])
+				}
+				if jobName != "" {
+					if status == "in_progress" {
+						if t, err := time.Parse(time.RFC3339, atStr); err == nil {
+							jobStarts[jobName] = t
+						} else {
+							jobStarts[jobName] = now()
+						}
+					} else if status == "completed" || action == "completed" {
+						if !completedJobs[jobName] {
+							completedJobs[jobName] = true
+							if !checksGreenSaid {
+								say("checks green")
+								checksGreenSaid = true
+							}
+							if !enqueuedSaid {
+								say("enqueued")
+								enqueuedSaid = true
+							}
+							if !groupRunStartedSaid {
+								say("group run started")
+								groupRunStartedSaid = true
+							}
+
+							tEnd, err := time.Parse(time.RFC3339, atStr)
+							if err != nil {
+								tEnd = now()
+							}
+							var duration int64
+							if s, err := strconv.ParseInt(strVal(f["seconds"]), 10, 64); err == nil {
+								duration = s
+							} else if s, err := strconv.ParseInt(strVal(f["duration"]), 10, 64); err == nil {
+								duration = s
+							} else if start, ok := jobStarts[jobName]; ok && !start.IsZero() {
+								duration = int64(tEnd.Sub(start) / time.Second)
+							} else if !groupStarted.IsZero() {
+								duration = int64(tEnd.Sub(groupStarted) / time.Second)
+							}
+							if duration < 0 {
+								duration = 0
+							}
+
+							startedTime := jobStarts[jobName]
+							if startedTime.IsZero() {
+								startedTime = tEnd.Add(-time.Duration(duration) * time.Second)
+								jobStarts[jobName] = startedTime
+							}
+
+							isRed := conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" || conclusion == "cancelled"
+							collectedJobs = append(collectedJobs, cicost.Job{
+								Name:       jobName,
+								Conclusion: conclusion,
+								Attempt:    1,
+								Started:    startedTime,
+								Completed:  tEnd,
+							})
+
+							say("job %s done in %ds", jobName, duration)
+
+							if isRed {
+								tests := strVal(f["tests"])
+								if tests == "" {
+									tests = strVal(f["fail"])
+								}
+								if tests == "" {
+									tests = strVal(f["failing"])
+								}
+								if tests == "" {
+									tests = strVal(f["test"])
+								}
+								if tests != "" {
+									say("FAILED job=%s tests=%s", jobName, tests)
+									rep.Failed = []string{jobName, tests}
+								} else {
+									say("FAILED job=%s", jobName)
+									rep.Failed = []string{jobName}
+								}
+								rep.State = "failed"
+								appendCost(ctx, rdb, o, &rep, workflowName, runID, "failure", collectedJobs)
+								return rep, nil
+							}
+						}
+					}
+				}
+			}
+
+			// Check for PR merged
+			if kind == "pull_request" && (num == nStr || isForPR) &&
+				(action == "closed" || action == "merged") &&
+				(strings.EqualFold(strVal(f["merged"]), "true") || action == "merged") {
+				if !checksGreenSaid {
+					say("checks green")
+					checksGreenSaid = true
+				}
+				if !enqueuedSaid {
+					say("enqueued")
+					enqueuedSaid = true
+				}
+				mergeSHA := strVal(f["merge_commit_sha"])
+				if mergeSHA == "" {
+					mergeSHA = strVal(f["merge_sha"])
+				}
+				if mergeSHA == "" {
+					mergeSHA = head
+				}
+				say("merged %s", mergeSHA)
+				rep.State = "merged"
+				rep.MergeSHA = mergeSHA
+				appendCost(ctx, rdb, o, &rep, workflowName, runID, "success", collectedJobs)
+				return afterMerge(ctx, rdb, o, rep, headRef, baseRef, say)
+			}
+		}
+	}
+}
+
+func appendCost(ctx context.Context, rdb redis.Cmdable, o LandPROptions, rep *LandPRReport, workflowName, runID, conclusion string, jobs []cicost.Job) {
+	if !o.Cost {
+		return
+	}
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	c := cicost.FromJobs(jobs)
+	sha := rep.Head
+	if sha == "" {
+		sha = strings.Repeat("0", 40)
+	}
+	if runID == "" {
+		runID = "-"
+	}
+	if workflowName == "" {
+		workflowName = "ci"
+	}
+	conc := conclusion
+	switch conc {
+	case "failed", "failure":
+		conc = "failure"
+	case "cancelled", "canceled":
+		conc = "cancelled"
+	case "success", "green":
+		conc = "success"
+	default:
+		conc = "success"
+	}
+	r := cireceipt.Receipt{
+		Repo:       o.Repo,
+		SHA:        sha,
+		RunID:      runID,
+		Workflow:   workflowName,
+		Conclusion: conc,
+		PR:         strconv.Itoa(o.N),
+		At:         now().UTC().Format(time.RFC3339),
+	}
+	ev := "-"
+	if rdb != nil {
+		if w, ok := rdb.(cicost.Writer); ok {
+			if id, err := cicost.Write(ctx, w, &r, c); err == nil {
+				ev = id
+			}
+		}
+	}
+	line := c.Line(r, ev)
+	rep.CostLine = line
+	if o.Log != nil {
+		fmt.Fprintln(o.Log, line)
+	}
+}
+
+func strVal(v any) string {
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	if v != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
 }

@@ -21,7 +21,7 @@ import (
 func TestNoRetiredPRRecordRead(t *testing.T) {
 	t.Parallel()
 
-	roots := []string{filepath.Join("..", "..", "..", "cmd", "nova-sprint"), "."}
+	roots := []string{filepath.Join("..", "..", "..", "deprecated", "cmd", "nova-sprint"), "."}
 	scanned := 0
 	for _, root := range roots {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

@@ -1,7 +1,7 @@
 // land pr (nova-tools#4311): one pull request to its merge commit in one
 // pass, the scratch script of 2026-09-26 as a verb.
 //
-//	nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]
+//	nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> [--tick <d>]] [--watch] [--cost]
 //
 // It reads the PR by REST, reads its head's check state from Redis
 // (ci:<repo>:<head>:gh, written by the webhook ingest; never the check-runs
@@ -12,6 +12,12 @@
 // token comes from the environment (GH_TOKEN, then GITHUB_TOKEN, as the
 // lander reads it; internal/nsprint/land/stream); no child process. A
 // missing token is the typed refusal REFUSED no GitHub token remedy=...
+//
+// With --watch (#4331), it subscribes to ev:github in Redis and observes the
+// transitions to the end (checks green -> enqueued -> group run started ->
+// job <name> done in <s>s -> merged <sha>) without polling GitHub. Red prints
+// the failing job and test names verbatim and exits 1. --cost appends the
+// COST line (#4328).
 //
 // After MERGED (card pr-record-follows-github) the PR record follows the
 // REST reply (written from head.sha and head.ref when absent: PR <n> RECORD
@@ -46,6 +52,8 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	api := fs.String("api", gh.DefaultAPI, "")
 	wait := fs.Duration("wait", 0, "")
 	tick := fs.Duration("tick", 30*time.Second, "")
+	watch := fs.Bool("watch", false, "")
+	cost := fs.Bool("cost", false, "")
 	// The one positional <n> may come before or after the flags.
 	var pos []string
 	for len(args) > 0 {
@@ -59,7 +67,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		args = fs.Args()
 	}
-	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> [--tick <d>]]"
+	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> [--tick <d>]] [--watch] [--cost]"
 	if len(pos) != 1 {
 		return refuse(errOut, verb, "wants one pull request number: "+usage)
 	}
@@ -90,13 +98,16 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	defer st.Close()
-	// Three calls per pass; a --wait pass again after the head's event.
+	// Three calls per pass; a --wait or --watch pass again after the head's event.
 	budget := 3
-	if *wait > 0 {
+	if *wait > 0 || *watch {
 		budget = 0
 	}
 	c := &stream.GitHub{API: *api, Token: tok, Budget: budget, Verb: verb, Redis: st.Client(), Log: errOut}
-	rep, err := stream.LandPRWait(ctx, c, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out, Wait: *wait, Tick: *tick})
+	rep, err := stream.LandPRWait(ctx, c, st.Client(), stream.LandPROptions{
+		Repo: *repo, N: n, Log: out, Wait: *wait, Tick: *tick,
+		Watch: *watch, Cost: *cost,
+	})
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}

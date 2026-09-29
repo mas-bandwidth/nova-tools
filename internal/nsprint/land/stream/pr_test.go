@@ -389,3 +389,426 @@ func TestLandPRWithNoRecordWritesItFromTheReply(t *testing.T) {
 		t.Fatalf("the head index does not name 7: %v", c.Keys(ctx, "pr:*").Val())
 	}
 }
+
+// TestLandPRWatchTransitionsToMerged (nova-tools#4331): land pr --watch
+// subscribes to ev:github in Redis and prints one line per transition:
+//
+//	checks green -> enqueued -> group run started -> job <name> done in <s>s -> merged <sha>
+//
+// with zero polling calls to GitHub, and exits 0 on merged.
+func TestLandPRWatchTransitionsToMerged(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+
+	var log bytes.Buffer
+	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	groupHead := strings.Repeat("g", 40)
+	mergeSHA := strings.Repeat("e", 40)
+
+	msgs := []redis.XMessage{
+		{
+			ID: "1-0",
+			Values: map[string]any{
+				"kind":   "check_run",
+				"status": "checks_green",
+				"head":   prHead,
+				"number": "7",
+			},
+		},
+		{
+			ID: "2-0",
+			Values: map[string]any{
+				"kind":   "pull_request",
+				"action": "enqueued",
+				"number": "7",
+				"head":   prHead,
+			},
+		},
+		{
+			ID: "3-0",
+			Values: map[string]any{
+				"kind":     "merge_group",
+				"action":   "checks_requested",
+				"head":     groupHead,
+				"head_ref": "refs/heads/gh-readonly-queue/dev/pr-7-" + groupHead,
+				"at":       "2026-09-26T12:00:05Z",
+			},
+		},
+		{
+			ID: "4-0",
+			Values: map[string]any{
+				"kind":   "check_run",
+				"check":  "lint",
+				"status": "in_progress",
+				"head":   groupHead,
+				"at":     "2026-09-26T12:00:10Z",
+			},
+		},
+		{
+			ID: "5-0",
+			Values: map[string]any{
+				"kind":       "check_run",
+				"check":      "lint",
+				"status":     "completed",
+				"conclusion": "success",
+				"head":       groupHead,
+				"at":         "2026-09-26T12:00:25Z",
+			},
+		},
+		{
+			ID: "6-0",
+			Values: map[string]any{
+				"kind":             "pull_request",
+				"action":           "closed",
+				"merged":           "true",
+				"number":           "7",
+				"merge_commit_sha": mergeSHA,
+				"head":             prHead,
+				"at":               "2026-09-26T12:00:30Z",
+			},
+		},
+	}
+
+	readCount := 0
+	streamRead := func(_ context.Context, tip string, block time.Duration) ([]redis.XMessage, error) {
+		readCount++
+		if readCount == 1 {
+			return msgs, nil
+		}
+		return nil, nil
+	}
+
+	o := LandPROptions{
+		Repo:       "o/r",
+		N:          f.n,
+		Log:        &log,
+		Watch:      true,
+		StreamRead: streamRead,
+		Now:        func() time.Time { return now },
+	}
+
+	rep, err := LandPRWait(context.Background(), gh, c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.State != "merged" || rep.MergeSHA != mergeSHA {
+		t.Fatalf("report: %+v, want merged at %s", rep, mergeSHA)
+	}
+	wantLines := []string{
+		"PR 7 checks green",
+		"PR 7 enqueued",
+		"PR 7 group run started",
+		"PR 7 job lint done in 15s",
+		"PR 7 merged " + mergeSHA,
+	}
+	gotLog := log.String()
+	for _, want := range wantLines {
+		if !strings.Contains(gotLog, want) {
+			t.Errorf("log missing line %q:\n%s", want, gotLog)
+		}
+	}
+	if gh.Calls != 1 {
+		t.Errorf("GitHub calls = %d, want 1 (initial PR read only, no polling)", gh.Calls)
+	}
+}
+
+// TestLandPRWatchFailingJobAndTestsVerbatim (nova-tools#4331): on red, prints
+// the failing job and test names verbatim, sets State to "failed" (exit 1),
+// without any GitHub polling loop.
+func TestLandPRWatchFailingJobAndTestsVerbatim(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+
+	var log bytes.Buffer
+	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	groupHead := strings.Repeat("g", 40)
+
+	msgs := []redis.XMessage{
+		{
+			ID: "1-0",
+			Values: map[string]any{
+				"kind":     "merge_group",
+				"action":   "checks_requested",
+				"head":     groupHead,
+				"head_ref": "refs/heads/gh-readonly-queue/dev/pr-7-" + groupHead,
+				"at":       "2026-09-26T12:00:00Z",
+			},
+		},
+		{
+			ID: "2-0",
+			Values: map[string]any{
+				"kind":       "check_run",
+				"check":      "test-packages",
+				"status":     "completed",
+				"conclusion": "failure",
+				"seconds":    "42",
+				"tests":      "TestFooBar,TestBazQux",
+				"head":       groupHead,
+				"at":         "2026-09-26T12:00:42Z",
+			},
+		},
+	}
+
+	readCount := 0
+	streamRead := func(_ context.Context, tip string, block time.Duration) ([]redis.XMessage, error) {
+		readCount++
+		if readCount == 1 {
+			return msgs, nil
+		}
+		return nil, nil
+	}
+
+	o := LandPROptions{
+		Repo:       "o/r",
+		N:          f.n,
+		Log:        &log,
+		Watch:      true,
+		StreamRead: streamRead,
+		Now:        func() time.Time { return now },
+	}
+
+	rep, err := LandPRWait(context.Background(), gh, c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.State != "failed" {
+		t.Fatalf("state = %q, want failed", rep.State)
+	}
+	wantJob := "test-packages"
+	wantTests := "TestFooBar,TestBazQux"
+	if len(rep.Failed) < 2 || rep.Failed[0] != wantJob || rep.Failed[1] != wantTests {
+		t.Fatalf("rep.Failed = %v, want [%s %s]", rep.Failed, wantJob, wantTests)
+	}
+	gotLog := log.String()
+	if !strings.Contains(gotLog, "PR 7 job test-packages done in 42s") {
+		t.Errorf("log missing job done line:\n%s", gotLog)
+	}
+	wantFailLine := "PR 7 FAILED job=test-packages tests=TestFooBar,TestBazQux"
+	if !strings.Contains(gotLog, wantFailLine) {
+		t.Errorf("log missing verbatim fail line %q:\n%s", wantFailLine, gotLog)
+	}
+	if gh.Calls != 1 {
+		t.Errorf("GitHub calls = %d, want 1 (no polling)", gh.Calls)
+	}
+}
+
+// TestLandPRWatchWithCost (nova-tools#4331, #4328): --cost appends the
+// COST line with job-seconds, total, spin and job values.
+func TestLandPRWatchWithCost(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+
+	var log bytes.Buffer
+	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	groupHead := strings.Repeat("g", 40)
+	mergeSHA := strings.Repeat("e", 40)
+
+	msgs := []redis.XMessage{
+		{
+			ID: "1-0",
+			Values: map[string]any{
+				"kind":     "merge_group",
+				"action":   "checks_requested",
+				"head":     groupHead,
+				"head_ref": "refs/heads/gh-readonly-queue/dev/pr-7-" + groupHead,
+				"at":       "2026-09-26T12:00:00Z",
+			},
+		},
+		{
+			ID: "2-0",
+			Values: map[string]any{
+				"kind":       "check_run",
+				"check":      "lint",
+				"status":     "completed",
+				"conclusion": "success",
+				"seconds":    "15",
+				"head":       groupHead,
+				"at":         "2026-09-26T12:00:15Z",
+			},
+		},
+		{
+			ID: "3-0",
+			Values: map[string]any{
+				"kind":       "check_run",
+				"check":      "test-cmd",
+				"status":     "completed",
+				"conclusion": "success",
+				"seconds":    "30",
+				"head":       groupHead,
+				"at":         "2026-09-26T12:00:45Z",
+			},
+		},
+		{
+			ID: "4-0",
+			Values: map[string]any{
+				"kind":             "pull_request",
+				"action":           "closed",
+				"merged":           "true",
+				"number":           "7",
+				"merge_commit_sha": mergeSHA,
+				"head":             prHead,
+				"at":               "2026-09-26T12:00:50Z",
+			},
+		},
+	}
+
+	readCount := 0
+	streamRead := func(_ context.Context, tip string, block time.Duration) ([]redis.XMessage, error) {
+		readCount++
+		if readCount == 1 {
+			return msgs, nil
+		}
+		return nil, nil
+	}
+
+	o := LandPROptions{
+		Repo:       "o/r",
+		N:          f.n,
+		Log:        &log,
+		Watch:      true,
+		Cost:       true,
+		StreamRead: streamRead,
+		Now:        func() time.Time { return now },
+	}
+
+	rep, err := LandPRWait(context.Background(), gh, c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.State != "merged" {
+		t.Fatalf("state = %q, want merged", rep.State)
+	}
+	if rep.CostLine == "" {
+		t.Fatal("rep.CostLine is empty")
+	}
+	gotLog := log.String()
+	if !strings.Contains(gotLog, rep.CostLine) {
+		t.Errorf("log does not contain CostLine:\n%s\nCostLine:\n%s", gotLog, rep.CostLine)
+	}
+	if !strings.HasPrefix(rep.CostLine, "COST repo=o/r sha="+prHead) {
+		t.Errorf("CostLine prefix unexpected: %s", rep.CostLine)
+	}
+	if !strings.Contains(rep.CostLine, "jobs=2 total=45 spin=0 unknown=0") {
+		t.Errorf("CostLine totals unexpected: %s", rep.CostLine)
+	}
+	if !strings.Contains(rep.CostLine, "job=lint:15:success:1:ok") || !strings.Contains(rep.CostLine, "job=test-cmd:30:success:1:ok") {
+		t.Errorf("CostLine missing job tokens: %s", rep.CostLine)
+	}
+}
+
+// TestLandPRWatchFromRedisStream verifies that LandPRWait with Watch=true reads
+// actual entries published to ev:github in Redis without StreamRead override.
+func TestLandPRWatchFromRedisStream(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	groupHead := strings.Repeat("g", 40)
+	mergeSHA := strings.Repeat("f", 40)
+
+	// Publish transition events to ev:github
+	c.XAdd(ctx, &redis.XAddArgs{
+		Stream: "ev:github",
+		Values: map[string]any{
+			"kind":   "check_run",
+			"status": "checks_green",
+			"head":   prHead,
+			"number": "7",
+		},
+	})
+	c.XAdd(ctx, &redis.XAddArgs{
+		Stream: "ev:github",
+		Values: map[string]any{
+			"kind":   "pull_request",
+			"action": "enqueued",
+			"number": "7",
+			"head":   prHead,
+		},
+	})
+	c.XAdd(ctx, &redis.XAddArgs{
+		Stream: "ev:github",
+		Values: map[string]any{
+			"kind":     "merge_group",
+			"action":   "checks_requested",
+			"head":     groupHead,
+			"head_ref": "refs/heads/gh-readonly-queue/dev/pr-7-" + groupHead,
+			"at":       "2026-09-26T12:00:00Z",
+		},
+	})
+	c.XAdd(ctx, &redis.XAddArgs{
+		Stream: "ev:github",
+		Values: map[string]any{
+			"kind":       "check_run",
+			"check":      "lint",
+			"status":     "completed",
+			"conclusion": "success",
+			"seconds":    "12",
+			"head":       groupHead,
+			"at":         "2026-09-26T12:00:12Z",
+		},
+	})
+	c.XAdd(ctx, &redis.XAddArgs{
+		Stream: "ev:github",
+		Values: map[string]any{
+			"kind":             "pull_request",
+			"action":           "closed",
+			"merged":           "true",
+			"number":           "7",
+			"merge_commit_sha": mergeSHA,
+			"head":             prHead,
+			"at":               "2026-09-26T12:00:20Z",
+		},
+	})
+
+	var log bytes.Buffer
+	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
+	o := LandPROptions{
+		Repo:  "o/r",
+		N:     f.n,
+		Log:   &log,
+		Watch: true,
+		Cost:  true,
+		Tick:  50 * time.Millisecond,
+		Wait:  2 * time.Second,
+		Tip:   "0-0",
+	}
+
+	rep, err := LandPRWait(ctx, gh, c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.State != "merged" || rep.MergeSHA != mergeSHA {
+		t.Fatalf("report: %+v, want merged at %s", rep, mergeSHA)
+	}
+	if rep.CostLine == "" {
+		t.Fatal("expected rep.CostLine to be populated")
+	}
+	gotLog := log.String()
+	for _, want := range []string{
+		"PR 7 checks green",
+		"PR 7 enqueued",
+		"PR 7 group run started",
+		"PR 7 job lint done in 12s",
+		"PR 7 merged " + mergeSHA,
+		"COST repo=o/r",
+	} {
+		if !strings.Contains(gotLog, want) {
+			t.Errorf("log missing %q:\n%s", want, gotLog)
+		}
+	}
+}
