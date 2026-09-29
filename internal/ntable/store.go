@@ -95,6 +95,9 @@ type Receipt struct {
 	Epoch, Before, After uint64
 	Outcome              string
 	BatchDelta           *BatchDelta
+	// Replay is true when ApplyBatch returned the receipt recorded for an
+	// operation it had already applied, and wrote nothing.
+	Replay bool
 }
 
 type operation struct {
@@ -169,8 +172,9 @@ func runUnlessNamed(err error, remedy string) string {
 	return "; run: " + remedy
 }
 
-// memberFindCommand names the verb that shows where a member is now.
-func memberFindCommand(table, member string) string {
+// memberReadCommand names the verb that shows a member's place, score,
+// revision and fields now.
+func memberReadCommand(table, member string) string {
 	args := []string{table, member}
 	endFlags := false
 	for i, arg := range args {
@@ -180,7 +184,7 @@ func memberFindCommand(table, member string) string {
 	if endFlags {
 		args = append([]string{"--"}, args...)
 	}
-	return "nova-table member find " + strings.Join(args, " ")
+	return "nova-table member read " + strings.Join(args, " ")
 }
 
 // words joins the detail elements of a refusal reply.
@@ -224,7 +228,7 @@ func (o operation) refused(reply []any) error {
 		if o.guarded() && len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected epoch %v, observed epoch %v", ErrMemberEpoch, reply[4], reply[3])
-			remedy = memberFindCommand(o.table, o.member)
+			remedy = memberReadCommand(o.table, o.member)
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
 		}
@@ -232,7 +236,7 @@ func (o operation) refused(reply []any) error {
 		if o.guarded() && len(reply) >= 4 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected absent, observed %v", ErrMemberExists, reply[3])
-			remedy = memberFindCommand(o.table, o.member)
+			remedy = memberReadCommand(o.table, o.member)
 		} else {
 			cause = ErrMemberExists
 		}
@@ -271,7 +275,7 @@ func (o operation) refused(reply []any) error {
 		if o.guarded() && len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrNotMember, reply[4], reply[3])
-			remedy = memberFindCommand(o.table, o.member)
+			remedy = memberReadCommand(o.table, o.member)
 		} else {
 			cause = ErrNotMember
 			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
@@ -391,7 +395,7 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrMemberRevision, reply[3], reply[4])
-			remedy = memberFindCommand(o.table, o.member)
+			remedy = memberReadCommand(o.table, o.member)
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberRevision, reply[2:])
 		}
@@ -409,13 +413,13 @@ func (o operation) refused(reply []any) error {
 			cause = fmt.Errorf("%w: %s", ErrFieldGuard, words(reply[2:]))
 		}
 		if o.member != "" {
-			remedy = memberFindCommand(o.table, o.member)
+			remedy = memberReadCommand(o.table, o.member)
 		}
 	case typedrec.TableRefusalPlaceGuard:
 		if len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: member %q: expected place %v, observed %v", ErrPlaceGuard, reply[2], reply[3], reply[4])
-			remedy = memberFindCommand(o.table, o.member)
+			remedy = memberReadCommand(o.table, o.member)
 		} else {
 			cause = fmt.Errorf("%w: %s", ErrPlaceGuard, words(reply[2:]))
 		}
@@ -1364,6 +1368,7 @@ func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (R
 		return Receipt{}, fmt.Errorf("%s: malformed committed receipt", o.location())
 	}
 	var r Receipt
+	r.Replay = len(reply) >= 3 && fmt.Sprint(reply[2]) == "REPLAY"
 	r.ID = fmt.Sprint(wire[1])
 	r.Outcome = fmt.Sprint(wire[5])
 	for i, target := range []*uint64{&r.Epoch, &r.Before, &r.After} {

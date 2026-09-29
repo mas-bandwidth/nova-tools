@@ -36,19 +36,19 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 		{
 			"not a member (move)",
 			refusalFixtureBatch(rev, "r-nm", ntable.BatchMemberEntry{ID: "zz", Expect: guard, Move: &ntable.MemberMoveOp{Row: "build", Col: "done"}}),
-			[]string{`batch "r-nm"`, `member "zz"`, "expected an existing member", "observed no member record", "changed=no", "; run: nova-table member find 'demo' 'zz'"},
+			[]string{`batch "r-nm"`, `member "zz"`, "expected an existing member", "observed no member record", "changed=no", "; run: nova-table member read 'demo' 'zz'"},
 			[]string{"cell members", "''"},
 		},
 		{
 			"not a member (guard only)",
 			refusalFixtureBatch(rev, "r-nm2", ntable.BatchMemberEntry{ID: "zz", Expect: guard}),
-			[]string{`member "zz"`, "expected an existing member", "observed no member record", "changed=no", "; run: nova-table member find 'demo' 'zz'"},
+			[]string{`member "zz"`, "expected an existing member", "observed no member record", "changed=no", "; run: nova-table member read 'demo' 'zz'"},
 			[]string{"cell members"},
 		},
 		{
 			"member exists (create)",
 			refusalFixtureBatch(rev, "r-exists", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "done", Score: 1}}),
-			[]string{`batch "r-exists"`, `member "a"`, "expected absent", "observed placed at build:ready", "changed=no", "; run: nova-table member find 'demo' 'a'"},
+			[]string{`batch "r-exists"`, `member "a"`, "expected absent", "observed placed at build:ready", "changed=no", "; run: nova-table member read 'demo' 'a'"},
 			nil,
 		},
 		{
@@ -64,13 +64,13 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 		{
 			"failed place guard",
 			refusalFixtureBatch(rev, "r-pg", ntable.BatchMemberEntry{ID: "a", Expect: place("test", "done")}),
-			[]string{`batch "r-pg"`, "failed place guard", `member "a"`, "expected place test:done", "observed build:ready", "changed=no", "; run: nova-table member find 'demo' 'a'"},
+			[]string{`batch "r-pg"`, "failed place guard", `member "a"`, "expected place test:done", "observed build:ready", "changed=no", "; run: nova-table member read 'demo' 'a'"},
 			[]string{"disagree", "drift", "DRIFT"},
 		},
 		{
 			"member revision",
 			refusalFixtureBatch(rev, "r-mrev", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Revision: "9"}}),
-			[]string{`member "a"`, "expected 9, observed 1", "changed=no", "; run: nova-table member find 'demo' 'a'"},
+			[]string{`member "a"`, "expected 9, observed 1", "changed=no", "; run: nova-table member read 'demo' 'a'"},
 			nil,
 		},
 		{
@@ -88,7 +88,7 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 		{
 			"field guard",
 			refusalFixtureBatch(rev, "r-fg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"role": {Absent: boolPtr(true)}}}}),
-			[]string{`member "a"`, `field "role"`, "expected absent", `observed "x"`, "changed=no", "; run: nova-table member find 'demo' 'a'"},
+			[]string{`member "a"`, `field "role"`, "expected absent", `observed "x"`, "changed=no", "; run: nova-table member read 'demo' 'a'"},
 			nil,
 		},
 		{

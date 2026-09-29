@@ -11,6 +11,15 @@ import (
 	"testing"
 )
 
+// asReplay returns a raw replay reply without its marker, and says whether it had one.
+func asReplay(ans []any) ([]any, bool) {
+	if len(ans) == 3 && ans[2] == "REPLAY" {
+		return ans[:2], true
+	}
+	return ans, false
+}
+
+
 func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
@@ -27,7 +36,8 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	want := []any{"OK", []any{"RECEIPT", "1-0", "0", "3", "4", "changed", "{}"}}
 	before := storeImage(t, c)
 	ans, err := rawApply(ctx, c, recorded)
-	if err != nil || !reflect.DeepEqual(ans, want) {
+	ans, marked := asReplay(ans)
+	if err != nil || !marked || !reflect.DeepEqual(ans, want) {
 		t.Errorf("replay of a recorded request that a newer rule refuses: %v %v; want the original result", trunc(ans), err)
 	}
 	if !reflect.DeepEqual(before, storeImage(t, c)) {
@@ -57,7 +67,9 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	if _, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "move-on", `{"id":"h3","expect":{"absent":true},"create":{"row":"build","col":"ready","score":4}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if again, err := rawApply(ctx, c, valid); err != nil || !reflect.DeepEqual(first, again) {
+	again, err := rawApply(ctx, c, valid)
+	again, marked = asReplay(again)
+	if err != nil || !marked || !reflect.DeepEqual(first, again) {
 		t.Errorf("replay after the table moved on: %v %v", trunc(again), err)
 	}
 }

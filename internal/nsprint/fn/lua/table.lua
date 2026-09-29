@@ -2053,7 +2053,10 @@ do
         if op_record.request ~= raw_json then
           return T.refuse('OPCONFLICT', peek.operation_id)
         end
-        return cjson.decode(op_record.result)
+        -- the original result, and a third element saying it is a replay
+        local original = cjson.decode(op_record.result)
+        original[3] = 'REPLAY'
+        return original
       end
     end
 

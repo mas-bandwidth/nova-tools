@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -21,6 +22,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	epoch := fs.Uint64("epoch", app.defaults.Epoch, "the epoch this write observed; it must equal the manifest's epoch")
 	actor := fs.String("actor", app.defaults.Actor, "actor recorded with the change; it must equal the manifest's actor when the manifest names one")
 	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
+	asJSON := fs.Bool("json", false, "print the receipt as one JSON object instead of the lines")
 	_ = fs.Set("receipt", "true")
 	if app.shared != nil && !app.receipts {
 		_ = fs.Set("receipt", "false")
@@ -107,9 +109,16 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	if rcpt.BatchDelta != nil {
 		delta = *rcpt.BatchDelta
 	}
-	fmt.Fprintf(stdout, "TABLE BATCH table=%s operation=%s epoch=%d before=%d after=%d outcome=%s selected=%d guards=%d changed=%d trips=%d\n",
+	if *asJSON {
+		return printJSON(stdout, stderr, verb, batchJSON(manifest.Table, rcpt, delta, trips.N()))
+	}
+	replay := "no"
+	if rcpt.Replay {
+		replay = "yes"
+	}
+	fmt.Fprintf(stdout, "TABLE BATCH table=%s operation=%s epoch=%d table_revision=%d->%d outcome=%s selected=%d guards=%d changed=%d replay=%s trips=%d\n",
 		manifest.Table, field(delta.OperationID), rcpt.Epoch, rcpt.Before, rcpt.After, rcpt.Outcome,
-		delta.SelectedCount, delta.GuardCount, delta.ChangedCount, trips.N())
+		delta.SelectedCount, delta.GuardCount, delta.ChangedCount, replay, trips.N())
 
 	if *receipt {
 		fmt.Fprintf(stdout, "TABLE RECEIPT event=%s epoch=%d before=%d after=%d outcome=%s\n",
@@ -117,11 +126,44 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	for _, m := range delta.Members {
-		fmt.Fprintf(stdout, "MEMBER %s place=%s->%s score=%s->%s rev=%s->%s fields=%s\n",
+		fmt.Fprintf(stdout, "MEMBER %s place=%s->%s score=%s->%s member_revision=%s->%s fields=%s\n",
 			field(m.ID), placeOrDash(m.BeforePlace), placeOrDash(m.AfterPlace),
 			scoreOrDash(m.BeforeScoreText), scoreOrDash(m.AfterScoreText), m.BeforeRev, m.AfterRev, fieldChanges(m))
 	}
 	return 0
+}
+
+// batchJSON is the receipt as one object: revisions and scores are decimal
+// strings, an absent place or score is null, fields are [before, after] pairs.
+func batchJSON(table string, r ntable.Receipt, delta ntable.BatchDelta, trips int64) map[string]any {
+	pair := func(before, after any) map[string]any { return map[string]any{"before": before, "after": after} }
+	orNil := func(s string) any {
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+	members := make([]map[string]any, 0, len(delta.Members))
+	for _, m := range delta.Members {
+		fields := map[string][2]*string{}
+		for name, c := range m.Fields {
+			if (c.Before == nil && c.After == nil) || (c.Before != nil && c.After != nil && *c.Before == *c.After) {
+				continue
+			}
+			fields[name] = [2]*string{c.Before, c.After}
+		}
+		members = append(members, map[string]any{
+			"id": m.ID, "place": pair(orNil(m.BeforePlace), orNil(m.AfterPlace)),
+			"score":           pair(m.BeforeScoreText, m.AfterScoreText),
+			"member_revision": pair(m.BeforeRev, m.AfterRev), "fields": fields,
+		})
+	}
+	return map[string]any{
+		"table": table, "operation_id": delta.OperationID, "epoch": strconv.FormatUint(r.Epoch, 10),
+		"table_revision": pair(strconv.FormatUint(r.Before, 10), strconv.FormatUint(r.After, 10)),
+		"outcome":        r.Outcome, "selected": delta.SelectedCount, "guards": delta.GuardCount, "changed": delta.ChangedCount,
+		"event": r.ID, "replay": r.Replay, "trips": trips, "members": members,
+	}
 }
 
 func placeOrDash(p string) string {

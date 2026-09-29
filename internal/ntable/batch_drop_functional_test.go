@@ -13,6 +13,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
+func asReplayed(ans []any) []any {
+	got, _ := asReplay(ans)
+	return got
+}
+
 func TestBatchOperationRecordsDoNotSurviveADrop(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
@@ -23,7 +28,7 @@ func TestBatchOperationRecordsDoNotSurviveADrop(t *testing.T) {
 		t.Fatalf("first apply: %v %v", trunc(first), err)
 	}
 	// within one incarnation the replay returns the original receipt
-	if again, err := rawApply(ctx, c, old); err != nil || !reflect.DeepEqual(first, again) {
+	if again, err := rawApply(ctx, c, old); err != nil || !reflect.DeepEqual(asReplayed(again), first) {
 		t.Fatalf("replay: %v %v", trunc(again), err)
 	}
 
@@ -62,7 +67,7 @@ func TestBatchOperationRecordsDoNotSurviveADrop(t *testing.T) {
 		t.Errorf("the fresh request returned the old receipt")
 	}
 	// and now it is recorded: its own replay returns its own receipt
-	if again, err := rawApply(ctx, c, fresh); err != nil || !reflect.DeepEqual(ans, again) {
+	if again, err := rawApply(ctx, c, fresh); err != nil || !reflect.DeepEqual(ans, asReplayed(again)) {
 		t.Errorf("replay of the fresh request: %v %v", trunc(again), err)
 	}
 }
