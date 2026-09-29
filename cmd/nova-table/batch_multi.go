@@ -24,11 +24,11 @@ func (app *application) cmdBatchMulti(raw []byte, source string, fromFile bool, 
 			if limit.Member != "" {
 				what += fmt.Sprintf(" (member %q)", limit.Member)
 			}
-			return refused(stderr, verb, what+"; "+limit.Advice()+"; code=LIMIT; changed=no; run: nova-table batch -h")
+			return refused(stderr, verb, what+"; "+limit.Advice()+"; "+ntable.CheckedBeforeSending+"; code=LIMIT; changed=no; run: nova-table batch -h")
 		case errors.As(err, &rule):
-			return refused(stderr, verb, fmt.Sprintf("%s; code=%s; changed=no; run: nova-table batch -h", rule.Msg, rule.Code))
+			return refused(stderr, verb, fmt.Sprintf("%s; %s; code=%s; changed=no; run: nova-table batch -h", rule.Msg, ntable.CheckedBeforeSending, rule.Code))
 		default:
-			return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v; changed=no; run: nova-table batch -h", err))
+			return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v; %s; changed=no; run: nova-table batch -h", err, ntable.CheckedBeforeSending))
 		}
 	}
 
@@ -45,14 +45,14 @@ func (app *application) cmdBatchMulti(raw []byte, source string, fromFile bool, 
 		want := strconv.FormatUint(epoch, 10)
 		for _, table := range manifest.Tables {
 			if table.Epoch != want {
-				return refuse(stderr, verb, fmt.Sprintf("--epoch %d differs from table %q's epoch %q; make them equal or drop --epoch; changed=no; run: nova-table batch -h", epoch, table.Name, table.Epoch))
+				return refuse(stderr, verb, fmt.Sprintf("--epoch %d differs from table %q's epoch %q; make them equal or drop --epoch; %s; changed=no; run: nova-table batch -h", epoch, table.Name, table.Epoch, ntable.CheckedBeforeSending))
 			}
 		}
 	}
 	if manifest.Actor == "" {
 		manifest.Actor = actor
 	} else if actorSet && actor != manifest.Actor {
-		return refuse(stderr, verb, fmt.Sprintf("--actor %q differs from the manifest's actor %q; make them equal or drop --actor; changed=no; run: nova-table batch -h", actor, manifest.Actor))
+		return refuse(stderr, verb, fmt.Sprintf("--actor %q differs from the manifest's actor %q; make them equal or drop --actor; %s; changed=no; run: nova-table batch -h", actor, manifest.Actor, ntable.CheckedBeforeSending))
 	}
 
 	ctx := context.Background()

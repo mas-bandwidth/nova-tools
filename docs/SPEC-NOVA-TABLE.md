@@ -416,7 +416,10 @@ reads the head of each member (epoch, revision, place) and the fields its entrie
 counts, from lengths (`HSTRLEN`), the bytes of every before-value and after-value of
 those fields, and the least size its receipt can have, and refuses at once as `LIMIT`
 over either: `value bytes per batch` (16 MiB) or `receipt bytes`. What the store holds
-in the fields a batch does not name costs the batch nothing. Measured on the bench, on
+in the fields a batch does not name costs the batch nothing. For a schema-2 batch,
+the 16 MiB bound covers the combined distinct named fields of all physical members
+across all participating tables; the batch reads only the placements it names.
+Measured for schema 1 on the bench, on
 four cores, a table of two rows, three runs each: unsetting 16 MiB of before-values
 (the most a batch may touch) held the store 0.045 s; a manifest of 873,735 bytes of
 guards, every one satisfied (the largest accepted batch measured), 0.47 s; a receipt
