@@ -13,7 +13,7 @@ import (
 )
 
 // The reminder duty of the tick (docs/SPEC-SPRINT.md, "Reminders"): the
-// sprint's people and their goals are one record in the store's key space,
+// sprint's people and their goals are one record in the store,
 // kept by the goal verbs and carried across a clear; the tick reads it, and
 // while the machine is RUNNING pushes each person's goal down its route when
 // it is due, once, and writes one judgment for a route that fails.
