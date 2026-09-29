@@ -46,7 +46,11 @@ import (
 // it expects. A first manifest refused otherwise applied nothing: the
 // operation is released without effect and the step is planned again from a
 // fresh read. A later manifest refused otherwise leaves the operation
-// pending: check and where show it, and repair says why it cannot finish.
+// pending (check and where show it) until repair, or the next mutating verb,
+// finishes it: every entry whose expectation still holds applies, every other
+// is skipped and listed in one judgment notification, and the fence is
+// released. Repair never overwrites newer state, and never blocks the sprint
+// for good.
 
 // Store runs sprint steps against a Backend.
 type Store struct {
@@ -85,6 +89,10 @@ type Result struct {
 	Replay   bool             `json:"replay,omitempty"` // the recorded result of the caller's operation id
 	Repaired []string         `json:"repaired,omitempty"`
 	Pending  string           `json:"pending,omitempty"` // an operation left in the fence
+	// Skipped is each entry a repair of this operation did not apply because
+	// its expectation no longer held: recorded with the result, so a replay of
+	// the caller's operation id returns it.
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -591,33 +599,76 @@ func (st *Store) stillExpected(ctx context.Context, man ntable.BatchManifest) (u
 
 // RepairResult is what finishing one pending operation did.
 type RepairResult struct {
-	Op     string `json:"op"`
-	Verb   string `json:"verb"`
-	Done   string `json:"done"` // finished, abandoned, or open
-	Detail string `json:"detail,omitempty"`
+	Op      string   `json:"op"`
+	Verb    string   `json:"verb"`
+	Done    string   `json:"done"` // finished, finished-with-skips, abandoned, or open
+	Detail  string   `json:"detail,omitempty"`
+	Skipped []string `json:"skipped,omitempty"` // each entry skipped: card, table, expected, found
+}
+
+// Repair outcomes.
+const (
+	RepairFinished  = "finished"
+	RepairSkipped   = "finished-with-skips"
+	RepairAbandoned = "abandoned"
+	RepairOpen      = "open"
+)
+
+// NRepairSkipped is the judgment a repair writes when it skipped entries of a
+// cut operation whose expectations no longer held: a writer outside the fence
+// changed those members. It lists each skipped entry.
+const NRepairSkipped = "repair skipped changes whose expectation no longer held"
+
+// RepairSkippedDecisions are the decisions open on a repair's skips.
+var RepairSkippedDecisions = []string{"look at the card", "return", "drop", "rework"}
+
+// Skip is one entry of a cut operation that repair did not apply because its
+// expectation no longer held.
+type Skip struct {
+	Card, Primary, Table, Expected, Found string
+}
+
+func (k Skip) String() string {
+	return fmt.Sprintf("card %s (primary %s) on %s: expected %s, found %s", k.Card, k.Primary, k.Table, k.Expected, k.Found)
 }
 
 // finish completes a pending operation from its record: each manifest sent
 // again in order (an applied one replays), then the release with its
 // notifications. When its first manifest never applied, nothing of it
 // happened: past the grace it is abandoned, within it it is left to its
-// writer. One that cannot finish stays pending, and says why.
+// writer. A later manifest whose expectations no longer all hold (a writer
+// outside the fence changed a member) is applied entry by entry: every entry
+// whose expectation holds applies, every other is skipped, never overwriting
+// newer state, and the release writes one judgment listing the skips (the
+// model's Repair: a move applies only where its expectation holds). One the
+// store does not answer stays pending, and says why.
 func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) {
-	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: "finished"}
+	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
+	var skips []Skip
 	for i, man := range op.Manifests {
 		_, err := st.send(ctx, man)
 		if err == nil || refusalCode(err) == "OPCONFLICT" {
 			continue
 		}
 		if errors.Is(err, ErrUnknown) {
-			return RepairResult{Op: op.ID, Verb: op.Verb, Done: "open", Detail: "the store did not answer: " + err.Error()}, nil
+			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "the store did not answer: " + err.Error()}, nil
 		}
 		if refusalCode(err) == "REVISION" {
-			if _, ferr := st.resendFresh(ctx, man, err); ferr == nil {
+			ferr := err
+			if _, ferr = st.resendFresh(ctx, man, err); ferr == nil {
 				continue
-			} else if i > 0 {
-				return RepairResult{Op: op.ID, Verb: op.Verb, Done: "open", Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, ferr)}, nil
 			}
+			if errors.Is(ferr, ErrUnknown) {
+				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s: the store did not answer: %v", man.Table, ferr)}, nil
+			}
+		}
+		if i > 0 {
+			sk, err := st.applyEntries(ctx, man)
+			if err != nil {
+				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, err)}, nil
+			}
+			skips = append(skips, sk...)
+			continue
 		}
 		if i == 0 {
 			if st.Now().Sub(op.At) < st.grace() {
@@ -626,14 +677,160 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 			if err := st.B.Release(ctx, op, false); err != nil {
 				return r, err
 			}
-			return RepairResult{Op: op.ID, Verb: op.Verb, Done: "abandoned", Detail: "its first manifest never applied: " + err.Error()}, nil
+			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairAbandoned, Detail: "its first manifest never applied: " + err.Error()}, nil
 		}
-		return RepairResult{Op: op.ID, Verb: op.Verb, Done: "open", Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, err)}, nil
+	}
+	if len(skips) > 0 {
+		op = st.withSkips(op, skips)
+		r.Done = RepairSkipped
+		for _, k := range skips {
+			r.Skipped = append(r.Skipped, k.String())
+		}
+		r.Detail = fmt.Sprintf("%d entries skipped, their expectation no longer held; judgment %s: %s", len(skips), op.ID+".skip", strings.Join(r.Skipped, "; "))
 	}
 	if err := st.B.Release(ctx, op, true); err != nil {
-		return RepairResult{Op: op.ID, Verb: op.Verb, Done: "open", Detail: "the commit was not confirmed: " + err.Error()}, nil
+		return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "the commit was not confirmed: " + err.Error()}, nil
 	}
 	return r, nil
+}
+
+// applyEntries applies a later manifest of a cut operation entry by entry,
+// each under its own operation id derived from the manifest's, so an entry
+// applied by an earlier repair replays (or conflicts, when sent against
+// another table revision) and counts as applied. An entry the table layer
+// refuses on its own expectations is skipped, with what it expected and what
+// the store holds.
+func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]Skip, error) {
+	var skips []Skip
+	for j, e := range man.Members {
+		one := man
+		one.Members = []ntable.BatchMemberEntry{e}
+		one.OperationID = fmt.Sprintf("%s.e%d", man.OperationID, j+1)
+		outcome := ""
+		for a := 0; a < st.attempts() && outcome == ""; a++ {
+			rs, err := st.B.ReadSet(ctx, man.Table, []string{e.ID})
+			if err != nil {
+				return nil, err
+			}
+			one.ExpectedTableRevision = strconv.FormatUint(rs.Revision, 10)
+			_, err = st.send(ctx, one)
+			switch {
+			case err == nil, refusalCode(err) == "OPCONFLICT":
+				outcome = "applied"
+			case refusalCode(err) == "REVISION":
+				// the table moved between the read and the send: read again
+			case !ntable.IsRefusal(err):
+				return nil, err
+			default:
+				skips = append(skips, skipOf(man.Table, e, rs))
+				outcome = "skipped"
+			}
+		}
+		if outcome == "" {
+			return nil, fmt.Errorf("member %s: the table kept moving through %d sends", e.ID, st.attempts())
+		}
+	}
+	return skips, nil
+}
+
+// skipOf describes a skipped entry: what it expected and what the store holds.
+func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Skip {
+	k := Skip{Card: e.ID, Primary: e.ID, Table: table, Expected: "the member present", Found: "no member"}
+	var m *ntable.ReadSetMember
+	for i := range rs.Members {
+		if rs.Members[i].ID == e.ID {
+			m = &rs.Members[i]
+		}
+	}
+	if p := e.Set["primary"]; p != "" {
+		k.Primary = p
+	} else if m != nil && m.Fields["primary"] != "" {
+		k.Primary = m.Fields["primary"]
+	}
+	if x := e.Expect; x != nil {
+		var want []string
+		if x.Absent {
+			want = append(want, "absent")
+		}
+		if x.Revision != "" {
+			want = append(want, "revision "+x.Revision)
+		}
+		if x.Place != nil {
+			want = append(want, "at "+x.Place.Row+":"+x.Place.Col)
+		}
+		names := make([]string, 0, len(x.Fields))
+		for f := range x.Fields {
+			names = append(names, f)
+		}
+		sort.Strings(names)
+		for _, f := range names {
+			g := x.Fields[f]
+			switch {
+			case g.Equals != nil:
+				want = append(want, f+"="+*g.Equals)
+			case g.Absent != nil:
+				want = append(want, f+" absent")
+			case g.OneOf != nil:
+				want = append(want, f+" one of "+strings.Join(g.OneOf, "|"))
+			}
+		}
+		if len(want) > 0 {
+			k.Expected = strings.Join(want, ", ")
+		}
+	}
+	if m != nil {
+		have := []string{"revision " + strconv.FormatUint(m.Revision, 10)}
+		if m.Placed {
+			have = append(have, "at "+m.Row+":"+m.Col)
+		} else {
+			have = append(have, "not placed")
+		}
+		if x := e.Expect; x != nil {
+			names := make([]string, 0, len(x.Fields))
+			for f := range x.Fields {
+				names = append(names, f)
+			}
+			sort.Strings(names)
+			for _, f := range names {
+				if v, ok := m.Fields[f]; ok {
+					have = append(have, f+"="+v)
+				} else {
+					have = append(have, f+" absent")
+				}
+			}
+		}
+		k.Found = strings.Join(have, ", ")
+	}
+	return k
+}
+
+// withSkips is the operation as its repair releases it: one judgment listing
+// every skipped entry, its primaries the subjects, and the caller's recorded
+// result carrying the skips.
+func (st *Store) withSkips(op OpRecord, skips []Skip) OpRecord {
+	var prims, lines []string
+	seen := map[string]bool{}
+	for _, k := range skips {
+		lines = append(lines, k.String())
+		if !seen[k.Primary] {
+			seen[k.Primary] = true
+			prims = append(prims, k.Primary)
+		}
+	}
+	sort.Strings(prims)
+	n := sprint.Note{ID: op.ID + ".skip", Kind: sprint.Judgment, Type: NRepairSkipped, Primaries: prims, Count: len(prims),
+		What: fmt.Sprintf("repair of %s (%s) skipped %d entries a writer outside the fence changed: %s", op.ID, op.Verb, len(skips), strings.Join(lines, "; ")),
+		Who:  st.Actor, At: st.Now(), Decisions: append([]string(nil), RepairSkippedDecisions...)}
+	op.Notes = append(append([]sprint.Note(nil), op.Notes...), n)
+	var res Result
+	if op.Result != "" && json.Unmarshal([]byte(op.Result), &res) == nil {
+		res.Skipped = lines
+		res.Notes++
+		if body, err := json.Marshal(res); err == nil {
+			op.Result = string(body)
+		}
+	}
+	return op
 }
 
 // Repair finishes the pending operation, if any.

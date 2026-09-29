@@ -319,9 +319,11 @@ func TestALaterTableMovedByADisplayWriteIsSentAgain(t *testing.T) {
 	h.clean("resent")
 }
 
-// A later table's member changed under the step: the operation is cut, stays
-// pending, and says why; nothing overwrites the newer work.
-func TestALaterMemberChangedCutsAndStaysPending(t *testing.T) {
+// A later table's member changed under the step (a writer outside the
+// fence): the operation is cut; repair applies what still holds, skips the
+// changed member without overwriting it, writes one judgment listing the skip,
+// and releases the fence, so every verb runs again.
+func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -342,14 +344,18 @@ func TestALaterMemberChangedCutsAndStaysPending(t *testing.T) {
 		t.Fatalf("a member changed under a later table: %v", err)
 	}
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != "open" || !strings.Contains(rr[0].Detail, "changed under the step") {
+	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 1 || !strings.Contains(rr[0].Skipped[0], "s1-1") {
 		t.Fatalf("repair of a cut operation: %+v %v", rr, err)
 	}
+	if h.m.Pending() != nil {
+		t.Fatalf("repair left the fence held")
+	}
+	if c := h.snap().Work.Card("s1-1"); c.F("brief") != "changed" || c.Col != sprint.Ready {
+		t.Fatalf("repair overwrote the newer state: %s %s", c.Col, c.F("brief"))
+	}
 	h.tick(2 * time.Minute)
-	if _, err := h.st.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1"})); err == nil {
-		t.Fatalf("a verb ran over a pending operation that cannot finish")
-	} else if pe := (*PendingError)(nil); !errors.As(err, &pe) {
-		t.Fatalf("not a pending refusal: %v", err)
+	if _, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"})); err != nil {
+		t.Fatalf("a verb after the repair: %v", err)
 	}
 }
 
