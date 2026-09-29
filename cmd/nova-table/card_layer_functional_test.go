@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
 )
@@ -23,6 +24,7 @@ func buildNovaTable(t *testing.T, repoRoot string) string {
 	binPath := filepath.Join(binDir, "nova-table")
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/nova-table")
 	cmd.Dir = repoRoot
+	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build nova-table: %v\noutput:\n%s", err, string(out))

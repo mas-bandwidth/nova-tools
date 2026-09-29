@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,14 +32,22 @@ func getHeadCommit(t *testing.T, repoRoot string) string {
 	return head
 }
 
-// setupCardTable initializes a test table schema with standard card lifecycle columns.
-func setupCardTable(t *testing.T, binPath, addr, table string) {
+// setupCardTableWithEpoch initializes a test table schema with standard card lifecycle columns
+// and optional epoch configuration through the public create API.
+func setupCardTableWithEpoch(t *testing.T, binPath, addr, table, epochKey, epochField string) {
 	t.Helper()
-	createCmd := exec.Command(binPath, "create", table,
+	args := []string{"create", table,
 		"--columns", "waiting,ready,working,review,merging,landed,done",
 		"--member-prefix", "card:",
 		"--redis", addr,
-	)
+	}
+	if epochKey != "" {
+		args = append(args, "--epoch-key", epochKey)
+	}
+	if epochField != "" {
+		args = append(args, "--epoch-field", epochField)
+	}
+	createCmd := exec.Command(binPath, args...)
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to create table %s: %v\noutput:\n%s", table, err, string(out))
 	}
@@ -47,6 +56,11 @@ func setupCardTable(t *testing.T, binPath, addr, table string) {
 	if out, err := rowCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to add row stream-1 to table %s: %v\noutput:\n%s", table, err, string(out))
 	}
+}
+
+// setupCardTable initializes a test table schema with standard card lifecycle columns.
+func setupCardTable(t *testing.T, binPath, addr, table string) {
+	setupCardTableWithEpoch(t, binPath, addr, table, "", "")
 }
 
 // runCardCmd executes scripts/card-manager.py with explicit test environment flags.
@@ -65,15 +79,17 @@ func runCardCmd(t *testing.T, repoRoot, binPath, addr string, args ...string) (i
 		"PYTHONDONTWRITEBYTECODE=1",
 	)
 
-	out, err := cmd.CombinedOutput()
-	outputStr := string(out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), outputStr, outputStr
+			return exitErr.ExitCode(), stdout.String(), stderr.String()
 		}
 		t.Fatalf("failed to run card-manager.py: %v", err)
 	}
-	return 0, outputStr, outputStr
+	return 0, stdout.String(), stderr.String()
 }
 
 // setupCardInReview admits a card into stream-1:waiting and transitions it to stream-1:review.
@@ -341,11 +357,8 @@ func TestCard057EvidenceStaleEpoch(t *testing.T) {
 		t.Cleanup(func() { rdb.Close() })
 
 		tbl := "cards_stale_epoch_custom"
-		setupCardTable(t, binPath, addr, tbl)
+		setupCardTableWithEpoch(t, binPath, addr, tbl, "domain:epoch:active", "n")
 
-		if err := rdb.HSet(ctx, fmt.Sprintf("table:%s", tbl), "epoch_key", "domain:epoch:active", "epoch_field", "n").Err(); err != nil {
-			t.Fatal(err)
-		}
 		if err := rdb.HSet(ctx, "domain:epoch:active", "n", "5").Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -801,4 +814,321 @@ func TestCard057EvidenceScopeHappyPath(t *testing.T) {
 	if err != nil || postPlace != "stream-1:merging" {
 		t.Fatalf("expected card to be in stream-1:merging, got %q (err=%v)", postPlace, err)
 	}
+}
+
+// TestCard057MalformedActiveEpoch verifies that when a table's configured active epoch domain
+// contains a non-uint64 active epoch, recording evidence is refused with cause=invalid_active_epoch.
+func TestCard057MalformedActiveEpoch(t *testing.T) {
+	t.Parallel()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := filepath.Dir(filepath.Dir(wd))
+	binPath := buildNovaTable(t, repoRoot)
+	headCommit := getHeadCommit(t, repoRoot)
+
+	cases := []struct {
+		name        string
+		activeEpoch string
+		desc        string
+	}{
+		{"NonDecimalLetters", "bad-epoch", "alphabetic active epoch string"},
+		{"NonDecimalAlphaNumeric", "12a", "alphanumeric active epoch string"},
+		{"NegativeMinusOne", "-1", "negative active epoch string -1"},
+		{"LeadingZeroes01", "01", "leading zero active epoch '01'"},
+		{"OverflowUint64PlusOne", "18446744073709551616", "2^64 exact overflow"},
+		{"OverflowTwentyDigits", "99999999999999999999", "20 digits exceeding 2^64-1"},
+		{"NonDecimalFloat", "2.5", "floating point active epoch string"},
+		{"NonDecimalHex", "0x20", "hexadecimal active epoch string"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			addr := throwaway(t)
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: addr})
+			t.Cleanup(func() { rdb.Close() })
+
+			tbl := "cards_malformed_active_epoch_" + strings.ToLower(tc.name)
+			epochKey := "domain:epoch:" + tbl
+			setupCardTableWithEpoch(t, binPath, addr, tbl, epochKey, "n")
+
+			// Populate active epoch with malformed value
+			if err := rdb.HSet(ctx, epochKey, "n", tc.activeEpoch).Err(); err != nil {
+				t.Fatal(err)
+			}
+
+			manifestFile := filepath.Join(t.TempDir(), "evidence.json")
+			manifestData := map[string]any{
+				"schema":       1,
+				"table":        tbl,
+				"epoch":        "0",
+				"operation_id": "op-ev-malformed-active-" + strings.ToLower(tc.name),
+				"evidence": []map[string]any{
+					{
+						"card_id":     "card-test",
+						"head":        headCommit,
+						"digest":      "1111111111111111111111111111111111111111111111111111111111111111",
+						"reader":      "reviewer-1",
+						"disposition": "accepted",
+						"ci_status":   "pass",
+					},
+				},
+			}
+			data, err := json.Marshal(manifestData)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(manifestFile, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			code, stdout, stderr := runCardCmd(t, repoRoot, binPath, addr, "evidence", "--evidence", manifestFile, "--table", tbl)
+			if code != 1 {
+				t.Fatalf("%s (%s): expected exit code 1, got %d; stdout=%s; stderr=%s", tc.name, tc.desc, code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, "cause=invalid_active_epoch") {
+				t.Fatalf("%s: expected stderr to contain 'cause=invalid_active_epoch', got:\n%s", tc.name, stderr)
+			}
+			if !strings.Contains(stderr, "expected=uint64_decimal") {
+				t.Fatalf("%s: expected stderr to contain 'expected=uint64_decimal', got:\n%s", tc.name, stderr)
+			}
+			wantObserved := fmt.Sprintf("observed=%s", tc.activeEpoch)
+			if !strings.Contains(stderr, wantObserved) {
+				t.Fatalf("%s: expected stderr to contain %q, got:\n%s", tc.name, wantObserved, stderr)
+			}
+			if !strings.Contains(stderr, "PREFLIGHT REFUSED") {
+				t.Fatalf("%s: expected stderr to contain 'PREFLIGHT REFUSED', got:\n%s", tc.name, stderr)
+			}
+			if !strings.Contains(stderr, "changed=no") {
+				t.Fatalf("%s: expected stderr to contain 'changed=no', got:\n%s", tc.name, stderr)
+			}
+
+			// Invariance verification: zero evidence records created in Redis
+			keys, err := rdb.Keys(ctx, "evidence:*").Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(keys) != 0 {
+				t.Fatalf("%s: expected zero evidence keys in Redis, found %v", tc.name, keys)
+			}
+		})
+	}
+}
+
+// TestCard057StoredWrongEpochMergeRefusal verifies that the merge filter rejects
+// persisted wrong-epoch evidence even if evidence recording was bypassed (e.g. direct Redis write)
+// or if evidence was subsequently corrupted/mutated with a wrong epoch.
+func TestCard057StoredWrongEpochMergeRefusal(t *testing.T) {
+	t.Parallel()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := filepath.Dir(filepath.Dir(wd))
+	binPath := buildNovaTable(t, repoRoot)
+	headCommit := getHeadCommit(t, repoRoot)
+
+	t.Run("DirectlyPersistedWrongEpochBypassingRecording", func(t *testing.T) {
+		t.Parallel()
+		addr := throwaway(t)
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { rdb.Close() })
+
+		tbl := "cards_bypassed_wrong_epoch"
+		setupCardTable(t, binPath, addr, tbl)
+
+		cid, digest := setupCardInReview(t, repoRoot, binPath, addr, tbl, "card-bypassed-epoch", headCommit)
+
+		preRev, err := rdb.HGet(ctx, fmt.Sprintf("card:%s", cid), "revision").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Directly inject two reader approvals into Redis with wrong epoch "99" (bypassing card-manager.py evidence recording)
+		readers := []string{"reviewer-bypass-1", "reviewer-bypass-2"}
+		for _, r := range readers {
+			evKey := fmt.Sprintf("evidence:%s:op-bypass:%s", cid, r)
+			evData := map[string]any{
+				"card_id":      cid,
+				"table":        tbl,
+				"operation_id": "op-bypass",
+				"head":         headCommit,
+				"digest":       digest,
+				"reader":       r,
+				"disposition":  "accepted",
+				"ci_status":    "pass",
+				"epoch":        "99", // Persisted wrong-epoch evidence!
+			}
+			if err := rdb.HSet(ctx, evKey, evData).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := rdb.SAdd(ctx, fmt.Sprintf("evidence:%s:readers", cid), r).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// Attempt move to merging under table epoch "0"
+		moveFile := filepath.Join(t.TempDir(), "move_merging.json")
+		moveManifest := map[string]any{
+			"schema":       1,
+			"table":        tbl,
+			"epoch":        "0",
+			"operation_id": "op-move-bypassed-wrong-epoch",
+			"events": []map[string]any{
+				{
+					"id":              cid,
+					"to":              "merging",
+					"expect_place":    "stream-1:review",
+					"expect_revision": preRev,
+					"head":            headCommit,
+				},
+			},
+		}
+		moveData, err := json.Marshal(moveManifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(moveFile, moveData, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		mCode, mStdout, mStderr := runCardCmd(t, repoRoot, binPath, addr, "move", "--events", moveFile, "--table", tbl)
+		if mCode != 1 {
+			t.Fatalf("expected move with bypassed wrong-epoch evidence to exit code 1, got %d; stdout=%s; stderr=%s", mCode, mStdout, mStderr)
+		}
+		if !strings.Contains(mStderr, "cause=insufficient_evidence") {
+			t.Fatalf("expected stderr to contain 'cause=insufficient_evidence', got:\n%s", mStderr)
+		}
+		if !strings.Contains(mStderr, "PREFLIGHT REFUSED") {
+			t.Fatalf("expected stderr to contain 'PREFLIGHT REFUSED', got:\n%s", mStderr)
+		}
+		if !strings.Contains(mStderr, "changed=no") {
+			t.Fatalf("expected stderr to contain 'changed=no', got:\n%s", mStderr)
+		}
+
+		// Ensure card place did not transition and remained in stream-1:review
+		place, err := rdb.HGet(ctx, fmt.Sprintf("card:%s", cid), fmt.Sprintf("place:%s", tbl)).Result()
+		if err != nil || place != "stream-1:review" {
+			t.Fatalf("expected card to remain in stream-1:review, got %q (err=%v)", place, err)
+		}
+	})
+
+	t.Run("RecordedEvidenceMutatedToWrongEpoch", func(t *testing.T) {
+		t.Parallel()
+		addr := throwaway(t)
+		ctx := context.Background()
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { rdb.Close() })
+
+		tbl := "cards_mutated_wrong_epoch"
+		setupCardTable(t, binPath, addr, tbl)
+
+		cid, digest := setupCardInReview(t, repoRoot, binPath, addr, tbl, "card-mutated-epoch", headCommit)
+
+		// Record valid evidence via card-manager.py under epoch 0
+		evFile := filepath.Join(t.TempDir(), "evidence_valid.json")
+		evManifest := map[string]any{
+			"schema":       1,
+			"table":        tbl,
+			"epoch":        "0",
+			"operation_id": "op-ev-valid",
+			"evidence": []map[string]any{
+				{
+					"card_id":     cid,
+					"head":        headCommit,
+					"digest":      digest,
+					"reader":      "reviewer-1",
+					"disposition": "accepted",
+					"ci_status":   "pass",
+				},
+				{
+					"card_id":     cid,
+					"head":        headCommit,
+					"digest":      digest,
+					"reader":      "reviewer-2",
+					"disposition": "accepted",
+					"ci_status":   "pass",
+				},
+			},
+		}
+		evData, err := json.Marshal(evManifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(evFile, evData, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		code, stdout, stderr := runCardCmd(t, repoRoot, binPath, addr, "evidence", "--evidence", evFile, "--table", tbl)
+		if code != 0 {
+			t.Fatalf("expected evidence recording to succeed, got %d; stdout=%s; stderr=%s", code, stdout, stderr)
+		}
+
+		preRev, err := rdb.HGet(ctx, fmt.Sprintf("card:%s", cid), "revision").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Mutate stored evidence in Redis to have wrong epoch "7"
+		evKeys, err := rdb.Keys(ctx, fmt.Sprintf("evidence:%s:*", cid)).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated := 0
+		for _, k := range evKeys {
+			if strings.HasSuffix(k, ":readers") {
+				continue
+			}
+			if err := rdb.HSet(ctx, k, "epoch", "7").Err(); err != nil {
+				t.Fatal(err)
+			}
+			mutated++
+		}
+		if mutated < 2 {
+			t.Fatalf("expected at least 2 evidence records mutated, got %d", mutated)
+		}
+
+		// Attempt move to merging
+		moveFile := filepath.Join(t.TempDir(), "move_merging.json")
+		moveManifest := map[string]any{
+			"schema":       1,
+			"table":        tbl,
+			"epoch":        "0",
+			"operation_id": "op-move-mutated-wrong-epoch",
+			"events": []map[string]any{
+				{
+					"id":              cid,
+					"to":              "merging",
+					"expect_place":    "stream-1:review",
+					"expect_revision": preRev,
+					"head":            headCommit,
+				},
+			},
+		}
+		moveData, err := json.Marshal(moveManifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(moveFile, moveData, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		mCode, mStdout, mStderr := runCardCmd(t, repoRoot, binPath, addr, "move", "--events", moveFile, "--table", tbl)
+		if mCode != 1 {
+			t.Fatalf("expected move with mutated wrong-epoch evidence to exit code 1, got %d; stdout=%s; stderr=%s", mCode, mStdout, mStderr)
+		}
+		if !strings.Contains(mStderr, "cause=insufficient_evidence") {
+			t.Fatalf("expected stderr to contain 'cause=insufficient_evidence', got:\n%s", mStderr)
+		}
+
+		place, err := rdb.HGet(ctx, fmt.Sprintf("card:%s", cid), fmt.Sprintf("place:%s", tbl)).Result()
+		if err != nil || place != "stream-1:review" {
+			t.Fatalf("expected card to remain in stream-1:review, got %q (err=%v)", place, err)
+		}
+	})
 }
