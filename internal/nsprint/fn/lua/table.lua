@@ -2905,7 +2905,7 @@ do
         local _, why = before_length(f)
         if why then return why end
       end
-      local over = T.over('batch_value_bytes', touched, id) or T.over('receipt_bytes', receipt_least, id)
+      local over = T.over_least('batch_value_bytes', touched, id) or T.over_least('receipt_bytes', receipt_least, id)
       if over then return over end
     end
     local member_cache = {} -- physical key -> field -> value, false for absent
