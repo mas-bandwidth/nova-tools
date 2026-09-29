@@ -73,6 +73,8 @@ func routeHandler(t *testing.T, answers string) http.HandlerFunc {
 
 // A fix/complexity-1 card routes to the muse row.
 func TestRouteFixComplexity1PicksMuse(t *testing.T) {
+	t.Parallel()
+
 	srv := fakeRouteServer(t, routeHandler(t, `{"answers": {
 		"kind": {"type":"choice","choice":"fix","probabilities":{"fix":0.95},"confidence":0.95},
 		"complexity": {"type":"score","score":1.0,"confidence":0.9},
@@ -88,7 +90,6 @@ func TestRouteFixComplexity1PicksMuse(t *testing.T) {
 	os.WriteFile(other, []byte(`{}`), 0o600)
 	card := writeRouteFile(t, "card.md", strings.Repeat("fix the named bug with a red test first. ", 60))
 	routes := writeRouteFile(t, "routes.tsv", "fix\t1\t"+muse+"\tpublic\nfix\t2\t"+other+"\tpublic\n")
-	t.Setenv("JEV_API_KEY", "sekret")
 	exit, stdout, stderr := runSwarm(t, "route", "--card", card, "--routes", routes, "--base-url", srv.URL)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0 (stdout=%q stderr=%q)", exit, stdout, stderr)
@@ -107,6 +108,8 @@ func TestRouteFixComplexity1PicksMuse(t *testing.T) {
 // The same card with touches_private 0.9 skips the public row and lands on
 // the paid row: contributor routes are forbidden for private material.
 func TestRoutePrivateSkipsPublic(t *testing.T) {
+	t.Parallel()
+
 	srv := fakeRouteServer(t, routeHandler(t, `{"answers": {
 		"kind": {"type":"choice","choice":"fix","probabilities":{"fix":0.95},"confidence":0.95},
 		"complexity": {"type":"score","score":1.0,"confidence":0.9},
@@ -122,7 +125,6 @@ func TestRoutePrivateSkipsPublic(t *testing.T) {
 	os.WriteFile(paid, []byte(`{}`), 0o600)
 	card := writeRouteFile(t, "card.md", strings.Repeat("fix the named bug with a red test first. ", 60))
 	routes := writeRouteFile(t, "routes.tsv", "fix\t1\t"+muse+"\tpublic\nfix\t1\t"+paid+"\tpaid\n")
-	t.Setenv("JEV_API_KEY", "sekret")
 	exit, stdout, stderr := runSwarm(t, "route", "--card", card, "--routes", routes, "--base-url", srv.URL)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0 (stdout=%q stderr=%q)", exit, stdout, stderr)
@@ -137,6 +139,8 @@ func TestRoutePrivateSkipsPublic(t *testing.T) {
 
 // Kind confidence below the floor yields worker=default and exit 3.
 func TestRouteBelowFloorExits3(t *testing.T) {
+	t.Parallel()
+
 	srv := fakeRouteServer(t, routeHandler(t, `{"answers": {
 		"kind": {"type":"choice","choice":"fix","probabilities":{"fix":0.5},"confidence":0.5},
 		"complexity": {"type":"score","score":1.0,"confidence":0.9},
@@ -152,7 +156,6 @@ func TestRouteBelowFloorExits3(t *testing.T) {
 	os.WriteFile(def, []byte(`{}`), 0o600)
 	card := writeRouteFile(t, "card.md", strings.Repeat("fix the named bug with a red test first. ", 60))
 	routes := writeRouteFile(t, "routes.tsv", "fix\t1\t"+muse+"\tpublic\n")
-	t.Setenv("JEV_API_KEY", "sekret")
 	exit, stdout, stderr := runSwarm(t, "route", "--card", card, "--routes", routes, "--default", def, "--base-url", srv.URL)
 	if exit != 3 {
 		t.Fatalf("exit = %d, want 3 (stdout=%q stderr=%q)", exit, stdout, stderr)
@@ -167,6 +170,8 @@ func TestRouteBelowFloorExits3(t *testing.T) {
 
 // A missing routes row falls to the nearest lower complexity for that kind.
 func TestRouteFallsToLowerComplexity(t *testing.T) {
+	t.Parallel()
+
 	srv := fakeRouteServer(t, routeHandler(t, `{"answers": {
 		"kind": {"type":"choice","choice":"feat","probabilities":{"feat":0.95},"confidence":0.95},
 		"complexity": {"type":"score","score":3.0,"confidence":0.9},
@@ -182,7 +187,6 @@ func TestRouteFallsToLowerComplexity(t *testing.T) {
 	os.WriteFile(mid, []byte(`{}`), 0o600)
 	card := writeRouteFile(t, "card.md", strings.Repeat("add a verb with tests. ", 100))
 	routes := writeRouteFile(t, "routes.tsv", "feat\t1\t"+low+"\tpublic\nfeat\t2\t"+mid+"\tpublic\n")
-	t.Setenv("JEV_API_KEY", "sekret")
 	exit, stdout, stderr := runSwarm(t, "route", "--card", card, "--routes", routes, "--base-url", srv.URL)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0 (stdout=%q stderr=%q)", exit, stdout, stderr)

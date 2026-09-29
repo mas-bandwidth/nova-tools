@@ -117,7 +117,11 @@ func main() {
 	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
+	return runWith(args, stdin, stdout, stderr, now, nativeHooks{})
+}
+
+func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, hooks nativeHooks) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
 	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
 	// every other exit of this tool is unchanged.
@@ -136,7 +140,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "help", "-h", "--help":
 		// help <verb> for a NAMED verb only: anything else is the banner.
 		if cmd == "help" && len(rest) > 0 && helpVerbs[rest[0]] {
-			return run(append(append([]string{}, rest...), "--help"), stdin, stdout, stderr, now)
+			return runWith(append(append([]string{}, rest...), "--help"), stdin, stdout, stderr, now, hooks)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -153,7 +157,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
 	case "native":
-		return cmdNative(rest, stdout, stderr)
+		return cmdNativeWith(rest, stdout, stderr, hooks)
 	case "route":
 		return cmdRoute(rest, stdout, stderr)
 	case "slots":
@@ -630,6 +634,10 @@ func cmdProfile(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdNative(args []string, stdout, stderr io.Writer) int {
+	return cmdNativeWith(args, stdout, stderr, nativeHooks{})
+}
+
+func cmdNativeWith(args []string, stdout, stderr io.Writer, hooks nativeHooks) int {
 	f := newFlags("native")
 	harness := f.fs.String("harness", "", "")
 	model := f.fs.String("model", "", "")
@@ -831,6 +839,12 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		usageInterval:  usageInterval.d,
 		benchName:      *benchFlag,
 		stageTimeout:   stageDur,
+		watchIdle:      hooks.watchIdle,
+		reap:           hooks.reap,
+		killGroup:      hooks.killGroup,
+		deadlineFn:     hooks.deadlineFn,
+		launchArgv:     hooks.launchArgv,
+		persistUnknown: hooks.persistUnknown,
 	}
 	if workerGiven {
 		cfg.worker = &w
