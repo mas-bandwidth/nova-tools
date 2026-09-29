@@ -118,8 +118,8 @@ func (h *harness) deps() deps {
 			}
 			return h.store, nil
 		},
-		openRedis: func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
-		now:       func() time.Time { return time.Unix(1700000000, 0) },
+		openRedis:       func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
+		now:             func() time.Time { return time.Unix(1700000000, 0) },
 		tailscaleStatus: h.tailscale,
 	}
 }
