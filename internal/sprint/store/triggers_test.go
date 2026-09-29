@@ -111,3 +111,22 @@ func TestTheEngineRefusesASentinelLandedByAnotherStep(t *testing.T) {
 	}
 	h.clean("still waiting")
 }
+
+// A returned primary is back in review with a judgment open on it, whatever
+// the cursor: rework, accept (its reads stand at its head), or drop.
+func TestTriggerReturnedPrimaryIsAJudgment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.through("s1-1")
+	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
+	h.readInbox()
+	if got := h.judgmentsOn("s1-1"); h.state("s1-1") != sprint.Review || len(got) != 1 || got[0] != sprint.NReturned {
+		t.Fatalf("s1-1 is %s with %v open", h.state("s1-1"), got)
+	}
+	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	if got := h.judgmentsOn("s1-1"); len(got) != 0 {
+		t.Fatalf("accept left %v open", got)
+	}
+	h.clean("accepted again")
+}

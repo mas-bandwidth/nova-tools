@@ -421,7 +421,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -589,12 +589,29 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
 		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
+		// Back in review, the coordinator decides again.
+		j := judgment(NReturned, c.Row, s.Now, c.Int("returns"), c.ID)
+		j.Who, j.Attempt, j.What = r.Who, c.Int("attempt"), r.Reason
+		if len(okReaders(s, c)) < 2 {
+			j.Decisions = removeDecision(j.Decisions, "accept")
+		}
+		u.Notes = append(u.Notes, j)
 		leaving[c.ID] = true
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, leaving, nil)
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
+}
+
+func removeDecision(ds []string, d string) []string {
+	var out []string
+	for _, x := range ds {
+		if x != d {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func orEmpty(c *Card, id string) *Card {

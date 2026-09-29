@@ -27,7 +27,8 @@ const (
 	NAbandoned      = "an operation was abandoned"
 	NSentinelLanded = "sentinel landed" // released by the coordinator
 
-	NReadyToAccept   = "ready to accept" // two different readers said ok at its head
+	NReadyToAccept   = "ready to accept"    // two different readers said ok at its head
+	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
 	NConflict        = "stream stopped: conflict on a card"
@@ -48,6 +49,7 @@ const (
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
 	NReadyToAccept:   {"accept", "rework", "drop"},
+	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},
 	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
 	NConflict:        {"resolve and resume", "rework", "drop"},

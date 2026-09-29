@@ -154,6 +154,7 @@ one answer to each judgment (every one prints its own, filled in):
   a stream not moving: look   where, then queue --stream <s>
   the sprint is done          clear --confirm <prefix>, or add --stream <s> for more work
   sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
+  returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
 `
 
 func versionLine() string { return buildinfo.Line(prog, version) }

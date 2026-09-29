@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -177,4 +178,30 @@ func TestLandingResolvesWhatWaitsOnIt(t *testing.T) {
 		t.Fatalf("after s1-2 landed: c %s", w.state("c"))
 	}
 	w.clean("c ready")
+}
+
+// H8: return opens "returned to review"; accept is a decision only while its
+// reads stand at its head; rework closes it.
+func TestReturnOpensAJudgment(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	accepted(w, "s1-1")
+	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
+	open := w.openOn("s1-1")
+	if len(open) != 1 || open[0].Note.Type != NReturned || strings.Join(open[0].Note.Decisions, ",") != "rework,accept,drop" {
+		t.Fatalf("returned: %+v", open)
+	}
+	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
+	if len(w.openOn("s1-1")) != 0 {
+		t.Fatalf("rework left it open")
+	}
+	w.clean("reworked")
+	// Its reads gone (a new head), accept is not offered.
+	w2 := setup(t, 1)
+	accepted(w2, "s1-1")
+	w2.s.Work.Card("s1-1").Fields["head"] = "moved"
+	w2.must(Return(w2.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	if d := w2.openOn("s1-1")[0].Note.Decisions; strings.Join(d, ",") != "rework,drop" {
+		t.Fatalf("decisions without standing reads: %v", d)
+	}
 }

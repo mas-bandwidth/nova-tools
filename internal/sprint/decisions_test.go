@@ -360,8 +360,8 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	nid := w.openOn("s1-1")[0].Note.ID
 	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Answers: []string{nid}}))
-	if len(w.openOn("s1-1")) != 0 {
-		t.Fatalf("return left the red CI open")
+	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReturned {
+		t.Fatalf("return left the red CI open, or opened no returned judgment: %v", o)
 	}
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Red: true}))
 	red := w.openOn(StreamSubject("s1"))[0].Note.ID
@@ -373,9 +373,14 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 		t.Fatalf("ack of a stopped stream's judgment: %+v", p)
 	}
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2"}))
-	ci := w.openOn("s1-1")[0].Note.ID
+	var ci string
+	for _, o := range w.openOn("s1-1") {
+		if o.Note.Type == NCIRed {
+			ci = o.Note.ID
+		}
+	}
 	p = w.must(Ack(w.s, AckReq{Notes: []string{ci}, Reason: "a flaky runner"}))
-	if len(w.openOn("s1-1")) != 0 || p.Units[0].Notes[0].What != "ack: a flaky runner" || p.Units[0].Notes[0].Answers != ci {
+	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReturned || p.Units[0].Notes[0].What != "ack: a flaky runner" || p.Units[0].Notes[0].Answers != ci {
 		t.Fatalf("ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
 	}
 }

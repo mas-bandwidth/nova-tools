@@ -283,10 +283,22 @@ JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s 
 	run(gs[0], "rework with a fix")
 	run(gs[1], "rework with the finding")
 	run(gs[2], "take the suspect off and resume")
-	if out := ta.ok("inbox"); strings.Contains(out, "JUDGMENT") {
+	if out := ta.ok("inbox"); openBesidesReturned(out) {
 		t.Fatalf("a judgment is still open after its commands ran:\n%s", out)
 	}
 	ta.clean()
+}
+
+// openBesidesReturned says the inbox shows a judgment other than returned to
+// review: a card taken off a stopped stream is back in review, and that
+// judgment asks the coordinator to decide it again.
+func openBesidesReturned(out string) bool {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "JUDGMENT") && !strings.Contains(l, sprint.NReturned) {
+			return true
+		}
+	}
+	return false
 }
 
 // I3: a repeat's "stop and look" lists its cards, cut at MaxLook with the
@@ -348,7 +360,7 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 			if !found {
 				t.Fatalf("no decision %q: %+v", c.decision, g.Commands)
 			}
-			if out := ta.ok("inbox"); strings.Contains(out, "JUDGMENT") {
+			if out := ta.ok("inbox"); openBesidesReturned(out) {
 				t.Fatalf("still open:\n%s", out)
 			}
 			ta.clean()

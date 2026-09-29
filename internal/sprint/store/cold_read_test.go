@@ -728,8 +728,9 @@ func TestReturnAnswersCIRed(t *testing.T) {
 	}
 	t.Logf("decisions: %v", o[0].Note.Decisions)
 	res := p.do("return --answers", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Answers: []string{o[0].Note.ID}}))
-	if left := p.openOn("s1-1"); len(left) != 0 {
-		t.Errorf("return, a listed decision of %q, acted on the card and the judgment stays open (%d); refused: %v", sprint.NCIRed, len(left), res.Refused)
+	// ci red is answered; what is open is the returned primary's own judgment.
+	if left := p.openOn("s1-1"); len(left) != 1 || left[0].Note.Type != sprint.NReturned {
+		t.Errorf("return, a listed decision of %q, acted on the card and left open %v; refused: %v", sprint.NCIRed, left, res.Refused)
 	}
 }
 
