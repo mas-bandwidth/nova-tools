@@ -94,13 +94,6 @@ a finish of a generation that is not the live one is refused as stale.
 
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
-example:
-  nova-sprint init --readers reader-a,reader-b,reader-c --members m1,m2,m3
-  nova-sprint add --stream s1 --count 100
-  nova-sprint start --limit 50
-  nova-sprint play --seed 7 --every 1s --start
-  nova-sprint inbox
-  nova-sprint where
 `)
 	return b.String()
 }
