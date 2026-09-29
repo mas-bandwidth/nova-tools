@@ -270,6 +270,7 @@ nova-table cell move <table> <row> <from-col> <to-col> <member>...
 nova-table cell members <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find <table> <id>
+nova-table member read <table> <id>... | <table> --cell <row:col>
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
@@ -310,10 +311,14 @@ inputs. It is an unpadded record of every row and column.
 
 `member find` answers where an identity is placed in this table, with
 `state=placed row=<r> col=<c>`, `state=unplaced`, or `state=missing`. All three are
-successful reads (exit 0), with epoch, revision and `trips=1`. The read checks
+successful reads (exit 0), with epoch, `table_revision` and `trips=1`. The read checks
 that a reported placement is present in its owned set; disagreement refuses as
 drift. It does not search bound external sets. An identity from another epoch
 refuses with the two epochs. Use `check` for a full audit of all record/set links.
+
+`member read` reads members in one exchange: their place, score, member revision and
+fields, the members that do not exist, and the table's revision and epoch (see
+`docs/CLI.md`, Reading members).
 A custom member prefix needs read access to that namespace.
 
 `view list` lists stored view names in lexical order. `view show` prints the
