@@ -157,8 +157,15 @@ func MergeNotes(notes []Note) []Note {
 			out = append(out, n)
 			continue
 		}
-		out[i].Primaries = append(out[i].Primaries, n.Primaries...)
-		out[i].Count += n.Count
+		if len(n.Primaries) == 0 {
+			out[i].Count += n.Count
+		}
+		for _, p := range n.Primaries {
+			if !contains(out[i].Primaries, p) {
+				out[i].Primaries = append(out[i].Primaries, p)
+				out[i].Count++
+			}
+		}
 		if n.Before > out[i].Before {
 			out[i].Before = n.Before
 		}

@@ -458,3 +458,13 @@ func TestLawfulRefusesAMoveOutsideTheLifecycle(t *testing.T) {
 		t.Fatalf("a landed primary taken off the table: %+v", p)
 	}
 }
+
+// A subject is listed once in a merged note, and counted once.
+func TestMergeNotesListsASubjectOnce(t *testing.T) {
+	t.Parallel()
+	a := happened(NWorkOK, "s1", t0, "p1")
+	got := MergeNotes([]Note{a, a, happened(NWorkOK, "s1", t0, "p2")})
+	if len(got) != 1 || got[0].Count != 2 || len(got[0].Primaries) != 2 {
+		t.Fatalf("merged: %+v", got)
+	}
+}

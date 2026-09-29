@@ -230,7 +230,7 @@ same run is recorded once. Stream-batch CI in merging is the merge step's fact.
 Each carries: id, kind, type, stream, the primaries (a set, bounded, with the
 count), what happened, who reported it, attempt, how many times before, the
 clock time, the decisions. Notifications of one type, stream and cause are
-grouped into one line with a count. Marked ones (repeats, overdue) sort first.
+grouped into one line with a count; a subject is listed and counted once. Marked ones (repeats, overdue) sort first.
 A primary that came back a second time for the same cause is marked on the
 notification of that cause, and "stop and look" is added to its decisions.
 
@@ -337,8 +337,9 @@ and the summary line. Every judgment verb takes `--answers <notification>`.
 Every store verb takes `--redis`, `--prefix`, `--actor`, `--op <id>` (the same
 id again, for the same verb with the same arguments, returns the recorded
 result; recorded for another verb or other arguments it is a conflict and is
-refused), `--json` and `--max`. A card's text fields (brief, fix, finding,
-report, reason, note) are at most 8 KiB, and every manifest is checked against
+refused), `--json` and `--max`. A card's and a control card's text fields
+(brief, fix, finding, report, reason, note, return reason, ci note, did) are
+at most 8 KiB, and every manifest is checked against
 the table layer's bounds before anything is written, split by entries and by
 bytes, so no step can wedge the sprint. Every command checks first that the
 store's table function library is this build's, and refuses (exit 2) with the

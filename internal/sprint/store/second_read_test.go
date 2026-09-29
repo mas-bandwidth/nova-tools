@@ -262,3 +262,28 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 		})
 	}
 }
+
+// The 8 KiB bound covers every text field a card or a control card carries:
+// a return reason, a ci note and a resume's did over it refuse the step.
+func TestEveryTextFieldIsBounded(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", MaxCardTextBytes+1)
+	p := newProbe(t)
+	p.setup(2)
+	p.through("s1-1", "s1-2")
+	over := func(name string, step Step) {
+		t.Helper()
+		res, err := p.st.Run(p.ctx, step)
+		refused := len(res.Refused) > 0 && strings.Contains(res.Refused[0].Why, "over the bound")
+		if err != nil || len(res.Moved) != 0 && !refused || !refused {
+			t.Errorf("%s over 8 KiB: %+v %v", name, res, err)
+		}
+	}
+	over("return reason", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Reason: long}))
+	over("ci note", CIStep(sprint.CIReq{Sel: ids("s1-1"), Red: true, Note: long}))
+	p.do("red", MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
+	over("did", ResumeStep(sprint.ResumeReq{Stream: "s1", Did: long}))
+	if p.ctl("s1").F("state") != sprint.StreamStopped || p.state("s1-1") != sprint.Merging {
+		t.Fatalf("a refused step moved something")
+	}
+}
