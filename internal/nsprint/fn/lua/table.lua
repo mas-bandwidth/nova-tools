@@ -235,6 +235,64 @@ do
     end
     return i == #s + 1
   end
+  -- T.repeats(raw): the JSON text names a key twice in one object, comparing
+  -- the keys as decoded (m\u0065mbers is members). raw has already decoded.
+  function T.repeats(raw)
+    local pos, len = 1, #raw
+    local function ws()
+      while pos <= len do
+        local b = string.byte(raw, pos)
+        if b == 32 or b == 9 or b == 10 or b == 13 then pos = pos + 1 else break end
+      end
+    end
+    local function str()
+      local start = pos
+      pos = pos + 1
+      while pos <= len do
+        local ch = string.sub(raw, pos, pos)
+        if ch == '\\' then pos = pos + 2
+        elseif ch == '"' then
+          pos = pos + 1
+          local ok, decoded = pcall(cjson.decode, string.sub(raw, start, pos - 1))
+          return ok and decoded or nil
+        else pos = pos + 1 end
+      end
+    end
+    local value
+    local function container(close, keyed)
+      pos = pos + 1
+      local seen = {}
+      ws()
+      if string.sub(raw, pos, pos) == close then pos = pos + 1; return false end
+      while pos <= len do
+        ws()
+        if keyed then
+          local key = str()
+          if key == nil then return false end
+          if seen[key] then return true end
+          seen[key] = true
+          ws()
+          pos = pos + 1 -- the colon
+        end
+        if value() then return true end
+        ws()
+        local ch = string.sub(raw, pos, pos)
+        pos = pos + 1
+        if ch ~= ',' then return false end
+      end
+      return false
+    end
+    value = function()
+      ws()
+      local ch = string.sub(raw, pos, pos)
+      if ch == '{' then return container('}', true)
+      elseif ch == '[' then return container(']', false)
+      elseif ch == '"' then str(); return false end
+      while pos <= len and not string.find(string.sub(raw, pos, pos), '[,}%]%s]') do pos = pos + 1 end
+      return false
+    end
+    return value()
+  end
   function T.decode(s)
     local ok, v = pcall(cjson.decode, s or '')
     if ok and type(v) == 'table' then return v end
@@ -1451,6 +1509,7 @@ do
     local table_name = args[1]
     local scope = T.decode(args[2])
     if not scope then return T.refuse('ARGS', 'read_set scope must be a JSON object or array') end
+    if T.repeats(args[2]) then return T.refuse('ARGS', 'read_set request names a key twice') end
     local shape = 'read_set scope must be {"members": [...]}, {"selection": [...]} or a nonempty array of member ids'
     local members, selection
     if scope.members ~= nil or scope.selection ~= nil then

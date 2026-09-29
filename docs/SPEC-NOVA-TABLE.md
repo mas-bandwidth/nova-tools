@@ -267,8 +267,8 @@ members. A selection beyond the declared bound refuses; it cannot return a prefi
 marked complete. Bound/external cells are not writable through this interface.
 The request is `{"members": [<id>, ...]}`, `{"selection": [{"row": <row>, "col":
 <col>}, ...]}` or a bare array of ids; its list is nonempty, an id is a nonempty
-string, and an unknown key, both lists together or any other shape refuses as
-`ARGS`. A malformed request is never answered as an empty set; an empty cell in a
+string, and an unknown key, a key named twice in one object (as in a manifest),
+both lists together or any other shape refuses as `ARGS`. A malformed request is never answered as an empty set; an empty cell in a
 valid selection is a complete, empty answer.
 
 `ns_table_apply` is one application call with one conditional mutation manifest.

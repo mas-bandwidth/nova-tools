@@ -375,3 +375,28 @@ func TestBatchWithoutMembersIsRefusedAndAdvancesNothing(t *testing.T) {
 		t.Errorf("a refused empty manifest changed the store")
 	}
 }
+
+// A read set's request names no key twice, as a manifest does not: the second
+// value would silently replace the first.
+func TestReadSetRefusesRepeatedKeys(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	seedTwo(t, ctx, c)
+	for _, scope := range []string{
+		`{"members":["a"],"members":["b"]}`,
+		`{"members":["a"],"m\u0065mbers":["b"]}`,
+		`{"selection":[{"row":"build","col":"ready","col":"working"}]}`,
+		`{"selection":[{"row":"build","col":"ready"},{"row":"test","row":"build","col":"ready"}]}`,
+		`{"members":["a"],"selection":[{"row":"build","col":"ready"}],"members":["a"]}`,
+	} {
+		rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", scope).Slice()
+		if err != nil || len(rs) < 3 || rs[0] != "REFUSED" || rs[1] != "ARGS" || !strings.Contains(fmt.Sprint(rs[2]), "twice") {
+			t.Errorf("%s: %v %v; want REFUSED ARGS naming a repeated key", scope, trunc(rs), err)
+		}
+	}
+	// a name that repeats in different objects is not a repeat
+	rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", `{"selection":[{"row":"build","col":"ready"},{"row":"test","col":"ready"}]}`).Slice()
+	if err != nil || len(rs) != 6 || rs[0] != "SET" {
+		t.Errorf("distinct objects with the same key names: %v %v", trunc(rs), err)
+	}
+}
