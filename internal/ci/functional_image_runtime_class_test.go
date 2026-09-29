@@ -286,7 +286,7 @@ func TestContainerRuntimeProbeValuesAreNumbers(t *testing.T) {
 	if !strings.Contains(line[1], "| float") || !strings.Contains(line[1], "| int") || !strings.Contains(line[1], "round") {
 		t.Errorf("%s/tasks/main.yml: WANT_CPU is %q; a string times 100000 repeats the string and a fraction gives 150000.0, so it must be (cpus | float * 100000) | round | int", containerRuntimeRole, line[1])
 	}
-	for _, want := range []string{"- --security-opt", "- no-new-privileges", "- --cap-drop", "- all", "NoNewPrivs", "CapBnd"} {
+	for _, want := range []string{"- --security-opt", "- no-new-privileges", "- --cap-drop", "- all", "NoNewPrivs", "CapBnd", "memory.swap.max"} {
 		if !strings.Contains(tasks, want) {
 			t.Errorf("%s/tasks/main.yml: the probe lacks %q", containerRuntimeRole, want)
 		}

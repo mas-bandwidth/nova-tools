@@ -173,7 +173,7 @@
 # the limits back from its own cgroup and the play fails when one is not the
 # value asked for, when the network is not loopback only, when the root
 # filesystem is writable, when /tmp is not, when no-new-privileges is not set,
-# or when a capability remains.
+# when a capability remains, or when the container may use swap.
 - name: the probe container has the limits the runner will use
   become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
   become_user: "{{ container_runtime_user }}"
@@ -193,6 +193,8 @@
       - --pids-limit
       - "{{ container_runtime_probe_pids }}"
       - --memory
+      - "{{ container_runtime_probe_memory_bytes }}"
+      - --memory-swap
       - "{{ container_runtime_probe_memory_bytes }}"
       - --cpus
       - "{{ container_runtime_probe_cpus }}"
@@ -218,6 +220,7 @@
         set -e
         test "$(cat /sys/fs/cgroup/pids.max)" = "$WANT_PIDS" || { echo "pids.max is $(cat /sys/fs/cgroup/pids.max), want $WANT_PIDS"; exit 11; }
         test "$(cat /sys/fs/cgroup/memory.max)" = "$WANT_MEMORY" || { echo "memory.max is $(cat /sys/fs/cgroup/memory.max), want $WANT_MEMORY"; exit 12; }
+        test "$(cat /sys/fs/cgroup/memory.swap.max)" = 0 || { echo "memory.swap.max is $(cat /sys/fs/cgroup/memory.swap.max 2>&1), want 0: swap is not bounded"; exit 19; }
         test "$(cat /sys/fs/cgroup/cpu.max)" = "$WANT_CPU" || { echo "cpu.max is $(cat /sys/fs/cgroup/cpu.max), want $WANT_CPU"; exit 13; }
         test "$(ls /sys/class/net)" = lo || { echo "network is not loopback only: $(ls /sys/class/net)"; exit 14; }
         if touch /probe-rootfs 2>/dev/null; then echo "the root filesystem is writable"; exit 15; fi

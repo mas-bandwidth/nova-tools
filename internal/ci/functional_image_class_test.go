@@ -656,7 +656,7 @@ func TestFunctionalImageRuntimeAndReadmeAgree(t *testing.T) {
 	}
 	tasks := readFile(t, filepath.Join(root, filepath.FromSlash(containerRuntimeRole+"/tasks/main.yml")))
 	readme := readFile(t, filepath.Join(root, filepath.FromSlash(functionalImageReadme)))
-	for _, flag := range []string{"--network", "--pids-limit", "--memory", "--cpus", "--read-only", "--tmpfs", "--timeout", "--ipc"} {
+	for _, flag := range []string{"--network", "--pids-limit", "--memory", "--memory-swap", "--cpus", "--read-only", "--tmpfs", "--timeout", "--ipc"} {
 		if !strings.Contains(tasks, "- "+flag) {
 			t.Errorf("%s/tasks/main.yml: the probe does not run with %s", containerRuntimeRole, flag)
 		}

@@ -80,7 +80,7 @@ build cache is written by the code under test, so it is kept per trust domain
 The run:
 
     podman run --rm --name nova-functional-run --init --timeout 600 \
-      --network none --ipc private --pids-limit 512 --memory 4g --cpus 4 \
+      --network none --ipc private --pids-limit 512 --memory 4g --memory-swap 4g --cpus 4 \
       --security-opt no-new-privileges --cap-drop all \
       --read-only --tmpfs /tmp:rw,exec,size=2g --tmpfs /home/bench:rw,size=1g,mode=1777 \
       -v "$PWD":/src:ro -v nova-gocache-<domain>:/gocache -v nova-gomod:/gomodcache:ro \
@@ -102,7 +102,8 @@ user as "other", so it is world-readable.
 | `--network none` | loopback only. The fixtures bind `127.0.0.1`; nothing leaves the container and nothing reaches in. A missing module fails at once (`GOPROXY=off`) instead of waiting on a dial |
 | `--ipc private` | System V shared memory and queues are the container's own, so Postgres's segment cannot outlive the run or collide with another |
 | `--pids-limit` | a fork bomb or a leak stops at the limit |
-| `--memory` | the run, tmpfs included, stops at the limit and takes nothing more from the machine |
+| `--memory` | the run, tmpfs included, stops at the limit |
+| `--memory-swap` | equal to `--memory`, so the run may use no swap: without it the runtime allows as much swap again as memory, and the run takes more from the machine than it was given |
 | `--cpus` | the run takes no more cores than it was given |
 | `--security-opt no-new-privileges` | no process in the run gains privilege through a setuid binary (the base image carries `su`, `passwd` and `mount`) |
 | `--cap-drop all` | the run holds no capability; the fixtures need none as the `bench` user |
