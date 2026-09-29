@@ -1861,7 +1861,9 @@ move the other shape's paths out of the store, then run the same command again.
 The tool moves and deletes nothing, and prints no command that does. Every writer
 of a shared store upgrades together: an older `nova-cairn` opening a new session
 in a bench store writes the own shape beside the records, and this version then
-refuses the store until those paths are moved out. A top-level `README.md`, in any case, is documentation
+refuses the store until those paths are moved out; an older `nova-cairn` takes no
+lock, so two appends of one entry id, one from each version, can both report a
+new entry while only one text survives, or write two sections for one id. A top-level `README.md`, in any case, is documentation
 and never a session file in either shape: it counts for no shape and is not
 indexed, and `README` is refused as a session id.
 

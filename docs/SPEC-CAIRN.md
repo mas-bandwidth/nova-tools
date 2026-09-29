@@ -57,8 +57,13 @@ directory holds:
 **Mixed versions.** A store is written by one version family. A `nova-cairn`
 older than this one, run on a bench store, writes the own shape beside the
 records when `open` is called for a new session; this version then refuses the
-store as mixed until those paths are moved out. Every writer of a shared store
-upgrades together.
+store as mixed until those paths are moved out. A `nova-cairn` older than the
+one that takes the store's lock takes none, so it is not serialised with this
+one: two appends of one entry id, one from each, can both read "new" and both
+write. In the own shape several different texts can each report a new entry
+while only one survives; in a bench store two sections can be written for one
+id, which `receipt` and `index` then refuse as a duplicate. Every writer of a
+shared store upgrades together.
 
 A top-level `README.md`, in any case, is documentation and never a session file
 in either shape: it counts for no shape, `index` and the coverage ledger do not

@@ -77,8 +77,10 @@ flags:
                     written by one version family: a nova-cairn older than this
                     one opening a new session in a bench store writes the own
                     shape beside the records, and this version then refuses the
-                    store as mixed until those paths are moved out, so every
-                    writer of a shared store upgrades together. A top-level
+                    store as mixed until those paths are moved out, and one
+                    that takes no lock can race this one on an entry id (both
+                    report a new entry, one text survives), so every writer of
+                    a shared store upgrades together. A top-level
                     README.md, in any case, is documentation and never a
                     session file in either shape; README is refused as a
                     session id. A symlink named <id>.md counts as a record only
