@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -152,6 +154,11 @@ type BatchInput struct {
 	RouteSkip string
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// BinDir overrides the directory where ssh, rsync, and scp are found (test seam).
+	BinDir string
+	// ProbeClient is the HTTP client admission checks use to probe repositories.
+	// If nil, the default client is used.
+	ProbeClient *http.Client
 	// clock is the batch's time source. nil means the real clock; a test injects a
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
@@ -247,7 +254,7 @@ func Batch(in BatchInput) int {
 		return 2
 	}
 	in.Root = absroot
-	cards, err := readCards(in.Cards)
+	cards, err := readCardsWith(in.Cards, in.ProbeClient)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 		return 2
@@ -704,7 +711,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile, in.BinDir)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -833,6 +840,12 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		b := benches[c.bench]
+		var pullRun func(string, ...string) error
+		if in.BinDir != "" {
+			pullRun = func(host string, args ...string) error {
+				return execBinRun(in.BinDir, host, args...)
+			}
+		}
 		err := pullFromBench(benchPull{
 			host:       b.Host,
 			remoteSlot: b.Root + "/" + strconv.Itoa(c.slot),
@@ -842,6 +855,7 @@ func Batch(in BatchInput) int {
 			wait:       in.PullWait,
 			poll:       in.PullPoll,
 			notes:      in.Stderr,
+			run:        pullRun,
 		})
 		if err != nil {
 			unreachable[i] = isUnreachable(err)
@@ -1389,7 +1403,7 @@ func applyPublicGate(cards []batchCard, w Worker, root string) {
 
 // readCards reads the TSV and admits every card or none: one line that does not parse
 // queues nothing at all, because a batch is all of its cards or none.
-func readCards(path string) ([]batchCard, error) {
+func readCardsWith(path string, client *http.Client) ([]batchCard, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("--cards wants a readable TSV of label, slot, model, card-path: %w", err)
@@ -1448,7 +1462,7 @@ func readCards(path string) ([]batchCard, error) {
 		why := ""
 		if reason := cardShapeFailure(parts[2], string(cardRaw)); reason != "" {
 			why = "card-shape: " + reason
-		} else if err := checkRepos(parts[0], string(cardRaw)); err != nil {
+		} else if err := checkReposWith(client, parts[0], string(cardRaw)); err != nil {
 			var ar *admitRefusal
 			if !errors.As(err, &ar) {
 				return nil, err
@@ -1469,6 +1483,10 @@ func readCards(path string) ([]batchCard, error) {
 		})
 	}
 	return cards, nil
+}
+
+func readCards(path string) ([]batchCard, error) {
+	return readCardsWith(path, nil)
 }
 
 // logSize is the byte length of a card's log file, or zero when the file is not there yet.
@@ -2527,4 +2545,14 @@ func storeSpends(root string, cards []batchCard, want func(i int) bool) []cardSp
 	close(work)
 	wg.Wait()
 	return out
+}
+
+func execBinRun(binDir, host string, args ...string) error {
+	bin := filepath.Join(binDir, "ssh")
+	testguard.RefuseHosts(bin, append([]string{host}, args...)...)
+	cmd := exec.Command(bin, append([]string{host}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
+	}
+	return nil
 }

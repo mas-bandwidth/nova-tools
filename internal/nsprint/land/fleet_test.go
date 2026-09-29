@@ -133,6 +133,8 @@ func validateFleetResult(res *FleetResult) error {
 // p50 < 10 min over the 280; no machine budget exceeded; zero lost, zero twice.
 // Fails when the run lands 0.
 func TestL15(t *testing.T) {
+	t.Parallel()
+
 	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).

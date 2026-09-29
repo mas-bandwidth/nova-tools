@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -652,12 +653,18 @@ func TestJevEvalHelper(t *testing.T) {
 // Main wires --calib, --prompt-sha, --candidate and --jev-eval: a regressing
 // candidate folds the sprint and exits 3 with the current prompt unchanged.
 func TestMainJevEvalExitCodes(t *testing.T) {
-	t.Setenv("FOLD_JEV_HELPER", "1")
-	set := filepath.Join(t.TempDir(), "calib.jsonl")
+	t.Parallel()
+
+	tmp := t.TempDir()
+	set := filepath.Join(tmp, "calib.jsonl")
 	if err := os.WriteFile(set, []byte(calibSet), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	helper := os.Args[0] + " -test.run=^TestJevEvalHelper$ --"
+	wrap := filepath.Join(tmp, "jev-helper.sh")
+	if err := testbin.WriteExecutable(wrap, []byte(fmt.Sprintf("#!/bin/sh\nexport FOLD_JEV_HELPER=1\nexec %s -test.run=^TestJevEvalHelper$ -- \"$@\"\n", os.Args[0])), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	helper := wrap + " --"
 	for _, tc := range []struct {
 		candidate string
 		code      int

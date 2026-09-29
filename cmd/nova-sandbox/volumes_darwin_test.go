@@ -114,20 +114,17 @@ func (f *fakeDiskutil) run(args ...string) (string, error) {
 	return "", fmt.Errorf("the fake diskutil was asked %q, which Create does not run", strings.Join(args, " "))
 }
 
-// benchDiskutil puts the fake diskutil and a lock file of the test's own in place, and
-// takes them out again.
-func benchDiskutil(t *testing.T, usable func(string) error) *fakeDiskutil {
+// benchDiskutil puts the fake diskutil and a lock file of the test's own in place.
+func benchDiskutil(t *testing.T, usable func(string) error) (*fakeDiskutil, diskutilVolumes) {
 	t.Helper()
 	f := &fakeDiskutil{}
 	lock := filepath.Join(t.TempDir(), "volume-create.lock")
-
-	oldRun, oldUsable, oldPath := diskutilRun, volumeRootUsable, volumeLockPath
-	t.Cleanup(func() { diskutilRun, volumeRootUsable, volumeLockPath = oldRun, oldUsable, oldPath })
-
-	diskutilRun = f.run
-	volumeRootUsable = usable
-	volumeLockPath = func() (string, error) { return lock, nil }
-	return f
+	vols := diskutilVolumes{
+		run:        f.run,
+		lockPath:   func() (string, error) { return lock, nil },
+		rootUsable: usable,
+	}
+	return f, vols
 }
 
 // alwaysUsable is the uncontended machine: the new volume's root is the caller's and
@@ -183,23 +180,24 @@ const realApfsList = `APFS Containers (2 found)
     |   Capacity Consumed:         16384 B (16.4 KB)
 `
 
-// fakeApfsList answers `apfs list` with the real listing and refuses every other command,
-// so a test that thinks it is reading the tree cannot be reading something else.
-func fakeApfsList(t *testing.T) {
-	t.Helper()
-	old := diskutilRun
-	t.Cleanup(func() { diskutilRun = old })
-	diskutilRun = func(args ...string) (string, error) {
-		if strings.Join(args, " ") != "apfs list" {
-			return "", fmt.Errorf("List ran `diskutil %s`", strings.Join(args, " "))
-		}
-		return realApfsList, nil
+func testDiskutilWithRealList() diskutilVolumes {
+	return diskutilVolumes{
+		run: func(args ...string) (string, error) {
+			if strings.Join(args, " ") != "apfs list" {
+				return "", fmt.Errorf("List ran `diskutil %s`", strings.Join(args, " "))
+			}
+			return realApfsList, nil
+		},
 	}
 }
 
-func mustList(t *testing.T) []diskVolume {
+func mustList(t *testing.T, mgr ...volumeManager) []diskVolume {
 	t.Helper()
-	got, err := diskutilVolumes{}.List()
+	var v volumeManager = diskutilVolumes{}
+	if len(mgr) > 0 && mgr[0] != nil {
+		v = mgr[0]
+	}
+	got, err := v.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -209,8 +207,8 @@ func mustList(t *testing.T) []diskVolume {
 // The reaper's eyes: every nova- volume of the real listing, with the disk to delete and
 // the mount point to look for survivors under.
 func TestListReadsTheRealDiskutilTree(t *testing.T) {
-	fakeApfsList(t)
-	got := mustList(t)
+	t.Parallel()
+	got := mustList(t, testDiskutilWithRealList())
 	want := []diskVolume{
 		{Name: "nova-kill1", Disk: "disk3s7", Mount: "/Volumes/nova-kill1"},
 		// `Not Mounted` is diskutil saying there is no mount point, not a path — and the
@@ -231,8 +229,8 @@ func TestListReadsTheRealDiskutilTree(t *testing.T) {
 // same listing one record above the leaked one, and the prefix is the whole of this tool's
 // authority to delete anything.
 func TestListNeverReturnsAVolumeThisToolDidNotName(t *testing.T) {
-	fakeApfsList(t)
-	for _, v := range mustList(t) {
+	t.Parallel()
+	for _, v := range mustList(t, testDiskutilWithRealList()) {
 		if !strings.HasPrefix(v.Name, volumePrefix) {
 			t.Errorf("List returned %+v, which this tool did not make and may not touch", v)
 		}
@@ -244,9 +242,11 @@ func TestListNeverReturnsAVolumeThisToolDidNotName(t *testing.T) {
 // says "not mine" once and "mine" after that; the second volume is the one that is
 // returned, and the first one is gone rather than leaked.
 func TestCreateRemakesAVolumeWhoseRootIsNotTheCallers(t *testing.T) {
+	t.Parallel()
+
 	var asked int
 	var mu sync.Mutex
-	f := benchDiskutil(t, func(string) error {
+	f, vols := benchDiskutil(t, func(string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		asked++
@@ -256,7 +256,7 @@ func TestCreateRemakesAVolumeWhoseRootIsNotTheCallers(t *testing.T) {
 		return nil
 	})
 
-	vol, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	vol, err := vols.Create("disk3", "nova-x", "64m")
 	if err != nil {
 		t.Fatalf("Create gave up on a volume that was writable on the second attempt: %v", err)
 	}
@@ -277,9 +277,11 @@ func TestCreateRemakesAVolumeWhoseRootIsNotTheCallers(t *testing.T) {
 // on to mkdir work/ would die with `permission denied` and a path, which says nothing
 // about what went wrong or what to do.
 func TestCreateRefusesAVolumeThatNeverBecomesWritable(t *testing.T) {
-	f := benchDiskutil(t, func(string) error { return errors.New("owned by uid 0") })
+	t.Parallel()
 
-	_, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	f, vols := benchDiskutil(t, func(string) error { return errors.New("owned by uid 0") })
+
+	_, err := vols.Create("disk3", "nova-x", "64m")
 	if err == nil {
 		t.Fatal("Create returned a volume the caller cannot write; the run would then fail at mkdir with `permission denied` and no cause")
 	}
@@ -299,10 +301,12 @@ func TestCreateRefusesAVolumeThatNeverBecomesWritable(t *testing.T) {
 // and it must not say the volume could not be created, which sends a reader to diskutil
 // and to the container for a fault in neither.
 func TestCreateSaysTheVolumeWasMadeAndTheMountDenied(t *testing.T) {
-	f := benchDiskutil(t, alwaysUsable)
+	t.Parallel()
+
+	f, vols := benchDiskutil(t, alwaysUsable)
 	f.mountDenied = true
 
-	_, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	_, err := vols.Create("disk3", "nova-x", "64m")
 	if err == nil {
 		t.Fatal("Create returned a volume with no mount point; there is nowhere to work and the run would fail at mkdir with no cause")
 	}
@@ -333,28 +337,27 @@ func TestCreateSaysTheVolumeWasMadeAndTheMountDenied(t *testing.T) {
 //
 // The two seams compose here: the manager is the REAL diskutil manager and diskutil itself
 // is the fake, so what is under test is the sentence a caller reads.
-func withDeniedDiskService(t *testing.T) *fakeDiskutil {
+func withDeniedDiskService(t *testing.T) (*fakeDiskutil, runSeams) {
 	t.Helper()
-	f := benchDiskutil(t, alwaysUsable)
+	f, vols := benchDiskutil(t, alwaysUsable)
 	f.frameworkDenied = true
-	old := runVolumes
-	t.Cleanup(func() { runVolumes = old })
-	runVolumes = diskutilVolumes{}
-	return f
+	return f, runSeams{volumes: vols}
 }
 
-func refuseRun(t *testing.T, args ...string) (int, string) {
+func refuseRun(t *testing.T, s runSeams, args ...string) (int, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	f := parseRun(args)
-	code := runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	code := runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")}, s)
 	return code, errb.String()
 }
 
 func TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag(t *testing.T) {
-	withDeniedDiskService(t)
+	t.Parallel()
 
-	code, errOut := refuseRun(t, runFlagsFor(t)...)
+	_, s := withDeniedDiskService(t)
+
+	code, errOut := refuseRun(t, s, runFlagsFor(t)...)
 	if code != 125 || !strings.Contains(errOut, "reason=no_container") {
 		t.Fatalf("a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
 	}
@@ -369,15 +372,17 @@ func TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag(t *testin
 }
 
 func TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails(t *testing.T) {
-	withDeniedDiskService(t)
+	t.Parallel()
 
-	code, errOut := refuseRun(t, runFlagsFor(t, "--container", "disk3")...)
+	_, s := withDeniedDiskService(t)
+
+	code, errOut := refuseRun(t, s, runFlagsFor(t, "--container", "disk3")...)
 	if code != 125 || !strings.Contains(errOut, "reason=volume_failed") {
 		t.Fatalf("a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
 	}
 	for _, want := range []string{"could not be listed", "OS sandbox", "--write", diskutilFrameworkLine} {
 		if !strings.Contains(errOut, want) {
-			t.Errorf("the refusal does not carry %q:\n%s", want, errOut)
+			t.Errorf("the refusal does not carry %q, so a reader is left with single-user mode:\n%s", want, errOut)
 		}
 	}
 }
@@ -386,9 +391,11 @@ func TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails(t *testing.T) {
 // reach are two faces of one cause, and a reader who meets the second must not be told
 // something different from the first.
 func TestTheSandboxedCallerSentenceIsWrittenOnce(t *testing.T) {
-	f := benchDiskutil(t, alwaysUsable)
+	t.Parallel()
+
+	f, vols := benchDiskutil(t, alwaysUsable)
 	f.mountDenied = true
-	_, mountErr := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
+	_, mountErr := vols.Create("disk3", "nova-x", "64m")
 	if mountErr == nil {
 		t.Fatal("Create returned a volume with no mount point")
 	}
@@ -396,8 +403,8 @@ func TestTheSandboxedCallerSentenceIsWrittenOnce(t *testing.T) {
 		t.Errorf("the mount-denied refusal does not carry the shared sentence:\n%s", mountErr)
 	}
 
-	withDeniedDiskService(t)
-	_, errOut := refuseRun(t, runFlagsFor(t)...)
+	_, s := withDeniedDiskService(t)
+	_, errOut := refuseRun(t, s, runFlagsFor(t)...)
 	if !strings.Contains(errOut, sandboxedCallerRemedy) {
 		t.Errorf("the denied-disk-service refusal does not carry the shared sentence:\n%s", errOut)
 	}
@@ -406,7 +413,9 @@ func TestTheSandboxedCallerSentenceIsWrittenOnce(t *testing.T) {
 // Edge 1, the lock. Eight callers at once, and diskutil sees ONE of them at a time. The
 // fake yields inside addVolume, so without the lock this is over 1 on every run.
 func TestConcurrentCreatesAreSerialized(t *testing.T) {
-	f := benchDiskutil(t, alwaysUsable)
+	t.Parallel()
+
+	f, vols := benchDiskutil(t, alwaysUsable)
 
 	const callers = 8
 	var wg sync.WaitGroup
@@ -417,7 +426,7 @@ func TestConcurrentCreatesAreSerialized(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, errs[i] = diskutilVolumes{}.Create("disk3", fmt.Sprintf("nova-c%d", i), "64m")
+			_, errs[i] = vols.Create("disk3", fmt.Sprintf("nova-c%d", i), "64m")
 		}(i)
 	}
 	close(start)
@@ -444,12 +453,11 @@ func TestConcurrentCreatesAreSerialized(t *testing.T) {
 // is what `flock` scopes to -- so a second descriptor in this process is the same test the
 // operating system runs, and it needs no second binary.
 func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "volume-create.lock")
-	old := volumeLockPath
-	t.Cleanup(func() { volumeLockPath = old })
-	volumeLockPath = func() (string, error) { return path, nil }
+	lockPath := func() (string, error) { return path, nil }
 
-	unlock, err := lockVolumeCreate()
+	unlock, err := lockVolumeCreateAt(lockPath)
 	if err != nil {
 		t.Fatalf("the create lock could not be taken: %v", err)
 	}

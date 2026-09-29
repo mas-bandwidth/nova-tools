@@ -14,7 +14,8 @@ import (
 )
 
 func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+	lookPath := fakeSQLite3(t)
 	max := strconv.Itoa(int(^uint(0) >> 1))
 	for _, tc := range []struct{ name, rows string }{
 		{"negative", "private-provider\tm\t-1\t0\t\t\t\n"},
@@ -25,9 +26,10 @@ func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
 		{"truncated_row", "private-provider\tm\t1\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			writeDB(t, home, tc.rows)
-			u, err := ReadProviderUsage(UsageOpenCode, home)
+			u, err := ReadProviderUsageWith(UsageOpenCode, home, lookPath)
 			if err == nil {
 				t.Fatalf("corrupt source must fail instead of producing observed usage: %+v", u)
 			}
@@ -48,12 +50,13 @@ func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
 }
 
 func TestOpenCodeNumericBoundsPreserveZeroAndAbsence(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+	lookPath := fakeSQLite3(t)
 	max := strconv.Itoa(int(^uint(0) >> 1))
 	home := t.TempDir()
 	writeDB(t, home, "p\tm\t"+max+"\t0\t\t-\t\n")
 
-	u, err := ReadProviderUsage(UsageOpenCode, home)
+	u, err := ReadProviderUsageWith(UsageOpenCode, home, lookPath)
 	if err != nil {
 		t.Fatalf("host integer boundary is valid: %v", err)
 	}

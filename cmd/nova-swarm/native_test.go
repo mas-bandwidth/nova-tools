@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +42,20 @@ func nativeSandbox(t *testing.T) string {
 		t.Fatalf("building the binaries these tests run: %v", err)
 	}
 	return builtFakeSandbox
+}
+
+func nativeSandboxMode(t *testing.T, mode string) string {
+	t.Helper()
+	base := nativeSandbox(t)
+	if mode == "" || mode == "pass" {
+		return base
+	}
+	wrapper := filepath.Join(t.TempDir(), "fake-sandbox")
+	script := fmt.Sprintf("#!/bin/sh\nexport NOVA_FAKE_SANDBOX=%s\nexec %s \"$@\"\n", mode, base)
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return wrapper
 }
 
 // nativeSandboxOnPath puts the fake sandbox on PATH under its own name (`nova-sandbox`), so
@@ -775,8 +791,8 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 // and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
 // refusal, and the wall's own name and the card's known answer both land where a reader looks.
 func TestFriendSequenceLocalModelCard(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -823,7 +839,7 @@ func TestFriendSequenceLocalModelCard(t *testing.T) {
 // (remote ip)) does NOT cover 127.0.0.1, so a local-model card died silently without this
 // named grant (issue #591).
 func TestNativeAllowsProviderLoopback(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -988,21 +1004,12 @@ func TestNativeRunChildDirIsJobDir(t *testing.T) {
 // The test chdirs away from the slot, the root, and the job directory, then runs the
 // walled path and asserts the fake harness's pwd is exactly the job directory.
 func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
 	label := "foreign-cwd-label"
-
-	foreign := t.TempDir()
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
@@ -1020,7 +1027,7 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 	}
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 	if !sameDir(got, jobDir) {
-		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, jobDir)
+		t.Errorf("the child's cwd is %q, want the job directory %q", got, jobDir)
 	}
 }
 
@@ -1054,7 +1061,7 @@ func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
 // hard-coded unescaped receipt. A job that completed must be validated against the decoded
 // path and reach the usage recorder, never wear the face of a launch that never happened.
 func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 
@@ -1102,6 +1109,7 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 // own SANDBOX OK line, and says none when no wall was named -- so a run without a wall is
 // visible in the one line a caller reads.
 func TestNativeOKNamesTheWall(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 
@@ -1124,7 +1132,6 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 	})
 
 	t.Run("walled", func(t *testing.T) {
-		t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
@@ -1155,9 +1162,9 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 // run's argv carries each repo the card named as a --repo allow rule, and the child still
 // runs to completion.
 func TestNativeRunPassesRepoAllowRule(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "hosts")
+	t.Parallel()
 	bin := nativeHarness(t)
-	sandbox := nativeSandbox(t)
+	sandbox := nativeSandboxMode(t, "hosts")
 	root, slot := aSlot(t)
 
 	var errOut bytes.Buffer
@@ -1180,7 +1187,7 @@ func TestNativeRunPassesRepoAllowRule(t *testing.T) {
 // --recipient flag, and no bus checkout in the write set -- so a bus send from inside the
 // wall is denied by construction.
 func TestNativeRunDeniesBusInsideWall(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -1206,6 +1213,7 @@ func TestNativeRunDeniesBusInsideWall(t *testing.T) {
 // wall that cannot express a HOST rule, is a refusal -- never an unwalled run. The one line
 // names the label and the reason.
 func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 
@@ -1225,7 +1233,6 @@ func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
 
 	// A wall that cannot express a host rule (hosts=none).
 	t.Run("wall_without_host_rules", func(t *testing.T) {
-		t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 		sandbox := nativeSandbox(t)
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
@@ -1258,15 +1265,19 @@ func assertRepoRefusal(t *testing.T, out string) {
 // a refusal naming what was looked for, unless the caller typed --no-wall, in which case the
 // run goes unwalled and says so by its own name.
 func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
-	t.Setenv("PATH", t.TempDir()) // no nova-sandbox on PATH anywhere
 
 	t.Run("no_wall_no_flag", func(t *testing.T) {
+		t.Parallel()
+
 		root, slot := aSlot(t)
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			sandboxLook: func(string) (string, error) { return "", errors.New("not found") },
 		}, &errOut)
 		if code != 2 {
 			t.Fatalf("a run with no wall and no --no-wall exits 2, got %d:\n%s", code, errOut.String())
@@ -1286,6 +1297,8 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 	})
 
 	t.Run("no_wall_with_flag", func(t *testing.T) {
+		t.Parallel()
+
 		root, slot := aSlot(t)
 		var errOut bytes.Buffer
 		res, code := nativeRun(nativeRunConfig{
@@ -1307,8 +1320,12 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 // inside it without --repo rules -- never unwalled, and no refusal -- while the same wall
 // and a named repo is the refusal asserted elsewhere.
 func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
+	t.Parallel()
+
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
+	}
 	bin := nativeHarness(t)
-	nativeSandboxOnPath(t)
 	label := "a-label"
 	root, slot := aSlot(t)
 
@@ -1316,6 +1333,7 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 	res, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: label,
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandboxLook: func(file string) (string, error) { return filepath.Join(builtPathBin, file), nil },
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("a wall without host rules still walls a card naming no repos, got %d:\n%s", code, errOut.String())
@@ -1337,7 +1355,7 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 // happens from a foreign cwd, proving the child's own environment and directory are the
 // run's, not the caller's.
 func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -1346,26 +1364,19 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	// Plant a foreign environment the run must shed: HOME and the two XDG homes outside the
 	// wall, a TMPDIR the wall would deny, and a provider key whose value the log must redact.
 	foreign := t.TempDir()
-	t.Setenv("HOME", filepath.Join(foreign, "home"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(foreign, "config"))
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(foreign, "cache"))
-	t.Setenv("TMPDIR", filepath.Join(foreign, "tmp"))
-	t.Setenv("FAKE_KEY", "planted-secret-value")
-
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
+	plantedEnv := append(os.Environ(),
+		"HOME="+filepath.Join(foreign, "home"),
+		"XDG_CONFIG_HOME="+filepath.Join(foreign, "config"),
+		"XDG_CACHE_HOME="+filepath.Join(foreign, "cache"),
+		"TMPDIR="+filepath.Join(foreign, "tmp"),
+		"FAKE_KEY=planted-secret-value",
+	)
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: label,
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
-		sandbox: sandbox,
+		sandbox: sandbox, environ: plantedEnv,
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
@@ -1428,7 +1439,7 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 // wall's argv carries the shared cache in its write set. The directories must exist with
 // mode 0755 BEFORE the child runs, which the child's own stat is what proves.
 func TestNativeSharedGoCaches(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -1508,7 +1519,8 @@ func TestNativeSharedGoCaches(t *testing.T) {
 // exactly -- GOMODCACHE, GOCACHE and GOTOOLCHAIN are not set (Go derives the caches from
 // HOME as before), <root>/cache is not made, and the wall's write set does not name it.
 func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -1563,6 +1575,7 @@ func nativeLoggedEnv(t *testing.T, log string) map[string][]string {
 // unwalled half is the one the sixth run proved: with no wall the child must still be in the
 // job directory, not the invoker's.
 func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 
@@ -1574,22 +1587,11 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 		{"unwalled", "", true},
 		{"walled", sandbox, false},
 	} {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.sandbox != "" {
-				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
-			}
+			t.Parallel()
 			root, slot := aSlot(t)
 			label := "foreign-cwd-" + tc.name
-
-			foreign := t.TempDir()
-			orig, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chdir(foreign); err != nil {
-				t.Fatalf("chdir to a foreign directory: %v", err)
-			}
-			defer func() { _ = os.Chdir(orig) }()
 
 			var errOut bytes.Buffer
 			_, code := nativeRun(nativeRunConfig{
@@ -1607,7 +1609,7 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 			}
 			got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 			if !sameDir(got, jobDir) {
-				t.Errorf("from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, jobDir)
+				t.Errorf("the %s child's cwd is %q, want the job directory %q", tc.name, got, jobDir)
 			}
 		})
 	}
@@ -1662,7 +1664,7 @@ func resolvedPath(t *testing.T, path string) string {
 // directory with the slot and root spelled relatively, and the test asserts the wall argv
 // carries the resolved absolute slot.
 func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	foreign := t.TempDir()
@@ -1673,19 +1675,15 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	}
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	orig, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
-	relRoot, err := filepath.Rel(foreign, root)
+	relRoot, err := filepath.Rel(cwd, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relSlot, err := filepath.Rel(foreign, slot)
+	relSlot, err := filepath.Rel(cwd, slot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1775,6 +1773,7 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 //
 // The fake harness says one line on each stream; both modes hold both lines in the file.
 func TestNativeNoWallWritesHarnessLog(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 
@@ -1787,9 +1786,6 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 		{"walled", sandbox, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.sandbox != "" {
-				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
-			}
 			root, slot := aSlot(t)
 			label := "harness-log-" + tc.name
 			touched := filepath.Join(t.TempDir(), "touched")
@@ -1853,6 +1849,7 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 //     capture here is EMPTY on purpose, so this case fails the moment that lookup narrows
 //     back to the job root: it is the only path where the lookup alone decides.
 func TestNativeSilentHarnessIsNotOK(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	const label = "silent-label"
 	// The fake says this on its own stderr for FAKE-SAY: "fake harness: " + the word + "\n",
@@ -1876,9 +1873,6 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 		{name: "result_under_repo", card: "FAKE-NORESULT\n", want: " harness=ok", resultInRepo: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.walled {
-				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
-			}
 			root, slot := aSlot(t)
 			jobDir := filepath.Join(slot, "jobs", label)
 			if tc.resultInRepo {
@@ -2026,6 +2020,8 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 // to the harness's environment and writes NO auth file under the job. --auth remains only
 // the legacy shape's. The fake harness proves the key is present by length, never by value.
 func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
@@ -2033,12 +2029,13 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 		t.Fatal(err)
 	}
 	desc := nativeWorkerDescription(t, "fake-model", "secret")
-	t.Setenv("FAKE_KEY", fakeKey)
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	rc := runWith([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{
+		environ: append(os.Environ(), "FAKE_KEY="+fakeKey),
+	})
 	if rc != 0 {
 		t.Fatalf("a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}
@@ -2216,6 +2213,7 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 // is refused naming both; --model other/deepseek-v4-flash is refused too, because the
 // provider half matters.
 func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	writeSecretOnly := func(t *testing.T) string {
 		t.Helper()
@@ -2236,9 +2234,9 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		return path
 	}
-	t.Setenv("CARD881_SECRET", fakeKey)
 
 	t.Run("qualified_match_is_accepted", func(t *testing.T) {
+		t.Parallel()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
@@ -2255,6 +2253,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 	})
 
 	t.Run("model_mismatch_is_refused_naming_both", func(t *testing.T) {
+		t.Parallel()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
@@ -2274,6 +2273,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 	})
 
 	t.Run("provider_mismatch_is_refused", func(t *testing.T) {
+		t.Parallel()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
@@ -2289,7 +2289,6 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 			"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
 			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 		}
-		t.Setenv("CARD881_SECRET", fakeKey)
 		raw, err := json.MarshalIndent(desc, "", "  ")
 		if err != nil {
 			t.Fatal(err)
@@ -2348,7 +2347,7 @@ func nativeWorkerDescription(t *testing.T, model, keyShape string) string {
 // renders the space as \x20, and comparing that escaped spelling to the real job directory
 // refused a run whose child had already finished (#624).
 func TestNativeWalledJobPathWithSpace(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root := filepath.Join(t.TempDir(), "My Bench")

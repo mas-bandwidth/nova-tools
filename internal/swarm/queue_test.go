@@ -191,6 +191,7 @@ func TestStealPicksTheFullestBenchOnTheMirrorTimer(t *testing.T) {
 // a DIRECTORY -- this package's portable stand-in for a pending replace -- and it ends a
 // few polls later, far inside SteadyWindow.
 func TestTakeCardWaitsOutAReplaceCollision(t *testing.T) {
+	t.Parallel()
 	bench := t.TempDir()
 	plantCard(t, bench, "only")
 
@@ -219,6 +220,7 @@ func TestTakeCardWaitsOutAReplaceCollision(t *testing.T) {
 // THE STEAL'S RENAME MEETS THE SAME WINDOWS COLLISION, and the victim's line is only
 // respected once the rename LANDS: a transient refusal must not end the steal.
 func TestStealWaitsOutAReplaceCollision(t *testing.T) {
+	t.Parallel()
 	victim := t.TempDir()
 	plantCard(t, victim, "only")
 
@@ -251,7 +253,7 @@ func collideUntilRename(t *testing.T, dst string) *atomic.Int64 {
 		t.Fatal(err)
 	}
 	var hits atomic.Int64
-	forceTransientIO = func(err error) bool {
+	t.Cleanup(armTransient(filepath.Dir(dst), func(err error) bool {
 		if err == nil {
 			return false
 		}
@@ -263,7 +265,6 @@ func collideUntilRename(t *testing.T, dst string) *atomic.Int64 {
 			_ = os.RemoveAll(dst)
 		}
 		return true
-	}
-	t.Cleanup(func() { forceTransientIO = nil })
+	}))
 	return &hits
 }

@@ -296,20 +296,18 @@ func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
 // TWO CONCURRENT INVOCATIONS on one checkout. The second waits and then refuses with a
 // sentence, rather than writing the same OPEN list from underneath the first.
 func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
-	// The binary waits ten seconds; a test that waited ten seconds would assert the same
-	// thing and take ten seconds to do it.
-	real := checkoutLockWait
-	checkoutLockWait = 200 * time.Millisecond
-	t.Cleanup(func() { checkoutLockWait = real })
 
 	release, err := bus.LockCheckout(checkout, time.Second)
 	if err != nil {
 		t.Fatalf("the first run could not take the lock: %v", err)
 	}
 	defer release()
-	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+	deps := defaultDeps()
+	deps.lockWait = 200 * time.Millisecond
+	invokeWithDeps(t, deps, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "SEND REFUSED: ").
 		mustContain(t, "stderr", "another nova-bus is already running on this checkout").

@@ -6,13 +6,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/update"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestExecutableFirstRun(t *testing.T) {
-	t.Chdir("../..")
+	t.Parallel()
+	root := repoRoot(t)
+	binExe := buildNovaVersion(t)
 	var banner bytes.Buffer
 	update.Main("nova-version", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-version")
@@ -20,13 +23,16 @@ func TestExecutableFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range examples {
-		var out, errs bytes.Buffer
-		code := update.Main("nova-version", strings.Fields(line)[1:], "", &out, &errs)
-		if code == 2 {
-			t.Fatalf("%s refused: %s", line, errs.String())
+		cmd := exec.Command(binExe, strings.Fields(line)[1:]...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+				t.Fatalf("%s refused: %s", line, out)
+			}
 		}
 	}
-	doc, err := os.ReadFile("docs/TESTS.md")
+	doc, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,12 +41,16 @@ func TestExecutableFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wanted, actual []string
-	var out, errs bytes.Buffer
+	var out bytes.Buffer
 	for _, line := range transcript {
 		if strings.HasPrefix(line, "$ ") {
-			if c := update.Main("nova-version", strings.Fields(line)[2:], "", &out, &errs); c != 0 {
-				t.Fatalf("first run: %d %s", c, errs.String())
+			cmd := exec.Command(binExe, strings.Fields(line)[2:]...)
+			cmd.Dir = root
+			cmdOut, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("first run: %v %s", err, cmdOut)
 			}
+			out.Write(cmdOut)
 		} else if s := firstRunShape(line); s != "" {
 			wanted = append(wanted, s)
 		}
@@ -91,8 +101,9 @@ func firstRunShape(line string) string {
 // the words and drops the count and the order; this one keeps the whole
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	t.Chdir(repoRoot(t))
-	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
+	t.Parallel()
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,13 +156,27 @@ func elide(t *testing.T, name, pattern, as string) onboarding.Norm {
 // command than the reader typed.
 func runVersionDocumented(t *testing.T) onboarding.Runner {
 	t.Helper()
+	root := repoRoot(t)
+	binExe := buildNovaVersion(t)
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, fmt.Errorf("the transcript redirects %q into nova-version, which reads no stdin", s.Stdin)
 		}
-		var out, errb bytes.Buffer
-		code := update.Main("nova-version", s.Args, "", &out, &errb)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		cmd := exec.Command(binExe, s.Args...)
+		cmd.Dir = root
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		code := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				code = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, err
+			}
+		}
+		return onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}, nil
 	}
 }
 

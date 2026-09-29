@@ -41,6 +41,8 @@ func (h *tripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 // legacy s:<S>:idx:task sets the old line counted are not read. A name that
 // is not the open sprint is refused naming the open one.
 func TestControl21(t *testing.T) {
+	t.Parallel()
+
 	addr, c := planRedis(t)
 	ctx := context.Background()
 	const s = "control-21"

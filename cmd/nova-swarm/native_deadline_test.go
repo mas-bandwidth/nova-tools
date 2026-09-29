@@ -36,8 +36,9 @@ import (
 // time chosen by anybody. What the deadline branch then does is asserted by its effects:
 // the grandchild is gone, which a leader-only kill leaves false for five minutes.
 func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
-	got := deadlineOnATree(t)
+	got := deadlineOnATree(t, nativeHooks{})
 	if !strings.Contains(got.stdout, "NATIVE INCOMPLETE ") {
 		t.Fatalf("a run killed at the deadline still prints its verdict line:\n%s\n%s", got.stdout, got.stderr)
 	}
@@ -69,13 +70,14 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 // on a clock: a grandchild with five minutes of sleep left is alive the instant the run
 // returns, or the observable above could not tell the fix from the defect.
 func TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
-	realKill := nativeKillGroup
-	t.Cleanup(func() { nativeKillGroup = realKill })
-	nativeKillGroup = func(pgid int, started string) {
-		_ = syscall.Kill(pgid, syscall.SIGKILL) // the leader, not -pgid: the #779 defect
+	hooks := nativeHooks{
+		killGroup: func(pgid int, started string) {
+			_ = syscall.Kill(pgid, syscall.SIGKILL) // the leader, not -pgid: the #779 defect
+		},
 	}
-	got := deadlineOnATree(t)
+	got := deadlineOnATree(t, hooks)
 	defer func() { _ = syscall.Kill(got.grandchild, syscall.SIGKILL) }()
 	// The grandchild is ALIVE, not provably gone: signal 0 answers EPERM for a live
 	// process the runner's own sandbox keeps out of reach (macOS sandbox-exec), which is
@@ -96,7 +98,7 @@ type deadlineRun struct {
 // deadlineOnATree runs one card whose harness leaves a five-minute grandchild behind and
 // then ignores SIGTERM, and fires the run's deadline the moment the harness has recorded
 // that grandchild. It returns once the run has.
-func deadlineOnATree(t *testing.T) deadlineRun {
+func deadlineOnATree(t *testing.T, hooks nativeHooks) deadlineRun {
 	t.Helper()
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -106,11 +108,9 @@ func deadlineOnATree(t *testing.T) deadlineRun {
 	}
 	bgPath := filepath.Join(slot, "jobs", "deadline", "background.pid")
 
-	realDeadline := nativeDeadline
-	t.Cleanup(func() { nativeDeadline = realDeadline })
 	quit := make(chan struct{})
 	defer close(quit)
-	nativeDeadline = func(time.Duration) (<-chan time.Time, func() bool) {
+	hooks.deadlineFn = func(time.Duration) (<-chan time.Time, func() bool) {
 		fire := make(chan time.Time)
 		go func() {
 			// The harness writes the pid after the grandchild has started and before it
@@ -140,7 +140,7 @@ func deadlineOnATree(t *testing.T) deadlineRun {
 	returned := make(chan struct{})
 	go func() {
 		defer close(returned)
-		_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+		_ = runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), hooks)
 	}()
 	// A safety net for a run that never returns, which would otherwise hold the package
 	// until go test's own timeout. The green run returns in milliseconds after the pid.

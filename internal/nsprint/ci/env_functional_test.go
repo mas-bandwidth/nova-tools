@@ -11,22 +11,26 @@ import (
 )
 
 func TestCIRunCheckDoesNotSeeTheSeatEnvironment(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	// The fixture's client connects directly, so the seat variables below
 	// reach only the runner's own environment, as they do on a bench.
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "bench")
-	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "SEAT_PW_FOR_TEST")
-	t.Setenv("SEAT_PW_FOR_TEST", "value-one-never-printed")
-	t.Setenv("NOVA_REDIS_BENCH_PASSWORD", "value-two-never-printed")
-	t.Setenv("NOVA_SECRETS_ONLY", "value-three-never-printed")
-	t.Setenv("REDISCLI_AUTH", "value-four-never-printed")
-	t.Setenv("CI_ENV_KEEP_ME", "kept")
+	testEnv := append(os.Environ(),
+		"NOVA_SPRINT_REDIS_USER=bench",
+		"NOVA_SPRINT_REDIS_PASSWORD_ENV=SEAT_PW_FOR_TEST",
+		"SEAT_PW_FOR_TEST=value-one-never-printed",
+		"NOVA_REDIS_BENCH_PASSWORD=value-two-never-printed",
+		"NOVA_SECRETS_ONLY=value-three-never-printed",
+		"REDISCLI_AUTH=value-four-never-printed",
+		"CI_ENV_KEEP_ME=kept",
+	)
 	f.client.HSet(f.ctx, ci.ConfigKey(runRepo), "checks", "env", "check:env", "env")
 
 	if _, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: f.url}); err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	res, out, err := f.run(t, "b1")
+	res, out, err := f.run(t, "b1", func(ro *ci.RunOptions) { ro.Environ = testEnv })
 	if err != nil || res.Summary != ci.SummaryGreen || len(res.Checks) != 1 {
 		t.Fatalf("run = %+v, %v\n%s", res, err, out)
 	}

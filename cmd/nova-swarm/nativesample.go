@@ -100,7 +100,8 @@ type liveSampler struct {
 	// stdout AFTER the NATIVE OK line and writes it into no file (decision 16): a created
 	// RESULT.md without the contract line would score the card `line1-mismatch`, and 13d
 	// promises the published report is kept byte for byte.
-	defect string
+	defect    string
+	sqliteCmd string
 }
 
 // startLiveSampler begins sampling and returns the sampler. A zero or negative interval, or
@@ -111,6 +112,7 @@ func startLiveSampler(dataHome string, interval time.Duration, cfg nativeRunConf
 		dataHome: dataHome, interval: interval,
 		tokens: cfg.tokens, unmetered: cfg.unmetered, worker: cfg.worker, logPath: logPath,
 		cardLabel: cfg.label,
+		sqliteCmd: cfg.sqliteCmd,
 		stop:      make(chan struct{}), fired: make(chan string, 1),
 	}
 	if interval <= 0 || dataHome == "" {
@@ -187,7 +189,7 @@ func (s *liveSampler) loop() {
 // counted as a failed read, which is what rule 13d asks for.
 func (s *liveSampler) readOnce() {
 	s.enter()
-	usage, err := swarm.ReadJobUsageLive(s.dataHome)
+	usage, err := swarm.ReadJobUsageLiveWith(s.sqliteCmd, s.dataHome)
 	s.leave()
 	// THE CARD'S OWN TURN COUNT is read OUTSIDE the lock, because it opens a file: rule 13b
 	// counts the harness log's assistant turns, "or the usage row count where the log has

@@ -162,6 +162,10 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
 func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+	return runEnv(args, stdout, stderr, now, os.Getenv)
+}
+
+func runEnv(args []string, stdout, stderr io.Writer, now time.Time, getenv func(string) string) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, "nova-tokens", usage, &code)
@@ -172,16 +176,16 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	switch verb {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdout, stderr, now)
+			return runEnv(append(rest, "--help"), stdout, stderr, now, getenv)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "fold":
 		return cmdFold(rest, stdout, stderr, now)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now)
+		return cmdReport(rest, stdout, stderr, now, getenv)
 	case "ledger":
-		return cmdLedger(rest, stdout, stderr)
+		return cmdLedger(rest, stdout, stderr, getenv)
 	case "sum":
 		return cmdSum(rest, stdout, stderr, now)
 	case "check":
@@ -1068,7 +1072,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, getenv func(string) string) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "")
 	day := fs.String("day", "", "")
@@ -1094,7 +1098,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if *ledger != "" {
 			return (&refusals{token: "REPORT", list: []string{"--redis and --ledger are two sources for one report; name one"}}).print(stderr)
 		}
-		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
+		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr, getenv)
 	}
 	if *ledger != "" || *monthFlag != "" {
 		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)

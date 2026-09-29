@@ -28,7 +28,34 @@ const diskutilPath = "/usr/sbin/diskutil"
 const volumesRoot = "/Volumes"
 
 // diskutilVolumes is the real manager.
-type diskutilVolumes struct{}
+type diskutilVolumes struct {
+	run        func(args ...string) (string, error)
+	lockPath   func() (string, error)
+	rootUsable func(string) error
+}
+
+func (d diskutilVolumes) runner() func(args ...string) (string, error) {
+	if d.run != nil {
+		return d.run
+	}
+	return diskutilRun
+}
+
+func (d diskutilVolumes) locker() func() (func(), error) {
+	if d.lockPath != nil {
+		return func() (func(), error) {
+			return lockVolumeCreateAt(d.lockPath)
+		}
+	}
+	return lockVolumeCreate
+}
+
+func (d diskutilVolumes) isRootUsable(mount string) error {
+	if d.rootUsable != nil {
+		return d.rootUsable(mount)
+	}
+	return volumeRootUsable(mount)
+}
 
 func newPlatformVolumes() volumeManager { return diskutilVolumes{} }
 
@@ -91,8 +118,8 @@ func field(out, name string) string {
 // Container is the APFS container the BOOT volume lives in, asked of the boot volume
 // itself rather than guessed from a listing: a Mac with external APFS disks has many
 // containers and only one of them is the one / is on.
-func (diskutilVolumes) Container() (string, error) {
-	out, err := diskutilRun("info", "/")
+func (d diskutilVolumes) Container() (string, error) {
+	out, err := d.runner()("info", "/")
 	if err != nil {
 		return "", err
 	}
@@ -108,8 +135,8 @@ func (diskutilVolumes) Container() (string, error) {
 // ways: the container listing, and the mount point. Either one is enough to refuse —
 // a stray directory at /Volumes/nova-<n> would be mounted over, and a run that mounted
 // over someone's directory and then deleted the volume would look like it had eaten it.
-func (diskutilVolumes) Exists(name string) (bool, error) {
-	out, err := diskutilRun("apfs", "list")
+func (d diskutilVolumes) Exists(name string) (bool, error) {
+	out, err := d.runner()("apfs", "list")
 	if err != nil {
 		return false, err
 	}
@@ -158,7 +185,7 @@ const volumeCreateAttempts = 3
 // after the fact: `chown` on someone else's directory needs root, which rule 2 does not
 // have. So the lock, and then the question.
 func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error) {
-	unlock, err := lockVolumeCreate()
+	unlock, err := d.locker()()
 	if err != nil {
 		return diskVolume{}, err
 	}
@@ -170,7 +197,7 @@ func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error
 		if err != nil {
 			return diskVolume{}, err
 		}
-		last = volumeRootUsable(vol.Mount)
+		last = d.isRootUsable(vol.Mount)
 		if last == nil {
 			return vol, nil
 		}
@@ -187,7 +214,7 @@ func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error
 // createOnce is one addVolume and the two questions that follow it: is it a volume, and
 // where is it mounted. It holds no lock and knows nothing about retries.
 func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, error) {
-	out, err := diskutilRun("apfs", "addVolume", container, "APFS", name, "-quota", size)
+	out, err := d.runner()("apfs", "addVolume", container, "APFS", name, "-quota", size)
 	if err != nil {
 		return diskVolume{}, err
 	}
@@ -195,7 +222,7 @@ func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, e
 	if !okVolumeDisk(disk) {
 		return diskVolume{}, fmt.Errorf("diskutil made a volume and named it %q, which is not a volume reference", disk)
 	}
-	info, err := diskutilRun("info", disk)
+	info, err := d.runner()("info", disk)
 	if err != nil {
 		_ = d.Delete(disk)
 		return diskVolume{}, err
@@ -252,7 +279,12 @@ func rootOwnedAndWritable(mount string) error {
 // on purpose — a real addVolume is seconds and a queue of them is minutes — and it is
 // production code's own wait, never a test's.
 func lockVolumeCreate() (func(), error) {
-	path, err := volumeLockPath()
+	return lockVolumeCreateAt(volumeLockPath)
+}
+
+// lockVolumeCreateAt is lockVolumeCreate with an explicit lockPath function.
+func lockVolumeCreateAt(lockPath func() (string, error)) (func(), error) {
+	path, err := lockPath()
 	if err != nil {
 		return nil, err
 	}
@@ -327,8 +359,8 @@ func defaultVolumeLockPath() (string, error) {
 // the real `diskutil apfs list`, copied off the Studio, and never a shape assumed here.
 const treeChars = "|+-<> "
 
-func (diskutilVolumes) List() ([]diskVolume, error) {
-	out, err := diskutilRun("apfs", "list")
+func (d diskutilVolumes) List() ([]diskVolume, error) {
+	out, err := d.runner()("apfs", "list")
 	if err != nil {
 		return nil, err
 	}
@@ -380,18 +412,18 @@ func (diskutilVolumes) Used(mount string) (int64, error) {
 // Delete unmounts and removes the volume. A volume whose last process has only just died
 // can still be reported busy, so a first failure is followed by a forced unmount and one
 // more attempt — and a second failure is a LEAK, reported, never swallowed.
-func (diskutilVolumes) Delete(disk string) error {
+func (d diskutilVolumes) Delete(disk string) error {
 	if !okVolumeDisk(disk) {
 		return fmt.Errorf("%q is not a volume reference and this tool deletes nothing it cannot name", disk)
 	}
-	_, err := diskutilRun("apfs", "deleteVolume", disk)
+	_, err := d.runner()("apfs", "deleteVolume", disk)
 	if err == nil {
 		return nil
 	}
-	if _, uerr := diskutilRun("unmount", "force", disk); uerr != nil {
+	if _, uerr := d.runner()("unmount", "force", disk); uerr != nil {
 		return err
 	}
-	if _, second := diskutilRun("apfs", "deleteVolume", disk); second != nil {
+	if _, second := d.runner()("apfs", "deleteVolume", disk); second != nil {
 		return second
 	}
 	return nil

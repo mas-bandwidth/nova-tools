@@ -88,6 +88,52 @@ var (
 	worktreeGUID  = newGUID
 )
 
+// worktreeEnv carries the seams worktree uses to interact with git,
+// the forge, the system clock, the process probe, and the GUID generator.
+// When zero, each field falls back to the package-level default.
+type worktreeEnv struct {
+	git          gitRunner
+	forgeFactory func(repo string, env []string) worktreeForge
+	now          func() time.Time
+	inUse        func(string) bool
+	guid         func() string
+}
+
+func defaultForgeFactory(git gitRunner) func(repo string, env []string) worktreeForge {
+	return func(repo string, env []string) worktreeForge {
+		return ghForge{repo: repo, env: env, git: git}
+	}
+}
+
+func defaultWorktreeEnv() worktreeEnv {
+	return worktreeEnv{
+		git:          worktreeGit,
+		forgeFactory: worktreeForgeFactory,
+		now:          worktreeNow,
+		inUse:        worktreeInUse,
+		guid:         worktreeGUID,
+	}
+}
+
+func (e worktreeEnv) withDefaults() worktreeEnv {
+	if e.git == nil {
+		e.git = worktreeGit
+	}
+	if e.forgeFactory == nil {
+		e.forgeFactory = defaultForgeFactory(e.git)
+	}
+	if e.now == nil {
+		e.now = worktreeNow
+	}
+	if e.inUse == nil {
+		e.inUse = worktreeInUse
+	}
+	if e.guid == nil {
+		e.guid = worktreeGUID
+	}
+	return e
+}
+
 // The three sentinel failures the forge seam can report, which the verb turns
 // into reason=no_pr, reason=no_forge and reason=bad_origin. errBadOrigin is bad
 // input rather than an outage: nothing was asked of the forge at all.
@@ -159,6 +205,11 @@ type worktreeRecord struct {
 func (r worktreeRecord) path(scratch string) string { return filepath.Join(scratch, r.guid) }
 
 func worktreeVerb(args []string, stdout, stderr io.Writer, env []string) int {
+	return worktreeVerbWith(args, stdout, stderr, env, defaultWorktreeEnv())
+}
+
+func worktreeVerbWith(args []string, stdout, stderr io.Writer, env []string, wt worktreeEnv) int {
+	wt = wt.withDefaults()
 	f := parseWorktree(args)
 	refuse := func(reason, text string) int {
 		fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(text), worktreeRemedy)
@@ -171,16 +222,16 @@ func worktreeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	if !f.prune && !f.prNumeric {
 		return refuse("bad_pr", "--pr wants one pull-request number and one mode")
 	}
-	if !isGitWorkTree(f.repo) {
+	if !isGitWorkTreeWith(f.repo, wt.git) {
 		return refuse("bad_repo", "--repo wants an existing repository named by an absolute path")
 	}
 	if !isDir(f.scratch) {
 		return refuse("bad_scratch", "--scratch wants an existing directory and is not created")
 	}
 	if f.prune {
-		return worktreePrune(f, stdout, stderr, env)
+		return worktreePruneWith(f, stdout, stderr, env, wt)
 	}
-	return worktreeOne(f, stdout, stderr, env)
+	return worktreeOneWith(f, stdout, stderr, env, wt)
 }
 
 func isDir(path string) bool {
@@ -194,10 +245,17 @@ func isDir(path string) bool {
 // isGitWorkTree is true only for an absolute existing directory git itself
 // calls a work tree.
 func isGitWorkTree(dir string) bool {
+	return isGitWorkTreeWith(dir, worktreeGit)
+}
+
+func isGitWorkTreeWith(dir string, git gitRunner) bool {
 	if dir == "" || !filepath.IsAbs(dir) || !isDir(dir) {
 		return false
 	}
-	out, err := worktreeGit(dir, "rev-parse", "--is-inside-work-tree")
+	if git == nil {
+		git = worktreeGit
+	}
+	out, err := git(dir, "rev-parse", "--is-inside-work-tree")
 	if err != nil {
 		return false
 	}
@@ -208,9 +266,13 @@ func isGitWorkTree(dir string) bool {
 // the recorded tree when it is still there, clean and at that head, and rebuild
 // it otherwise. Either way one WORKTREE OK line.
 func worktreeOne(f worktreeFlags, stdout, stderr io.Writer, env []string) int {
+	return worktreeOneWith(f, stdout, stderr, env, defaultWorktreeEnv())
+}
+
+func worktreeOneWith(f worktreeFlags, stdout, stderr io.Writer, env []string, wt worktreeEnv) int {
 	recPath := filepath.Join(f.scratch, strconv.Itoa(f.pr)+".pr")
 	rec, hasRec := readRecord(f.scratch, f.pr)
-	forge := worktreeForgeFactory(f.repo, env)
+	forge := wt.forgeFactory(f.repo, env)
 	head, base, err := forgeHead(forge, f.pr)
 	if err != nil {
 		return worktreeForgeRefuse(stderr, err)
@@ -224,18 +286,18 @@ func worktreeOne(f worktreeFlags, stdout, stderr io.Writer, env []string) int {
 		guid = rec.guid
 		path := rec.path(f.scratch)
 		if pathIsWorktree(path) {
-			if h, herr := worktreeHead(path); herr == nil && h == head && treeClean(path) {
+			if h, herr := worktreeHeadWith(path, wt.git); herr == nil && h == head && treeCleanWith(path, wt.git) {
 				fmt.Fprintf(stdout, "WORKTREE OK path=%s head=%s\n", oneline.Escape(path), oneline.Field(head))
 				return 0
 			}
 		}
-		_ = removeWorktree(f.repo, f.scratch, path)
+		_ = removeWorktreeWith(f.repo, f.scratch, path, wt.git)
 	}
 	if guid == "" {
-		guid = worktreeGUID()
+		guid = wt.guid()
 	}
 	path := filepath.Join(f.scratch, guid)
-	if err := addWorktree(f.repo, path, head); err != nil {
+	if err := addWorktreeWith(f.repo, path, head, wt.git); err != nil {
 		fmt.Fprintf(stderr, "WORKTREE REFUSED reason=bad_repo: git could not make the worktree: %s\n%s\n", oneline.Err(err), worktreeRemedy)
 		return sandbox.ExitCannotRun
 	}
@@ -278,7 +340,14 @@ func pathIsWorktree(path string) bool {
 }
 
 func worktreeHead(path string) (string, error) {
-	out, err := worktreeGit(path, "rev-parse", "HEAD")
+	return worktreeHeadWith(path, worktreeGit)
+}
+
+func worktreeHeadWith(path string, git gitRunner) (string, error) {
+	if git == nil {
+		git = worktreeGit
+	}
+	out, err := git(path, "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -286,13 +355,27 @@ func worktreeHead(path string) (string, error) {
 }
 
 func treeClean(path string) bool {
-	out, err := worktreeGit(path, "status", "--porcelain")
+	return treeCleanWith(path, worktreeGit)
+}
+
+func treeCleanWith(path string, git gitRunner) bool {
+	if git == nil {
+		git = worktreeGit
+	}
+	out, err := git(path, "status", "--porcelain")
 	return err == nil && strings.TrimSpace(out) == ""
 }
 
 func addWorktree(repo, path, head string) error {
-	_, _ = worktreeGit(repo, "fetch", "origin", head)
-	_, err := worktreeGit(repo, "worktree", "add", "--detach", path, head)
+	return addWorktreeWith(repo, path, head, worktreeGit)
+}
+
+func addWorktreeWith(repo, path, head string, git gitRunner) error {
+	if git == nil {
+		git = worktreeGit
+	}
+	_, _ = git(repo, "fetch", "origin", head)
+	_, err := git(repo, "worktree", "add", "--detach", path, head)
 	return err
 }
 
@@ -300,12 +383,26 @@ func addWorktree(repo, path, head string) error {
 // and the directory only through safepath so a computed path can never reach
 // outside the scratch root the caller named.
 func removeWorktree(repo, scratch, path string) error {
-	_, _ = worktreeGit(repo, "worktree", "remove", "--force", path)
+	return removeWorktreeWith(repo, scratch, path, worktreeGit)
+}
+
+func removeWorktreeWith(repo, scratch, path string, git gitRunner) error {
+	if git == nil {
+		git = worktreeGit
+	}
+	_, _ = git(repo, "worktree", "remove", "--force", path)
 	return safepath.RemoveUnder(scratch, path)
 }
 
 func listWorktrees(repo string) map[string]bool {
-	out, err := worktreeGit(repo, "worktree", "list", "--porcelain")
+	return listWorktreesWith(repo, worktreeGit)
+}
+
+func listWorktreesWith(repo string, git gitRunner) map[string]bool {
+	if git == nil {
+		git = worktreeGit
+	}
+	out, err := git(repo, "worktree", "list", "--porcelain")
 	if err != nil {
 		return map[string]bool{}
 	}
@@ -323,9 +420,13 @@ func listWorktrees(repo string) map[string]bool {
 // its guid directory ages out and no process is using. A hand-made worktree and
 // a tree whose PR state is unknown are kept.
 func worktreePrune(f worktreeFlags, stdout, stderr io.Writer, env []string) int {
-	listed := listWorktrees(f.repo)
-	forge := worktreeForgeFactory(f.repo, env)
-	now := worktreeNow()
+	return worktreePruneWith(f, stdout, stderr, env, defaultWorktreeEnv())
+}
+
+func worktreePruneWith(f worktreeFlags, stdout, stderr io.Writer, env []string, wt worktreeEnv) int {
+	listed := listWorktreesWith(f.repo, wt.git)
+	forge := wt.forgeFactory(f.repo, env)
+	now := wt.now()
 	removed := 0
 	for _, rec := range readRecords(f.scratch) {
 		path := rec.path(f.scratch)
@@ -340,7 +441,7 @@ func worktreePrune(f worktreeFlags, stdout, stderr io.Writer, env []string) int 
 			case "closed":
 				reason = "pr_closed"
 			case "open":
-				if info, serr := os.Stat(path); serr == nil && now.Sub(info.ModTime()) > staleAfter && !worktreeInUse(path) {
+				if info, serr := os.Stat(path); serr == nil && now.Sub(info.ModTime()) > staleAfter && !wt.inUse(path) {
 					reason = "stale"
 				}
 			}
@@ -348,7 +449,7 @@ func worktreePrune(f worktreeFlags, stdout, stderr io.Writer, env []string) int 
 		if reason == "" {
 			continue
 		}
-		if err := removeWorktree(f.repo, f.scratch, path); err != nil {
+		if err := removeWorktreeWith(f.repo, f.scratch, path, wt.git); err != nil {
 			continue
 		}
 		fmt.Fprintf(stdout, "WORKTREE REMOVED path=%s reason=%s\n", oneline.Escape(path), oneline.Field(reason))
@@ -481,10 +582,15 @@ func inUseByAProcess(dir string) bool {
 type ghForge struct {
 	repo string
 	env  []string
+	git  gitRunner
 }
 
 func (g ghForge) PR(id int) (worktreePR, error) {
-	url, err := worktreeGit(g.repo, "remote", "get-url", "origin")
+	git := g.git
+	if git == nil {
+		git = worktreeGit
+	}
+	url, err := git(g.repo, "remote", "get-url", "origin")
 	if err != nil {
 		return worktreePR{}, badOrigin("")
 	}

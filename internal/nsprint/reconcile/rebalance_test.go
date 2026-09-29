@@ -37,6 +37,8 @@ func (f *dealFixture) queued(t *testing.T, id, stream, friend string, age int64,
 // reply is REFUSED with the reason and the id; with a stream it goes back to
 // the stream's ready set, unowned, why=no-consumer.
 func TestFriendRebalanceNeverSilentZero(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	f.friend(t, "emma", 2, false)
 	must(t, f.c.HSet(f.ctx, "friend:emma:down", "reason", "down", "actor", "rowan").Err())

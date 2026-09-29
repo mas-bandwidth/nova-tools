@@ -40,6 +40,7 @@ type nativeRunConfig struct {
 	model    string        // provider/model, one slash, both sides nonempty
 	label    string        // the --title this run is labelled with
 	card     []byte        // the card text, passed as the message, byte-for-byte
+	stdout   io.Writer     // optional: destination for STAGE lines; defaults to os.Stdout if nil
 	slotDir  string        // the slot directory; HOME is a data dir beneath it
 	root     string        // the configured root the slot directory must sit under
 	authFile string        // optional: an auth file to copy one entry out of
@@ -120,6 +121,30 @@ type nativeRunConfig struct {
 	benchName string
 	// stageTimeout is the hard timeout for staging (default 120s).
 	stageTimeout time.Duration
+
+	// Hook fields for lifecycle and test seams. When nil, fall back to package defaults.
+	watchIdle      func(swarm.IdleWatch, <-chan struct{}) <-chan swarm.IdleEnd
+	reap           func(int, string, time.Duration) bool
+	killGroup      func(int, string)
+	deadlineFn     func(time.Duration) (<-chan time.Time, func() bool)
+	launchArgv     func(provider, goos string, req swarm.LaunchRequest) ([]string, error)
+	persistUnknown func(string) error
+	sqliteCmd      string
+	sandboxLook    func(string) (string, error)
+	environ        []string
+}
+
+// nativeHooks packages the seams for the native run lifecycle.
+type nativeHooks struct {
+	watchIdle      func(swarm.IdleWatch, <-chan struct{}) <-chan swarm.IdleEnd
+	reap           func(int, string, time.Duration) bool
+	killGroup      func(int, string)
+	deadlineFn     func(time.Duration) (<-chan time.Time, func() bool)
+	launchArgv     func(provider, goos string, req swarm.LaunchRequest) ([]string, error)
+	persistUnknown func(string) error
+	sqliteCmd      string
+	cardOut        string
+	environ        []string
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -215,6 +240,10 @@ var (
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code int) {
+	stageOut := cfg.stdout
+	if stageOut == nil {
+		stageOut = os.Stdout
+	}
 	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
@@ -319,7 +348,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// absent or empty variable is refused HERE, before anything runs, the way run and
 		// supervise refuse it.
 		if cfg.worker.Secret != "" {
-			if _, err := swarm.SecretFromEnv(cfg.worker.Secret); err != nil {
+			sec := cfg.worker.Secret
+			var err error
+			if cfg.environ != nil {
+				_, err = swarm.SecretFromSlice(cfg.environ, sec)
+			} else {
+				_, err = swarm.SecretFromEnv(sec)
+			}
+			if err != nil {
 				refuseNative(errOut, oneline.Escape(err.Error()))
 				return nativeRunResult{}, 2
 			}
@@ -647,7 +683,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// STAGE OK/FAIL line and detaches 2s after seeing it; without one on every
 			// failure path (this one included) it waits out the full 135s and prints
 			// STAGE UNSEEN even though staging already ended.
-			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
+			fmt.Fprintf(stageOut, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
 				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
 			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", errOut)
 			res := nativeRunResult{
@@ -665,7 +701,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 		// STAGE FAIL (issue #3050): see the timeout branch above for why this line has
 		// to be printed here rather than left to the caller's own NATIVE line.
-		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+		fmt.Fprintf(stageOut, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
 			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), oneline.Escape(stageErr.Error()))
 		refuseNative(errOut, stageErr.Error())
 		return nativeRunResult{}, 2
@@ -677,7 +713,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// ran out of wall. The wrapper hands the model the repo, or the card does not start.
 	if !stageRes.Staged && swarm.CardNamesRepo(cfg.card) {
 		named := swarm.ReadCardBase(cfg.card)
-		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=no-repo-staged\n",
+		fmt.Fprintf(stageOut, "STAGE FAIL bench=%s repo=%s base=%s reason=no-repo-staged\n",
 			oneline.Field(bench), oneline.Field(named.Named), oneline.Field(swarm.Version8(named.Sha)))
 		refuseNative(errOut, fmt.Sprintf("%s names repo %s but nothing was staged into %s: read the card's REPO:/base-repo: line (owner/name or a clone URL)",
 			oneline.Field(cfg.label), oneline.Field(named.Named), oneline.Field(stageOpts.TargetDir)))
@@ -686,7 +722,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// STAGE OK (issue #3050): staging returned silently, so the batch launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
-	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
+	fmt.Fprintf(stageOut, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
 		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
 
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
@@ -699,7 +735,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	runArgv := launch[1:]
 	wall := cfg.sandbox
 	if wall == "" && !cfg.noWall {
-		found, err := exec.LookPath(swarm.SandboxBinary)
+		look := exec.LookPath
+		if cfg.sandboxLook != nil {
+			look = cfg.sandboxLook
+		}
+		found, err := look(swarm.SandboxBinary)
 		if err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s no wall: %s is on no PATH entry and --sandbox names no file; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes",
 				oneline.Field(cfg.label), oneline.Field(swarm.SandboxBinary)))
@@ -734,7 +774,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+	envSource := os.Environ()
+	if cfg.environ != nil {
+		envSource = cfg.environ
+	}
+	childEnv := nativeChildEnvFrom(envSource, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
 		id, err := swarm.LoadPoolIdentity(cfg.root)
 		if err != nil {
@@ -913,7 +957,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		deadlineC, stopDeadline := nativeDeadline(cfg.deadline)
+		deadlineFn := cfg.deadlineFn
+		if deadlineFn == nil {
+			deadlineFn = nativeDeadline
+		}
+		deadlineC, stopDeadline := deadlineFn(cfg.deadline)
 		// THE IDLE WATCH (the wall-hang lane, 2026-09-19). `batch` has watched its cards
 		// for idleness since issue #593 -- log growth AND the process tree's CPU, so a
 		// `go test` that prints nothing for minutes is not mistaken for a dead card --
@@ -922,9 +970,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// anybody looked: `js-under-20-bytes` held a slot for eighteen silent minutes and
 		// returned nothing.
 		stopWatch := make(chan struct{})
-		idleC := nativeWatchIdle(swarm.IdleWatch{
+		watchIdle := cfg.watchIdle
+		if watchIdle == nil {
+			watchIdle = nativeWatchIdle
+		}
+		idleC := watchIdle(swarm.IdleWatch{
 			Log: outLog, Job: jobDir, Pid: pgid, Idle: cfg.idle, Reader: reader,
 		}, stopWatch)
+		killGroup := cfg.killGroup
+		if killGroup == nil {
+			killGroup = nativeKillGroup
+		}
+		reap := cfg.reap
+		if reap == nil {
+			reap = nativeReap
+		}
 		select {
 		case runErr := <-done:
 			stopDeadline()
@@ -937,7 +997,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				res.rc = -1
 			}
 		case <-deadlineC:
-			nativeKillGroup(pgid, started)
+			killGroup(pgid, started)
 			<-done
 			res.rc = -1
 		case end := <-idleC:
@@ -953,7 +1013,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// machinery stopping a card that is not going to finish -- so it gets the same
 			// grace. The kill still happens; it happens second.
 			stopDeadline()
-			nativeReap(pgid, started, swarm.TerminateGrace)
+			reap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
@@ -964,13 +1024,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// timeouts, so the run reaps the card instead of waiting for it
 			// to notice, and does not launch it again.
 			stopDeadline()
-			nativeReap(pgid, started, swarm.TerminateGrace)
+			reap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.lost = true
 		case <-termCh:
 			stopDeadline()
-			nativeReap(pgid, started, swarm.TerminateGrace)
+			reap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.terminated = true
@@ -1050,7 +1110,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// cannot be written, the capture must carry the word. If neither
 			// file can be written, the run refuses: a quiet exit would be
 			// scored as an ordinary missing result and retried.
-			if err := persistUnknownFn(jobDir); err != nil {
+			persist := cfg.persistUnknown
+			if persist == nil {
+				persist = persistUnknownFn
+			}
+			if err := persist(jobDir); err != nil {
 				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance could not be recorded: %s\n", oneline.Escape(err.Error()))
 				res.unrecorded = true
 			}
@@ -1586,8 +1650,12 @@ func benchOS(cfg nativeRunConfig) string {
 // are empty on windows and in the unit tests of the argv builder, and the environment is
 // then exactly what it was.
 func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
+	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+}
+
+func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
 	var kept []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
 		if keepNativeEnv(name) {
 			kept = append(kept, kv)
@@ -1630,8 +1698,11 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 		out = append(out, "SHELL="+shimShell)
 	}
 	if secretEnv != "" {
-		if v, ok := os.LookupEnv(secretEnv); ok {
-			out = append(out, secretEnv+"="+v)
+		for _, kv := range environ {
+			if k, v, ok := strings.Cut(kv, "="); ok && k == secretEnv {
+				out = append(out, secretEnv+"="+v)
+				break
+			}
 		}
 	}
 	return out
@@ -2027,7 +2098,11 @@ var launchArgvFor = swarm.LaunchArgvFor
 // typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt, nova-tools#3651). The
 // card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
-	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
+	launcher := cfg.launchArgv
+	if launcher == nil {
+		launcher = launchArgvFor
+	}
+	return launcher(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
 		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: swarm.CardPrompt(cfg.card),
 	})
 }

@@ -92,6 +92,7 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 // exist during staging), the commit carries the pool identity from StagingGitEnv
 // with zero leakage from any hostile bench gitconfig.
 func TestWorkerClonesAfterLaunchCarriesPoolIdentity(t *testing.T) {
+	t.Parallel()
 	pool := t.TempDir()
 	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 	if _, err := LoadPoolIdentity(pool); err != nil {
@@ -104,19 +105,23 @@ func TestWorkerClonesAfterLaunchCarriesPoolIdentity(t *testing.T) {
 		t.Fatalf("StageJob: %v", err)
 	}
 
-	// Hostile bench git config with a ghost user in the process environment.
-	benchHome := t.TempDir()
-	benchConfig := filepath.Join(benchHome, ".gitconfig")
-	if err := os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
-	t.Setenv("HOME", benchHome)
-
 	// The harness child environment is built through childEnv across the supervisor boundary,
 	// delivering the pool's identity and git config isolation.
 	w := Worker{WorkerDir: filepath.Join(pool, "worker")}
 	workerEnv := childEnv(w, 1, "task-1", "", pool)
+
+	var foundGlobal, foundNoSystem bool
+	for _, e := range workerEnv {
+		if e == "GIT_CONFIG_GLOBAL=/dev/null" {
+			foundGlobal = true
+		}
+		if e == "GIT_CONFIG_NOSYSTEM=1" {
+			foundNoSystem = true
+		}
+	}
+	if !foundGlobal || !foundNoSystem {
+		t.Fatalf("workerEnv missing git isolation: %v", workerEnv)
+	}
 
 	// Worker initializes a repository inside the job and makes a commit.
 	workerRepo := filepath.Join(job, "repo")

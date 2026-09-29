@@ -42,6 +42,10 @@ func NativeUsageSource(worker *Worker) string {
 // refusal tells a caller which field of their description put them here rather than making
 // them guess.
 func NativeBudgetSourceRefusal(source string, tokens int, unmetered bool, worker *Worker) string {
+	return NativeBudgetSourceRefusalWith(SQLiteBinary, source, tokens, unmetered, worker)
+}
+
+func NativeBudgetSourceRefusalWith(sqliteCmd, source string, tokens int, unmetered bool, worker *Worker) string {
 	numeric := !unmetered && tokens > 0
 	card := worker != nil && worker.HasCardBudget()
 	if !numeric && !card {
@@ -60,7 +64,7 @@ func NativeBudgetSourceRefusal(source string, tokens int, unmetered bool, worker
 	case UsageNone:
 		return fmt.Sprintf("%s wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read", why)
 	case UsageOpenCode, "":
-		if !SQLiteOnPath() {
+		if !SQLiteOnPathWith(sqliteCmd) {
 			return fmt.Sprintf("%s is read from the harness's own database with `%s -readonly`, and %s is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install %s on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read", why, SQLiteBinary, SQLiteBinary, SQLiteBinary)
 		}
 		return ""
@@ -89,7 +93,14 @@ func cardBudgetFields(worker *Worker) string {
 // asked BEFORE a launch by rule 13d's refusal and AFTER one by the final read, and both ask
 // it the same way.
 func SQLiteOnPath() bool {
-	_, err := exec.LookPath(SQLiteBinary)
+	return SQLiteOnPathWith(SQLiteBinary)
+}
+
+func SQLiteOnPathWith(sqliteCmd string) bool {
+	if sqliteCmd == "" {
+		sqliteCmd = SQLiteBinary
+	}
+	_, err := exec.LookPath(sqliteCmd)
 	return err == nil
 }
 

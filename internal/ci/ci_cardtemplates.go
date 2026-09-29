@@ -301,6 +301,10 @@ const maxCardTemplateLine = 160
 // repository, so a test drives it with a fixture tree. A directory that does
 // not exist is skipped.
 func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardTemplatesResult, error) {
+	return CheckCardTemplatesWith(defaultSourceSeams(), root, dirs, allowlistPath)
+}
+
+func CheckCardTemplatesWith(s SourceSeams, root string, dirs []string, allowlistPath string) (CardTemplatesResult, error) {
 	var res CardTemplatesResult
 	entries, err := readCardTemplateAllowlist(allowlistPath)
 	if err != nil {
@@ -314,7 +318,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 		if statErr != nil || !info.IsDir() {
 			continue
 		}
-		walkErr := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
+		walkErr := s.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -324,7 +328,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 			if !hasCardTemplateExt(path) {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := s.ReadFile(path)
 			if readErr != nil {
 				return readErr
 			}

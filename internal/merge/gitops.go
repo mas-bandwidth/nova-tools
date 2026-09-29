@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -62,7 +64,9 @@ type Runner interface {
 
 // Exec is the production runner: the command, in a directory, under the context's
 // deadline.
-type Exec struct{}
+type Exec struct {
+	Env []string
+}
 
 // noBackgroundGit is the configuration every git this tool starts carries, and it is one
 // sentence: NO GIT THIS TOOL RUNS LEAVES A GIT BEHIND IT.
@@ -144,7 +148,7 @@ const execOutputCap = 64 * 1024
 // keeps at most execOutputCap bytes and cancels the command the moment the ceiling is
 // reached. A result that was cut says so, because a prefix read as the whole answer is
 // worse than a marked prefix.
-func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+func (e Exec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	// EVERY GIT THIS TOOL STARTS CARRIES noBackgroundGit. It is here rather than in
 	// Git.Run so that what the guard reads, and what a test's fake Runner is handed, is
 	// still the tool's own command -- and so that the one place that really starts a
@@ -155,8 +159,15 @@ func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := bounded.NewCapture(execOutputCap, cancel)
-	cmd := exec.CommandContext(runCtx, name, args...)
+	bin, lookupErr := resolveBinary(name, e.Env)
+	if lookupErr != nil {
+		return "", lookupErr
+	}
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
+	if e.Env != nil {
+		cmd.Env = e.Env
+	}
 	cmd.Stdout = out
 	cmd.Stderr = out
 	err := cmd.Run()
@@ -228,16 +239,15 @@ func runUncapped(ctx context.Context, runner Runner, dir, name string, args ...s
 //
 // Peak memory for one call is therefore bounded by uncappedStdoutCeiling plus
 // uncappedRingSize, however much the command actually writes or how long it runs.
-func (Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error) {
-	return runUncappedCapture(ctx, dir, name, uncappedStdoutCeiling, uncappedRingSize, args...)
+func (e Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error) {
+	return e.runUncappedCapture(ctx, dir, name, uncappedStdoutCeiling, uncappedRingSize, args...)
 }
 
-// runUncappedCapture is RunUncapped's body with the ceiling and ring size taken as
-// arguments rather than the package constants. RunUncapped always calls it with
-// uncappedStdoutCeiling and uncappedRingSize; the tests call it directly with small
-// synthetic limits so the ceiling-exceeded path can be exercised deterministically,
-// through the real Exec/exec.Cmd machinery, without a fixture anywhere near 64 MiB.
 func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ringSize int, args ...string) (string, error) {
+	return (Exec{}).runUncappedCapture(ctx, dir, name, stdoutCeiling, ringSize, args...)
+}
+
+func (e Exec) runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ringSize int, args ...string) (string, error) {
 	if filepath.Base(name) == "git" {
 		args = NoBackgroundGit(args...)
 	}
@@ -247,8 +257,15 @@ func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ri
 	ring := newRingBuffer(ringSize)
 	stdout := newCeilingWriter(stdoutCeiling, cancel)
 
-	cmd := exec.CommandContext(runCtx, name, args...)
+	bin, lookupErr := resolveBinary(name, e.Env)
+	if lookupErr != nil {
+		return "", lookupErr
+	}
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
+	if e.Env != nil {
+		cmd.Env = e.Env
+	}
 	// stdout feeds both: the ceiling writer, which is what a successful parse reads
 	// whole, and the ring, so a stdout-side failure still has a tail. stderr feeds only
 	// the ring -- git and gh write their own diagnostics there, and this tool has never
@@ -654,4 +671,81 @@ func DefaultBranchOf(g *Git, remote string) string {
 		}
 	}
 	return ""
+}
+
+// resolveBinary preserves Go's ambient command lookup for the production zero-value
+// Exec. An explicit Env is an exact executable scope: a bare name must be found in
+// its final PATH entry, and a miss must never fall through to the process's PATH.
+// Paths supplied by the caller are left to exec.CommandContext as before.
+func resolveBinary(name string, env []string) (string, error) {
+	if env == nil || filepath.Base(name) != name || filepath.VolumeName(name) != "" {
+		return name, nil
+	}
+	path, ok := envValue(env, "PATH")
+	if !ok {
+		return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	}
+	suffixes := []string{""}
+	if runtime.GOOS == "windows" {
+		// Go's Windows findExecutable tests the unsuffixed file only when
+		// the requested name already has an extension, then tries PATHEXT.
+		suffixes = nil
+		if filepath.Ext(name) != "" {
+			suffixes = append(suffixes, "")
+		}
+		ext, ok := envValue(env, "PATHEXT")
+		if !ok || ext == "" {
+			ext = ".COM;.EXE;.BAT;.CMD"
+		}
+		for _, suffix := range strings.Split(ext, ";") {
+			if suffix == "" {
+				continue
+			}
+			if !strings.HasPrefix(suffix, ".") {
+				suffix = "." + suffix
+			}
+			suffixes = append(suffixes, suffix)
+		}
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			if runtime.GOOS == "windows" {
+				continue // Windows LookPath skips empty PATH components.
+			}
+			dir = "."
+		}
+		for _, suffix := range suffixes {
+			candidate := filepath.Join(dir, name+suffix)
+			fi, err := os.Stat(candidate)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			if runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
+				continue
+			}
+			// Go's LookPath refuses an executable found through a relative PATH
+			// component (ErrDot). CommandContext must never re-resolve this name
+			// against the ambient PATH, nor reinterpret it under cmd.Dir.
+			if !filepath.IsAbs(candidate) {
+				return "", &exec.Error{Name: name, Err: exec.ErrDot}
+			}
+			return candidate, nil
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
+
+// envValue follows exec.Cmd's last-value-wins environment rule. Windows keys are
+// case-insensitive, including Path/PATH and PATHEXT spelling.
+func envValue(env []string, key string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		k, value, ok := strings.Cut(env[i], "=")
+		if !ok {
+			continue
+		}
+		if k == key || runtime.GOOS == "windows" && strings.EqualFold(k, key) {
+			return value, true
+		}
+	}
+	return "", false
 }

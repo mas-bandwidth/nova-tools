@@ -142,6 +142,7 @@ func TestPayloadRefusesAStateMissingARequiredTypedField(t *testing.T) {
 // criteria the question names must be IN the bytes, and no file the question
 // did not name may be.
 func TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := writeQuestionFile(t, dir, "questions-x.json", goodQuestions)
 	writeQuestionFile(t, dir, "criteria-x.md", "version: test.1\nTHE LONG CRITERIA BODY\n")
@@ -163,8 +164,7 @@ func TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse(t *testing.T) {
 		_, _ = w.Write([]byte(`{"answers":{"x":{"type":"choice","choice":"a","confidence":0.9}}}`))
 	}))
 	defer srv.Close()
-	t.Setenv(DefaultKeyEnv, "test-key")
-	c, err := New(srv.URL, DefaultKeyEnv)
+	c, err := NewWithKey(srv.URL, "test-key")
 	if err != nil {
 		t.Fatal(err)
 	}

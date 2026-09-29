@@ -147,6 +147,7 @@ func stLine(t *testing.T, stream, prefix string) string {
 // every behaviour the issue names. The six bodies also stand as the six
 // top-level tests below, under the issue's own names.
 func TestIssue2296(t *testing.T) {
+	t.Parallel()
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
 	t.Run("TestNoCodeStagedNothingToSay", noCodeStagedNothingToSay)
@@ -308,7 +309,10 @@ func noCodeStagedSaysNo(t *testing.T) {
 	}
 }
 
-func TestNoCodeStagedRefusals(t *testing.T) { noCodeStagedRefusals(t) }
+func TestNoCodeStagedRefusals(t *testing.T) {
+	t.Parallel()
+	noCodeStagedRefusals(t)
+}
 
 // The refusals are exit 2 (SPEC.md:1015-1021): a --dir that is not the root
 // of a git repository, a diff-index that itself fails, unmerged entries, an
@@ -429,10 +433,7 @@ func noCodeStagedRefusals(t *testing.T) {
     ;;
 esac
 `, tc.record, real))
-			orig := os.Getenv("PATH")
-			os.Setenv("PATH", bin+string(os.PathListSeparator)+orig)
-			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-			os.Setenv("PATH", orig)
+			exit, stdout, stderr := runCheckWith(t, stagedEnv{gitBin: filepath.Join(bin, "git")}, "nocode", "--staged", "--dir", dir)
 			refused(t, tc.name, exit, stderr, tc.want)
 			if stdout != "" {
 				t.Errorf("%s printed to stdout: %q", tc.name, stdout)

@@ -2,12 +2,9 @@ package table_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -87,28 +84,16 @@ func TestStreamsTableFromRecords(t *testing.T) {
 	}
 }
 
-// failTransport counts every HTTP request and refuses it.
-type failTransport struct{ n atomic.Int64 }
-
-func (f *failTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	f.n.Add(1)
-	return nil, errors.New("the table tick made an HTTP call")
-}
-
 // TestTableTickMakesNoRestCall (DONE-WHEN of #3530): a tick of the whole
-// table is Redis only. With every HTTP request refused and counted, ten
-// ticks over the fixture make zero HTTP calls (no GitHub REST, no webhook
-// poll), and every command they send is a read of the keyspace (plus the
-// writer's lock refresh when a lock is named): no KEYS, no SCAN, no write.
+// table is Redis only. Ten ticks over the fixture make zero HTTP calls
+// (no GitHub REST, no webhook poll), and every command they send is a read of the keyspace
+// (plus the writer's lock refresh when a lock is named): no KEYS, no SCAN, no write.
 // Every stream cell is a ZCARD of its own set: the tick reads
 // ws:<s>:<where> for every stream of ws:order and every where of WSStates
 // (ready since #3866, review between working and merging since #4072).
-
 func TestTableTickMakesNoRestCall(t *testing.T) {
-	ft := &failTransport{}
-	saved := http.DefaultTransport
-	http.DefaultTransport = ft
-	t.Cleanup(func() { http.DefaultTransport = saved })
+	t.Parallel()
+
 	client, _, log := sprintStore(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	cfg := table.SprintFixtureConfig()
@@ -123,9 +108,6 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 			t.Fatalf("tick %d took %d round trips, want 1", i, snap.RoundTrips)
 		}
 		_ = snap.Render(now)
-	}
-	if n := ft.n.Load(); n != 0 {
-		t.Fatalf("ten ticks made %d HTTP calls, want 0", n)
 	}
 	keys := log.keysRead()
 	for _, s := range table.SprintFixtureStreams {

@@ -189,23 +189,26 @@ func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
 // The injected source's words: exactly OK is green, FAIL... is red, anything
 // else waits. GitHub is never asked whatever the word.
 func TestChecksMapsTheRecordWord(t *testing.T) {
+	t.Parallel()
 	const repo, sha = "owner/repo", "deadbeef"
 
 	t.Run("production address has safe local default", func(t *testing.T) {
-		t.Setenv("REDIS_ADDR", "")
-		t.Setenv("NOVA_REDIS_HOST", "")
-		t.Setenv("NOVA_REDIS_PORT", "")
-		if got := redisAddrFromEnv(); got != "localhost:6379" {
-			t.Fatalf("redisAddrFromEnv() = %q, want localhost:6379", got)
+		t.Parallel()
+		getenv := func(string) string { return "" }
+		if got := redisAddrFromLookup(getenv); got != "localhost:6379" {
+			t.Fatalf("redisAddrFromLookup() = %q, want localhost:6379", got)
 		}
 	})
 
 	t.Run("production address follows NOVA_REDIS_HOST and PORT", func(t *testing.T) {
-		t.Setenv("REDIS_ADDR", "")
-		t.Setenv("NOVA_REDIS_HOST", "redis.example.test")
-		t.Setenv("NOVA_REDIS_PORT", "6380")
-		if got := redisAddrFromEnv(); got != "redis.example.test:6380" {
-			t.Fatalf("redisAddrFromEnv() = %q, want redis.example.test:6380", got)
+		t.Parallel()
+		env := map[string]string{
+			"NOVA_REDIS_HOST": "redis.example.test",
+			"NOVA_REDIS_PORT": "6380",
+		}
+		getenv := func(key string) string { return env[key] }
+		if got := redisAddrFromLookup(getenv); got != "redis.example.test:6380" {
+			t.Fatalf("redisAddrFromLookup() = %q, want redis.example.test:6380", got)
 		}
 	})
 

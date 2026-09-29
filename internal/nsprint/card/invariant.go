@@ -20,11 +20,16 @@ var filesCache sync.Map
 // card's PATHS packages against (#4396). nil when there is no mirror, no sha,
 // or the mirror does not hold it: the lint then reads each path by its shape.
 func FilesAt(repo, sha string) []string {
+	return FilesAtWithRoot("", repo, sha)
+}
+
+// FilesAtWithRoot is FilesAt using root as the bare mirror directory.
+func FilesAtWithRoot(root, repo, sha string) []string {
 	if repo == "" || !shaRE.MatchString(sha) {
 		return nil
 	}
-	dir := mirrorPath(repo)
-	if dir == "" || !hasMirror(repo) {
+	dir := mirrorPathWithRoot(root, repo)
+	if dir == "" || !hasMirrorWithRoot(root, repo) {
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
@@ -51,7 +56,12 @@ func FilesAt(repo, sha string) []string {
 // LintOneInvariant is cardhdr.LintOneInvariant over a card body, its PATHS
 // counted against the repo at the card's base-sha (FilesAt).
 func LintOneInvariant(repo, sha string, text []byte) cardhdr.Refusals {
-	return cardhdr.LintOneInvariant(cardhdr.Card{Text: string(text), Files: FilesAt(repo, sha)})
+	return LintOneInvariantWithRoot("", repo, sha, text)
+}
+
+// LintOneInvariantWithRoot is LintOneInvariant using root as the bare mirror directory.
+func LintOneInvariantWithRoot(root, repo, sha string, text []byte) cardhdr.Refusals {
+	return cardhdr.LintOneInvariant(cardhdr.Card{Text: string(text), Files: FilesAtWithRoot(root, repo, sha)})
 }
 
 // LintLines is a card's refusals, one line each, each ending card=<name> when

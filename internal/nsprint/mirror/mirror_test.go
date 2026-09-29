@@ -61,20 +61,18 @@ func (g *logGit) fetchURLs() []string {
 
 func (g *logGit) reset() { g.mu.Lock(); g.argv = nil; g.mu.Unlock() }
 
-func gitEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_AUTHOR_NAME", "t")
-	t.Setenv("GIT_AUTHOR_EMAIL", "t@example.invalid")
-	t.Setenv("GIT_COMMITTER_NAME", "t")
-	t.Setenv("GIT_COMMITTER_EMAIL", "t@example.invalid")
-}
-
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t",
+		"GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t",
+		"GIT_COMMITTER_EMAIL=t@example.invalid",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -88,7 +86,6 @@ type fixture struct{ base, work string }
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	gitEnv(t)
 	root := t.TempDir()
 	f := fixture{base: filepath.Join(root, "github"), work: filepath.Join(root, "work")}
 	git(t, root, "init", "-q", "--bare", "--initial-branch=dev", filepath.Join(f.base, "nova-tools.git"))
@@ -127,6 +124,7 @@ func benchConfig(t *testing.T, bench string, f fixture, srcDir string, g Git) Co
 // TestMirrorFanOut is #2922's DONE-WHEN: the source fetches the fixture GitHub
 // once, the follower fetches only the source's mirror, and status reads both OK.
 func TestMirrorFanOut(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	mr, rdb := newRedis(t)
@@ -209,6 +207,7 @@ func TestMirrorFanOut(t *testing.T) {
 // fetches the upstream itself (from=github-fallback); with the source's mirror
 // unreachable it does the same; with a fresh source it never touches upstream.
 func TestSourceStaleFallsBackToGitHub(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	mr, rdb := newRedis(t)
@@ -253,6 +252,7 @@ func TestSourceStaleFallsBackToGitHub(t *testing.T) {
 // reason=fetch, the refs are byte-identical, the tip in Redis is kept, and a
 // --reference clone against the mirror still works.
 func TestFetchFailureLeavesMirror(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	mr, rdb := newRedis(t)
@@ -289,6 +289,7 @@ func TestFetchFailureLeavesMirror(t *testing.T) {
 
 // TestFirstCloneAtomic: a clone that fails leaves no <repo>.git and no tmp dir.
 func TestFirstCloneAtomic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	_, rdb := newRedis(t)
@@ -320,6 +321,7 @@ func TestFirstCloneAtomic(t *testing.T) {
 // TestShallowMirrorRefusedAndRepaired is rowan-tools#275: check refuses a
 // shallow mirror, a refresh repairs it, and a --reference clone then works.
 func TestShallowMirrorRefusedAndRepaired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	f.commit(t, "two")
@@ -416,6 +418,7 @@ func TestStatusReceiptShapes(t *testing.T) {
 // TestOneLoopPerBench: a second loop on the same bench exits 2 while the lease
 // is held; the holder's loop runs one pass per tick and stops with its ctx.
 func TestOneLoopPerBench(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	_, rdb := newRedis(t)
 	c := benchConfig(t, "src", f, "", &logGit{})

@@ -24,6 +24,8 @@ import (
 // with the model's word (#3919: ABSTAIN other in done/abstain, BLOCKED deps
 // in done/fail), never no-commit.
 func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
+	t.Parallel()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +45,8 @@ func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := context.Background()
 			st, client := newSprint(t)
 			id := card.Identity{Sprint: "control-nocommit", Label: "card-" + tc.name, BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
@@ -58,9 +62,8 @@ func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
 			if err := os.WriteFile(gate, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv(fakeHarnessEnv, tc.mode)
-			t.Setenv(fakeGateEnv, gate)
 			h := newHarnessRun(t, id, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"="+tc.mode, fakeGateEnv+"="+gate)
 			rep := card.RunWrapper(ctx, h.cfg, &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token})
 
 			hash := hashOf(t, ctx, client, id.Sprint, id.Label)

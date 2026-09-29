@@ -98,6 +98,10 @@ const messagesSQL = `SELECT ` +
 // BUDGET-UNVERIFIABLE on the third such sample, because a numeric budget the tool has
 // stopped being able to see is a budget the caller believes is enforced and is not.
 func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
+	return readOpenCodeUsageWith(dataHome, exec.LookPath)
+}
+
+func readOpenCodeUsageWith(dataHome string, lookPath func(file string) (string, error)) (ProviderUsage, error) {
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -107,11 +111,12 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 		// reported nothing, which is an absence and not a failure.
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+	sqliteCmd, err := lookPath(SQLiteBinary)
+	if err != nil {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
 			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCodeWaiting(path)
+	rows, err := queryOpenCodeWaitingWith(sqliteCmd, path)
 	if err != nil {
 		return ProviderUsage{}, err
 	}
@@ -148,6 +153,13 @@ const LiveSampleLimit = 5 * time.Second
 // cases rule 13d keeps apart -- nothing observed, a partial observation, a read that FAILS
 // -- are the caller's to tell apart, and this function's error is the third of them.
 func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
+	return ReadJobUsageLiveWith(SQLiteBinary, dataHome)
+}
+
+func ReadJobUsageLiveWith(sqliteCmd, dataHome string) (ProviderUsage, error) {
+	if sqliteCmd == "" {
+		sqliteCmd = SQLiteBinary
+	}
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -155,11 +167,11 @@ func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
 	if path == "" {
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+	if _, err := exec.LookPath(sqliteCmd); err != nil {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
-			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
+			ErrNoSQLite, path, sqliteCmd, sqliteCmd)
 	}
-	rows, err := queryOpenCode(path, LiveSampleLimit)
+	rows, err := queryOpenCodeWith(sqliteCmd, path, LiveSampleLimit)
 	if err != nil {
 		return ProviderUsage{}, err
 	}
@@ -194,13 +206,22 @@ func findOpenCodeStore(dataHome string) (string, error) {
 // present and `sqlite3 -readonly` answers `database is locked`; recording a dash for that
 // window loses tokens the harness really spent.
 func queryOpenCodeWaiting(path string) ([][]string, error) {
+	return queryOpenCodeWaitingWith(SQLiteBinary, path)
+}
+
+func queryOpenCodeWaitingWith(sqliteCmd, path string) ([][]string, error) {
+	if sqliteCmd == "" {
+		sqliteCmd = SQLiteBinary
+	}
 	return walWait{
 		first:  usageTimeout,
 		settle: usageSettleWait,
 		pause:  usageSettlePause,
-		query:  queryOpenCode,
-		now:    time.Now,
-		sleep:  time.Sleep,
+		query: func(p string, limit time.Duration) ([][]string, error) {
+			return queryOpenCodeWith(sqliteCmd, p, limit)
+		},
+		now:   time.Now,
+		sleep: time.Sleep,
 	}.read(path)
 }
 
@@ -289,9 +310,16 @@ func walPending(path string) bool {
 // job's own and this tool never writes it: `-readonly` is that promise kept by the program
 // that opens it, and `-tabs` is the shape the rows come back in.
 func queryOpenCode(path string, limit time.Duration) ([][]string, error) {
+	return queryOpenCodeWith(SQLiteBinary, path, limit)
+}
+
+func queryOpenCodeWith(sqliteCmd, path string, limit time.Duration) ([][]string, error) {
+	if sqliteCmd == "" {
+		sqliteCmd = SQLiteBinary
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, messagesSQL)
+	cmd := exec.CommandContext(ctx, sqliteCmd, "-readonly", "-tabs", path, messagesSQL)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = usageWaitDelay

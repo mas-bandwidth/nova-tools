@@ -43,12 +43,17 @@ func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 	// A seat given by --seat or NOVA_SEAT (nova-tools#4052) is read through
 	// nova-secrets' library in this process: its login wins, and the password
 	// goes to the client in memory, never into this process's environment.
-	if c, ok, err := sel.Active(); ok {
-		if err != nil {
-			return "", "", err
+	if sel != nil {
+		if c, ok, err := sel.Active(); ok {
+			if err != nil {
+				return "", "", err
+			}
+			_ = c.Password.Use(func(pw string) error { password = pw; return nil })
+			return c.User, password, nil
 		}
-		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
-		return c.User, password, nil
+		if getenv := sel.Getenv(); getenv != nil {
+			return AuthLookup("", "", getenv)
+		}
 	}
 	return Auth("", "")
 }
@@ -57,6 +62,11 @@ func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 // ACL user, else UserEnv; passwordEnv the variable holding its password, else
 // PasswordEnvEnv, else DefaultPasswordEnv.
 func Auth(user, passwordEnv string) (string, string, error) { return redisauth.Auth(user, passwordEnv) }
+
+// AuthLookup is Auth with an injected environment lookup function.
+func AuthLookup(user, passwordEnv string, getenv func(string) string) (string, string, error) {
+	return redisauth.AuthLookup(user, passwordEnv, getenv)
+}
 
 // NoUserHint is the #3520 refusal: password in the environment, ACL user unset.
 func NoUserHint() string { return redisauth.NoUserHint() }
@@ -135,6 +145,11 @@ func OpenSingle(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 1, seatcred.Process())
 }
 
+// OpenSingleSeat is OpenSingle as sel's seat instead of this process's.
+func OpenSingleSeat(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
+	return open(ctx, addr, 1, sel)
+}
+
 // OpenProbe is OpenSeat for a one-shot health read (`nova-sprint doctor`):
 // one connection, one dial attempt bounded by a second, and no command
 // retries, so a store that is down or refuses the login answers on the first
@@ -185,7 +200,11 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 		opts.DialerRetryBackoff = func(int) time.Duration { return 0 }
 	}
 	client := redis.NewClient(opts)
-	if user == "" && os.Getenv(DefaultPasswordEnv) != "" {
+	getenv := os.Getenv
+	if sel != nil && sel.Getenv() != nil {
+		getenv = sel.Getenv()
+	}
+	if user == "" && getenv(DefaultPasswordEnv) != "" {
 		client.AddHook(noUserHook{addr: addr})
 	}
 	return &Store{client: client}, nil

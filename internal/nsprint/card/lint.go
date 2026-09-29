@@ -469,10 +469,17 @@ func typedDependencies(deps []dependency) string {
 	return strings.Join(entries, ",")
 }
 
-type privateRepoError struct{ Name string }
+type privateRepoError struct {
+	Name       string
+	mirrorPath string
+}
 
 func (e *privateRepoError) Error() string {
-	return "private repo " + e.Name + ": no mirror at " + mirrorPath(e.Name) + "; run mirror-refresh on this host"
+	p := e.mirrorPath
+	if p == "" {
+		p = mirrorPath(e.Name)
+	}
+	return "private repo " + e.Name + ": no mirror at " + p + "; run mirror-refresh on this host"
 }
 
 // probeRepo refuses a repository this host cannot show exists. A local bare
@@ -491,7 +498,7 @@ func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if hasMirror(name) {
+	if hasMirrorFrom(ctx, name) {
 		return name, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, probeURL, nil)
@@ -511,7 +518,7 @@ func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 		resp.StatusCode == http.StatusUnauthorized ||
 		resp.StatusCode == http.StatusForbidden ||
 		isRedirect(resp.StatusCode):
-		return "", &privateRepoError{Name: name}
+		return "", &privateRepoError{Name: name, mirrorPath: mirrorPathFrom(ctx, name)}
 	default:
 		return "", fmt.Errorf("probe: HTTP %d", resp.StatusCode)
 	}

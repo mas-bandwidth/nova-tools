@@ -67,6 +67,7 @@ func TestMain(m *testing.M) {
 		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		os.Unsetenv("NOVA_BUS_RECEIPT_MAX_WORDS")
 		// The bus fixture busDir copies is built under this directory too, so it is
 		// removed with it on every path out of this function.
 		busFixtureRoot = dir

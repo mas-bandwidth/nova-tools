@@ -19,12 +19,14 @@ import (
 // table's declared default row, never a literal argv in the caller. RED WITHOUT THE WIRING:
 // native built `run --model <m> --title <l> -- <card>` inline and never asked the table.
 func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	for _, tc := range []struct{ model, row string }{
 		{"fake/fake-model", swarm.DefaultLaunchRow},
 		{"opencode/deepseek-v4-flash", "opencode"},
 	} {
 		t.Run(tc.row, func(t *testing.T) {
+			t.Parallel()
 			root, slot := aSlot(t)
 			type call struct {
 				provider string
@@ -32,19 +34,16 @@ func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
 				argv     []string
 			}
 			var calls []call
-			orig := launchArgvFor
-			t.Cleanup(func() { launchArgvFor = orig })
-			launchArgvFor = func(provider, goos string, req swarm.LaunchRequest) ([]string, error) {
-				argv, err := orig(provider, goos, req)
-				calls = append(calls, call{provider, req, argv})
-				return argv, err
-			}
-
 			card := "a card\n"
 			var errOut bytes.Buffer
 			_, code := nativeRun(nativeRunConfig{
 				binary: bin, model: tc.model, label: "launcher-lbl",
 				card: []byte(card), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+				launchArgv: func(provider, goos string, req swarm.LaunchRequest) ([]string, error) {
+					argv, err := swarm.LaunchArgvFor(provider, goos, req)
+					calls = append(calls, call{provider, req, argv})
+					return argv, err
+				},
 			}, &errOut)
 			if code != 0 {
 				t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())

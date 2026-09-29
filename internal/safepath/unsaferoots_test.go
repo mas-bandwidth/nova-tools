@@ -75,8 +75,9 @@ func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
 }
 
 func TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome(t *testing.T) {
+	t.Parallel()
 	fakeHome := t.TempDir()
-	t.Setenv("HOME", fakeHome)
+	policy := Policy{UserHomeDir: func() (string, error) { return fakeHome, nil }}
 	fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
 	if err != nil {
 		t.Fatalf("could not resolve the fixture's fake home: %v", err)
@@ -90,7 +91,7 @@ func TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = RemoveUnderRoots(victim, rootLink)
+	err = policy.RemoveUnderRoots(victim, rootLink)
 	if err == nil || !errors.Is(err, ErrUnsafe) {
 		t.Errorf("RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", victim, rootLink, err)
 	}
@@ -100,8 +101,9 @@ func TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome(t *testing.T) {
 }
 
 func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
+	t.Parallel()
 	fakeHome := t.TempDir()
-	t.Setenv("HOME", fakeHome)
+	policy := Policy{UserHomeDir: func() (string, error) { return fakeHome, nil }}
 	fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
 	if err != nil {
 		t.Fatalf("could not resolve the fixture's fake home: %v", err)
@@ -111,7 +113,7 @@ func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
 
 	parent := filepath.Dir(fakeHomeReal)
 
-	err = RemoveUnderRoots(fakeHomeReal, parent)
+	err = policy.RemoveUnderRoots(fakeHomeReal, parent)
 	if err == nil || !errors.Is(err, ErrUnsafe) {
 		t.Errorf("RemoveUnderRoots(%q, %q) = %v, want a refusal that wraps ErrUnsafe", fakeHomeReal, parent, err)
 	}
@@ -128,9 +130,11 @@ func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
 // symlink to HOME, and HOME as a path under /Users, do not." Both doors must refuse the
 // resolved root, not the name the caller happened to spell it with.
 func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
+	t.Parallel()
 	t.Run("a root that is a symlink to the home", func(t *testing.T) {
+		t.Parallel()
 		fakeHome := t.TempDir()
-		t.Setenv("HOME", fakeHome)
+		policy := Policy{UserHomeDir: func() (string, error) { return fakeHome, nil }}
 		fakeHomeReal, err := filepath.EvalSymlinks(fakeHome)
 		if err != nil {
 			t.Fatalf("could not resolve the fixture's fake home: %v", err)
@@ -144,7 +148,7 @@ func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = RemoveUnder(rootLink, victim)
+		err = policy.RemoveUnder(rootLink, victim)
 		if err == nil || !errors.Is(err, ErrUnsafe) {
 			t.Errorf("RemoveUnder(%q, %q) = %v, want a refusal that wraps ErrUnsafe", rootLink, victim, err)
 		}
@@ -154,6 +158,7 @@ func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
 	})
 
 	t.Run("a root that is a symlink to the whole disk", func(t *testing.T) {
+		t.Parallel()
 		elsewhere := t.TempDir()
 		rootLink := filepath.Join(elsewhere, "disk-link")
 		if err := os.Symlink(string(os.PathSeparator), rootLink); err != nil {
@@ -205,19 +210,23 @@ func caseInsensitiveVolume(t *testing.T, dir string) bool {
 // to get. Every case is the same shape: the path handed in IS the home directory, by
 // device and inode, and the only question is whether the check can see that.
 func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
+	t.Parallel()
 	// A RELATIVE HOME. os.UserHomeDir hands back $HOME exactly as it stands, and a
 	// relative one resolves to a relative string that can never equal the absolute path
 	// under test -- so the home comparison silently answered "different" about the home
 	// itself. This is the portable case: it is red on linux and on darwin alike, and it
 	// is the same bug Johnny found, met through the spelling instead of through the case.
 	t.Run("HOME spelled relative to the working directory", func(t *testing.T) {
+		t.Parallel()
 		parent := t.TempDir()
 		realHome := filepath.Join(parent, "home")
 		mustWrite(t, filepath.Join(realHome, "keep"), "x")
-		t.Chdir(parent)
-		t.Setenv("HOME", "home")
+		policy := Policy{
+			WorkingDir:  parent,
+			UserHomeDir: func() (string, error) { return "home", nil },
+		}
 
-		err := RemoveUnderRoots(realHome, parent)
+		err := policy.RemoveUnderRoots(realHome, parent)
 		if err == nil || !errors.Is(err, ErrUnsafe) {
 			t.Errorf("RemoveUnderRoots(%q, %q) with HOME=%q = %v, want a refusal that wraps ErrUnsafe", realHome, parent, "home", err)
 		}
@@ -231,6 +240,7 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 	// could NOT tell whether it was about to delete the home was the case where it went
 	// ahead. An unanswered question about the home is a refusal.
 	t.Run("HOME that cannot be stat'd fails closed", func(t *testing.T) {
+		t.Parallel()
 		if os.Geteuid() == 0 {
 			t.Skip("root traverses a 0o000 directory, so the unreadable-home case cannot be built here")
 		}
@@ -245,9 +255,9 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { os.Chmod(locked, 0o755) })
-		t.Setenv("HOME", hidden)
+		policy := Policy{UserHomeDir: func() (string, error) { return hidden, nil }}
 
-		err := RemoveUnderRoots(victim, victimRoot)
+		err := policy.RemoveUnderRoots(victim, victimRoot)
 		if err == nil {
 			t.Errorf("RemoveUnderRoots(%q, %q) = nil with an unreadable HOME; a home the check cannot identify is a refusal, not a pass", victim, victimRoot)
 		}
@@ -259,13 +269,14 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 	// JOHNNY'S OWN CASE, on the volume that has it. Skipped on hulk, which is linux and
 	// case-sensitive; it is the Studio's leg of the PR's CI that runs this one.
 	t.Run("a case-variant spelling of HOME", func(t *testing.T) {
+		t.Parallel()
 		parent := t.TempDir()
 		if !caseInsensitiveVolume(t, parent) {
 			t.Skip("this volume is case-sensitive, so a case variant is a different directory here; the darwin CI leg covers this")
 		}
 		realHome := filepath.Join(parent, "glenn")
 		mustWrite(t, filepath.Join(realHome, "keep"), "x")
-		t.Setenv("HOME", realHome)
+		policy := Policy{UserHomeDir: func() (string, error) { return realHome, nil }}
 		variant := filepath.Join(parent, "Glenn")
 		vi, verr := os.Stat(variant)
 		ri, rerr := os.Stat(realHome)
@@ -273,7 +284,7 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 			t.Fatalf("the fixture's own premise failed: %q and %q are not the same directory", variant, realHome)
 		}
 
-		err := RemoveUnderRoots(variant, parent)
+		err := policy.RemoveUnderRoots(variant, parent)
 		if err == nil || !errors.Is(err, ErrUnsafe) {
 			t.Errorf("RemoveUnderRoots(%q, %q) = %v, want a refusal: it IS %q", variant, parent, err, realHome)
 		}
@@ -285,15 +296,19 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 
 // The same three questions of the single-root door, which has its own copy of the check.
 func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
+	t.Parallel()
 	t.Run("a relative HOME as the root", func(t *testing.T) {
+		t.Parallel()
 		parent := t.TempDir()
 		realHome := filepath.Join(parent, "home")
 		victim := filepath.Join(realHome, "victim")
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
-		t.Chdir(parent)
-		t.Setenv("HOME", "home")
+		policy := Policy{
+			WorkingDir:  parent,
+			UserHomeDir: func() (string, error) { return "home", nil },
+		}
 
-		err := RemoveUnder(realHome, victim)
+		err := policy.RemoveUnder(realHome, victim)
 		if err == nil || !errors.Is(err, ErrUnsafe) {
 			t.Errorf("RemoveUnder(%q, %q) with HOME=%q = %v, want a refusal: the root IS the home", realHome, victim, "home", err)
 		}
@@ -303,6 +318,7 @@ func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
 	})
 
 	t.Run("a case-variant spelling of HOME as the root", func(t *testing.T) {
+		t.Parallel()
 		parent := t.TempDir()
 		if !caseInsensitiveVolume(t, parent) {
 			t.Skip("this volume is case-sensitive, so a case variant is a different directory here; the darwin CI leg covers this")
@@ -310,9 +326,9 @@ func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
 		realHome := filepath.Join(parent, "glenn")
 		victim := filepath.Join(realHome, "victim")
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
-		t.Setenv("HOME", realHome)
+		policy := Policy{UserHomeDir: func() (string, error) { return realHome, nil }}
 
-		err := RemoveUnder(filepath.Join(parent, "Glenn"), victim)
+		err := policy.RemoveUnder(filepath.Join(parent, "Glenn"), victim)
 		if err == nil || !errors.Is(err, ErrUnsafe) {
 			t.Errorf("RemoveUnder with the root spelled %q = %v, want a refusal: it IS the home", filepath.Join(parent, "Glenn"), err)
 		}

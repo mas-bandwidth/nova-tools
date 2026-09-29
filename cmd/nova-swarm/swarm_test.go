@@ -194,6 +194,15 @@ func TestMain(m *testing.M) {
 	if os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF") == "" {
 		_ = os.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "0s")
 	}
+	if os.Getenv("JEV_API_KEY") == "" {
+		_ = os.Setenv("JEV_API_KEY", "sekret")
+	}
+	if os.Getenv("CAP_BUDGET_ENV") == "" {
+		_ = os.Setenv("CAP_BUDGET_ENV", "fake-cap-budget-key")
+	}
+	if os.Getenv("CARD881_SECRET") == "" {
+		_ = os.Setenv("CARD881_SECRET", "fake-card881-secret")
+	}
 	if err := buildShared(); err != nil {
 		fmt.Fprintf(os.Stderr, "building the binaries these tests run: %v\n", err)
 		os.Exit(1)

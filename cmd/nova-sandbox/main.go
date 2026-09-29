@@ -180,6 +180,14 @@ var version string
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ())) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) (code int) {
+	return runWithDeps(args, stdin, stdout, stderr, env, defaultEgressEnv(), defaultWorktreeEnv())
+}
+
+func runWithEgress(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string, egress egressEnv) (code int) {
+	return runWithDeps(args, stdin, stdout, stderr, env, egress, defaultWorktreeEnv())
+}
+
+func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string, egress egressEnv, wt worktreeEnv) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is probed, wrapped or written (the CLI style's rule (b), #4505).
 	// Only -h: every other exit of this tool, the bare wrap's 125 included, is
@@ -197,7 +205,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		// help <verb> for a NAMED verb only: anything else falls through to the bare
 		// wrap below, and help must never reach it.
 		if args[0] == "help" && len(args) > 1 && helpVerbs[args[1]] {
-			return run(append(args[1:], "--help"), stdin, stdout, stderr, env)
+			return runWithDeps(append(args[1:], "--help"), stdin, stdout, stderr, env, egress, wt)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -221,7 +229,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
 		verbflag.HelpIfAsked(args[1:], "worktree")
-		return worktreeVerb(args[1:], stdout, stderr, env)
+		return worktreeVerbWith(args[1:], stdout, stderr, env, wt)
 	case "egress":
 		if len(args) > 1 {
 			if egressVerbs[args[1]] {
@@ -229,7 +237,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			}
 			verbflag.HelpIfAsked(args[1:2], "egress")
 		}
-		return egressVerb(args[1:], stderr)
+		return egressVerbWith(args[1:], stderr, egress)
 	case "policy":
 		verbflag.HelpIfAsked(args[1:], "policy")
 		return policyVerb(args[1:], stdout, stderr, env)

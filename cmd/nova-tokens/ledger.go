@@ -28,8 +28,8 @@ import (
 // it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
 // or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
 // names one. Dialing does not ping (#7fbdefecf56e).
-func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
-	user, password, err := redisauth.Auth(user, passwordEnv)
+func openLedger(addr, user, passwordEnv string, getenv func(string) string) (record.LedgerStore, error) {
+	user, password, err := redisauth.AuthLookup(user, passwordEnv, getenv)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 // cmdLedger indexes the day files of one day or one month into tokens:ledger:<day>. Each day is
 // replaced whole, so indexing twice is the table indexing once. It reads the day files and
 // writes nothing beside them.
-func cmdLedger(args []string, stdout, stderr io.Writer) int {
+func cmdLedger(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	fs := newFlagSet("ledger")
 	out := fs.String("out", "", "")
 	day := fs.String("day", "", "")
@@ -142,7 +142,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 		}
 		sort.Strings(paths)
 	}
-	ls, err := openLedger(*addr, *user, *passwordEnv)
+	ls, err := openLedger(*addr, *user, *passwordEnv, getenv)
 	if err != nil {
 		fmt.Fprintf(stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
 		return 1
@@ -213,7 +213,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 // cmdReportStore is `report --redis`: the month's ledger grouped by model, repo,
 // day, or the (day, model, repo) tuple, every one of the five types apart and a dash where
 // no row reported a type.
-func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, stderr io.Writer) int {
+func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, stderr io.Writer, getenv func(string) string) int {
 	r := &refusals{token: "REPORT"}
 	switch {
 	case month == "":
@@ -228,7 +228,7 @@ func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, 
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	ls, err := openLedger(addr, user, passwordEnv)
+	ls, err := openLedger(addr, user, passwordEnv, getenv)
 	if err != nil {
 		fmt.Fprintf(stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
 		return 1

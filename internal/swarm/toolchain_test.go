@@ -25,6 +25,8 @@ import (
 // The test builds that shape under a temporary prefix, so it asserts the resolver on every
 // platform and never the machine it happens to run on.
 func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the versioned-prefix roots are a darwin shape and the launcher is a symlink")
 	}
@@ -41,9 +43,18 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	if err := os.Symlink(filepath.Join(real, "go"), filepath.Join(binDir, "go")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", binDir)
 
-	got, ok := toolchainVersionDir(prefix, "go")
+	lookIn := func(dir string) func(string) (string, error) {
+		return func(tool string) (string, error) {
+			p := filepath.Join(dir, tool)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p, nil
+			}
+			return "", os.ErrNotExist
+		}
+	}
+
+	got, ok := toolchainVersionDirWith(prefix, "go", lookIn(binDir))
 	if !ok {
 		t.Fatalf("the launcher at %s resolved to no versioned directory under %s", filepath.Join(binDir, "go"), prefix)
 	}
@@ -63,13 +74,11 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	if err := testbin.WriteExecutable(filepath.Join(other, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", other)
-	if got, ok := toolchainVersionDir(prefix, "go"); ok {
+	if got, ok := toolchainVersionDirWith(prefix, "go", lookIn(other)); ok {
 		t.Errorf("a go outside the prefix named the root %s; the versioned entry is brew's copy and only brew's", got)
 	}
 	// AND A TOOL THAT IS NOT INSTALLED AT ALL names nothing, rather than a prefix.
-	t.Setenv("PATH", t.TempDir())
-	if got, ok := toolchainVersionDir(prefix, "dotnet"); ok {
+	if got, ok := toolchainVersionDirWith(prefix, "dotnet", lookIn(t.TempDir())); ok {
 		t.Errorf("a tool that is not on PATH named the root %s", got)
 	}
 }

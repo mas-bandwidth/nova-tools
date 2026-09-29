@@ -9,6 +9,8 @@ import (
 )
 
 func TestGitHubStubStartsCleanly(t *testing.T) {
+	t.Parallel()
+
 	stub := testutil.StartGitHubStub(t)
 	if stub.URL == "" {
 		t.Fatal("expected non-empty stub URL")
@@ -19,6 +21,8 @@ func TestGitHubStubStartsCleanly(t *testing.T) {
 }
 
 func TestGitHubStubInterceptsHTTPCalls(t *testing.T) {
+	t.Parallel()
+
 	// Use a dummy testing.T to verify it reports an error when called
 	subT := &testing.T{}
 	stub := testutil.StartGitHubStub(subT)

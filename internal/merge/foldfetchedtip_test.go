@@ -82,7 +82,7 @@ func fetchedTipLab(t *testing.T) (lane, tip, recordPath string) {
 // promise. The checkout and state are deliberately stale and dirty; only the named commit
 // may decide the fold, even while a coordinator owns the checkout lock.
 func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
-	noReReadPause(t)
+	t.Parallel()
 	lane, tip, recordPath := fetchedTipLab(t)
 	statePath := filepath.Join(lane, StateName)
 	if err := os.WriteFile(recordPath, tipRead("worktree", strings.Repeat("b", 40)), 0o644); err != nil {
@@ -106,6 +106,7 @@ func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
 	}
 	defer release()
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Millisecond)
+	records.Sleep = func(time.Duration) {}
 	if _, err := records.FoldTip(tip); err == nil {
 		t.Fatal("legacy FoldTip must retain its checkout lock")
 	}
@@ -180,10 +181,11 @@ func (r *countingExec) count(args ...string) int {
 }
 
 func TestFoldFetchedTipRereadsOnlyProblemPaths(t *testing.T) {
-	noReReadPause(t)
+	t.Parallel()
 	lane, tip, _ := fetchedTipLab(t)
 	runner := &countingExec{}
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
+	records.Sleep = func(time.Duration) {}
 	folded, err := records.FoldFetchedTip(tip)
 	if err != nil {
 		t.Fatal(err)

@@ -26,7 +26,6 @@ type dealFixture struct {
 
 func newDealFixture(t *testing.T) *dealFixture {
 	t.Helper()
-	t.Setenv(testutil.CIEnv, "1")
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

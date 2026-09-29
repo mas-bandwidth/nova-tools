@@ -24,6 +24,8 @@ import (
 // reached through a fake ssh in t.TempDir(), so no host is reached and no real key is read:
 // every key here is a throwaway generated in the test's own temp directory.
 func TestStorePullUsesBenchOwnedKey(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake ssh is a POSIX shell script")
 	}
@@ -109,9 +111,9 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 	} {
 		t.Run("pulls over "+c.name, func(t *testing.T) {
 			_ = os.Remove(sshLog)
-			t.Setenv("SSH_AUTH_SOCK", filepath.Join(root, "agent.sock"))
 			o := base
 			o.Key = c.key
+			o.Env = append(os.Environ(), "SSH_AUTH_SOCK="+filepath.Join(root, "agent.sock"))
 			head, err := PullStore(o)
 			if err != nil {
 				t.Fatalf("PullStore refused %s: %v", c.name, err)

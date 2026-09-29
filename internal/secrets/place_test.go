@@ -1,7 +1,6 @@
 package secrets
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -10,18 +9,14 @@ import (
 
 func armHostGuard(t *testing.T) {
 	t.Helper()
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
-	t.Cleanup(func() {
-		os.Unsetenv(testguard.EnvNoHost)
-		testguard.Reload()
-	})
+	t.Cleanup(testguard.Arm())
 }
 
 // TestPlaceSSHSeamPanicsUnderTheGuard pins 47d81e9c: sshPlaceSecret calls
 // testguard.RefuseHosts before the child. Reverting place.go left
 // ./internal/secrets green because the package had no test of that seam.
 func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
+	t.Parallel()
 	armHostGuard(t)
 	defer func() {
 		r := recover()

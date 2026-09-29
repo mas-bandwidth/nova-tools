@@ -23,8 +23,7 @@ import (
 // This watches git's own trace2 stream, which records every child a git starts, so what is
 // read here is what git did rather than what this file hopes it did.
 func TestNoGitThisToolRunsStartsABackgroundGit(t *testing.T) {
-	// No t.Parallel: this sets GIT_TRACE2_EVENT for the process, and Go runs the
-	// sequential tests with every parallel one paused.
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on this machine")
 	}
@@ -37,12 +36,14 @@ func TestNoGitThisToolRunsStartsABackgroundGit(t *testing.T) {
 	}
 	// The bench's own git configuration decides nothing here: a runner with
 	// maintenance.auto already off would make this test pass by accident.
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "no-such-gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_TRACE2_EVENT", trace)
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "no-such-gitconfig"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "no-such-gitconfig"),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TRACE2_EVENT="+trace,
+	)
 
-	g := NewGit(repo, time.Minute, nil)
+	g := NewGit(repo, time.Minute, Exec{Env: env})
 	for _, args := range [][]string{
 		{"init", "--quiet", "-b", "main", "."},
 		{"add", "-A"},
@@ -179,8 +180,7 @@ func gitChildrenStarted(t *testing.T, dir string) ([][]string, int) {
 // how the defect reached a green CI in the first place: the pull request's test legs run on
 // space and studio only.
 func TestAPushThisToolMakesLeavesNoGitInTheReceivingRepository(t *testing.T) {
-	// No t.Parallel: this sets GIT_TRACE2_EVENT for the process, and Go runs the
-	// sequential tests with every parallel one paused.
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on this machine")
 	}
@@ -193,12 +193,14 @@ func TestAPushThisToolMakesLeavesNoGitInTheReceivingRepository(t *testing.T) {
 	}
 	// The bench's own git configuration decides nothing here: a runner that already had
 	// receive.autogc off would make this pass by accident.
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "no-such-gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	baseEnv := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "no-such-gitconfig"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "no-such-gitconfig"),
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
 
-	g := NewGit(work, time.Minute, nil)
-	bare := NewGit(remote, time.Minute, nil)
+	g := NewGit(work, time.Minute, Exec{Env: baseEnv})
+	bare := NewGit(remote, time.Minute, Exec{Env: baseEnv})
 	if out, err := bare.Run("init", "--quiet", "--bare", "-b", "main", "."); err != nil {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
@@ -221,11 +223,12 @@ func TestAPushThisToolMakesLeavesNoGitInTheReceivingRepository(t *testing.T) {
 
 	// The trace is switched on for the PUSH alone, so what is counted is the child that
 	// push's receive-pack started and nothing the set-up did.
-	t.Setenv("GIT_TRACE2_EVENT", trace)
+	pushEnv := append(baseEnv, "GIT_TRACE2_EVENT="+trace)
+	gPush := NewGit(work, time.Minute, Exec{Env: pushEnv})
 	for _, target := range []string{remote, "file://" + filepath.ToSlash(remote)} {
 		// Both spellings: `git push <path>` and `git push file://<path>` take different
 		// code paths inside git, and the gc child was measured on hulk under both.
-		if out, err := g.Run("push", "--quiet", target, "HEAD:refs/heads/"+refFor(target)); err != nil {
+		if out, err := gPush.Run("push", "--quiet", target, "HEAD:refs/heads/"+refFor(target)); err != nil {
 			t.Fatalf("git push %s: %v\n%s", target, err, out)
 		}
 	}

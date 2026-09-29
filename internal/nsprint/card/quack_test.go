@@ -76,9 +76,9 @@ func TestQuackIssue(t *testing.T) {
 // TestMirrorBranchSHA reads the base-sha from this host's mirror with git,
 // and refuses a repo with no mirror.
 func TestMirrorBranchSHA(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
-	t.Setenv("NOVA_MIRROR_ROOT", root)
-	if _, err := card.MirrorBranchSHA("mas-bandwidth/nova-tools", "dev"); err == nil {
+	if _, err := card.MirrorBranchSHA("mas-bandwidth/nova-tools", "dev", root); err == nil {
 		t.Fatal("no mirror: want a refusal")
 	}
 	work := t.TempDir()
@@ -92,11 +92,11 @@ func TestMirrorBranchSHA(t *testing.T) {
 		}
 	}
 	want, _ := exec.Command("git", "-C", work, "rev-parse", "HEAD").Output()
-	got, err := card.MirrorBranchSHA("mas-bandwidth/nova-tools", "dev")
+	got, err := card.MirrorBranchSHA("mas-bandwidth/nova-tools", "dev", root)
 	if err != nil || got != strings.TrimSpace(string(want)) {
 		t.Fatalf("got %q %v, want %s", got, err, want)
 	}
-	if _, err := card.MirrorBranchSHA("mas-bandwidth/nova-tools", "nope"); err == nil {
+	if _, err := card.MirrorBranchSHA("mas-bandwidth/nova-tools", "nope", root); err == nil {
 		t.Fatal("missing branch: want a refusal")
 	}
 }

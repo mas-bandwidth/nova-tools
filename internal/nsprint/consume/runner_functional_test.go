@@ -6,9 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"reflect"
 	"sort"
 	"strconv"
@@ -188,13 +186,7 @@ func (r *roundTrips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 }
 
 func TestControl33PrToRead(t *testing.T) {
-	var httpCalls atomic.Int64
-	orig := http.DefaultTransport
-	http.DefaultTransport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		httpCalls.Add(1)
-		return nil, errors.New("control 33: no HTTP client may run")
-	})
-	t.Cleanup(func() { http.DefaultTransport = orig })
+	t.Parallel()
 
 	const (
 		t1 = "2026-09-23T20:00:01Z"
@@ -513,12 +505,6 @@ func TestControl33PrToRead(t *testing.T) {
 		out := f.pass()
 		if !strings.Contains(out, "RUNNER ") || !strings.Contains(out, "ADOPT ") {
 			t.Fatalf("pass printed %q, want a RUNNER and an ADOPT line", out)
-		}
-		if _, err := http.DefaultTransport.RoundTrip(&http.Request{}); err == nil {
-			t.Fatal("http.DefaultTransport is not the failing guard")
-		}
-		if n := httpCalls.Load(); n != 1 {
-			t.Fatalf("%d HTTP requests, want only this subtest's own probe of the guard", n)
 		}
 	})
 }

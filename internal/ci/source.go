@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -25,6 +26,29 @@ var (
 	// so every position the caller reads resolves in the set its file is in.
 	parseSource = parseSourceFile
 )
+
+// SourceSeams carries the functions used to walk, read and parse Go sources.
+type SourceSeams struct {
+	WalkDir   func(root string, fn fs.WalkDirFunc) error
+	ReadFile  func(name string) ([]byte, error)
+	ParseFile func(name string, src []byte, mode parser.Mode) (*token.FileSet, *ast.File, error)
+}
+
+func defaultSourceSeams() SourceSeams {
+	return SourceSeams{
+		WalkDir:   walkSourceDir,
+		ReadFile:  readSourceFile,
+		ParseFile: parseSource,
+	}
+}
+
+func DiskSourceSeams() SourceSeams {
+	return SourceSeams{
+		WalkDir:   filepath.WalkDir,
+		ReadFile:  os.ReadFile,
+		ParseFile: parseSourceFile,
+	}
+}
 
 // deprecatedDir is the one top-level directory no walk of this repository's
 // source descends into. The tools kept there are reference only: a module of

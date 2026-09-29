@@ -648,12 +648,21 @@ func TestTheFloorFindingCountsInEnglish(t *testing.T) {
 // anchor as reached through a symlink. Introduced while repairing the symlink
 // finding — every existing test used an absolute temp dir, so nothing saw it.
 func TestARelativeRootIsNotReadAsASymlinkEscape(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	root := filepath.Join(base, "repo")
 	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
-	t.Chdir(base)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(cwd, root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
-	wantFailures(t, corpusOK(t, "repo", tmpLedger(t), 1, as), nil)
+	wantFailures(t, corpusOK(t, rel, tmpLedger(t), 1, as), nil)
 }
 
 // ---------------------------------------------------------------------------

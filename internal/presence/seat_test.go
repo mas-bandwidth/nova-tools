@@ -18,16 +18,20 @@ import (
 // dials the fleet shape (default user off) as the seat's Redis user, with no
 // NOVA_REDIS_BENCH_PASSWORD in the environment and none left there after.
 func TestOpenLogsInAsTheSeat(t *testing.T) {
+	t.Parallel()
 	const pw = "wake-seat-test-pw-4052"
 	home := seattest.Home(t, "swarm-y", map[string]string{"NOVA_REDIS_BENCH_PASSWORD": pw})
 	addr := testutil.Start(t, "--user", "default", "off", "--user", "bench", "on", ">"+pw, "~*", "&*", "+@all")
-	seattest.Env(t, home)
-	t.Setenv(presence.PasswordEnv, "")
+	mockEnv := map[string]string{
+		"HOME":           home,
+		seatcred.SopsEnv: seattest.Sops(t),
+	}
+	getenv := func(key string) string { return mockEnv[key] }
 	ctx := context.Background()
 
 	// Open sends nothing (#3277, #4026): the first command carries the NOAUTH
 	// refusal, and it names --seat.
-	r0, err := presence.Open(ctx, addr, "")
+	r0, err := presence.OpenWithSelection(ctx, addr, "", getenv, seatcred.WithLookup(getenv))
 	if err != nil {
 		t.Fatalf("Open with no seat and no password: %v; want no error before the first command", err)
 	}
@@ -35,13 +39,14 @@ func TestOpenLogsInAsTheSeat(t *testing.T) {
 		t.Fatalf("first command with no seat and no password = %v; want a NOAUTH refusal naming --seat", err)
 	}
 	_ = r0.Close()
-	seatcred.Select("swarm-y")
-	r, err := presence.Open(ctx, addr, "")
+	sel := seatcred.WithLookup(getenv)
+	sel.Select("swarm-y")
+	r, err := presence.OpenWithSelection(ctx, addr, "", getenv, sel)
 	if err != nil {
 		t.Fatalf("Open as seat swarm-y: %v", err)
 	}
 	_ = r.Close()
-	if u, _, err := presence.Login("ignored"); err != nil || u != "bench" {
+	if u, _, err := presence.LoginWithSelection("ignored", getenv, sel); err != nil || u != "bench" {
 		t.Fatalf("Login under the seat = %q, %v; want bench", u, err)
 	}
 	for _, kv := range os.Environ() {

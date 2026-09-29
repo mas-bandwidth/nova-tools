@@ -118,6 +118,8 @@ type Config struct {
 	// Err, when set, gets every REFUSED line as well as out (#3700): the
 	// dealer keeps stdout, and a session log on the bench keeps stderr.
 	Err io.Writer
+	// Env is extra environment variables passed to the child process.
+	Env []string
 	// start is the process seam for deterministic deadline tests.
 	start func(string, Line, time.Time) (int, string, error)
 }
@@ -167,7 +169,13 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 	deadline := began.Add(budget)
 	start := cfg.start
 	if start == nil {
-		start = startDetached
+		if len(cfg.Env) > 0 {
+			start = func(wrapper string, l Line, deadline time.Time) (int, string, error) {
+				return startDetachedArgsEnv(wrapper, []string{WrapperName, l.Card()}, l.String(), deadline, cfg.Env)
+			}
+		} else {
+			start = startDetached
+		}
 	}
 	refused := func(format string, args ...any) {
 		res.Refused++

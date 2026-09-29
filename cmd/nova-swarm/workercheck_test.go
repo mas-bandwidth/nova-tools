@@ -52,8 +52,12 @@ func workerCheckFixture(t *testing.T, edit func(map[string]any)) string {
 }
 
 func runWorkerCheck(args ...string) (int, string, string) {
+	return runWorkerCheckWithEnv(os.Getenv, args...)
+}
+
+func runWorkerCheckWithEnv(getenv func(string) string, args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := run(append([]string{"worker", "check"}, args...), strings.NewReader(""), &out, &errb, time.Now().UTC())
+	code := cmdWorkerWithEnv(append([]string{"check"}, args...), &out, &errb, getenv)
 	return code, out.String(), errb.String()
 }
 
@@ -116,15 +120,25 @@ func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
 
 // A secret the environment does not hold is named by its variable, and no value leaks.
 func TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue(t *testing.T) {
+	t.Parallel()
+
 	const name = "NOVA_CARD8385_ABSENT_SECRET"
 	const sentinel = "sk-must-never-print-8385"
-	t.Setenv(name, "")
-	t.Setenv("NOVA_CARD8385_SENTINEL", sentinel)
+	fakeEnv := func(k string) string {
+		switch k {
+		case name:
+			return ""
+		case "NOVA_CARD8385_SENTINEL":
+			return sentinel
+		default:
+			return os.Getenv(k)
+		}
+	}
 	path := workerCheckFixture(t, func(d map[string]any) {
 		delete(d, "key_file")
 		d["secret"] = name
 	})
-	code, out, errb := runWorkerCheck(path, "--env")
+	code, out, errb := runWorkerCheckWithEnv(fakeEnv, path, "--env")
 	combined := out + errb
 	if code != 2 {
 		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out, errb)

@@ -125,20 +125,27 @@ func probeBase() string {
 	return defaultProbeBase
 }
 
-// checkRepos is the admission check: every repository a card names must be reachable with
-// an unauthenticated request, or the card is refused under its label. It returns nil when
-// the card names no repository or every one of them is public.
-func checkRepos(label, text string) error {
+// checkReposWith is the admission check using the given client (or probeClient if nil):
+// every repository a card names must be reachable with an unauthenticated request, or the
+// card is refused under its label.
+func checkReposWith(client *http.Client, label, text string) error {
 	for _, repo := range cardRepos(text) {
 		owner, name, ok := strings.Cut(repo, "/")
 		if !ok || owner == "" || name == "" {
 			continue
 		}
-		if err := probeRepo(owner, name); err != nil {
+		if err := probeRepoWith(client, owner, name); err != nil {
 			return &admitRefusal{label: label, why: err.Error()}
 		}
 	}
 	return nil
+}
+
+// checkRepos is the admission check: every repository a card names must be reachable with
+// an unauthenticated request, or the card is refused under its label. It returns nil when
+// the card names no repository or every one of them is public.
+func checkRepos(label, text string) error {
+	return checkReposWith(nil, label, text)
 }
 
 // probeClient is the client the admission probe uses. It is a package variable only so a
@@ -146,18 +153,21 @@ func checkRepos(label, text string) error {
 // reassigns it, and production always dials the real network through the default transport.
 var probeClient = &http.Client{Timeout: probeTimeout}
 
-// probeRepo issues one unauthenticated HEAD request against <base>/<owner>/<name> within
-// probeTimeout. A 200 means the repository is reachable without credentials. A 401 or 403
-// is an authentication prompt, and a 404 is how github answers an unauthenticated request
-// for a private repository (so the existence is not leaked): both refuse as private. Any
-// other status and any transport error or timeout refuse as a probe failure.
-func probeRepo(owner, name string) error {
+// probeRepoWith issues one unauthenticated HEAD request against <base>/<owner>/<name> within
+// probeTimeout using client (or probeClient if nil). A 200 means the repository is reachable
+// without credentials. A 401 or 403 is an authentication prompt, and a 404 is how github answers
+// an unauthenticated request for a private repository: both refuse as private. Any other status
+// and any transport error or timeout refuse as a probe failure.
+func probeRepoWith(client *http.Client, owner, name string) error {
+	if client == nil {
+		client = probeClient
+	}
 	url := probeBase() + "/" + owner + "/" + name
 	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
 		return &probeError{reason: err.Error()}
 	}
-	resp, err := probeClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return &probeError{reason: err.Error()}
 	}
@@ -170,4 +180,13 @@ func probeRepo(owner, name string) error {
 	default:
 		return &probeError{reason: fmt.Sprintf("HTTP %d from %s", resp.StatusCode, oneline.Escape(url))}
 	}
+}
+
+// probeRepo issues one unauthenticated HEAD request against <base>/<owner>/<name> within
+// probeTimeout. A 200 means the repository is reachable without credentials. A 401 or 403
+// is an authentication prompt, and a 404 is how github answers an unauthenticated request
+// for a private repository (so the existence is not leaked): both refuse as private. Any
+// other status and any transport error or timeout refuse as a probe failure.
+func probeRepo(owner, name string) error {
+	return probeRepoWith(nil, owner, name)
 }

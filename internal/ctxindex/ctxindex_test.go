@@ -92,12 +92,10 @@ func TestBuildIndexesSpecsTestsAndSymbols(t *testing.T) {
 // A lookup reads the one bucket its key hashes to and nothing else: every other bucket
 // is garbage and the lookup still answers (Glenn 2026-09-23: indexed, never a linear scan).
 func TestLookupReadsOnlyItsBucket(t *testing.T) {
-	old := BucketSize
-	BucketSize = 1
-	t.Cleanup(func() { BucketSize = old })
+	t.Parallel()
 	repo := fixture(t)
 	out := filepath.Join(t.TempDir(), "ix")
-	if _, err := Build(repo, out); err != nil {
+	if _, err := BuildWithOptions(repo, out, BuildOptions{BucketSize: 1}); err != nil {
 		t.Fatal(err)
 	}
 	ix, err := Open(out)
@@ -175,6 +173,7 @@ func TestRebuildAnswersFromTheNewHeadOnly(t *testing.T) {
 // CURRENT still names the last complete head, whose directory answers whole. The next
 // complete build swaps CURRENT and the new head answers.
 func TestPartialBuildLeavesThePreviousIndexWhole(t *testing.T) {
+	t.Parallel()
 	repo := fixture(t)
 	out := filepath.Join(t.TempDir(), "ix")
 	st1, err := Build(repo, out)
@@ -184,14 +183,14 @@ func TestPartialBuildLeavesThePreviousIndexWhole(t *testing.T) {
 	write(t, repo, "docs/SPEC-A.md", "1. `alpha-rule-one`: alpha is refused.\n")
 	gitIn(t, repo, "commit", "-q", "-am", "drop beta")
 	stop := errors.New("killed partway")
-	afterBuckets = func(kind string) error {
-		if kind == "test" {
-			return stop
-		}
-		return nil
-	}
-	_, err = Build(repo, out)
-	afterBuckets = func(string) error { return nil }
+	_, err = BuildWithOptions(repo, out, BuildOptions{
+		AfterBuckets: func(kind string) error {
+			if kind == "test" {
+				return stop
+			}
+			return nil
+		},
+	})
 	if !errors.Is(err, stop) {
 		t.Fatalf("partial build err = %v, want %v", err, stop)
 	}

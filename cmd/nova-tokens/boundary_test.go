@@ -307,6 +307,8 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 // on PATH records any invocation. Then every verb runs, and afterwards: the fake was never
 // called, the bare repository is byte-identical, and the checkout's own .git is too.
 func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
+	t.Parallel()
+
 	realGit, _ := exec.LookPath("git")
 	if realGit == "" || runtime.GOOS == "windows" {
 		t.Skip("the fixture wants a real git to build the checkout and a shell script for the fake")
@@ -333,7 +335,7 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	gitRun(t, realGit, bus, "remote", "add", "origin", bare)
 	gitRun(t, realGit, bus, "push", "-q", "origin", "HEAD:refs/heads/main")
 
-	gitLog := fakeGit(t)
+	gitLog, env := fakeGit(t)
 	beforeBare := readTree(t, bare)
 	beforeGit := readTree(t, filepath.Join(bus, ".git"))
 
@@ -348,7 +350,7 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 		{"help"},
 	}
 	for _, args := range runs {
-		r := invoke(t, args...)
+		r := invokeCmd(t, "", env, args...)
 		if r.exit > 1 {
 			t.Errorf("%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
 		}

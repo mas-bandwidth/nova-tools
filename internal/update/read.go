@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -105,6 +106,29 @@ func identity(e Entry, raw string, report bool) Read {
 type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
 
 func process(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+	return processWith(ctx, args, input, cap, "", nil)
+}
+
+func lookPathEnv(file, pathEnv string) (string, error) {
+	if pathEnv == "" {
+		return exec.LookPath(file)
+	}
+	if filepath.IsAbs(file) || strings.Contains(file, string(filepath.Separator)) {
+		return file, nil
+	}
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			dir = "."
+		}
+		p := filepath.Join(dir, file)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%q not found in PATH", file)
+}
+
+func processWith(ctx context.Context, args []string, input io.Reader, cap int, pathEnv string, extraEnv []string) ProcessResult {
 	r := ProcessResult{}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -114,7 +138,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "empty argv"
 		return r
 	}
-	path, err := exec.LookPath(args[0])
+	path, err := lookPathEnv(args[0], pathEnv)
 	if err != nil {
 		r.Reason = "not_found"
 		return r
@@ -124,6 +148,13 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := exec.CommandContext(child, path, args[1:]...)
+	if pathEnv != "" || len(extraEnv) > 0 {
+		cmd.Env = os.Environ()
+		if pathEnv != "" {
+			cmd.Env = append(cmd.Env, "PATH="+pathEnv)
+		}
+		cmd.Env = append(cmd.Env, extraEnv...)
+	}
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and

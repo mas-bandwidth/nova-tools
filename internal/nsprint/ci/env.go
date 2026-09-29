@@ -66,7 +66,12 @@ func scrubbed(name, indirect string) bool {
 
 // checkEnviron is the scrubbed process environment plus the variables every
 // check gets, and the dropped names for the run's ENV line.
-func checkEnviron() (env, dropped []string) {
-	env, dropped = CheckEnv(os.Environ())
+// If base is given and non-empty, it is used instead of os.Environ().
+func checkEnviron(base ...[]string) (env, dropped []string) {
+	src := os.Environ()
+	if len(base) > 0 && base[0] != nil {
+		src = base[0]
+	}
+	env, dropped = CheckEnv(src)
 	return append(env, "GIT_TERMINAL_PROMPT=0", "CI=1"), dropped
 }

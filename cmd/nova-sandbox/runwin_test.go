@@ -207,6 +207,7 @@ type winBench struct {
 	place   *fakeWinPlace
 	scratch string
 	sigs    chan os.Signal
+	seams   runSeams
 }
 
 func newWinBench(t *testing.T, code int) *winBench {
@@ -220,15 +221,12 @@ func newWinBench(t *testing.T, code int) *winBench {
 		scratch: root,
 		sigs:    make(chan os.Signal),
 	}
-	oldPlace, oldSigs, oldGOOS, oldWall := runWinPlace, runSignals, runGOOS, runWinWall
-	t.Cleanup(func() { runWinPlace, runSignals, runGOOS, runWinWall = oldPlace, oldSigs, oldGOOS, oldWall })
-
-	runWinPlace = b.place
-	runGOOS = "windows"
-	runSignals = func() (<-chan os.Signal, func()) { return b.sigs, func() {} }
-	// The wall is not built (runwin_other.go / wrap_other.go), and every test below is about
-	// the PLACE, so the wall says yes here and exactly one test below turns it off again.
-	runWinWall = func() (string, bool) { return "appcontainer", true }
+	b.seams = runSeams{
+		winPlace: b.place,
+		goos:     "windows",
+		signals:  func() (<-chan os.Signal, func()) { return b.sigs, func() {} },
+		winWall:  func() (string, bool) { return "appcontainer", true },
+	}
 	return b
 }
 
@@ -265,7 +263,7 @@ func (b *winBench) exec(t *testing.T, args ...string) (int, string) {
 		d, _ = time.ParseDuration(f.timeout)
 	}
 	var out, errb bytes.Buffer
-	code := runDisposableWindows(f, d, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	code := runDisposableWindows(f, d, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")}, b.seams)
 	return code, errb.String()
 }
 
@@ -277,7 +275,7 @@ func (b *winBench) verb(t *testing.T, extra ...string) (int, string) {
 	args = append(args, "--")
 	args = append(args, shellOf(t)...)
 	var out, errb bytes.Buffer
-	return runVerb(args, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")}), errb.String()
+	return runVerb(args, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")}, b.seams), errb.String()
 }
 
 func (b *winBench) order() string { return strings.Join(b.place.snapshot(), " ") }
@@ -289,6 +287,7 @@ func (b *winBench) order() string { return strings.Join(b.place.snapshot(), " ")
 // The contract in one line, and it is the SAME line as darwin's: whatever the command did,
 // the place it did it in is gone.
 func TestWindowsRunCreatesJobAndScratchRunsAndAlwaysDeletes(t *testing.T) {
+	t.Parallel()
 	for _, code := range []int{0, 7, 1} {
 		b := newWinBench(t, code)
 		got, errOut := b.exec(t, b.args(t)...)
@@ -313,6 +312,7 @@ func TestWindowsRunCreatesJobAndScratchRunsAndAlwaysDeletes(t *testing.T) {
 // renamed aside -- NTFS raises a sharing violation and there is no replace-the-inode trick --
 // so a delete attempted before the kill is a leak by construction.
 func TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved(t *testing.T) {
+	t.Parallel()
 	b := newWinBench(t, 0)
 	b.exec(t, b.args(t)...)
 	closed, removed := -1, -1
@@ -340,6 +340,7 @@ func TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved(t *testing.T) {
 // about to delete, so the scratch made beside a job that failed is unmade before the verb
 // returns and NOTHING is run.
 func TestWindowsAJobThatFailsUnmakesTheScratchBesideIt(t *testing.T) {
+	t.Parallel()
 	b := newWinBench(t, 0)
 	b.place.jobErr = errors.New("CreateJobObjectW: access denied")
 	code, errOut := b.exec(t, b.args(t)...)
@@ -363,6 +364,7 @@ func TestWindowsAJobThatFailsUnmakesTheScratchBesideIt(t *testing.T) {
 // W5: <scratch>/nova-<n> is the run's ONLY --write, and the working directory and HOME are
 // inside it. A second writable root would be a place the delete does not reach.
 func TestWindowsTheScratchIsTheOnlyWrite(t *testing.T) {
+	t.Parallel()
 	b := newWinBench(t, 0)
 	reads := t.TempDir()
 	b.exec(t, b.args(t, "--read", reads)...)
@@ -395,6 +397,7 @@ func TestWindowsTheScratchIsTheOnlyWrite(t *testing.T) {
 
 // W5 again, the other way: a run never joins a place it did not make.
 func TestWindowsAnExistingScratchIsRefusedNotJoined(t *testing.T) {
+	t.Parallel()
 	b := newWinBench(t, 0)
 	b.place.exists = true
 	code, errOut := b.exec(t, b.args(t)...)
@@ -413,6 +416,8 @@ func TestWindowsAnExistingScratchIsRefusedNotJoined(t *testing.T) {
 // The caps reach the JOB, in the job's own units, and they are set on the job -- which the
 // production body does before any process is in it.
 func TestWindowsMemoryAndCPUReachTheJob(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	b.exec(t, b.args(t, "--memory", "4g", "--cpu", "50")...)
 	if got, want := b.place.jobLimits().MemoryBytes, int64(4)<<30; got != want {
@@ -467,6 +472,8 @@ func TestWindowsMemoryAndCPUAreAcceptedAndIgnoredOffWindows(t *testing.T) {
 // ceiling, and the precedent is rule 7's net_unenforceable: a promise this tool cannot
 // enforce is a refusal, never a note.
 func TestWindowsSizeIsRefusedNotApproximated(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	code, errOut := b.verb(t, "--size", "8g")
 	if code != 125 {
@@ -559,6 +566,8 @@ func TestAbsolutePathForNamesThePlatform(t *testing.T) {
 // `a-windows-leak-exits-3-and-names-the-one-command-that-removes-it`. A caller that read 0
 // would believe the machine was clean.
 func TestWindowsALeakExitsThreeAndNamesTheOneCommand(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	b.place.removeErr = errors.New("ERROR_SHARING_VIOLATION")
 	code, errOut := b.exec(t, b.args(t)...)
@@ -586,12 +595,12 @@ func TestWindowsALeakExitsThreeAndNamesTheOneCommand(t *testing.T) {
 // the first failure as final -- Defender and the search indexer hold transient handles on
 // files a run has just written.
 func TestWindowsTheRemovalIsGivenARetryWindow(t *testing.T) {
+	t.Parallel()
+
 	var got time.Duration
 	b := newWinBench(t, 0)
 	b.place.removeOKAfter = 0
-	old := runWinPlace
-	runWinPlace = &windowRecordingPlace{winPlacer: b.place, window: &got}
-	t.Cleanup(func() { runWinPlace = old })
+	b.seams.winPlace = &windowRecordingPlace{winPlacer: b.place, window: &got}
 
 	if code, errOut := b.exec(t, b.args(t)...); code != 0 {
 		t.Fatalf("a clean run returned %d\n%s", code, errOut)
@@ -622,12 +631,12 @@ func (p *windowRecordingPlace) RemoveTree(root, dir string, w time.Duration) err
 // 124 on --timeout, and the job closed -- which is the kill. There is no SIGTERM, no grace
 // and no SIGKILL, because there is no signal to escalate from.
 func TestWindowsATimeoutClosesTheJobAndExits124(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	// A start that never finishes: the done channel is never written.
-	old := runWinPlace
 	hang := &hangingPlace{fakeWinPlace: b.place}
-	runWinPlace = hang
-	t.Cleanup(func() { runWinPlace = old })
+	b.seams.winPlace = hang
 
 	code, errOut := b.exec(t, b.args(t, "--timeout", "20ms")...)
 	if code != exitTimeout {
@@ -678,15 +687,15 @@ func (p *hangingPlace) CloseJob(job winJob) error {
 // termination gave the child is what the receipt carries, and the receipt is what says how
 // the run ended.
 func TestWindowsHasNo128PlusN(t *testing.T) {
+	t.Parallel()
+
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := newWinBench(t, 0)
-	old := runWinPlace
 	hang := &hangingPlace{fakeWinPlace: b.place}
-	runWinPlace = hang
-	t.Cleanup(func() { runWinPlace = old })
+	b.seams.winPlace = hang
 
 	done := make(chan struct{})
 	var code int
@@ -724,6 +733,8 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 // the optional feature must already be enabled; the refusal names the edition and the
 // feature rather than saying "unavailable".
 func TestWSBRefusesOnAnEditionThatHasNoWindowsSandbox(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	b.place.wsbOK, b.place.wsbEd = false, "Home"
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
@@ -745,6 +756,8 @@ func TestWSBRefusesOnAnEditionThatHasNoWindowsSandbox(t *testing.T) {
 // instance per machine, so a pool of workers each wanting one is a queue of one -- which is
 // why the default is --place job and wsb is the review place.
 func TestASecondWSBRunRefusesRatherThanQueues(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	b.place.wsbRun, b.place.wsbBusy = true, "windowssandbox.exe pid=904"
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
@@ -773,6 +786,8 @@ func TestTheWindowsDefaultPlaceIsTheJob(t *testing.T) {
 // `wsb-refuses-a-run-with-no-timeout`. Without a deadline a guest that never writes the
 // status file is a wait with no end, and this verb never waits without one.
 func TestWSBRefusesARunWithNoTimeout(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	code, errOut := b.verb(t, "--place", "wsb")
 	if code != 125 || !strings.Contains(errOut, "reason=bad_timeout") {
@@ -786,11 +801,11 @@ func TestWSBRefusesARunWithNoTimeout(t *testing.T) {
 // `a-wsb-run-with-no-status-file-times-out-at-124`. This is the one place the contract
 // bends: WindowsSandbox.exe returns as soon as the VM is up and carries no guest status.
 func TestAWSBRunWithNoStatusFileTimesOutAt124(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
 	tick := make(chan time.Time)
-	oldPoll := runWinPoll
-	runWinPoll = func(time.Duration) <-chan time.Time { return tick }
-	t.Cleanup(func() { runWinPoll = oldPoll })
+	b.seams.winPoll = func(time.Duration) <-chan time.Time { return tick }
 
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30ms")...)
 	if code != exitTimeout {
@@ -806,15 +821,15 @@ func TestAWSBRunWithNoStatusFileTimesOutAt124(t *testing.T) {
 
 // And the status that DOES come back through the file is the command's own.
 func TestAWSBRunReadsTheGuestsStatusOutOfTheScratch(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
-	oldRead := runWinReadExit
-	runWinReadExit = func(path string) (int, bool) {
+	b.seams.winReadExit = func(path string) (int, bool) {
 		if filepath.Base(path) != wsbExitFile {
 			t.Errorf("the host waited on %q, want the status file in the mapped writable folder", path)
 		}
 		return 7, true
 	}
-	t.Cleanup(func() { runWinReadExit = oldRead })
 
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
 	if code != 7 {
@@ -987,8 +1002,10 @@ func goCodeOnly(t *testing.T, path string) string {
 // gets deleted -- which is hygiene, not containment. Rule 1 is OS-ENFORCED OR REFUSED, so
 // the verb refuses and the refusal names the half that is missing.
 func TestWindowsRefusesWhileTheWallIsNotBuilt(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 0)
-	runWinWall = func() (string, bool) { return "appcontainer", false }
+	b.seams.winWall = func() (string, bool) { return "appcontainer", false }
 	code, errOut := b.exec(t, b.args(t)...)
 	if code != 125 || !strings.Contains(errOut, "reason=no_sandbox") {
 		t.Fatalf("a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", code, errOut)
@@ -1137,6 +1154,8 @@ func TestReadWSBExit(t *testing.T) {
 // The W-preamble in one test: the same verb, the same receipt grammar, the same exit codes.
 // A caller writes one argv for three platforms and reads one grammar back.
 func TestTheWindowsReceiptIsTheSameGrammarAsDarwins(t *testing.T) {
+	t.Parallel()
+
 	b := newWinBench(t, 3)
 	_, errOut := b.exec(t, b.args(t)...)
 	for _, want := range []string{"SANDBOX OK ", "SANDBOX STEP ", "SANDBOX DONE name=j1 exit=3 wall=", " freed="} {

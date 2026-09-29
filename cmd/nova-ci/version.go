@@ -19,6 +19,10 @@ import (
 // version is empty in ordinary builds and is filled only by a release stamp.
 var version string
 
+func printVersionLine(stamped string, stdout io.Writer) {
+	fmt.Fprintln(stdout, buildinfo.Line("nova-ci", stamped))
+}
+
 // cmdVersion prints the one line. It takes no flags and no arguments: a second output
 // shape is a second thing to agree about, and this verb exists to end an argument rather
 // than to start one.
@@ -28,6 +32,6 @@ func cmdVersion(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-ci version: takes no flags and no arguments, got %d\n", len(args))
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-ci", version))
+	printVersionLine(version, stdout)
 	return 0
 }

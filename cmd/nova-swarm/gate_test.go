@@ -35,9 +35,9 @@ import (
 // because the run it closes was (sandbox=landlock), and a walled run may offer the read set
 // as one candidate.
 func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	root, slot := aSlot(t)
 	const refused = "/opt/sdk/go1.26.5/bin/go"
 	cardPath := filepath.Join(root, "card.md")
@@ -123,10 +123,9 @@ func TestNativeOrdinaryRunIsStillOK(t *testing.T) {
 // real boundary (SPEC-SANDBOX rule 1); the harness's fence is a second, weaker one, and a
 // second fence that denies what the first one grants can only cost cards.
 func TestNativeWalledRunOpensTheWorkersReadRoots(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
-	t.Setenv("FAKE_KEY", fakeKey)
 	root, slot := aSlot(t)
 	stage, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -166,7 +165,7 @@ func workerWithReadRoots(t *testing.T, roots ...string) string {
 	home := t.TempDir()
 	desc := map[string]any{
 		"name": "fake-1", "provider": "fake", "model": "fake-model",
-		"env_var": "FAKE_KEY", "secret": "FAKE_KEY", "usage": "opencode",
+		"env_var": "CARD881_SECRET", "secret": "CARD881_SECRET", "usage": "opencode",
 		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
 		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 		"read_roots":   roots,

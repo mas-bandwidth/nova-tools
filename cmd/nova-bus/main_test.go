@@ -28,6 +28,13 @@ func invoke(t *testing.T, stdin string, args ...string) result {
 	return result{code, out.String(), errOut.String()}
 }
 
+func invokeWithDeps(t *testing.T, deps busDeps, stdin string, args ...string) result {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code := runWithDeps(args, strings.NewReader(stdin), &out, &errOut, now(), deps)
+	return result{code, out.String(), errOut.String()}
+}
+
 func (r result) mustCode(t *testing.T, want int) result {
 	t.Helper()
 	if r.code != want {

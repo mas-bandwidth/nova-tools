@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix && functional
 
 package sprinttable
 
@@ -87,7 +87,8 @@ func helperEnv(role string) []string {
 }
 
 func TestRefreshSurvivesUnitProcessGroupKill(t *testing.T) {
-	pid := startRefresh(t, true)
+	t.Parallel()
+	pid, u := startRefresh(t, true)
 	sid, err := getsid(pid)
 	if err != nil {
 		t.Fatal(err)
@@ -95,21 +96,22 @@ func TestRefreshSurvivesUnitProcessGroupKill(t *testing.T) {
 	if sid != pid {
 		t.Fatalf("refresh sid %d, pid %d; setsid makes the process its own session leader", sid, pid)
 	}
-	if err := syscall.Kill(-unitPID(t), syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(-u.pid(t), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	waitUnit(t)
+	u.wait(t)
 	if err := syscall.Kill(pid, 0); err != nil {
 		t.Fatalf("refresh pid %d died with the unit's process group: %v", pid, err)
 	}
 }
 
 func TestRefreshInTheUnitGroupDiesWithTheUnit(t *testing.T) {
+	t.Parallel()
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	pid := startRefresh(t, false)
+	pid, u := startRefresh(t, false)
 	sid, err := getsid(pid)
 	if err != nil {
 		t.Fatal(err)
@@ -117,10 +119,10 @@ func TestRefreshInTheUnitGroupDiesWithTheUnit(t *testing.T) {
 	if sid == pid {
 		t.Fatalf("refresh sid %d equals pid; this case is the one that did not call setsid", pid)
 	}
-	if err := syscall.Kill(-unitPID(t), syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(-u.pid(t), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	waitUnit(t)
+	u.wait(t)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		err := syscall.Kill(pid, 0)
@@ -134,24 +136,59 @@ func TestRefreshInTheUnitGroupDiesWithTheUnit(t *testing.T) {
 	}
 }
 
-// unitHolder is the unit process for the current test, set by startRefresh
-// and read by the kill. It is not shared across parallel tests: these two
-// tests do not call t.Parallel.
-var (
-	heldUnit *exec.Cmd
-	heldErr  bytes.Buffer
-	heldWait sync.Once
-)
-
-func unitPID(t *testing.T) int {
-	t.Helper()
-	if heldUnit == nil || heldUnit.Process == nil {
-		t.Fatal("no unit process")
-	}
-	return heldUnit.Process.Pid
+type unitSession struct {
+	cmd      *exec.Cmd
+	errBuf   bytes.Buffer
+	waitOnce sync.Once
 }
 
-func startRefresh(t *testing.T, ownSession bool) int {
+func (u *unitSession) pid(t *testing.T) int {
+	t.Helper()
+	if u.cmd == nil || u.cmd.Process == nil {
+		t.Fatal("no unit process")
+	}
+	return u.cmd.Process.Pid
+}
+
+func (u *unitSession) waitHeld() {
+	u.waitOnce.Do(func() {
+		if u.cmd != nil {
+			_ = u.cmd.Wait()
+		}
+	})
+}
+
+func (u *unitSession) wait(t *testing.T) {
+	t.Helper()
+	done := make(chan struct{}, 1)
+	go func() {
+		u.waitHeld()
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("unit did not exit after SIGTERM to its process group")
+	}
+}
+
+func (u *unitSession) reap(pidfile string) {
+	if u.cmd != nil && u.cmd.Process != nil {
+		_ = syscall.Kill(-u.cmd.Process.Pid, syscall.SIGKILL)
+	}
+	u.waitHeld()
+	raw, err := os.ReadFile(pidfile)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+}
+
+func startRefresh(t *testing.T, ownSession bool) (int, *unitSession) {
 	t.Helper()
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready.fifo")
@@ -161,8 +198,7 @@ func startRefresh(t *testing.T, ownSession bool) int {
 	pidfile := filepath.Join(dir, "child.pid")
 	pids := readPID(ready)
 
-	heldErr.Reset()
-	heldWait = sync.Once{}
+	u := &unitSession{}
 	unit := exec.Command(os.Args[0])
 	unit.Env = append(os.Environ(),
 		"SPRINT_TABLE_HELPER=unit",
@@ -173,15 +209,15 @@ func startRefresh(t *testing.T, ownSession bool) int {
 		unit.Env = append(unit.Env, "SPRINT_NO_SETSID=1")
 	}
 	unit.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	unit.Stderr = &heldErr
+	unit.Stderr = &u.errBuf
 	if err := unit.Start(); err != nil {
 		t.Fatal(err)
 	}
-	heldUnit = unit
+	u.cmd = unit
 	t.Cleanup(func() {
-		reapUnit(pidfile)
-		if t.Failed() && heldErr.Len() > 0 {
-			t.Log(heldErr.String())
+		u.reap(pidfile)
+		if t.Failed() && u.errBuf.Len() > 0 {
+			t.Log(u.errBuf.String())
 		}
 	})
 
@@ -190,49 +226,11 @@ func startRefresh(t *testing.T, ownSession bool) int {
 		if pid <= 0 {
 			t.Fatalf("refresh announced pid %d", pid)
 		}
-		return pid
+		return pid, u
 	case <-time.After(30 * time.Second):
-		t.Fatalf("refresh never announced its pid; unit stderr: %s", heldErr.String())
-		return 0
+		t.Fatalf("refresh never announced its pid; unit stderr: %s", u.errBuf.String())
+		return 0, nil
 	}
-}
-
-func waitHeld() {
-	heldWait.Do(func() {
-		if heldUnit != nil {
-			_ = heldUnit.Wait()
-		}
-	})
-}
-
-func waitUnit(t *testing.T) {
-	t.Helper()
-	done := make(chan struct{}, 1)
-	go func() {
-		waitHeld()
-		done <- struct{}{}
-	}()
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("unit did not exit after SIGTERM to its process group")
-	}
-}
-
-func reapUnit(pidfile string) {
-	if heldUnit != nil && heldUnit.Process != nil {
-		_ = syscall.Kill(-heldUnit.Process.Pid, syscall.SIGKILL)
-	}
-	waitHeld()
-	raw, err := os.ReadFile(pidfile)
-	if err != nil {
-		return
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid <= 0 {
-		return
-	}
-	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
 // getsid is the session id of pid. syscall.Getsid is the BSD wrapper and is

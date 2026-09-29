@@ -44,7 +44,6 @@ type prFixture struct {
 // friends: rowan (coordinator), emma and stella.
 func newPRFixture(t *testing.T, S string) *prFixture {
 	t.Helper()
-	t.Setenv(testutil.CIEnv, "1")
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -133,6 +132,8 @@ func (f *prFixture) wsLogWhy(s string) int {
 // task to stella naming the HOLD line and the head; the record carries
 // fix_task; a second pass pushes nothing more.
 func TestHeldHeadWithoutFixTaskPushesOneFixToAuthor(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3579a")
 	hold := "HOLD who=emma head=" + headA + " gates=scope:fail reason=touches-a-path-outside-PATHS"
 	f.addPR(t, "build-3572", "stella", "3572", headA, "SCORE who=jev head="+headA+" score=8/10", hold)
@@ -178,6 +179,8 @@ func TestHeldHeadWithoutFixTaskPushesOneFixToAuthor(t *testing.T) {
 // held at two earlier heads and now at a third gets no fix task; one
 // close-<n>-<head8> task goes to the coordinator with the finding kept.
 func TestThirdHeldHeadIsCloseOverRecut(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3579c")
 	f.addPR(t, "build-3233", "stella", "3233", headC,
 		"HOLD who=emma head="+headA+" reason=first",
@@ -208,6 +211,8 @@ func TestThirdHeldHeadIsCloseOverRecut(t *testing.T) {
 // recut-<n>-<head8> task on the coordinator's queue, never a fix to
 // whatever the branch name says.
 func TestSwarmBuiltHoldIsRecutOnTheCoordinator(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3579s")
 	f.addPR(t, "card-3484", "", "3484", headA, "HOLD who=emma head="+headA+" reason=no-control")
 	if c := f.run(t); c.Fixes != 1 {
@@ -228,6 +233,8 @@ func TestSwarmBuiltHoldIsRecutOnTheCoordinator(t *testing.T) {
 // least-loaded live reader, never the author; the record carries read_task;
 // a second pass pushes nothing.
 func TestEveryUnreadHeadGetsOneRead(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3580r")
 	// rowan carries two ready entries, emma one, stella (the author) none.
 	f.c.XAdd(f.ctx, &redis.XAddArgs{Stream: "q:rowan", Values: []any{"id", "other-1"}})
@@ -276,6 +283,8 @@ func TestEveryUnreadHeadGetsOneRead(t *testing.T) {
 // has a SCORE at head; the branch name says nothing. The read goes to
 // another friend and stella's own line does not count as the read.
 func TestAuthorFromBuilderTaskNotBranch(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3580a")
 	f.c.XAdd(f.ctx, &redis.XAddArgs{Stream: "q:emma", Values: []any{"id", "other-1"}})
 	f.c.XAdd(f.ctx, &redis.XAddArgs{Stream: "q:rowan", Values: []any{"id", "other-2"}})
@@ -299,6 +308,8 @@ func TestAuthorFromBuilderTaskNotBranch(t *testing.T) {
 // head; the cancelled task leaves its ws set, its owner's open index and
 // its queue.
 func TestNewHeadSupersedesOldRead(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3580s")
 	f.addPR(t, "build-3552", "stella", "3552", headA)
 	if c := f.run(t); c.Reads != 1 {
@@ -342,6 +353,8 @@ func TestNewHeadSupersedesOldRead(t *testing.T) {
 // pushed with, the task is carried to the new head (carried_from set, a
 // `read carry` note in ws:log) and nothing new is pushed or cancelled.
 func TestIdenticalDiffCarriesTheRead(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3580c")
 	f.addPR(t, "build-3556", "stella", "3556", headA)
 	f.c.HSet(f.ctx, prkey.Key(prRepo, 3556), "diff_sha256", "d1")

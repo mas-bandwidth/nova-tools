@@ -8,6 +8,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -15,16 +16,21 @@ import (
 // named by NOVA_SPRINT_REDIS_USER with the password in the variable
 // NOVA_SPRINT_REDIS_PASSWORD_ENV names, like every other nova-sprint verb.
 func TestPreflightUsesSeatUser(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	mr.RequireUserAuth("coordinator", "seat-secret")
 
 	t.Run("named seat gets past AUTH", func(t *testing.T) {
-		t.Setenv(store.UserEnv, "coordinator")
-		t.Setenv(store.PasswordEnvEnv, "NOVA_TEST_PREFLIGHT_SEAT_PASSWORD")
-		t.Setenv("NOVA_TEST_PREFLIGHT_SEAT_PASSWORD", "seat-secret")
-		t.Setenv(store.DefaultPasswordEnv, "")
-		c, err := Open(ctx, mr.Addr())
+		env := map[string]string{
+			store.UserEnv:                       "coordinator",
+			store.PasswordEnvEnv:                "NOVA_TEST_PREFLIGHT_SEAT_PASSWORD",
+			"NOVA_TEST_PREFLIGHT_SEAT_PASSWORD": "seat-secret",
+			store.DefaultPasswordEnv:            "",
+		}
+		sel := seatcred.WithLookup(func(k string) string { return env[k] })
+		c, err := Open(ctx, mr.Addr(), sel)
 		if err != nil {
 			t.Fatalf("open as the seat: %v", err)
 		}
@@ -38,9 +44,12 @@ func TestPreflightUsesSeatUser(t *testing.T) {
 	})
 
 	t.Run("no seat refuses and names the coordinator seat", func(t *testing.T) {
-		t.Setenv(store.UserEnv, "")
-		t.Setenv(store.DefaultPasswordEnv, "seat-secret")
-		c, err := Open(ctx, mr.Addr())
+		env := map[string]string{
+			store.UserEnv:            "",
+			store.DefaultPasswordEnv: "seat-secret",
+		}
+		sel := seatcred.WithLookup(func(k string) string { return env[k] })
+		c, err := Open(ctx, mr.Addr(), sel)
 		if err == nil {
 			c.Close()
 			t.Fatal("open with no seat user must refuse against an ACL Redis")
@@ -53,10 +62,13 @@ func TestPreflightUsesSeatUser(t *testing.T) {
 	})
 
 	t.Run("seat user with an empty password refuses", func(t *testing.T) {
-		t.Setenv(store.UserEnv, "coordinator")
-		t.Setenv(store.PasswordEnvEnv, "NOVA_TEST_PREFLIGHT_SEAT_PASSWORD")
-		t.Setenv("NOVA_TEST_PREFLIGHT_SEAT_PASSWORD", "")
-		if c, err := Open(ctx, mr.Addr()); err == nil {
+		env := map[string]string{
+			store.UserEnv:                       "coordinator",
+			store.PasswordEnvEnv:                "NOVA_TEST_PREFLIGHT_SEAT_PASSWORD",
+			"NOVA_TEST_PREFLIGHT_SEAT_PASSWORD": "",
+		}
+		sel := seatcred.WithLookup(func(k string) string { return env[k] })
+		if c, err := Open(ctx, mr.Addr(), sel); err == nil {
 			c.Close()
 			t.Fatal("empty seat password must refuse")
 		}

@@ -39,7 +39,10 @@ func needDarwin(t *testing.T) {
 
 // job is one worker's shape: a write set with its data home, a read set, and a secret
 // directory in NEITHER list — the thing the wall exists to keep unreadable.
-type job struct{ base, write, read, home, secret, outside string }
+type job struct {
+	base, write, read, home, secret, outside string
+	egress                                   egressEnv
+}
 
 func newJob(t *testing.T) job {
 	t.Helper()
@@ -77,7 +80,11 @@ func (j job) env(extra ...string) []string {
 func (j job) tool(t *testing.T, env []string, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := run(args, nil, &out, &errb, env)
+	egress := j.egress
+	if egress.priv == nil && egress.lookup == nil && egress.goos == "" {
+		egress = defaultEgressEnv()
+	}
+	code := runWithEgress(args, nil, &out, &errb, env, egress)
 	return code, out.String(), errb.String()
 }
 
