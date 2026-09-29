@@ -123,12 +123,7 @@ func TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
 	for _, id := range []string{"good", "adir", "gone", "linked"} {
-		if err := Open(store, id, "", benchNow, PublishManual); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Append(store, id, "e1", "words", "", benchNow, PublishManual); err != nil {
-			t.Fatal(err)
-		}
+		layOwn(t, store, id)
 	}
 	replace := func(path string, with func(string) error) {
 		if err := os.Rename(path, filepath.Join(t.TempDir(), "moved")); err != nil {

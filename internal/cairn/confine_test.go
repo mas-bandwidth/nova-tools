@@ -11,36 +11,39 @@ import (
 // linkText is what every refusal of a symbolic link says.
 var linkText = []string{"is a symbolic link", "does not follow links", "ls -ld -- "}
 
+// layOwn lays down by hand, with no sync, what an open and an append of entry e1
+// leave in the tool's own shape: the session file, the entry file, the log.
+func layOwn(t *testing.T, store, session string) {
+	t.Helper()
+	entry := `{"session":"` + session + `","id":"e1","stamp":"2026-09-29T08:00:00Z","source":"","publish":"manual","text":"words"}`
+	for path, body := range map[string]string{
+		sessionFile(store, session):       "# cairn " + session + "\n\nENTRY e1 2026-09-29T08:00:00Z\n",
+		entryPath(store, session, "e1"):   entry,
+		filepath.Join(store, "log.jsonl"): `{"event":"open","session":"` + session + `"}` + "\n" + entry + "\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644); err != nil {
+			t.Fatal(err)
+		} else {
+			f.WriteString(body)
+			f.Close()
+		}
+	}
+}
+
 // The store the two shapes share for these tests, laid down by hand: a real
 // session x and an entry e1 in it.
 func laidStore(t *testing.T, own bool) string {
 	t.Helper()
 	store := t.TempDir()
-	if !own {
-		if err := os.WriteFile(benchFile(store, "x"), []byte("# x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return store
-	}
-	if err := Open(store, "x", "", benchNow, PublishManual); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Append(store, "x", "e1", "words", "", benchNow, PublishManual); err != nil {
+	if own {
+		layOwn(t, store, "x")
+	} else if err := os.WriteFile(benchFile(store, "x"), []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return store
-}
-
-// swapForLink replaces path with a link to target, keeping what was there
-// under path+".real"; the second return puts it back.
-func swapForLink(t *testing.T, path, target string) {
-	t.Helper()
-	if err := os.Rename(path, path+".real"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, path); err != nil {
-		t.Skipf("no symlinks here: %v", err)
-	}
 }
 
 // treeOf is every path under root with the bytes of every file, so two calls
