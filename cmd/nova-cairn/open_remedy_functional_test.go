@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
@@ -64,7 +66,9 @@ func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("go", "build", "-o", filepath.Join(bin, "nova-cairn"), ".").CombinedOutput(); err != nil {
+	build := exec.Command("go", "build", "-o", filepath.Join(bin, "nova-cairn"), ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v: %s", err, out)
 	}
 	store := filepath.Join(root, "cairns")
