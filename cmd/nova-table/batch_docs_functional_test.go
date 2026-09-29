@@ -34,7 +34,7 @@ func codeBlock(t *testing.T, doc, heading, lang string) string {
 	return rest[:strings.Index(rest, "```")]
 }
 
-var volatileFields = regexp.MustCompile(`event=\S+|before=\d+ after=\d+|trips=\d+`)
+var volatileFields = regexp.MustCompile(`event=\S+`)
 
 func normalize(out string) string { return volatileFields.ReplaceAllString(out, "N") }
 
@@ -73,41 +73,116 @@ func specDoc(t *testing.T, name string) string {
 	return string(b)
 }
 
-// The documents' example manifests run, and print what the documents print.
-func TestBatchDocumentedExamplesRunAndPrintWhatIsDocumented(t *testing.T) {
+// docBlock is one fenced block of a document.
+type docBlock struct{ lang, body string }
+
+// docBlocks returns the fenced blocks between the heading start and the next
+// heading of the same or a higher level, in order.
+func docBlocks(t *testing.T, doc, start string) []docBlock {
+	t.Helper()
+	i := strings.Index(doc, "\n"+start+"\n")
+	if i < 0 {
+		t.Fatalf("no heading %q", start)
+	}
+	rest := doc[i+1+len(start):]
+	level := len(start) - len(strings.TrimLeft(start, "#"))
+	end := len(rest)
+	for j := 0; j < len(rest); {
+		k := strings.Index(rest[j:], "\n#")
+		if k < 0 {
+			break
+		}
+		line := rest[j+k+1:]
+		hashes := len(line) - len(strings.TrimLeft(line, "#"))
+		if hashes <= level && strings.HasPrefix(line[hashes:], " ") {
+			end = j + k
+			break
+		}
+		j += k + 1
+	}
+	var blocks []docBlock
+	body := rest[:end]
+	for {
+		o := strings.Index(body, "```")
+		if o < 0 {
+			return blocks
+		}
+		body = body[o+3:]
+		nl := strings.Index(body, "\n")
+		lang := body[:nl]
+		body = body[nl+1:]
+		c := strings.Index(body, "```")
+		blocks = append(blocks, docBlock{lang, body[:c]})
+		body = body[c+3:]
+	}
+}
+
+// runDocScenario runs the sh blocks of a document, in order, against an empty
+// store, as a reader would: `cat > file <<'EOF'` writes the file, every
+// `nova-table` line is run through the verb parser. The text block after an sh
+// block is the output of that block's last command.
+func runDocScenario(t *testing.T, name string, blocks []docBlock) {
+	t.Helper()
+	addr := throwaway(t)
+	dir := t.TempDir()
+	files := map[string]bool{}
+	var lastOut string
+	for _, b := range blocks {
+		switch b.lang {
+		case "sh":
+			lines := strings.Split(b.body, "\n")
+			for i := 0; i < len(lines); i++ {
+				line := strings.TrimSpace(lines[i])
+				switch {
+				case line == "":
+				case strings.HasPrefix(line, "cat > "):
+					file := strings.Fields(strings.TrimPrefix(line, "cat > "))[0]
+					var body []string
+					for i++; i < len(lines) && lines[i] != "EOF"; i++ {
+						body = append(body, lines[i])
+					}
+					if err := os.WriteFile(filepath.Join(dir, file), []byte(strings.Join(body, "\n")+"\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					files[file] = true
+				case strings.HasPrefix(line, "nova-table "):
+					words := shellSplit(line)[1:]
+					for j, w := range words {
+						if files[w] {
+							words[j] = filepath.Join(dir, w)
+						}
+					}
+					code, stdout, stderr := runTable(withStore(t, addr, words)...)
+					if code != 0 {
+						t.Fatalf("%s: %q exits %d\n%s%s", name, line, code, stdout, stderr)
+					}
+					lastOut = stdout
+				default:
+					t.Fatalf("%s: a line the harness does not run: %q", name, line)
+				}
+			}
+		case "text":
+			if got, want := normalize(lastOut), normalize(b.body); got != want {
+				t.Errorf("%s: the last command prints\n%s\nthe document prints\n%s", name, got, want)
+			}
+		}
+	}
+}
+
+// Every worked example in the documents runs from an empty store, command by
+// command, and prints the lines the document prints.
+func TestDocumentedExamplesRunFromAnEmptyStore(t *testing.T) {
 	t.Parallel()
 	spec, cli := specDoc(t, "SPEC-NOVA-TABLE.md"), specDoc(t, "CLI.md")
-	want := normalize(codeBlock(t, spec, "#### Output format", "text"))
-	if got := normalize(codeBlock(t, cli, "### Batch mutation", "text")); got != want {
-		t.Errorf("CLI.md prints:\n%s\nSPEC-NOVA-TABLE.md prints:\n%s", got, want)
-	}
-	// the documented manifest, at the fixture's revision
-	addr, rev := batchFixture(t)
-	manifest := codeBlock(t, spec, "#### Manifest structure", "json")
-	manifest = strings.Replace(manifest, `"expected_table_revision": "5"`, `"expected_table_revision": "`+rev+`"`, 1)
-	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
-	if code != 0 || stderr != "" {
-		t.Fatalf("the documented manifest: exit %d, stderr %q", code, stderr)
-	}
-	if got := normalize(stdout); got != want {
-		t.Errorf("the verb prints:\n%s\nthe documents print:\n%s", got, want)
-	}
-
-	// the documented runnable example, from a file, on a fresh fixture
-	for _, doc := range []struct{ name, text string }{{"SPEC-NOVA-TABLE.md", spec}, {"CLI.md", cli}} {
-		addr, rev := batchFixture(t)
-		sh := codeBlock(t, doc.text, "Runnable example", "sh")
-		body := sh[strings.Index(sh, "<<'EOF'\n")+len("<<'EOF'\n"):]
-		body = body[:strings.Index(body, "\nEOF\n")]
-		body = strings.Replace(body, `"expected_table_revision": "5"`, `"expected_table_revision": "`+rev+`"`, 1)
-		file := filepath.Join(t.TempDir(), "manifest.json")
-		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if code, out, stderr := runTable("batch", "--redis", addr, file); code != 0 || !strings.Contains(out, "outcome=changed") {
-			t.Errorf("%s runnable example: exit %d\n%s\n%s", doc.name, code, out, stderr)
-		}
-	}
+	t.Run("SPEC", func(t *testing.T) {
+		t.Parallel()
+		runDocScenario(t, "SPEC", docBlocks(t, spec, "#### Worked example"))
+	})
+	t.Run("CLI", func(t *testing.T) {
+		t.Parallel()
+		blocks := append(docBlocks(t, cli, "### Batch mutation"), docBlocks(t, cli, "### Reading members")...)
+		runDocScenario(t, "CLI", blocks)
+	})
 }
 
 // -h prints the banner the specification prints, and the stdin form works.
@@ -148,10 +223,10 @@ func TestBatchPrintsCountsScoresAndFields(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	for _, w := range []string{
-		"selected=3 guards=1 changed=2 trips=1",
-		`MEMBER m1 place=build:ready->build:working score=1->7 rev=1->2 fields={"extra":[null,"x y"],"role":["builder","lead"]}`,
-		`MEMBER m2 place=-->build:done score=-->2.5 rev=0->1 fields={}`,
-		`MEMBER m3 place=-->- score=-->- rev=0->0 fields={}`,
+		"selected=3 guards=1 changed=2 replay=no trips=1",
+		`MEMBER m1 place=build:ready->build:working score=1->7 member_revision=1->2 fields={"extra":[null,"x y"],"role":["builder","lead"]}`,
+		`MEMBER m2 place=-->build:done score=-->2.5 member_revision=0->1 fields={}`,
+		`MEMBER m3 place=-->- score=-->- member_revision=0->0 fields={}`,
 	} {
 		if !strings.Contains(stdout, w+"\n") && !strings.Contains(stdout, w+" ") {
 			t.Errorf("stdout lacks %q:\n%s", w, stdout)
