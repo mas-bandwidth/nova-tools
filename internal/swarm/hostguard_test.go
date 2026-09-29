@@ -15,12 +15,7 @@ import (
 
 func armHostGuard(t *testing.T) {
 	t.Helper()
-	// Reload after t.Setenv restores the incoming value. Cleanups are LIFO:
-	// register this first so it runs last. Do not Unsetenv: this helper did
-	// not own the incoming NOVA_TEST_NO_HOST=1 that make test sets.
-	t.Cleanup(testguard.Reload)
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
+	t.Cleanup(testguard.Arm())
 }
 
 // TestHostGuardCleanupRestoresCachedState is the isolation defect on #2152:
@@ -63,22 +58,26 @@ func mustPanicHost(t *testing.T, wantProg string, fn func()) {
 }
 
 func TestSSHRunPanicsUnderTheGuard(t *testing.T) {
+	t.Parallel()
 	armHostGuard(t)
 	mustPanicHost(t, "ssh", func() { _ = sshRun("bench.invalid", "uptime") })
 }
 
 func TestSSHOutputPanicsUnderTheGuard(t *testing.T) {
+	t.Parallel()
 	armHostGuard(t)
 	mustPanicHost(t, "ssh", func() { _, _ = sshOutput("bench.invalid", "uptime") })
 }
 
 func TestSCPFilePanicsUnderTheGuard(t *testing.T) {
+	t.Parallel()
 	armHostGuard(t)
 	local := filepath.Join(t.TempDir(), "out")
 	mustPanicHost(t, "scp", func() { _ = scpFile("bench.invalid", "/remote", local) })
 }
 
 func TestCopyCardToBenchPanicsUnderTheGuard(t *testing.T) {
+	t.Parallel()
 	armHostGuard(t)
 	local := filepath.Join(t.TempDir(), "card.md")
 	if err := os.WriteFile(local, []byte("card\n"), 0o644); err != nil {

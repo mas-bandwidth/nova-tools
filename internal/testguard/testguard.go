@@ -52,6 +52,7 @@ const EnvNoHost = "NOVA_TEST_NO_HOST"
 // can run in parallel without mutating the process environment.
 type Guard struct {
 	refusing  atomic.Bool
+	forced    atomic.Int64
 	allowed   atomic.Int64
 	lookPath  func(string) (string, error)
 	tempRoots func() []string
@@ -73,6 +74,10 @@ func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 // what it is testing without reading the environment itself.
 func Refusing() bool { return defaultGuard.Refusing() }
 
+// Arm forces the guard to refuse host access until the returned function is called.
+// It allows tests asserting guard behavior to run in parallel without mutating process environment.
+func Arm() func() { return defaultGuard.Arm() }
+
 // AllowHosts opens a scope in which a seam may run a child, and returns the
 // function that closes it.
 func AllowHosts() func() { return defaultGuard.AllowHosts() }
@@ -92,7 +97,14 @@ func NewGuard(armed bool) *Guard {
 }
 
 // Refusing reports whether the guard is armed.
-func (g *Guard) Refusing() bool { return g.refusing.Load() }
+func (g *Guard) Refusing() bool { return g.refusing.Load() || g.forced.Load() > 0 }
+
+// Arm forces the guard to refuse host access until the returned function is called.
+func (g *Guard) Arm() func() {
+	g.forced.Add(1)
+	var once sync.Once
+	return func() { once.Do(func() { g.forced.Add(-1) }) }
+}
 
 // AllowHosts opens a scope in which a seam may run a child, and returns the
 // function that closes it.
@@ -106,7 +118,7 @@ func (g *Guard) AllowHosts() func() {
 // command line it is about to run. Under the guard, and outside an AllowHosts
 // scope, it panics naming that command line; otherwise it returns immediately.
 func (g *Guard) RefuseHosts(program string, args ...string) {
-	if !g.refusing.Load() || g.allowed.Load() > 0 {
+	if (!g.refusing.Load() && g.forced.Load() <= 0) || g.allowed.Load() > 0 {
 		return
 	}
 	if g.isFakeProgram(program) {
