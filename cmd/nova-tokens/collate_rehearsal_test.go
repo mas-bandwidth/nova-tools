@@ -27,10 +27,10 @@ func generateCorpus(t *testing.T, dir string, nLines int, days []string, injectM
 		"claude-3-5-haiku-20241022",
 	}
 	repoPaths := []string{
-		"/Users/glenn/repo/schema/pkg/types.go",
-		"/Users/glenn/repo/serialize/src/lib.rs",
-		"/Users/glenn/repo/nova-tools/cmd/main.go",
-		"/Users/glenn/repo/unmatched/doc.md",
+		"/workspace/repo/schema/pkg/types.go",
+		"/workspace/repo/serialize/src/lib.rs",
+		"/workspace/repo/nova-tools/cmd/main.go",
+		"/workspace/repo/unmatched/doc.md",
 	}
 
 	trDir := mkdir(t, filepath.Join(dir, "transcripts"))
@@ -235,9 +235,9 @@ func BenchmarkCollate10kLines(b *testing.B) {
 
 	models := []string{"claude-3-5-sonnet", "claude-3-opus", "claude-3-5-haiku"}
 	repoPaths := []string{
-		"/Users/glenn/repo/schema/pkg/types.go",
-		"/Users/glenn/repo/serialize/src/lib.rs",
-		"/Users/glenn/repo/nova-tools/cmd/main.go",
+		"/workspace/repo/schema/pkg/types.go",
+		"/workspace/repo/serialize/src/lib.rs",
+		"/workspace/repo/nova-tools/cmd/main.go",
 	}
 	rng := rand.New(rand.NewSource(42))
 	for i := 0; i < 10000; i++ {
