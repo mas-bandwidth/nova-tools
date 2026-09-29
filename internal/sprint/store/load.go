@@ -2,36 +2,45 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// loadAttempts bounds how often a read is taken again because a table moved
-// while it was read.
-const loadAttempts = 8
-
 // errMoved is a read that saw a table change between its exchanges.
-var errMoved = fmt.Errorf("a table changed while it was read")
+var errMoved = errors.New("a table changed while it was read")
+
+// movedError is errMoved in a load, naming the table.
+type movedError struct{ table string }
+
+func (e *movedError) Unwrap() error { return errMoved }
+
+func (e *movedError) Error() string { return "table " + e.table + " changed while it was read" }
 
 // Load is the set read of a step: the tables' shapes (one exchange), their
 // cells' member ids (one exchange), every member's place, score, revision and
 // fields (one read set per ntable.LimitReadSetMembers members), and the open
 // judgments. A table's read sets must all see the revision its shape saw, or
-// the read is taken again: the snapshot is one consistent state of each table.
+// the read is taken again, after a jittered wait, up to LoadTries reads and
+// RetryBudget asleep: the snapshot is one consistent state of each table.
 // extras names records to read as well (unplaced ones included), by table.
 func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	var last error
-	for i := 0; i < loadAttempts; i++ {
+	var last *movedError
+	r := st.retry()
+	for r.next(LoadTries) {
 		s, err := st.loadOnce(ctx, tables, extras)
-		if err == errMoved {
-			last = err
+		var moved *movedError
+		if errors.As(err, &moved) {
+			last = moved
 			continue
 		}
 		return s, err
 	}
-	return nil, fmt.Errorf("%w %d times running; the tables are busy, run the verb again", last, loadAttempts)
+	return nil, fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
+		last.table, r.tries, r.slept.Round(time.Millisecond))
 }
 
 func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
@@ -99,15 +108,12 @@ func (st *Store) readInto(ctx context.Context, t *sprint.Table, ids []string, pl
 		if err != nil {
 			return err
 		}
-		if res.Revision != t.Revision {
-			return errMoved
-		}
-		if placed && len(res.Missing) > 0 {
-			return errMoved
+		if res.Revision != t.Revision || (placed && len(res.Missing) > 0) {
+			return &movedError{table: st.Names.Table(t.Name)}
 		}
 		for _, m := range res.Members {
 			if placed && !m.Placed {
-				return errMoved
+				return &movedError{table: st.Names.Table(t.Name)}
 			}
 			c := &sprint.Card{ID: m.ID, Score: m.Score, Rev: m.Revision, Fields: m.Fields}
 			if m.Placed {

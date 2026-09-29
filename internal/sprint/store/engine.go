@@ -55,8 +55,9 @@ type Store struct {
 	Actor    string
 	Now      func() time.Time
 	NewID    func() string       // a fresh operation id family
-	Sleep    func(time.Duration) // backoff between attempts on a busy fence; nil does not wait
-	Attempts int                 // plans per step before giving up on a busy fence; default 12
+	Sleep    func(time.Duration) // the wait between tries on busy tables or fence; nil is time.Sleep
+	Rand     func(n int64) int64 // the jitter of that wait, a number in [0, n); nil is math/rand/v2
+	Attempts int                 // plans per step before giving up on a busy fence; default FenceTries
 	Resends  int                 // sends of one manifest after a lost reply; default 3
 	// Grace is how long an operation is taken as in flight (its writer alive)
 	// before a writer that finds its first manifest unapplied abandons it.
@@ -117,7 +118,7 @@ func (st *Store) attempts() int {
 	if st.Attempts > 0 {
 		return st.Attempts
 	}
-	return 12
+	return FenceTries
 }
 
 func (st *Store) resends() int {
@@ -134,18 +135,12 @@ func (st *Store) grace() time.Duration {
 	return time.Minute
 }
 
-func (st *Store) backoff(attempt int) {
-	if st.Sleep != nil && attempt > 1 {
-		st.Sleep(time.Duration(attempt*attempt) * 5 * time.Millisecond)
-	}
-}
-
 // Fenced reads the tables with the fence read before and after, finishing a
 // pending operation first: the snapshot is no partial state of any operation,
 // and gen is the fence's generation it was read at.
 func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, error) {
-	for i := 1; i <= st.attempts(); i++ {
-		st.backoff(i)
+	r := st.retry()
+	for r.next(st.attempts()) {
 		f, err := st.B.ReadFence(ctx)
 		if err != nil {
 			return nil, 0, err
@@ -179,7 +174,7 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 		}
 		return snap, f.Gen, nil
 	}
-	return nil, 0, fmt.Errorf("the sprint is busy: other operations kept the fence moving through %d reads; run the verb again", st.attempts())
+	return nil, 0, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept.Round(time.Millisecond))
 }
 
 // Run plans and applies a step as one operation.
@@ -201,6 +196,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.NewID()
 	}
 	rowsAdded := false
+	plans := st.retry()
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		snap, gen, err := st.Fenced(ctx, step.Load, step.Extras, &res.Repaired)
@@ -248,7 +244,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, fmt.Errorf("%w: acquiring the fence for %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
 		if !ok {
-			st.backoff(res.Attempts)
+			if !plans.wait() {
+				break
+			}
 			continue
 		}
 		applied, err := st.apply(ctx, op)

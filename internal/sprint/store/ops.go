@@ -54,6 +54,7 @@ type CheckReport struct {
 // when it is older.
 func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Snapshot, error) {
 	var rep CheckReport
+	quiet := st.retry()
 	for i := 0; i < max(reads, 1); i++ {
 		rep.Reads++
 		f, err := st.B.ReadFence(ctx)
@@ -75,7 +76,7 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		last := i == max(reads, 1)-1
 		switch {
 		case pending == nil && f.Gen != f2.Gen, pending != nil && !last:
-			st.backoff(i + 2) // another writer is at it: look again for a quiet moment
+			quiet.wait() // another writer is at it: look again for a quiet moment
 			continue
 		}
 		var ops []string

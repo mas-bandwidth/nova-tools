@@ -30,7 +30,8 @@ func newHarness(t *testing.T) *harness {
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
-		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) }}
+		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
+		Sleep: func(time.Duration) {}}
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +277,7 @@ func TestAnotherWriterBetweenReadAndWriteMeansAFreshPlan(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(3)
-	other := &Store{B: h.m, Names: h.st.Names, Actor: "other", Now: h.st.Now, NewID: func() string { return "o" }}
+	other := &Store{B: h.m, Names: h.st.Names, Actor: "other", Now: h.st.Now, NewID: func() string { return "o" }, Sleep: h.st.Sleep}
 	r := &racer{Backend: h.m, at: "acquire", do: func() {
 		if _, err := other.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})); err != nil {
 			t.Error(err)
