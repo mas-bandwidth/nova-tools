@@ -418,14 +418,16 @@ over either: `value bytes per batch` (16 MiB) or `receipt bytes`. What the store
 in the fields a batch does not name costs the batch nothing. Measured on the bench, on
 four cores, a table of two rows, three runs each: unsetting 16 MiB of before-values
 (the most a batch may touch) held the store 0.045 s; a manifest of 873,735 bytes of
-guards, every one satisfied (the largest accepted batch measured), 0.46 s; a receipt
+guards, every one satisfied (the largest accepted batch measured), 0.47 s; a receipt
 near its bound (128 members, 48 fields each), 0.05 to 0.07 s; refused for its receipt
 (a manifest of 886,533 bytes), 0.40 s, which is the time to decode and check the
 manifest; refused for its value bytes over a store holding 256 MiB in the named
 fields, 0.013 s. Decoding and checking a manifest of about 1 MiB is most of the time of
 the larger figures. A create or move of an unplaced member also checks the table's
-cells for a stray placement, so the time of such a batch grows with the table's size;
-these figures do not include a large table.
+cells for a stray placement, so the time of such a batch grows with the table's size,
+which the value bounds do not limit: 128 creates held the store 0.36 s on a table of
+1,000 rows and 4.1 s on a table of 10,000 rows. The figures above are for a table of
+two rows.
 
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
 a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;
