@@ -700,12 +700,8 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	}
 
 	homes := in.CallerHomes
-	if len(homes) == 0 {
-		if homesFn != nil {
-			homes = homesFn()
-		} else {
-			homes = callerHomes()
-		}
+	if len(homes) == 0 && homesFn != nil {
+		homes = homesFn()
 	}
 
 	// rule 5: the command is resolved on the CALLER's PATH, here, outside the wall.

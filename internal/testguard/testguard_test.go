@@ -1,7 +1,7 @@
 package testguard
 
 import (
-	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -10,31 +10,18 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
-// arm turns the guard on for one test and puts the cached value back
-// afterwards. The cleanup registered here runs BEFORE t.Setenv's own, so the
-// cache is never left holding a value the environment no longer has.
-func arm(t *testing.T) {
-	t.Helper()
-	t.Setenv(EnvNoHost, "1")
-	Reload()
-	t.Cleanup(func() {
-		os.Unsetenv(EnvNoHost)
-		Reload()
-	})
-}
-
 func TestUnsetGuardLetsTheSeamRun(t *testing.T) {
-	t.Setenv(EnvNoHost, "")
-	Reload()
-	t.Cleanup(Reload)
-	if Refusing() {
+	t.Parallel()
+	g := NewGuard(false)
+	if g.Refusing() {
 		t.Fatal("the guard must be off when the variable is unset; production pays nothing for it")
 	}
-	RefuseHosts("ssh", "hulk", "uptime") // must not panic
+	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 }
 
 func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
-	arm(t)
+	t.Parallel()
+	g := NewGuard(true)
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -47,7 +34,7 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 			}
 		}
 	}()
-	RefuseHosts("ssh", "hulk", "bash -s")
+	g.RefuseHosts("ssh", "hulk", "bash -s")
 }
 
 // TestAFakeOnPATHIsNotAHost is the half that keeps the honest test cheap: the
@@ -56,7 +43,8 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 // around. A program that resolves inside a temp directory is a fake; the fleet
 // is never there.
 func TestAFakeOnPATHIsNotAHost(t *testing.T) {
-	arm(t)
+	t.Parallel()
+	g := NewGuard(true)
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "ssh")
 	if runtime.GOOS == "windows" {
@@ -65,24 +53,50 @@ func TestAFakeOnPATHIsNotAHost(t *testing.T) {
 	if err := testbin.WriteExecutable(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	RefuseHosts("ssh", "hulk", "uptime") // must not panic
-	RefuseHosts(fake, "hulk", "uptime")  // named by absolute path, the same answer
+	g.lookPath = func(program string) (string, error) {
+		if program == "ssh" {
+			return fake, nil
+		}
+		return exec.LookPath(program)
+	}
+	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
+	g.RefuseHosts(fake, "hulk", "uptime")  // named by absolute path, the same answer
 }
 
 func TestAllowHostsIsScopedAndNests(t *testing.T) {
-	arm(t)
-	outer := AllowHosts()
-	inner := AllowHosts()
+	t.Parallel()
+	g := NewGuard(true)
+	outer := g.AllowHosts()
+	inner := g.AllowHosts()
 	inner()
-	RefuseHosts("ssh", "hulk") // the outer scope still stands
-	inner()                    // closing twice is not a second decrement
-	RefuseHosts("ssh", "hulk")
+	g.RefuseHosts("ssh", "hulk") // the outer scope still stands
+	inner()                      // closing twice is not a second decrement
+	g.RefuseHosts("ssh", "hulk")
 	outer()
 	defer func() {
 		if recover() == nil {
 			t.Fatal("the guard must be armed again once every scope has closed")
 		}
 	}()
-	RefuseHosts("ssh", "hulk")
+	g.RefuseHosts("ssh", "hulk")
+}
+
+func TestArmIsScopedAndIdempotent(t *testing.T) {
+	t.Parallel()
+	g := NewGuard(false)
+	if g.Refusing() {
+		t.Fatal("initially unarmed guard must not be refusing")
+	}
+	disarm := g.Arm()
+	if !g.Refusing() {
+		t.Fatal("armed guard must be refusing")
+	}
+	disarm()
+	if g.Refusing() {
+		t.Fatal("disarmed guard must not be refusing")
+	}
+	disarm() // closing twice is safe and idempotent
+	if g.Refusing() {
+		t.Fatal("calling disarm twice must be a no-op")
+	}
 }

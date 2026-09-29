@@ -492,12 +492,12 @@ func TestBuildDefaultWiringPassesCallerHomes(t *testing.T) {
 	// Build must refuse it.
 	realHomes := callerHomes()
 	if len(realHomes) == 0 {
-		return
+		t.Skip("no caller homes discovered")
 	}
 	realHome := realHomes[0]
 	f, err := os.CreateTemp(realHome, ".sandbox-probe-*")
 	if err != nil {
-		return
+		t.Skipf("cannot create temp file in caller home %s: %v", realHome, err)
 	}
 	realScript := f.Name()
 	f.WriteString(body)
