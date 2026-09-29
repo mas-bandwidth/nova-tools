@@ -1,6 +1,9 @@
 package sprint
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // H2: the read that completes two different readers' ok writes one judgment,
 // ready to accept; rework and drop close it as accept does.
@@ -87,4 +90,26 @@ func TestAMergeFactNamesACardOfTheBatch(t *testing.T) {
 		t.Fatalf("a conflict inside the batch")
 	}
 	w.clean("stuck")
+}
+
+// H5: a report on a read card still asked is accepted: the begin and the
+// report in one step, begun stamped with it.
+func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	c := w.s.Fleet.Card("s1-1.w1")
+	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+	w.must(Ask(w.s, AskReq{}))
+	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	w.tick(time.Minute)
+	for i, verdict := range []string{"ok", "broken"} {
+		rc := reads[i]
+		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Sel: Sel{IDs: []string{rc.ID}}}))
+		if rc.Col != verdict || rc.F("begun") != stamp(w.s.Now) || rc.F("read") != rc.F("begun") {
+			t.Fatalf("%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
+		}
+	}
+	w.clean("read")
 }

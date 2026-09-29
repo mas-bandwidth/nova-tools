@@ -142,7 +142,8 @@ type ReadReq struct {
 }
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
-// with the finding. A broken read is a judgment; the second different reader's
+// with the finding (a report on a card still asked is the begin and the report
+// in one step, begun stamped with it). A broken read is a judgment; the second different reader's
 // ok at the primary's head is the judgment ready to accept, which accept,
 // rework and drop close.
 func Read(s *Snapshot, r ReadReq) Plan {
@@ -184,6 +185,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			col = Broken
 		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
+		if c.Col == Asked { // a report on a card never begun is the begin and the report in one step
+			set["begun"] = stamp(s.Now)
+		}
 		if r.Finding != "" {
 			set["finding"] = r.Finding
 		}
