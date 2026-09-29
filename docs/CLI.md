@@ -857,6 +857,33 @@ toolchain roots on the wall's argv, read-only and skipped when one is not there:
 `--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
 and records the outcome.
 
+### The doctor
+
+The doctor compares the `version` line of the `nova-swarm` first on PATH with the one at
+`~/.local/bin/nova-swarm`, and `batch` and `native` run the same check before they start
+anything (`-h` never does). Each binary is asked for `version` under a 5-second deadline,
+both at the same time; the first line it prints, at most 4096 bytes, is its stamp, and a
+stamp is printed as a bounded, escaped excerpt.
+
+| line | meaning | exit | next action |
+|---|---|---|---|
+| `DOCTOR OK stamp=<stamp>` | the two agree, or there is one binary to read | 0 | none |
+| `DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory` | no binary was read | 0 | none |
+| `DOCTOR DRIFT path=<binary> stamp=<stamp>` and `DOCTOR DRIFT local=<binary> stamp=<stamp>` | the two stamps differ; both are printed | 2 | see the next line |
+| `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
+| `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
+
+The cause is `timed out after <deadline>`, `exited <n>`, `printed nothing`, `printed a line
+longer than <n> bytes` or `not found`, and the other binary is described in one sentence:
+it reported a stamp, it could not be read either, it is not installed, or there is no other
+binary. A stamp printed before a failure is still compared, so a stale binary that then
+hangs is refused as shadowing and as unreadable.
+
+When the check itself is the problem, the refusal's own next action is the way out: run the
+named binary's `version` by hand to see what it does, then rebuild it or remove it.
+Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
+shadow with, and the check passes on the PATH binary alone. No flag skips the check.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS

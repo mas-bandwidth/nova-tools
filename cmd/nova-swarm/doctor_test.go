@@ -760,3 +760,62 @@ func TestDoctorSaysWhenThereIsNothingToCompare(t *testing.T) {
 		t.Errorf("the launch is refused with nothing to compare: (%d, %v)", code, stop)
 	}
 }
+
+// The spec and the CLI reference list exactly the lines the doctor prints: every line the
+// code prints below starts with one of these, and both documents carry each one.
+func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
+	t.Parallel()
+	prefixes := []string{
+		"DOCTOR OK stamp=",
+		"DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory",
+		"DOCTOR DRIFT path=",
+		"DOCTOR DRIFT local=",
+		"DOCTOR REFUSED ",
+		"DOCTOR UNREADABLE reading the version of ",
+	}
+	printed := map[string]bool{}
+	note := func(text string) {
+		for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			known := false
+			for _, p := range prefixes {
+				if strings.HasPrefix(line, p) {
+					printed[p], known = true, true
+				}
+			}
+			if !known {
+				t.Errorf("the doctor printed a line the docs do not list: %q", line)
+			}
+		}
+	}
+	run := func(env doctorEnv, args ...string) {
+		var out, errOut bytes.Buffer
+		env.cmdDoctor(args, &out, &errOut)
+		note(out.String())
+		note(errOut.String())
+	}
+	both := doctorFake(map[string]string{"/p": doctorRebuiltLine, "/l": doctorRebuiltLine}, noPath, "/home/me")
+	run(both, "--path", "/p", "--local", "/l")
+	run(doctorFake(nil, noPath, "/home/me"))
+	run(doctorFake(map[string]string{"/p": doctorStaleLine, "/l": doctorRebuiltLine}, noPath, "/home/me"), "--path", "/p", "--local", "/l")
+	run(doctorFake(map[string]string{"/l": doctorRebuiltLine}, noPath, "/home/me"), "--path", "/p", "--local", "/l")
+	for _, p := range prefixes {
+		if !printed[p] {
+			t.Errorf("no run printed a line starting %q", p)
+		}
+	}
+
+	for _, doc := range []string{"SPEC-SWARM.md", "CLI.md"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "docs", doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range prefixes {
+			if !strings.Contains(string(raw), p) {
+				t.Errorf("docs/%s does not list %q", doc, p)
+			}
+		}
+	}
+}
