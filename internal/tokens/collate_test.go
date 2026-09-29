@@ -104,10 +104,10 @@ func TestCollateDay_NewDayFile(t *testing.T) {
 	day := "2026-09-28"
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	rows := []*Row{
-		makeRow(day, "claude-sonnet", "nova-tools", 100, 200, "claude:glenn"),
+		makeRow(day, "claude-sonnet", "nova-tools", 100, 200, "claude:runner"),
 	}
 
-	res, err := CollateDay(dir, day, rows, "5", []string{"claude:glenn"}, false, "v1.0.0", now)
+	res, err := CollateDay(dir, day, rows, "5", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil {
 		t.Fatalf("CollateDay failed: %v", err)
 	}
@@ -117,8 +117,8 @@ func TestCollateDay_NewDayFile(t *testing.T) {
 	if res.Rows != 1 {
 		t.Errorf("expected 1 row, got %d", res.Rows)
 	}
-	if len(res.Sources) != 1 || res.Sources[0] != "claude:glenn" {
-		t.Errorf("expected sources [claude:glenn], got %v", res.Sources)
+	if len(res.Sources) != 1 || res.Sources[0] != "claude:runner" {
+		t.Errorf("expected sources [claude:runner], got %v", res.Sources)
 	}
 
 	// Verify file on disk
@@ -145,11 +145,11 @@ func TestCollateDay_Idempotent(t *testing.T) {
 	day := "2026-09-28"
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	rows := []*Row{
-		makeRow(day, "claude-sonnet", "nova-tools", 100, 200, "claude:glenn"),
+		makeRow(day, "claude-sonnet", "nova-tools", 100, 200, "claude:runner"),
 	}
 
 	// First collation
-	res1, err := CollateDay(dir, day, rows, "5", []string{"claude:glenn"}, false, "v1.0.0", now)
+	res1, err := CollateDay(dir, day, rows, "5", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil || !res1.Written {
 		t.Fatalf("first CollateDay failed: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestCollateDay_Idempotent(t *testing.T) {
 	}
 
 	// Second collation with identical rows
-	res2, err := CollateDay(dir, day, rows, "5", []string{"claude:glenn"}, false, "v1.0.0", now)
+	res2, err := CollateDay(dir, day, rows, "5", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil || !res2.Written {
 		t.Fatalf("second CollateDay failed: %v", err)
 	}
@@ -183,21 +183,21 @@ func TestCollateDay_ShrinkRefusal(t *testing.T) {
 	day := "2026-09-28"
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	rows1 := []*Row{
-		makeRow(day, "claude-sonnet", "nova-tools", 1000, 200, "claude:glenn"),
+		makeRow(day, "claude-sonnet", "nova-tools", 1000, 200, "claude:runner"),
 	}
 
-	res1, err := CollateDay(dir, day, rows1, "5", []string{"claude:glenn"}, false, "v1.0.0", now)
+	res1, err := CollateDay(dir, day, rows1, "5", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil || !res1.Written {
 		t.Fatalf("initial CollateDay failed: %v", err)
 	}
 
 	// Smaller rows (shrunk input: 1000 -> 500)
 	rows2 := []*Row{
-		makeRow(day, "claude-sonnet", "nova-tools", 500, 200, "claude:glenn"),
+		makeRow(day, "claude-sonnet", "nova-tools", 500, 200, "claude:runner"),
 	}
 
 	// Without allowShrink: should refuse
-	res2, err := CollateDay(dir, day, rows2, "5", []string{"claude:glenn"}, false, "v1.0.0", now)
+	res2, err := CollateDay(dir, day, rows2, "5", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestCollateDay_ShrinkRefusal(t *testing.T) {
 	}
 
 	// With allowShrink: should succeed
-	res3, err := CollateDay(dir, day, rows2, "5", []string{"claude:glenn"}, true, "v1.0.0", now)
+	res3, err := CollateDay(dir, day, rows2, "5", []string{"claude:runner"}, true, "v1.0.0", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,26 +228,26 @@ func TestCollateDay_SourceMerging(t *testing.T) {
 	day := "2026-09-28"
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 
-	// Step 1: Initial file with two rows from bus:emma and claude:glenn
+	// Step 1: Initial file with two rows from bus:emma and claude:runner
 	rows1 := []*Row{
 		makeRow(day, "gpt-4", "schema", 300, 100, "bus:emma"),
-		makeRow(day, "claude-sonnet", "nova-tools", 1000, 200, "claude:glenn"),
+		makeRow(day, "claude-sonnet", "nova-tools", 1000, 200, "claude:runner"),
 	}
-	res1, err := CollateDay(dir, day, rows1, "10", []string{"bus:emma", "claude:glenn"}, false, "v1.0.0", now)
+	res1, err := CollateDay(dir, day, rows1, "10", []string{"bus:emma", "claude:runner"}, false, "v1.0.0", now)
 	if err != nil || !res1.Written {
 		t.Fatalf("initial CollateDay failed: %v", err)
 	}
 
-	// Step 2: Collation declaring only claude:glenn with updated tokens (1200)
+	// Step 2: Collation declaring only claude:runner with updated tokens (1200)
 	rows2 := []*Row{
-		makeRow(day, "claude-sonnet", "nova-tools", 1200, 200, "claude:glenn"),
+		makeRow(day, "claude-sonnet", "nova-tools", 1200, 200, "claude:runner"),
 	}
-	res2, err := CollateDay(dir, day, rows2, "12", []string{"claude:glenn"}, false, "v1.0.0", now)
+	res2, err := CollateDay(dir, day, rows2, "12", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil || !res2.Written {
 		t.Fatalf("merged CollateDay failed: %v", err)
 	}
 
-	// Verify that both rows are present: bus:emma was retained, claude:glenn was updated
+	// Verify that both rows are present: bus:emma was retained, claude:runner was updated
 	df, findings, err := ReadDayFile(Path(dir, day))
 	if err != nil || len(findings) > 0 {
 		t.Fatalf("ReadDayFile failed: %v, findings: %v", err, findings)
@@ -276,19 +276,19 @@ func TestCollateDay_PartialCollision(t *testing.T) {
 			Repo:  "nova-tools",
 			Unit:  "-",
 		},
-		sources: map[string]bool{"bus:emma": true, "claude:glenn": true},
+		sources: map[string]bool{"bus:emma": true, "claude:runner": true},
 		bases:   map[string]bool{"utc": true},
 	}
 	r.Counts.Set(Input, 1000)
 
-	res1, err := CollateDay(dir, day, []*Row{r}, "5", []string{"bus:emma", "claude:glenn"}, false, "v1.0.0", now)
+	res1, err := CollateDay(dir, day, []*Row{r}, "5", []string{"bus:emma", "claude:runner"}, false, "v1.0.0", now)
 	if err != nil || !res1.Written {
 		t.Fatalf("initial CollateDay failed: %v", err)
 	}
 
-	// New fold only declares claude:glenn: cannot decompose the blended row -> TOKENS PARTIAL
-	r2 := makeRow(day, "claude-sonnet", "nova-tools", 600, 100, "claude:glenn")
-	res2, err := CollateDay(dir, day, []*Row{r2}, "5", []string{"claude:glenn"}, false, "v1.0.0", now)
+	// New fold only declares claude:runner: cannot decompose the blended row -> TOKENS PARTIAL
+	r2 := makeRow(day, "claude-sonnet", "nova-tools", 600, 100, "claude:runner")
+	res2, err := CollateDay(dir, day, []*Row{r2}, "5", []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestCollateDay_EmptyDayDoesNotWrite(t *testing.T) {
 	day := "2026-09-28"
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 
-	res, err := CollateDay(dir, day, nil, Dash, []string{"claude:glenn"}, false, "v1.0.0", now)
+	res, err := CollateDay(dir, day, nil, Dash, []string{"claude:runner"}, false, "v1.0.0", now)
 	if err != nil {
 		t.Fatal(err)
 	}
