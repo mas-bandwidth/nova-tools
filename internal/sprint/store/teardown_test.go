@@ -83,3 +83,15 @@ func TestTeardownKeysAreExactNames(t *testing.T) {
 		}
 	}
 }
+
+// After clears, the definition snapshot of every epoch after the first is
+// named, the active one's too.
+func TestTeardownNamesEveryEpochsDefinition(t *testing.T) {
+	t.Parallel()
+	keys := TeardownKeys(sprint.Names{Prefix: "p-"}, nil, Epochs{Last: 2})
+	for _, want := range []string{"table:p-work:1:definition", "table:p-work:2:definition", "p-sprint:epoch", "p-sprint:inbox@2", "p-sprint:fence@1"} {
+		if !slices.Contains(keys, want) {
+			t.Fatalf("no %s in %v", want, keys)
+		}
+	}
+}

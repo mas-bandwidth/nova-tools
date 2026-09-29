@@ -58,9 +58,6 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	for _, e := range old {
 		for _, shape := range epochs.Old[e] {
 			keys = append(keys, ntable.RowsKeyAt(shape.Name, e))
-			if e > 0 {
-				keys = append(keys, ntable.EpochPrefix(shape.Name, e)+":definition")
-			}
 			for _, row := range shape.Rows {
 				keys = append(keys, ntable.RowKeyAt(shape.Name, row.Key, e))
 				for _, c := range shape.Columns {
@@ -69,6 +66,13 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 					}
 				}
 			}
+		}
+	}
+	for e := uint64(1); e <= epochs.Last; e++ {
+		// the definition snapshot the table layer keeps of every epoch after
+		// the first, the active one's too
+		for _, t := range All {
+			keys = append(keys, ntable.EpochPrefix(names.Table(t), e)+":definition")
 		}
 	}
 	for e := uint64(0); e <= epochs.Last; e++ {
