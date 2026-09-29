@@ -15,11 +15,11 @@ func TestTheReadsShowTheNeeds(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 b --needs s1-1,s1-2")
-	out := ta.ok("card b")
+	out := ta.ok("card --fields b")
 	if !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDS s1-2 ready\n") {
 		t.Fatalf("card b: %s", out)
 	}
-	if out := ta.ok("card s1-1"); !strings.Contains(out, "NEEDED-BY b\n") {
+	if out := ta.ok("card --fields s1-1"); !strings.Contains(out, "NEEDED-BY b\n") {
 		t.Fatalf("card s1-1: %s", out)
 	}
 	if out := ta.ok("queue --stream s2 --col waiting"); !strings.Contains(out, "b work:s2:waiting waits for: s1-1,s1-2") {
@@ -41,7 +41,7 @@ func TestCardShowsTheWaivedNeeds(t *testing.T) {
 	ta.ok("drop s1-1 --reason obsolete")
 	g := ta.group(sprint.NBlocked, "s2")
 	ta.ok("ack " + g.Notes[0] + " --reason fine")
-	out := ta.ok("card b")
+	out := ta.ok("card --fields b")
 	if !strings.Contains(out, "NEEDS s1-1 off the table (dropped) waived by ") || !strings.Contains(out, " at 20") {
 		t.Fatalf("card b: %s", out)
 	}
@@ -70,10 +70,10 @@ func TestTheCardSaysWhatHoldsIt(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("add --stream s2 b --needs s1-1")
-	if out := ta.ok("card s1-1"); !strings.Contains(out, "HELD (e) the machine is STOPPED; the next tick: s1-1") {
+	if out := ta.ok("card --fields s1-1"); !strings.Contains(out, "HELD (e) the machine is STOPPED; the next tick: s1-1") {
 		t.Fatalf("card s1-1: %s", out)
 	}
-	if out := ta.ok("card b"); !strings.Contains(out, "HELD (d) needs s1-1 (e)") {
+	if out := ta.ok("card --fields b"); !strings.Contains(out, "HELD (d) needs s1-1 (e)") {
 		t.Fatalf("card b: %s", out)
 	}
 	if out := ta.ok("card b --json"); !strings.Contains(out, `"held":{"id":"b","by":"d"`) {

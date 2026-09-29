@@ -207,7 +207,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	if !strings.Contains(out, "HAPPENED") || !strings.Contains(out, "stream landed") {
 		t.Fatalf("inbox: %s", out)
 	}
-	out = ta.ok("card s1-1")
+	out = ta.ok("card --fields s1-1")
 	if !strings.Contains(out, "PRIMARY s1-1 place=s1:landed") || !strings.Contains(out, "WORK s1-1.w1") || !strings.Contains(out, "MERGE s1-1") {
 		t.Fatalf("card: %s", out)
 	}
@@ -378,7 +378,7 @@ func TestClearByTheCommand(t *testing.T) {
 	if w.Epoch != 0 || w.All != 2 {
 		t.Fatalf("where at the old epoch: %+v", w)
 	}
-	if out := ta.ok("card s1-1 --at-epoch 0"); !strings.Contains(out, "place=s1:working") {
+	if out := ta.ok("card --fields s1-1 --at-epoch 0"); !strings.Contains(out, "place=s1:working") {
 		t.Fatalf("card at the old epoch: %s", out)
 	}
 	ta.ok("add --stream s1 --count 2")

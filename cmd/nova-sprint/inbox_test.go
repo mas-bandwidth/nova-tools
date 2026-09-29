@@ -149,7 +149,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 		t.Fatalf("rework with no --fix for one of three: %d\n%s%s", code, out, errs)
 	}
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
-		if out := ta.ok("card " + id); !strings.Contains(out, "place=s1:review ") {
+		if out := ta.ok("card --fields " + id); !strings.Contains(out, "place=s1:review ") {
 			t.Fatalf("%s moved by a refused rework:\n%s", id, out)
 		}
 	}
@@ -161,7 +161,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 		t.Fatalf("rework with the finding and the report: %s", out)
 	}
 	for id, want := range map[string]string{"s1-1": `fix=the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {
-		if out := ta.ok("card " + id); !strings.Contains(out, want) {
+		if out := ta.ok("card --fields " + id); !strings.Contains(out, want) {
 			t.Fatalf("%s: no %s in\n%s", id, want, out)
 		}
 	}
@@ -169,7 +169,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	if !strings.Contains(out, "moved=2") {
 		t.Fatalf("rework --fix: %s", out)
 	}
-	if out := ta.ok("card s1-4"); !strings.Contains(out, `fix=handle\x20the\x20empty\x20case`) {
+	if out := ta.ok("card --fields s1-4"); !strings.Contains(out, `fix=handle\x20the\x20empty\x20case`) {
 		t.Fatalf("--fix for all: %s", out)
 	}
 	ta.clean()

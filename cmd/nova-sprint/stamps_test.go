@@ -39,7 +39,7 @@ func TestQueueShowsTheStamps(t *testing.T) {
 	if out := ta.ok("queue --as reader-a"); !strings.Contains(out, "asked="+asked+" begun="+begun) {
 		t.Fatalf("queue: %s", out)
 	}
-	if out := ta.ok("card s1-1"); !strings.Contains(out, "dealt="+dealt) || !strings.Contains(out, "begun="+begun) {
+	if out := ta.ok("card --fields s1-1"); !strings.Contains(out, "dealt="+dealt) || !strings.Contains(out, "begun="+begun) {
 		t.Fatalf("card: %s", out)
 	}
 	ta.clean()

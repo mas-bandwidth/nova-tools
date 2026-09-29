@@ -27,7 +27,7 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 		t.Fatalf("add --sentinel: %s", out)
 	}
 	ta.ok("add --stream s2 b --needs stop --actor lead")
-	if out := ta.ok("card stop"); !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDED-BY b\n") {
+	if out := ta.ok("card --fields stop"); !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDED-BY b\n") {
 		t.Fatalf("card stop: %s", out)
 	}
 	ta.deal(1)

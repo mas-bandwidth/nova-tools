@@ -237,6 +237,9 @@ func setWords(set map[string]string) string {
 func renderNote(l Line) string {
 	n := l.Note
 	who := byWhom(n.Who)
+	if l.Verb == "updated" {
+		return "judgment updated: " + n.Type + ": " + n.What
+	}
 	switch n.Kind {
 	case Judgment:
 		s := "judgment: " + n.Type
@@ -260,4 +263,66 @@ func renderNote(l Line) string {
 		s += ": " + n.What
 	}
 	return s
+}
+
+// Timeline is a primary's lines as its story tells them: in the order
+// written, a step's lines with the primary's own first, then its work, read
+// and merge cards', then the notifications; a primary's line that only
+// mirrors its work card's in the same step (dealt, finished, taken back)
+// left to the work card's.
+func Timeline(lines []Line, id string) []Line {
+	rank := func(l Line) int {
+		switch {
+		case l.Note != nil:
+			return 4
+		case l.Table == Work:
+			return 0
+		case l.Table == Fleet:
+			return 1
+		case l.Table == Readers:
+			return 2
+		}
+		return 3
+	}
+	fleetIn := map[string]bool{} // ops with a line of the primary's work card
+	for _, l := range lines {
+		if l.Note == nil && l.Table == Fleet && l.Primary == id {
+			fleetIn[l.Op] = true
+		}
+	}
+	var out []Line
+	for _, l := range lines {
+		if l.Note == nil && l.Table == Work && l.Card == id && fleetIn[l.Op] && mirrorsWork(l) {
+			continue
+		}
+		out = append(out, l)
+	}
+	// within a step (a run of lines of one op), the primary's first
+	for i := 0; i < len(out); {
+		j := i + 1
+		for j < len(out) && out[j].Op != "" && out[j].Op == out[i].Op {
+			j++
+		}
+		run := out[i:j]
+		sort.SliceStable(run, func(x, y int) bool { return rank(run[x]) < rank(run[y]) })
+		i = j
+	}
+	return out
+}
+
+// mirrorsWork says a primary's line says only what its work card's line of
+// the same step says: dealt (ready -> working), finished (working ->
+// review), taken back (working -> ready).
+func mirrorsWork(l Line) bool {
+	_, from, _ := strings.Cut(l.From, ":")
+	_, to, _ := strings.Cut(l.To, ":")
+	switch {
+	case from == string(Ready) && to == string(Working):
+		return true
+	case from == string(Working) && to == string(Review):
+		return true
+	case from == string(Working) && to == string(Ready):
+		return true
+	}
+	return false
 }

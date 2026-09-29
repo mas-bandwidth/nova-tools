@@ -479,11 +479,16 @@ type cardView struct {
 	Needs    []sprint.NeedState `json:"needs,omitempty"`
 	NeededBy []string           `json:"needed_by,omitempty"`
 	Held     *sprint.Hold       `json:"held,omitempty"` // what holds it now (check rule 12)
+	// The story: its timeline from the log, and the words given (reports,
+	// findings, fixes, reasons) whole.
+	Timeline []storyLine `json:"timeline"`
+	Texts    []storyText `json:"texts"`
 }
 
 func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("card")
 	atEpoch := fs.Int64("at-epoch", -1, "the primary as it was at an earlier epoch (before a clear)")
+	fields := fs.Bool("fields", false, "every field of the primary and its cards, one record a line, instead of its story")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, "card", fmt.Sprint("wants one primary id ", err))
@@ -510,9 +515,30 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			held = &hd
 		}
 	}
+	lines, err := st.Log(ctx)
+	if err != nil {
+		return a.readFailed("card", err, stderr)
+	}
+	events, texts := a.story(v, lines)
 	if c.json {
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held})
+		if events == nil {
+			events = []storyLine{}
+		}
+		if texts == nil {
+			texts = []storyText{}
+		}
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+			Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
+		return 0
+	}
+	if !*fields {
+		a.printStory(stdout, v, events, texts, held)
+		epoch := uint64(0)
+		if pinned, err := st.Pinned(ctx); err == nil {
+			epoch = pinned.PinnedEpoch()
+		}
+		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open))
 		return 0
 	}
 	printCard(stdout, "PRIMARY", v.Primary)
