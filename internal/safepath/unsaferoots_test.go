@@ -219,6 +219,9 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 	// under test -- so the home comparison silently answered "different" about the home
 	// itself. This is the portable case: it is red on linux and on darwin alike, and it
 	// is the same bug Johnny found, met through the spelling instead of through the case.
+	//
+	// Under Policy, this test exercises the Policy.sameDir fallback against WorkingDir,
+	// where production stats against the process working directory.
 	t.Run("HOME spelled relative to the working directory", func(t *testing.T) {
 		t.Parallel()
 		parent := t.TempDir()
@@ -300,6 +303,8 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 // The same three questions of the single-root door, which has its own copy of the check.
 func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
 	t.Parallel()
+	// Under Policy, this test exercises the Policy.sameDir fallback against WorkingDir,
+	// where production stats against the process working directory.
 	t.Run("a relative HOME as the root", func(t *testing.T) {
 		t.Parallel()
 		parent := t.TempDir()

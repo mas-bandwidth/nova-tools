@@ -31,16 +31,6 @@ import (
 // failure" without reading the message.
 var ErrUnsafe = errors.New("refusing to remove an unsafe path")
 
-// RemoveUnder removes path, which must sit strictly below root. It is os.RemoveAll
-// with the one question that matters answered first: can this path escape the root a
-// person named? A path that does not exist is nothing to remove and returns nil.
-//
-// root and path may be relative; they are made absolute against the process's own
-// directory, the same directory the caller would have opened them from. Symlinks are
-// followed on BOTH sides before the containment test, so a link cannot smuggle a path
-// outside its root, and the path itself may not be a link: removing a link removes
-// only the link, but a link where a directory was expected is a derivation the tool
-// must not act on.
 // Policy configures the environmental boundaries for path removal.
 // The zero value uses os.UserHomeDir and standard path resolution.
 type Policy struct {
@@ -67,7 +57,16 @@ func RemoveUnder(root, path string) error {
 	return Policy{}.RemoveUnder(root, path)
 }
 
-// RemoveUnder removes path when it is strictly below root under the given policy.
+// RemoveUnder removes path, which must sit strictly below root. It is os.RemoveAll
+// with the one question that matters answered first: can this path escape the root a
+// person named? A path that does not exist is nothing to remove and returns nil.
+//
+// root and path may be relative; they are made absolute against the process's own
+// directory, the same directory the caller would have opened them from. Symlinks are
+// followed on BOTH sides before the containment test, so a link cannot smuggle a path
+// outside its root, and the path itself may not be a link: removing a link removes
+// only the link, but a link where a directory was expected is a derivation the tool
+// must not act on.
 func (p Policy) RemoveUnder(root, path string) error {
 	if strings.TrimSpace(root) == "" {
 		return fmt.Errorf("%w: the root is empty", ErrUnsafe)
