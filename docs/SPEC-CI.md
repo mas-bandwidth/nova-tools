@@ -1860,6 +1860,58 @@ assigned in the same function and one level of parameter; a path computed any
 other way is not seen. A package none of whose files spells a list file's name
 is not parsed, since the resolver could not reach a list from it.
 
+### `deadcode` — no new function unreachable from every main package
+
+**The rule.** `deadcode ./cmd/...` (golang.org/x/tools, a `go tool` dependency
+of go.mod, so the toolchain builds it from the module cache and nothing is
+installed) reports no unreachable function that is not on the platform allowlist, and
+every function the allowlist names is still reported.
+**The hurt.** Unreachable functions under `cmd/` are compiled, vetted, read and
+merged on every commit for nobody (#4312).
+**The test.** `TestDeadcode` and `TestDeadcodeAllowlistOnlyShrinksAgainstMergeBase`
+(`internal/ci/deadcode_class_test.go`).
+It runs `go tool deadcode ./cmd/...` at the repository root with a
+`goenv.Clean` environment, reads the default one-line-per-function output, and
+compares the set against the platform allowlist in both directions.
+**Its allowlist.** `internal/ci/testdata/deadcode_allowlist_<goos>.txt` (`_darwin.txt`
+and `_linux.txt`), one `pkg.Name <reason>` per line (the package's directory, a
+dot, the name the tool prints; a method carries its receiver), keyed by package
+and name and never by line. Shrink-only.
+**Its remedy lines.** `is unreachable from every main package; delete it, or
+list it in internal/ci/testdata/deadcode_allowlist_<goos>.txt with a reason`; for a
+stale row, `deadcode no longer reports it (it is reachable now, or gone);
+delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)`.
+**Its narrowings.** It reads the call graph from the main packages down, so a
+function only a test calls is unreachable to it (the row says so), and a
+function reached through reflection or a linkname is reported the way the tool
+reports it. If the toolchain has no `go tool deadcode` at all -- a toolchain
+older than the go line -- the test skips with the line that says so rather than
+reporting a clean tree.
+
+### `u1000` — no new unused identifier, tests included
+
+**The rule.** `staticcheck -checks U1000 <living-pkgs...>` (honnef.co/go/tools, a `go
+tool` dependency of go.mod) over living packages reports no unused func, field,
+type, var or const that is not on the platform allowlist, and every identifier the
+allowlist names is still reported.
+**The hurt.** Unused identifiers, most of them test helpers, that `deadcode`
+never loads because it starts from the main packages: a fixture nobody builds
+and a const nobody reads are the same debt one package over (#4312).
+**The test.** `TestU1000` and `TestU1000AllowlistOnlyShrinksAgainstMergeBase`
+(`internal/ci/deadcode_class_test.go`), the same reader as `deadcode` over
+staticcheck's `file:line:col: <kind> <name> is unused (U1000)` lines.
+**Its allowlist.** `internal/ci/testdata/u1000_allowlist_<goos>.txt` (`_darwin.txt`
+and `_linux.txt`), one `pkg.Name <reason>` per line, a method as `pkg.(*T).m`.
+Shrink-only.
+**Its remedy lines.** `is unused (staticcheck U1000); delete it, or list it in
+internal/ci/testdata/u1000_allowlist_<goos>.txt with a reason`; for a stale row,
+`staticcheck no longer reports it (it is used now, or gone); delete the stale
+row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)`.
+**Its narrowings.** U1000 is the one check run over living packages; the rest
+of staticcheck is not a rule here. An exported identifier is never unused to it,
+so an exported helper nothing calls is the `deadcode` rule's to find, and a
+field is keyed by its name alone.
+
 ### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
 
 **The rule.** No shell file in the tree (a `.sh`, `.bash` or `.zsh` file, or an
