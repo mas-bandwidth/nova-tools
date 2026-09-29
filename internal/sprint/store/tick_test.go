@@ -412,3 +412,38 @@ func TestTheTickStopsAtASentinelUntilItIsReleased(t *testing.T) {
 	}
 	h.clean("after the release")
 }
+
+// The landing step resolves what waited on it and marks a due sentinel
+// reached at once; the tick is the backstop and does neither again.
+func TestTheLandingStepAndTheTickDoNothingTwice(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"x"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"y"}, Needs: []string{"x"}}))
+	h.startMachine()
+	h.machine()
+	h.work("m1")
+	h.machine()
+	h.readAll()
+	h.landAll("s1")
+	if h.state("y") != sprint.Ready || len(h.openOf(sprint.NSentinelReached)) != 1 {
+		t.Fatalf("after the landing step: y %s, reached %d", h.state("y"), len(h.openOf(sprint.NSentinelReached)))
+	}
+	before := h.written(sprint.NSentinelReached)
+	res := h.machine()
+	for _, p := range res.Parts {
+		if p.Name == "resolve" && (len(p.Moved) > 0 || p.Notes > 0) {
+			t.Fatalf("the tick resolved again: %+v", p)
+		}
+	}
+	if h.written(sprint.NSentinelReached) != before || h.state("y") != sprint.Working {
+		t.Fatalf("after the tick: reached written %d (was %d), y %s", h.written(sprint.NSentinelReached), before, h.state("y"))
+	}
+	h.quiet("after the landing")
+	h.clean("after the landing")
+}

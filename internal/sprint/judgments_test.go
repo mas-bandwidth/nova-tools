@@ -205,3 +205,27 @@ func TestReturnOpensAJudgment(t *testing.T) {
 		t.Fatalf("decisions without standing reads: %v", d)
 	}
 }
+
+// H9: a primary in review that nothing moves gets a judgment from the step
+// that causes it: never asked, after its last judgment is acknowledged; ask
+// closes it; an ack of the stranded judgment itself does not write it again.
+func TestAStrandedPrimaryIsAJudgment(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	c := w.s.Fleet.Card("s1-1.w1")
+	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
+	ci := w.openOn("s1-1")[0].Note.ID
+	w.must(Ack(w.s, AckReq{Notes: []string{ci}, Reason: "flaky"}))
+	o := w.openOn("s1-1")
+	if len(o) != 1 || o[0].Note.Type != NStranded || strings.Join(o[0].Note.Decisions, ",") != "ask,rework,drop" || !strings.Contains(o[0].Note.What, "never asked") {
+		t.Fatalf("stranded: %+v", o)
+	}
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	if len(w.openOn("s1-1")) != 0 {
+		t.Fatalf("ask left it open")
+	}
+	w.clean("asked")
+}

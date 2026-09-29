@@ -130,3 +130,31 @@ func TestTriggerReturnedPrimaryIsAJudgment(t *testing.T) {
 	}
 	h.clean("accepted again")
 }
+
+// ack of "work came back failed" no longer strands the primary: the ack
+// writes "stranded in review" (rework, drop), open whatever the cursor.
+func TestTriggerAckOfFailedWorkIsStranded(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.takeAndFinish(true, "s1-1")
+	open, _ := h.m.OpenNotes(h.ctx)
+	if len(open) != 1 || open[0].Note.Type != sprint.NWorkFailed {
+		t.Fatalf("open: %v", open)
+	}
+	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"}))
+	h.readInbox()
+	if got := h.judgmentsOn("s1-1"); len(got) != 1 || got[0] != sprint.NStranded {
+		t.Fatalf("after the ack: %v", got)
+	}
+	open, _ = h.m.OpenNotes(h.ctx)
+	if d := open[0].Note.Decisions; len(d) != 2 || d[0] != "rework" || d[1] != "drop" {
+		t.Fatalf("decisions: %v", d)
+	}
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
+	if got := h.judgmentsOn("s1-1"); len(got) != 0 {
+		t.Fatalf("rework left %v", got)
+	}
+	h.clean("reworked")
+}

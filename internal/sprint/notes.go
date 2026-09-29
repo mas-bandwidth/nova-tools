@@ -56,6 +56,7 @@ const (
 	NBlocked         = "a primary is blocked on something dropped"
 	NCIRed           = "ci red"
 	NReadsExhausted  = "reads exhausted"
+	NStranded        = "stranded in review" // failed work acknowledged, or never asked, and nothing open
 	NRepairSkipped   = "repair skipped changes the store refused as recorded"
 	NOpStuck         = "an operation was stuck"
 	NOverdue         = "a judgment notification has waited past its deadline"
@@ -78,6 +79,7 @@ var Decisions = map[string][]string{
 	NBlocked:         {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look"},
 	NReadsExhausted:  {"ask another reader", "rework", "drop"},
+	NStranded:        {"ask", "rework", "drop"},
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
 	NOpStuck:         {"check", "ack"},
 	NOverdue:         {"act"},
