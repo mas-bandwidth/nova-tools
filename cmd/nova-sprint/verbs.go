@@ -106,7 +106,7 @@ ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
-line: landed/all percent -> ETA. Exit 1 means an item was refused, an operation
+line: landed/all percent -> ETA. Exit 1 can mean an item was refused, an operation
 is pending or cut, or the sprint was cleared during the step. With item
 refusals, other valid items may have moved. Read MOVED, REFUSED and any error
 before retrying.
@@ -140,7 +140,7 @@ NOVA_REDIS_BENCH_PASSWORD).
 ` + machineWords() + `
 ` + fleetWords() + `
 ` + goalWords() + `
-exit codes: 0 done, 1 refused, pending, cut or cleared, 2 usage or store error
+exit codes: 0 done, 1 failed or incomplete, 2 usage or store error
 
 `)
 	return b.String()
