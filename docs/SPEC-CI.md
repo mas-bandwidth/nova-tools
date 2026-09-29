@@ -384,6 +384,36 @@ writer; `cmd/nova-ci/cost_test.go` runs the verb end to end through `run()`,
 every refusal, the store seam, and executes the `### cost` transcript of
 docs/CLI.md line for line through `onboarding.CompareTranscript`.
 
+## The flake runner verb (flake)
+
+**The verb.** `nova-ci flake` runs a test in isolated processes repeatedly to isolate and detect flaky tests:
+
+```
+flake   --package <pkg> --test <pattern> [--runs <n>] [--timeout <duration>]
+        isolated test flake detection: run test up to --runs times in separate
+        processes and emit a STABLE or FLAKE receipt line; exit 0 stable,
+        1 flake detected, 2 bad arguments or cannot run
+```
+
+It executes `go test -count=1 -run <pattern> <pkg>` in a child process for each run, up to `--runs` iterations (default 10). Each run executes under a timeout context (default 60s, configurable via `--timeout`).
+
+**Its one-line receipt.**
+When every run passes, it prints one line on stdout and exits 0:
+
+```
+STABLE package=<pkg> test=<pattern> runs=<n> passed=<n> failed=0
+```
+
+When one or more runs fail, it prints one line on stdout and exits 1:
+
+```
+FLAKE package=<pkg> test=<pattern> runs=<n> failed=<f> passed=<p>
+```
+
+**Its refusals (exit 2).**
+Missing required flags (`--package`, `--test`), non-positive `--runs` or `--timeout`, or unexpected positional arguments refuse on stderr with the tool's standard refusal ending `run: nova-ci help`.
+If no tests match the pattern, or if the package cannot be built or set up, the command refuses on stderr and exits 2.
+
 ## The CI class test against a real network host on the CI path
 
 **The help line.** The class test is entered in the CI check roster and in help

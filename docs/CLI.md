@@ -1698,6 +1698,29 @@ red, `functional` 33 s green in its second attempt, `docs` skipped, `test-hosted
 60 s green; so `total=150` and `spin=75`, the red job's 42 s and the rerun's
 33 s. A job name is one token: the space in `test (linux)` prints as `\x20`.
 
+### flake
+
+`nova-ci flake --package <pkg> --test <pattern> [--runs <n>] [--timeout <duration>]` runs
+the named test in isolated processes up to `--runs` times (default 10) to detect test flakes.
+Each run executes `go test -count=1 -run <pattern> <pkg>` under a timeout context (default 60s,
+configurable via `--timeout`).
+
+When all runs pass, it emits a `STABLE` receipt line and exits 0:
+
+```
+STABLE package=<pkg> test=<pattern> runs=<n> passed=<n> failed=0
+```
+
+When one or more runs fail, it emits a `FLAKE` receipt line and exits 1:
+
+```
+FLAKE package=<pkg> test=<pattern> runs=<n> failed=<f> passed=<p>
+```
+
+Missing required flags (`--package`, `--test`), non-positive `--runs` or `--timeout`, or unexpected
+positional arguments refuse on stderr and exit 2. If no tests match the pattern, or if the package
+cannot be built or set up, the command refuses on stderr and exits 2.
+
 ## nova-config
 
 ```
