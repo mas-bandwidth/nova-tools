@@ -48,11 +48,20 @@ do
     local flat = redis.pcall('HGETALL', key)
     if type(flat) == 'table' and flat.err then
       if string.find(flat.err, 'WRONGTYPE') then error({wrongtype = true, key = key, found = T.kind(key), want = 'hash'}) end
-      error(flat)
+      T.rethrow(flat)
     end
     local h = {}
     for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
     return h, flat
+  end
+  -- T.rethrow(res): raise again an error a pcall caught, as it came: the store
+  -- writes "ERR " in front of a message that names no code, so the copy this
+  -- function raises gives it back without the prefix it already carries.
+  function T.rethrow(res)
+    if type(res) == 'table' and res.err then
+      error({err = (string.gsub(res.err, '^ERR ', '', 1))}, 0)
+    end
+    error(res, 0)
   end
   -- T.top(callback): the wrapper every registered function runs under.
   function T.top(callback)
@@ -80,7 +89,7 @@ do
           local family = {H = 'hash', Z = 'zset', S = 'set', X = 'stream', L = 'list'}
           error({wrongtype = true, key = key, found = T.kind(key), want = family[string.sub(command, 1, 1)] or 'value'})
         end
-        error(res)
+        T.rethrow(res)
       end
       return res
     end,
@@ -414,7 +423,7 @@ do
     local flat = redis.pcall('HGETALL', mkey)
     if type(flat) == 'table' and flat.err then
       if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash') end
-      return nil, nil, { 'ERR', flat.err }
+      T.rethrow(flat)
     end
     local h = {}
     for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
@@ -456,7 +465,7 @@ do
             local kind = (type(t) == 'table' and t.ok) and t.ok or t
             return T.refuse('WRONGTYPE', key, kind, 'zset')
           end
-          return {'ERR', res.err}
+          T.rethrow(res)
         end
         if res then
           return T.refuse('DRIFT', row, col.name, id)
@@ -477,7 +486,7 @@ do
               local kind = (type(t) == 'table' and t.ok) and t.ok or t
               return T.refuse('WRONGTYPE', key, kind, 'zset')
             end
-            return {'ERR', res.err}
+            T.rethrow(res)
           end
           if res then
             return T.refuse('DRIFT', row, col.name, id)
@@ -1143,7 +1152,7 @@ do
     local count = redis.pcall('ZCARD', src.key)
     if type(count) == 'table' and count.err then
       if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', src.key, T.kind(src.key), 'zset') end
-      return nil, { 'ERR', count.err }
+      T.rethrow(count)
     end
     local first, dst = 5, nil
     if op == 'add' then
@@ -1156,7 +1165,7 @@ do
       count = redis.pcall('ZCARD', dst.key)
       if type(count) == 'table' and count.err then
         if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', dst.key, T.kind(dst.key), 'zset') end
-        return nil, { 'ERR', count.err }
+        T.rethrow(count)
       end
     end
     local seen, here = {}, T.place(row, col)
@@ -2021,7 +2030,7 @@ do
         local score = redis.pcall('ZSCORE', cell.key, id)
         if type(score) == 'table' and score.err then
           if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, T.kind(cell.key), 'zset') end
-          return {'ERR', score.err}
+          T.rethrow(score)
         end
         if not score then return T.refuse('DRIFT', r, c, id) end
         local drift = T.check_placement(d, id, current_place)
