@@ -482,7 +482,15 @@ receipt.
 
 Operation records do not expire. A table's operation records, of every epoch, are
 one hash, `table:<t>:ops`, whose fields are `<epoch>:<operation id>` and whose values
-are the records (the request bytes, at most 1 MiB, and the receipt). One key keeps the
+are the records (the request bytes, at most 1 MiB, and the result, which holds the
+receipt). The record holds the result's delta escaped a second time inside the record's
+own encoding, and the change event holds the actor twice (its own field and inside the
+delta), so both exceed the receipt bound. Measured at the largest batches the bounds
+allow: the change event at most 2 MiB (2,096,969 bytes, an actor of 1,048,232 bytes),
+the record at most 5 MiB (5,242,119 bytes, an actor of 524,116 `/` characters, which
+JSON escapes; 4,175,647 bytes for 128 members each setting 26 fields of 64 `/`
+characters). Records do not expire, so a record holds that much for as long as the
+table exists. One key keeps the
 work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
 them alike: each removes the whole hash in the same atomic call as the drop, so a table
 created again under the name is a new table and no operation of the old one replays
