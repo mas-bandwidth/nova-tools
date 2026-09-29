@@ -25,9 +25,20 @@ var errCleared = errors.New("the sprint was cleared while the step read it")
 type ClearedError struct {
 	Held, Now uint64
 	At        time.Time
+	// Finished says the step finished at the epoch it held as the clear
+	// closed it: its moves stand there, and nothing of it is at the new one.
+	Finished bool
 }
 
 func (e *ClearedError) Error() string {
+	if e.Held > e.Now {
+		return fmt.Sprintf("this step holds epoch %d, which is unknown to this sprint: its epoch is %d; nothing was changed; read the sprint again (nova-sprint queue, where) and act on epoch %d",
+			e.Held, e.Now, e.Now)
+	}
+	if e.Finished {
+		return fmt.Sprintf("the sprint was cleared at %s as this step finished: its moves stand at epoch %d, which the clear closed, and the sprint's epoch is now %d; read the sprint again (nova-sprint queue, where) and act on epoch %d",
+			e.At.UTC().Format(time.RFC3339), e.Held, e.Now, e.Now)
+	}
 	return fmt.Sprintf("the sprint was cleared at %s: its epoch is now %d, and this step holds epoch %d; nothing was changed; read the sprint again (nova-sprint queue, where) and act on epoch %d",
 		e.At.UTC().Format(time.RFC3339), e.Now, e.Held, e.Now)
 }
@@ -122,6 +133,16 @@ func (st *Store) Pinned(ctx context.Context) (*Store, error) { return st.pin(ctx
 
 // PinnedEpoch is the epoch a pinned store is at.
 func (st *Store) PinnedEpoch() uint64 { return st.epoch }
+
+// left reads the sprint's epoch and says whether the sprint has left the
+// epoch the store is pinned to.
+func (st *Store) left(ctx context.Context) (EpochState, bool, error) {
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return es, false, err
+	}
+	return es, es.N != st.epoch, nil
+}
 
 // SetReview sets an open judgment's next review time (wait) at the sprint's
 // epoch. A judgment id of another epoch is refused, naming its epoch: an id

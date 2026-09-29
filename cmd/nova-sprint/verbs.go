@@ -409,11 +409,12 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	}
 	var pe *store.PendingError
 	var cut *store.CutError
+	var cleared *store.ClearedError
 	switch {
 	case err == nil:
 	case errors.Is(err, store.ErrUnknown):
 		code = 2
-	case errors.As(err, &pe), errors.As(err, &cut):
+	case errors.As(err, &pe), errors.As(err, &cut), errors.As(err, &cleared):
 		code = 1
 	default:
 		code = 2

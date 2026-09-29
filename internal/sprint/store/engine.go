@@ -419,9 +419,15 @@ func (st *Store) callerOp(ctx context.Context, step Step, res Result) (Result, b
 	return res, true, nil
 }
 
+// after brings the display cells up to date after a step. A step finished at
+// an epoch a clear closed as it ran (the clear finished its operation there)
+// is told the sprint was cleared, not what the sync of the display cells met.
 func (st *Store) after(ctx context.Context, step Step, res Result) (Result, error) {
 	if step.Mirrors {
 		if err := st.SyncMirrors(ctx); err != nil {
+			if es, left, lerr := st.left(ctx); lerr == nil && left {
+				return res, &ClearedError{Held: st.epoch, Now: es.N, At: es.Cleared, Finished: true}
+			}
 			return res, err
 		}
 	}
