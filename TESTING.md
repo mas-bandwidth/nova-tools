@@ -83,10 +83,16 @@ Name the packages. The run needs rootless `podman` (on macOS, a running
 FUNCTIONAL RUN run=<id> ended=finished exit=0 wall=20.3s build=0.0s modcache=0.5s total=21.2s containers_left=0
 ```
 
-The test output comes through unchanged on stdout and stderr, and the exit code
-is `make test-functional`'s (0 green, 2 a red test or build), except where the
-tool ended the run: 124 the deadline, 130 an interrupt, 125 the run could not
-start or a container of the run was still present at the end.
+The test output comes through unchanged on stdout and stderr. Through make,
+the exit code is 0 green and 2 for any failure: make reports every failing
+recipe as 2. The distinct codes exist when the tool is called directly
+(`bin/functionalrun run ...`, which the target builds): the container's own
+code (`make test-functional`'s: 0 green, 2 a red test or build), except where
+the tool ended the run: 124 the deadline (the runtime's `--timeout`, or the
+in-container timeout), 130 an interrupt, 125 the run could not start, its
+runtime client was lost, or a container of the run was still present at the
+end. The target execs the built tool, so a signal to make reaches the tool,
+which removes the container.
 
 The tool by hand, for its flags (`--cpus`, `--memory`, `--pids`, `--scratch`,
 `--grace`, `--image`, the volume names):

@@ -300,12 +300,14 @@ test-functional:
 # tmpfs scratch, this user's own Go cache volumes, no network, and
 # FUNCTIONAL_DEADLINE enforced from outside the container by the runtime. The
 # container is removed whatever happens, and every container of an earlier run
-# past its deadline is reaped first. Output and exit code are the target's.
+# past its deadline is reaped first. The tool is built into this checkout's bin/
+# and exec'd, never `go run`, so a signal to make reaches the tool itself and
+# the tool's exit code is make's to report (make reports any failure as 2).
 FUNCTIONAL_DEADLINE ?= 10m
 FUNCTIONAL_CONTEXT ?= infra/functional-image
 test-functional-container: PKGS = $(CL_PKGS)
 test-functional-container:
-	$(GO) run ./tools/functionalrun run --deadline $(FUNCTIONAL_DEADLINE) --context $(FUNCTIONAL_CONTEXT) $(PKGS)
+	$(GO) build -o bin/functionalrun ./tools/functionalrun && exec ./bin/functionalrun run --deadline $(FUNCTIONAL_DEADLINE) --context $(FUNCTIONAL_CONTEXT) $(PKGS)
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
