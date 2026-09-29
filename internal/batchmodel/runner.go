@@ -174,11 +174,7 @@ func peekFiniteRequest(raw []byte) (Request, error) {
 	return Request{Table: w.Table, Epoch: w.Epoch, OperationID: w.OperationID}, nil
 }
 func recordFor(s Snapshot, q Request) *OperationRecord {
-	epoch, err := decimal(q.Epoch)
-	if err != nil {
-		return nil
-	}
-	key := ntable.EpochPrefix(q.Table, epoch) + ":op:" + q.OperationID
+	key := operationField(q.Epoch, q.OperationID)
 	record, ok := s.OperationRecords[key]
 	if !ok {
 		return nil

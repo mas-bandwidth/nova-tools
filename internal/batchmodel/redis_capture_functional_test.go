@@ -217,10 +217,8 @@ func TestRecord(t *testing.T) {
 		if bundle.SourceSHA256 == "" || bundle.ConfigSHA256 == "" {
 			t.Fatal("generated bundle lacks input hashes")
 		}
-		epoch, _ := decimal(q.Epoch)
-		opKey := ntable.EpochPrefix("t1", epoch) + ":op:" + q.OperationID
-		r.Cmd("HSET", opKey, "hidden", "changed")
-		if _, err := capture.Capture(ctx, q); err == nil || !strings.Contains(err.Error(), "unexpected field count") {
+		r.Cmd("HSET", operationHashKey("t1"), "hidden", "changed")
+		if _, err := capture.Capture(ctx, q); err == nil || !strings.Contains(err.Error(), "field identity") {
 			t.Fatalf("unknown durable operation hash field escaped capture: %v", err)
 		}
 	})

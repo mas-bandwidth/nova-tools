@@ -46,7 +46,7 @@ type Snapshot struct {
 	EpochFields      map[string]string // complete active-epoch hash
 	Members          map[string]Member
 	Operations       uint64
-	OperationRecords map[string]OperationRecord // physical op key -> durable contents
+	OperationRecords map[string]OperationRecord // epoch:id hash field -> durable contents
 	Receipts         uint64
 	Events           []StreamEvent    // full change stream, including setup
 	StreamInfo       StreamInfo       // XINFO metadata not visible in XRANGE
@@ -286,6 +286,20 @@ func ValidateStep(s Step) error {
 	}
 	if s.After.Operations != s.Before.Operations+1 || s.After.Receipts != s.Before.Receipts+1 {
 		return errors.New("accepted batch did not append exactly one operation and receipt")
+	}
+	if s.Before.OperationRecords != nil && s.After.OperationRecords != nil {
+		key := operationField(s.Request.Epoch, s.Request.OperationID)
+		if len(s.After.OperationRecords) != len(s.Before.OperationRecords)+1 || len(s.After.OperationRecords) != int(s.After.Operations) {
+			return errors.New("accepted batch changed durable operation history count")
+		}
+		for oldKey, old := range s.Before.OperationRecords {
+			if !reflect.DeepEqual(old, s.After.OperationRecords[oldKey]) {
+				return fmt.Errorf("prior durable operation %s changed", oldKey)
+			}
+		}
+		if s.After.Recorded == nil || !reflect.DeepEqual(s.After.OperationRecords[key], *s.After.Recorded) {
+			return errors.New("new durable operation differs from captured hash field")
+		}
 	}
 	if err := checkStreamPrefix(s.Before, s.After, 1); err != nil {
 		return err

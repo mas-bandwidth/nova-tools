@@ -137,10 +137,10 @@ func acceptedWriteKeys(s Step) (map[string]bool, error) {
 	table := s.Request.Table
 	prefix := ntable.EpochPrefix(table, epoch)
 	allowed := map[string]bool{
-		ntable.RevisionKey(table):               true,
-		ntable.ChangesKey(table):                true,
-		prefix + ":definition":                  true,
-		prefix + ":op:" + s.Request.OperationID: true,
+		ntable.RevisionKey(table): true,
+		ntable.ChangesKey(table):  true,
+		prefix + ":definition":    true,
+		operationHashKey(table):   true,
 	}
 	for _, id := range s.Request.Selected {
 		allowed[ntable.MemberKey(id)] = true

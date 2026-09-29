@@ -127,7 +127,7 @@ AlreadyUnplacedRemoveRequest ==
          !.members[1].setField=NoField, !.members[1].setValue=NoValue,
          !.members[1].remove=TRUE, !.members[1].removeSupplied=TRUE]
 \* Existing unplaced records support field edits, but cannot be moved into a
-\* cell. Check both omitted score (formerly an undefined ScoreAt) and explicit.
+\* cell. Both omitted-score and explicit-score attempts are refused.
 UnplacedMoveRequest ==
  [UnplacedFieldRequest EXCEPT !.id="op-unplaced-move",
     !.bytes="canonical-unplaced-move", !.members[1].target=FromCell]
@@ -341,7 +341,7 @@ Apply(q) ==
 \* Synthetic interference: table.lua has no revision-bumping field-write verb.
 \* Direct application HSET does not bump these revisions. These two field
 \* actions test a hypothetical cooperating writer, not current HSET behavior.
-\* See README's explicit scope decision and follow-up.
+\* See README's explicit field-writer scope and follow-up.
 OrdinaryFieldWrite(m) ==
  /\ m \in present /\ memberRevision[m]<MaxRevision
  /\ tableRevision[BatchTable]<MaxRevision

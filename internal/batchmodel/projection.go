@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // FiniteBaseline is frozen immediately after the owned Redis fixture is built.
@@ -118,11 +116,7 @@ func ProjectFinite(s Snapshot, base FiniteBaseline, control ProjectionControl) (
 		return out, fmt.Errorf("validated stream event omitted")
 	}
 	for _, e := range control.Accepted {
-		epoch, err := decimal(e.Request.Epoch)
-		if err != nil {
-			return out, err
-		}
-		key := ntable.EpochPrefix(e.Request.Table, epoch) + ":op:" + e.Request.OperationID
+		key := operationField(e.Request.Epoch, e.Request.OperationID)
 		stored, ok := s.OperationRecords[key]
 		if !ok || !reflect.DeepEqual(stored, e.Record) || !sameOperation(stored, e.Request, e.Receipt) {
 			return out, fmt.Errorf("durable operation %s differs from validated evidence", key)

@@ -470,20 +470,20 @@ shows that removing an already-unplaced member refuses. A two-action trace prove
 that explicit `remove:false` and set/unset of the same field both refuse.
 A four-action trace removes a member and tries moving the retained unplaced record
 back into a cell, first without a score and then with one; both requests refuse.
-The original revision bound remains three. An additional full nondeterministic
+The main instance uses a revision bound of three. A full nondeterministic
 instance uses a revision limit of two with three actions. Two directed traces
 reach that limit before attempting another batch: one uses two effective moves,
 and the other uses two guard-only no-ops, leaving every member revision at zero.
-Both must reach refusal, and refusal/replay read-only checks preserve the store.
+Both require refusal, and refusal/replay read-only checks preserve the store.
 A reversed overflow case forces the third move and violates `RevisionWithinBounds`;
-separate reversed cases name `UnplacedMoveRequiresPlacement` and
+separate reversed cases check `UnplacedMoveRequiresPlacement` and
 `OnePlacePerDimension`. A separate input fixture seeds the existing member at
 its revision limit while leaving the table revision zero, then attempts a batch.
 Its positive case requires refusal; its reversed case violates
-`RevisionWithinBounds`. This independently tests the member guard and makes no
+`RevisionWithinBounds`. This tests the member guard and makes no
 claim that the seeded counter relation is reachable from the all-zero fixture.
 The runtime stores these counters separately. Score lookup returns the no-score
-sentinel for an unplaced member, so even the forced omitted-score move reaches
+sentinel for an unplaced member, so the forced omitted-score move reaches
 the named property failure instead of a function-domain error.
 Absent member records carry no application fields, and create starts from that
 empty field image before applying its explicit set; every positive configuration
@@ -505,27 +505,28 @@ Request bytes are abstract identities; byte equality, rather than digest equalit
 controls replay. Accepted batches produce one complete receipt and one table
 revision; refusals and replay leave the modeled store unchanged.
 
-**Field-writer scope decision.** `OrdinaryFieldWrite` and `OrdinarySetEmpty` are
+**Field-writer scope.** `OrdinaryFieldWrite` and `OrdinarySetEmpty` are
 synthetic cooperating writers that advance both revisions. `table.lua` has no such
 field-write verb; a direct application `HSET` does not advance these revisions.
-We retain these actions as protocol interference hypotheses, not implementations
-of `HSET`. The main exploration's field branches and empty-field guard scenario,
-`ExtendedNoop`, `ExtendedRemove`, `BrokenStaleMember`, `BrokenOrdinaryRevision`,
-`BrokenMissingRevision`, `BrokenScorePreserved`, `BrokenRemoveLeavesCell`,
-`BrokenRemoveDeletesRecord` and `BrokenSameCellRevision` depend on this assumption.
+These actions model protocol interference hypotheses, not `HSET` implementations.
+The main exploration's field branches and empty-field guard scenario,
+`MCBatchRevisionBound`, `ExtendedNoop`, `ExtendedRemove`, `BrokenStaleMember`,
+`BrokenOrdinaryRevision`, `BrokenMissingRevision`, `BrokenScorePreserved`,
+`BrokenRemoveLeavesCell`, `BrokenRemoveDeletesRecord` and
+`BrokenSameCellRevision` depend on this assumption.
 They do not establish that a revision guard detects direct application field edits.
-Modeling unversioned `HSET` interference and its guard consequences remains a
-follow-up. The new overflow and unplaced-move traces use only batch actions.
+Unversioned `HSET` interference and its guard consequences remain a follow-up.
+The overflow and unplaced-move traces use only batch actions.
 
 The negative configurations cover late guard/type/permission failure after an
 initial write, post-write guard evaluation, duplicate placement, stale epoch/table/
 member expectations, stale member expectations after an ordinary move, omitted
 ordinary field/move revision increments, lost-reply double effects, digest collision,
 incomplete receipt effects and stale replay reported as a new acceptance. The
-added reversed cases reject a valid omitted-revision request after an ordinary
+reversed cases reject a valid omitted-revision request after an ordinary
 revision advance, preserve a score that was explicitly replaced, leave a removed
 member in its old cell, delete its record on removal, or spuriously increment its
-revision on a same-cell no-op. Two further reversed cases force acceptance of
+revision on a same-cell no-op. Other reversed cases force acceptance of
 the malformed remove and set/unset forms; a third forces removal of an already
 unplaced member. `CASES.tsv` names each exact expected property.
 `BATCH-SOURCES.tsv` records the batch model,
@@ -572,6 +573,12 @@ literals, rather than deriving observed values from the model's transition.
 A separate negative case changes one observed member field and must fail
 `MatchesExecution`; a parser error or an unrelated invariant failure does not
 count as the expected rejection.
+
+Functional fixtures run in an isolated container on a Linux bench. Redis Unix
+socket paths must fit the platform limit; the macOS limit is 100 bytes, so a
+fixture path of 104–106 bytes refuses before replay. Fixture directories use a
+short private `TMPDIR` inside the run environment. The `tlacheck batch-replay`
+command itself is Linux-only.
 
 The suite covers move/set with a guard, exact retry and operation conflict;
 same-cell no-op, removal and unset on the retained record; creation and

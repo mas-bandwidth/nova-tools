@@ -2,15 +2,18 @@ package batchmodel
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 )
 
-// The repaired runtime emits these exact fields in one batch_delta JSON value.
-// Scores and touched field endpoints are the only nullable values. The fields
-// map is sparse, but its key set must equal exactly the set/unset instructions.
+// The runtime emits these exact fields in one batch_delta JSON value.
+// Scores and touched field endpoints are nullable. A long field endpoint is
+// null with length and SHA-1 metadata. The sparse fields map must cover every
+// set/unset instruction exactly.
 type wireBatchDelta struct {
 	OperationID   string            `json:"operation_id"`
 	Digest        string            `json:"digest"`
@@ -24,8 +27,8 @@ type wireMemberDelta struct {
 	ID          string                     `json:"id"`
 	BeforePlace string                     `json:"before_place"`
 	AfterPlace  string                     `json:"after_place"`
-	BeforeScore *json.Number               `json:"before_score"`
-	AfterScore  *json.Number               `json:"after_score"`
+	BeforeScore *string                    `json:"before_score"`
+	AfterScore  *string                    `json:"after_score"`
 	BeforeRev   string                     `json:"before_rev"`
 	AfterRev    string                     `json:"after_rev"`
 	FieldsSet   map[string]string          `json:"fields_set"`
@@ -33,9 +36,18 @@ type wireMemberDelta struct {
 	Fields      map[string]wireFieldChange `json:"fields"`
 }
 type wireFieldChange struct {
-	Before *string `json:"before"`
-	After  *string `json:"after"`
+	Before      *string      `json:"before"`
+	After       *string      `json:"after"`
+	BeforeBytes *json.Number `json:"before_bytes"`
+	BeforeSHA1  *string      `json:"before_sha1"`
+	AfterBytes  *json.Number `json:"after_bytes"`
+	AfterSHA1   *string      `json:"after_sha1"`
 }
+
+// Keep this bound aligned with the runtime's T.receipt_value_bytes. The
+// adapter checkout can lag the source checkout, so the wire contract is pinned
+// here to Rowan's 64-byte runtime revision.
+const receiptValueBytes = 64
 
 func nullableShape(inner wireShape) wireShape {
 	return func(raw json.RawMessage) error {
@@ -49,9 +61,10 @@ func nullableShape(inner wireShape) wireShape {
 func validateDeltaShape(raw []byte) error {
 	str := primitiveShape('"')
 	number := numberShape
-	change := objectShape(map[string]wireShape{"before": nullableShape(str), "after": nullableShape(str)}, "before", "after")
+	change := objectShape(map[string]wireShape{"before": nullableShape(str), "after": nullableShape(str),
+		"before_bytes": number, "before_sha1": str, "after_bytes": number, "after_sha1": str}, "before", "after")
 	member := objectShape(map[string]wireShape{
-		"id": str, "before_place": str, "after_place": str, "before_score": nullableShape(number), "after_score": nullableShape(number),
+		"id": str, "before_place": str, "after_place": str, "before_score": nullableShape(str), "after_score": nullableShape(str),
 		"before_rev": str, "after_rev": str, "fields_set": stringMapShape(str), "fields_unset": emptyObjectOrArrayShape(str), "fields": stringMapShape(change),
 	}, "id", "before_place", "after_place", "before_score", "after_score", "before_rev", "after_rev", "fields_set", "fields_unset", "fields")
 	return objectShape(map[string]wireShape{"operation_id": str, "digest": str, "actor": str, "selected_count": number, "guard_count": number, "changed_count": number, "members": arrayShape(member)},
@@ -154,8 +167,12 @@ func DecodeAcceptedReply(reply any, q Request, before Snapshot) (*Receipt, error
 		if err != nil {
 			return nil, fmt.Errorf("member %s: %w", m.ID, err)
 		}
-		if err := checkSparseFields(m, unset, entry, observed); err != nil {
+		long, err := checkSparseFields(m, unset, entry, observed)
+		if err != nil {
 			return nil, fmt.Errorf("member %s: %w", m.ID, err)
+		}
+		if long {
+			return nil, fmt.Errorf("member %s: receipt field value outside finite model", m.ID)
 		}
 		b, err := wireMemberImage(m.BeforePlace, m.BeforeScore, m.BeforeRev, observed.Exists, observed.Epoch, observed.Fields)
 		if err != nil {
@@ -192,7 +209,7 @@ func smallCount(raw json.Number) (uint64, error) {
 	return n, nil
 }
 
-func wireMemberImage(place string, score *json.Number, revision string, exists bool, epoch string, fields map[string]string) (Member, error) {
+func wireMemberImage(place string, score *string, revision string, exists bool, epoch string, fields map[string]string) (Member, error) {
 	if _, err := decimal(revision); err != nil {
 		return Member{}, err
 	}
@@ -220,7 +237,7 @@ func wireMemberImage(place string, score *json.Number, revision string, exists b
 	if score == nil {
 		return Member{}, fmt.Errorf("placed member lacks score")
 	}
-	n, err := modelScoreNumber(*score)
+	n, err := modelScoreString(*score)
 	if err != nil {
 		return Member{}, err
 	}
@@ -228,20 +245,19 @@ func wireMemberImage(place string, score *json.Number, revision string, exists b
 	return m, nil
 }
 
-func modelScoreNumber(raw json.Number) (uint64, error) {
-	// The finite runtime fixture only admits numeric values 1 or 2; accept
-	// equivalent JSON decimal spellings without converting through float64.
-	s := string(raw)
+func modelScoreString(s string) (uint64, error) {
+	// The finite runtime fixture only admits scores 1 or 2. Receipt scores
+	// are decimal strings; keep the same accepted spellings without float64.
 	if s == "1" || s == "1.0" || s == "1.00" {
 		return 1, nil
 	}
 	if s == "2" || s == "2.0" || s == "2.00" {
 		return 2, nil
 	}
-	return 0, fmt.Errorf("receipt score %q outside finite model", raw)
+	return 0, fmt.Errorf("receipt score %q outside finite model", s)
 }
 
-func checkSparseFields(w wireMemberDelta, unset []string, entry MemberAction, before Member) error {
+func checkSparseFields(w wireMemberDelta, unset []string, entry MemberAction, before Member) (bool, error) {
 	want := map[string]bool{}
 	if entry.SetField != "" {
 		want[entry.SetField] = true
@@ -250,39 +266,78 @@ func checkSparseFields(w wireMemberDelta, unset []string, entry MemberAction, be
 		want[entry.UnsetField] = true
 	}
 	if len(w.Fields) != len(want) {
-		return fmt.Errorf("sparse field delta omits or adds touched field")
+		return false, fmt.Errorf("sparse field delta omits or adds touched field")
 	}
-	if len(w.FieldsSet) != (boolInt(entry.SetField != "")) || len(unset) != (boolInt(entry.UnsetField != "")) {
-		return fmt.Errorf("set/unset instruction echo differs")
+	shortSet := entry.SetField != "" && len(entry.SetValue) <= receiptValueBytes
+	if len(w.FieldsSet) != boolInt(shortSet) || len(unset) != boolInt(entry.UnsetField != "") {
+		return false, fmt.Errorf("set/unset instruction echo differs")
 	}
-	if entry.SetField != "" && w.FieldsSet[entry.SetField] != entry.SetValue {
-		return fmt.Errorf("set instruction value differs")
+	if shortSet && w.FieldsSet[entry.SetField] != entry.SetValue {
+		return false, fmt.Errorf("set instruction value differs")
 	}
 	if entry.UnsetField != "" && (len(unset) != 1 || unset[0] != entry.UnsetField) {
-		return fmt.Errorf("unset instruction differs")
+		return false, fmt.Errorf("unset instruction differs")
 	}
 	for field := range w.FieldsSet {
 		if field != entry.SetField {
-			return fmt.Errorf("unexpected set field %s", field)
+			return false, fmt.Errorf("unexpected set field %s", field)
 		}
 	}
+	long := false
 	for field, change := range w.Fields {
 		if !want[field] {
-			return fmt.Errorf("untouched field %s included", field)
+			return false, fmt.Errorf("untouched field %s included", field)
 		}
 		prior, exists := before.Fields[field]
-		if exists != (change.Before != nil) || exists && prior != *change.Before {
-			return fmt.Errorf("field %s before value disagrees with prestate", field)
+		var priorValue *string
+		if exists {
+			priorValue = &prior
 		}
+		beforeLong, err := checkFieldSide(change.Before, change.BeforeBytes, change.BeforeSHA1, priorValue)
+		if err != nil {
+			return false, fmt.Errorf("field %s before: %w", field, err)
+		}
+		long = long || beforeLong
+		var afterValue *string
 		if field == entry.SetField {
-			if change.After == nil || *change.After != entry.SetValue {
-				return fmt.Errorf("field %s after set differs", field)
-			}
-		} else if change.After != nil {
-			return fmt.Errorf("field %s unset remained present", field)
+			afterValue = &entry.SetValue
 		}
+		afterLong, err := checkFieldSide(change.After, change.AfterBytes, change.AfterSHA1, afterValue)
+		if err != nil {
+			return false, fmt.Errorf("field %s after: %w", field, err)
+		}
+		long = long || afterLong
 	}
-	return nil
+	return long, nil
+}
+
+// checkFieldSide compares a receipt side to an independently known raw value.
+// A digest is evidence about that value; it is never used as the value itself.
+func checkFieldSide(wire *string, size *json.Number, digest *string, source *string) (bool, error) {
+	if source == nil {
+		if wire != nil || size != nil || digest != nil {
+			return false, fmt.Errorf("absent field has value or hash metadata")
+		}
+		return false, nil
+	}
+	if len(*source) <= receiptValueBytes {
+		if wire == nil || *wire != *source || size != nil || digest != nil {
+			return false, fmt.Errorf("short field value differs")
+		}
+		return false, nil
+	}
+	if wire != nil || size == nil || digest == nil {
+		return false, fmt.Errorf("long field must carry length and SHA-1 only")
+	}
+	n, err := decimal(string(*size))
+	if err != nil || n != uint64(len(*source)) {
+		return false, fmt.Errorf("long field length differs")
+	}
+	h := sha1.Sum([]byte(*source))
+	if *digest != hex.EncodeToString(h[:]) {
+		return false, fmt.Errorf("long field SHA-1 differs")
+	}
+	return true, nil
 }
 func boolInt(b bool) int {
 	if b {

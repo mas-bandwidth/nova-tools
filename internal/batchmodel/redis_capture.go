@@ -2,7 +2,10 @@ package batchmodel
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -40,8 +43,7 @@ func (a RedisCapture) Capture(ctx context.Context, q Request) (Snapshot, error) 
 	if q.Table == "" || q.Epoch == "" {
 		return Snapshot{}, fmt.Errorf("capture needs table and epoch")
 	}
-	epochNumber, err := decimal(q.Epoch)
-	if err != nil {
+	if _, err := decimal(q.Epoch); err != nil {
 		return Snapshot{}, fmt.Errorf("capture epoch: %w", err)
 	}
 	image, err := a.ScanImage(ctx)
@@ -83,22 +85,23 @@ func (a RedisCapture) Capture(ctx context.Context, q Request) (Snapshot, error) 
 		s.Members[id] = m
 	}
 	s.OperationRecords = map[string]OperationRecord{}
-	for k := range image {
-		if strings.HasPrefix(k, "table:"+q.Table+":") && strings.Contains(k, ":op:") {
-			h, err := hashReply(a.Store.Cmd("HGETALL", k))
+	opsKey := operationHashKey(q.Table)
+	for key := range image {
+		if strings.HasPrefix(key, "table:"+q.Table+":") && strings.Contains(key, ":op:") {
+			return Snapshot{}, fmt.Errorf("legacy per-operation key %s outside current runtime protocol", key)
+		}
+	}
+	if _, exists := image[opsKey]; exists {
+		h, err := hashReply(a.Store.Cmd("HGETALL", opsKey))
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("operation hash %s: %w", opsKey, err)
+		}
+		for field, raw := range h {
+			record, err := decodeOperationRecord(q.Table, field, raw)
 			if err != nil {
-				return Snapshot{}, fmt.Errorf("operation %s: %w", k, err)
+				return Snapshot{}, fmt.Errorf("operation %s[%s]: %w", opsKey, field, err)
 			}
-			expected := []string{"operation_id", "digest", "request", "stream_id", "epoch", "rev_before", "rev_after", "outcome", "result"}
-			if len(h) != len(expected) {
-				return Snapshot{}, fmt.Errorf("operation key %s has unexpected field count", k)
-			}
-			for _, field := range expected {
-				if _, ok := h[field]; !ok {
-					return Snapshot{}, fmt.Errorf("operation key %s lacks field %s", k, field)
-				}
-			}
-			s.OperationRecords[k] = OperationRecord{Table: q.Table, Epoch: h["epoch"], OperationID: h["operation_id"], Digest: h["digest"], ReceiptID: h["stream_id"], BeforeRevision: h["rev_before"], AfterRevision: h["rev_after"], Outcome: h["outcome"], Canonical: []byte(h["request"]), ResultJSON: []byte(h["result"])}
+			s.OperationRecords[field] = record
 		}
 	}
 	s.Operations = uint64(len(s.OperationRecords))
@@ -124,11 +127,74 @@ func (a RedisCapture) Capture(ctx context.Context, q Request) (Snapshot, error) 
 		last := events[len(events)-1]
 		s.LastEvent = &last
 	}
-	opKey := ntable.EpochPrefix(q.Table, epochNumber) + ":op:" + q.OperationID
-	if record, ok := s.OperationRecords[opKey]; ok {
+	if record, ok := s.OperationRecords[operationField(q.Epoch, q.OperationID)]; ok {
 		s.Recorded = &record
 	}
 	return s, nil
+}
+
+func operationHashKey(table string) string   { return "table:" + table + ":ops" }
+func operationField(epoch, id string) string { return epoch + ":" + id }
+
+// The physical operations hash is shared across epochs. Each field is a
+// separately validated logical record, keyed by the exact epoch and ID.
+func decodeOperationRecord(table, field, raw string) (OperationRecord, error) {
+	epoch, id, ok := strings.Cut(field, ":")
+	if !ok || id == "" || (epoch != "1" && epoch != "2") {
+		return OperationRecord{}, fmt.Errorf("field identity outside finite fixture")
+	}
+	if err := rejectDuplicateJSONKeys([]byte(raw)); err != nil {
+		return OperationRecord{}, err
+	}
+	str := primitiveShape('"')
+	shape := objectShape(map[string]wireShape{
+		"operation_id": str, "digest": str, "request": str, "stream_id": str,
+		"epoch": str, "rev_before": str, "rev_after": str, "outcome": str, "result": str,
+	}, "operation_id", "digest", "request", "stream_id", "epoch", "rev_before", "rev_after", "outcome", "result")
+	if err := shape([]byte(raw)); err != nil {
+		return OperationRecord{}, err
+	}
+	var r struct{ OperationID, Digest, Request, StreamID, Epoch, RevBefore, RevAfter, Outcome, Result string }
+	// Decode by wire names, rather than Go's case-insensitive field matching.
+	var fields map[string]string
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return OperationRecord{}, err
+	}
+	r.OperationID, r.Digest, r.Request, r.StreamID = fields["operation_id"], fields["digest"], fields["request"], fields["stream_id"]
+	r.Epoch, r.RevBefore, r.RevAfter, r.Outcome, r.Result = fields["epoch"], fields["rev_before"], fields["rev_after"], fields["outcome"], fields["result"]
+	if r.Epoch != epoch || r.OperationID != id || r.StreamID == "" || (r.Outcome != "changed" && r.Outcome != "noop") {
+		return OperationRecord{}, fmt.Errorf("record identity or outcome differs from hash field")
+	}
+	if _, err := decimal(r.RevBefore); err != nil {
+		return OperationRecord{}, err
+	}
+	if _, err := decimal(r.RevAfter); err != nil {
+		return OperationRecord{}, err
+	}
+	if err := rejectDuplicateJSONKeys([]byte(r.Request)); err != nil {
+		return OperationRecord{}, fmt.Errorf("request: %w", err)
+	}
+	if err := validateManifestShape([]byte(r.Request)); err != nil {
+		return OperationRecord{}, fmt.Errorf("request: %w", err)
+	}
+	var request struct {
+		Table       string `json:"table"`
+		Epoch       string `json:"epoch"`
+		OperationID string `json:"operation_id"`
+	}
+	if err := json.Unmarshal([]byte(r.Request), &request); err != nil || request.Table != table || request.Epoch != epoch || request.OperationID != id {
+		return OperationRecord{}, fmt.Errorf("stored request identity differs from record")
+	}
+	digest := sha1.Sum([]byte(r.Request))
+	if r.Digest != hex.EncodeToString(digest[:]) {
+		return OperationRecord{}, fmt.Errorf("stored request digest differs")
+	}
+	if !json.Valid([]byte(r.Result)) {
+		return OperationRecord{}, fmt.Errorf("stored result is not JSON")
+	}
+	return OperationRecord{Table: table, Epoch: epoch, OperationID: id, Digest: r.Digest,
+		ReceiptID: r.StreamID, BeforeRevision: r.RevBefore, AfterRevision: r.RevAfter,
+		Outcome: r.Outcome, Canonical: []byte(r.Request), ResultJSON: []byte(r.Result)}, nil
 }
 
 func (a RedisCapture) readFiniteCells(table string, s *Snapshot) error {

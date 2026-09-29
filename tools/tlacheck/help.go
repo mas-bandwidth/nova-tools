@@ -172,7 +172,7 @@ first run: git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn
            tlacheck witnesses /tmp/table-pinned.lua
 `
 
-const helpBatchReplay = `tlacheck batch-replay: capture bounded batch histories and check them against MCBatchMemberTable.
+const helpBatchReplay = `tlacheck batch-replay: capture bounded batch histories and check them against MCBatchMemberTable on a Linux bench.
 
 usage: tlacheck batch-replay --source <table.lua> --dir <dir> [--root <checkout>]
                              [--models <dir>] [--jar <tla2tools.jar>] [--java <java>]
