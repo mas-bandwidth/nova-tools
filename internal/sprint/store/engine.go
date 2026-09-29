@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -870,9 +871,10 @@ func (k Skip) String() string {
 
 // finish completes a pending operation from its record: each manifest sent
 // again in order (an applied one replays), then the release with its
-// notifications. When its first manifest never applied, nothing of it
-// happened: past the grace it is abandoned, within it it is left to its
-// writer. A later manifest whose expectations no longer all hold (a writer
+// notifications. A first manifest refused within the grace is left to its
+// writer; past it, it is applied entry by entry as a later one is, and only
+// when none of its changes applied, nor its writer's own send of it, nothing
+// of the operation happened and it is abandoned. A later manifest whose expectations no longer all hold (a writer
 // outside the fence changed a member) is applied entry by entry: every entry
 // whose expectation holds applies, every other is skipped, never overwriting
 // newer state, and the release writes one judgment listing the skips (the
@@ -946,6 +948,29 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 			// it is abandoned at once, whoever its writer is
 			if st.now().Sub(op.At) < st.grace() && curable(err, man) {
 				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "in flight: its first manifest has not applied yet"}, nil
+			}
+			// Past the grace its writer may still be alive: the first manifest
+			// goes entry by entry, as a later one does. When none of its
+			// changes applies, the table layer's record says whether its
+			// writer applied it whole (a refreshed send): then it counts as
+			// applied; else nothing of the operation happened, and it is
+			// abandoned.
+			if curable(err, man) {
+				before := len(skips)
+				if open := byEntry(0, man); open != nil {
+					return *open, nil
+				}
+				if changedAny(man, skips[before:]) {
+					continue
+				}
+				sent, perr := st.sentBefore(ctx, man)
+				if perr != nil {
+					return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s: the store did not answer: %v", man.Table, perr)}, nil
+				}
+				skips = skips[:before]
+				if sent {
+					continue
+				}
 			}
 			if err := st.B.Release(ctx, abandonment(op, st.Actor, st.now()), true); err != nil {
 				return r, err
@@ -1072,6 +1097,39 @@ func holds(e ntable.BatchMemberEntry, t *sprint.Table) bool {
 		return false
 	}
 	return true
+}
+
+// changedAny says an entry of the manifest that changes its member applied:
+// it is not among the skips.
+func changedAny(man ntable.BatchManifest, skips []Skip) bool {
+	skipped := map[string]bool{}
+	for _, k := range skips {
+		skipped[k.Card] = true
+	}
+	for _, e := range man.Members {
+		if hasChanges(e) && !skipped[e.ID] {
+			return true
+		}
+	}
+	return false
+}
+
+// sentBefore says the table layer records the manifest's operation id as
+// applied (its writer sent it, perhaps against a refreshed revision): a send
+// of it against a revision no table reaches is answered from that record (a
+// replay, or a conflict with the other bytes) before the revision is judged,
+// and is refused on the revision, applying nothing, when there is none.
+func (st *Store) sentBefore(ctx context.Context, man ntable.BatchManifest) (bool, error) {
+	probe := man
+	probe.ExpectedTableRevision = strconv.FormatUint(math.MaxUint64, 10)
+	_, err := st.send(ctx, probe)
+	switch {
+	case err == nil, refusalCode(err) == "OPCONFLICT":
+		return true, nil
+	case errors.Is(err, ErrUnknown):
+		return false, err
+	}
+	return false, nil
 }
 
 // bars says the manifest is the work table's and holds an entry the
