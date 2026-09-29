@@ -273,7 +273,7 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 	}
 	m := shortest(up, q)
 	q[m]++
-	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m}
+	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m, "dealt": stamp(s.Now)}
 	if fix != "" {
 		fields["fix"] = fix
 	}
@@ -295,7 +295,7 @@ func redeal(s *Snapshot, c, wc *Card, up []string, q map[string]int) Unit {
 	m := shortest(up, q)
 	q[m]++
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, moveEntry(wc, m, Ready, nextGen(wc, m), "withdrawn")),
+		change(Fleet, moveEntry(wc, m, Ready, nextGen(wc, m, s.Now), "withdrawn")),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
 }
@@ -472,7 +472,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 					continue
 				}
 				u.Changes = append(u.Changes, change(Readers, createEntry(id, reader, Asked, pr.Score,
-					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head})))
+					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head, "asked": stamp(s.Now)})))
 				again = append(again, reader)
 			}
 			if len(again) > 0 {
@@ -570,13 +570,13 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			if len(up) > 0 {
 				m := shortest(up, q)
 				q[m]++
-				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nextGen(c, m), "taken"))},
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nextGen(c, m, s.Now), "taken"))},
 					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d", c.ID, c.Row, c.Col, m, c.Int("gen")+1)})
 				continue
 			}
-			set := nextGen(c, "")
+			set := nextGen(c, "", s.Now)
 			set["withdrawn"] = stamp(s.Now)
-			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken"))},
+			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
 				Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
 				u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
@@ -632,17 +632,18 @@ func level(s *Snapshot, p *Plan, up []string) {
 		c := q[len(q)-1]
 		queues[long] = q[:len(q)-1]
 		queues[short] = append(queues[short], c)
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short)))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short, s.Now)))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, short, c.Int("gen")+1)})
 	}
 }
 
 // nextGen is the fields of a work card dealt again: a new generation, bound
-// to the member it is dealt to ("" when it is withdrawn).
-func nextGen(c *Card, member string) map[string]string {
+// to the member it is dealt to, with dealt stamped now ("" when it is
+// withdrawn: no member, and dealt is unset by the caller).
+func nextGen(c *Card, member string, now time.Time) map[string]string {
 	set := map[string]string{"gen": itoa(c.Int("gen") + 1)}
 	if member != "" {
-		set["member"] = member
+		set["member"], set["dealt"] = member, stamp(now)
 	}
 	return set
 }

@@ -58,6 +58,11 @@ type queueCard struct {
 	Gen     int     `json:"gen,omitempty"`
 	Head    string  `json:"head,omitempty"`
 	Score   float64 `json:"score"`
+	// The stamps: a work card's dealt and taken, a read card's asked and begun.
+	Dealt string `json:"dealt,omitempty"`
+	Taken string `json:"taken,omitempty"`
+	Asked string `json:"asked,omitempty"`
+	Begun string `json:"begun,omitempty"`
 }
 
 func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
@@ -80,7 +85,8 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
-				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score})
+				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score,
+				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun")})
 		}
 	}
 	if *stream != "" {
@@ -115,6 +121,11 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 				next = "finish"
 			}
 			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen)
+		}
+		for _, st := range [][2]string{{"dealt", x.Dealt}, {"taken", x.Taken}, {"asked", x.Asked}, {"begun", x.Begun}} {
+			if st[1] != "" {
+				l += " " + st[0] + "=" + st[1]
+			}
 		}
 		lines = append(lines, l)
 	}
