@@ -82,8 +82,8 @@ func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
 	if err != nil || !again.Running() || res.Notes != 0 || !again.Since.Equal(after.Since) {
 		t.Fatalf("start when running changed something: %+v %+v %v", again, res, err)
 	}
-	h.tick(6 * time.Second)
-	if line := h.st.MachineLine(h.ctx); line != "machine: STOPPED (no tick for 6s)" {
+	h.tick(MachineSilence + time.Second)
+	if line := h.st.MachineLine(h.ctx); line != "machine: STOPPED (no tick for 16s)" {
 		t.Fatalf("no tick: %q", line)
 	}
 	h.machine()

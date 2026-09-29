@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -26,9 +27,10 @@ const (
 	// with it and a later primary never waits behind a long queue.
 	MaxReadyPerMember = 2
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
-	// moved by the next tick.
+	// due, and the next tick reads the whole sprint and moves them.
 	TickMaxMoves = 200
-	// TickMaxNotes bounds the judgments one part of a tick writes.
+	// TickMaxNotes bounds the judgments one part of a tick writes; the rest
+	// are due, and the next tick writes them.
 	TickMaxNotes = 50
 )
 
@@ -40,6 +42,10 @@ const (
 	DeadlineUnbegun    = 30 * time.Minute // a read card asked and not begun
 	DeadlineUnreported = 2 * time.Hour    // a read card begun and not reported
 	DeadlineMergeIdle  = 30 * time.Minute // a stream with cards to merge and no merge step
+	// DeadlineJudgment is how long a judgment stays open, in running time,
+	// before the tick marks it overdue; a review time the coordinator set
+	// (wait) is the judgment's own due time instead.
+	DeadlineJudgment = 10 * time.Minute
 )
 
 // The tick's own notification types.
@@ -51,6 +57,8 @@ const (
 	NWorkLate  = "a work card is past its deadline"
 	NReadLate  = "a read card is past its deadline"
 	NMergeLate = "a stream has had no merge step past its deadline"
+	// NOverdue (notes.go) is the overdue line: a happened note, once per
+	// judgment, when the judgment passes its due time.
 
 	NMachineStarted = "the machine started"
 	NMachineStopped = "the machine stopped"
@@ -73,10 +81,6 @@ var TickDecisions = map[string][]string{
 // TickReq is what a tick is given beside the snapshot.
 type TickReq struct {
 	Who string // recorded with every move; "" is MachineActor
-	// Scan says something landed or was added since the last tick, or this
-	// is the first tick after start: the waiting sets are scanned (T1). Needs
-	// cross streams, so a landing in any stream scans every stream.
-	Scan bool
 	// Stopped is the time the machine was STOPPED between two clock readings:
 	// a deadline compares running time only. nil is none.
 	Stopped func(from, to time.Time) time.Duration
@@ -104,17 +108,23 @@ func (r TickReq) running(now time.Time, stampText string) (time.Duration, bool) 
 	return d, true
 }
 
-// TickPart is one part of a tick: its name and its plan.
+// TickPartFn is one part of the tick over an observed state: its plan, held
+// to the part's bounds, and how many moves and judgments are due past them.
+type TickPartFn func(*Snapshot, TickReq) (plan Plan, due int)
+
+// TickPart is one part of a tick: its name, its plan, and what is due past
+// its bounds.
 type TickPart struct {
 	Name string
 	Plan Plan
+	Due  int
 }
 
 // TickParts is the tick's parts in their fixed order. Repair of a pending
 // operation (T5) comes first and needs the store: the binding does it.
 var TickParts = []struct {
 	Name string
-	Fn   func(*Snapshot, TickReq) Plan
+	Fn   TickPartFn
 }{
 	{"resolve", TickResolve},
 	{"resume", TickResume},
@@ -123,6 +133,7 @@ var TickParts = []struct {
 	{"ask", TickAsk},
 	{"check", TickCheck},
 	{"deadlines", TickDeadlines},
+	{"overdue", TickOverdue},
 }
 
 // Tick is every part's plan over one observed state. Each part is computed
@@ -130,7 +141,8 @@ var TickParts = []struct {
 func Tick(s *Snapshot, r TickReq) []TickPart {
 	out := make([]TickPart, 0, len(TickParts))
 	for _, p := range TickParts {
-		out = append(out, TickPart{p.Name, p.Fn(s, r)})
+		plan, due := p.Fn(s, r)
+		out = append(out, TickPart{p.Name, plan, due})
 	}
 	return out
 }
@@ -140,27 +152,30 @@ func (p Plan) Empty() bool {
 	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0
 }
 
-// bound keeps the first n units and the first TickMaxNotes unit-less notes.
-func bound(p Plan, n int) Plan {
-	if len(p.Units) > n {
-		p.Units = p.Units[:n]
+// bound keeps the first TickMaxMoves units and the first TickMaxNotes
+// unit-less notes, and says how many it left out: those are due.
+func bound(p Plan) (Plan, int) {
+	due := 0
+	if len(p.Units) > TickMaxMoves {
+		due += len(p.Units) - TickMaxMoves
+		p.Units = p.Units[:TickMaxMoves]
 	}
 	if len(p.Notes) > TickMaxNotes {
+		due += len(p.Notes) - TickMaxNotes
 		p.Notes = p.Notes[:TickMaxNotes]
 	}
-	return p
+	return p, due
 }
 
-// T1. TickResolve, when something landed or was added since the last tick,
-// scans every stream's waiting set in score order: a primary whose every need
+// T1. TickResolve scans every stream's waiting set in score order, from the
+// state, whenever the tick reads the whole sprint: a primary whose every need
 // has landed moves to ready; a need that was dropped is the blocked judgment,
 // once. A sentinel is never moved: when everything it needs has landed the
 // tick marks it reached and opens its judgment (SentinelsDue), and what waits
-// behind it stays waiting until the coordinator releases it.
-func TickResolve(s *Snapshot, r TickReq) Plan {
-	if !r.Scan {
-		return Plan{}
-	}
+// behind it stays waiting until the coordinator releases it. No flag says a
+// scan is due: what is due is read from the state, so a tick that did not
+// finish leaves it due for the next.
+func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	for _, c := range s.Work.Column(Waiting) {
 		if !IsSentinel(c) {
@@ -174,14 +189,15 @@ func TickResolve(s *Snapshot, r TickReq) Plan {
 	due := SentinelsDue(s, r.who())
 	p.Units = append(p.Units, due.Units...)
 	p.Notes = append(p.Notes, due.Notes...)
-	return bound(p, TickMaxMoves)
+	return bound(p)
 }
 
 // T7. TickResume resumes a stream stopped only because a card needed another
 // stream's card, once that card has landed: the stuck cards back to queued,
 // the stream merging, its judgment closed, and a happened note.
-func TickResume(s *Snapshot, r TickReq) Plan {
+func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
+	due := 0
 	for _, st := range s.Merge.Rows {
 		ctl := s.StreamCtl(st)
 		if ctl.F("state") != StreamStopped || ctl.F("cause") != "cross" {
@@ -198,6 +214,10 @@ func TickResume(s *Snapshot, r TickReq) Plan {
 		if !landed {
 			continue
 		}
+		if len(p.Units) >= TickMaxMoves {
+			due++
+			continue
+		}
 		q := Resume(s, ResumeReq{Stream: st, Did: "the card it needed landed", Who: r.who()})
 		if len(q.Units) == 0 {
 			continue
@@ -206,11 +226,8 @@ func TickResume(s *Snapshot, r TickReq) Plan {
 		n.Who = r.who()
 		q.Units[0].Notes = append(q.Units[0].Notes, n)
 		p.Units = append(p.Units, q.Units...)
-		if len(p.Units) >= TickMaxMoves {
-			break
-		}
 	}
-	return p
+	return p, due
 }
 
 // T3. TickDeal deals ready primaries, oldest first by score, each to the up
@@ -218,8 +235,9 @@ func TickResume(s *Snapshot, r TickReq) Plan {
 // than MaxReadyPerMember; a withdrawn card is dealt again at a new
 // generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
-func TickDeal(s *Snapshot, r TickReq) Plan {
+func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
+	due := 0
 	var ready []*Card
 	for _, c := range s.Work.Column(Ready) {
 		if !IsSentinel(c) {
@@ -238,6 +256,7 @@ func TickDeal(s *Snapshot, r TickReq) Plan {
 			room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
 		}
 		n := min(room, TickMaxMoves, len(ready))
+		due = min(room, len(ready)) - n
 		if n > 0 {
 			ids := make([]string, n)
 			for i := range ids {
@@ -246,25 +265,30 @@ func TickDeal(s *Snapshot, r TickReq) Plan {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	notify(&p, s, conds, []string{NNoMember}, r.who())
-	return p
+	due += notify(&p, s, conds, []string{NNoMember}, r.who())
+	return p, due
 }
 
 // T4. TickLevel evens the up members' ready queues when two differ by more
 // than one: the newest cards go to the shortest queue.
-func TickLevel(s *Snapshot, r TickReq) Plan {
-	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}), TickMaxMoves)
+func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
+	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
 
 // T2. TickAsk asks two different readers of every primary in review whose
 // work did not fail and that has no read card at its attempt (the readers
 // named on the primary first). One that cannot be asked, for want of two
 // different readers, is a judgment once (N1), closed when it is asked.
-func TickAsk(s *Snapshot, r TickReq) Plan {
+func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
+	due := 0
 	for _, c := range s.Work.Column(Review) {
-		if c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 && len(ids) < TickMaxMoves {
-			ids = append(ids, c.ID)
+		if c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+			if len(ids) < TickMaxMoves {
+				ids = append(ids, c.ID)
+			} else {
+				due++
+			}
 		}
 	}
 	var p Plan
@@ -278,14 +302,14 @@ func TickAsk(s *Snapshot, r TickReq) Plan {
 		}
 	}
 	p.Refused = nil
-	notify(&p, s, conds, []string{NCannotAsk}, r.who())
-	return p
+	due += notify(&p, s, conds, []string{NCannotAsk}, r.who())
+	return p, due
 }
 
 // T6. TickCheck holds the state to what is always true (section 9): each
 // violation is one judgment (N8), with the rule and the cards, closed by the
 // tick when the rule holds again.
-func TickCheck(s *Snapshot, r TickReq) Plan {
+func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
 	for _, v := range Check(s, nil) {
@@ -301,14 +325,14 @@ func TickCheck(s *Snapshot, r TickReq) Plan {
 		}
 		conds = append(conds, c)
 	}
-	notify(&p, s, conds, []string{NInvariant}, r.who())
-	return p
+	due := notify(&p, s, conds, []string{NInvariant}, r.who())
+	return p, due
 }
 
 // TickDeadlines writes one judgment for each card or stream past its
 // deadline, in running time (N4, N5, N6), and closes it when the card or the
 // stream moves.
-func TickDeadlines(s *Snapshot, r TickReq) Plan {
+func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
 	late := func(stampField string, c *Card, limit time.Duration) (string, bool) {
@@ -355,8 +379,98 @@ func TickDeadlines(s *Snapshot, r TickReq) Plan {
 				decisions: []string{"merge --stream " + st, "look"}})
 		}
 	}
-	notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r.who())
-	return p
+	due := notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r.who())
+	return p, due
+}
+
+// TickOverdue marks each open judgment overdue once, when it passes its due
+// time in running time (DeadlineJudgment after it was written, or the review
+// time the coordinator set with wait): one overdue line (a happened note of
+// NOverdue naming the judgment), and a hold on the judgment's open subjects
+// (an acknowledged-kind record of NOverdue, never a judgment and shown in no
+// inbox) that stops the tick marking it again. The tick closes the hold when
+// the judgment closes or is no longer overdue (a wait moved its review time
+// on), so a judgment overdue again is marked again. A coordinator who is
+// silent is visible: every judgment waiting on them is named, once, as
+// overdue.
+func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	type judg struct {
+		note     Note
+		subjects []string
+	}
+	var order []string
+	byID := map[string]*judg{}
+	for _, o := range s.Open {
+		if o.Note.Kind != Judgment {
+			continue
+		}
+		j := byID[o.Note.ID]
+		if j == nil {
+			j = &judg{note: o.Note}
+			byID[o.Note.ID] = j
+			order = append(order, o.Note.ID)
+		}
+		j.subjects = append(j.subjects, o.Subject())
+	}
+	overdue := func(n Note) bool {
+		if !n.Review.IsZero() {
+			return s.Now.After(n.Review)
+		}
+		d, ok := r.running(s.Now, stamp(n.At))
+		return ok && d > DeadlineJudgment
+	}
+	marked := map[string]bool{} // judgment id + subject, held as overdue
+	for _, o := range s.Acked {
+		if o.Note.Type != NOverdue {
+			continue
+		}
+		j := byID[o.Note.What]
+		if j == nil || !contains(j.subjects, o.Subject()) || !overdue(j.note) {
+			p.Closes = append(p.Closes, o)
+			continue
+		}
+		marked[OpenKey(o.Note.What, o.Subject())] = true
+	}
+	written, due := 0, 0
+	for _, id := range order {
+		j := byID[id]
+		if !overdue(j.note) {
+			continue
+		}
+		var fresh []string
+		for _, sub := range j.subjects {
+			if !marked[OpenKey(id, sub)] {
+				fresh = append(fresh, sub)
+			}
+		}
+		if len(fresh) == 0 {
+			continue
+		}
+		if written >= TickMaxNotes {
+			due++
+			continue
+		}
+		written++
+		sort.Strings(fresh)
+		n := j.note
+		past := fmt.Sprintf("%s of running time", DeadlineJudgment)
+		if !n.Review.IsZero() {
+			past = "its review time " + stamp(n.Review)
+		}
+		line := Note{Kind: Happened, Type: NOverdue, Stream: n.Stream, Who: r.who(), At: s.Now,
+			What: fmt.Sprintf("%s (%s) open since %s, past %s; run: nova-sprint inbox", id, n.Type, stamp(n.At), past)}
+		hold := Note{Kind: Acknowledged, Type: NOverdue, Stream: n.Stream, What: id, Who: r.who(), At: s.Now,
+			StreamLevel: n.StreamLevel, SprintLevel: n.SprintLevel}
+		if !n.StreamLevel && !n.SprintLevel {
+			line.Primaries, line.Count = fresh, len(fresh)
+			hold.Primaries, hold.Count = fresh, len(fresh)
+		} else {
+			line.Primaries, line.Count = n.Primaries, n.Count
+		}
+		p.Notes = append(p.Notes, line, hold)
+	}
+	return p, due
 }
 
 // cond is a condition the tick tells the coordinator of: a judgment of a type
@@ -371,10 +485,10 @@ type cond struct {
 }
 
 // condKey identifies a condition on one subject: the type, the subject and
-// what it says. N3's count changes while it stays one condition, so it is
-// keyed by its type and subject only.
+// what it says. N3's count and N1's count of free readers change while each
+// stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, what string) string {
-	if typ == NNoMember {
+	if typ == NNoMember || typ == NCannotAsk {
 		what = ""
 	}
 	return typ + "\x00" + subject + "\x00" + what
@@ -389,8 +503,10 @@ func (c cond) subjects() []string {
 
 // notify writes a judgment for each condition not open already (bounded by
 // TickMaxNotes), and closes every open judgment of the types whose condition
-// no longer holds: each judgment is written once and never every tick.
-func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) {
+// no longer holds: each judgment is written once and never every tick. It
+// returns how many conditions it left unwritten past the bound: those are
+// due.
+func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) int {
 	// A condition is open while its judgment is, or while the coordinator's
 	// acknowledgement of it is held: either way it is not written again.
 	held := append(append([]Open(nil), s.Open...), s.Acked...)
@@ -401,7 +517,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) {
 		}
 	}
 	holds := map[string]bool{}
-	written := 0
+	written, due := 0, 0
 	for _, c := range conds {
 		fresh := false
 		for _, sub := range c.subjects() {
@@ -409,7 +525,11 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) {
 			holds[k] = true
 			fresh = fresh || !open[k]
 		}
-		if !fresh || written >= TickMaxNotes {
+		if !fresh {
+			continue
+		}
+		if written >= TickMaxNotes {
+			due++
 			continue
 		}
 		written++
@@ -426,4 +546,5 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) {
 			p.Closes = append(p.Closes, o)
 		}
 	}
+	return due
 }

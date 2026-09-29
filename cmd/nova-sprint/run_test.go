@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
@@ -32,11 +34,11 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	if !strings.Contains(out, "MOVED deal: s1-1 ready -> working") || !strings.Contains(out, "TICK OK state=RUNNING idle=no moved=2") {
 		t.Fatalf("tick: %s", out)
 	}
-	ta.a.sleep(6 * time.Second)
-	if out := ta.ok("inbox"); !strings.Contains(out, "machine: STOPPED (no tick for 6s)") {
+	ta.a.sleep(store.MachineSilence + time.Second)
+	if out := ta.ok("inbox"); !strings.Contains(out, "machine: STOPPED (no tick for 16s)") {
 		t.Fatalf("inbox with no tick: %s", out)
 	}
-	if out := ta.ok("take --as m1 --limit 1"); !strings.Contains(out, "machine: STOPPED (no tick for 6s)") {
+	if out := ta.ok("take --as m1 --limit 1"); !strings.Contains(out, "machine: STOPPED (no tick for 16s)") {
 		t.Fatalf("a verb's line with no tick: %s", out)
 	}
 	ta.ok("stop")
@@ -102,8 +104,8 @@ func TestWhereHeaderIsStoppedOrTheProgressLine(t *testing.T) {
 		t.Fatalf("running with cards:\n%q", out)
 	}
 	// running but silent: never hidden
-	ta.a.sleep(6 * time.Second)
-	if got := whereHead(t, ta.ok("where")); !strings.HasPrefix(got, "SPRINT TABLE\n\nSTOPPED (no tick for 6s)\n\n") {
+	ta.a.sleep(store.MachineSilence + time.Second)
+	if got := whereHead(t, ta.ok("where")); !strings.HasPrefix(got, "SPRINT TABLE\n\nSTOPPED (no tick for 16s)\n\n") {
 		t.Fatalf("running but silent:\n%q", got)
 	}
 }
