@@ -33,7 +33,7 @@ func init() {
 		{"add", "--stream <s> (<id>... | --count <n>) [--needs <a,b>] [--brief <text>] [--score <n>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
 		{"start", "(<id>... | --stream <s> | --limit <n> | --group <n>)", "start --limit 10", (*app).cmdStart},
-		{"take", "--as <member> [<card>[@<gen>]...] [--limit <n>]", "take --as m1 --limit 5", (*app).cmdTake},
+		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1", (*app).cmdFinish},
 		{"ask", "[<id>...] [--stream <s>] [--limit <n>] [--another]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
@@ -89,8 +89,12 @@ ids, a stream, a column, --limit n, or an inbox group (--group n). Each verb
 prints what moved (MOVED), what did not and why (REFUSED, on stderr), its
 summary line, and the sprint's line: landed/all percent -> ETA.
 
-A card id with @<gen> names the generation of a work card the worker holds;
-a finish of a generation that is not the live one is refused as stale.
+A work card is named with its generation, <card>@<gen>: the generation the
+worker holds, from queue --as <member> (--json: "gen"). take by id and finish
+name it for every card; a card named without one is refused, naming the live
+generation, and a generation that is not the live one is refused as stale.
+take with no card takes the member's oldest ready cards (--limit n, default 1)
+and prints each one's generation.
 
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
@@ -507,8 +511,11 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "take", err.Error())
 	}
 	ids, gens, err := cardGens(words)
-	if err != nil || *as == "" {
-		return refuse(stderr, "take", fmt.Sprint("wants --as <member>; ", err))
+	if err != nil {
+		return refuse(stderr, "take", err.Error())
+	}
+	if *as == "" || len(gens) != len(ids) {
+		return refuse(stderr, "take", "wants --as <member>, and every card named as <card>@<gen>, the generation from queue --as <member>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
