@@ -161,9 +161,12 @@ func TestMain(m *testing.M) {
 		decoy := filepath.Join(dir, "decoy-box.json")
 		_ = fuse.CreateBox(decoy)
 		_ = os.Setenv("NOVA_FUSE_BOX", decoy)
-		defer os.RemoveAll(dir)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+	os.Exit(code)
 }
 
 // TestNoDefaultBoxRefusesToGuess: the destination law. Every verb that touches the box
