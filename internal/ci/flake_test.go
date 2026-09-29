@@ -211,3 +211,47 @@ func TestDetectFlakeRunnerError(t *testing.T) {
 		t.Errorf("expected runner error, got %v", err)
 	}
 }
+
+func TestDetectFlakePreRunTimeoutIsSetupFailed(t *testing.T) {
+	t.Parallel()
+
+	fakeRunner := func(ctx context.Context, pkg, testPattern string) (RunOutcome, error) {
+		return RunOutcome{SetupFailed: true, Output: "setup timed out: compilation deadline exceeded"}, nil
+	}
+
+	_, err := DetectFlake(context.Background(), FlakeConfig{
+		Package: "./internal/ci",
+		Test:    "TestColdPackage",
+		Runs:    3,
+		Runner:  fakeRunner,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var setupFailed *SetupFailedError
+	if !errors.As(err, &setupFailed) {
+		t.Fatalf("expected SetupFailedError on pre-run timeout, got %T: %v", err, err)
+	}
+	if setupFailed.Package != "./internal/ci" {
+		t.Errorf("unexpected package: %q", setupFailed.Package)
+	}
+}
+
+func TestExecTestRunnerPreRunTimeoutClassification(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // canceled before execution
+
+	outcome, err := ExecTestRunner(ctx, "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist", "TestCheckReportsWithoutWriting")
+	if err != nil {
+		t.Fatalf("unexpected runner error: %v", err)
+	}
+	if !outcome.SetupFailed {
+		t.Errorf("expected SetupFailed=true for pre-run timeout, got outcome: %+v", outcome)
+	}
+	if outcome.Passed {
+		t.Errorf("expected Passed=false for pre-run timeout, got outcome: %+v", outcome)
+	}
+}
+

@@ -98,14 +98,29 @@ type flakeTestEvent struct {
 
 // ExecTestRunner is the default production runner executing `go test -json -count=1 -run <pattern> <pkg>`.
 func ExecTestRunner(ctx context.Context, pkg, testPattern string) (RunOutcome, error) {
+	return ExecTestRunnerEnv(ctx, pkg, testPattern, nil)
+}
+
+// ExecTestRunnerEnv executes `go test -json -count=1 -run <pattern> <pkg>` with additional environment variables.
+func ExecTestRunnerEnv(ctx context.Context, pkg, testPattern string, extraEnv []string) (RunOutcome, error) {
 	cmd := exec.CommandContext(ctx, "go", "test", "-json", "-count=1", "-run", testPattern, pkg)
 	configureFlakeProcess(cmd)
-	cmd.Env = goenv.Clean(os.Environ())
+	cmd.Env = append(goenv.Clean(os.Environ()), extraEnv...)
+	cmd.WaitDelay = 3 * time.Second
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+			errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+			return RunOutcome{SetupFailed: true, Output: "setup timed out: " + err.Error()}, nil
+		}
+		return RunOutcome{}, err
+	}
+	defer cleanupFlakeProcess(cmd)
+	err := cmd.Wait()
+	cleanupFlakeProcess(cmd)
 
 	var (
 		ranTests    int
@@ -140,24 +155,30 @@ func ExecTestRunner(ctx context.Context, pkg, testPattern string) (RunOutcome, e
 		rawOutput += stderrBuf.String()
 	}
 
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
-		return RunOutcome{Passed: false, Output: "test execution timed out: " + rawOutput}, nil
+	if buildFailed {
+		return RunOutcome{SetupFailed: true, Output: rawOutput}, nil
 	}
 
-	if buildFailed || (ranTests == 0 && err != nil) {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) || err == nil {
-			return RunOutcome{SetupFailed: true, Output: rawOutput}, nil
+	if ranTests == 0 {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+			return RunOutcome{SetupFailed: true, Output: "setup timed out: " + rawOutput}, nil
 		}
-		return RunOutcome{}, err
-	}
-
-	if ranTests == 0 && err == nil {
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				return RunOutcome{SetupFailed: true, Output: rawOutput}, nil
+			}
+			return RunOutcome{}, err
+		}
 		return RunOutcome{NoTests: true, Output: rawOutput}, nil
 	}
 
 	if err == nil && failedTests == 0 {
 		return RunOutcome{Passed: true, Output: rawOutput}, nil
+	}
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+		return RunOutcome{Passed: false, Output: "test execution timed out: " + rawOutput}, nil
 	}
 
 	return RunOutcome{Passed: false, Output: rawOutput}, nil

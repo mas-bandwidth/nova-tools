@@ -10,11 +10,16 @@ import (
 func configureFlakeProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		pgid := cmd.Process.Pid
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		return cmd.Process.Kill()
+		cleanupFlakeProcess(cmd)
+		return nil
 	}
+}
+
+func cleanupFlakeProcess(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return
+	}
+	pgid := cmd.Process.Pid
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	_ = cmd.Process.Kill()
 }
