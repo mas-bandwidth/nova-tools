@@ -149,13 +149,17 @@ var (
 )
 
 type runSeams struct {
-	volumes    volumeManager
-	exec       func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error)
-	now        func() time.Time
-	signals    func() (<-chan os.Signal, func())
-	goos       string
-	denials    denialReader
-	denialStat func(string) (os.FileInfo, error)
+	volumes     volumeManager
+	exec        func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error)
+	now         func() time.Time
+	signals     func() (<-chan os.Signal, func())
+	goos        string
+	denials     denialReader
+	denialStat  func(string) (os.FileInfo, error)
+	winPlace    winPlacer
+	winWall     func() (string, bool)
+	winPoll     func(time.Duration) <-chan time.Time
+	winReadExit func(string) (int, bool)
 }
 
 func (s runSeams) withDefaults() runSeams {
@@ -179,6 +183,18 @@ func (s runSeams) withDefaults() runSeams {
 	}
 	if s.denialStat == nil {
 		s.denialStat = denialStat
+	}
+	if s.winPlace == nil {
+		s.winPlace = runWinPlace
+	}
+	if s.winWall == nil {
+		s.winWall = runWinWall
+	}
+	if s.winPoll == nil {
+		s.winPoll = runWinPoll
+	}
+	if s.winReadExit == nil {
+		s.winReadExit = runWinReadExit
 	}
 	return s
 }
@@ -552,7 +568,7 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 		return code
 	}
 	if goos == "windows" {
-		return runDisposableWindows(f, deadline, stdin, stdout, stderr, env)
+		return runDisposableWindows(f, deadline, stdin, stdout, stderr, env, s)
 	}
 	return runDisposable(f, deadline, stdin, stdout, stderr, env, s)
 }
