@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // engine is the container runtime as this tool uses it. The podman type below
@@ -79,7 +78,7 @@ func (p *podman) Start(args []string, stdout, stderr io.Writer) (process, error)
 	cmd.Stdin = nil
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setOwnProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("%s %s: %v", p.bin, firstWords(args, 2), err)
 	}
