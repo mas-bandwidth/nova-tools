@@ -320,7 +320,7 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	if err := testbin.WriteExecutable(answers, []byte("#!/bin/sh\necho 'nova-swarm v1 stamp'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	line, err := readVersionLineWithin(answers, 30*time.Second, time.Second)
+	line, err := readVersionLineWithin(answers, 30*time.Second, time.Second, doctorVersionLineMax)
 	if err != nil || line != "nova-swarm v1 stamp" {
 		t.Fatalf("a binary that answers: got (%q, %v)", line, err)
 	}
@@ -329,7 +329,7 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	if err := testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	line, err = readVersionLineWithin(hangs, 200*time.Millisecond, 50*time.Millisecond)
+	line, err = readVersionLineWithin(hangs, 200*time.Millisecond, 50*time.Millisecond, doctorVersionLineMax)
 	if err == nil || err.Error() != "timed out after 200ms" || line != "" {
 		t.Errorf("a hung binary: got (%q, %v), want an empty line and \"timed out after 200ms\"", line, err)
 	}
@@ -368,7 +368,7 @@ func doctorStubs(t *testing.T, pathScript, localScript string) (env doctorEnv, p
 		lookPath: func(string) (string, error) { return pathBin, nil },
 		homeDir:  func() (string, error) { return home, nil },
 		read: func(p string) (string, error) {
-			return readVersionLineWithin(p, time.Second, 100*time.Millisecond)
+			return readVersionLineWithin(p, time.Second, 100*time.Millisecond, doctorVersionLineMax)
 		},
 	}
 	return env, pathBin, localBin
@@ -499,5 +499,98 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(pidFile); err != nil || len(strings.Fields(string(raw))) != 2 {
 		t.Errorf("the stub ran twice and should have recorded two children, got %q (%v)", raw, err)
+	}
+}
+
+// The first-line writer keeps the first line and nothing else, whatever streams through it:
+// a hundred megabytes in 64 KiB writes leaves it holding what one line may hold, and every
+// write is still accepted in full so the copy never stalls.
+func TestFirstLineWriterRetainsOnlyTheFirstLineUpToTheLimit(t *testing.T) {
+	t.Parallel()
+	chunk := bytes.Repeat([]byte("y\n"), 32*1024)
+
+	w := &firstLineWriter{limit: 4096}
+	for i := 0; i < 1600; i++ {
+		if n, err := w.Write(chunk); n != len(chunk) || err != nil {
+			t.Fatalf("write %d: (%d, %v), want the whole chunk accepted", i, n, err)
+		}
+	}
+	if line, over := w.result(); line != "y" || over || len(w.line) != 1 {
+		t.Errorf("a stream of short lines: kept %q (overflow %v, %d bytes), want just %q", line, over, len(w.line), "y")
+	}
+
+	fired := 0
+	w = &firstLineWriter{limit: 4096, onOverflow: func() { fired++ }}
+	long := bytes.Repeat([]byte("a"), 64*1024)
+	for i := 0; i < 1600; i++ {
+		_, _ = w.Write(long)
+	}
+	line, over := w.result()
+	if !over || len(line) != 4096 || len(w.line) != 4096 || fired != 1 {
+		t.Errorf("a line that never ends: kept %d bytes (overflow %v, notified %d times), want 4096, true, 1", len(line), over, fired)
+	}
+
+	// A first line of exactly the limit is a line; one byte more is not.
+	w = &firstLineWriter{limit: 8}
+	_, _ = w.Write([]byte("12345678\nrest"))
+	if line, over := w.result(); line != "12345678" || over {
+		t.Errorf("a line of exactly the limit: got %q overflow %v", line, over)
+	}
+	w = &firstLineWriter{limit: 8}
+	_, _ = w.Write([]byte("123456789\n"))
+	if line, over := w.result(); !over || len(line) != 8 {
+		t.Errorf("a line one byte over: got %q overflow %v", line, over)
+	}
+}
+
+// A binary that streams forever is cut off at the deadline holding at most its first line,
+// and one whose first line never ends is killed at the limit, with its own cause and no line
+// to compare; the bytes retained are asserted, not the process's memory.
+func TestReadVersionLineWithinBoundsWhatItKeeps(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	streams := write("streams", "exec yes")
+	line, err := readVersionLineWithin(streams, 300*time.Millisecond, 50*time.Millisecond, 4096)
+	if line != "y" || err == nil || err.Error() != "timed out after 300ms" {
+		t.Errorf("a binary that streams forever: got (%q, %v), want its first line and a timeout", line, err)
+	}
+
+	endless := write("endless", "while :; do printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; done")
+	line, err = readVersionLineWithin(endless, 30*time.Second, 50*time.Millisecond, 64)
+	if line != "" || err == nil || err.Error() != "printed a line longer than 64 bytes" {
+		t.Errorf("a first line that never ends: got (%q, %v), want no line and the limit named", line, err)
+	}
+}
+
+// A stamp the doctor prints is a bounded, escaped excerpt: a very long stamp is compared
+// whole and printed short, on the OK line, in the drift lines and in the unreadable line.
+func TestDoctorPrintsABoundedExcerptOfAStamp(t *testing.T) {
+	t.Parallel()
+	long := "nova-swarm " + strings.Repeat("x", 3000)
+	env := doctorFake(map[string]string{"/opt/nova-swarm": long, "/home/me/.local/bin/nova-swarm": doctorRebuiltLine}, noPath, "/home/me")
+
+	var out, errOut bytes.Buffer
+	if code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if len(errOut.String()) > 4*doctorStampExcerpt+2000 || strings.Contains(errOut.String(), strings.Repeat("x", doctorStampExcerpt+50)) {
+		t.Errorf("the refusal printed the whole stamp (%d bytes)", errOut.Len())
+	}
+	if !strings.Contains(errOut.String(), "...+") {
+		t.Errorf("the excerpt does not say it was cut:\n%.400s", errOut.String())
+	}
+
+	out.Reset()
+	env = doctorFake(map[string]string{"/opt/nova-swarm": long}, noPath, "/home/me")
+	if code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut); code != 0 || out.Len() > doctorStampExcerpt+100 {
+		t.Errorf("OK line: exit %d, %d bytes", code, out.Len())
 	}
 }

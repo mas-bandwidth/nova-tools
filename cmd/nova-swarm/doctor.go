@@ -33,6 +33,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -74,50 +75,85 @@ const (
 // errDoctorNotFound is the read error for a binary that is not there.
 var errDoctorNotFound = errors.New("not found")
 
-// lockedBuffer is a write-safe buffer: the output copy can still be running when the wait
-// gives up on a pipe a child holds open, and the first line is read after that.
-type lockedBuffer struct {
-	mu   sync.Mutex
-	data []byte
+// doctorVersionLineMax is the most a `version` line may hold. A stamp is one short line, so
+// a first line past this is the binary's fault and its own cause, and nothing past it is kept.
+const doctorVersionLineMax = 4096
+
+// doctorStampExcerpt is the most of a stamp a DOCTOR line prints: the comparison sees the
+// whole line, the output a bounded, escaped excerpt of it.
+const doctorStampExcerpt = 200
+
+// firstLineWriter keeps the first line written to it and discards the rest: it is the
+// binary's stdout, so a binary that streams forever costs the doctor at most limit bytes.
+// It is safe for the copy goroutine to write while the reader looks at it.
+type firstLineWriter struct {
+	mu         sync.Mutex
+	line       []byte
+	limit      int
+	done       bool // the first line ended, or overflowed: later bytes are discarded
+	overflowed bool
+	onOverflow func()
 }
 
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.data = append(b.data, p...)
-	return len(p), nil
+func (w *firstLineWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	w.mu.Lock()
+	overflow := false
+	if !w.done {
+		take := p
+		if i := bytes.IndexByte(p, '\n'); i >= 0 {
+			take, w.done = p[:i], true
+		}
+		if room := w.limit - len(w.line); len(take) > room {
+			w.line = append(w.line, take[:room]...)
+			w.done, w.overflowed, overflow = true, true, true
+		} else {
+			w.line = append(w.line, take...)
+		}
+	}
+	notify := w.onOverflow
+	w.mu.Unlock()
+	if overflow && notify != nil {
+		notify()
+	}
+	return n, nil
 }
 
-func (b *lockedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return string(b.data)
+// result is the first line kept, without a trailing carriage return, and whether it
+// overflowed the limit.
+func (w *firstLineWriter) result() (line string, overflowed bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return strings.TrimRight(string(w.line), "\r"), w.overflowed
 }
 
 // readVersionLine runs `<path> version` under the production deadline and returns its first
 // line. It is production's reader only: every unit test injects the reader or the deadline.
 func readVersionLine(path string) (string, error) {
-	return readVersionLineWithin(path, doctorVersionDeadline, doctorVersionGrace)
+	return readVersionLineWithin(path, doctorVersionDeadline, doctorVersionGrace, doctorVersionLineMax)
 }
 
-// readVersionLineWithin is readVersionLine with the deadline and the pipe grace named. The
-// first line printed is returned even when the run then fails, so a stamp read before a hang
-// or a non-zero exit is still compared; the error names the cause in the words the refusal
-// prints: "timed out after <deadline>", "exited <n>", "printed nothing", or "not found". A
-// run that outlives the deadline is killed, and a child still holding the output pipe is
-// given up on after the grace.
-func readVersionLineWithin(path string, deadline, grace time.Duration) (string, error) {
+// readVersionLineWithin is readVersionLine with the deadline, the pipe grace and the line
+// limit named. The first line printed is returned even when the run then fails, so a stamp
+// read before a hang or a non-zero exit is still compared; the error names the cause in the
+// words the refusal prints: "timed out after <deadline>", "exited <n>", "printed nothing",
+// "printed a line longer than <limit> bytes", or "not found". A run that outlives the
+// deadline is killed, a run whose first line passes the limit is killed at once, and a child
+// still holding the output pipe is given up on after the grace. Output after the first line
+// is discarded as it arrives, so memory is bounded by the limit whatever the binary prints.
+func readVersionLineWithin(path string, deadline, grace time.Duration, limit int) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "version")
-	var out lockedBuffer
-	cmd.Stdout = &out
+	out := &firstLineWriter{limit: limit, onOverflow: cancel}
+	cmd.Stdout = out
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = grace
 	err := cmd.Run()
-	line, _, _ := strings.Cut(out.String(), "\n")
-	line = strings.TrimRight(line, "\r")
+	line, overflowed := out.result()
 	switch {
+	case overflowed:
+		return "", fmt.Errorf("printed a line longer than %d bytes", limit)
 	case ctx.Err() != nil:
 		return line, fmt.Errorf("timed out after %s", deadline)
 	case err == nil || errors.Is(err, exec.ErrWaitDelay):
@@ -269,6 +305,12 @@ func doctorSameFile(a, b string) bool {
 	return os.SameFile(ai, bi)
 }
 
+// doctorExcerpt is a stamp as a DOCTOR line prints it: at most doctorStampExcerpt bytes,
+// escaped to one line. The comparison has already seen the whole line.
+func doctorExcerpt(line string) string {
+	return oneline.Escape(oneline.Cap(line, doctorStampExcerpt))
+}
+
 // doctorStamp is the line the OK form reports, with buildinfo's own floor when a read
 // produced nothing -- the same "devel" every version verb prints, never an invented number.
 func doctorStamp(line string) string {
@@ -293,7 +335,7 @@ func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	}
 	r := e.compareBinaries(e.resolveBinaries(*pathFlag, *localFlag))
 	if !r.refused() {
-		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", oneline.Escape(doctorStamp(r.stamp)))
+		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", doctorExcerpt(doctorStamp(r.stamp)))
 		return 0
 	}
 	writeDoctorRefusal(stderr, r)
@@ -307,9 +349,9 @@ func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 func writeDoctorRefusal(stderr io.Writer, r doctorReport) {
 	if r.shadowed {
 		fmt.Fprintf(stderr, "DOCTOR DRIFT path=%s stamp=%s\n",
-			oneline.Field(r.pathBinary), oneline.Escape(doctorStamp(r.pathLine)))
+			oneline.Field(r.pathBinary), doctorExcerpt(doctorStamp(r.pathLine)))
 		fmt.Fprintf(stderr, "DOCTOR DRIFT local=%s stamp=%s\n",
-			oneline.Field(r.localBinary), oneline.Escape(doctorStamp(r.localLine)))
+			oneline.Field(r.localBinary), doctorExcerpt(doctorStamp(r.localLine)))
 		fmt.Fprintf(stderr, "DOCTOR REFUSED %s shadows %s; copy the ~/.local/bin binary over the PATH one, or fix PATH so ~/.local/bin comes first\n",
 			oneline.Field(r.pathBinary), oneline.Field(r.localBinary))
 	}
@@ -338,7 +380,7 @@ func doctorReported(line string) string {
 	if strings.TrimSpace(line) == "" {
 		return "nothing"
 	}
-	return "stamp=" + oneline.Escape(line)
+	return "stamp=" + doctorExcerpt(line)
 }
 
 // doctorLaunchVerb reports whether v is a verb that starts a card, which is where the

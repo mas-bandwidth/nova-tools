@@ -56,9 +56,10 @@ var swarmAudit = audit.Config{
 		"fenceSuffix",
 		// doctorOther and doctorReported (doctor.go) render the two tails of a DOCTOR
 		// UNREADABLE line: the other binary's path through oneline.Field and its stamp
-		// through oneline.Escape inside themselves, beside literal words, so what comes back
-		// is one escaped token.
-		"doctorOther", "doctorReported",
+		// through doctorExcerpt (oneline.Cap then oneline.Escape) inside themselves, beside
+		// literal words, so what comes back is one escaped token; doctorExcerpt is the
+		// stamp's bounded escape itself.
+		"doctorOther", "doctorReported", "doctorExcerpt",
 		// swarm.WallLine (issue #644's follow-up) builds the `WALL task=<id> path=<p>
 		// step=<n> [commits=<n> branch=<name>]` report line and puts every field through
 		// oneline.Field inside itself. The path and step come from the card's own log and
@@ -119,6 +120,9 @@ var swarmAudit = audit.Config{
 		// io/fs supplies only the ErrNotExist sentinel that error is compared with; neither
 		// holds a writer, and the words the refusal prints from them pass through oneline.
 		`"errors"`, `"io/fs"`,
+		// doctor.go: bytes only finds the newline that ends a stamp in the child's output
+		// and holds no writer; what is kept is printed through doctorExcerpt.
+		`"bytes"`,
 		// native_proc_unix.go (issue #779) needs these two and neither writes a stream.
 		// os/signal only routes the manager's SIGTERM into a channel the run selects on;
 		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
