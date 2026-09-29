@@ -219,11 +219,40 @@ func recordState(op, path string) (bool, error) {
 	case !li.Mode().IsRegular():
 		found = fmt.Sprintf("not a regular file (%s)", li.Mode().Type())
 	}
+	if found == "" {
+		// On a disk that folds case, the path above may have reached a file
+		// whose name differs from the one asked for. Only the exact name is a
+		// session file, so the other is neither read nor written through.
+		if listed, ok := foldedName(path); ok {
+			return false, &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q matches the existing %q only by letter case; "+
+				"only the exact name %q is a session file: rename that file or choose another session id",
+				opPhrase(op), path, listed, filepath.Base(path))}
+		}
+	}
 	if found != "" {
 		return false, &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is %s; move or remove it, or choose another session id",
 			opPhrase(op), path, found)}
 	}
 	return true, nil
+}
+
+// foldedName reports the directory entry that path reached by letter case
+// alone: the name it holds when that is not the name asked for.
+func foldedName(path string) (string, bool) {
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return "", false
+	}
+	want, folded := filepath.Base(path), ""
+	for _, e := range entries {
+		if e.Name() == want {
+			return "", false
+		}
+		if strings.EqualFold(e.Name(), want) {
+			folded = e.Name()
+		}
+	}
+	return folded, folded != ""
 }
 
 // RecordPathError is the refusal for a session record path holding something

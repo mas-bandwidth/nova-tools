@@ -150,3 +150,78 @@ func TestSymlinkedOwnShapeMarkersCountAsMarkers(t *testing.T) {
 		}
 	}
 }
+
+// foldsCase probes the file system the test runs on.
+func foldsCase(t *testing.T) bool {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Probe"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.Stat(filepath.Join(dir, "probe"))
+	return err == nil
+}
+
+// Only the exact ".md" name is a session file. A file named s1.MD is not one on
+// any file system; where the disk folds case, a verb addressing s1 must not
+// find it through the fold, so open, append, receipt and index --session refuse
+// and none writes through it. Where the disk keeps case, s1.md is simply a
+// different name and is created. The test states the outcome for both.
+func TestCaseFoldedRecordNamesAreNotSessionFiles(t *testing.T) {
+	t.Parallel()
+	folds := foldsCase(t)
+	store := t.TempDir()
+	if err := os.WriteFile(benchFile(store, "a"), []byte("# a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(store, "s1.MD")
+	if err := os.WriteFile(other, []byte("# other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(other)
+
+	// The store-wide readers agree that s1.MD is not a session.
+	rows, total, err := Index(store, "", 0)
+	if err != nil || total != 0 || len(rows) != 0 {
+		t.Fatalf("index lists %v %d %v", rows, total, err)
+	}
+	if got := Coverage(store).Sessions; got != 1 {
+		t.Fatalf("coverage counts %d sessions, want 1 (a.md only)", got)
+	}
+
+	if folds {
+		listing0 := listing(t, store)
+		checks := map[string]error{
+			"open":    Open(store, "s1", "", benchNow, PublishManual),
+			"append":  func() error { _, err := Append(store, "s1", "e", "w", "", benchNow, PublishManual); return err }(),
+			"index":   func() error { _, _, err := Index(store, "s1", 0); return err }(),
+			"receipt": func() error { _, err := Receipt(store, "s1", "e"); return err }(),
+		}
+		for verb, err := range checks {
+			var rp *RecordPathError
+			if !errors.As(err, &rp) || !strings.Contains(err.Error(), "only by letter case") || !strings.Contains(err.Error(), "s1.MD") {
+				t.Errorf("%s: want a refusal naming the case-folded match, got %v", verb, err)
+			}
+		}
+		if got := listing(t, store); !reflect.DeepEqual(got, listing0) {
+			t.Fatalf("a refused verb changed the store: %v -> %v", listing0, got)
+		}
+	} else {
+		if err := Open(store, "s1", "", benchNow, PublishManual); err != nil {
+			t.Fatalf("open on a case-keeping disk: %v", err)
+		}
+		if _, err := os.Stat(benchFile(store, "s1")); err != nil {
+			t.Fatalf("s1.md was not created beside s1.MD: %v", err)
+		}
+	}
+	if after, _ := os.ReadFile(other); string(after) != string(before) {
+		t.Fatalf("s1.MD was written through: %q", after)
+	}
+
+	// The same holds for an id that differs from an existing session by case.
+	if folds {
+		if _, err := Append(store, "A", "e", "w", "", benchNow, PublishManual); err == nil || !strings.Contains(err.Error(), "only by letter case") {
+			t.Fatalf("append to A beside a.md: %v", err)
+		}
+	}
+}

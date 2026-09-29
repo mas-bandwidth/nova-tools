@@ -70,6 +70,13 @@ path, what is there and the next action (move or remove it, or choose another
 session id); `open` never reports success over it, and no verb answers "no such
 session" for it.
 
+Only the exact name `<id>.md` is a session file: `s1.MD` is not one on any
+file system, and `index` and the coverage ledger skip it. On a disk that folds
+letter case, a verb addressing session `s1` (or `S1`) that would reach an
+existing `s1.MD` (or `s1.md`) through the fold refuses at exit 2 naming both
+names, and writes nothing through it; on a disk that keeps case they are two
+different names.
+
 On a bench store `open` creates `<store>/<id>.md` when none exists and is a
 no-op when one does. The new file holds a short header, fsynced before success
 is reported: a `# Cairn <first 8 characters of the id>` title line, a line
@@ -204,3 +211,4 @@ New regression cases must demonstrate the defect before the repair.
 42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkToARegularFileIsARecord`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory, a symlink to a directory and a dangling symlink at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlink to a regular file is a record; a symlinked own-shape marker is a marker.
 43. `TestBenchSourceIsRecordedInheritedAndReported` — on a bench store `open --source` prints the pointer it recorded, an `append` with no `--source` carries it, and `receipt` and `index` report it; a hand-kept record reports `source=-`; a source never forms a section.
 44. `TestMixedShapeMessageNamesThePathsOfEachShape`, `TestMixedShapeNextActionsRun` and `TestIDRefusalsNameTheRuleBroken` — the mixed-store refusal reads as a sentence for each verb and carries the two next actions, which run in a shell and leave one shape; an identifier refusal names the rule broken (empty, over 128 bytes, a directory name, `..`, whitespace, a control character, a slash) and never echoes an over-long id whole.
+45. `TestCaseFoldedRecordNamesAreNotSessionFiles` — a file named `s1.MD` is not a session file: the store-wide readers skip it, and on a case-folding disk `open`, `append`, `receipt` and `index --session` refuse naming the fold and write nothing through it (on a case-keeping disk `open s1` creates `s1.md` beside it; the test probes the disk and asserts the outcome for whichever it is).
