@@ -1826,28 +1826,34 @@ session's pointer; an `append` with no `--source` carries that pointer, and an
 `append --source` names the entry's own. `index` and `receipt` print what the
 entry holds, and `source=-` is an entry with no pointer at all.
 
-Two store shapes are read. The tool's own is `sessions/<id>.md` with `entries/`
-and `log.jsonl` beside it. A **bench store** keeps one markdown file per session
+The store's shape is read from its contents, once. The tool's own is
+`sessions/<id>.md` with `entries/` and `log.jsonl` beside it; an empty or absent
+store directory gets it. A **bench store** keeps one markdown file per session
 directly under the store — `cairns/<session>.md`, the shape a friend appending
-by hand already has — and is read as it stands:
+by hand has — and keeps it:
 
 ```sh
 # cairns/b9395d11.md exists, written by hand; this lays down the fixture the tests use
 mkdir -p cairns && cp internal/cairn/testdata/bench-b9395d11.md cairns/b9395d11.md
-nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 --publish manual --text "the words to keep"
+nova-cairn open --store ./cairns --session NEW --publish manual
+nova-cairn append --store ./cairns --session NEW --entry beat-1405 --publish manual --text "the words to keep"
 ```
 
-`open` on such a record is a no-op (it never writes a second record under
-`sessions/`, which would split one session in two), and `append` lands a dated
-`## <stamp> — <entry>` section at the end of the file, one blank line between
-sections, the words byte-for-byte under the heading. Nothing appears beside the
-file: no `entries/`, no `log.jsonl`, no index. Retries and conflicts read that
-section, so the same ID with the same words adds nothing and the same ID with
-different words still refuses. `index` and `receipt` read stored entries and so
-cover the tool's own shape only; a bench record's entries are its sections, and
-the coverage ledger counts the file. An append addressing a session neither
-shape holds refuses with the whole remedy verb: `open first: nova-cairn open
---store <dir> --session <id> --publish <policy>`.
+On a bench store `open` creates `cairns/<id>.md` with a short header when none
+exists and does nothing when one does; it never writes `sessions/`, `entries/`
+or `log.jsonl`. `append` lands a dated `## <stamp> — <entry>` section at the end
+of the file, one blank line between sections, the words byte-for-byte under the
+heading. Nothing appears beside the file: no `entries/`, no `log.jsonl`, no
+index. Retries and conflicts read that section, so the same ID with the same
+words adds nothing and the same ID with different words refuses. `index` and
+`receipt` read the dated sections, and the coverage ledger counts the file. An
+append addressing a session with no file refuses with the whole remedy verb:
+`open first: nova-cairn open --store <dir> --session <id> --publish <policy>`.
+
+A store holding both shapes (a top-level `<id>.md` together with `sessions/`,
+`entries/` or `log.jsonl`) is refused by every verb at exit 2 with one line that
+names the operation, the paths found of each shape and the next action: move
+either set out of the store. The lifecycle is modelled in `tla/CairnStore.tla`.
 
 
 ## nova-table

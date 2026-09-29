@@ -25,41 +25,65 @@ existing and no friend's practice is renamed by adopting it.
 
 **`open --store <dir> --session <id> [--source <ptr>] --publish <policy>`
 starts one session record.** The store is caller-named and holds plain
-files (`sessions/<id>.md`, `entries/<id>/<entry>.json`, one append-only
-`log.jsonl`); there is no default store, no environment variable and no
-discovery. The session identifier is stable: retries and recoveries address
-the same record by this name, and concurrent records coexist untouched by
-each other. Re-opening an open session is a no-op. The session file's
-header is convention only and is never parsed, so alternate
-directory/header conventions survive: the entry files are the source of
-truth and the readable record links to them.
+files; there is no default store, no environment variable and no discovery.
+The session identifier is stable: retries and recoveries address the same
+record by this name, and concurrent records coexist untouched by each other.
+Re-opening an open session is a no-op. The record is created in the store's
+shape (below): `sessions/<id>.md` with `entries/<id>/<entry>.json` and one
+append-only `log.jsonl` in the tool's own shape, `<id>.md` directly under the
+store in a bench store. The session file's header is convention only and is
+never parsed, so alternate directory/header conventions survive: in the tool's
+own shape the entry files are the source of truth and the readable record links
+to them.
 
-**The store's shape is read, never imposed.** Beside the layout above, a
-store may keep **one markdown file per session directly under it** —
-`<store>/<session>.md`, which is how a friend appending by hand already
-keeps a record. Both verbs read it: `open` on such a record is a no-op, and
-`append` lands a dated `## <stamp> — <entry>` section at the end of the
+**The store's shape is read from its contents, once, and never imposed.** A
+store is in one of three shapes, decided by one function from what the
+directory holds:
+
+- **bench**: at least one top-level `<id>.md` session file and no `sessions/`,
+  `entries/` or `log.jsonl`. This is how a friend appending by hand keeps a
+  record.
+- **own**: the tool's own layout, `sessions/<id>.md`, `entries/<id>/<entry>.json`
+  and `log.jsonl`. An empty directory and a directory that does not exist yet
+  are also this shape, so a new store gets the tool's own layout.
+- **mixed**: a top-level `<id>.md` together with any of `sessions/`, `entries/`
+  or `log.jsonl`. Every verb refuses it at exit 2 with one line naming the
+  operation, the cause, the paths found of each shape and the next action: move
+  either set out of the store so it keeps one shape. Nothing is written.
+
+On a bench store `open` creates `<store>/<id>.md` when none exists and is a
+no-op when one does. The new file holds a short header, fsynced before success
+is reported: a `# Cairn <first 8 characters of the id>` title line, a line
+naming the full session id and the open stamp in RFC 3339 UTC, and a `Source:`
+line when `--source` is given (escaped to one line, so a pointer never forms a
+section heading). It creates no `sessions/`, `entries/` or `log.jsonl`, and the
+flat format stores no publication policy, so `--publish` is validated and not
+written. `append` lands a dated `## <stamp> — <entry>` section at the end of the
 file in the file's own shape, one blank line between sections, the words
-byte-for-byte beneath the heading. Nothing appears beside the file — no
-`entries/`, no `log.jsonl`, no index — because the file IS the record; the
-duplicate and conflict rules below read that section instead of an entry
-file. `index` and `receipt` read those same dated sections. Their byte counts
-measure the whitespace-trimmed section body, matching duplicate detection;
-they do not reconstruct the original append's trailing newlines. The flat
-format stores no source or publication policy: receipts print `source=-`
-and `publish=unknown`. Ordinary prose without machine-form entry headings
-is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
-entry headings refuse rather than produce an ambiguous receipt. The nested
-record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
-(2026-09-18): an append into a bench store refused `no such session
-"b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
-named remedy would have written a second record and split one session in
-two. **A refusal names the remedy verb whole** — `open first: nova-cairn
-open --store <dir> --session <id> --publish <policy>` — rather than a verb
-the reader must reconstruct. The remedy quotes the caller's store and session
-for a POSIX shell. Control bytes use octal decoding inside a subshell with a
-sentinel to preserve trailing newlines, so the printed command stays one line
-and opens exactly the named record.
+byte-for-byte beneath the heading. An append to a session with no file refuses
+with the remedy verb, and appends only after that `open`. Nothing appears
+beside the file: no `entries/`, no `log.jsonl`, no index. The duplicate and
+conflict rules below read the section instead of an entry file. `index` and
+`receipt` read the dated sections; they see a session as soon as `open` has
+made its file. Their byte counts measure the whitespace-trimmed section body,
+matching duplicate detection; they do not reconstruct the original append's
+trailing newlines. The flat format stores no source or publication policy:
+receipts print `source=-` and `publish=unknown`. Ordinary prose without
+machine-form entry headings is not an indexed entry. Invalid stamps, invalid
+entry identifiers and duplicate entry headings refuse rather than produce an
+ambiguous receipt. The coverage ledger counts the session files of the store's
+shape.
+
+**A refusal names the remedy verb whole** — `open first: nova-cairn open --store
+<dir> --session <id> --publish <policy>` — rather than a verb the reader must
+reconstruct. The remedy quotes the caller's store and session for a POSIX shell.
+Control bytes use octal decoding inside a subshell with a sentinel to preserve
+trailing newlines, so the printed command stays one line and opens exactly the
+named record, in the shape the store already has.
+
+The lifecycle of a store (shape, open, append, duplicate, conflict, refusal) is
+modelled in `tla/CairnStore.tla`: one shape per store, an entry id maps to one
+text, and append never creates a session.
 
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
 --file <path|->) [--source <ptr>] --publish <policy>` files the friend's
@@ -122,8 +146,8 @@ New regression cases must demonstrate the defect before the repair.
 9. `TestAppendToTheBenchFileRetriesAsADuplicate` — the duplicate rule reads the bench section instead of an entry file: a retry of the same request is `duplicate=true` and adds no second section.
 10. `TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID` — the conflict rule reads the bench section instead of an entry file: the same entry id carrying different prose is a conflict.
 11. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
-12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataOrderingAndNestedPrecedence` checks ordering, metadata and the shared coverage count.
-13. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
+12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataAndOrdering` checks ordering, metadata and the shared coverage count.
+13. `TestMixedShapeStoreIsRefusedByEveryVerb` — a store holding a top-level `<id>.md` together with `sessions/`, `entries/` or `log.jsonl` is refused by `open`, `append`, `index` and `receipt` with one line naming the operation, the cause, the paths of each shape and the next action, and nothing is written. `TestMixedShapeMessageNamesThePathsOfEachShape` fixes the wording; `TestStoreShapeFromContents` fixes the shape rule.
 14. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`). `TestAppendOpenRemedyRoundTripsThroughShell` executes the printed command through a POSIX shell and verifies the exact store and session.
 15. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
 16. `TestAppendViaFileAndStdinKeepsExactBytes` — words named by `--file <path|->`, from a file or from stdin, are filed byte-for-byte.
@@ -145,3 +169,10 @@ New regression cases must demonstrate the defect before the repair.
 31. `TestReadCommandsRefuseMissingStoreAndSession` — absent inputs refuse, while existing empty stores and sessions succeed.
 32. `TestFlatReadersRefuseCorruptAndAmbiguousHeadings` — invalid stamps, invalid identifiers and duplicate entry headings refuse.
 33. `TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct` — ordinary prose is preserved without inventing entries.
+34. `TestBenchStoreOpenThenAppendKeepsTheBenchShape` — on a bench store holding several sessions and none for a new one, `append` refuses with the `open` remedy, `open` creates `<id>.md` and nothing else (the exact directory listing is asserted), and the next `append` lands the dated section with no `sessions/`, `entries/` or `log.jsonl`.
+35. `TestBenchOpenWritesTheHeader` — the header is the title line, the session line with the open stamp, and the `Source:` line when given; a source never forms a section heading.
+36. `TestBenchOpenTwiceIsANoOp` — a second `open` changes nothing.
+37. `TestBenchAppendBeforeOpenRefusesWithTheRemedy` and `TestBenchLifecycleDuplicateAndConflict` — the refusal names the remedy and writes nothing; after `open`, the same id with the same words is a duplicate and the same id with different words is a conflict.
+38. `TestBenchIndexAndReceiptSeeTheOpenedSession` — `index`, `receipt` and the coverage ledger see a session as soon as `open` has made its file.
+39. `TestEmptyAndAbsentStoresGetTheOwnShape` and `TestEmptyStoreOpenGetsTheOwnShapeAtTheCLI` — an empty or absent store directory gets the tool's own layout.
+40. `TestBenchStoreOpenRemedyKeepsTheBenchShape` and `TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb` — the same behaviour at the command line: exit codes, one-line refusals, the listing after each verb. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` runs the printed remedy on a bench store in the functional tier.

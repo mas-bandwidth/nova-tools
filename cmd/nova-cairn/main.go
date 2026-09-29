@@ -53,13 +53,18 @@ flags:
                     environment variable and no discovery from the working
                     directory. The store is plain files; a note is fsync-durable
                     before success is reported, independently of Redis and of
-                    any remote. Two shapes are read: this tool's own
-                    (sessions/<id>.md, entries/, log.jsonl) and a bench store of
-                    one markdown file per session directly under the store
-                    (<id>.md), appended by hand. On the second, open is a no-op
-                    and append lands a dated "## <stamp> - <entry>" section at
-                    the end of the file; no index and no directory appear
-                    beside it.
+                    any remote. Its shape is read from its contents, once:
+                    a bench store holds one markdown file per session directly
+                    under it (<id>.md), appended by hand or made by open;
+                    anything else is this tool's own shape (sessions/<id>.md,
+                    entries/, log.jsonl), and an empty or absent directory
+                    becomes it. On a bench store, open creates <id>.md with a
+                    short header (or does nothing when it exists), and append
+                    lands a dated "## <stamp> — <entry>" section at the end of
+                    the file; no sessions/, entries/, log.jsonl or index
+                    appears beside it. A store holding both shapes is refused
+                    by every verb, naming the paths found of each and the next
+                    action.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:

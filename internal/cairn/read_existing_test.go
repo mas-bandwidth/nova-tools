@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
+func TestFlatReadMetadataAndOrdering(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
 	raw := "# Own heading\n\n## 2026-09-28T02:00:00Z — late\n\n  late prose  \n\n## 2026-09-28T01:00:00Z — early\n\nearly\n"
@@ -15,10 +15,10 @@ func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 28, 1, 30, 0, 0, time.UTC)
-	if err := Open(store, "nested", "src", now, PublishNever); err != nil {
+	if err := Open(store, "second", "src", now, PublishNever); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Append(store, "nested", "middle", "nested prose", "", now, PublishNever); err != nil {
+	if _, err := Append(store, "second", "middle", "second prose", "", now, PublishNever); err != nil {
 		t.Fatal(err)
 	}
 	rows, total, err := Index(store, "", 0)
@@ -34,22 +34,6 @@ func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
 	}
 	if got := Coverage(store); got.Sessions != 2 || got.Entries != 3 {
 		t.Fatalf("coverage=%+v", got)
-	}
-	// A flat duplicate of a nested session is not a second record and cannot
-	// replace its entry metadata, even if its own contents are malformed.
-	if err := os.WriteFile(benchFile(store, "nested"), []byte("## 2026-99-28T01:00:00Z — bad\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	rows, total, err = Index(store, "nested", 0)
-	if err != nil || total != 1 || rows[0].Source != "src" {
-		t.Fatalf("nested precedence=%+v total=%d err=%v", rows, total, err)
-	}
-	if got := Coverage(store); got.Sessions != 2 || got.Entries != 3 {
-		t.Fatalf("duplicate coverage=%+v", got)
-	}
-	rc, err = Receipt(store, "nested", "middle")
-	if err != nil || rc.Source != "src" || rc.Policy != PublishNever {
-		t.Fatalf("nested receipt=%+v err=%v", rc, err)
 	}
 }
 

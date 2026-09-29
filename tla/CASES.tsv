@@ -1,4 +1,9 @@
 config	module	expected	property	deadlock	group	gate	debt
+MCCairnStore.cfg	MCCairnStore.tla	pass	-	check	cairnstore	required	-
+MCCairnStoreBrokenAppendCreates.cfg	MCCairnStore.tla	action	AppendCreatesNoSession	check	cairnstore	required	-
+MCCairnStoreBrokenConflictAdds.cfg	MCCairnStore.tla	invariant	OneTextPerEntry	check	cairnstore	required	-
+MCCairnStoreBrokenMixedServed.cfg	MCCairnStore.tla	action	MixedIsRefusedByEveryVerb	check	cairnstore	required	-
+MCCairnStoreBrokenOpenOwn.cfg	MCCairnStore.tla	invariant	OneShapeUnlessHanded	check	cairnstore	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-

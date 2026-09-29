@@ -23,26 +23,28 @@ func existingStore(store string) error {
 	return nil
 }
 
-// Preserve the nested-record precedence without treating permission errors or
-// a directory at the record path as evidence that the session is absent.
-func recordForRead(store, session string) (string, bool, error) {
+// recordForRead finds the session's record in the store's shape without
+// treating permission errors or a directory at the record path as evidence
+// that the session is absent.
+func recordForRead(store, session string, sh shape) (string, bool, error) {
 	if !validID(session) {
 		return "", false, fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
 	}
-	for i, path := range []string{sessionFile(store, session), benchFile(store, session)} {
-		info, err := os.Stat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return "", false, fmt.Errorf("cannot read session %q: %w", session, err)
-		}
-		if !info.Mode().IsRegular() {
-			return "", false, fmt.Errorf("session %q is not a regular file", session)
-		}
-		return path, i == 1, nil
+	path, bench := sessionFile(store, session), false
+	if sh == shapeBench {
+		path, bench = benchFile(store, session), true
 	}
-	return "", false, &NotFoundError{Msg: fmt.Sprintf("no such session %q under store %q", session, store)}
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return "", false, &NotFoundError{Msg: fmt.Sprintf("no such session %q under store %q", session, store)}
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("cannot read session %q: %w", session, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("session %q is not a regular file", session)
+	}
+	return path, bench, nil
 }
 
 // Flat records store only a dated heading and prose. Source and publication
@@ -96,12 +98,9 @@ func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
 		if !validID(id) || (session != "" && id != session) {
 			continue
 		}
-		path, isFlat, err := recordForRead(store, id)
+		path, _, err := recordForRead(store, id, shapeBench)
 		if err != nil {
 			return nil, nil, err
-		}
-		if !isFlat {
-			continue
 		}
 		receipts, err := benchReceipts(path, id)
 		if err != nil {

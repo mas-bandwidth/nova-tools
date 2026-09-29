@@ -18,11 +18,17 @@
 //	log.jsonl                    append-only event log feeding the ledger
 //
 // A store that keeps ONE MARKDOWN FILE PER SESSION directly under it --
-// <session>.md, the shape a friend appending by hand already has -- is read as
-// it stands. `open` on such a record is a no-op and `append` lands a dated
-// `## <stamp> — <entry>` section at the end of the file, with no entries/
-// directory, no log and no index appearing beside it. The tool adapts to the
-// store; the store is never converted to suit the tool.
+// <session>.md, the shape a friend appending by hand has -- is a bench store.
+// The shape is decided from the store's contents by storeShape (shape.go):
+// a top-level <id>.md and no sessions/, entries/ or log.jsonl is a bench
+// store; anything else, including an empty or absent directory, is the tool's
+// own shape; a store holding both is refused by every verb. On a bench store
+// `open` creates <session>.md with a short header when none exists and is a
+// no-op when one does, and `append` lands a dated `## <stamp> — <entry>`
+// section at the end of the file, with no sessions/, entries/ or log.jsonl
+// and no index appearing beside it. The tool adapts to the store; the store
+// is never converted to suit the tool. The lifecycle is modelled in
+// tla/CairnStore.tla (unchecked until run on the bench host).
 //
 // Each entry file is written atomically via internal/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename),
@@ -155,33 +161,26 @@ func sessionFile(store, session string) string {
 	return filepath.Join(store, "sessions", session+".md")
 }
 
-// benchFile is the other store shape this tool reads: one markdown file per
-// session directly under the store, kept and appended by hand. Rowan's bench
-// has kept its cairns that way since before the tool existed
-// (`cairns/<session>.md`), and on 2026-09-18 an append into it refused with
-// `no such session; open first` while the record sat right there. The refusal
-// was false, and its remedy was worse than the defect: `open` would have
-// written a second record under sessions/ and split one session in two.
-//
-// So the store's own shape is READ rather than imposed. Nothing is migrated,
-// nothing is renamed, and a bench file gets no sidecar: the file IS the
-// record, which is the same promise SPEC-CAIRN already makes about headers.
+// benchFile is the bench store's record: one markdown file per session
+// directly under the store, kept and appended by hand or created by open.
+// Nothing is migrated, nothing is renamed, and a bench file gets no sidecar:
+// the file IS the record.
 func benchFile(store, session string) string {
 	return filepath.Join(store, session+".md")
 }
 
-// locateRecord returns the session record's path and whether it is a bench
-// file. The nested record wins when both exist, so a store the tool opened
-// keeps its own shape and no caller is switched between two records by a file
-// appearing beside the store.
-func locateRecord(store, session string) (path string, bench, ok bool) {
-	if name := sessionFile(store, session); fileExists(name) {
-		return name, false, true
+// locateRecord returns the session record's path for a store of the given
+// shape and whether it is a bench file. Only the shape's own location is
+// consulted: a store never answers from two places.
+func locateRecord(store, session string, sh shape) (path string, bench, ok bool) {
+	name, bench := sessionFile(store, session), false
+	if sh == shapeBench {
+		name, bench = benchFile(store, session), true
 	}
-	if name := benchFile(store, session); fileExists(name) {
-		return name, true, true
+	if fileExists(name) {
+		return name, bench, true
 	}
-	return "", false, false
+	return "", bench, false
 }
 
 func fileExists(name string) bool {
@@ -399,15 +398,20 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if !validPublish(publish) {
 		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
 	}
+	sh, err := storeShape("open", store)
+	if err != nil {
+		return err
+	}
+	if sh == shapeBench {
+		return openBench(store, session, source, now.UTC().Format(time.RFC3339))
+	}
 	// The source a session was opened with must be readable before anything
 	// is written or reported: open prints it, and append inherits it.
 	if _, err := SessionSource(store, session); err != nil {
 		return err
 	}
-	// Re-open is a no-op: the record already stands, in whichever shape the
-	// store keeps it. A bench file counts, or open would write a second
-	// record beside one already being appended to.
-	if _, _, ok := locateRecord(store, session); ok {
+	// Re-open is a no-op: the record already stands.
+	if _, _, ok := locateRecord(store, session, sh); ok {
 		return nil
 	}
 	name := sessionFile(store, session)
@@ -474,7 +478,11 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if text == "" {
 		return res, errors.New("empty note stores nothing; refusing to file it")
 	}
-	path, bench, ok := locateRecord(store, session)
+	sh, err := storeShape("append", store)
+	if err != nil {
+		return res, err
+	}
+	path, bench, ok := locateRecord(store, session, sh)
 	if !ok {
 		return res, noRecord(store, session, publish)
 	}
@@ -577,7 +585,11 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 	if !validID(id) {
 		return rc, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
 	}
-	path, bench, err := recordForRead(store, session)
+	sh, err := storeShape("receipt", store)
+	if err != nil {
+		return rc, err
+	}
+	path, bench, err := recordForRead(store, session, sh)
 	if err != nil {
 		return rc, err
 	}
@@ -619,14 +631,21 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 	if err := existingStore(store); err != nil {
 		return nil, 0, err
 	}
+	sh, err := storeShape("index", store)
+	if err != nil {
+		return nil, 0, err
+	}
 	if session != "" {
-		if _, _, err := recordForRead(store, session); err != nil {
+		if _, _, err := recordForRead(store, session, sh); err != nil {
 			return nil, 0, err
 		}
 	}
-	rows, flat, err := flatIndexRows(store, session)
-	if err != nil {
-		return nil, 0, err
+	var rows []IndexRow
+	flat := map[string]bool{}
+	if sh == shapeBench {
+		if rows, flat, err = flatIndexRows(store, session); err != nil {
+			return nil, 0, err
+		}
 	}
 	root := filepath.Join(store, "entries")
 	entries, err := os.ReadDir(root)
@@ -682,7 +701,16 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 func Coverage(store string) Ledger {
 	var led Ledger
 	names := map[string]bool{}
-	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
+	// Only the shape's own location is counted. A store that reads as mixed
+	// is refused by every verb, so its count is never one a caller acts on.
+	sh, _ := storeShape("index", store)
+	dirs := []string{filepath.Join(store, "sessions")}
+	if sh == shapeBench {
+		dirs = []string{store}
+	} else if sh == shapeMixed {
+		dirs = append(dirs, store)
+	}
+	for _, dir := range dirs {
 		if files, err := os.ReadDir(dir); err == nil {
 			for _, f := range files {
 				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {

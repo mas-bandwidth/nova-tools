@@ -53,3 +53,38 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 		})
 	}
 }
+
+// The remedy the refusal prints, run through a shell on a bench store, opens
+// the named session as <id>.md and creates nothing else.
+func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	store := filepath.Join(root, "cairns")
+	if err := os.Mkdir(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if err := os.WriteFile(filepath.Join(store, id+".md"), []byte("# "+id+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, _, errOut := runCode("", "append", "--store", store, "--session", "NEW", "--entry", "e", "--text", "note", "--publish", "manual")
+	_, remedy, ok := strings.Cut(errOut, "open first: ")
+	if code != 2 || !ok {
+		t.Fatalf("append=%d %q", code, errOut)
+	}
+	remedy = strings.TrimSuffix(remedy, "; run: nova-cairn help\n")
+	args := strings.Fields(strings.ReplaceAll(remedy, "'", ""))[1:] // open --store <dir> --session NEW --publish manual
+	runOK(t, "", args...)
+	entries, err := os.ReadDir(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if !reflect.DeepEqual(got, []string{"NEW.md", "a.md", "b.md"}) {
+		t.Fatalf("store after the remedy: %v", got)
+	}
+}
