@@ -25,8 +25,12 @@ var SeatHint = fmt.Sprintf("preflight runs as the %s seat: %s=%s %s=<the variabl
 // when unset). A refusal names the seat preflight needs. store.Open sends
 // nothing (#3277); preflight is the one verb whose job is the probe, so it
 // sends the PING itself and a refused login is refused here, with the seat.
-func Open(ctx context.Context, addr string) (*redis.Client, error) {
-	st, err := store.Open(ctx, addr)
+func Open(ctx context.Context, addr string, sel ...*seatcred.Selection) (*redis.Client, error) {
+	var s *seatcred.Selection
+	if len(sel) > 0 {
+		s = sel[0]
+	}
+	st, err := store.OpenSeat(ctx, addr, s)
 	if err == nil {
 		if err = st.Client().Ping(ctx).Err(); err != nil {
 			_ = st.Close()
@@ -34,12 +38,18 @@ func Open(ctx context.Context, addr string) (*redis.Client, error) {
 		}
 	}
 	if err != nil {
+		getenv := os.Getenv
+		if s != nil && s.Getenv() != nil {
+			getenv = s.Getenv()
+		}
 		who := "the default user, because " + store.UserEnv + " is unset"
-		if u := os.Getenv(store.UserEnv); u != "" {
+		if u := getenv(store.UserEnv); u != "" {
 			who = "seat " + u
 		}
-		if s := seatcred.Selected(); s != "" {
-			who = "--seat " + s
+		if s != nil && s.Selected() != "" {
+			who = "--seat " + s.Selected()
+		} else if seatcred.Selected() != "" {
+			who = "--seat " + seatcred.Selected()
 		}
 		return nil, fmt.Errorf("%w (connected as %s); %s", err, who, SeatHint)
 	}

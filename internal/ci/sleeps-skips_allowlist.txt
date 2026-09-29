@@ -96,8 +96,6 @@ internal/nsprint/lessons	TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives
 internal/nsprint/pr	until	seed #4413: time.After at harness_test.go:35
 internal/nsprint/preflight	fakeSession.LaunchDry	seed #4413: time.After at fleet_test.go:44
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
-internal/sprinttable	startRefresh	seed #4413: time.After at session_unix_test.go:194
-internal/sprinttable	waitUnit	seed #4413: time.After at session_unix_test.go:217
 internal/swarm	TestAnIdleSlotAsksOnAnEventNotAPoll	seed #4413: time.After at slotwait_test.go:37 and 1 more
 internal/swarm	TestCountRefusalsDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:195
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81

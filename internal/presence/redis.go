@@ -47,12 +47,17 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 
 // OpenWith dials addr as user, using lookup to obtain the password when no seat is active.
 func OpenWith(ctx context.Context, addr, user string, lookup func(string) string) (*Redis, error) {
+	return OpenWithSelection(ctx, addr, user, lookup, nil)
+}
+
+// OpenWithSelection dials addr as user with lookup and selection.
+func OpenWithSelection(ctx context.Context, addr, user string, lookup func(string) string, sel *seatcred.Selection) (*Redis, error) {
 	a, err := Addr(addr)
 	if err != nil {
 		return nil, err
 	}
 	opts := &redis.Options{Addr: a}
-	u, pw, err := LoginWith(user, lookup)
+	u, pw, err := LoginWithSelection(user, lookup, sel)
 	if err != nil {
 		return nil, err
 	}
@@ -86,10 +91,18 @@ func Login(user string) (string, string, error) {
 
 // LoginWith is Login with an explicit lookup for environment variables.
 func LoginWith(user string, lookup func(string) string) (string, string, error) {
+	return LoginWithSelection(user, lookup, nil)
+}
+
+// LoginWithSelection is Login with lookup and selection named.
+func LoginWithSelection(user string, lookup func(string) string, sel *seatcred.Selection) (string, string, error) {
 	if lookup == nil {
 		lookup = os.Getenv
 	}
-	if c, ok, err := seatcred.Active(); ok {
+	if sel == nil {
+		sel = seatcred.Process()
+	}
+	if c, ok, err := sel.Active(); ok {
 		if err != nil {
 			return "", "", err
 		}

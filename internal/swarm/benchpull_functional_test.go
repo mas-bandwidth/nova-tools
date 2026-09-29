@@ -3,13 +3,17 @@
 package swarm
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // These tests run a batch or a pull against fake ssh and scp programs placed
@@ -22,6 +26,8 @@ import (
 // copies -- one explicit scp per file, so a file that did not come back is a copy that
 // failed rather than a filter that matched nothing and exited 0.
 func TestPullWaitsForResult(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	remoteSlot := filepath.Join(dir, "bench", "3")
@@ -30,7 +36,7 @@ func TestPullWaitsForResult(t *testing.T) {
 	// The result is not on the bench when the slot's shell returns: it appears on the
 	// THIRD ask, so a pull that asks once and copies gets nothing, whatever the machine's
 	// load is doing.
-	sshLog, scpLog := fakeBenchBin(t, dir, benchFake{
+	bin, sshLog, scpLog := fakeBenchBin(t, dir, benchFake{
 		appearAfter: 3,
 		appearPath:  filepath.Join(remoteJob, "RESULT.md"),
 		appearBody:  "RESULT: a\nall green\n",
@@ -38,10 +44,12 @@ func TestPullWaitsForResult(t *testing.T) {
 	writeAt(t, filepath.Join(remoteJob, "usage.tsv"), "tokens_in\ttokens_out\tusd\n10\t20\t0.0100\n")
 	writeAt(t, filepath.Join(remoteSlot, "native.log"), "the card's own log\n")
 
+	run, output, copyFile := makePullSeams(bin)
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
 		host: "b2", remoteSlot: remoteSlot, remoteJob: remoteJob, localJob: localJob,
 		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
+		run: run, output: output, copy: copyFile,
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
@@ -124,18 +132,22 @@ func TestPullWaitsForResult(t *testing.T) {
 // file up into the job, and says so on stderr -- the card is wrong and a person reading the
 // packet is told where its result was found.
 func TestPullCopiesResultUpFromRepo(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
-	_, _ = fakeBenchBin(t, dir, benchFake{})
+	bin, _, _ := fakeBenchBin(t, dir, benchFake{})
 	remoteJob := filepath.Join(dir, "bench", "1", "jobs", "a")
 	localJob := filepath.Join(dir, "root", "b2-1", "jobs", "a")
 	buried := filepath.Join(remoteJob, "repo", "nova-tools", "RESULT.md")
 	writeAt(t, buried, "RESULT: a\nall green\n")
 
+	run, output, copyFile := makePullSeams(bin)
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
 		host: "b2", remoteJob: remoteJob, localJob: localJob, label: "a",
 		wait: 200 * time.Millisecond, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
+		run: run, output: output, copy: copyFile,
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
@@ -159,12 +171,14 @@ func TestPullCopiesResultUpFromRepo(t *testing.T) {
 // own reason token, so a batch's packet says the machine was unreachable rather than
 // blaming the model for a result nobody could go and get.
 func TestPullScoresBenchUnreachable(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")
 	bench := writeBenches(t, dir, "b2\tb2\t"+benchRoot+"\t-\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone")
-	_, _ = fakeBenchBin(t, dir, benchFake{unreachable: true})
+	bin, _, _ := fakeBenchBin(t, dir, benchFake{unreachable: true})
 	// The card still has to cross to the bench, and rsync is the copy out; the fake here
 	// answers for it the way the remote-run tests' one does.
 	writeAt(t, filepath.Join(dir, "benchbin", "rsync"), "#!/bin/sh\nexit 0\n")
@@ -185,6 +199,7 @@ func TestPullScoresBenchUnreachable(t *testing.T) {
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
 		PullWait: 150 * time.Millisecond, PullPoll: 50 * time.Millisecond,
 		Stdout: &out, Stderr: &errb,
+		BinDir: bin,
 	})
 	if code != 1 {
 		t.Fatalf("a batch whose only card could not be pulled says NO; exit %d\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
@@ -197,9 +212,9 @@ func TestPullScoresBenchUnreachable(t *testing.T) {
 	}
 }
 
-func fakeBenchBin(t *testing.T, dir string, f benchFake) (sshLog, scpLog string) {
+func fakeBenchBin(t *testing.T, dir string, f benchFake) (bin, sshLog, scpLog string) {
 	t.Helper()
-	bin := filepath.Join(dir, "benchbin")
+	bin = filepath.Join(dir, "benchbin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -229,8 +244,39 @@ func fakeBenchBin(t *testing.T, dir string, f benchFake) (sshLog, scpLog string)
 	if err := testbin.WriteExecutable(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	return sshLog, scpLog
+	return bin, sshLog, scpLog
+}
+
+func makePullSeams(bin string) (func(string, ...string) error, func(string, ...string) (string, error), func(string, string, string) error) {
+	run := func(host string, args ...string) error {
+		binPath := filepath.Join(bin, "ssh")
+		testguard.RefuseHosts(binPath, append([]string{host}, args...)...)
+		cmd := exec.Command(binPath, append([]string{host}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
+		}
+		return nil
+	}
+	output := func(host string, args ...string) (string, error) {
+		binPath := filepath.Join(bin, "ssh")
+		testguard.RefuseHosts(binPath, append([]string{host}, args...)...)
+		cmd := exec.Command(binPath, append([]string{host}, args...)...)
+		out, err := cmd.Output()
+		if err != nil {
+			return string(out), &sshError{code: exitCodeOf(err), err: err}
+		}
+		return string(out), nil
+	}
+	copyFile := func(host, remote, local string) error {
+		binPath := filepath.Join(bin, "scp")
+		testguard.RefuseHosts(binPath, host+":"+remote, local)
+		cmd := exec.Command(binPath, host+":"+remote, local)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("scp %s: %s", remote, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	return run, output, copyFile
 }
 
 func newStepClock() *stepClock { return &stepClock{now: time.Unix(1_700_000_000, 0)} }

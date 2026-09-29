@@ -312,7 +312,14 @@ func TestNoGraphQLInNovaSprint(t *testing.T) {
 	}
 	root := moduleRoot(t)
 	n, sawSelf := 0, false
-	for _, dir := range []string{"cmd/nova-sprint", "internal/nsprint"} {
+	dirs := []string{"internal/nsprint"}
+	for _, candidate := range []string{"cmd/nova-sprint", "deprecated/cmd/nova-sprint"} {
+		if _, err := os.Stat(filepath.Join(root, candidate)); err == nil {
+			dirs = append(dirs, candidate)
+			break
+		}
+	}
+	for _, dir := range dirs {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				return err

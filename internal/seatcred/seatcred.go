@@ -142,6 +142,7 @@ type Selection struct {
 	addr     string
 	github   string
 	resolver func(seat string) (Cred, error)
+	getenv   func(string) string
 }
 
 var process Selection
@@ -231,6 +232,28 @@ func (s *Selection) Selected() string {
 	return s.selected
 }
 
+// WithLookup sets the environment lookup function for this selection.
+func (s *Selection) WithLookup(getenv func(string) string) *Selection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getenv = getenv
+	return s
+}
+
+// Getenv returns the environment lookup function for this selection, or nil.
+func (s *Selection) Getenv() func(string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getenv
+}
+
+// WithLookup returns a new Selection configured with getenv.
+func WithLookup(getenv func(string) string) *Selection {
+	var s Selection
+	s.getenv = getenv
+	return &s
+}
+
 // Active is the selected seat's login, resolved on first use and kept for the
 // life of the selection. ok is false when no seat is selected: the caller then
 // authenticates as it did before (its own environment variables).
@@ -243,7 +266,14 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 	if !s.resolved {
 		resolve := s.resolver
 		if resolve == nil {
-			resolve = defaultResolver
+			if s.getenv != nil {
+				lookup := s.getenv
+				resolve = func(seat string) (Cred, error) {
+					return Resolve(seat, lookup)
+				}
+			} else {
+				resolve = defaultResolver
+			}
 		}
 		s.cred, s.credErr = resolve(s.selected)
 		s.resolved = true
@@ -255,6 +285,11 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 // "--", which ends a tool's own flags), selects that seat or else getenv's
 // NOVA_SEAT, and returns the rest. A --seat with no name is an error.
 func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]string, error) {
+	if getenv != nil {
+		s.WithLookup(getenv)
+	} else if s.Getenv() != nil {
+		getenv = s.Getenv()
+	}
 	seat, flagged := "", false
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {

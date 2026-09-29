@@ -122,9 +122,13 @@ type Enqueuer struct {
 // NewEnqueuer returns the door onto one forge, telling DefaultEvents (stderr) of
 // every admission. Every production enqueue is built here -- nova-merge land,
 // nova-pulse's ledger and GHSweep.Enqueue -- so each one emits its `enqueue`
-// line; a caller wanting another sink sets Events after.
-func NewEnqueuer(host EnqueueHost) *Enqueuer {
-	return &Enqueuer{Host: host, Events: DefaultEvents}
+// line; a caller wanting another sink sets Events after, or passes it as events.
+func NewEnqueuer(host EnqueueHost, events ...*Events) *Enqueuer {
+	ev := DefaultEvents
+	if len(events) > 0 && events[0] != nil {
+		ev = events[0]
+	}
+	return &Enqueuer{Host: host, Events: ev}
 }
 
 // Enqueue admits one pull request to its base's merge queue, or refuses and says why.

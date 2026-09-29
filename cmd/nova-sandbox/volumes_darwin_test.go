@@ -183,23 +183,24 @@ const realApfsList = `APFS Containers (2 found)
     |   Capacity Consumed:         16384 B (16.4 KB)
 `
 
-// fakeApfsList answers `apfs list` with the real listing and refuses every other command,
-// so a test that thinks it is reading the tree cannot be reading something else.
-func fakeApfsList(t *testing.T) {
-	t.Helper()
-	old := diskutilRun
-	t.Cleanup(func() { diskutilRun = old })
-	diskutilRun = func(args ...string) (string, error) {
-		if strings.Join(args, " ") != "apfs list" {
-			return "", fmt.Errorf("List ran `diskutil %s`", strings.Join(args, " "))
-		}
-		return realApfsList, nil
+func testDiskutilWithRealList() diskutilVolumes {
+	return diskutilVolumes{
+		run: func(args ...string) (string, error) {
+			if strings.Join(args, " ") != "apfs list" {
+				return "", fmt.Errorf("List ran `diskutil %s`", strings.Join(args, " "))
+			}
+			return realApfsList, nil
+		},
 	}
 }
 
-func mustList(t *testing.T) []diskVolume {
+func mustList(t *testing.T, mgr ...volumeManager) []diskVolume {
 	t.Helper()
-	got, err := diskutilVolumes{}.List()
+	var v volumeManager = diskutilVolumes{}
+	if len(mgr) > 0 && mgr[0] != nil {
+		v = mgr[0]
+	}
+	got, err := v.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -209,8 +210,8 @@ func mustList(t *testing.T) []diskVolume {
 // The reaper's eyes: every nova- volume of the real listing, with the disk to delete and
 // the mount point to look for survivors under.
 func TestListReadsTheRealDiskutilTree(t *testing.T) {
-	fakeApfsList(t)
-	got := mustList(t)
+	t.Parallel()
+	got := mustList(t, testDiskutilWithRealList())
 	want := []diskVolume{
 		{Name: "nova-kill1", Disk: "disk3s7", Mount: "/Volumes/nova-kill1"},
 		// `Not Mounted` is diskutil saying there is no mount point, not a path — and the
@@ -231,8 +232,8 @@ func TestListReadsTheRealDiskutilTree(t *testing.T) {
 // same listing one record above the leaked one, and the prefix is the whole of this tool's
 // authority to delete anything.
 func TestListNeverReturnsAVolumeThisToolDidNotName(t *testing.T) {
-	fakeApfsList(t)
-	for _, v := range mustList(t) {
+	t.Parallel()
+	for _, v := range mustList(t, testDiskutilWithRealList()) {
 		if !strings.HasPrefix(v.Name, volumePrefix) {
 			t.Errorf("List returned %+v, which this tool did not make and may not touch", v)
 		}
@@ -444,12 +445,11 @@ func TestConcurrentCreatesAreSerialized(t *testing.T) {
 // is what `flock` scopes to -- so a second descriptor in this process is the same test the
 // operating system runs, and it needs no second binary.
 func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "volume-create.lock")
-	old := volumeLockPath
-	t.Cleanup(func() { volumeLockPath = old })
-	volumeLockPath = func() (string, error) { return path, nil }
+	lockPath := func() (string, error) { return path, nil }
 
-	unlock, err := lockVolumeCreate()
+	unlock, err := lockVolumeCreateAt(lockPath)
 	if err != nil {
 		t.Fatalf("the create lock could not be taken: %v", err)
 	}

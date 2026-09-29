@@ -23,20 +23,17 @@ func armHostGuard(t *testing.T) {
 // before t.Setenv restored the variable, so later tests saw env=1 while
 // testguard.Refusing() was false. No child, no network.
 func TestHostGuardCleanupRestoresCachedState(t *testing.T) {
-	t.Cleanup(testguard.Reload)
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
+	t.Parallel()
+
+	g := testguard.NewGuard(true)
 	t.Run("arm", func(t *testing.T) {
-		armHostGuard(t)
-		if !testguard.Refusing() {
+		t.Cleanup(g.Arm())
+		if !g.Refusing() {
 			t.Fatal("the armed subtest must refuse")
 		}
 	})
-	if os.Getenv(testguard.EnvNoHost) != "1" {
-		t.Fatalf("environment was %q, want 1", os.Getenv(testguard.EnvNoHost))
-	}
-	if !testguard.Refusing() {
-		t.Fatal("environment was restored to 1 but cached host guard remained disabled")
+	if !g.Refusing() {
+		t.Fatal("host guard remained disabled after subtest cleanup")
 	}
 }
 
