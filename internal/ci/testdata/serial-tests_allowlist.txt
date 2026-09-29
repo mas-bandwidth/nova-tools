@@ -22,9 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 64
-cmd/nova-sandbox/handoff_test.go:TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/handoff_test.go:TestRunRefusesWhenTheHandoffFailsAfterACleanCommand serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+# ceiling: 44
 cmd/nova-sandbox/reapverb_test.go:TestAnUnreadableMarkerIsAnOrphan serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
 cmd/nova-sandbox/reapverb_test.go:TestReapDryRunTouchesNothing serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
 cmd/nova-sandbox/reapverb_test.go:TestReapExitsThreeWhenAVolumeRemains serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
@@ -33,17 +31,6 @@ cmd/nova-sandbox/reapverb_test.go:TestReapNeverTakesAVolumeFromALiveRun serial: 
 cmd/nova-sandbox/reapverb_test.go:TestReapOnACleanMachineIsExitZero serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
 cmd/nova-sandbox/reapverb_test.go:TestReapReadsTheStartTimeAndNotJustThePid serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
 cmd/nova-sandbox/reapverb_test.go:TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestACleanRunNeverAsksWhatWasDenied serial: swaps package var main.runDenials, swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestAFailedRunIsToldWhatTheWallDenied serial: swaps package var main.denialStat, swaps package var main.runDenials, swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestATimeoutNeverAsksWhatWasDeniedAndSaysItTimedOut serial: swaps package var main.runDenials, swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunCreatesTheVolumeRunsAndAlwaysDeletesIt serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunDeletesTheVolumeWhenTheWallItselfRefuses serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunNamesTheContainerWhenTheCreateItselfFails serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunRefusesAVolumeNameThatIsAlreadyThere serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunRefusesWhenTheContainerCannotBeRead serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunReportsALeakAndPaysForItWithTheExitCode serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
-cmd/nova-sandbox/run_test.go:TestTheTempDirectoryIsOnTheVolume serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
 cmd/nova-sandbox/runwin_test.go:TestASecondWSBRunRefusesRatherThanQueues serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
 cmd/nova-sandbox/runwin_test.go:TestAWSBRunReadsTheGuestsStatusOutOfTheScratch serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinReadExit, swaps package var main.runWinWall
 cmd/nova-sandbox/runwin_test.go:TestAWSBRunWithNoStatusFileTimesOutAt124 serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinPoll, swaps package var main.runWinWall
@@ -62,13 +49,6 @@ cmd/nova-sandbox/runwin_test.go:TestWindowsSizeIsRefusedNotApproximated serial: 
 cmd/nova-sandbox/runwin_test.go:TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
 cmd/nova-sandbox/runwin_test.go:TestWindowsTheRemovalIsGivenARetryWindow serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
 cmd/nova-sandbox/runwin_test.go:TestWindowsTheScratchIsTheOnlyWrite serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
-cmd/nova-sandbox/volumes_darwin_test.go:TestConcurrentCreatesAreSerialized serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-sandbox/volumes_darwin_test.go:TestCreateRefusesAVolumeThatNeverBecomesWritable serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-sandbox/volumes_darwin_test.go:TestCreateRemakesAVolumeWhoseRootIsNotTheCallers serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-sandbox/volumes_darwin_test.go:TestCreateSaysTheVolumeWasMadeAndTheMountDenied serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-sandbox/volumes_darwin_test.go:TestTheSandboxedCallerSentenceIsWrittenOnce serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
 internal/nsprint/lessons/lessons_test.go:TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives serial: swaps package var lessons.lockBusy

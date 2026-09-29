@@ -29,7 +29,9 @@ const volumesRoot = "/Volumes"
 
 // diskutilVolumes is the real manager.
 type diskutilVolumes struct {
-	run func(args ...string) (string, error)
+	run        func(args ...string) (string, error)
+	lockPath   func() (string, error)
+	rootUsable func(string) error
 }
 
 func (d diskutilVolumes) runner() func(args ...string) (string, error) {
@@ -37,6 +39,22 @@ func (d diskutilVolumes) runner() func(args ...string) (string, error) {
 		return d.run
 	}
 	return diskutilRun
+}
+
+func (d diskutilVolumes) locker() func() (func(), error) {
+	if d.lockPath != nil {
+		return func() (func(), error) {
+			return lockVolumeCreateAt(d.lockPath)
+		}
+	}
+	return lockVolumeCreate
+}
+
+func (d diskutilVolumes) isRootUsable(mount string) error {
+	if d.rootUsable != nil {
+		return d.rootUsable(mount)
+	}
+	return volumeRootUsable(mount)
 }
 
 func newPlatformVolumes() volumeManager { return diskutilVolumes{} }
@@ -167,7 +185,7 @@ const volumeCreateAttempts = 3
 // after the fact: `chown` on someone else's directory needs root, which rule 2 does not
 // have. So the lock, and then the question.
 func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error) {
-	unlock, err := lockVolumeCreate()
+	unlock, err := d.locker()()
 	if err != nil {
 		return diskVolume{}, err
 	}
@@ -179,7 +197,7 @@ func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error
 		if err != nil {
 			return diskVolume{}, err
 		}
-		last = volumeRootUsable(vol.Mount)
+		last = d.isRootUsable(vol.Mount)
 		if last == nil {
 			return vol, nil
 		}

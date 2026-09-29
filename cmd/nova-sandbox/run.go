@@ -148,6 +148,45 @@ var (
 	runGOOS = runtime.GOOS
 )
 
+type runSeams struct {
+	volumes    volumeManager
+	exec       func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error)
+	now        func() time.Time
+	signals    func() (<-chan os.Signal, func())
+	goos       string
+	denials    denialReader
+	denialStat func(string) (os.FileInfo, error)
+}
+
+func (s runSeams) withDefaults() runSeams {
+	if s.volumes == nil {
+		s.volumes = runVolumes
+	}
+	if s.exec == nil {
+		s.exec = runExec
+	}
+	if s.now == nil {
+		s.now = runNow
+	}
+	if s.signals == nil {
+		s.signals = runSignals
+	}
+	if s.goos == "" {
+		s.goos = runGOOS
+	}
+	if s.denials == nil {
+		s.denials = runDenials
+	}
+	if s.denialStat == nil {
+		s.denialStat = denialStat
+	}
+	return s
+}
+
+func defaultRunSeams() runSeams {
+	return runSeams{}.withDefaults()
+}
+
 // runFlags is the run verb's own argv, parsed by hand like the bare form's.
 type runFlags struct {
 	name, size, container, timeout string
@@ -474,14 +513,20 @@ func applyGoReadsWith(f *runFlags, stderr io.Writer, goEnv func() (goDirs, error
 
 // runVerb is the verb. It returns the status the tool exits with: the command's own,
 // 124 for a --timeout, 125 for a refusal of the tool's own, and 3 for a leak.
-func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
+func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string, optSeams ...runSeams) int {
+	var s runSeams
+	if len(optSeams) > 0 {
+		s = optSeams[0]
+	}
+	s = s.withDefaults()
+
 	f := parseRun(args)
 	// The question, before every complaint about the argv that did not ask it.
 	if f.help {
 		fmt.Fprint(stdout, runUsage)
 		return 0
 	}
-	goos := runGOOS
+	goos := s.goos
 	deadline, bad := validateRun(&f, goos)
 	f.bad = append(f.bad, bad...)
 	if len(f.bad) > 0 {
@@ -509,7 +554,7 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 	if goos == "windows" {
 		return runDisposableWindows(f, deadline, stdin, stdout, stderr, env)
 	}
-	return runDisposable(f, deadline, stdin, stdout, stderr, env)
+	return runDisposable(f, deadline, stdin, stdout, stderr, env, s)
 }
 
 // remedyFor is the one remedy line a refusal carries, and it is the PLATFORM'S. A windows
@@ -721,8 +766,14 @@ func noDisposableBody(goos string) (line, remedy string, refused bool) {
 // runDisposable is everything from the container lookup onwards. It is one function on
 // purpose: from the moment the volume exists there is exactly ONE path to the exit, and
 // that path deletes it.
-func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
-	started := runNow()
+func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string, optSeams ...runSeams) int {
+	var s runSeams
+	if len(optSeams) > 0 {
+		s = optSeams[0]
+	}
+	s = s.withDefaults()
+
+	started := s.now()
 	refuse := func(reason, format string, a ...any) int {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(fmt.Sprintf(format, a...)), runRemedy)
 		return sandbox.ExitRefused
@@ -730,7 +781,7 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 
 	container := f.container
 	if container == "" {
-		got, err := step(stderr, "container", func() (string, error) { return runVolumes.Container() })
+		got, err := stepWith(s.now, stderr, "container", func() (string, error) { return s.volumes.Container() })
 		if err != nil {
 			// `--container` is the remedy for a container this tool could not find, and no
 			// remedy at all for a disk service it cannot reach: named by hand, the next
@@ -747,7 +798,7 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 	}
 
 	name := volumePrefix + f.name
-	exists, err := step(stderr, "look", func() (bool, error) { return runVolumes.Exists(name) })
+	exists, err := stepWith(s.now, stderr, "look", func() (bool, error) { return s.volumes.Exists(name) })
 	if err != nil {
 		return refuse("volume_failed", "the volumes on this machine could not be listed: %s%s", oneline.Err(err), sandboxedCallerCause(err))
 	}
@@ -755,7 +806,7 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 		return refuse("volume_exists", "a volume named %s is already on this machine; a run never joins a place it did not make. Pick another --name, or remove it: diskutil apfs deleteVolume %s", oneline.Escape(name), oneline.Escape(name))
 	}
 
-	vol, err := step(stderr, "create", func() (diskVolume, error) { return runVolumes.Create(container, name, f.size) })
+	vol, err := stepWith(s.now, stderr, "create", func() (diskVolume, error) { return s.volumes.Create(container, name, f.size) })
 	if err != nil {
 		// A volume that was made and not mounted is not a volume that could not be made,
 		// and this verb's own prefix would say the wrong one of the two. The manager is the
@@ -767,7 +818,7 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 	}
 
 	// ONE exit from here. Whatever the run does, the volume goes.
-	code := runInVolume(f, vol, deadline, stdin, stdout, stderr, env)
+	code := runInVolumeWith(s, f, vol, deadline, stdin, stdout, stderr, env)
 	// The handoff is the one thing that happens between the command's exit and
 	// the delete, and it happens on EVERY path through runInVolume -- a failure,
 	// a timeout and a signal included, because a card that was killed at its
@@ -785,12 +836,16 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 			MaxBytes:  max,
 		}, code)
 	}
-	return finish(stderr, f.name, vol, code, started)
+	return finishWith(s, stderr, f.name, vol, code, started)
 }
 
 // runInVolume builds the wall around the volume and runs the command inside it. Its
 // answer is the status the run earned; the volume's fate is not its business.
 func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
+	return runInVolumeWith(defaultRunSeams(), f, vol, deadline, stdin, stdout, stderr, env)
+}
+
+func runInVolumeWith(s runSeams, f runFlags, vol diskVolume, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
 	refuse := func(reason, format string, a ...any) int {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(fmt.Sprintf(format, a...)), runRemedy)
 		return sandbox.ExitRefused
@@ -837,8 +892,8 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 		oneline.Field(p.Net()), oneline.Field(p.Cwd), base64Cwd(p.Cwd), p.AncestorCount(),
 		oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
 
-	startedAt := runNow()
-	started, err := runExec(p, childEnv, stdin, stdout, stderr)
+	startedAt := s.now()
+	started, err := s.exec(p, childEnv, stdin, stdout, stderr)
 	done, killGroup := started.done, started.kill
 	if err != nil {
 		var r sandbox.Refusal
@@ -858,7 +913,7 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	}
 	grace := time.NewTimer(killGrace)
 	defer grace.Stop()
-	sigs, stop := runSignals()
+	sigs, stop := s.signals()
 	defer stop()
 
 	code, timedOut := supervise(done, deadlineC, grace.C, sigs, killGroup)
@@ -873,7 +928,7 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 		return code
 	}
 	if code != 0 {
-		reportDenials(stderr, p, started.pid, runNow().Sub(startedAt))
+		reportDenialsWith(s, stderr, p, started.pid, s.now().Sub(startedAt))
 	}
 	return code
 }
@@ -887,11 +942,15 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 // path, and a remedy naming a flag already in the argv sends a reader to fix what is not
 // broken.
 func reportDenials(stderr io.Writer, p *sandbox.Policy, pid int, ran time.Duration) {
+	reportDenialsWith(defaultRunSeams(), stderr, p, pid, ran)
+}
+
+func reportDenialsWith(s runSeams, stderr io.Writer, p *sandbox.Policy, pid int, ran time.Duration) {
 	// The window is the run's, rounded up: the log is asked about the seconds the command
 	// was alive and no more, so a neighbour's violation from before it started is not this
 	// card's problem.
 	window := int(ran.Seconds()) + 2
-	denied, _ := step(stderr, "denials", func() ([]deniedPath, error) { return runDenials(window, pid), nil })
+	denied, _ := stepWith(s.now, stderr, "denials", func() ([]deniedPath, error) { return s.denials(window, pid), nil })
 	allowed := append(append([]string{}, p.Reads...), p.Writes...)
 	allowed = append(allowed, p.OptRoots...)
 	denied = outsideTheWall(denied, allowed)
@@ -903,7 +962,7 @@ func reportDenials(stderr io.Writer, p *sandbox.Policy, pid int, ran time.Durati
 			len(p.Reads), len(p.Writes))
 		return
 	}
-	printDenied(stderr, denied, maxDenied)
+	printDeniedStat(stderr, denied, maxDenied, s.denialStat)
 }
 
 // supervise waits for whichever of three things happens first — the command finished, the
@@ -956,12 +1015,16 @@ func supervise(done <-chan int, deadline, grace <-chan time.Time, sigs <-chan os
 // receipt. A delete that fails prints SANDBOX LEAK with the disk and the one command that
 // removes it, and costs exit 3 whatever the command's own status was.
 func finish(stderr io.Writer, name string, vol diskVolume, code int, started time.Time) int {
-	freed, err := runVolumes.Used(vol.Mount)
+	return finishWith(defaultRunSeams(), stderr, name, vol, code, started)
+}
+
+func finishWith(s runSeams, stderr io.Writer, name string, vol diskVolume, code int, started time.Time) int {
+	freed, err := s.volumes.Used(vol.Mount)
 	if err != nil {
 		freed = 0
 	}
-	delErr := stepErr(stderr, "delete", func() error { return runVolumes.Delete(vol.Disk) })
-	wall := runNow().Sub(started).Seconds()
+	delErr := stepErrWith(s.now, stderr, "delete", func() error { return s.volumes.Delete(vol.Disk) })
+	wall := s.now().Sub(started).Seconds()
 	if delErr != nil {
 		fmt.Fprintf(stderr, "SANDBOX DONE name=%s exit=%d wall=%.3f freed=%d\n", oneline.Field(name), code, wall, 0)
 		fmt.Fprintf(stderr, "SANDBOX LEAK name=%s volume=%s remedy=\"diskutil apfs deleteVolume %s\"\n",
@@ -977,16 +1040,24 @@ func finish(stderr io.Writer, name string, vol diskVolume, code int, started tim
 // is printed BEFORE the step, because a step over 0.1s is exactly the one a reader is
 // waiting on and a line printed after it arrives too late to be progress.
 func step[T any](stderr io.Writer, name string, do func() (T, error)) (T, error) {
+	return stepWith(runNow, stderr, name, do)
+}
+
+func stepWith[T any](now func() time.Time, stderr io.Writer, name string, do func() (T, error)) (T, error) {
 	fmt.Fprintf(stderr, "SANDBOX STEP name=%s state=start\n", oneline.Field(name))
-	at := runNow()
+	at := now()
 	got, err := do()
-	fmt.Fprintf(stderr, "SANDBOX STEP name=%s state=done ms=%d\n", oneline.Field(name), runNow().Sub(at).Milliseconds())
+	fmt.Fprintf(stderr, "SANDBOX STEP name=%s state=done ms=%d\n", oneline.Field(name), now().Sub(at).Milliseconds())
 	return got, err
 }
 
 // stepErr is step for the one step whose answer is only whether it worked.
 func stepErr(stderr io.Writer, name string, do func() error) error {
-	_, err := step(stderr, name, func() (struct{}, error) { return struct{}{}, do() })
+	return stepErrWith(runNow, stderr, name, do)
+}
+
+func stepErrWith(now func() time.Time, stderr io.Writer, name string, do func() error) error {
+	_, err := stepWith(now, stderr, name, func() (struct{}, error) { return struct{}{}, do() })
 	return err
 }
 
