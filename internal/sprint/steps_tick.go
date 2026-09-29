@@ -360,16 +360,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// or withdrawal rewrites: a member whose beat lapses again and again
 	// cannot reset them, and the time a card spends withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
-		first := func(firstField, field string) string {
-			if c.F(firstField) != "" {
-				return firstField
-			}
-			return field
-		}
-		field, limit, word := first("first_dealt", "dealt"), DeadlineUntaken, "not taken"
-		if c.F("first_taken") != "" || c.Col == Working {
-			field, limit, word = first("first_taken", "taken"), DeadlineUnfinished, "not finished"
-		}
+		field, limit, word := WorkDeadline(c)
 		if at, ok := late(field, c, limit); ok {
 			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
 				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(field, "first_"), at, word),
@@ -626,4 +617,21 @@ func MovesDue(s *Snapshot) int {
 		}
 	}
 	return n
+}
+
+// WorkDeadline is the deadline a work card is held to: 15 minutes from the
+// attempt's first deal while it was never taken, 2 hours from its first take
+// once it was; no redeal or withdrawal rewrites either stamp. field is the
+// stamp it counts from.
+func WorkDeadline(c *Card) (field string, limit time.Duration, word string) {
+	first := func(firstField, field string) string {
+		if c.F(firstField) != "" {
+			return firstField
+		}
+		return field
+	}
+	if c.F("first_taken") != "" || c.Col == Working {
+		return first("first_taken", "taken"), DeadlineUnfinished, "not finished"
+	}
+	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken"
 }

@@ -321,6 +321,7 @@ func pickOf[T any](xs []T, k int) (T, bool) {
 // act runs one action.
 func (r *propRun) act(a pAct) {
 	r.errs, r.tickRes = nil, nil
+	r.beat()
 	r.cut, r.cutUsed = a.Cut, false
 	defer func() { r.cut = "" }()
 	if a.Cut != "" {
@@ -347,6 +348,7 @@ func (r *propRun) act(a pAct) {
 		r.stopAfter = -1
 	case "clock":
 		r.now = r.now.Add(a.D)
+		r.beat() // the machines beat on while the time passes
 		r.say("  (the clock moves %s)", a.D)
 	case "add":
 		r.add(stream, a.N, a.F)
@@ -396,15 +398,19 @@ func (r *propRun) act(a pAct) {
 	}
 }
 
-func (r *propRun) tick() {
-	// every member's machine beats: status follows the beat, and fleet down
-	// is the coordinator's hold
+// beat is one beat of every member's machine: they beat while time passes
+// (status follows the beat, and fleet down is the coordinator's hold).
+func (r *propRun) beat() {
 	zero := 0.0
 	for _, m := range r.cfg.members {
 		if _, err := r.st.Beat(r.ctx, m, &zero, hostload.Source{}); err != nil {
 			r.errs = append(r.errs, err)
 		}
 	}
+}
+
+func (r *propRun) tick() {
+	r.beat()
 	r.say("nova-sprint tick")
 	res, err := r.st.Tick(r.ctx)
 	if err != nil {

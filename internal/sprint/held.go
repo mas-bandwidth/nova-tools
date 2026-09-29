@@ -319,10 +319,7 @@ func (c *held) actor(pr *Card) string {
 		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up {
 			return ""
 		}
-		field, limit := "dealt", DeadlineUntaken
-		if wc.Col == Working {
-			field, limit = "taken", DeadlineUnfinished
-		}
+		field, limit, _ := WorkDeadline(wc) // the tick's own deadline
 		if d, ok := c.running(wc.F(field)); ok && d <= limit {
 			return fmt.Sprintf("member %s holds %s@%s (%s), %s of %s running", wc.Row, wc.ID, wc.F("gen"), wc.Col, d.Round(time.Second), limit)
 		}
