@@ -14,6 +14,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `FirstConn.tla` | `MCFirstConn*` | `internal/redisconn`'s first connection: the probe Open sends, taken and answered in the store's place only after HELLO was accepted, with seven reversed witnesses |
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
+| `CardManager.tla` | `MCCardManager*` | the card layer as data and a manager over the array of cards: admission, resolve, typed events, evidence and replacement, each one batch over one pre-state, with epochs, negative evidence and ground truth; eleven reversed witnesses |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
@@ -444,3 +445,135 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+## The card layer (CardManager)
+
+`CardManager.tla`: the card layer as data and a manager over the array of
+cards. Every card variable is a function from card ids to one property (the
+table cell and the record's reverse index, the pinned definition digest,
+kind and dependencies, the member revision, the outcome, the successor, the
+head, the live evidence records), beside the table revision, the receipts,
+the table's epoch and the epoch the coordinator's requests carry. There is
+no per-card action. Each manager action is one batch: one server call that
+reads one pre-state, checks every guard against it, and commits every change
+together with one table revision and one receipt:
+
+- `AdmitBatch`: the selected committed definitions are created in waiting in
+  the active epoch, record and placement in one commit; an id already
+  admitted refuses;
+- `ResolveSet`: over a declared scope, the waiting cards whose dependencies
+  are met move to ready together;
+- `ApplyEvents`: a manifest of typed events, one per card (start, result,
+  head change, merge and rework verdicts, a merge-queue rejection, land
+  observed, non-PR completion, cancel, dependency failure);
+- `RecordEvidence`: an array of reads and CI results, each bound to the head
+  and digest it was taken at;
+- `ReplaceDefinitions`: old cards end done/replaced with the successor named,
+  and the successors are admitted in waiting under new ids;
+- `NoOpBatch`: an accepted batch that changes no card still advances the
+  table revision once and writes one noop receipt (the batch contract of
+  `docs/SPEC-NOVA-TABLE.md`);
+- `Refuse`: a batch that fails any guard, or carries an epoch other than the
+  active one, writes nothing; it is the stutter `[Next]_vars` allows.
+
+Outside the manager: the table layer advances the epoch and the coordinator
+observes it; a push (or a new result artifact) moves a card's true head. The
+observations readers, CI and the merge queue really make are the instance
+constant `Obs`, the ground truth the verifier checks a record against. The
+named instance's `Obs` holds a queue rejection, green and red runs of CI at
+one head, and a reader that accepts and then rejects at one head.
+
+A dependency is met when landed, or done/completed for a kind that carries
+no PR, in the dependant's own epoch. Replaced, cancelled and
+dependency-failed never count, and nothing follows a replacement link. A new
+head, a new result or a rework invalidates the evidence taken before it. A
+negative record at the head (a rejecting read, red CI, a queue rejection)
+blocks merging and completion; it is recorded beside any acceptance, and an
+acceptance from an issuer whose rejection at that head is recorded refuses.
+A queue rejection returns a merging card to review at the same head.
+
+What it holds the layer to:
+
+- an admitted card sits in exactly one cell, in its admission epoch and its
+  stream's row, and the record's reverse index names it (`OnePlace`); record
+  and placement exist together (`AdmittedTogether`);
+- the admitted digest, kind and dependencies are the committed definition's
+  under that id, for good (`DigestPinned`);
+- ready, and every place after it on the line, only with dependencies met
+  (`ReadyImpliesDepsMet`);
+- live evidence is bound to the current head and the pinned digest
+  (`EvidenceBoundToHead`), every recorded observation was really made
+  (`EvidenceIsTrue`), the recorded head was really pushed (`HeadNotAhead`),
+  and a landing records the true head (`LandedAtTrueHead`);
+- merging holds the quorum of accepting reads and CI at the head and no
+  negative record there (`MergingIsAuthorized`);
+- done carries an outcome and only done does; replaced names an admitted
+  successor (`OutcomeOnDone`);
+- every accepted batch's guards held in its one pre-state (`OnePreState`, a
+  sticky audit flag in the manner of `TableMachine`'s checks);
+- action properties: waiting is entered only by admission, so ready never
+  returns to it (`NoReadyWaitingOscillation`); a landed or done record never
+  changes (`TerminalIsQuiet`); a card's revision moves by one exactly when
+  its record changes, every receipt (a no-op included) moves the table
+  revision by one and nothing else does, a card change comes with a receipt,
+  and the epoch only advances (`RevisionMonotone`); only cards of the active
+  epoch change, and admission is into it (`EpochFenced`); at one head no
+  record is removed except by a rework (`EvidenceAppendOnly`);
+- a waiting card of the active epoch whose dependencies are met leaves
+  waiting, for ready unless the coordinator ended it first or the epoch
+  moved on (`MetWaitingBecomesReady`), under weak fairness of the
+  coordinator's resolve over the complete scope and of its observing the
+  epoch.
+
+The instances (`MCCardManager.tla`). The named instance: three ids over two
+streams (c1 code, c2 a non-PR kind, c3 code depending on both), batches of
+one to three entries, two epochs, two heads, two readers with a quorum of
+two. `MCCardManager` checks it against every invariant and action property,
+`MCCardManagerLiveness` against the liveness property: one run holding both
+does not fit the 110 s budget, so they are two cases of one instance, in two
+groups. `MCCardManagerFour` is a second, wider-array instance: four ids (c4
+c3's revised definition under a fresh id), batches of one or two, one epoch,
+one head, every property.
+
+The configs' `VIEW` leaves out what no guard reads and no action of the
+correct model changes: the counters `rev`, `tableRev` and `receipts` (the
+properties about them are action properties, checked on every step), and
+the record of a card of an epoch before the active one, which no batch,
+push or dependency reads again; the view keeps only that it is there. Its
+invariants were checked while it was active, and a witness that writes to
+it breaks `EpochFenced` on the step. Every config keeps `TypeOK`, which is
+what makes TLC evaluate the counters before it writes a state to disk.
+
+Run on a bench through the runner, a passing config with two workers and
+the witnesses with one, each group under the 110 s budget:
+
+    go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-cardmanager --group cardmanager
+
+| config | group | result |
+|---|---|---|
+| `MCCardManager` | cardmanager | no error, 168,686 distinct states, 1,053,584 generated, depth 22, 34 s on two workers: every invariant and action property above |
+| `MCCardManagerLiveness` | cardmanager-liveness | no error, the same 168,686 distinct states, 84 s on two workers: MetWaitingBecomesReady |
+| `MCCardManagerFour` | cardmanager-four | no error, 111,591 distinct states, 582,676 generated, depth 25, 61 s on two workers: every property |
+| `MCCardManagerBrokenSecondPlace` | cardmanager | OnePlace violated in 4 states: c1 admitted and resolved to ready, admitted again without the absence guard; the ready cell keeps it and waiting gains it |
+| `MCCardManagerBrokenDigestInPlace` | cardmanager | DigestPinned violated in 3 states: a replacement writes the successor's digest onto the old member instead of admitting a new one |
+| `MCCardManagerBrokenReadyEarly` | cardmanager | ReadyImpliesDepsMet violated in 3 states: c3 admitted and resolved to ready with c1 and c2 not admitted |
+| `MCCardManagerBrokenStaleEvidence` | cardmanager | EvidenceBoundToHead violated in 7 states: c1 in review at head 1; the CI result of head 2 is recorded on it |
+| `MCCardManagerBrokenOneAtATime` | cardmanager | OnePreState violated in 3 states: c1 and c3 admitted; one batch cancels c1 and dependency-fails c3, c3's guard reading c1's cancel from the same batch |
+| `MCCardManagerBrokenForged` | cardmanager | EvidenceIsTrue violated in 7 states: c1 in review at head 1, where CI ran green; a red CI record for head 1 is accepted |
+| `MCCardManagerBrokenReturn` | cardmanager | NoReadyWaitingOscillation violated in 4 states: a ready card sent back to waiting |
+| `MCCardManagerBrokenResurrect` | cardmanager | TerminalIsQuiet violated in 4 states: a land event accepted for a cancelled card |
+| `MCCardManagerBrokenLastWins` | cardmanager | EvidenceAppendOnly violated in 8 states: c2 in review at head 1, r2's acceptance recorded; its later rejection replaces the acceptance instead of standing beside it |
+| `MCCardManagerBrokenStaleEpoch` | cardmanager | EpochFenced violated in 3 states: the epoch advances; a request still carrying epoch 1 admits c1 into it |
+| `MCCardManagerBrokenNoOpSilent` | cardmanager | RevisionMonotone violated in 2 states: an accepted no-op batch writes its receipt and leaves the table revision where it was |
+
+The eleven are misimplementations the model is shown to catch; there is no
+card-layer code yet to check them against. `Resurrect` also breaks
+`OutcomeOnDone`; its config selects the action property alone, as do the
+other action-property witnesses.
+
+What it leaves out: operation records, request digests and replay of an
+operation id (the receipt ledger of the table batch model); stale expected
+revisions other than the epoch (the Refuse stutter); reader eligibility
+beyond distinct recorded identities (author exclusion, a required-reader
+set); ground truth as anything but a fixed scenario per instance (`Obs`);
+and dispatch (jobs, slots, leases, workers).
