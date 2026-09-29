@@ -2,7 +2,6 @@ package ci
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -116,25 +115,12 @@ func TestCopiesRunNiced(t *testing.T) {
 	if assigns != 1 {
 		t.Errorf("internal/nsprint/card sets yieldToCI %d times in production, want exactly once (nice.go)", assigns)
 	}
-	for _, base := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
+	tree := repoTree(t)
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
+		for i, line := range strings.Split(string(f.Src), "\n") {
+			if code := strings.TrimSpace(line); strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = ") {
+				t.Errorf("%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", f.Rel, i+1, code)
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			src := readFile(t, path)
-			for i, line := range strings.Split(src, "\n") {
-				if code := strings.TrimSpace(line); strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = ") {
-					rel, _ := filepath.Rel(root, path)
-					t.Errorf("%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", filepath.ToSlash(rel), i+1, code)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -201,46 +187,42 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 	// line does.
 	lt := loadLiveTree(t, root)
 	var checked int
-	for _, base := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
+	tree := repoTree(t)
+	for _, f := range tree.Files {
+		if !f.InAnyDir("cmd", "internal") || f.Test {
+			continue
+		}
+		if !strings.HasSuffix(f.Rel, ".go") && !strings.HasSuffix(f.Rel, ".lua") {
+			continue
+		}
+		if !lt.File(f.Rel) {
+			continue
+		}
+		src := f.Src
+		if len(src) == 0 {
+			raw, err := os.ReadFile(f.Path)
 			if err != nil {
-				return err
+				t.Fatal(err)
 			}
-			if d.IsDir() || strings.HasSuffix(path, "_test.go") || (!strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, ".lua")) {
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
-			if !lt.File(rel) {
-				return nil
-			}
-			src := readFile(t, path)
-			var goLines map[int]bool
-			if strings.HasSuffix(path, ".go") {
-				fset := token.NewFileSet()
-				f, err := parser.ParseFile(fset, path, src, 0)
-				if err != nil {
-					t.Fatalf("%s: %v", filepath.ToSlash(rel), err)
-				}
-				goLines = goSlotLines(fset, f)
-			}
-			for i, line := range strings.Split(src, "\n") {
-				code := strings.TrimSpace(line)
-				if goLines != nil {
-					if !goLines[i+1] {
-						continue
-					}
-				} else if strings.HasPrefix(code, "--") || !slotSubtraction.MatchString(code) {
+			src = raw
+		}
+		var goLines map[int]bool
+		if f.Go && f.AST != nil {
+			goLines = goSlotLines(tree.FSet, f.AST)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			code := strings.TrimSpace(line)
+			if goLines != nil {
+				if !goLines[i+1] {
 					continue
 				}
-				checked++
-				if !namesCILegs.MatchString(code) {
-					t.Errorf("%s:%d: %q computes free slots without the CI legs running on the bench (nova-tools#4293)", filepath.ToSlash(rel), i+1, code)
-				}
+			} else if strings.HasPrefix(code, "--") || !slotSubtraction.MatchString(code) {
+				continue
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
+			checked++
+			if !namesCILegs.MatchString(code) {
+				t.Errorf("%s:%d: %q computes free slots without the CI legs running on the bench (nova-tools#4293)", f.Rel, i+1, code)
+			}
 		}
 	}
 	// The rule was written against eight; the two Go deal passes
