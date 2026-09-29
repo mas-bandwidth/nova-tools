@@ -8,6 +8,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `LandWatch.tla` | `MCLandWatch` | the land watch's watcher (land_watch.lua): stamps, slow and wall, one note per stay (findings L1 to L3) |
 | `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
+| `BatchMemberTable.tla` | `MCBatchMemberTable`, `MCBatchSecondEpoch`, `MCBatchBroken*` | atomic member batches over the existing placement/epoch model, shared revisions, guards, operation replay and complete receipts |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
 | `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, Ensure, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library, a LoadMissing that never replaces |
@@ -15,7 +16,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
 
-Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
+Runners. `tools/tlacheck` (Go, over `internal/tlc`, `internal/tablemodel` and `internal/batchmodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
 | Verb | What it runs |
 |---|---|
@@ -27,6 +28,7 @@ Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) ru
 | `member` | the member and epoch protocol and its four mutation controls (`--suite`), 120 s |
 | `replay` | the execution replay of a `table.lua` against `EpochMemberTable`, 120 s |
 | `witnesses` | the table model's findings replayed against a pinned `table.lua` in a disposable Redis |
+| `batch-replay` | real batch receipts and independent Redis snapshots checked against `BatchMemberTable`, including a corrupted observation control, under one 110 s budget |
 
 ```sh
 go run ./tools/tlacheck groups --root .
@@ -35,6 +37,7 @@ go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc
 go run ./tools/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
 go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
 go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source internal/nsprint/fn/lua/table.lua
+go run ./tools/tlacheck batch-replay --root . --jar /path/to/tla2tools.jar --dir /tmp/batch-replay --source internal/nsprint/fn/lua/table.lua
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
 go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -deadlock tla/MCCardMachine.tla
@@ -485,3 +488,186 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+
+## Atomic member batches
+
+`BatchMemberTable` extends `EpochMemberTable`; existing per-verb configurations
+remain separate. The required `batchmembertable` group contains twelve positive
+configurations and twenty-seven deliberately faulty variants. All positive instances
+retain three members, two rows, two columns and two epochs. The primary instance
+explores request lengths one through three, a guard-only request, and interacting
+cross-row changes for up to three actions. The second instance retains an old-epoch
+member while advancing, refreshing, binding and accepting a new-epoch create in
+four actions. Separate immutable member-epoch assignments make both paths explicit.
+Two further three-action traces advance a member revision with a synthetic field writer,
+then accept a cross-row score change with its member revision guard omitted. One
+trace removes its placement while retaining the member record; the other accepts
+a same-cell, same-score no-op without a member revision increment. Both still
+record one receipt and table revision for each accepted batch.
+An additional three-action trace removes a placed member and then changes an
+application field on the retained unplaced record. Another three-action trace
+shows that removing an already-unplaced member refuses. A two-action trace proves
+that explicit `remove:false` and set/unset of the same field both refuse.
+A four-action trace removes a member and tries moving the retained unplaced record
+back into a cell, first without a score and then with one; both requests refuse.
+The main instance uses a revision bound of three. A full nondeterministic
+instance uses a revision limit of two with three actions. Two directed traces
+reach that limit before attempting another batch: one uses two effective moves,
+and the other uses two guard-only no-ops, leaving every member revision at zero.
+Both require refusal, and refusal/replay read-only checks preserve the store.
+A reversed overflow case forces the third move and violates `RevisionWithinBounds`;
+separate reversed cases check `UnplacedMoveRequiresPlacement` and
+`OnePlacePerDimension`. A separate input fixture seeds the existing member at
+its revision limit while leaving the table revision zero, then attempts a batch.
+Its positive case requires refusal; its reversed case violates
+`RevisionWithinBounds`. This tests the member guard and makes no
+claim that the seeded counter relation is reachable from the all-zero fixture.
+The runtime stores these counters separately. Score lookup returns the no-score
+sentinel for an unplaced member, so the forced omitted-score move reaches
+the named property failure instead of a function-domain error.
+Absent member records carry no application fields, and create starts from that
+empty field image before applying its explicit set; every positive configuration
+checks the absent-record invariant and the create receipt's empty before image.
+
+The model represents field equality, absence and membership guards, including the
+difference between an absent field and an empty string. An existing member may
+omit its revision guard while retaining its table revision, source placement and
+field checks. An explicit move score replaces the old score; an omitted one
+preserves it. A removal clears placement but keeps the member record. Effective
+placement, score or application-field changes increment the member revision once;
+a same-cell move with unchanged score and fields is an accepted no-op. Receipt
+deltas carry before/after placement, score, revision and application fields.
+The `guardCount` counts entries with no requested mutation, while `changedCount`
+counts effective changes; their sum can be below `selectedCount` when a requested
+move proves to be a no-op.
+Ordinary add/remove/move actions share member and table revision increments.
+Request bytes are abstract identities; byte equality, rather than digest equality,
+controls replay. Accepted batches produce one complete receipt and one table
+revision; refusals and replay leave the modeled store unchanged.
+
+**Field-writer scope.** `OrdinaryFieldWrite` and `OrdinarySetEmpty` are
+synthetic cooperating writers that advance both revisions. `table.lua` has no such
+field-write verb; a direct application `HSET` does not advance these revisions.
+These actions model protocol interference hypotheses, not `HSET` implementations.
+The main exploration's field branches and empty-field guard scenario,
+`MCBatchRevisionBound`, `ExtendedNoop`, `ExtendedRemove`, `BrokenStaleMember`,
+`BrokenOrdinaryRevision`, `BrokenMissingRevision`, `BrokenScorePreserved`,
+`BrokenRemoveLeavesCell`, `BrokenRemoveDeletesRecord` and
+`BrokenSameCellRevision` depend on this assumption.
+They do not establish that a revision guard detects direct application field edits.
+Unversioned `HSET` interference and its guard consequences remain a follow-up.
+The overflow and unplaced-move traces use only batch actions.
+
+The negative configurations cover late guard/type/permission failure after an
+initial write, post-write guard evaluation, duplicate placement, stale epoch/table/
+member expectations, stale member expectations after an ordinary move, omitted
+ordinary field/move revision increments, lost-reply double effects, digest collision,
+incomplete receipt effects and stale replay reported as a new acceptance. The
+reversed cases reject a valid omitted-revision request after an ordinary
+revision advance, preserve a score that was explicitly replaced, leave a removed
+member in its old cell, delete its record on removal, or spuriously increment its
+revision on a same-cell no-op. Other reversed cases force acceptance of
+the malformed remove and set/unset forms; a third forces removal of an already
+unplaced member. `CASES.tsv` names each exact expected property.
+`BATCH-SOURCES.tsv` records the batch model, configurations, inherited models and
+runner source hashes, including the per-case input parser and case-plan parser.
+`RUNS.tsv` records each case's measured result, its own input fingerprint and the
+TLC executable hash; timeouts and unexpected diagnostics are failures. The runner
+emits the platform label `linux-amd64` rather than a machine name.
+
+On 2026-09-29, after integrating dev `abdc7a23026316fc4e31435c75ff5df9d959eb54`,
+frozen source `8fc37bcf7620695f5903891d8a5516b890fea035` ran all 39 required batch
+cases in an isolated Linux container. All reached their declared outcomes: 12
+positive, 22 action rejections and 5 invariant rejections. Each used one TLC worker
+under the shared 110-second budget. The container had a two-CPU quota and 4 GiB
+memory limit; the records retain the runtime's reported logical CPU count.
+The TLC JAR hash is
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+
+The per-case runner is now integrated. Its `merge --keep` joined those 39 fresh
+rows with the 76 unchanged current rows from dev, yielding 115 records. The older
+global-fingerprint batch measurements remain in Git history; none was relabelled
+as a fresh per-case run. All 4,480 source-file hashes matched before and after the
+container runs, and the owned containers were removed.
+
+This is a finite request-template model, not a JSON parser, Redis rollback proof or
+implementation refinement proof. Its three-action main bound is explicit; the
+second positive trace separately exercises successful new-epoch mutation and old
+image preservation. Additional named follow-ups are reversed witnesses for the remaining invariants,
+a distinct legacy missing-revision state (currently normalized to zero),
+a model property that detects omitted field unsets, automatic verification of
+`BATCH-SOURCES.tsv` and `BATCH-REPLAY-RUNS.tsv`, and a structured first-bad-step
+diagnostic (currently present only in the TLC log).
+The remaining runtime, replay, real-use and interactive gates
+in `docs/SPEC-NOVA-TABLE.md` still apply after the model checks pass.
+
+When TLC reports an invariant violation in the initial state without aggregate
+statistics, the runner records the single reported counterexample state as 1/1.
+That normalization requires the exact expected invariant and exit 12; it does not
+turn parse failures or unexpected outcomes into passing records. Raw bench logs
+retain the original diagnostic. Printed aggregate counts, when available, use the
+last pair TLC reports.
+
+### Batch execution replay
+
+On a Linux bench, `tlacheck batch-replay` loads the supplied `table.lua` into
+disposable Redis instances and captures consecutive calls. Each batch sends its
+exact request bytes in one FCALL. The decoder checks the reply against independent
+pre/post snapshots, the durable operation record and the stream event. It retains
+absent fields separately from present empty strings and checks sparse field
+deltas against the requested set/unset fields. Refusals and retries must preserve
+the complete store image, including Redis stream metadata. Accepted writes may
+change only their exact physical key set. The finite projection also checks row
+scores, definition and operation-record metadata, and every earlier stream event
+including its field order; consumer groups are unsupported and refused.
+
+The generated harness applies the corresponding model action and compares every
+observed state through `MatchesExecution`. It renders captured receipt values as
+literals, rather than deriving observed values from the model's transition.
+A separate negative case changes one observed member field and must fail
+`MatchesExecution`; a parser error or an unrelated invariant failure does not
+count as the expected rejection.
+
+Functional fixtures run in an isolated container on a Linux bench. Redis Unix
+socket paths must fit the platform limit; the macOS limit is 100 bytes, so a
+fixture path of 104–106 bytes refuses before replay. Fixture directories use a
+short private `TMPDIR` inside the run environment. The `tlacheck batch-replay`
+command itself is Linux-only.
+
+The suite covers move/set with a guard, exact retry and operation conflict;
+same-cell no-op, removal and unset on the retained record; creation and
+preventive refusals; an epoch advance/read/bind/create history; and an ordinary
+remove followed by a batch with an omitted member-revision guard. Each history
+uses the declared finite fixture. Its table definition, row metadata and member
+fields must fit that fixture; unsupported state prevents a replay packet.
+
+The command writes input hashes, captured evidence, generated model/configuration
+files and TLC logs into a new `--dir`. The shared Go TLC executor enforces one
+budget across capture and checking. It refuses to run on non-Linux hosts, downloads
+nothing and leaves the source checkout untouched. Help lists its input flags and
+exit codes. These bounded histories complement the exhaustive finite model cases;
+they do not replace the runtime property corpus, maximum-size checks, CLI review
+or real-use acceptance required by `docs/SPEC-NOVA-TABLE.md`.
+
+`BATCH-REPLAY-RUNS.tsv` records measured results for five passing histories and
+the named corrupted-observation rejection. Each row pins the Lua, generated trace,
+configuration and captured evidence hashes. The run directory retains capture
+packets, logs and `suite.json`. Preserve the executed binary and TLC JAR hashes
+alongside those outputs. A record applies only to its captured inputs and finite
+histories.
+
+From the same frozen source `8fc37bcf7620695f5903891d8a5516b890fea035`, the
+2026-09-29 `linux-amd64` container run completed all six declared histories on
+Redis 8.0.5; `corrupt-observation` failed exactly `MatchesExecution` as expected.
+The captured Lua hash is
+`e97d6a1528a4cfb6762c10ee404004919a7b954dd4db32fb851ac3bd26caf85b`,
+the TLC JAR hash is
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`,
+and the generated `suite.json` hash is
+`227778b4f7303fb4e019e93edf1d52d3ff530e09ab592e37e2a3db008c4a62d0`.
+The standalone `tlacheck` executable was retained with SHA-256
+`b99c07886cb789e827b68579d33eb256e85371db102c4466304a098f4ad2d011`;
+both the model and replay containers built the same executable bytes.
+These six finite captures establish only the listed histories, not general
+runtime refinement or behavior at the 16 MiB batch field-value bound.

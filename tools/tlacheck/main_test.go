@@ -633,7 +633,7 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invocation := regexp.MustCompile(`tlacheck\s+([a-z]+)((?:\s+[^\s|)&;><]+)*)`)
+	invocation := regexp.MustCompile(`tlacheck\s+([a-z][a-z-]*)((?:\s+[^\s|)&;><]+)*)`)
 	var commands [][]string
 	inBlock := false
 	for _, line := range strings.Split(string(raw), "\n") {

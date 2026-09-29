@@ -228,3 +228,27 @@ declared, the plan is refused, or a configuration or module cannot be read or na
 that is neither a file nor a standard one.
 first run: tlacheck inputs --root . --case MCFileLock.cfg
 `
+const helpBatchReplay = `tlacheck batch-replay: capture bounded batch histories and check them against MCBatchMemberTable on a Linux bench.
+
+usage: tlacheck batch-replay --source <table.lua> --dir <dir> [--root <checkout>]
+                             [--models <dir>] [--jar <tla2tools.jar>] [--java <java>]
+                             [--redis-server <program>] [--timeout <duration>]
+
+  --source        the table.lua under test (required)
+  --dir           a new private directory for captured histories and TLC logs (required)
+  --root          the checkout whose tla/ holds the models (default .)
+  --models        the model directory (default <root>/tla)
+  --jar           the TLC jar; without it the environment variable TLC_JAR names it
+  --java          the java program; without it java on PATH
+  --redis-server  the redis-server program; without it redis-server on PATH
+  --timeout       the total capture and TLC budget (default 110s; at most 110s)
+
+Captures finite histories from disposable Redis stores, then runs each generated bundle
+with one TLC worker, two JVM processors and a 512 MiB heap. The corrupted-observation
+control must violate MatchesExecution. Stops at the first unexpected result.
+
+output: BATCH OK|FAIL case= verdict= exit= generated= distinct= lua_sha256= trace_sha256= config_sha256= evidence_sha256= log= evidence= suite=,
+        then BATCH OK|FAIL cases= seconds=. Exit 0 every expected result, 1 a mismatch or timeout,
+        2 the run could not start.
+first run: tlacheck batch-replay --root . --source internal/nsprint/fn/lua/table.lua --jar /path/to/tla2tools.jar --dir /tmp/batch-replay-out
+`

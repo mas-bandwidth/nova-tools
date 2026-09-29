@@ -769,15 +769,21 @@ write epoch and receipt:
 exit codes: 0 done, 1 refused, 2 usage
 ```
 
-### Model
+### Model and acceptance evidence
 
-No model of the batch action is in this tree. `tla/EpochMemberTable.tla` models the
-per-verb member/epoch table over the one-place and epoch definitions; it has no batch
-action, member revisions, field guards, operation records or receipts. What checks the
-batch here is the tests.
+`tla/MCBatchMemberTable.tla` models bounded batch transitions over member
+placement, revisions, guards, operation records and receipts. Its declared
+`batchmembertable` group has 39 configurations, including positive traces and
+reversed witnesses. `tlacheck batch-replay` separately captures finite histories
+from disposable Redis stores and checks their observations against the model;
+the corrupted-observation control must violate `MatchesExecution`. The model's
+bounds and the captured histories do not prove the Redis implementation in
+general. `tla/README.md` states their exact scope and measurement records.
 
-The tests: trip and commit tests with complete unchanged-store refusal tests; bounded
-randomized batches on owned Redis (16 fixed seeds, 128 steps each) with runtime checks;
-Go receipt replay with one batch receipt per action; N=1 and the maximum configured N
-separately, including a late invalid entry, interacting moves and a replay; and the
-ordinary callers' regression suite.
+Acceptance also requires trip and commit tests with complete unchanged-store
+refusal checks; bounded randomized batches on owned Redis (16 fixed seeds,
+128 steps each) with runtime checks; Go receipt replay with one batch receipt
+per action; N=1 and the maximum configured N separately, including a late
+invalid entry, interacting moves and a replay; and the ordinary callers'
+regression suite. Records from a prior runner or runtime source are historical
+evidence until measured against the current inputs.

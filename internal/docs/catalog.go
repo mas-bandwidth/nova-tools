@@ -45,6 +45,7 @@ var DefaultCatalog = []Entry{
 
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
+	E("internal/batchmodel", "batch receipt capture, validation and TLA trace rendering", "go test ./internal/batchmodel", "go test ./internal/batchmodel"),
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "append-only coordination bus", "go test ./internal/bus", "go test ./internal/bus"),
