@@ -9,7 +9,7 @@ import (
 // Violation is one broken rule of docs/SPEC-SPRINT.md section 9, or a step
 // cut short (section 10).
 type Violation struct {
-	Rule   int    `json:"rule"` // 1..9 and 11, or 10 for a cut step
+	Rule   int    `json:"rule"` // 1..9, 11 and 12 (a stall), or 10 for a cut step
 	Detail string `json:"detail"`
 }
 

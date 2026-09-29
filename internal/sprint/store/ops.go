@@ -55,7 +55,7 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		if err != nil {
 			return rep, nil, err
 		}
-		s, err := st.Load(ctx, All, nil)
+		s, err := st.Load(ctx, All, tickExtras)
 		if err != nil {
 			return rep, nil, err
 		}
@@ -81,6 +81,11 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 			ops = pendingOf(*pending, st.Names)
 		}
 		rep.Violations = sprint.Check(s, ops)
+		held, err := st.heldState(ctx, s, pending)
+		if err != nil {
+			return rep, nil, err
+		}
+		rep.Violations = append(rep.Violations, sprint.CheckHeld(held, s.Now)...)
 		if rep.InFlight {
 			var kept []sprint.Violation
 			for _, v := range rep.Violations {
@@ -99,6 +104,49 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		return rep, s, nil
 	}
 	return rep, nil, fmt.Errorf("the sprint kept changing through %d reads; run check again", rep.Reads)
+}
+
+// heldState is the no-stall rule's reading of a snapshot: the machine's
+// state, its STOPPED spans, its last tick, and the pending operation.
+func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpRecord) (sprint.HeldState, error) {
+	h := sprint.HeldState{Snap: s, Grace: st.grace()}
+	if pending != nil {
+		h.Pending = &sprint.PendingOp{ID: pending.ID, Verb: pending.Verb, At: pending.At}
+	}
+	if _, ok := st.B.(KV); ok {
+		m, hb, err := st.Machine(ctx)
+		if err != nil {
+			return h, err
+		}
+		h.Running, h.Stopped, h.LastTick = m.Running(), m.StoppedBetween, hb.At
+	}
+	return h, nil
+}
+
+// Held is what holds one primary now: the no-stall rule's answer for it.
+func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return sprint.Hold{}, err
+	}
+	f, err := st.B.ReadFence(ctx)
+	if err != nil {
+		return sprint.Hold{}, err
+	}
+	if f.Pending != nil {
+		return sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}, nil
+	}
+	s, err := st.Load(ctx, All, func(s *sprint.Snapshot) map[string][]string {
+		return map[string][]string{sprint.Work: append(sprint.ResolveExtras(s), id)}
+	})
+	if err != nil {
+		return sprint.Hold{}, err
+	}
+	h, err := st.heldState(ctx, s, nil)
+	if err != nil {
+		return sprint.Hold{}, err
+	}
+	return sprint.Holder(h, s.Now, id), nil
 }
 
 // SyncMirrors brings the display cells up to date: a fleet member's status,

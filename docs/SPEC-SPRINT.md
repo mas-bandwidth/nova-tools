@@ -258,10 +258,13 @@ resumed because the card it needed landed.
 | an operation was stuck | check, ack |
 | a judgment notification has waited past its due time | act |
 | a stream has made no progress past its deadline | look |
+| stalled: nothing holds a card (rule 12) | the decisions its place allows, ack |
 
 The machine's tick writes its own judgments (section 14): cannot ask, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
-merge step past its deadline, an invariant is broken.
+merge step past its deadline, an invariant is broken, a stall (rule 12: one
+judgment for each card nothing holds, or for the stall a chain of waiting
+cards ends at; the stall judgment itself holds nothing).
 
 The step that lands or drops the last open primary of the sprint (every
 primary landed or off the table, at least one landed) writes one judgment, the
@@ -350,8 +353,23 @@ exactly, member by member, never by their counts.
     was dropped and acknowledged is recorded on the card as waived, by whom and
     when, and counts as satisfied; nothing else does. add refuses needs that
     would make a cycle, naming it.
+12. Nothing stalls. Every primary on the table that has not landed is held by
+    one of: (a) an outside actor before its deadline (its live work card in an
+    up member's ready or working cell, a read card asked or reading, its merge
+    card queued in a stream that merges); (b) the next tick, whose own parts,
+    called on the state, move it or write a judgment naming it; (c) an open
+    judgment naming it, or its stream while the stream is stopped or it merges
+    there, or the tick's judgment on it that the coordinator acknowledged; (d)
+    what it waits on, itself held, followed through the chain (a need not
+    landed, a sentinel not released, a place in the ready queues); (e) with
+    the machine STOPPED, the next tick. A chain that ends in nothing or in a
+    cycle holds nothing. A judgment past its due time that no overdue mark
+    holds, a stopped stream with no open judgment, and an operation pending
+    past its grace that a tick since has not finished are stalls too. `card`
+    prints what holds a primary (`HELD`).
 
-Rules 2, 3, 4, 5 and 9 hold whenever no operation is pending; 1, 6, 7, 8 and
+Rules 2, 3, 4, 5, 9 and 12 hold whenever no operation is pending (while one
+is, 12 judges only the operation); 1, 6, 7, 8 and
 11 always; 5 and 6 skip sentinels, which land by release and are never read or
 merged. A rank is the one step that changes scores: while a rank is pending, a
 copy may carry the rank's own new score, and any other difference breaks
@@ -539,7 +557,8 @@ order; a card whose needs have all landed moves to ready; a sentinel is never
 moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), level
 (T4), ask (T2: two different readers for each primary in review with no read
-card at its attempt and work not failed), check (T6), deadlines. Each part is
+card at its attempt and work not failed), check (T6: section 9, and the
+no-stall rule 12), deadlines. Each part is
 bounded per tick (200 moves, 50 notes). A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.
 
@@ -549,7 +568,7 @@ no fleet member is up, a work card past its deadline (15 minutes dealt and not
 taken, 2 hours taken and not finished), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
-and the cards). Deadlines count running time: time spent STOPPED does not
+and the cards), stalled (rule 12: what nothing holds, and why). Deadlines count running time: time spent STOPPED does not
 count. A judgment of the tick the coordinator acknowledges while its condition
 still holds is kept as acknowledged on the condition, in no inbox: the tick
 does not write it again until the condition has cleared (the tick then closes

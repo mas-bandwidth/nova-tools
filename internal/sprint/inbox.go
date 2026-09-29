@@ -414,6 +414,10 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d)
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
+		case d == "resume" && s != "":
+			add(d, resume(didText))
+		case d == "release":
+			add(d, cmd+"release "+strings.Join(g.Members, " ")+" --reason '<what you looked at and found>'"+ans)
 		}
 	}
 	if g.Type == NRed {

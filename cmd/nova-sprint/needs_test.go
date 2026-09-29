@@ -47,3 +47,22 @@ func TestCardShowsTheWaivedNeeds(t *testing.T) {
 	}
 	ta.clean()
 }
+
+// card prints what holds the primary now (check rule 12): with the machine
+// STOPPED, the next tick's deal, and behind it the need that tick moves.
+func TestTheCardSaysWhatHoldsIt(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s2 b --needs s1-1")
+	if out := ta.ok("card s1-1"); !strings.Contains(out, "HELD (e) the machine is STOPPED; the next tick: s1-1") {
+		t.Fatalf("card s1-1: %s", out)
+	}
+	if out := ta.ok("card b"); !strings.Contains(out, "HELD (d) needs s1-1 (e)") {
+		t.Fatalf("card b: %s", out)
+	}
+	if out := ta.ok("card b --json"); !strings.Contains(out, `"held":{"id":"b","by":"d"`) {
+		t.Fatalf("card b --json: %s", out)
+	}
+}

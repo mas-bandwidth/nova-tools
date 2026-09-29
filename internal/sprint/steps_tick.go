@@ -76,6 +76,7 @@ var TickDecisions = map[string][]string{
 	NWorkLate:  {"fleet down <member>", "wait", "drop"},
 	NReadLate:  {"ask --another", "wait", "drop"},
 	NMergeLate: {"merge --stream <s>", "look"},
+	NStalled:   {"look at the card", "ack"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -308,7 +309,10 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 
 // T6. TickCheck holds the state to what is always true (section 9): each
 // violation is one judgment (N8), with the rule and the cards, closed by the
-// tick when the rule holds again.
+// tick when the rule holds again. Its duty is the no-stall rule too (rule 12):
+// each stall nothing holds is one judgment "stalled", with the decisions open
+// to it, not written again while it stays and closed when it clears; a stall
+// that waits behind another is told by the other's.
 func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
@@ -325,7 +329,19 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
-	due := notify(&p, s, conds, []string{NInvariant}, r.who())
+	for _, f := range Unheld(HeldState{Snap: s, Running: true, Stopped: r.Stopped}, s.Now) {
+		if f.Root != "" {
+			continue
+		}
+		c := cond{typ: NStalled, stream: f.Stream, what: f.What + ": " + f.Why, decisions: f.Decisions}
+		if strings.HasPrefix(f.Subject, "stream:") {
+			c.streamLevel = true
+		} else {
+			c.primaries = []string{f.Subject}
+		}
+		conds = append(conds, c)
+	}
+	due := notify(&p, s, conds, []string{NInvariant, NStalled}, r.who())
 	return p, due
 }
 
