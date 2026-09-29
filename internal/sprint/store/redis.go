@@ -440,6 +440,28 @@ func (r *Redis) Done(ctx context.Context, callerOp string) (string, bool, error)
 	return v, err == nil, err
 }
 
+// DoneBefore asks every earlier epoch's results for the caller's operation id,
+// in one pipeline.
+func (r *Redis) DoneBefore(ctx context.Context, callerOp string, before uint64) (uint64, bool, error) {
+	if before == 0 {
+		return 0, false, nil
+	}
+	pipe := r.C.Pipeline()
+	cmds := make([]*redis.BoolCmd, before)
+	for e := uint64(0); e < before; e++ {
+		cmds[e] = pipe.HExists(ctx, r.Names.KeyAt(keyDone, e), callerOp)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, false, err
+	}
+	for e := before; e > 0; e-- {
+		if cmds[e-1].Val() {
+			return e - 1, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
 func (r *Redis) SetReview(ctx context.Context, noteID string, at time.Time) error {
 	raw, err := r.C.HGet(ctx, r.key(keyNotes), noteID).Result()
 	if errors.Is(err, redis.Nil) {

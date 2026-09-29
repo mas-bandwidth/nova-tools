@@ -112,7 +112,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return p
 }
 
@@ -368,7 +368,7 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": stamp(s.Now)}, n)
 		}
 	}
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return Lawful(p)
 }
 
@@ -502,7 +502,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, orphans, nil)
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return Lawful(p)
 }
 
@@ -609,7 +609,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, leaving, nil)
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return Lawful(p)
 }
 
@@ -713,7 +713,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
 		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
 	}
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return Lawful(p)
 }
 
@@ -781,7 +781,7 @@ func Rank(s *Snapshot, r RankReq) Plan {
 		p.Units = append(p.Units, u)
 		score++
 	}
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return p
 }
 

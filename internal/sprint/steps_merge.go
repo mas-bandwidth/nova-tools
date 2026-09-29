@@ -364,6 +364,6 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil, "need_card", "need_stream")))
 	}
 	p.Units = append(p.Units, u)
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return p
 }

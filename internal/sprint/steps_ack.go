@@ -37,7 +37,7 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			}
 		}
 		if len(entries) == 0 {
-			p.refuse(id, "no open judgment "+id+"; run: nova-sprint inbox")
+			p.refuse(id, noJudgment(s, id))
 			continue
 		}
 		n := entries[0].Note

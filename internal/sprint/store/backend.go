@@ -69,6 +69,9 @@ type Backend interface {
 	Release(ctx context.Context, op OpRecord, commit bool) error
 	// Done is the recorded result of a caller's operation id.
 	Done(ctx context.Context, callerOp string) (string, bool, error)
+	// DoneBefore is the latest epoch before the given one that recorded a
+	// result of the caller's operation id, in one exchange.
+	DoneBefore(ctx context.Context, callerOp string, before uint64) (uint64, bool, error)
 	// SetReview sets an open judgment's next review time (wait).
 	SetReview(ctx context.Context, noteID string, at time.Time) error
 	// Progress is each stream's last progress: the time of the last operation

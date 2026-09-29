@@ -179,10 +179,10 @@ func closesFor(open []Open, types []string, subject string) []Open {
 // resolves some obligation of (it closes, or records a decided answer to it);
 // one it does not is refused by its id. Naming a notification closes nothing
 // by itself.
-func answered(p *Plan, open []Open, ids []string) {
+func answered(p *Plan, s *Snapshot, ids []string) {
 	for _, id := range ids {
 		known, resolved := false, false
-		for _, o := range open {
+		for _, o := range s.Open {
 			known = known || o.Note.ID == id
 		}
 		for _, u := range p.Units {
@@ -203,7 +203,7 @@ func answered(p *Plan, open []Open, ids []string) {
 		}
 		switch {
 		case !known:
-			p.refuse(id, "no open judgment "+id+"; run: nova-sprint inbox")
+			p.refuse(id, noJudgment(s, id))
 		case !resolved:
 			p.refuse(id, "this step resolves no obligation of "+id)
 		}

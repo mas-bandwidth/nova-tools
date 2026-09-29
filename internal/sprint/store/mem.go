@@ -741,6 +741,20 @@ func (m *Mem) Done(_ context.Context, callerOp string) (string, bool, error) {
 	return v, ok, nil
 }
 
+func (m *Mem) DoneBefore(_ context.Context, callerOp string, before uint64) (uint64, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for e := before; e > 0; e-- {
+		m.touch(e - 1)
+		if l := m.logs[e-1]; l != nil {
+			if _, ok := l.done[callerOp]; ok {
+				return e - 1, true, nil
+			}
+		}
+	}
+	return 0, false, nil
+}
+
 func (m *Mem) SetReview(_ context.Context, noteID string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

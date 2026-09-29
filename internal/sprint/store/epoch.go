@@ -122,3 +122,17 @@ func (st *Store) Pinned(ctx context.Context) (*Store, error) { return st.pin(ctx
 
 // PinnedEpoch is the epoch a pinned store is at.
 func (st *Store) PinnedEpoch() uint64 { return st.epoch }
+
+// SetReview sets an open judgment's next review time (wait) at the sprint's
+// epoch. A judgment id of another epoch is refused, naming its epoch: an id
+// of an earlier epoch never reaches a judgment of this one.
+func (st *Store) SetReview(ctx context.Context, noteID string, at time.Time) error {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	if e := sprint.IDEpoch(noteID); e != st.epoch {
+		return errors.New(sprint.OtherEpoch(noteID, e, st.epoch))
+	}
+	return st.B.SetReview(ctx, noteID, at)
+}
