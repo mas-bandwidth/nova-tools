@@ -143,11 +143,11 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// printTick prints what one tick did: each part's moves, its refusals, the
-// moves left due past its bounds, and a summary line; a tick of a STOPPED
-// machine says the machine is STOPPED.
+// printTick prints what one tick did: each part's moves, its refusals, a
+// halt by a stop, the moves left due past its bounds, and a summary line; a
+// tick of a STOPPED machine says the machine is STOPPED.
 func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr io.Writer) {
-	if res.State == store.Stopped && err == nil {
+	if res.State == store.Stopped && err == nil && res.Halted == "" {
 		fmt.Fprintf(stdout, "TICK OK state=STOPPED nothing done; run: nova-sprint start\n")
 		return
 	}
@@ -167,6 +167,9 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 	listed(stderr, "REFUSED", refused, max, "tick")
 	if res.Stale != "" {
 		fmt.Fprintf(stdout, "STALE %s\n", oneline.Escape(res.Stale))
+	}
+	if res.Halted != "" {
+		fmt.Fprintf(stdout, "HALTED %s\n", oneline.Escape(res.Halted))
 	}
 	if res.Due > 0 {
 		fmt.Fprintf(stdout, "DUE %d moves past the tick's bounds: the next ticks catch up\n", res.Due)
@@ -208,7 +211,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
 			was = res.State
 		}
-		if err != nil || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" {
+		if err != nil || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" || res.Halted != "" {
 			fmt.Fprintf(stdout, "%s tick\n", a.now().Format("15:04:05"))
 			a.printTick(res, err, max, stdout, stderr)
 			if line := sprintLine(ctx, st); line != "" {

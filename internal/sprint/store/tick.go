@@ -221,8 +221,8 @@ func (st *Store) MachineLine(ctx context.Context) string {
 // state it has changes nothing and writes nothing. A change is recorded as a
 // happened notification (who, when); a STOPPED span is opened by stop and
 // closed by start, and its time added to the total time STOPPED. The flag is
-// read by run before every tick: a tick in flight finishes, and no tick
-// begins after the flag says STOPPED.
+// read by the tick before every part: the part in flight finishes, and no
+// part begins after the flag says STOPPED.
 func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Machine, res Result, err error) {
 	verb, typ := "stop", sprint.NMachineStopped
 	if running {
@@ -273,13 +273,15 @@ type PartResult struct {
 // TickResult is what a tick did: the state it found, whether it was idle
 // (nothing changed since the last tick), the pending operation it finished,
 // its parts that wrote, why it stopped short (the sprint's epoch changed
-// under it), and how many moves and judgments it left due past its bounds.
+// under it, or the machine was stopped), and how many moves and judgments it
+// left due past its bounds.
 type TickResult struct {
 	State    string         `json:"state"`
 	Idle     bool           `json:"idle,omitempty"`
 	Repaired []RepairResult `json:"repaired,omitempty"`
 	Parts    []PartResult   `json:"parts,omitempty"`
 	Stale    string         `json:"stale,omitempty"`
+	Halted   string         `json:"halted,omitempty"`
 	Due      int            `json:"due,omitempty"`
 }
 
@@ -356,8 +358,15 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
-	if rerr := st.remind(ctx, m, &res); rerr != nil && err == nil {
-		err = fmt.Errorf("remind: %w", rerr)
+	if err == nil && res.Halted == "" {
+		// The reminder duty is a part too: it begins only while RUNNING.
+		if halted, herr := st.halted(ctx, &res, "remind"); herr != nil {
+			err = herr
+		} else if !halted {
+			if rerr := st.remind(ctx, m, &res); rerr != nil {
+				err = fmt.Errorf("remind: %w", rerr)
+			}
+		}
 	}
 	hb.At, hb.Ticks = st.now(), hb.Ticks+1
 	hb.Error, hb.Failures = "", 0
@@ -373,6 +382,21 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 		err = werr
 	}
 	return res, err
+}
+
+// halted reads the machine's state before a part of a tick begins: STOPPED
+// halts the tick there, and says so on the result.
+func (st *Store) halted(ctx context.Context, res *TickResult, part string) (bool, error) {
+	var m Machine
+	if err := st.getJSON(ctx, keyMachine, &m); err != nil {
+		return false, err
+	}
+	if m.Running() {
+		return false, nil
+	}
+	res.State = Stopped
+	res.Halted = "the machine was stopped during the tick: the part " + part + " did not begin"
+	return true, nil
 }
 
 // look is the cheap read of a tick: the four tables' shapes in one exchange,
@@ -410,10 +434,11 @@ func (st *Store) look(ctx context.Context) (Heartbeat, error) {
 // read is due, or TickFullEvery has passed, runs each part that has something
 // to do as its own operation on a fresh read. A part is skipped when it has
 // nothing to do on the tick's first read and nothing has moved before it in
-// this tick. It returns what it saw, for the heartbeat; a tick that did not
-// finish what was due (a part that lost to other writers, a stale epoch, or
-// moves due past a bound) leaves a full read due (Full zero), so the next
-// tick reads the state and does the rest.
+// this tick. Before each part it reads the machine's state: STOPPED halts the
+// tick there. It returns what it saw, for the heartbeat; a tick that did not
+// finish what was due (a part that lost to other writers, a stale epoch, a
+// halt, or moves due past a bound) leaves a full read due (Full zero), so the
+// next tick reads the state and does the rest.
 func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult) (Heartbeat, error) {
 	f, err := st.B.ReadFence(ctx)
 	if err != nil {
@@ -437,6 +462,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if _, ok, err := st.stuck(ctx); err != nil {
 		return last, err
 	} else if ok {
+		if halted, err := st.halted(ctx, res, "stuck"); err != nil || halted {
+			return last, err
+		}
 		// A stuck operation repaired since: its judgment, once, by a step
 		// that writes nothing else.
 		r, err := st.Run(ctx, Step{Verb: "tick stuck", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
@@ -482,6 +510,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 			if p, due := part.Fn(snap, req); p.Empty() && due == 0 {
 				continue
 			}
+		}
+		if halted, err := st.halted(ctx, res, part.Name); err != nil {
+			return last, err
+		} else if halted {
+			return unfinished, nil
 		}
 		due := 0
 		r, err := st.Run(ctx, TickPartStep(part.Name, part.Fn, req, &at, nil, &due))

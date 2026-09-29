@@ -137,3 +137,55 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 		t.Fatalf("the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
 	}
 }
+
+// stopAtFirstPart stops the machine as the tick's first part takes the fence,
+// as a stop run beside the tick would.
+type stopAtFirstPart struct {
+	*Mem
+	h    *harness
+	part string
+}
+
+func (s *stopAtFirstPart) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
+	if s.part == "" && strings.HasPrefix(op.Verb, "tick ") {
+		s.part = strings.TrimPrefix(op.Verb, "tick ")
+		other := &Store{B: s.Mem, Names: s.h.st.Names, Actor: "coordinator", Now: s.h.st.Now, NewID: s.h.st.NewID}
+		if _, _, _, err := other.SetMachine(ctx, false); err != nil {
+			return false, err
+		}
+	}
+	return s.Mem.Acquire(ctx, gen, op)
+}
+
+func TestNoPartBeginsAfterStop(t *testing.T) {
+	t.Parallel()
+	h := raceScene(t)
+	h.startMachine()
+	x := &stopAtFirstPart{Mem: h.m, h: h}
+	h.st.B = x
+	res := h.machine()
+	h.st.B = h.m
+	if x.part == "" {
+		t.Fatalf("the tick ran no part")
+	}
+	for _, p := range res.Parts {
+		if p.Name != x.part {
+			t.Errorf("the part %s ran after stop returned during %s", p.Name, x.part)
+		}
+	}
+	if res.State != Stopped || !strings.Contains(res.Halted, "did not begin") {
+		t.Fatalf("the tick does not say it halted: %+v", res)
+	}
+	if len(res.Parts) != 1 || len(res.Parts[0].Moved) == 0 {
+		t.Fatalf("the part in flight did not finish: %+v", res.Parts)
+	}
+	h.clean("halted")
+	// Started again, the tick does what was left.
+	h.startMachine()
+	h.tick(time.Second)
+	h.machine()
+	s := h.snap()
+	if len(s.Readers.Of("rv")) != 2 || s.StreamCtl("s3").F("state") == sprint.StreamStopped {
+		t.Fatalf("after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
+	}
+}
