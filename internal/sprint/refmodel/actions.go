@@ -75,8 +75,11 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 		if !ok {
 			return s, badChoice("no score chosen for %s", id)
 		}
-		if err := n.checkScore(a, id, sc); err != nil {
+		if err := s.checkScore(a, id, sc); err != nil {
 			return s, err
+		}
+		if k := indexOf(a.IDs, id); k > 0 && !(scores[a.IDs[k-1]] < sc) {
+			return s, badChoice("%s has score %v, not after %s of the same add at %v", id, sc, a.IDs[k-1], scores[a.IDs[k-1]])
 		}
 		needs := addSorted(nil, a.Needs...)
 		kind := KindPrimary
@@ -99,6 +102,13 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 	for _, id := range a.IDs {
 		if n.Primaries[id].Kind != KindSentinel && n.NeedsMet(id) {
 			n.setPrimary(id, func(p *Primary) { p.State = Ready })
+		}
+		// Section 16: a sentinel whose needs have all landed or been
+		// waived is marked reached by the step in which that becomes
+		// true: for one admitted with nothing to wait for, the add.
+		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) {
+			n.setPrimary(id, func(p *Primary) { p.Reached = true })
+			n.open(JReached, id)
 		}
 		if len(n.DroppedNeeds(id)) > 0 {
 			n.open(JBlocked, id)
@@ -143,6 +153,15 @@ func (s State) checkScore(a AddArgs, id string, sc float64) error {
 		}
 	}
 	return nil
+}
+
+func indexOf(xs []string, x string) int {
+	for i, y := range xs {
+		if y == x {
+			return i
+		}
+	}
+	return -1
 }
 
 // placeSentinel is the spec's section 16 for a sentinel just admitted: it
@@ -454,15 +473,27 @@ func (s State) shortestPair(two []string) bool {
 
 // AskAnother is SprintTables.tla AskAnother(p, r) (line 397): one more reader
 // for a primary in review (free, F1, FreeCoordinator); it answers a broken
-// read and reads exhausted.
+// read and reads exhausted. Refused for work that came back failed and for
+// a primary not asked yet at its attempt: the spec's section 6 ("work that
+// came back failed is not read"; "ask --another deals a primary already asked
+// to one more reader"), which the model's AskAnother does not guard.
 func AskAnother(s State, p, r string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
-	if !s.InWork(p, Review) {
-		return s, refuse("%s is not in review", p)
+	if !s.InWork(p, Review) || s.Failed(p) || !s.AskedNow(p) {
+		return s, refuse("%s is not in review, asked, with work that did not fail", p)
 	}
 	pr := s.Primaries[p]
+	free := 0
+	for _, x := range s.Readers {
+		if _, made := s.Reads[RC(p, pr.Attempt, x)]; !made {
+			free++
+		}
+	}
+	if free == 0 {
+		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
+	}
 	id := RC(p, pr.Attempt, r)
 	if !has(s.Readers, r) {
 		return s, badChoice("%s is not a reader", r)
@@ -958,13 +989,12 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 // FleetUp is SprintTables.tla FleetUp(m) (line 637): the member comes up and
 // the ready queues are levelled in one call; the newest cards move at a new
 // generation. moves is the choice, card to member; Level holds it to the
-// spec's rule (section 14, T4).
+// spec's rule (section 14, T4). The model's FleetUp is enabled only for a
+// member that is down; the spec says nothing of up for a member that is up,
+// and here it is the levelling alone (as fleet level).
 func FleetUp(s State, m string, moves map[string]string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
-	}
-	if st, ok := s.Members[m]; ok && st == Up {
-		return s, refuse("%s is up", m)
 	}
 	n := s.Clone()
 	if _, ok := n.Members[m]; !ok {
@@ -1111,7 +1141,11 @@ func CiGreen(s State, p string) (State, error) {
 // look at any judgment (section 8), waives the dropped needs by the ack of a
 // blocked judgment, and keeps the tick's judgments as acknowledged conditions
 // (section 14): those are from the spec, not yet in the model.
-func Ack(s State, typ string, subjects []string) (State, error) {
+//
+// waive is, for a blocked judgment, the dropped needs its notification names:
+// the ack waives those (Waive, line 298), and the blocked judgment closes only
+// when no dropped need of the primary is left unwaived.
+func Ack(s State, typ string, subjects []string, waive []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
@@ -1133,8 +1167,15 @@ func Ack(s State, typ string, subjects []string) (State, error) {
 		delete(n.Open, Judgment{typ, sub})
 		switch typ {
 		case JBlocked:
-			if drops := n.DroppedNeeds(sub); len(drops) > 0 {
-				n.setPrimary(sub, func(x *Primary) { x.Waived = addSorted(x.Waived, drops...) })
+			var named []string
+			for _, q := range waive {
+				if has(n.DroppedNeeds(sub), q) {
+					named = append(named, q)
+				}
+			}
+			n.setPrimary(sub, func(x *Primary) { x.Waived = addSorted(x.Waived, named...) })
+			if len(n.DroppedNeeds(sub)) > 0 {
+				n.open(JBlocked, sub)
 			}
 		case JNoMember, JCannotAsk:
 			n.Acked[Judgment{typ, sub}] = true
