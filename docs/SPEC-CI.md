@@ -1923,6 +1923,15 @@ not held (`nova-tokens`): it has no seat to fall back to. A
 hand-parsed read counts as covered when its function calls `redisOr` anywhere,
 not necessarily on that value.
 
+### `redis-cleanup` — every test redis-server start registers cleanup and unlinks its PID
+
+**The rule.** Every function starting a throwaway `redis-server` registers `t.Cleanup` to kill the process and unlink its PID file; `testutil.Start` records the PID file at startup and runs `SweepOrphans()` to clean up orphaned servers from killed runs.
+**The mistake it prevents.** A crashed or terminated test binary or runner abort leaves orphaned `redis-server` processes occupying ports and consuming host memory across runs.
+**The test.** `TestEveryRedisStartHasCleanup`, with its control `TestEveryRedisStartHasCleanupSeesMissingCleanup` (`internal/ci/redis_cleanup_class_test.go`).
+**Its allowlist.** None.
+**Its remedy line.** `register t.Cleanup to kill the redis-server process and unlink its PID file, and sweep orphans at startup`.
+**Its narrowings.** Spawning `redis-server` via `exec.Command` or `testutil.Start` is verified; processes run outside the test runner are not covered.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
