@@ -344,7 +344,7 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		}
 	}
 	answered(&p, s.Open, r.Answers)
-	return p
+	return Lawful(p)
 }
 
 // unitStreams is the streams of the plan's units, in order.
@@ -462,7 +462,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	answered(&p, s.Open, r.Answers)
-	return p
+	return Lawful(p)
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.
@@ -523,7 +523,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 	}
 	settle(&p, s, r.Who, leaving, nil)
 	answered(&p, s.Open, r.Answers)
-	return p
+	return Lawful(p)
 }
 
 func orEmpty(c *Card, id string) *Card {
@@ -595,7 +595,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 	}
 	settle(&p, s, r.Who, dropping, dropping)
 	answered(&p, s.Open, r.Answers)
-	return p
+	return Lawful(p)
 }
 
 // RankReq is the coordinator changing scores.

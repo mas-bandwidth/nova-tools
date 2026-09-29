@@ -439,3 +439,22 @@ func TestMergeNotesGroupsOneTypeStreamAndCause(t *testing.T) {
 		t.Fatalf("merged: %+v", got)
 	}
 }
+
+// G5: a plan that moves a primary outside the lifecycle is refused at run
+// time, not only in a test of the table.
+func TestLawfulRefusesAMoveOutsideTheLifecycle(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	c := w.s.Work.Card("s1-1")
+	p := Lawful(Plan{Units: []Unit{
+		{Key: "jump", Changes: []Change{change(Work, moveEntry(c, c.Row, Landed, nil))}},
+		{Key: "fine", Changes: []Change{change(Work, moveEntry(c, c.Row, Working, nil))}},
+	}})
+	if len(p.Units) != 1 || p.Units[0].Key != "fine" || len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, "ready -> landed") {
+		t.Fatalf("lawful: %+v", p)
+	}
+	landed := &Card{ID: "x", Row: "s1", Col: Landed, Rev: 1, Fields: map[string]string{}}
+	if p := Lawful(Plan{Units: []Unit{{Key: "x", Changes: []Change{change(Work, removeEntry(landed, nil))}}}}); len(p.Units) != 0 {
+		t.Fatalf("a landed primary taken off the table: %+v", p)
+	}
+}
