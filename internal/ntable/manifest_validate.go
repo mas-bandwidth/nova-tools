@@ -26,6 +26,56 @@ type containerState struct {
 	seenLowerKeys map[string]bool
 	expectKey     bool
 	lastKey       string
+	where         string // the manifest path of this container: members[0].create
+	count         int    // elements seen, for an array
+}
+
+// joinPath appends an object key to a manifest path.
+func joinPath(where, key string) string {
+	if where == "" {
+		return key
+	}
+	return where + "." + key
+}
+
+// valueWhere is the manifest path of the value about to be read in c.
+func (c *containerState) valueWhere() string {
+	if c.kind == containerArray {
+		return fmt.Sprintf("%s[%d]", c.where, c.count)
+	}
+	return joinPath(c.where, c.lastKey)
+}
+
+// describe names a JSON token's type in the manifest's language.
+func describe(tok any) string {
+	switch v := tok.(type) {
+	case nil:
+		return "null"
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case string:
+		return "a string"
+	case json.Number:
+		return "a number"
+	case json.Delim:
+		if v == '{' {
+			return "an object"
+		}
+		return "an array"
+	}
+	return "something else"
+}
+
+// wrongType is the refusal of a value of the wrong type, at its place.
+func wrongType(where, want string, tok any) error {
+	name := where
+	if i := strings.LastIndexAny(where, ".]"); i >= 0 && where[len(where)-1] != ']' {
+		name = where[i+1:]
+	}
+	return &ManifestError{Where: where, Msg: fmt.Sprintf("%s must be %s, found %s", name, want, describe(tok))}
 }
 
 var rootAllowedKeys = map[string]bool{
@@ -101,9 +151,31 @@ func isNumberToken(tok any) bool {
 	}
 }
 
-// ValidateBatchManifestRaw strictly validates raw batch manifest bytes according
-// to Nova Table specification invariants before any normalization occurs.
+// ValidateBatchManifestRaw reads raw manifest bytes as a batch manifest and
+// applies every rule the server applies that needs no store: the manifest's
+// size, UTF-8, exact-case keys, no key twice, each value's type, the bounds, and
+// the combinations of changes. Nothing is coerced. The errors are of two kinds:
+// a *ManifestError, a manifest that cannot be read as one (it names the place,
+// members[0].create.score, in the manifest's words), and a *RuleError or a
+// *LimitError, a manifest that reads as one and that a rule refuses; each is
+// what the store would answer, with the same code.
 func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
+	m, err := validateBatchManifest(raw)
+	if err != nil {
+		var (
+			me *ManifestError
+			re *RuleError
+			le *LimitError
+		)
+		if !errors.As(err, &me) && !errors.As(err, &re) && !errors.As(err, &le) {
+			err = &ManifestError{Msg: err.Error()}
+		}
+		return nil, err
+	}
+	return m, nil
+}
+
+func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, errors.New("empty manifest")
 	}
@@ -195,7 +267,7 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 					return nil, errors.New("expected string key in object")
 				}
 				if top.seenKeys[key] || (top.seenLowerKeys != nil && top.seenLowerKeys[strings.ToLower(key)]) {
-					return nil, fmt.Errorf("duplicate key %q in manifest", key)
+					return nil, fmt.Errorf("duplicate key %q in manifest", bounded(key))
 				}
 				top.seenKeys[key] = true
 				if top.seenLowerKeys != nil {
@@ -208,101 +280,89 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 				switch top.path {
 				case "root":
 					if !rootAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in root manifest", key)
+						return nil, fmt.Errorf("unknown field %q in root manifest", bounded(key))
 					}
 				case "member":
 					if !memberAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in member object", key)
+						return nil, fmt.Errorf("unknown field %q in member object", bounded(key))
 					}
 				case "expect":
 					if !expectAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in expect", key)
+						return nil, fmt.Errorf("unknown field %q in expect", bounded(key))
 					}
 				case "place":
 					if !placeAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in place", key)
+						return nil, fmt.Errorf("unknown field %q in place", bounded(key))
 					}
 				case "create":
 					if !createAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in create", key)
+						return nil, fmt.Errorf("unknown field %q in create", bounded(key))
 					}
 				case "move":
 					if !moveAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in move", key)
+						return nil, fmt.Errorf("unknown field %q in move", bounded(key))
 					}
 				case "field_guard":
 					if !fieldGuardAllowedKeys[key] {
-						return nil, fmt.Errorf("unknown field %q in field guard", key)
+						return nil, fmt.Errorf("unknown field %q in field guard", bounded(key))
 					}
 				}
 				continue
 			}
 
 			// Value for top.lastKey in containerObject
+			where := top.valueWhere()
 			if tok == nil {
-				if top.path == "set" {
-					return nil, fmt.Errorf("null value not allowed in set for field %q", top.lastKey)
-				}
-				return nil, fmt.Errorf("null value not allowed for %s", top.lastKey)
+				return nil, &ManifestError{Where: where, Msg: fmt.Sprintf("%s must not be null", top.lastKey)}
 			}
-
-			// 1. Keys that MUST be objects:
-			if (top.path == "member" && (top.lastKey == "expect" || top.lastKey == "create" || top.lastKey == "move" || top.lastKey == "set")) ||
-				(top.path == "expect" && (top.lastKey == "place" || top.lastKey == "fields")) ||
-				(top.path == "fields") {
-				delim, ok := tok.(json.Delim)
-				if !ok || delim != '{' {
-					return nil, fmt.Errorf("expected object for %s", top.lastKey)
+			isObject := func() bool { d, ok := tok.(json.Delim); return ok && d == '{' }
+			isArray := func() bool { d, ok := tok.(json.Delim); return ok && d == '[' }
+			_, isString := tok.(string)
+			switch {
+			case top.path == "member" && (top.lastKey == "expect" || top.lastKey == "create" || top.lastKey == "move" || top.lastKey == "set"),
+				top.path == "expect" && (top.lastKey == "place" || top.lastKey == "fields"),
+				top.path == "fields":
+				if !isObject() {
+					return nil, wrongType(where, "an object", tok)
 				}
-			}
-
-			// 2. Keys that MUST be arrays:
-			if (top.path == "root" && top.lastKey == "members") ||
-				(top.path == "member" && top.lastKey == "unset") ||
-				(top.path == "field_guard" && top.lastKey == "one_of") {
-				delim, ok := tok.(json.Delim)
-				if !ok || delim != '[' {
-					return nil, fmt.Errorf("expected array for %s", top.lastKey)
+			case top.path == "root" && top.lastKey == "members",
+				top.path == "member" && top.lastKey == "unset",
+				top.path == "field_guard" && top.lastKey == "one_of":
+				if !isArray() {
+					return nil, wrongType(where, "an array", tok)
 				}
-			}
-
-			// 3. Keys that MUST be booleans:
-			if top.path == "member" && top.lastKey == "remove" {
-				b, ok := tok.(bool)
-				if !ok || !b {
-					return nil, errors.New("remove must be true")
+			case top.path == "member" && top.lastKey == "remove",
+				top.path == "expect" && top.lastKey == "absent",
+				top.path == "field_guard" && top.lastKey == "absent":
+				if b, ok := tok.(bool); !ok || !b {
+					return nil, wrongType(where, "true", tok)
 				}
-			} else if (top.path == "expect" && top.lastKey == "absent") ||
-				(top.path == "field_guard" && top.lastKey == "absent") {
-				b, ok := tok.(bool)
-				if !ok {
-					return nil, fmt.Errorf("expected boolean for %s", top.lastKey)
+			case top.path == "root" && (top.lastKey == "table" || top.lastKey == "operation_id" || top.lastKey == "actor"),
+				top.path == "member" && top.lastKey == "id",
+				(top.path == "place" || top.path == "create" || top.path == "move") && (top.lastKey == "row" || top.lastKey == "col"),
+				top.path == "field_guard" && top.lastKey == "equals",
+				top.path == "set":
+				if !isString {
+					return nil, wrongType(where, "a string", tok)
 				}
-				if !b {
-					return nil, fmt.Errorf("expected boolean true for %s", top.lastKey)
+			case top.path == "root" && (top.lastKey == "epoch" || top.lastKey == "expected_table_revision"),
+				top.path == "expect" && top.lastKey == "revision":
+				if !isString {
+					return nil, wrongType(where, "a decimal string", tok)
 				}
-			}
-
-			// 4. Keys that MUST be strings:
-			if (top.path == "root" && (top.lastKey == "table" || top.lastKey == "operation_id" || top.lastKey == "actor")) ||
-				(top.path == "member" && top.lastKey == "id") ||
-				(top.path == "place" && (top.lastKey == "row" || top.lastKey == "col")) ||
-				(top.path == "create" && (top.lastKey == "row" || top.lastKey == "col")) ||
-				(top.path == "move" && (top.lastKey == "row" || top.lastKey == "col")) ||
-				(top.path == "field_guard" && top.lastKey == "equals") ||
-				(top.path == "set") {
-				if _, ok := tok.(string); !ok {
-					return nil, fmt.Errorf("expected string for %s", top.lastKey)
+				if v := tok.(string); !uintString(v) {
+					return nil, &ManifestError{Where: where, Msg: fmt.Sprintf("%s must be a decimal number in a string (0, 1, 2 ...), found %q", top.lastKey, bounded(v))}
 				}
-			}
-
-			// 5. Keys that MUST be numbers:
-			if (top.path == "root" && (top.lastKey == "schema" || top.lastKey == "epoch" || top.lastKey == "expected_table_revision")) ||
-				(top.path == "expect" && top.lastKey == "revision") ||
-				(top.path == "create" && top.lastKey == "score") ||
-				(top.path == "move" && top.lastKey == "score") {
+			case top.path == "root" && top.lastKey == "schema":
+				if _, ok := tok.(json.Number); !ok {
+					return nil, wrongType(where, "the number 1", tok)
+				}
+			case (top.path == "create" || top.path == "move") && top.lastKey == "score":
 				if !isNumberToken(tok) {
-					return nil, fmt.Errorf("expected number for %s (non-number)", top.lastKey)
+					return nil, wrongType(where, "a JSON number", tok)
+				}
+				if _, ok := tok.(json.Number); !ok {
+					return nil, wrongType(where, "a JSON number", tok)
 				}
 			}
 
@@ -349,6 +409,7 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 						seenKeys:      make(map[string]bool),
 						seenLowerKeys: childLower,
 						expectKey:     true,
+						where:         where,
 					})
 					continue
 				} else if delim == '[' {
@@ -369,8 +430,9 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 					}
 
 					stack = append(stack, containerState{
-						kind: containerArray,
-						path: childPath,
+						kind:  containerArray,
+						path:  childPath,
+						where: where,
 					})
 					continue
 				}
@@ -391,30 +453,24 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 				continue
 			}
 
+			where := top.valueWhere()
+			top.count++
 			if tok == nil {
-				if top.path == "unset" {
-					return nil, errors.New("null value not allowed in unset")
-				}
-				if top.path == "one_of" {
-					return nil, errors.New("null value not allowed in one_of")
-				}
-				if top.path == "members" {
-					return nil, errors.New("null value not allowed in members")
-				}
-				return nil, fmt.Errorf("null value not allowed in %s", top.path)
+				return nil, &ManifestError{Where: where, Msg: "an element must not be null"}
 			}
-
-			if top.path == "unset" {
-				if _, ok := tok.(string); !ok {
-					return nil, errors.New("field name in unset must be a string")
+			_, isString := tok.(string)
+			switch top.path {
+			case "unset":
+				if !isString {
+					return nil, wrongType(where, "a field name (a string)", tok)
 				}
-			} else if top.path == "one_of" {
-				if _, ok := tok.(string); !ok {
-					return nil, errors.New("item in one_of must be a string")
+			case "one_of":
+				if !isString {
+					return nil, wrongType(where, "an option (a string)", tok)
 				}
-			} else if top.path == "members" {
+			case "members":
 				if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-					return nil, errors.New("member entry must be an object")
+					return nil, wrongType(where, "a member entry (an object)", tok)
 				}
 			}
 
@@ -432,11 +488,13 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 						seenKeys:      make(map[string]bool),
 						seenLowerKeys: childLower,
 						expectKey:     true,
+						where:         where,
 					})
 				} else if delim == '[' {
 					stack = append(stack, containerState{
-						kind: containerArray,
-						path: "array",
+						kind:  containerArray,
+						path:  "array",
+						where: where,
 					})
 				}
 			}
@@ -452,6 +510,10 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 	dec.DisallowUnknownFields()
 	var manifest BatchManifest
 	if err := dec.Decode(&manifest); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			return nil, &ManifestError{Where: typeErr.Field, Msg: fmt.Sprintf("a value of the wrong type (found %s)", typeErr.Value)}
+		}
 		return nil, err
 	}
 
@@ -466,13 +528,13 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 	for _, m := range manifest.Members {
 		id := m.ID
 		if id == "" {
-			return nil, errors.New("member id cannot be empty")
+			return nil, rule("MEMBER", "", nil, "a member id cannot be empty")
 		}
 		if strings.ContainsAny(id, "\x00\r\n\t") {
-			return nil, fmt.Errorf("invalid member id %q", id)
+			return nil, rule("MEMBER", "", nil, "invalid member id %q", bounded(id))
 		}
 		if seenMemberIDs[id] {
-			return nil, fmt.Errorf("duplicate member id %q in manifest", id)
+			return nil, rule("TWICE", id, ErrDuplicateMember, "the id appears more than once in the manifest")
 		}
 		seenMemberIDs[id] = true
 		if m.Expect != nil && m.Expect.Fields != nil {
@@ -487,20 +549,20 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 				if fg.OneOf != nil {
 					conds++
 					if len(fg.OneOf) == 0 {
-						return nil, fmt.Errorf("one_of for %q must be nonempty array", fName)
+						return nil, rule("FIELDGUARD", id, ErrFieldGuard, "one_of for %q must be a nonempty array", fName)
 					}
 				}
 				if conds != 1 {
-					return nil, fmt.Errorf("field guard for %q must specify exactly one condition, got %d", fName, conds)
+					return nil, rule("FIELDGUARD", id, ErrFieldGuard, "field guard for %q must specify exactly one condition, got %d", fName, conds)
 				}
 			}
 		}
 	}
 
-	if err := validateManifestSemantics(&manifest); err != nil {
+	if err := CheckBatchBounds(&manifest); err != nil {
 		return nil, err
 	}
-	if err := CheckBatchBounds(&manifest); err != nil {
+	if err := validateManifestSemantics(&manifest); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
@@ -534,94 +596,126 @@ func reservedField(f string) bool {
 // manifest the server would refuse for its shape is refused here first.
 func validateManifestSemantics(m *BatchManifest) error {
 	if m.Schema != 1 {
-		return fmt.Errorf("schema %d is not supported, expected 1", m.Schema)
+		return rule("SCHEMA", "", nil, "schema %d is not supported, expected 1", m.Schema)
 	}
 	if !ValidName(m.Table) {
-		return fmt.Errorf("table %q wants letters, digits, _ . and -", m.Table)
+		return rule("NAME", "", nil, "table %q wants letters, digits, _ . and -", bounded(m.Table))
 	}
 	if !word(m.OperationID) {
-		return errors.New("operation_id must be a nonempty string without control characters")
+		return rule("OPERATION", "", nil, "operation_id must be a nonempty string without control characters")
 	}
 	if len(m.Members) == 0 {
-		return errors.New("a manifest names at least one member")
+		return rule("MANIFEST", "", ErrMalformedManifest, "a manifest names at least one member")
 	}
 	if !uintString(m.Epoch) {
-		return errors.New("epoch must be a decimal uint64 string")
+		return rule("EPOCH", "", nil, "epoch must be a decimal uint64 string")
 	}
 	if !uintString(m.ExpectedTableRevision) {
-		return errors.New("expected_table_revision must be a decimal uint64 string")
+		return rule("REVISION", "", nil, "expected_table_revision must be a decimal uint64 string")
 	}
 	for _, e := range m.Members {
 		if !word(e.ID) {
-			return errors.New("member id must be a nonempty string without control characters")
+			return rule("MEMBER", "", nil, "member id must be a nonempty string without control characters")
 		}
 		for f := range e.Set {
 			if reservedField(f) {
-				return fmt.Errorf("member %q: %w: field %q", e.ID, ErrReservedField, f)
+				return rule("RESERVEDFIELD", e.ID, ErrReservedField, "field %q", bounded(f))
 			}
 			if !word(f) {
-				return fmt.Errorf("member %q: field names are nonempty strings without control characters", e.ID)
+				return rule("ARGS", e.ID, nil, "field names are nonempty strings without control characters")
 			}
 		}
 		namedUnset := map[string]bool{}
 		for _, f := range e.Unset {
 			if namedUnset[f] {
-				return fmt.Errorf("member %q: unset names field %q twice", e.ID, f)
+				return rule("ARGS", e.ID, nil, "unset names field %q twice", bounded(f))
 			}
 			namedUnset[f] = true
 			if reservedField(f) {
-				return fmt.Errorf("member %q: %w: field %q", e.ID, ErrReservedField, f)
+				return rule("RESERVEDFIELD", e.ID, ErrReservedField, "field %q", bounded(f))
 			}
 			if !word(f) {
-				return fmt.Errorf("member %q: field names are nonempty strings without control characters", e.ID)
+				return rule("ARGS", e.ID, nil, "field names are nonempty strings without control characters")
 			}
 			if _, both := e.Set[f]; both {
-				return fmt.Errorf("member %q: %w: field %q cannot be both set and unset", e.ID, ErrMutation, f)
+				return rule("MUTATION", e.ID, ErrMutation, "field %q cannot be both set and unset", bounded(f))
 			}
 		}
 		if e.Expect == nil {
-			return fmt.Errorf("member %q: %w: missing expect", e.ID, ErrMalformedManifest)
+			return rule("MANIFEST", e.ID, ErrMalformedManifest, "missing expect")
 		}
 		x := e.Expect
 		if x.Absent && (x.Revision != "" || x.Place != nil || x.Fields != nil) {
-			return fmt.Errorf("member %q: %w: expect absent cannot combine with revision, place or fields", e.ID, ErrMutation)
+			return rule("MUTATION", e.ID, ErrMutation, "expect absent cannot combine with revision, place or fields")
 		}
 		if x.Revision != "" && !uintString(x.Revision) {
-			return fmt.Errorf("member %q: expect revision must be a decimal string", e.ID)
+			return rule("ARGS", e.ID, nil, "expect revision must be a decimal string")
 		}
 		for name, g := range x.Fields {
 			if !word(name) {
-				return fmt.Errorf("member %q: field guard names are nonempty strings without control characters", e.ID)
+				return rule("ARGS", e.ID, nil, "field guard names are nonempty strings without control characters")
 			}
 			seen := map[string]bool{}
 			for _, o := range g.OneOf {
 				if seen[o] {
-					return fmt.Errorf("member %q: field %q: one_of names an option twice", e.ID, name)
+					return rule("FIELDGUARD", e.ID, ErrFieldGuard, "field %q: one_of names an option twice", bounded(name))
 				}
 				seen[o] = true
 			}
 		}
 		if e.Create != nil {
 			if e.Move != nil || e.Remove {
-				return fmt.Errorf("member %q: %w: create cannot combine with move or remove", e.ID, ErrMutation)
+				return rule("MUTATION", e.ID, ErrMutation, "create cannot combine with move or remove")
 			}
 			if !x.Absent {
-				return fmt.Errorf("member %q: %w: create requires expect absent", e.ID, ErrMutation)
+				return rule("MUTATION", e.ID, ErrMutation, "create requires expect absent")
 			}
 			if math.IsNaN(e.Create.Score) || math.IsInf(e.Create.Score, 0) {
-				return fmt.Errorf("member %q: %w: expected a finite JSON number", e.ID, ErrInvalidScore)
+				return rule("SCORE", e.ID, ErrInvalidScore, "expected a finite JSON number")
 			}
 		}
 		if e.Move != nil {
 			if e.Remove {
-				return fmt.Errorf("member %q: %w: move cannot combine with remove", e.ID, ErrMutation)
+				return rule("MUTATION", e.ID, ErrMutation, "move cannot combine with remove")
 			}
 			if e.Move.Score != nil && (math.IsNaN(*e.Move.Score) || math.IsInf(*e.Move.Score, 0)) {
-				return fmt.Errorf("member %q: %w: expected a finite JSON number", e.ID, ErrInvalidScore)
+				return rule("SCORE", e.ID, ErrInvalidScore, "expected a finite JSON number")
 			}
 		}
 	}
 	return nil
+}
+
+// RuleError is a manifest that reads as a manifest and that a rule refuses:
+// a repeated member, a set and an unset of one field, a reserved field, a create
+// with a move, an empty members array. It is a refusal, as the store's are, and
+// says what the store would: a code and a sentence.
+type RuleError struct {
+	Code   string // the store's refusal code for the same rule
+	Member string // the member at fault, if one is
+	Msg    string // the sentence, naming the member
+	Detail string // the sentence without the member
+	is     error
+}
+
+func (e *RuleError) Error() string { return e.Msg }
+func (e *RuleError) Unwrap() error { return e.is }
+
+// rule builds a RuleError. When a sentinel names the rule, the sentence starts
+// with the sentinel's words, then the detail.
+func rule(code, member string, is error, format string, a ...any) error {
+	detail := fmt.Sprintf(format, a...)
+	msg := detail
+	if is != nil && is != ErrMalformedManifest {
+		msg = is.Error() + ": " + detail
+	}
+	if member != "" {
+		msg = fmt.Sprintf("member %q: %s", member, msg)
+	}
+	if is != nil && is != ErrMalformedManifest {
+		detail = is.Error() + ": " + detail
+	}
+	return &RuleError{Code: code, Member: member, Msg: msg, Detail: detail, is: is}
 }
 
 // checkEscapes refuses a \u escape the JSON decoder would silently replace with
@@ -674,4 +768,33 @@ func hex4(raw []byte, at int) (int, bool) {
 	}
 	v, err := strconv.ParseUint(string(raw[at:at+4]), 16, 16)
 	return int(v), err == nil
+}
+
+// ManifestError is a manifest that cannot be read as a manifest: it is not JSON,
+// names a key it may not, or holds a value of the wrong type. It says where, in
+// the manifest's own words (members[0].create.score), and never in the parser's.
+type ManifestError struct {
+	Where, Msg string
+}
+
+func (e *ManifestError) Error() string {
+	if e.Where == "" {
+		return e.Msg
+	}
+	return e.Msg + " at " + e.Where
+}
+
+func (e *ManifestError) Is(target error) bool { return target == ErrMalformedManifest }
+
+// bounded is s as a refusal may carry it: a value over 64 bytes is its first 32
+// and its length, so no refusal echoes a long input.
+func bounded(s string) string {
+	if len(s) <= 64 {
+		return s
+	}
+	cut := 32
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s...(%d bytes)", s[:cut], len(s))
 }

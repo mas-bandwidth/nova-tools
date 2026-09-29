@@ -153,6 +153,12 @@ do
     if observed <= bound then return nil end
     return T.refuse('LIMIT', T.limit_names[key], bound, observed, member)
   end
+  -- T.excerpt(s): s as a refusal may carry it: a value over 64 bytes is its first
+  -- 32 and its length, so a refusal never echoes a long input.
+  function T.excerpt(s)
+    if type(s) ~= 'string' or #s <= 64 then return s end
+    return string.sub(s, 1, 32) .. '...(' .. #s .. ' bytes)'
+  end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
@@ -429,10 +435,10 @@ do
     for _, col in ipairs(d.cols) do if col.name == name then return col end end
   end
   function T.cell(d, row, col, write)
-    if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', row) end
+    if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', T.excerpt(row)) end
     local c = T.col(d, col)
-    if not c then return nil, T.refuse('NOCOL', row, col) end
-    if c.noset then return nil, T.refuse('TEXT', row, col) end
+    if not c then return nil, T.refuse('NOCOL', T.excerpt(row), T.excerpt(col)) end
+    if c.noset then return nil, T.refuse('TEXT', T.excerpt(row), T.excerpt(col)) end
     local h = T.hash(T.rowkey(d, row))
     local bound = h['key:' .. col]
     if write and bound and bound ~= '' then return nil, T.refuse('BOUND', row, col, bound, h.owner or '') end
@@ -487,7 +493,7 @@ do
     local mkey = T.memberkey(d, id)
     local flat = redis.pcall('HGETALL', mkey)
     if type(flat) == 'table' and flat.err then
-      if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash') end
+      if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
       T.rethrow(flat)
     end
     local h = {}
@@ -518,7 +524,10 @@ do
     if from then d.cells[from] = true end
     if to then d.cells[to] = true end
   end
-  function T.unindexed(d, id)
+  -- T.unindexed(d, id, tag): the id is in an owned set of the table that no record
+  -- places it in. A caller that reports it as a batch or a read set passes a tag,
+  -- appended to the refusal, so the reader knows no record exists.
+  function T.unindexed(d, id, tag)
     for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
       local h = T.hash(T.rowkey(d, row))
       for _, col in ipairs(d.cols) do
@@ -533,7 +542,9 @@ do
           T.rethrow(res)
         end
         if res then
-          return T.refuse('DRIFT', row, col.name, id)
+          local refusal = T.refuse('DRIFT', row, col.name, id)
+          if tag then refusal[#refusal + 1] = tag end
+          return refusal
         end
       end
     end
@@ -828,7 +839,7 @@ do
     return function(keys, args)
       if (argc >= 0 and #args ~= argc) or (argc < 0 and #args < -argc) then return T.refuse('ARGS', verb) end
       local opts = T.decode(args[#args])
-      if not opts or not T.uint(opts.epoch) then return T.refuse('EPOCH', 'observed epoch required') end
+      if not opts or not T.uint(opts.epoch) then return T.refuse('EPOCH', 'requested epoch required') end
       for _, k in ipairs({'actor','fence','idem'}) do
         if opts[k] and type(opts[k]) ~= 'string' then return T.refuse('OPTIONS', k) end
       end
@@ -1589,7 +1600,7 @@ do
       local h, exists, why = T.member(d, id)
       if why then return why end
       if not exists then
-        local drift = T.unindexed(d, id)
+        local drift = T.unindexed(d, id, 'set-only')
         if drift then return drift end
         missing[#missing + 1] = id
       else
@@ -1610,7 +1621,7 @@ do
           row, col = r, c
           score = tostring(s)
         else
-          local drift = T.unindexed(d, id)
+          local drift = T.unindexed(d, id, 'set-only')
           if drift then return drift end
         end
         local fields = {}
@@ -1918,7 +1929,7 @@ do
         over = T.over('set_fields', count, id)
         if over then return over end
         for f, val in pairs(entry.set) do
-          if reserved(f) then return T.refuse('RESERVEDFIELD', id, f) end
+          if reserved(f) then return T.refuse('RESERVEDFIELD', id, T.excerpt(f)) end
           if not T.word(f) or type(val) ~= 'string' then
             return T.refuse('ARGS', 'field name and value must be valid strings', id)
           end
@@ -1932,7 +1943,7 @@ do
         if over then return over end
         local named = {}
         for _, f in ipairs(entry.unset) do
-          if type(f) == 'string' and reserved(f) then return T.refuse('RESERVEDFIELD', id, f) end
+          if type(f) == 'string' and reserved(f) then return T.refuse('RESERVEDFIELD', id, T.excerpt(f)) end
           if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', id) end
           if named[f] then return T.refuse('ARGS', 'unset names a field twice', id) end
           named[f] = true
@@ -1941,7 +1952,7 @@ do
       if entry.set ~= nil and entry.unset ~= nil then
         for _, f in ipairs(entry.unset) do
           if entry.set[f] ~= nil then
-            return T.refuse('MUTATION', id, 'field ' .. f .. ' cannot be both set and unset')
+            return T.refuse('MUTATION', id, 'field ' .. T.excerpt(f) .. ' cannot be both set and unset')
           end
         end
       end
@@ -1973,19 +1984,19 @@ do
         over = T.over('field_guards', n, id)
         if over then return over end
         for f, guard in pairs(exp.fields) do
-          if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
+          if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'guard must be object') end
           local conds = (guard.equals ~= nil and 1 or 0) + (guard.absent ~= nil and 1 or 0) + (guard.one_of ~= nil and 1 or 0)
-          if conds ~= 1 then return T.refuse('FIELDGUARD', id, f, 'exact one condition required') end
-          if guard.equals ~= nil and type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'equals must be string') end
-          if guard.absent ~= nil and guard.absent ~= true then return T.refuse('FIELDGUARD', id, f, 'absent must be true') end
+          if conds ~= 1 then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'exact one condition required') end
+          if guard.equals ~= nil and type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals must be string') end
+          if guard.absent ~= nil and guard.absent ~= true then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'absent must be true') end
           if guard.one_of ~= nil then
             if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
-              return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
+              return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of must be nonempty array')
             end
             local options = {}
             for _, opt in ipairs(guard.one_of) do
-              if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
-              if options[opt] then return T.refuse('FIELDGUARD', id, f, 'one_of names an option twice') end
+              if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of items must be strings') end
+              if options[opt] then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of names an option twice') end
               options[opt] = true
             end
           end
@@ -2128,7 +2139,7 @@ do
         member_scores[id] = tonumber(score)
         member_score_text[id] = score
       else
-        local drift = T.unindexed(d, id)
+        local drift = T.unindexed(d, id, 'set-only')
         if drift then return drift end
       end
 
@@ -2155,11 +2166,11 @@ do
             local actual = record[f]
             if guard.equals ~= nil then
               if actual == nil or actual ~= guard.equals then
-                return T.refuse('FIELDGUARD', id, f, 'equals', guard.equals, actual or '<absent>')
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals', T.excerpt(guard.equals), T.excerpt(actual) or '<absent>')
               end
             elseif guard.absent ~= nil then
               if actual ~= nil then
-                return T.refuse('FIELDGUARD', id, f, 'absent', actual)
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'absent', T.excerpt(actual))
               end
             elseif guard.one_of ~= nil then
               local matched = false
@@ -2169,7 +2180,7 @@ do
                 end
               end
               if not matched then
-                return T.refuse('FIELDGUARD', id, f, 'one_of', cjson.encode(guard.one_of), actual or '<absent>')
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of', T.excerpt(cjson.encode(guard.one_of)), T.excerpt(actual) or '<absent>')
               end
             end
           end

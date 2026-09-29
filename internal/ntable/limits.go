@@ -100,3 +100,31 @@ func CheckBatchBounds(m *BatchManifest) error {
 	}
 	return over(limitNameGuardEntries, LimitGuardEntries, guards, "")
 }
+
+// Advice says how to get under the bound: what to narrow. A request that is
+// narrowed is a different transaction, with its own operation id.
+func (e *LimitError) Advice() string {
+	switch e.Name {
+	case limitNameChanged, limitNameGuardEntries:
+		return fmt.Sprintf("send at most %d in one manifest; split the entries across manifests, each its own transaction with its own operation id", e.Bound)
+	case limitNameManifest:
+		return fmt.Sprintf("send at most %d bytes; fewer entries or shorter values, split across manifests with their own operation ids", e.Bound)
+	case limitNameMemberID:
+		return fmt.Sprintf("use a member id of at most %d bytes", e.Bound)
+	case limitNameFieldValue:
+		return fmt.Sprintf("keep a field value under %d bytes: store the value elsewhere and keep its identity in the field", e.Bound)
+	case limitNameSet, limitNameUnset:
+		return fmt.Sprintf("change at most %d fields of a member in one manifest; change the rest in a later manifest", e.Bound)
+	case limitNameGuards:
+		return fmt.Sprintf("guard at most %d fields of a member in one manifest", e.Bound)
+	case limitNameOneOf:
+		return fmt.Sprintf("list at most %d options in a one_of guard", e.Bound)
+	case limitNameReadSet:
+		return fmt.Sprintf("read at most %d members in one call; split the read", e.Bound)
+	case limitNameColumns:
+		return fmt.Sprintf("a table holds at most %d columns; remove one first or use another table", e.Bound)
+	case limitNameRows:
+		return fmt.Sprintf("a table holds at most %d rows; delete a row first or use another table", e.Bound)
+	}
+	return "narrow the request"
+}

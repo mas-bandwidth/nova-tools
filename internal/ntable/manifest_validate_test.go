@@ -1,6 +1,7 @@
 package ntable_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -124,7 +125,7 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		{
 			name:      "duplicate member id in same manifest",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m1","expect":{}},{"id":"m1","expect":{}}]}`,
-			errSubstr: `duplicate member id "m1" in manifest`,
+			errSubstr: `member "m1": duplicate manifest member: the id appears more than once in the manifest`,
 		},
 		{
 			name:      "empty member id",
@@ -144,7 +145,7 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		{
 			name:      "case 2: null value in set rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","set":{"status":null}}]}`,
-			errSubstr: `null value not allowed in set for field "status"`,
+			errSubstr: `status must not be null`,
 		},
 		{
 			name:      "case 3: case variant duplicate actor and Actor rejected",
@@ -154,37 +155,37 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		{
 			name:      "case A: null revision rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"revision":null}}]}`,
-			errSubstr: `null value not allowed for revision`,
+			errSubstr: `revision must not be null`,
 		},
 		{
 			name:      "case B: null create score rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":"c","score":null}}]}`,
-			errSubstr: `null value not allowed for score`,
+			errSubstr: `score must not be null`,
 		},
 		{
 			name:      "case C: null equals guard rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"fields":{"status":{"equals":null,"one_of":["ready"]}}}}]}`,
-			errSubstr: `null value not allowed for equals`,
+			errSubstr: `equals must not be null`,
 		},
 		{
-			name:      "type mismatch: non-number revision",
+			name:      "type mismatch: revision that is not a decimal number",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"revision":"abc"}}]}`,
-			errSubstr: `expected number for revision`,
+			errSubstr: `revision must be a decimal number in a string`,
 		},
 		{
 			name:      "type mismatch: non-string row",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":123,"col":"c","score":10}}]}`,
-			errSubstr: `expected string for row`,
+			errSubstr: `row must be a string, found a number`,
 		},
 		{
 			name:      "type mismatch: non-string col",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":true,"score":10}}]}`,
-			errSubstr: `expected string for col`,
+			errSubstr: `col must be a string, found true`,
 		},
 		{
 			name:      "type mismatch: non-number score",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":"c","score":"ten"}}]}`,
-			errSubstr: `expected number for score`,
+			errSubstr: `score must be a JSON number, found a string`,
 		},
 		{
 			name:      "type mismatch: non-boolean remove",
@@ -194,37 +195,37 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		{
 			name:      "type mismatch: non-boolean absent",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"absent":"true"}}]}`,
-			errSubstr: `expected boolean for absent`,
+			errSubstr: `absent must be true, found a string`,
 		},
 		{
 			name:      "type mismatch: non-object expect",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":"invalid"}]}`,
-			errSubstr: `expected object for expect`,
+			errSubstr: `expect must be an object, found a string`,
 		},
 		{
 			name:      "type mismatch: non-array members",
 			raw:       `{"schema":1,"table":"demo","members":{"id":"m"}}`,
-			errSubstr: `expected array for members`,
+			errSubstr: `members must be an array, found an object`,
 		},
 		{
 			name:      "type mismatch: non-array unset",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","unset":"field"}]}`,
-			errSubstr: `expected array for unset`,
+			errSubstr: `unset must be an array, found a string`,
 		},
 		{
 			name:      "null element in unset rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","unset":[null]}]}`,
-			errSubstr: `null value not allowed in unset`,
+			errSubstr: `an element must not be null`,
 		},
 		{
 			name:      "null element in one_of rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"fields":{"status":{"one_of":[null]}}}}]}`,
-			errSubstr: `null value not allowed in one_of`,
+			errSubstr: `an element must not be null`,
 		},
 		{
 			name:      "null root field actor rejected",
 			raw:       `{"schema":1,"table":"demo","actor":null,"members":[]}`,
-			errSubstr: `null value not allowed for actor`,
+			errSubstr: `actor must not be null`,
 		},
 		{
 			name:      "strict schema: version rejected",
@@ -279,4 +280,43 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 			t.Errorf("expected set.remove='done', got %q", m.Members[0].Set["remove"])
 		}
 	})
+}
+
+// A manifest that cannot be read is refused in the manifest's own words and at
+// its place; no message names the parser or its Go types.
+func TestManifestErrorsSpeakTheManifestsLanguage(t *testing.T) {
+	t.Parallel()
+	head := func(members string) string {
+		return `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"1","operation_id":"op","members":[` + members + `]}`
+	}
+	cases := []struct{ name, raw, want string }{
+		{"score string", head(`{"id":"a","expect":{"absent":true},"create":{"row":"r","col":"c","score":"5"}}`), `score must be a JSON number, found a string at members[0].create.score`},
+		{"move score", head(`{"id":"a","expect":{},"move":{"row":"r","col":"c","score":true}}`), `score must be a JSON number, found true at members[0].move.score`},
+		{"second member", head(`{"id":"a","expect":{}},{"id":"b","expect":{},"set":{"k":5}}`), `k must be a string, found a number at members[1].set.k`},
+		{"epoch number", `{"schema":1,"table":"demo","epoch":0,"expected_table_revision":"1","operation_id":"op","members":[]}`, `epoch must be a decimal string, found a number at epoch`},
+		{"revision number", head(`{"id":"a","expect":{"revision":1}}`), `revision must be a decimal string, found a number at members[0].expect.revision`},
+		{"schema string", `{"schema":"1","table":"demo"}`, `schema must be the number 1, found a string at schema`},
+		{"place row", head(`{"id":"a","expect":{"place":{"row":5,"col":"c"}}}`), `row must be a string, found a number at members[0].expect.place.row`},
+		{"unset item", head(`{"id":"a","expect":{},"unset":["x",7]}`), `must be a field name (a string), found a number at members[0].unset[1]`},
+		{"one_of item", head(`{"id":"a","expect":{"fields":{"f":{"one_of":["x",{}]}}}}`), `must be an option (a string), found an object at members[0].expect.fields.f.one_of[1]`},
+		{"member entry", head(`5`), `must be a member entry (an object), found a number at members[0]`},
+		{"remove", head(`{"id":"a","expect":{},"remove":false}`), `remove must be true, found false at members[0].remove`},
+		{"expect null", head(`{"id":"a","expect":null}`), `expect must not be null at members[0].expect`},
+	}
+	for _, tc := range cases {
+		_, err := ntable.ValidateBatchManifestRaw([]byte(tc.raw))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v; want %q", tc.name, err, tc.want)
+			continue
+		}
+		var me *ntable.ManifestError
+		if !errors.As(err, &me) || !errors.Is(err, ntable.ErrMalformedManifest) {
+			t.Errorf("%s: %T is not a ManifestError", tc.name, err)
+		}
+		for _, leak := range []string{"unmarshal", "Go struct", "Go value", "cannot use", "json:"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("%s: %q leaks the parser: %v", tc.name, leak, err)
+			}
+		}
+	}
 }

@@ -1930,7 +1930,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `batch (<manifest-file> \| - \| '<json>')` | Applies an atomic batch manifest (file, stdin or inline JSON) of member mutations and preconditions |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
-| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages |
+| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
 | `render <table>` | Prints a text table; an empty table prints nothing |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
@@ -2057,9 +2057,14 @@ boolean), `trips`, and `members` (`id`, `place`, `score`, `member_revision` as `
 
 Exit codes: 0 on success (including the replay of an identical request, which returns the original receipt
 and writes nothing); 1 on refusal, which prints the operation, the member at fault, the state expected
-against the state found, `changed=no` and a next command, and leaves the store unchanged; 2 on usage: a
-manifest that is missing, unreadable, malformed or outside the schema, or an `--epoch` or `--actor` that
-differs from the manifest. `nova-table batch -h` prints the usage banner, including the stdin form
+against the state found, `code=<CODE>`, `changed=no` and a next command, and leaves the store unchanged: it
+covers a manifest that reads as one and breaks a rule (a bound, a repeated member id, a field both set and
+unset, a reserved field, a create with a move, an absent with a revision, an empty `members` array) as well as
+the store's own refusals; 2 on usage or connection: a manifest that cannot be parsed or read (named by its
+place, `score must be a JSON number, found a string at members[0].create.score`), an `--epoch` or `--actor`
+that differs from the manifest, and a store that could not be reached or did not answer. When the store did not
+confirm a batch the message says `changed=unknown`: run the same manifest again with the same operation id; it
+returns the original receipt if the batch was applied and applies it if it was not. `nova-table batch -h` prints the usage banner, including the stdin form
 `nova-table batch - < manifest.json`, to stdout at exit 0 with empty stderr.
 
 An epoch behind the active one is refused as stale and one ahead of it as `EPOCHAHEAD`, naming the requested and the active epoch; `nova-table show <table>` prints the active epoch. A table that does not exist is refused as missing whatever the epoch.

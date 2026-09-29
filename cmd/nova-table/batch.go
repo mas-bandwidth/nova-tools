@@ -37,6 +37,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var raw []byte
+	fromFile := false
 	switch {
 	case pos[0] == "-":
 		in := app.in
@@ -56,18 +57,27 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v (a manifest is a file path, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0], readErr))
 		}
 		raw = content
+		fromFile = true
 	}
 
 	manifest, err := ntable.ValidateBatchManifestRaw(raw)
 	if err != nil {
-		var limit *ntable.LimitError
-		if errors.As(err, &limit) {
+		var (
+			limit *ntable.LimitError
+			rule  *ntable.RuleError
+		)
+		switch {
+		case errors.As(err, &limit):
 			what := limit.Error()
 			if limit.Member != "" {
 				what += fmt.Sprintf(" (member %q)", limit.Member)
 			}
-			return refused(stderr, verb, what+"; changed=no; run: nova-table batch -h")
+			return refused(stderr, verb, what+"; "+limit.Advice()+"; code=LIMIT; changed=no; run: nova-table batch -h")
+		case errors.As(err, &rule):
+			// a manifest that reads as one and breaks a rule is refused, as the store refuses
+			return refused(stderr, verb, fmt.Sprintf("%s; code=%s; changed=no; run: nova-table batch -h", rule.Msg, rule.Code))
 		}
+		// a manifest that cannot be read as one is a usage error
 		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v; changed=no; run: nova-table batch -h", err))
 	}
 
@@ -101,6 +111,18 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 
 	rcpt, err := ntable.ApplyBatch(ctx, c, *manifest)
+	if errors.Is(err, ntable.ErrUnknownOutcome) {
+		// the store did not confirm: the batch may or may not be applied. Send the same manifest again.
+		text := err.Error()
+		if i := strings.LastIndex(text, "; run: "); i >= 0 {
+			text = text[:i]
+		}
+		next := "nova-table batch -h"
+		if fromFile {
+			next = "nova-table batch '" + strings.ReplaceAll(pos[0], "'", `'\''`) + "'"
+		}
+		return refuse(stderr, verb, text+"; run: "+next)
+	}
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}

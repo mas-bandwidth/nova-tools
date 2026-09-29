@@ -489,13 +489,24 @@ guard, existing/placed member on create, duplicate manifest member, invalid/miss
 record, reverse-index or set drift, unknown row/column, bound cell, reserved-field
 write, invalid score/counter, operation-ID conflict and over-limit input. Each names
 operation, member or batch, expected/observed state, changed=no and the next usable
-command.
+command. A refusal is a code and a sentence: `...: <sentence>; code=NOTMEMBER; changed=no;
+run: <command>`. The sentence says what was expected against what was found, in
+words (never the code, never a Go type), and a field value in it over 64 bytes is
+its first 32 and its length. The next command is one that runs when pasted; for a
+member it is `nova-table member read <table> <id>`, for a limit the sentence says
+which part of the request to narrow, and for a conflicting operation id it says to
+use a new one. A drift says whether a record exists: an owned set that holds a member
+no record places there is not described as a record's claim, and `nova-table check`
+is the command that finds every such disagreement (nova-table has no repair verb).
 A request for an epoch behind the active one refuses `STALE`; one for an epoch
 ahead of it refuses `EPOCHAHEAD`, naming the requested and the active epoch and
 suggesting `nova-table show <table>`, which prints the active epoch. Existence
 comes first: a table that does not exist refuses as missing whatever epoch is
 asked for. A transport failure reports changed=unknown and operation reconciliation,
-never changed=no without evidence.
+never changed=no without evidence: the message says to send the same manifest
+again with the same operation id, which returns the original receipt if the batch
+was applied and applies it if it was not. The caller's epoch is always the
+"requested" epoch and the store's the "active" one.
 
 ### CLI batch verb (`nova-table batch`)
 
@@ -619,11 +630,13 @@ A revision is always labelled for what it counts: `table_revision` is the table'
 
 `nova-table member read <table> <id>... | <table> --cell <row:col>... [--at-epoch <n>] [--json]` is the read set as a verb: one exchange, one consistent snapshot. It prints a summary line (`TABLE READ` with the table, epoch, `table_revision`, and the counts of members found and missing), one `MEMBER` line per member found with its place, score, `member_revision` and fields, and one `MISSING` line per id that does not exist; `place=-` and `score=-` are an unplaced member. `--cell` reads every member of a cell (repeatable). `--json` prints one object with `table`, `epoch`, `table_revision`, `members` (`id`, `place`, `score`, `member_revision`, `fields`), `missing` and `trips`. The next command a refusal suggests for a member's state is this verb. `nova-table member find <table> <id>` reports only where a member is, with the table's revision as `table_revision`.
 
+`nova-table show` prints a cell that did not come back as `?`, never as a false 0, and says which: a warning line on stderr names the row, the column, the key and the type found, and `show` exits 1 (`render` and `watch` keep drawing the `?` and exit 0).
+
 #### Error handling and exit codes
 
 - `0` (`done`): The batch commits successfully, or an identical request replays without additional side effects.
-- `1` (`refused`): A precondition, epoch check, revision check, field guard or bound fails. `batch` prints the operation, the member at fault, the state expected against the state found, `changed=no` and a next command on stderr. The table store is unchanged.
-- `2` (`usage`): Invalid syntax, a missing or unreadable manifest, a manifest that is not valid JSON or breaks the manifest schema, or `--epoch` or `--actor` differing from the manifest.
+- `1` (`refused`): A manifest that reads as one and is refused by any rule (a bound, a repeated member id, a field both set and unset, a reserved field, a create with a move, an absent with a revision, an empty `members` array), and any refusal by the store (a precondition, epoch check, revision check, field guard). `batch` prints the operation, the member at fault, the state expected against the state found, `code=<CODE>`, `changed=no` and a next command on stderr. The table store is unchanged.
+- `2` (`usage` or `connection`): A manifest that cannot be parsed or read (a missing or unreadable file, not JSON, an unknown key, a value of the wrong type, named by its place in the manifest: `score must be a JSON number, found a string at members[0].create.score`), `--epoch` or `--actor` differing from the manifest, and a store that cannot be reached or did not answer. When the store did not confirm a batch the message says `changed=unknown` and to run the same manifest again with the same operation id.
 
 `-h` prints the complete usage banner to stdout at exit 0 with empty stderr:
 
