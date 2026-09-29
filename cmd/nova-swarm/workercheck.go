@@ -63,14 +63,26 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 			panic(verbflag.Help{FS: fs})
 		case rest[i] == "--env":
 			requireEnv = true
-		case rest[i] == "--max":
-			if i+1 >= len(rest) {
-				return refuse(stderr, " worker check", "--max wants a count")
-			}
-			i++
-			n, err := strconv.Atoi(rest[i])
+		case strings.HasPrefix(rest[i], "--env="):
+			b, err := strconv.ParseBool(strings.TrimPrefix(rest[i], "--env="))
 			if err != nil {
-				return refuse(stderr, " worker check", fmt.Sprintf("--max wants a count, got %q", rest[i]))
+				return refuse(stderr, " worker check", fmt.Sprintf("--env is true or false, got %q", strings.TrimPrefix(rest[i], "--env=")))
+			}
+			requireEnv = b
+		case rest[i] == "--max" || strings.HasPrefix(rest[i], "--max="):
+			var word string
+			if v, ok := strings.CutPrefix(rest[i], "--max="); ok {
+				word = v
+			} else {
+				if i+1 >= len(rest) {
+					return refuse(stderr, " worker check", "--max wants a count")
+				}
+				i++
+				word = rest[i]
+			}
+			n, err := strconv.Atoi(word)
+			if err != nil {
+				return refuse(stderr, " worker check", fmt.Sprintf("--max wants a count, got %q", word))
 			}
 			max = n
 		case strings.HasPrefix(rest[i], "-"):
