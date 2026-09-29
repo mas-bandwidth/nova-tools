@@ -35,11 +35,75 @@ end)
 do
   local T = {}
   function T.refuse(reason, ...) return {'REFUSED', reason, ...} end
+  -- T.kind(key): the Redis type of key ('none' when absent).
+  function T.kind(key)
+    local t = redis.call('TYPE', key)
+    return (type(t) == 'table' and t.ok) and t.ok or t
+  end
+  -- T.hash(key): the hash at key as a table, and its flat form. A value of
+  -- another type raises {wrongtype=...}, which T.top (every registered
+  -- function runs under it) turns into the refusal WRONGTYPE naming the key
+  -- and the type found; a wrong-type key never leaves as a raw Redis error.
   function T.hash(key)
-    local flat, h = redis.call('HGETALL', key), {}
+    local flat = redis.pcall('HGETALL', key)
+    if type(flat) == 'table' and flat.err then
+      if string.find(flat.err, 'WRONGTYPE') then error({wrongtype = true, key = key, found = T.kind(key), want = 'hash'}) end
+      T.rethrow(flat)
+    end
+    local h = {}
     for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
     return h, flat
   end
+  -- T.rethrow(res): raise again an error a pcall caught, as it came: the store
+  -- writes "ERR " in front of a message that names no code, so the copy this
+  -- function raises gives it back without the prefix it already carries.
+  function T.rethrow(res)
+    if type(res) == 'table' and res.err then
+      error({err = (string.gsub(res.err, '^ERR ', '', 1))}, 0)
+    end
+    error(res, 0)
+  end
+  -- T.top(callback): the wrapper every registered function runs under.
+  function T.top(callback)
+    return function(keys, args)
+      local ok, res = pcall(callback, keys, args)
+      if ok then return res end
+      if type(res) == 'table' and res.wrongtype then return T.refuse('WRONGTYPE', res.key, res.found, res.want) end
+      error(res, 0)
+    end
+  end
+  -- From here on `redis` is a shim whose register_function runs every
+  -- function under T.top. (Library load runs before the standard globals
+  -- exist, so nothing here calls type().)
+  -- (redis.call and its kin do not exist while the library loads, so the shim
+  -- forwards to them when a function runs.)
+  local redis = {
+    -- A command answered WRONGTYPE: the refusal names its key, the type found and
+    -- the type the command wants. It never leaves as a raw Redis error.
+    call = function(...)
+      local res = redis.pcall(...)
+      if type(res) == 'table' and res.err then
+        if string.find(res.err, 'WRONGTYPE') then
+          local command, key = ...
+          if command == 'XINFO' then key = select(3, ...) end
+          local family = {H = 'hash', Z = 'zset', S = 'set', X = 'stream', L = 'list'}
+          error({wrongtype = true, key = key, found = T.kind(key), want = family[string.sub(command, 1, 1)] or 'value'})
+        end
+        T.rethrow(res)
+      end
+      return res
+    end,
+    pcall = function(...) return redis.pcall(...) end,
+    sha1hex = function(...) return redis.sha1hex(...) end,
+    acl_check_cmd = function(...) return redis.acl_check_cmd(...) end,
+    register_function = function(spec, callback)
+      if callback == nil then
+        spec.callback = T.top(spec.callback)
+        return redis.register_function(spec)
+      end
+      return redis.register_function(spec, T.top(callback))
+    end,
+  }
   function T.flat(h)
     local flat = {}
     for k, v in pairs(h) do flat[#flat + 1] = k; flat[#flat + 1] = v end
@@ -61,12 +125,109 @@ do
     if carry == 1 then out = '1' .. out end
     return out
   end
+  -- T.uintgt(a, b): decimal uint64 strings, a > b.
+  function T.uintgt(a, b)
+    if #a ~= #b then return #a > #b end
+    return a > b
+  end
+  -- The bounds of a batch and of a read set. internal/ntable/limits.go holds
+  -- the same numbers and docs/SPEC-NOVA-TABLE.md states them; a test compares
+  -- the three. A refusal names the bound and the count found, never the input.
+  T.limits = {
+    manifest_bytes = 1048576, changed_entries = 128, guard_entries = 1024,
+    member_id_bytes = 256, field_value_bytes = 65536,
+    set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
+    read_set_members = 1024,
+    columns = 1000, rows = 100000,
+    receipt_bytes = 1048576, batch_value_bytes = 16777216,
+  }
+  T.limit_names = {
+    manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
+    member_id_bytes = 'member id bytes', field_value_bytes = 'field value bytes',
+    set_fields = 'set fields per member', unset_fields = 'unset fields per member',
+    field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
+    columns = 'columns per table', rows = 'rows per table',
+    receipt_bytes = 'receipt bytes', batch_value_bytes = 'value bytes per batch',
+  }
+  -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
+  function T.over(key, observed, member)
+    local bound = T.limits[key]
+    if observed <= bound then return nil end
+    return T.refuse('LIMIT', T.limit_names[key], bound, observed, member)
+  end
+  -- T.over_least(key, observed, member): the same refusal for a count the call
+  -- stopped at when it passed the bound, so the true size is at least this: the
+  -- sixth element of the refusal names the member ('' for none), the seventh says so.
+  function T.over_least(key, observed, member)
+    local bound = T.limits[key]
+    if observed <= bound then return nil end
+    return T.refuse('LIMIT', T.limit_names[key], bound, observed, member or '', 'at least')
+  end
+  -- T.excerpt(s): s as a refusal may carry it: a value over 64 bytes is its first
+  -- 32 and its length, so a refusal never echoes a long input.
+  function T.excerpt(s)
+    if type(s) ~= 'string' or #s <= 64 then return s end
+    return string.sub(s, 1, 32) .. '...(' .. #s .. ' bytes)'
+  end
+  -- A receipt, the change event and the operation record's result hold a field value in
+  -- full when it is at most this many bytes; a longer one is its length and its
+  -- SHA-1 (sha1hex is the digest the script API has). internal/ntable/limits.go
+  -- holds the same number (ReceiptValueBytes); a test compares them.
+  T.receipt_value_bytes = 64
+  -- The longest text of a score read back from the store: a double as the store
+  -- prints it ("-1.7976931348623157e+308").
+  T.score_text_bytes = 24
+  -- T.receipt_size(encode, late): the byte length of the receipt's delta as encode
+  -- makes it, known before the first write. Each score a call reads back after its
+  -- writes (late[i].delta.after_score) is counted at its longest form, so the size
+  -- is never less than the size the receipt ends with; the scores are put back.
+  function T.receipt_size(encode, late)
+    local held = {}
+    for i, l in ipairs(late) do
+      held[i] = l.delta.after_score
+      l.delta.after_score = string.rep('9', T.score_text_bytes)
+    end
+    local size = #encode()
+    for i, l in ipairs(late) do l.delta.after_score = held[i] end
+    return size
+  end
+  -- T.fieldchange(before, after): the change of one field as a receipt records it.
+  -- Absent is null with no bytes; a value too long to record is null with its
+  -- bytes and sha1.
+  function T.fieldchange(before, after)
+    local change = {before = cjson.null, after = cjson.null}
+    for _, side in ipairs({{'before', before}, {'after', after}}) do
+      local key, value = side[1], side[2]
+      if value ~= nil then
+        if #value > T.receipt_value_bytes then
+          change[key .. '_bytes'] = #value
+          change[key .. '_sha1'] = redis.sha1hex(value)
+        else
+          change[key] = value
+        end
+      end
+    end
+    return change
+  end
+  -- T.smallvalues(set): the fields of a set instruction whose values a receipt
+  -- records in full; the others appear in the receipt's fields by length and sha1.
+  function T.smallvalues(set)
+    local kept = {}
+    for f, v in pairs(set or {}) do
+      if #v <= T.receipt_value_bytes then kept[f] = v end
+    end
+    return kept
+  end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
   -- Reject malformed UTF-8 instead of letting a client rename them to U+FFFD.
   function T.row(n)
-    if not T.word(n) then return false end
+    return T.word(n) and T.utf8(n)
+  end
+  -- T.utf8(n): n is well-formed UTF-8 (no overlong forms, surrogates or
+  -- code points past U+10FFFF).
+  function T.utf8(n)
     local i = 1
     local function continuation(v) return v and v >= 128 and v <= 191 end
     while i <= #n do
@@ -112,6 +273,92 @@ do
       i = i + 1
     end
     return found
+  end
+  -- T.jsonnumber(s): s is one JSON number token (RFC 8259), nothing else.
+  function T.jsonnumber(s)
+    local i = 1
+    if string.sub(s, i, i) == '-' then i = i + 1 end
+    local c = string.sub(s, i, i)
+    if c == '0' then
+      i = i + 1
+    elseif string.match(c, '^[1-9]$') then
+      i = i + #string.match(s, '^%d+', i)
+    else
+      return false
+    end
+    if string.sub(s, i, i) == '.' then
+      local frac = string.match(s, '^%d+', i + 1)
+      if not frac then return false end
+      i = i + 1 + #frac
+    end
+    local e = string.sub(s, i, i)
+    if e == 'e' or e == 'E' then
+      i = i + 1
+      local sign = string.sub(s, i, i)
+      if sign == '+' or sign == '-' then i = i + 1 end
+      local exp = string.match(s, '^%d+', i)
+      if not exp then return false end
+      i = i + #exp
+    end
+    return i == #s + 1
+  end
+  -- T.repeats(raw): the JSON text names a key twice in one object, comparing
+  -- the keys as decoded (m\u0065mbers is members). raw has already decoded.
+  function T.repeats(raw)
+    local pos, len = 1, #raw
+    local function ws()
+      while pos <= len do
+        local b = string.byte(raw, pos)
+        if b == 32 or b == 9 or b == 10 or b == 13 then pos = pos + 1 else break end
+      end
+    end
+    local function str()
+      local start = pos
+      pos = pos + 1
+      while pos <= len do
+        local ch = string.sub(raw, pos, pos)
+        if ch == '\\' then pos = pos + 2
+        elseif ch == '"' then
+          pos = pos + 1
+          local ok, decoded = pcall(cjson.decode, string.sub(raw, start, pos - 1))
+          return ok and decoded or nil
+        else pos = pos + 1 end
+      end
+    end
+    local value
+    local function container(close, keyed)
+      pos = pos + 1
+      local seen = {}
+      ws()
+      if string.sub(raw, pos, pos) == close then pos = pos + 1; return false end
+      while pos <= len do
+        ws()
+        if keyed then
+          local key = str()
+          if key == nil then return false end
+          if seen[key] then return true end
+          seen[key] = true
+          ws()
+          pos = pos + 1 -- the colon
+        end
+        if value() then return true end
+        ws()
+        local ch = string.sub(raw, pos, pos)
+        pos = pos + 1
+        if ch ~= ',' then return false end
+      end
+      return false
+    end
+    value = function()
+      ws()
+      local ch = string.sub(raw, pos, pos)
+      if ch == '{' then return container('}', true)
+      elseif ch == '[' then return container(']', false)
+      elseif ch == '"' then str(); return false end
+      while pos <= len and not string.find(string.sub(raw, pos, pos), '[,}%]%s]') do pos = pos + 1 end
+      return false
+    end
+    return value()
   end
   function T.decode(s)
     local ok, v = pcall(cjson.decode, s or '')
@@ -210,6 +457,8 @@ do
       for k, v in pairs(snap) do if string.sub(k, 1, 1) ~= '_' then h[k] = v end end
       cfg = T.config(h)
     elseif historical and epoch ~= active then
+      -- the table must exist before its epoch can be called ahead
+      if next(template) and T.uintgt(epoch, active) then return nil, T.refuse('EPOCHAHEAD', epoch, active) end
       return nil, T.refuse('NOTABLE')
     end
     if not h then return nil, T.refuse('NOTABLE') end
@@ -219,7 +468,7 @@ do
     revision = revision or '0'
     if not T.uint(revision) then return nil, T.refuse('REVISION', revision) end
     return {name=name, key=key, prefix=prefix, epoch=epoch, active=active, revision=revision,
-      h=h, cols=cols, cfg=cfg, snap=snap, present=snap._present ~= '0',
+      h=h, cols=cols, ncols=#cols, cfg=cfg, snap=snap, present=snap._present ~= '0',
       newtemplate=not next(template), newidentity=not next(identity), commands={}, cells={}, members={}}
   end
   function T.def(name, historical)
@@ -234,6 +483,10 @@ do
     flat[#flat + 1] = 'read_revision'; flat[#flat + 1] = d.revision
     return flat
   end
+  -- T.opskey(name): the hash of a table's operation records, every epoch in one
+  -- key so that a drop removes them all in one bounded step. Its fields are
+  -- <epoch>:<operation id>, its values the records (JSON).
+  function T.opskey(name) return 'table:' .. name .. ':ops' end
   function T.rowkey(d, row) return d.prefix .. ':row:' .. row end
   function T.cellkey(d, row, col) return d.prefix .. ':cell:' .. row .. ':' .. col end
   function T.rowskey(d) return d.prefix .. ':rows' end
@@ -241,10 +494,10 @@ do
     for _, col in ipairs(d.cols) do if col.name == name then return col end end
   end
   function T.cell(d, row, col, write)
-    if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', row) end
+    if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', T.excerpt(row)) end
     local c = T.col(d, col)
-    if not c then return nil, T.refuse('NOCOL', row, col) end
-    if c.noset then return nil, T.refuse('TEXT', row, col) end
+    if not c then return nil, T.refuse('NOCOL', T.excerpt(row), T.excerpt(col)) end
+    if c.noset then return nil, T.refuse('TEXT', T.excerpt(row), T.excerpt(col)) end
     local h = T.hash(T.rowkey(d, row))
     local bound = h['key:' .. col]
     if write and bound and bound ~= '' then return nil, T.refuse('BOUND', row, col, bound, h.owner or '') end
@@ -257,36 +510,148 @@ do
   end
   function T.stage(d, ...) d.commands[#d.commands + 1] = {...} end
   function T.place(row, col) return row .. ':' .. col end
+  local command_expected_type = {
+    ZADD = 'zset',
+    ZREM = 'zset',
+    HSET = 'hash',
+    HDEL = 'hash',
+    SADD = 'set',
+    SREM = 'set',
+    XADD = 'stream',
+  }
+  function T.check_types(commands)
+    local key_kinds = {}
+    for _, cmd in ipairs(commands) do
+      local op = cmd[1]
+      local key = cmd[2]
+      if op == 'DEL' or op == 'UNLINK' then
+        key_kinds[key] = 'none'
+      else
+        local want = command_expected_type[op]
+        if want then
+          local kind = key_kinds[key]
+          if not kind then
+            local t = redis.call('TYPE', key)
+            kind = (type(t) == 'table' and t.ok) and t.ok or t
+            key_kinds[key] = kind
+          end
+          if kind ~= 'none' and kind ~= want then
+            return T.refuse('WRONGTYPE', key, kind, want)
+          end
+          if kind == 'none' then
+            key_kinds[key] = want
+          end
+        end
+      end
+    end
+    return nil
+  end
   function T.memberkey(d, id) return d.cfg.member_prefix .. id end
   function T.member(d, id)
-    if not T.word(id) then return nil, nil, T.refuse('MEMBER') end
-    local h = T.hash(T.memberkey(d, id))
+    if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
+    local mkey = T.memberkey(d, id)
+    local flat = redis.pcall('HGETALL', mkey)
+    if type(flat) == 'table' and flat.err then
+      if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
+      T.rethrow(flat)
+    end
+    local h = {}
+    for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
     local exists = next(h) ~= nil
     local epoch = h.epoch or '0'
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
     return h, exists
   end
+  -- T.member_head(d, id): a batch's view of a member: whether the record exists
+  -- and its epoch, revision and place, read by name. Any other field is read on
+  -- first use, by name (member_field in T.apply), so what a batch reads is what
+  -- its entries name and not what the record holds; T.limits.batch_value_bytes
+  -- bounds those reads.
+  function T.member_head(d, id)
+    if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
+    local mkey = T.memberkey(d, id)
+    local n = redis.pcall('HLEN', mkey)
+    if type(n) == 'table' and n.err then
+      if string.find(n.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
+      T.rethrow(n)
+    end
+    local h = {}
+    if n == 0 then return h, false end
+    local named = redis.call('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name)
+    if named[1] then h.epoch = named[1] end
+    if named[2] then h.revision = named[2] end
+    if named[3] then h['place:' .. d.name] = named[3] end
+    if (named[1] or '0') ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, named[1] or '0', d.epoch) end
+    return h, true
+  end
+  function T.advance_member_rev(record, exists)
+    if not exists then return '1' end
+    return T.next(record.revision or '0')
+  end
   function T.record(d, id, place, record, exists)
     -- Legacy epoch-zero records acquire an explicit immutable epoch on first
     -- placement. Other record fields belong to their existing owner.
     if not record.epoch then T.stage(d, 'HSET', T.memberkey(d, id), 'epoch', d.epoch) end
-    if place then T.stage(d, 'HSET', T.memberkey(d, id), 'place:' .. d.name, place)
-    else T.stage(d, 'HDEL', T.memberkey(d, id), 'place:' .. d.name) end
+    local next_rev = T.advance_member_rev(record, exists)
+    if not next_rev then return T.refuse('OVERFLOW', id) end
+    if place then T.stage(d, 'HSET', T.memberkey(d, id), 'place:' .. d.name, place, 'revision', next_rev)
+    else
+      T.stage(d, 'HDEL', T.memberkey(d, id), 'place:' .. d.name)
+      T.stage(d, 'HSET', T.memberkey(d, id), 'revision', next_rev)
+    end
   end
   function T.change(d, id, from, to, score)
     d.members[#d.members + 1] = {id=id, from=from or '', to=to or '', score=score or ''}
     if from then d.cells[from] = true end
     if to then d.cells[to] = true end
   end
-  function T.unindexed(d, id)
+  -- T.unindexed(d, id, tag): the id is in an owned set of the table that no record
+  -- places it in. A caller that reports it as a batch or a read set passes a tag,
+  -- appended to the refusal, so the reader knows no record exists.
+  function T.unindexed(d, id, tag)
     for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
       local h = T.hash(T.rowkey(d, row))
       for _, col in ipairs(d.cols) do
-        if redis.call('ZSCORE', T.cellkey(d, row, col.name), id) then
-          return T.refuse('DRIFT', row, col.name, id)
+        local key = T.cellkey(d, row, col.name)
+        local res = redis.pcall('ZSCORE', key, id)
+        if type(res) == 'table' and res.err then
+          if string.find(res.err, 'WRONGTYPE') then
+            local t = redis.call('TYPE', key)
+            local kind = (type(t) == 'table' and t.ok) and t.ok or t
+            return T.refuse('WRONGTYPE', key, kind, 'zset')
+          end
+          T.rethrow(res)
+        end
+        if res then
+          local refusal = T.refuse('DRIFT', row, col.name, id)
+          if tag then refusal[#refusal + 1] = tag end
+          return refusal
         end
       end
     end
+  end
+  function T.check_placement(d, id, expected_place)
+    for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
+      for _, col in ipairs(d.cols) do
+        local place = T.place(row, col.name)
+        if place ~= expected_place then
+          local key = T.cellkey(d, row, col.name)
+          local res = redis.pcall('ZSCORE', key, id)
+          if type(res) == 'table' and res.err then
+            if string.find(res.err, 'WRONGTYPE') then
+              local t = redis.call('TYPE', key)
+              local kind = (type(t) == 'table' and t.ok) and t.ok or t
+              return T.refuse('WRONGTYPE', key, kind, 'zset')
+            end
+            T.rethrow(res)
+          end
+          if res then
+            return T.refuse('DRIFT', row, col.name, id)
+          end
+        end
+      end
+    end
+    return nil
   end
   function T.rowfields(d, row, spec)
     if not T.row(row) or type(spec) ~= 'table' then return nil, T.refuse('ROW') end
@@ -351,7 +716,8 @@ do
           local record, exists, err = T.member(d, id)
           if err then return err end
           if not exists or record['place:' .. d.name] ~= T.place(row, col.name) then return T.refuse('DRIFT', row, col.name, id) end
-          T.record(d, id, nil, record, exists)
+          local rerr = T.record(d, id, nil, record, exists)
+          if rerr then return rerr end
           T.change(d, id, T.place(row, col.name), nil, score)
         end
         T.stage(d, 'DEL', T.cellkey(d, row, col.name))
@@ -450,6 +816,17 @@ do
   function T.finish(d, verb, args, opts, reply)
     local after = T.next(d.revision)
     if not after then return T.refuse('REVISION', d.revision) end
+    -- the size of a table: a definition is written by one HSET and a row count
+    -- is read by whole-table verbs
+    -- (a table already over the bound may shrink or stay, never grow)
+    if d.newtemplate or (d.definition_changed and #d.cols > d.ncols) then
+      local over = T.over('columns', #d.cols)
+      if over then return over end
+    end
+    if d.newrows then
+      local over = T.over('rows', redis.call('ZCARD', T.rowskey(d)) + d.newrows)
+      if over then return over end
+    end
     local stream = d.key .. ':changes'
     local source_stream = d.receipt_source or stream
     local kind = redis.call('TYPE', source_stream).ok
@@ -470,7 +847,9 @@ do
       if not rows then return why end
       T.rank(d, rows)
     end
-    local outcome = #d.commands == 0 and not d.newtemplate and not d.definition_changed and d.snap._present ~= '0' and 'noop' or 'changed'
+    -- opts.outcome names the outcome when the caller judges it (a batch whose
+    -- entries change nothing is a noop although it stages a revision step).
+    local outcome = opts.outcome or (#d.commands == 0 and not d.newtemplate and not d.definition_changed and d.snap._present ~= '0' and 'noop' or 'changed')
     if d.newtemplate then
       redis.call('SCARD', 'tables')
       T.hset(d.commands, d.key, d.h)
@@ -489,30 +868,60 @@ do
     local cells = {}
     for cell in pairs(d.cells) do cells[#cells + 1] = cell end
     table.sort(cells)
-    local wireargs = {}
-    for i = 1, #args - 1 do wireargs[#wireargs + 1] = args[i] end
+    -- opts.wireargs replaces the event's args for a caller whose arguments do
+    -- not end in the options JSON.
+    local wireargs = opts.wireargs
+    if not wireargs then
+      wireargs = {}
+      for i = 1, #args - 1 do wireargs[#wireargs + 1] = args[i] end
+    end
     local event = {'XADD', stream, '*', 'verb', verb, 'args', cjson.encode(wireargs),
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
       'members', #d.members == 0 and '[]' or cjson.encode(d.members), 'outcome', outcome}
+    local members_at = #event - 2
+    local delta_at
     if d.renamed_keys then event[#event + 1] = 'renamed_keys'; event[#event + 1] = cjson.encode(d.renamed_keys) end
+    -- opts.event_extra is a flat list of field, value pairs appended to the event.
+    if opts.event_extra then
+      for _, v in ipairs(opts.event_extra) do event[#event + 1] = v end
+      for i = #event - #opts.event_extra + 1, #event, 2 do
+        if event[i] == 'batch_delta' then delta_at = i + 1 end
+      end
+    end
     T.stage(d, unpack(event))
     for _, cmd in ipairs(d.commands) do
       if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end
     end
-    local id
-    for _, cmd in ipairs(d.commands) do id = redis.call(unpack(cmd)) end
+    local type_err = T.check_types(d.commands)
+    if type_err then return type_err end
+    local id, delta
+    for i, cmd in ipairs(d.commands) do
+      if i == #d.commands and opts.resolve then
+        -- the event is the last write: its members and delta are settled now
+        delta = opts.resolve()
+        cmd[members_at] = #d.members == 0 and '[]' or cjson.encode(d.members)
+        if delta_at then cmd[delta_at] = delta end
+      end
+      id = redis.call(unpack(cmd))
+    end
     local before = d.revision
     d.revision = after
     if type(reply) == 'function' then reply = reply() end
-    reply[#reply + 1] = {'RECEIPT', id, d.epoch, before, after, outcome}
+    local receipt = {'RECEIPT', id, d.epoch, before, after, outcome}
+    -- opts.receipt_extra is a seventh receipt element (a batch's delta).
+    if delta or opts.receipt_extra then receipt[7] = delta or opts.receipt_extra end
+    reply[#reply + 1] = receipt
+    -- opts.record runs last, after every staged write, with the finished reply
+    -- (a batch keeps its operation record here, which holds the receipt).
+    if opts.record then opts.record(reply, id, before, after, outcome) end
     return reply
   end
   function T.write(verb, argc, handler, declaration)
     return function(keys, args)
       if (argc >= 0 and #args ~= argc) or (argc < 0 and #args < -argc) then return T.refuse('ARGS', verb) end
       local opts = T.decode(args[#args])
-      if not opts or not T.uint(opts.epoch) then return T.refuse('EPOCH', 'observed epoch required') end
+      if not opts or not T.uint(opts.epoch) then return T.refuse('EPOCH', 'requested epoch required') end
       for _, k in ipairs({'actor','fence','idem'}) do
         if opts[k] and type(opts[k]) ~= 'string' then return T.refuse('OPTIONS', k) end
       end
@@ -526,8 +935,14 @@ do
       local edit = verb == 'set' and T.decode(args[2])
       local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil)
       if not d then return err end
-      if opts.epoch ~= d.active then return T.refuse('STALE', opts.epoch, d.active) end
-      if not d.present and not declaration and verb ~= 'drop_definition' then return T.refuse('NOTABLE') end
+      local missing = not d.present and not declaration and verb ~= 'drop_definition'
+      if opts.epoch ~= d.active then
+        -- a table that does not exist is missing whatever epoch is asked for
+        if missing and T.uintgt(opts.epoch, d.active) then return T.refuse('NOTABLE') end
+        if T.uintgt(opts.epoch, d.active) then return T.refuse('EPOCHAHEAD', opts.epoch, d.active) end
+        return T.refuse('STALE', opts.epoch, d.active)
+      end
+      if missing then return T.refuse('NOTABLE') end
       if declaration then d.present = true end
       local reply, why = handler(d, args, spec)
       if not reply then return why end
@@ -551,6 +966,7 @@ do
       local n = d.tailrank
       if n ~= n or n + 1 == n or n == math.huge then return nil, T.refuse('RANK') end
       d.tailrank, rank = n + 1, tostring(n + 1)
+      d.newrows = (d.newrows or 0) + 1
     end
     T.stage(d, 'DEL', T.rowkey(d, row))
     T.hset(d.commands, T.rowkey(d, row), h)
@@ -886,7 +1302,13 @@ do
       if err then return nil, err end
     end
     T.stage(d, 'DEL', T.rowskey(d))
-    if op == 'drop' or op == 'drop_definition' then d.present = false end
+    if op == 'drop' or op == 'drop_definition' then
+      d.present = false
+      -- The table's operation records, of every epoch, are one key (T.opskey):
+      -- a table created again under the name is a new table, and no operation
+      -- of the old one replays against it.
+      T.stage(d, 'DEL', T.opskey(d.name))
+    end
     if op == 'drop_definition' then
       redis.call('SCARD', 'tables')
       T.stage(d, 'DEL', d.key)
@@ -901,7 +1323,12 @@ do
     local row, col = args[2], args[3]
     local src, err = T.cell(d, row, col, true)
     if not src then return nil, err end
-    local count, first, dst = redis.call('ZCARD', src.key), 5, nil
+    local count = redis.pcall('ZCARD', src.key)
+    if type(count) == 'table' and count.err then
+      if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', src.key, T.kind(src.key), 'zset') end
+      T.rethrow(count)
+    end
+    local first, dst = 5, nil
     if op == 'add' then
       local score = tonumber(args[4])
       if not score or score ~= score or score == math.huge or score == -math.huge then return nil, T.refuse('SCORE') end
@@ -909,7 +1336,11 @@ do
     else
       dst, err = T.cell(d, row, args[4], true)
       if not dst then return nil, err end
-      count = redis.call('ZCARD', dst.key)
+      count = redis.pcall('ZCARD', dst.key)
+      if type(count) == 'table' and count.err then
+        if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', dst.key, T.kind(dst.key), 'zset') end
+        T.rethrow(count)
+      end
     end
     local seen, here = {}, T.place(row, col)
     for i = first, #args - 1 do
@@ -924,7 +1355,8 @@ do
         local drift = T.unindexed(d, id)
         if drift then return nil, drift end
         T.stage(d, 'ZADD', src.key, args[4], id)
-        T.record(d, id, here, record, exists)
+        local rerr = T.record(d, id, here, record, exists)
+        if rerr then return nil, rerr end
         T.change(d, id, nil, here, args[4])
         count = count + 1
       elseif op == 'remove' then
@@ -934,7 +1366,8 @@ do
         else
           if not score then return nil, T.refuse('DRIFT', row, col, id) end
           T.stage(d, 'ZREM', src.key, id)
-          T.record(d, id, nil, record, exists)
+          local rerr = T.record(d, id, nil, record, exists)
+          if rerr then return nil, rerr end
           T.change(d, id, here, nil, score)
           count = count - 1
         end
@@ -946,7 +1379,8 @@ do
         if dst.key ~= src.key then
           T.stage(d, 'ZREM', src.key, id)
           T.stage(d, 'ZADD', dst.key, score, id)
-          T.record(d, id, T.place(row, args[4]), record, exists)
+          local rerr = T.record(d, id, T.place(row, args[4]), record, exists)
+          if rerr then return nil, rerr end
           T.change(d, id, here, T.place(row, args[4]), score)
           count = count + 1
         end
@@ -1028,12 +1462,16 @@ do
     local record, exists, err = T.member(d, args[2])
     if err then return nil, err end
     if exists then return nil, T.refuse('MEMBEREXISTS', args[2]) end
-    T.stage(d, 'HSET', T.memberkey(d, args[2]), 'epoch', d.epoch)
+    T.stage(d, 'HSET', T.memberkey(d, args[2]), 'epoch', d.epoch, 'revision', '1')
     T.change(d, args[2], nil, nil, nil)
     return {'OK'}
   end))
   redis.register_function('ns_table_bind', T.write('bind', 3, function(d, args, spec)
     if type(spec.rows) ~= 'table' or not T.arrayfield(args[2], 'rows') then return nil, T.refuse('ROW') end
+    -- a bind leaves exactly the rows it names (a repeat is refused below), so the
+    -- count it names is the size the table takes; finish counts only rows added
+    local over = T.over('rows', #spec.rows)
+    if over then return nil, over end
     local old, keep = redis.call('ZRANGE', T.rowskey(d), 0, -1), {}
     d.touched, d.removed = {}, {}
     for i, row in ipairs(spec.rows) do
@@ -1094,7 +1532,7 @@ do
             local bound = h['key:' .. col.name]
             local key = bound and bound ~= '' and bound or T.cellkey(d, row, col.name)
             local count = redis.pcall('ZCARD', key)
-            if type(count) == 'table' and count.err then value = {'UNREAD', count.err}
+            if type(count) == 'table' and count.err then value = {'UNREAD', count.err, key, string.find(count.err, 'WRONGTYPE') and T.kind(key) or ''}
             elseif col.projection == 'count' then
               if h.exclude and h.exclude ~= '' and redis.call('ZSCORE', key, h.exclude) then count = count - 1 end
               value = {'OK', count, {}}
@@ -1179,4 +1617,1025 @@ do
     end
     return out
   end}
+
+  -- A read set's request is one of three shapes, each nonempty:
+  --   {"members": ["id", ...]}
+  --   {"selection": [{"row": "r", "col": "c"}, ...]}
+  --   ["id", ...]
+  -- Anything else refuses; it is never answered as an empty set.
+  function T.read_set(keys, args)
+    if #args < 2 or #args > 3 then return T.refuse('ARGS', 'read_set wants a table, a scope and at most an epoch') end
+    local table_name = args[1]
+    local scope = T.decode(args[2])
+    if not scope then return T.refuse('ARGS', 'read_set scope must be a JSON object or array') end
+    if T.repeats(args[2]) then return T.refuse('ARGS', 'read_set request names a key twice') end
+    local shape = 'read_set scope must be {"members": [...]}, {"selection": [...]} or a nonempty array of member ids'
+    local members, selection
+    if scope.members ~= nil or scope.selection ~= nil then
+      for k in pairs(scope) do
+        if k ~= 'members' and k ~= 'selection' then return T.refuse('ARGS', 'read_set scope has an unknown key') end
+      end
+      if scope.members ~= nil and scope.selection ~= nil then
+        return T.refuse('ARGS', 'read_set scope holds members or selection, not both')
+      end
+      members, selection = scope.members, scope.selection
+    elseif #scope > 0 and next(scope, #scope) == nil then
+      members = scope
+    else
+      return T.refuse('ARGS', shape)
+    end
+    if members ~= nil and (type(members) ~= 'table' or #members == 0) then
+      return T.refuse('ARGS', 'read_set members must be a nonempty array')
+    end
+    if selection ~= nil and (type(selection) ~= 'table' or #selection == 0) then
+      return T.refuse('ARGS', 'read_set selection must be a nonempty array')
+    end
+    local d, err = T.def(table_name, args[3])
+    if not d then return err end
+    local target_ids = {}
+    local seen_ids = {}
+    if members then
+      for _, id in ipairs(members) do
+        if type(id) ~= 'string' or id == '' then
+          return T.refuse('ARGS', 'read_set member ID must be a nonempty string')
+        end
+        if not seen_ids[id] then
+          seen_ids[id] = true
+          target_ids[#target_ids + 1] = id
+        end
+      end
+    else
+      for _, sel in ipairs(selection) do
+        if type(sel) ~= 'table' or type(sel.row) ~= 'string' or type(sel.col) ~= 'string' or sel.row == '' or sel.col == '' then
+          return T.refuse('ARGS', 'read_set selection requires row and col strings')
+        end
+        for k in pairs(sel) do
+          if k ~= 'row' and k ~= 'col' then return T.refuse('ARGS', 'read_set selection has an unknown key') end
+        end
+        local cell, why = T.cell(d, sel.row, sel.col, false)
+        if not cell then return why end
+        local ms = T.members(cell.key, cell.exclude or '')
+        for i = 1, #ms, 2 do
+          local id = ms[i]
+          if not seen_ids[id] then
+            seen_ids[id] = true
+            target_ids[#target_ids + 1] = id
+          end
+        end
+      end
+    end
+    local over = T.over('read_set_members', #target_ids)
+    if over then return over end
+    local members_out = {}
+    local missing = {}
+    for _, id in ipairs(target_ids) do
+      local h, exists, why = T.member(d, id)
+      if why then return why end
+      if not exists then
+        local drift = T.unindexed(d, id, 'set-only')
+        if drift then return drift end
+        missing[#missing + 1] = id
+      else
+        local rev = h.revision or '0'
+        local place = h['place:' .. d.name]
+        local placed = '0'
+        local row, col, score = '', '', '0'
+        if place then
+          local r, c = string.match(place, '^(.*):([^:]+)$')
+          if not r or not c then return T.refuse('DRIFT', id, place) end
+          local cell = T.cell(d, r, c, false)
+          if not cell then return T.refuse('DRIFT', id, place) end
+          local s = redis.call('ZSCORE', cell.key, id)
+          if not s then return T.refuse('DRIFT', r, c, id) end
+          local drift = T.check_placement(d, id, place)
+          if drift then return drift end
+          placed = '1'
+          row, col = r, c
+          score = tostring(s)
+        else
+          local drift = T.unindexed(d, id, 'set-only')
+          if drift then return drift end
+        end
+        local fields = {}
+        for k, v in pairs(h) do
+          if k ~= 'epoch' and k ~= 'revision' and string.sub(k, 1, 6) ~= 'place:' then
+            fields[#fields + 1] = k
+            fields[#fields + 1] = v
+          end
+        end
+        members_out[#members_out + 1] = {id, rev, placed, row, col, score, fields}
+      end
+    end
+    return {'SET', d.name, d.epoch, d.revision, members_out, missing}
+  end
+
+  function T.validate_manifest_json(raw)
+    local pos = 1
+    local len = #raw
+
+    local function skip_ws()
+      while pos <= len do
+        local b = string.byte(raw, pos)
+        if b == 32 or b == 9 or b == 10 or b == 13 then
+          pos = pos + 1
+        else
+          break
+        end
+      end
+    end
+
+    local function peek()
+      skip_ws()
+      if pos > len then return nil end
+      return string.sub(raw, pos, pos)
+    end
+
+    local function next_char()
+      skip_ws()
+      if pos > len then return nil end
+      local ch = string.sub(raw, pos, pos)
+      pos = pos + 1
+      return ch
+    end
+
+    local function parse_string()
+      skip_ws()
+      if string.sub(raw, pos, pos) ~= '"' then return nil, "expected string" end
+      local start = pos
+      pos = pos + 1
+      while pos <= len do
+        local ch = string.sub(raw, pos, pos)
+        if ch == '\\' then
+          pos = pos + 2
+        elseif ch == '"' then
+          pos = pos + 1
+          local ok, s = pcall(cjson.decode, string.sub(raw, start, pos - 1))
+          if not ok then return nil, "invalid string escape" end
+          return s
+        else
+          pos = pos + 1
+        end
+      end
+      return nil, "unterminated string"
+    end
+
+    local parse_value, parse_object, parse_array
+
+    parse_value = function(ctx)
+      skip_ws()
+      local ch = peek()
+      if not ch then return nil, "unexpected EOF" end
+      if ctx == 'root' or ctx == 'member' or ctx == 'expect' or ctx == 'place' or ctx == 'create' or ctx == 'move' or ctx == 'set' or ctx == 'fields' or ctx == 'field_guard' then
+        if ch ~= '{' then
+          return nil, "expected object for " .. tostring(ctx)
+        end
+        return parse_object(ctx)
+      elseif ctx == 'members' or ctx == 'unset' or ctx == 'one_of' then
+        if ch ~= '[' then
+          return nil, "expected array for " .. tostring(ctx)
+        end
+        return parse_array(ctx)
+      elseif ctx == 'string' then
+        if ch ~= '"' then
+          return nil, "expected string"
+        end
+        local s, err = parse_string()
+        if err then return nil, err end
+        return true
+      end
+
+      if ch == '{' then
+        return parse_object(ctx)
+      elseif ch == '[' then
+        return parse_array(ctx)
+      elseif ch == '"' then
+        local s, err = parse_string()
+        if err then return nil, err end
+        return true
+      elseif ch == 't' or ch == 'f' or ch == 'n' then
+        local start = pos
+        while pos <= len do
+          local c = string.sub(raw, pos, pos)
+          if c == ',' or c == '}' or c == ']' or c == ' ' or c == '\t' or c == '\r' or c == '\n' then
+            break
+          end
+          pos = pos + 1
+        end
+        local lit = string.sub(raw, start, pos - 1)
+        if lit ~= "true" and lit ~= "false" and lit ~= "null" then
+          return nil, "invalid literal: " .. lit
+        end
+        return true
+      else
+        local start = pos
+        while pos <= len do
+          local c = string.sub(raw, pos, pos)
+          if c == ',' or c == '}' or c == ']' or c == ' ' or c == '\t' or c == '\r' or c == '\n' then
+            break
+          end
+          pos = pos + 1
+        end
+        local num_str = string.sub(raw, start, pos - 1)
+        -- The JSON number grammar only: tonumber also reads 0x10, inf and 1e5 spellings JSON does not have.
+        if not T.jsonnumber(num_str) then
+          return nil, "invalid number"
+        end
+        if ctx == 'schema' and not string.match(num_str, '^[0-9]+$') then
+          return nil, "schema must be an integer"
+        end
+        return true
+      end
+    end
+
+    parse_object = function(ctx)
+      if next_char() ~= '{' then return nil, "expected {" end
+      local seen = {}
+      skip_ws()
+      if peek() == '}' then
+        next_char()
+        if ctx == 'member' then
+          return nil, "member entry missing expect record"
+        end
+        return true
+      end
+
+      while true do
+        local key, err = parse_string()
+        if err then return nil, err end
+
+        if seen[key] then
+          return nil, "duplicate key: " .. key
+        end
+        seen[key] = true
+
+        local val_ctx = nil
+        if ctx == 'root' then
+          local root_keys = {
+            schema=true, table=true, epoch=true, expected_table_revision=true,
+            operation_id=true, actor=true, members=true
+          }
+          if not root_keys[key] then return nil, "unknown field: " .. key end
+          if key == 'members' then val_ctx = 'members' end
+          if key == 'schema' then val_ctx = 'schema' end
+        elseif ctx == 'member' then
+          local member_keys = {
+            id=true, expect=true, create=true, move=true, remove=true, set=true, unset=true
+          }
+          if not member_keys[key] then return nil, "unknown member field: " .. key end
+          if key == 'expect' then val_ctx = 'expect'
+          elseif key == 'create' then val_ctx = 'create'
+          elseif key == 'move' then val_ctx = 'move'
+          elseif key == 'set' then val_ctx = 'set'
+          elseif key == 'unset' then val_ctx = 'unset'
+          end
+        elseif ctx == 'expect' then
+          local expect_keys = {
+            absent=true, revision=true, place=true, fields=true
+          }
+          if not expect_keys[key] then return nil, "unknown expect field: " .. key end
+          if key == 'place' then val_ctx = 'place'
+          elseif key == 'fields' then val_ctx = 'fields'
+          end
+        elseif ctx == 'place' then
+          local place_keys = {row=true, col=true}
+          if not place_keys[key] then return nil, "unknown place field: " .. key end
+        elseif ctx == 'fields' then
+          if not T.word(key) then return nil, "invalid field guard name: " .. key end
+          val_ctx = 'field_guard'
+        elseif ctx == 'field_guard' then
+          local guard_keys = {equals=true, absent=true, one_of=true}
+          if not guard_keys[key] then return nil, "unknown guard field: " .. key end
+          if key == 'one_of' then val_ctx = 'one_of' end
+        elseif ctx == 'create' then
+          local create_keys = {row=true, col=true, score=true}
+          if not create_keys[key] then return nil, "unknown create field: " .. key end
+        elseif ctx == 'move' then
+          local move_keys = {row=true, col=true, score=true}
+          if not move_keys[key] then return nil, "unknown move field: " .. key end
+        elseif ctx == 'set' then
+          if not T.word(key) then return nil, "invalid field name: " .. key end
+          val_ctx = 'string'
+        else
+          return nil, "an object is not allowed here"
+        end
+
+        skip_ws()
+        if next_char() ~= ':' then return nil, "expected :" end
+
+        local ok, v_err = parse_value(val_ctx)
+        if not ok then return nil, v_err end
+
+        skip_ws()
+        local sep = peek()
+        if sep == ',' then
+          next_char()
+        elseif sep == '}' then
+          next_char()
+          break
+        else
+          return nil, "expected , or } after object property"
+        end
+      end
+
+      if ctx == 'member' then
+        if not seen['id'] then return nil, "member entry missing id" end
+        if not seen['expect'] then return nil, "member entry missing expect record" end
+      end
+
+      return true
+    end
+
+    parse_array = function(ctx)
+      if next_char() ~= '[' then return nil, "expected [" end
+      skip_ws()
+      if peek() == ']' then
+        next_char()
+        return true
+      end
+
+      while true do
+        local elem_ctx = nil
+        if ctx == 'members' then
+          elem_ctx = 'member'
+        elseif ctx == 'unset' or ctx == 'one_of' then
+          elem_ctx = 'string'
+        end
+
+        local ok, err = parse_value(elem_ctx)
+        if not ok then return nil, err end
+
+        skip_ws()
+        local sep = peek()
+        if sep == ',' then
+          next_char()
+        elseif sep == ']' then
+          next_char()
+          break
+        else
+          return nil, "expected , or ] after array element"
+        end
+      end
+      return true
+    end
+
+    skip_ws()
+    if peek() ~= '{' then return T.refuse('MANIFEST', "expected root object") end
+    local ok, err = parse_object('root')
+    if not ok then return T.refuse('MANIFEST', err) end
+    skip_ws()
+    if pos <= len then return T.refuse('MANIFEST', "trailing characters") end
+    return nil
+  end
+
+  -- T.static_entries(manifest): every check that needs no store: shape, types,
+  -- bounds and combinations, in one pass over the entries. It returns a refusal,
+  -- or nil and the counts of entries with changes and guard-only entries.
+  -- A refusal here happens before the store is read.
+  function T.static_entries(manifest)
+    local seen, changed, guards = {}, 0, 0
+    if #manifest.members == 0 then return T.refuse('MANIFEST', 'a manifest names at least one member') end
+    local function finite(n) return type(n) == 'number' and n == n and n ~= math.huge and n ~= -math.huge end
+    local function score_refusal(id, v)
+      local found = type(v)
+      if v == nil then found = 'missing'
+      elseif v == cjson.null then found = 'null'
+      elseif found == 'number' then found = 'non-finite number' end
+      return T.refuse('SCORE', id, found)
+    end
+    local function reserved(f) return f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' end
+    for idx, entry in ipairs(manifest.members) do
+      if type(entry) ~= 'table' or not T.word(entry.id) then
+        return T.refuse('MEMBER', 'entry ' .. idx .. ' is not an object with a nonempty id without control characters')
+      end
+      local id = entry.id
+      local over = T.over('member_id_bytes', #id)
+      if over then return over end
+      if seen[id] then return T.refuse('TWICE', id) end
+      seen[id] = true
+      if entry.remove ~= nil and entry.remove ~= true then return T.refuse('ARGS', 'remove must be true', id) end
+
+      if entry.set ~= nil then
+        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object', id) end
+        local count = 0
+        for _ in pairs(entry.set) do count = count + 1 end
+        over = T.over('set_fields', count, id)
+        if over then return over end
+        for f, val in pairs(entry.set) do
+          if reserved(f) then return T.refuse('RESERVEDFIELD', id, T.excerpt(f)) end
+          if not T.word(f) or type(val) ~= 'string' then
+            return T.refuse('ARGS', 'field name and value must be valid strings', id)
+          end
+          over = T.over('field_value_bytes', #val, id)
+          if over then return over end
+        end
+      end
+      if entry.unset ~= nil then
+        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array', id) end
+        over = T.over('unset_fields', #entry.unset, id)
+        if over then return over end
+        local named = {}
+        for _, f in ipairs(entry.unset) do
+          if type(f) == 'string' and reserved(f) then return T.refuse('RESERVEDFIELD', id, T.excerpt(f)) end
+          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', id) end
+          if named[f] then return T.refuse('ARGS', 'unset names a field twice', id) end
+          named[f] = true
+        end
+      end
+      if entry.set ~= nil and entry.unset ~= nil then
+        for _, f in ipairs(entry.unset) do
+          if entry.set[f] ~= nil then
+            return T.refuse('MUTATION', id, 'field ' .. T.excerpt(f) .. ' cannot be both set and unset')
+          end
+        end
+      end
+
+      local exp = entry.expect
+      if type(exp) ~= 'table' then return T.refuse('MANIFEST', 'member ' .. id .. ' missing expect record') end
+      if exp.absent ~= nil then
+        if exp.absent ~= true then return T.refuse('ARGS', 'expect absent must be true', id) end
+        if exp.revision ~= nil or exp.place ~= nil or exp.fields ~= nil then
+          return T.refuse('MUTATION', id, 'expect absent cannot combine with revision, place or fields')
+        end
+      end
+      if exp.revision ~= nil and not T.uint(exp.revision) then
+        return T.refuse('ARGS', 'expect revision must be a decimal string', id)
+      end
+      if exp.place ~= nil and (type(exp.place) ~= 'table' or type(exp.place.row) ~= 'string' or type(exp.place.col) ~= 'string') then
+        return T.refuse('ARGS', 'expect place wants row and col strings', id)
+      end
+      if exp.fields ~= nil then
+        if type(exp.fields) ~= 'table' then return T.refuse('ARGS', 'expect fields must be object', id) end
+        local n = 0
+        for _, guard in pairs(exp.fields) do
+          n = n + 1
+          if type(guard) == 'table' and type(guard.one_of) == 'table' then
+            over = T.over('one_of_options', #guard.one_of, id)
+            if over then return over end
+          end
+        end
+        over = T.over('field_guards', n, id)
+        if over then return over end
+        for f, guard in pairs(exp.fields) do
+          if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'guard must be object') end
+          local conds = (guard.equals ~= nil and 1 or 0) + (guard.absent ~= nil and 1 or 0) + (guard.one_of ~= nil and 1 or 0)
+          if conds ~= 1 then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'exact one condition required') end
+          if guard.equals ~= nil and type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals must be string') end
+          if guard.absent ~= nil and guard.absent ~= true then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'absent must be true') end
+          if guard.one_of ~= nil then
+            if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
+              return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of must be nonempty array')
+            end
+            local options = {}
+            for _, opt in ipairs(guard.one_of) do
+              if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of items must be strings') end
+              if options[opt] then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of names an option twice') end
+              options[opt] = true
+            end
+          end
+        end
+      end
+
+      if entry.create ~= nil then
+        local cr = entry.create
+        if type(cr) ~= 'table' or type(cr.row) ~= 'string' or type(cr.col) ~= 'string' then
+          return T.refuse('ARGS', 'create wants row and col strings', id)
+        end
+        if not finite(cr.score) then return score_refusal(id, cr.score) end
+        if entry.move ~= nil or entry.remove ~= nil then
+          return T.refuse('MUTATION', id, 'create cannot combine with move or remove')
+        end
+        if exp.absent ~= true then return T.refuse('MUTATION', id, 'create requires expect absent') end
+      end
+      if entry.move ~= nil then
+        local mv = entry.move
+        if type(mv) ~= 'table' or type(mv.row) ~= 'string' or type(mv.col) ~= 'string' then
+          return T.refuse('ARGS', 'move wants row and col strings', id)
+        end
+        if mv.score ~= nil and not finite(mv.score) then return score_refusal(id, mv.score) end
+        if entry.remove ~= nil then return T.refuse('MUTATION', id, 'move cannot combine with remove') end
+      end
+
+      if entry.create ~= nil or entry.move ~= nil or entry.remove == true or
+          (entry.set ~= nil and next(entry.set) ~= nil) or (entry.unset ~= nil and #entry.unset > 0) then
+        changed = changed + 1
+      else
+        guards = guards + 1
+      end
+    end
+    local over = T.over('changed_entries', changed)
+    if over then return over end
+    over = T.over('guard_entries', guards)
+    if over then return over end
+    return nil, changed, guards
+  end
+
+  function T.apply(keys, args)
+    -- A refusal raised while one entry is judged carries that entry's id last.
+    local function at_member(err, id) err[#err + 1] = id; return err end
+    if #args ~= 2 then return T.refuse('ARGS', 'apply') end
+    local table_name = args[1]
+    local raw_json = args[2]
+    if type(raw_json) ~= 'string' then return T.refuse('ARGS', 'apply payload') end
+    local over = T.over('manifest_bytes', #raw_json)
+    if over then return over end
+
+    -- The operation is looked up first, before the request is judged: parse only
+    -- as far as the table, the epoch and the operation id, and find the record. An
+    -- identical recorded request returns its original result whatever rule a
+    -- newer server applies to it; a different one under the same id is a conflict.
+    local ops_key, op_field = T.opskey(table_name), nil
+    local peek = T.decode(raw_json)
+    if peek and peek.table == table_name and T.word(peek.operation_id) and T.uint(peek.epoch) then
+      op_field = peek.epoch .. ':' .. peek.operation_id
+      local recorded = redis.call('HGET', ops_key, op_field)
+      if recorded then
+        local record = cjson.decode(recorded)
+        if record.request ~= raw_json then
+          return T.refuse('OPCONFLICT', peek.operation_id)
+        end
+        -- the original result, and a third element saying it is a replay
+        local original = cjson.decode(record.result)
+        original[3] = 'REPLAY'
+        return original
+      end
+    end
+
+    -- Then the request is judged: the manifest's own rules, before the store is read.
+    if not T.utf8(raw_json) then return T.refuse('MANIFEST', 'manifest is not valid UTF-8') end
+    local manifest_err = T.validate_manifest_json(raw_json)
+    if manifest_err then return manifest_err end
+    local digest = redis.sha1hex(raw_json)
+    local manifest = T.decode(raw_json)
+    if not manifest or type(manifest) ~= 'table' then return T.refuse('MANIFEST', 'invalid json') end
+    if manifest.schema ~= 1 then return T.refuse('SCHEMA', tostring(manifest.schema)) end
+    if manifest.table ~= table_name then return T.refuse('ARGS', 'table mismatch') end
+    if not T.word(manifest.operation_id) then return T.refuse('OPERATION', 'invalid operation_id') end
+    if manifest.actor ~= nil and type(manifest.actor) ~= 'string' then return T.refuse('ARGS', 'actor must be a string') end
+    if not T.uint(manifest.epoch) then return T.refuse('EPOCH', tostring(manifest.epoch)) end
+    if not T.uint(manifest.expected_table_revision) then return T.refuse('REVISION', tostring(manifest.expected_table_revision)) end
+    if type(manifest.members) ~= 'table' then return T.refuse('ARGS', 'members array required') end
+    if not T.arrayfield(raw_json, 'members') then return T.refuse('MANIFEST', 'members must be json array') end
+    local static_err, changed_count, guard_count = T.static_entries(manifest)
+    if static_err then return static_err end
+    op_field = manifest.epoch .. ':' .. manifest.operation_id
+
+    -- Open the table exactly as every ordinary write does; the batch commits
+    -- through T.finish, so the definition snapshot, the immutable identity,
+    -- the template and the catalog are kept by the same code.
+    local d, err = T.open(table_name)
+    if not d then return err end
+    if not d.present then return T.refuse('NOTABLE') end
+
+    -- Unrecorded operation at another epoch refuses:
+    if manifest.epoch ~= d.active then
+      if T.uintgt(manifest.epoch, d.active) then
+        return T.refuse('EPOCHAHEAD', manifest.epoch, d.active)
+      end
+      return T.refuse('STALE', manifest.epoch, d.active)
+    end
+
+    -- Expected table revision:
+    if manifest.expected_table_revision ~= d.revision then
+      return T.refuse('REVISION', manifest.expected_table_revision, d.revision)
+    end
+
+    local members_list = manifest.members
+
+    -- Pre-state evaluation & expectation checking:
+    local member_records = {}
+    local member_exists = {} -- the member has a record
+    local member_cache = {} -- fields read by name: id -> field -> value, false for absent
+    local function member_field(id, f)
+      local cache = member_cache[id]
+      if not cache then cache = {}; member_cache[id] = cache end
+      local v = cache[f]
+      if v == nil then
+        v = redis.call('HGET', T.memberkey(d, id), f)
+        cache[f] = v
+      end
+      if v == false then return nil end
+      return v
+    end
+    local member_places = {}
+    local member_scores = {}
+    local member_score_text = {} -- the score exactly as the store holds it
+
+    -- What the batch touches is counted from lengths before anything is read or
+    -- hashed: the bytes of every before-value and after-value of the fields its
+    -- entries name (set, unset and guarded), and the size the receipt must have at
+    -- least. Either bound refuses the batch at once, before any read of a value.
+    local touched, receipt_least = 0, 2
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      if type(id) == 'string' and T.word(id) then
+        local mkey = T.memberkey(d, id)
+        local counted = {}
+        local function before_length(f)
+          if counted[f] == nil then
+            -- Only a record of the wrong type counts as empty here (it is refused
+            -- below); any other error, a missing permission first, is raised.
+            local n = redis.pcall('HSTRLEN', mkey, f)
+            if type(n) == 'table' then
+              if not (n.err and string.find(n.err, 'WRONGTYPE')) then T.rethrow(n) end
+              n = 0
+            end
+            if n == 0 then
+              local present = redis.pcall('HEXISTS', mkey, f)
+              if type(present) == 'table' then
+                if not (present.err and string.find(present.err, 'WRONGTYPE')) then T.rethrow(present) end
+                present = 0
+              end
+              if present ~= 1 then n = false end
+            end
+            counted[f] = n
+            touched = touched + (n or 0)
+          end
+          return counted[f]
+        end
+        local function side(key, n)
+          if n == false then return #key + 7 end
+          if n <= T.receipt_value_bytes then return #key + 5 + n end
+          return #key + 7 + (#key + 9 + #tostring(n)) + (#key + 51)
+        end
+        for f, val in pairs(entry.set or {}) do
+          local n = before_length(f)
+          touched = touched + #val
+          receipt_least = receipt_least + #f + 6 + side('before', n) + side('after', #val)
+        end
+        for _, f in ipairs(entry.unset or {}) do
+          local n = before_length(f)
+          receipt_least = receipt_least + #f + 9 + side('before', n) + side('after', false)
+        end
+        for f in pairs((entry.expect and entry.expect.fields) or {}) do before_length(f) end
+        local over = T.over_least('batch_value_bytes', touched, id) or T.over_least('receipt_bytes', receipt_least, id)
+        if over then return over end
+      end
+    end
+
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      local record, exists, why = T.member_head(d, id)
+      if why then return why end
+      member_records[id] = record or {}
+      member_exists[id] = exists
+
+      local current_place = record and record['place:' .. d.name]
+      if current_place then
+        local r, c = string.match(current_place, '^(.*):([^:]+)$')
+        if not r or not c then return T.refuse('DRIFT', id, current_place) end
+        local cell, cell_err = T.cell(d, r, c, true)
+        if not cell then return at_member(cell_err, id) end
+        local score = redis.pcall('ZSCORE', cell.key, id)
+        if type(score) == 'table' and score.err then
+          if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, T.kind(cell.key), 'zset') end
+          T.rethrow(score)
+        end
+        if not score then return T.refuse('DRIFT', r, c, id) end
+        local drift = T.check_placement(d, id, current_place)
+        if drift then return drift end
+        member_places[id] = current_place
+        member_scores[id] = tonumber(score)
+        member_score_text[id] = score
+      else
+        local drift = T.unindexed(d, id, 'set-only')
+        if drift then return drift end
+      end
+
+      -- Check expectations (their shapes are settled by T.static_entries):
+      local exp = entry.expect
+      if exp.absent ~= nil then
+        if exists or current_place then
+          return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
+        end
+      else
+        if not exists then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member') end
+        local obs_rev = record.revision or '0'
+        if exp.revision and exp.revision ~= obs_rev then
+          return T.refuse('MEMBERREVISION', id, exp.revision, obs_rev)
+        end
+        if exp.place then
+          local exp_place = T.place(exp.place.row, exp.place.col)
+          if current_place ~= exp_place then
+            return T.refuse('PLACEGUARD', id, exp_place, current_place or 'unplaced')
+          end
+        end
+        if exp.fields then
+          for f, guard in pairs(exp.fields) do
+            local actual = member_field(id, f)
+            if guard.equals ~= nil then
+              if actual == nil or actual ~= guard.equals then
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals', T.excerpt(guard.equals), T.excerpt(actual) or '<absent>')
+              end
+            elseif guard.absent ~= nil then
+              if actual ~= nil then
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'absent', T.excerpt(actual))
+              end
+            elseif guard.one_of ~= nil then
+              local matched = false
+              if actual ~= nil then
+                for _, opt in ipairs(guard.one_of) do
+                  if actual == opt then matched = true; break end
+                end
+              end
+              if not matched then
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of', T.excerpt(cjson.encode(guard.one_of)), T.excerpt(actual) or '<absent>')
+              end
+            end
+          end
+        end
+      end
+    end
+
+    -- Validate mutation constraints before staging:
+    local plan = {}
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      local record = member_records[id]
+      local current_place = member_places[id]
+      local item = {id=id, entry=entry, record=record, current_place=current_place}
+
+      local member_fields = {}
+      local fields_changed = false
+      if entry.set then
+        for f, val in pairs(entry.set) do
+          local bval = member_field(id, f)
+          if bval ~= val then
+            fields_changed = true
+          end
+          member_fields[f] = T.fieldchange(bval, val)
+        end
+      end
+      if entry.unset then
+        for _, f in ipairs(entry.unset) do
+          local bval = member_field(id, f)
+          if bval ~= nil then
+            fields_changed = true
+          end
+          member_fields[f] = T.fieldchange(bval, nil)
+        end
+      end
+      item.fields = member_fields
+
+      if entry.create then
+        if member_exists[id] or current_place then
+          return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
+        end
+        local crow, ccol = entry.create.row, entry.create.col
+        local dst_cell, err = T.cell(d, crow, ccol, true)
+        if not dst_cell then return at_member(err, id) end
+        local score = entry.create.score
+        item.action = 'create'
+        item.effective_change = true
+        item.dst_row = crow
+        item.dst_col = ccol
+        item.dst_place = T.place(crow, ccol)
+        item.dst_cell = dst_cell
+        item.score = score
+        item.before_place = ''
+        item.after_place = item.dst_place
+        item.before_score = cjson.null
+        item.after_score = nil -- the store's own string, read after the write
+        item.before_rev = '0'
+        item.after_rev = '1'
+      elseif entry.move then
+        if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to move') end
+        local mrow, mcol = entry.move.row, entry.move.col
+        local dst_cell, err = T.cell(d, mrow, mcol, true)
+        if not dst_cell then return at_member(err, id) end
+        local score
+        if entry.move.score ~= nil then
+          score = entry.move.score
+        else
+          score = member_scores[id]
+        end
+        local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
+        local src_cell, err2 = T.cell(d, src_row, src_col, true)
+        if not src_cell then return at_member(err2, id) end
+        local dst_place = T.place(mrow, mcol)
+        local cur_score = member_scores[id]
+        local place_changed = (dst_place ~= current_place)
+        local score_changed = (score ~= cur_score)
+        local effective = place_changed or score_changed or fields_changed
+
+        item.src_row = src_row
+        item.src_col = src_col
+        item.src_place = current_place
+        item.src_cell = src_cell
+        item.dst_row = mrow
+        item.dst_col = mcol
+        item.dst_place = dst_place
+        item.dst_cell = dst_cell
+        item.score = score
+        item.before_place = current_place
+        item.after_place = dst_place
+        item.before_score = member_score_text[id]
+        item.after_score = (score == cur_score) and member_score_text[id] or nil
+        item.before_rev = record.revision or '0'
+        item.effective_change = effective
+
+        if effective then
+          item.action = 'move'
+          item.after_rev = T.next(item.before_rev)
+          if not item.after_rev then return T.refuse('OVERFLOW', id) end
+        else
+          item.action = 'noop'
+          item.after_rev = item.before_rev
+        end
+      elseif entry.remove then
+        if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to remove') end
+        local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
+        local src_cell, err = T.cell(d, src_row, src_col, true)
+        if not src_cell then return at_member(err, id) end
+        item.action = 'remove'
+        item.effective_change = true
+        item.src_row = src_row
+        item.src_col = src_col
+        item.src_place = current_place
+        item.src_cell = src_cell
+        item.before_place = current_place
+        item.after_place = ''
+        item.before_score = member_score_text[id]
+        item.after_score = cjson.null
+        item.before_rev = record.revision or '0'
+        item.after_rev = T.next(item.before_rev)
+        if not item.after_rev then return T.refuse('OVERFLOW', id) end
+      else
+        item.before_place = current_place or ''
+        item.after_place = current_place or ''
+        item.before_score = member_score_text[id] ~= nil and member_score_text[id] or cjson.null
+        item.after_score = member_score_text[id] ~= nil and member_score_text[id] or cjson.null
+        item.before_rev = record.revision or '0'
+        local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
+                           (entry.unset ~= nil and #entry.unset > 0)
+        if has_fields then
+          if not member_exists[id] then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member to change fields of') end
+          if fields_changed then
+            item.action = 'fields'
+            item.effective_change = true
+            item.after_rev = T.next(item.before_rev)
+            if not item.after_rev then return T.refuse('OVERFLOW', id) end
+          else
+            item.action = 'noop'
+            item.effective_change = false
+            item.after_rev = item.before_rev
+          end
+        else
+          item.action = 'guard'
+          item.effective_change = false
+          item.after_rev = item.before_rev
+        end
+      end
+
+      plan[#plan + 1] = item
+    end
+
+    -- Stage mutations:
+    local delta_members = {}
+    local late = {} -- scores read back from the store after the writes
+    local real_changes = 0
+
+    for _, item in ipairs(plan) do
+      local id = item.id
+      local entry = item.entry
+      local record = item.record or {}
+      local mkey = T.memberkey(d, id)
+      local delta_item = {
+        id = id,
+        before_place = item.before_place,
+        after_place = item.after_place,
+        before_score = item.before_score,
+        -- never nil: the score the store holds is read back after the writes, and
+        -- a key that comes and goes can change the order the encoder writes it in
+        after_score = item.after_score == nil and '' or item.after_score,
+        before_rev = item.before_rev,
+        after_rev = item.after_rev,
+        fields_set = T.smallvalues(entry.set),
+        fields_unset = entry.unset or {},
+        fields = item.fields,
+      }
+      delta_members[#delta_members + 1] = delta_item
+
+      if item.effective_change then
+        real_changes = real_changes + 1
+      end
+
+      if item.action == 'create' then
+        T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
+        T.stage(d, 'HSET', mkey, 'epoch', d.epoch, 'place:' .. d.name, item.dst_place, 'revision', '1')
+        T.change(d, id, nil, item.dst_place, '')
+        late[#late + 1] = {member = d.members[#d.members], delta = delta_item, key = item.dst_cell.key, id = id}
+      elseif item.action == 'move' then
+        if not record.epoch then
+          T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
+        end
+        if item.src_cell.key ~= item.dst_cell.key then
+          T.stage(d, 'ZREM', item.src_cell.key, id)
+          T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
+          T.stage(d, 'HSET', mkey, 'place:' .. d.name, item.dst_place, 'revision', item.after_rev)
+          T.change(d, id, item.src_place, item.dst_place, '')
+        else
+          T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
+          T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
+          T.change(d, id, item.src_place, item.dst_place, '')
+        end
+        late[#late + 1] = {member = d.members[#d.members], delta = delta_item, key = item.dst_cell.key, id = id}
+      elseif item.action == 'remove' then
+        if not record.epoch then
+          T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
+        end
+        T.stage(d, 'ZREM', item.src_cell.key, id)
+        T.stage(d, 'HDEL', mkey, 'place:' .. d.name)
+        T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
+        T.change(d, id, item.src_place, nil, member_score_text[id])
+      elseif item.action == 'fields' then
+        if not record.epoch then
+          T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
+        end
+        T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
+      end
+
+      if entry.set and next(entry.set) then
+        local hcmd = {'HSET', mkey}
+        for f, val in pairs(entry.set) do
+          hcmd[#hcmd + 1] = f
+          hcmd[#hcmd + 1] = val
+        end
+        T.stage(d, unpack(hcmd))
+      end
+      if entry.unset and #entry.unset > 0 then
+        for i = 1, #entry.unset, 500 do
+          local dcmd = {'HDEL', mkey}
+          local last = math.min(i + 499, #entry.unset)
+          for j = i, last do
+            dcmd[#dcmd + 1] = entry.unset[j]
+          end
+          T.stage(d, unpack(dcmd))
+        end
+      end
+    end
+
+    local outcome = real_changes == 0 and 'noop' or 'changed'
+    local encode_delta
+    function encode_delta()
+      return cjson.encode({
+        operation_id = manifest.operation_id,
+        digest = digest,
+        actor = manifest.actor or '',
+        selected_count = #manifest.members,
+        guard_count = guard_count,
+        changed_count = real_changes,
+        members = delta_members,
+      })
+    end
+
+    local receipt_over = T.over('receipt_bytes', T.receipt_size(encode_delta, late))
+    if receipt_over then return receipt_over end
+
+    -- The operation record is the last write, after the commit; its
+    -- permission and type are settled before the first write.
+    if not redis.acl_check_cmd('HSET', ops_key, op_field, '{}') then
+      return T.refuse('NOPERM', 'HSET', ops_key)
+    end
+    local op_type_err = T.check_types({{'HSET', ops_key, op_field, '{}'}})
+    if op_type_err then return op_type_err end
+
+    return T.finish(d, 'apply', args, {
+      actor = manifest.actor or '', fence = '', idem = '',
+      outcome = outcome,
+      wireargs = {table_name, manifest.operation_id, digest},
+      event_extra = {'batch_delta', ''},
+      -- Runs after every write but the event: a member's score is what the
+      -- store holds, read back, so an event and a receipt carry the exact
+      -- decimal string and two different scores never print the same.
+      resolve = function()
+        for _, l in ipairs(late) do
+          local score = redis.call('ZSCORE', l.key, l.id)
+          l.member.score = score
+          l.delta.after_score = score
+        end
+        return encode_delta()
+      end,
+      record = function(reply, stream_id, before, after)
+        redis.call('HSET', ops_key, op_field, cjson.encode({
+          operation_id = manifest.operation_id,
+          digest = digest,
+          request = raw_json,
+          stream_id = stream_id,
+          epoch = d.epoch,
+          rev_before = before,
+          rev_after = after,
+          outcome = outcome,
+          result = cjson.encode(reply),
+        }))
+      end,
+    }, {'OK'})
+  end
+
+  redis.register_function('ns_table_apply', function(keys, args)
+    return T.apply(keys, args)
+  end)
+  redis.register_function{function_name = 'ns_table_read_set', flags = {'no-writes'}, callback = function(keys, args)
+    return T.read_set(keys, args)
+  end}
 end
+

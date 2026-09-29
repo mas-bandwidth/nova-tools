@@ -37,14 +37,14 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 		}
 	}
 	out = success("member", "find", "work", "check-a")
-	if !strings.Contains(out, `state=placed row="stream: build" col=done epoch=0 revision=7 trips=1`) {
+	if !strings.Contains(out, `state=placed row="stream: build" col=done epoch=0 table_revision=7 trips=1`) {
 		t.Errorf("find: %s", out)
 	}
 	success("member", "create", "work", "new")
-	if out = success("member", "find", "work", "new"); !strings.Contains(out, "state=unplaced epoch=0 revision=8 trips=1") {
+	if out = success("member", "find", "work", "new"); !strings.Contains(out, "state=unplaced epoch=0 table_revision=8 trips=1") {
 		t.Errorf("unplaced: %s", out)
 	}
-	if out = success("member", "find", "work", "unknown"); !strings.Contains(out, "state=missing epoch=0 revision=8 trips=1") {
+	if out = success("member", "find", "work", "unknown"); !strings.Contains(out, "state=missing epoch=0 table_revision=8 trips=1") {
 		t.Errorf("missing: %s", out)
 	}
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
