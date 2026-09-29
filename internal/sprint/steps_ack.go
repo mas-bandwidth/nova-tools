@@ -68,17 +68,23 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
-	// A primary whose last open judgment this call closes, with its reads
-	// exhausted, is a judgment once, unless the call acknowledged exactly that.
+	// A primary in review whose judgments this call closes gets the judgment
+	// it needs after them, once, unless the call acknowledged exactly that.
+	acked := map[string][]string{}
+	for _, u := range p.Units {
+		for _, o := range u.Closes {
+			acked[o.Subject()] = append(acked[o.Subject()], o.Note.Type)
+		}
+	}
 	written := map[string]bool{}
 	for i := range p.Units {
 		for _, o := range p.Units[i].Closes {
 			pr := s.Work.Placed(o.Subject())
-			if pr == nil || written[pr.ID] || o.Note.Type == NReadsExhausted || o.Note.Type == NStranded {
+			if pr == nil || written[pr.ID] {
 				continue
 			}
 			written[pr.ID] = true
-			if j, ok := strandedAfter(s, pr, closing, r.Who); ok {
+			if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, acked: acked[pr.ID], who: r.Who}); ok {
 				p.Units[i].Notes = append(p.Units[i].Notes, j)
 			}
 		}
@@ -110,22 +116,6 @@ func waive(s *Snapshot, id, who string) (Change, []Note) {
 		return change(Work, moveEntry(c, c.Row, Ready, set)), nil
 	}
 	return change(Work, setEntry(c, set)), nil
-}
-
-// strandedAfter is the judgment of a primary in review that nothing moves
-// (reads exhausted, or stranded in review), whose every open judgment is
-// among closing (note ids a step closes), if the condition holds.
-func strandedAfter(s *Snapshot, pr *Card, closing map[string]bool, who string) (Note, bool) {
-	typ, why := stranded(s, pr, nil)
-	if typ == "" {
-		return Note{}, false
-	}
-	for _, x := range closesFor(s.Open, nil, pr.ID) {
-		if !closing[x.Note.ID] {
-			return Note{}, false
-		}
-	}
-	return strandedNote(s, pr, typ, why, who), true
 }
 
 // strandedNote is the judgment of a stranded primary: failed work is not

@@ -734,6 +734,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			u.Bumps = append(u.Bumps, Bump{Fleet, CtlID(c.Row), counter, 1})
 		}
 		attempt := pr.Int("attempt")
+		asked := map[string]string{}
 		if !r.Failed {
 			var again []string
 			for _, reader := range Split(pr.F("asked")) {
@@ -744,6 +745,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				u.Changes = append(u.Changes, change(Readers, createEntry(id, reader, Asked, pr.Score,
 					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head, "asked": stamp(s.Now)})))
 				again = append(again, reader)
+				asked[id] = Asked
 			}
 			if len(again) > 0 {
 				u.Moved += "; asked again of " + strings.Join(again, ", ")
@@ -757,6 +759,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			u.Notes = append(u.Notes, n)
 		}
 		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set)))
+		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
+			u.Notes = append(u.Notes, j)
+		}
 		p.Units = append(p.Units, u)
 	}
 	return p
