@@ -100,7 +100,7 @@ func (a *app) machineVerb(name string, args []string, stderr io.Writer) (*store.
 	if len(pos) > 0 {
 		return nil, nil, refuse(stderr, name, "takes no words, found "+pos[0])
 	}
-	if c.actor == "coordinator" {
+	if c.actor == "" {
 		c.actor = sprint.MachineActor
 	}
 	st, err := a.store(*c)

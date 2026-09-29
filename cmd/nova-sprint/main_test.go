@@ -31,7 +31,7 @@ type testApp struct {
 
 func newTestApp(t *testing.T) *testApp {
 	ta := &testApp{t: t, m: store.NewMem(), now: t0, live: []string{"m1", "m2"}}
-	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-"}
+	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-", "NOVA_SPRINT_ACTOR": "coordinator"}
 	ta.a = newApp(func(k string) string { return env[k] })
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }

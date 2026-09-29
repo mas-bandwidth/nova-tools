@@ -107,7 +107,7 @@ func TestGoalSetDefaultRouteIsPrintedAndHelpNamesGoal(t *testing.T) {
 		if k == "NOVA_SPRINT_REMINDER_DIR" {
 			return dir
 		}
-		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-"}[k]
+		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-", "NOVA_SPRINT_ACTOR": "coordinator"}[k]
 	}
 	ok := filepath.Join(dir, "ok.txt")
 	if err := os.WriteFile(ok, []byte("goal"), 0o644); err != nil {

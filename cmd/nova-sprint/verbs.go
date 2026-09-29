@@ -93,8 +93,13 @@ func banner() string {
 	b.WriteString(`
 Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
 NOVA_REDIS_ADDR), --prefix <p> (else NOVA_SPRINT_PREFIX: every table, view and
-key of this sprint carries it), --actor, --op <id> (the same id again returns
-the recorded result), --json and --max <n> (listed items; 0 is all). A set is
+key of this sprint carries it), --actor <name> (else NOVA_SPRINT_ACTOR; no
+default: a verb that writes wants one), --op <id> (the same id again returns
+the recorded result), --json and --max <n> (listed items; 0 is all). The
+coordinator's verbs are the coordinator's alone (the first init names it:
+--coordinator, else the actor); take, finish, read and fleet beat are the
+workers', whose actor is the member or reader named; merge and ci are
+reports; tick and run are the machine's; the reads need no actor. A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
@@ -267,7 +272,7 @@ func (l *listFlag) Set(v string) error {
 // verbSetup is the flag set of a store verb with the common flags.
 func (a *app) verbSetup(name string) (flagSet, *common) {
 	fs := verbflag.New(name)
-	c := &common{}
+	c := &common{verb: name}
 	c.register(fs, a.getenv)
 	return fs, c
 }
@@ -544,6 +549,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	if len(pos) > 0 {
 		return refuse(stderr, "init", "takes no words, found "+pos[0])
 	}
+	c.coordinator = *coordinator
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
@@ -771,6 +777,7 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	if *as == "" || len(gens) != len(ids) {
 		return refuse(stderr, "take", "wants --as <member>, and every card named as <card>@<gen>, the generation from queue --as <member>")
 	}
+	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "take", err.Error())
@@ -799,6 +806,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	if *as == "" || len(ids) == 0 || len(gens) != len(ids) {
 		return refuse(stderr, "finish", "wants --as <member> and every card as <card>@<gen>, the generation the worker holds")
 	}
+	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
@@ -843,6 +851,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if *broken {
 		verdict = "broken"
 	}
+	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "read", err.Error())

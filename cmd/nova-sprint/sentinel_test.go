@@ -21,25 +21,25 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	if out := ta.ok("where"); strings.Contains(out, "coordinator:") {
 		t.Fatalf("where shows the coordinator line: %s", out)
 	}
-	ta.ok("add --stream s1 --count 1")
-	out := ta.ok("add --stream s1 --sentinel stop")
+	ta.ok("add --stream s1 --count 1 --actor lead")
+	out := ta.ok("add --stream s1 --sentinel stop --actor lead")
 	if !strings.Contains(out, "MOVED sentinel stop -> waiting stream=s1") {
 		t.Fatalf("add --sentinel: %s", out)
 	}
-	ta.ok("add --stream s2 b --needs stop")
+	ta.ok("add --stream s2 b --needs stop --actor lead")
 	if out := ta.ok("card stop"); !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDED-BY b\n") {
 		t.Fatalf("card stop: %s", out)
 	}
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")
-	ta.ok("ask")
+	ta.ok("ask --actor lead")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
 	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 	ta.ok("accept s1-1 --actor lead")
 	ta.ok("merge --stream s1")
 	g := ta.group(sprint.NSentinelReached, "s1")
-	if code, _, errs := ta.do("release stop --reason 'looked' --actor someone"); code != 1 || !strings.Contains(errs, "release is the coordinator's alone: lead, not someone") {
+	if code, _, errs := ta.do("release stop --reason 'looked' --actor someone"); code != 2 || !strings.Contains(errs, "release is the coordinator's alone: lead, not someone") {
 		t.Fatalf("another actor: %d %s", code, errs)
 	}
 	if code, _, errs := ta.do("release stop --actor lead"); code != 1 || !strings.Contains(errs, "release wants --reason") {

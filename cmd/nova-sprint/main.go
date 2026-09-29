@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -122,6 +123,8 @@ func libraryMatches(ctx context.Context, c *redis.Client, addr string) error {
 
 // common is the flags every store verb takes.
 type common struct {
+	verb                     string // the verb's name: its class (coordinator.go)
+	coordinator              string // init --coordinator: the coordinator it names
 	redis, prefix, actor, op string
 	json                     bool
 	max                      int
@@ -132,7 +135,7 @@ type common struct {
 func (c *common) register(fs flagSet, getenv func(string) string) {
 	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
 	fs.StringVar(&c.prefix, "prefix", getenv("NOVA_SPRINT_PREFIX"), "the prefix of every table, view and key of this sprint (else NOVA_SPRINT_PREFIX; empty is none)")
-	fs.StringVar(&c.actor, "actor", "coordinator", "who is acting, recorded with every change")
+	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
@@ -156,13 +159,26 @@ func (a *app) store(c common) (*store.Store, error) {
 	if strings.TrimSpace(c.redis) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
 	}
+	if why := needsActor(c); why != "" {
+		return nil, errors.New(why)
+	}
 	names := sprint.Names{Prefix: c.prefix}
 	b, err := a.backend(c.redis, names)
 	if err != nil {
 		return nil, err
 	}
 	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
-	return st.Pinned(context.Background())
+	ctx := context.Background()
+	if st, err = st.Pinned(ctx); err != nil {
+		return nil, err
+	}
+	if why, err := coordinatorOnly(ctx, st, c); err != nil || why != "" {
+		if err == nil {
+			err = errors.New(why)
+		}
+		return nil, err
+	}
+	return st, nil
 }
 
 // run is the one entry point: the command line, and the driver, which runs

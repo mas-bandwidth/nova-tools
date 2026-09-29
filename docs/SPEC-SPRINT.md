@@ -555,7 +555,21 @@ and the summary line. Every judgment verb takes `--answers <notification>`.
 Every store verb takes `--redis`, `--prefix`, `--actor`, `--op <id>` (the same
 id again, for the same verb with the same arguments, returns the recorded
 result; recorded for another verb or other arguments it is a conflict and is
-refused), `--json` and `--max`. A card's and a control card's text fields
+refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
+NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
+has one class of who may run it. The coordinator's verbs (init, add, release,
+resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
+up, fleet down, fleet level, reader add, wait, ack, clear, teardown, repair,
+goal set, goal drop, play) are the sprint's coordinator's alone: the first
+init names the coordinator (`--coordinator`, else the actor), a later init is
+refused unless its actor is that coordinator and never changes it, and
+another actor is refused (exit 2) with nothing written; a store with no
+coordinator takes init and teardown only. The workers' verbs (take, finish,
+read, fleet beat) are anyone's who names the member or reader, and their
+actor, when none is given, is that name. The reports (merge, ci) want an
+actor; the machine's verbs (tick, run) are recorded as the machine; the reads
+(queue, inbox, card, check, where, goal show) need no actor. A card's and a
+control card's text fields
 (brief, fix, finding, report, reason, note, return reason, ci note, did) are
 at most 8 KiB, and every manifest is checked against
 the table layer's bounds before anything is written, split by entries and by
