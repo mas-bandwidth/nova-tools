@@ -69,7 +69,9 @@ Compare two builds by diffing their manifests.
 
 A run is one container for one package set. The source tree is mounted read
 only; the two Go caches are named volumes. The module cache is filled once by a
-separate step that has the network, and is mounted read only for every run:
+separate step that has the network, and is mounted read only for every run. The
+build cache is written by the code under test, so it is kept per trust domain
+(see "The build cache" below); the commands name it `nova-gocache-<domain>`:
 
     podman run --rm -v "$PWD":/src:ro -v nova-gomod:/gomodcache \
       -e GOPROXY=https://proxy.golang.org -w /src nova-functional go mod download
@@ -80,7 +82,7 @@ The run:
       --network none --ipc private --pids-limit 512 --memory 4g --cpus 4 \
       --security-opt no-new-privileges --cap-drop all \
       --read-only --tmpfs /tmp:rw,exec,size=2g --tmpfs /home/bench:rw,size=1g,mode=1777 \
-      -v "$PWD":/src:ro -v nova-gocache:/gocache -v nova-gomod:/gomodcache:ro \
+      -v "$PWD":/src:ro -v nova-gocache-<domain>:/gocache -v nova-gomod:/gomodcache:ro \
       -w /src nova-functional \
       make test-functional PKGS=./internal/ntable/
 
@@ -107,8 +109,31 @@ user as "other", so it is world-readable.
 | `--tmpfs /tmp` | test directories and built test binaries live in memory and are gone at exit; `exec` because test binaries run from there |
 | `--tmpfs /home/bench` | a writable home, in memory; `mode=1777` because podman does not take a `uid` option here |
 | `-v …:/src:ro` | a test cannot change the tree it tests |
-| `-v nova-gocache:/gocache` | the build cache: warm runs compile nothing. One writer at a time, so parallel containers use a volume each |
+| `-v nova-gocache-<domain>:/gocache` | the build cache: warm runs compile nothing. One volume per trust domain and one writer at a time (see below) |
 | `-v nova-gomod:/gomodcache:ro` | the complete module cache, read only |
+
+### The build cache
+
+The test code in a run writes to `/gocache`, and Go links a cache entry into a
+later build by its action id without re-checking its content (only
+`GODEBUG=gocacheverify=1` re-checks, and it re-runs every action, so the cache
+saves nothing). A cache that a broken or malicious branch has written can
+therefore make another run go falsely green. The cache cannot reach the host
+(no network, the tree is read only), so the rule is about which runs share one:
+
+- One cache volume per trust domain. A run of code nobody has reviewed writes
+  only a cache of its own: a volume made for that run and removed after it, or
+  `--tmpfs /gocache:rw,size=2g,mode=1777` in place of the volume. Only runs of
+  reviewed, merged code share `nova-gocache-merged`, and no volume that a run
+  of unreviewed code has mounted is ever mounted by another run.
+- One writer at a time on a volume, so parallel containers use a volume each.
+- A size bound. The volume is not covered by `--memory` and grows with every
+  new package and Go version. Measure it before a run and remove it above the
+  bound; the next run rebuilds it warm-slow once:
+
+      podman run --rm -v nova-gocache-merged:/gocache:ro nova-functional du -sm /gocache
+
+  A volume over 2048 MB (`podman volume rm nova-gocache-merged`) is removed.
 
 The runtime that runs this on a runner is installed and probed by
 `fleet/container-runtime.yml` (rootless podman; the probe runs a container with
