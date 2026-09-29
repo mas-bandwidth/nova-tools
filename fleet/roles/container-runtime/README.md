@@ -58,7 +58,7 @@ The probe image is the base of the functional image; a class test
 | `container_runtime_subid_start`, `container_runtime_subid_count` | `100000`, `65536` | the range given when the user has no row: it starts at the first id at or above `_start` that no other user's range in the file covers |
 | `container_runtime_controllers` | `cpu`, `memory`, `pids` | controllers a limit needs delegated |
 | `container_runtime_probe_image` | the base image of the functional image, by digest | image the probe runs |
-| `container_runtime_probe_pids`, `_memory_bytes`, `_cpus`, `_timeout` | `128`, `268435456`, `2`, `60` | the probe's limits |
+| `container_runtime_probe_pids`, `_memory_bytes`, `_cpus`, `_timeout` | `128`, `268435456`, `2`, `60` | the probe's limits; `_cpus` may be fractional (`1.5`) |
 | `container_runtime_probe_kill_after`, `_grace` | `3`, `20` | the bound the timeout probe uses, and the seconds it may take to take effect |
 
 Debian-family Linux with cgroups v2 only (apt, and the unified hierarchy the

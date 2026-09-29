@@ -201,7 +201,7 @@
       - -e
       - "WANT_MEMORY={{ container_runtime_probe_memory_bytes }}"
       - -e
-      - "WANT_CPU={{ container_runtime_probe_cpus * 100000 }} 100000"
+      - "WANT_CPU={{ ((container_runtime_probe_cpus | float) * 100000) | round | int }} 100000"
       - "{{ container_runtime_probe_image }}"
       - sh
       - -c
