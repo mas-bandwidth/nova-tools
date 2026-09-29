@@ -270,7 +270,7 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 	if at := p.F("attempt"); at != "" && at != "0" {
 		head += "   attempt " + at
 	}
-	if h := p.F("head"); h != "" && h != p.ID {
+	if h := p.F("head"); h != "" && h != p.ID && !strings.HasPrefix(h, p.ID+".w") {
 		head += "   head " + h
 	}
 	for i := len(v.Work) - 1; i >= 0; i-- {
