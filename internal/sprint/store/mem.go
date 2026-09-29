@@ -779,6 +779,22 @@ func (m *Mem) SetCursor(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *Mem) Coordinator(context.Context) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.kv[keyCoordinator], nil
+}
+
+func (m *Mem) SetCoordinator(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.kv == nil {
+		m.kv = map[string]string{}
+	}
+	m.kv[keyCoordinator] = name
+	return nil
+}
+
 // Record is a member's record as the store holds it, for tests.
 func (m *Mem) Record(table, id string) (row, col string, rev uint64, fields map[string]string, ok bool) {
 	m.mu.Lock()

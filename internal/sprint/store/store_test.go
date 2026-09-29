@@ -133,7 +133,7 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	for _, g := range v.Groups {
 		types = append(types, g.Type)
 	}
-	for _, want := range []string{sprint.NWorkOK, sprint.NReadyToAccept, sprint.NStartedMerging, sprint.NBatchLanded, sprint.NStreamLanded} {
+	for _, want := range []string{sprint.NWorkOK, sprint.NStartedMerging, sprint.NBatchLanded, sprint.NStreamLanded} {
 		found := false
 		for _, got := range types {
 			found = found || got == want

@@ -80,6 +80,11 @@ type Backend interface {
 	NotesSince(ctx context.Context, after string, max int) ([]sprint.Note, []string, error)
 	Cursor(ctx context.Context) (string, error)
 	SetCursor(ctx context.Context, id string) error
+	// Coordinator is the sprint's coordinator, set by init ("" when none
+	// is); release is refused for any other actor. It is one for the sprint,
+	// kept by a clear, and teardown removes it.
+	Coordinator(ctx context.Context) (string, error)
+	SetCoordinator(ctx context.Context, name string) error
 	// RecordIDs is every member id the table has held a record of, placed
 	// or not, as its change log names them: the records its drop keeps.
 	RecordIDs(ctx context.Context, table string) ([]string, error)

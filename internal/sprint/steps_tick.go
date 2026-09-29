@@ -154,25 +154,27 @@ func bound(p Plan, n int) Plan {
 // T1. TickResolve, when something landed or was added since the last tick,
 // scans every stream's waiting set in score order: a primary whose every need
 // has landed moves to ready; a need that was dropped is the blocked judgment,
-// once. A sentinel is never moved.
+// once. A sentinel is never moved: when everything it needs has landed the
+// tick marks it reached and opens its judgment (SentinelsDue), and what waits
+// behind it stays waiting until the coordinator releases it.
 func TickResolve(s *Snapshot, r TickReq) Plan {
 	if !r.Scan {
 		return Plan{}
 	}
 	var ids []string
 	for _, c := range s.Work.Column(Waiting) {
-		if c.F("kind") == Sentinel {
-			// SENTINEL CALL SITE: when every need of a sentinel has landed the
-			// tick marks it REACHED and opens its judgment, by the sentinel's
-			// own pure step (branch rowan/sprint-fix-h), called here.
-			continue
+		if !IsSentinel(c) {
+			ids = append(ids, c.ID)
 		}
-		ids = append(ids, c.ID)
 	}
-	if len(ids) == 0 {
-		return Plan{}
+	var p Plan
+	if len(ids) > 0 {
+		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
-	return bound(Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()}), TickMaxMoves)
+	due := SentinelsDue(s, r.who())
+	p.Units = append(p.Units, due.Units...)
+	p.Notes = append(p.Notes, due.Notes...)
+	return bound(p, TickMaxMoves)
 }
 
 // T7. TickResume resumes a stream stopped only because a card needed another
@@ -220,7 +222,7 @@ func TickDeal(s *Snapshot, r TickReq) Plan {
 	var p Plan
 	var ready []*Card
 	for _, c := range s.Work.Column(Ready) {
-		if c.F("kind") != Sentinel {
+		if !IsSentinel(c) {
 			ready = append(ready, c)
 		}
 	}

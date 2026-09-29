@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,7 @@ type AckReq struct {
 // of its own.
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
+	p.on(s)
 	closing := map[string]bool{} // every note id this call closes
 	named := map[string]bool{}
 	for _, id := range r.Notes {
@@ -52,6 +54,18 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			// cleared and come back.
 			u.Notes = append(u.Notes, acknowledged(n, entries, r.Who, s.Now))
 		}
+		if n.Type == NBlocked {
+			for _, o := range entries {
+				if c, notes := waive(s, o.Subject(), r.Who); c.Entry.ID != "" {
+					u.Changes = append(u.Changes, c)
+					u.Notes = append(u.Notes, notes...)
+					u.Moved += "; " + o.Subject() + " waives " + c.Entry.Set["waived"]
+					if c.Entry.Move != nil {
+						u.Moved += " and is ready"
+					}
+				}
+			}
+		}
 		p.Units = append(p.Units, u)
 	}
 	// A primary whose last open judgment this call closes, with its reads
@@ -70,6 +84,32 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 	}
 	return p
+}
+
+// waive is the change that records, on a waiting primary, that the
+// coordinator acknowledged its dropped needs: they are waived, by whom and
+// when, and count as satisfied. A primary with nothing else to wait for moves
+// to ready in the same change; a sentinel is reached instead.
+func waive(s *Snapshot, id, who string) (Change, []Note) {
+	c := s.Work.Placed(id)
+	if c == nil || c.Col != Waiting {
+		return Change{}, nil
+	}
+	gone := droppedNeeds(s, WaitsFor(s, c, nil))
+	if len(gone) == 0 {
+		return Change{}, nil
+	}
+	set := map[string]string{"waived": strings.Join(append(Split(c.F("waived")), gone...), ","), "waived_by": who, "waived_at": stamp(s.Now)}
+	after := &Card{ID: c.ID, Fields: map[string]string{"needs": c.F("needs"), "waived": set["waived"]}}
+	switch {
+	case len(WaitsFor(s, after, nil)) > 0:
+	case IsSentinel(c):
+		set["reached"] = stamp(s.Now)
+		return change(Work, setEntry(c, set)), []Note{reachedNote(s, c, nil, 0, who)}
+	default:
+		return change(Work, moveEntry(c, c.Row, Ready, set)), nil
+	}
+	return change(Work, setEntry(c, set)), nil
 }
 
 // exhaustedAfter is the reads exhausted judgment of a primary in review whose

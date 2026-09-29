@@ -100,7 +100,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		for _, rd := range chosenReaders {
 			q[rd]++
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
-				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head")})))
+				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)})))
 		}
 		all = append(all, chosenReaders...)
 		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
@@ -142,8 +142,10 @@ type ReadReq struct {
 }
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
-// with the finding. A broken read is a judgment; the second different reader's
-// ok at the primary's head says it is ready to accept.
+// with the finding (a report on a card still asked is the begin and the report
+// in one step, begun stamped with it). A broken read is a judgment; the second different reader's
+// ok at the primary's head is the judgment ready to accept, which accept,
+// rework and drop close.
 func Read(s *Snapshot, r ReadReq) Plan {
 	var p Plan
 	sel := r.Sel
@@ -174,7 +176,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Begin {
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, nil))},
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, map[string]string{"begun": stamp(s.Now)}))},
 				Moved: c.ID + " asked -> reading"})
 			continue
 		}
@@ -183,6 +185,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			col = Broken
 		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
+		if c.Col == Asked { // a report on a card never begun is the begin and the report in one step
+			set["begun"] = stamp(s.Now)
+		}
 		if r.Finding != "" {
 			set["finding"] = r.Finding
 		}
@@ -207,8 +212,8 @@ func Read(s *Snapshot, r ReadReq) Plan {
 						others[o.F("reader")] = true
 					}
 				}
-				if len(others) == 1 {
-					n := happened(NReadyToAccept, pr.Row, s.Now, pr.ID)
+				if len(others) == 1 && !hasOpen(s.Open, NReadyToAccept, pr.ID) {
+					n := judgment(NReadyToAccept, pr.Row, s.Now, 0, pr.ID)
 					n.Who, n.Attempt = r.As, attempt
 					u.Notes = append(u.Notes, n)
 				}
@@ -416,7 +421,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -584,12 +589,29 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
 		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
+		// Back in review, the coordinator decides again.
+		j := judgment(NReturned, c.Row, s.Now, c.Int("returns"), c.ID)
+		j.Who, j.Attempt, j.What = r.Who, c.Int("attempt"), r.Reason
+		if len(okReaders(s, c)) < 2 {
+			j.Decisions = removeDecision(j.Decisions, "accept")
+		}
+		u.Notes = append(u.Notes, j)
 		leaving[c.ID] = true
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, leaving, nil)
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
+}
+
+func removeDecision(ds []string, d string) []string {
+	var out []string
+	for _, x := range ds {
+		if x != d {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func orEmpty(c *Card, id string) *Card {
@@ -669,6 +691,19 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, dropping, dropping)
+	// Each stream counts its dropped primaries on its control card.
+	for _, st := range unitStreams(p) {
+		k := 0
+		for _, u := range p.Units {
+			if u.Stream == st && dropping[u.Key] {
+				k++
+			}
+		}
+		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
+	}
+	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
+		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
+	}
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
 }

@@ -271,6 +271,7 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+	h.run(TakeStep(sprint.TakeReq{As: "m2", Sel: sprint.Sel{Limit: 1}, Who: "m2"}))
 	// stopped for three hours: no deadline runs
 	h.stopMachine()
 	h.tick(3 * time.Hour)
@@ -281,16 +282,18 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	}
 	h.tick(sprint.DeadlineUnfinished + time.Minute)
 	h.machine()
-	if h.written(sprint.NWorkLate) != 1 || len(h.openOf(sprint.NWorkLate)) != 1 {
-		t.Fatalf("the late work card: written %d open %d", h.written(sprint.NWorkLate), len(h.openOf(sprint.NWorkLate)))
+	// each member's work card, taken and not finished
+	if h.written(sprint.NWorkLate) != 2 || len(h.openOf(sprint.NWorkLate)) != 2 {
+		t.Fatalf("the late work cards: written %d open %d", h.written(sprint.NWorkLate), len(h.openOf(sprint.NWorkLate)))
 	}
 	h.tick(2 * time.Minute)
 	h.machine()
 	h.quiet("late")
-	if h.written(sprint.NWorkLate) != 1 {
+	if h.written(sprint.NWorkLate) != 2 {
 		t.Fatalf("written again")
 	}
 	h.work("m1")
+	h.work("m2")
 	h.machine()
 	if len(h.openOf(sprint.NWorkLate)) != 0 {
 		t.Fatalf("still open after the finish")

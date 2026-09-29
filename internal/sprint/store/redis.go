@@ -520,3 +520,19 @@ func (r *Redis) Cursor(ctx context.Context) (string, error) {
 func (r *Redis) SetCursor(ctx context.Context, id string) error {
 	return r.C.Set(ctx, r.key(keyCursor), id, 0).Err()
 }
+
+// keyCoordinator holds the coordinator's name: one for the sprint, as the
+// machine's records, so a clear keeps it.
+const keyCoordinator = "coordinator"
+
+func (r *Redis) Coordinator(ctx context.Context) (string, error) {
+	v, err := r.C.Get(ctx, r.Names.Key(keyCoordinator)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return v, err
+}
+
+func (r *Redis) SetCoordinator(ctx context.Context, name string) error {
+	return r.C.Set(ctx, r.Names.Key(keyCoordinator), name, 0).Err()
+}

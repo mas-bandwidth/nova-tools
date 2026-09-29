@@ -21,7 +21,7 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyNotes, keyOpen, keyCurs
 
 // machineKeys are the machine's records: one for the whole sprint, under its
 // prefix, never per epoch, so a clear keeps the machine's state and history.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // identity, revision, definition record and change log; and its operation

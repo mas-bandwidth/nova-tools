@@ -129,6 +129,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
+  A report on a card still asked is accepted: it is the begin and the report in
+  one step, and `begun` is stamped with it.
 - A primary is acceptable when two different readers have an ok read card at
   its current attempt and head. One reader's ok alone is never enough, whoever
   the reader. A reader counts once, and a read card counts only when the row it

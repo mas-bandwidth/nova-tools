@@ -174,8 +174,9 @@ func TestACrossStreamNeedIsDealtWhenItLands(t *testing.T) {
 	h.machine()
 	h.readAll()
 	h.landAll("s1")
-	if st := h.state("y"); st != sprint.Waiting {
-		t.Fatalf("y is %s before a tick", st)
+	// the landing step resolves what waited for it; the tick deals it
+	if st := h.state("y"); st != sprint.Ready {
+		t.Fatalf("y is %s after the landing", st)
 	}
 	h.machine()
 	if st := h.state("y"); st != sprint.Working {
@@ -373,4 +374,41 @@ func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) 
 		}
 	}
 	h.clean("after the stuck operation")
+}
+
+// The tick never moves a sentinel: when everything before it has landed the
+// tick marks it reached and opens its judgment; what waits behind it stays
+// waiting, and is dealt only after the coordinator releases it.
+func TestTheTickStopsAtASentinelUntilItIsReleased(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"after"}}))
+	h.startMachine()
+	for i := 0; i < 4; i++ {
+		h.machine()
+		h.work("m1")
+		h.machine()
+		h.readAll()
+		h.landAll("s1")
+	}
+	h.machine()
+	if h.state("s1-1") != sprint.Landed || h.state("s1-2") != sprint.Landed {
+		t.Fatalf("before the sentinel: %s %s", h.state("s1-1"), h.state("s1-2"))
+	}
+	if h.state("stop") != sprint.Waiting || h.state("after") != sprint.Waiting || len(h.openOf(sprint.NSentinelReached)) != 1 {
+		t.Fatalf("at the sentinel: stop %s after %s reached %d", h.state("stop"), h.state("after"), len(h.openOf(sprint.NSentinelReached)))
+	}
+	h.quiet("at the sentinel")
+	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "the first two are green", Coordinator: "tester", Who: "tester"}))
+	h.machine()
+	if h.state("stop") != sprint.Landed || h.state("after") != sprint.Working {
+		t.Fatalf("after the release: stop %s after %s", h.state("stop"), h.state("after"))
+	}
+	h.clean("after the release")
 }
