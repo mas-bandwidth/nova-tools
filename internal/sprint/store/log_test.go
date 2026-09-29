@@ -59,14 +59,14 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 	h.clean("reworked")
 	got := strings.Join(h.linesOf("p1"), "\n")
 	for _, want := range []string{
-		"p1 added to s1 by tester, score",
+		"p1 added to s1 by tester",
 		"attempt 1 dealt to m1",
 		"attempt 1 redealt from m1 to m2 by the machine",
 		"m2 took attempt 1",
 		"m2 finished attempt 1: FAILED",
 		"judgment: work came back failed",
 		"p1 reworked by tester: attempt 2",
-		"answered \"work came back failed\" by tester",
+		"tester answered \"work came back failed\": rework",
 		"attempt 2 dealt to",
 	} {
 		if !strings.Contains(got, want) {

@@ -79,9 +79,6 @@ func renderPrimary(l Line, fromCol, toCol string, moved bool, by string) string 
 	switch {
 	case l.From == "" && !l.Removed:
 		s := fmt.Sprintf("%s added to %s %s", id, l.Stream, by)
-		if sc := l.Set["score"]; sc != "" {
-			s += ", score " + sc
-		}
 		if toCol == string(Waiting) {
 			s += ", waiting for what it needs"
 		}
@@ -179,7 +176,7 @@ func renderMerge(l Line, toRow, toCol string, moved bool, by string) string {
 	case !moved:
 		return fmt.Sprintf("its merge card changed %s: %s", by, setWords(l.Set))
 	case toCol == Merged:
-		return fmt.Sprintf("merged into %s %s", toRow, by)
+		return fmt.Sprintf("merged into %s and landed %s", toRow, by)
 	case toCol == Stuck:
 		return fmt.Sprintf("stuck in the merge of %s %s", toRow, whyOf(l))
 	case toCol == Returned:
@@ -244,14 +241,14 @@ func renderNote(l Line) string {
 	case Judgment:
 		s := "judgment: " + n.Type
 		if n.What != "" {
-			s += ": " + n.What
+			s += ": " + firstLine(n.What)
 		}
 		if len(n.Decisions) > 0 {
 			s += " (decisions: " + strings.Join(n.Decisions, ", ") + ")"
 		}
 		return s
 	case Decided:
-		return fmt.Sprintf("answered %q %s: %s", n.Type, who, n.What)
+		return fmt.Sprintf("%s answered %q: %s", strings.TrimPrefix(who, "by "), n.Type, firstLine(strings.TrimPrefix(n.What, "answered by ")))
 	case Acknowledged:
 		if !n.Review.IsZero() {
 			return fmt.Sprintf("%q held %s until %s", n.Type, who, n.Review.Format("15:04"))
@@ -260,9 +257,18 @@ func renderNote(l Line) string {
 	}
 	s := n.Type
 	if n.What != "" {
-		s += ": " + n.What
+		s += ": " + firstLine(n.What)
 	}
 	return s
+}
+
+// firstLine is a text's first line, marked when more follows: the whole
+// text is printed as a paragraph below the timeline.
+func firstLine(s string) string {
+	if first, _, more := strings.Cut(strings.TrimSpace(s), "\n"); more {
+		return strings.TrimSpace(first) + " (more below)"
+	}
+	return strings.TrimSpace(s)
 }
 
 // Timeline is a primary's lines as its story tells them: in the order
@@ -290,10 +296,23 @@ func Timeline(lines []Line, id string) []Line {
 			fleetIn[l.Op] = true
 		}
 	}
+	mergeIn := map[string]bool{} // ops with a line of the primary's merge card
+	for _, l := range lines {
+		if l.Note == nil && l.Table == Merge && l.Card == id {
+			mergeIn[l.Op] = true
+		}
+	}
 	var out []Line
 	for _, l := range lines {
-		if l.Note == nil && l.Table == Work && l.Card == id && fleetIn[l.Op] && mirrorsWork(l) {
+		switch {
+		case l.Note == nil && l.Table == Work && l.Card == id && fleetIn[l.Op] && mirrorsWork(l):
 			continue
+		case l.Note == nil && l.Table == Work && l.Card == id && mergeIn[l.Op] && strings.HasSuffix(l.To, ":"+string(Landed)):
+			continue // the merge card's line says merged and landed
+		case l.Note == nil && l.Table == Merge && l.From == "" && !l.Removed:
+			continue // queued at the accept, which says so
+		case l.Note == nil && l.From == l.To && !l.Removed && len(l.Text) == 0 && l.Set["score"] == "":
+			continue // a field set in passing (a stamp, the readers asked): the lines around it say what happened
 		}
 		out = append(out, l)
 	}

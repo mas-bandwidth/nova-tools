@@ -288,6 +288,13 @@ const (
 	noneText = "'<why nothing is to be done>'"
 )
 
+// NoteCommands is one open judgment's decisions as commands, the members it
+// names its subjects: as the inbox prints them for a group of one.
+func NoteCommands(n Note, members []string) []Command {
+	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID}, Members: members, Decisions: n.Decisions}
+	return commands(g, n, "")
+}
+
 // commands is the group's decisions as commands, from its oldest note (a
 // stopped stream's card and the card it needs, by their named fields). A
 // decision about cards takes the group with its size and the notifications it
