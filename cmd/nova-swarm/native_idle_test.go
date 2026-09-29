@@ -251,7 +251,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 }
 
 // TestNativeIdleReapsTheCardInsteadOfShootingIt keeps the REAL signal, because the point of
-// the HOLD (johnny-b9716b436e56: "Idle kill is `KillGroup` ... not `swarm.Reap`
+// the HOLD ("Idle kill is `KillGroup` ... not `swarm.Reap`
 // (TERM-wait-KILL)") is what the operating system delivers, and a recorder cannot show
 // that. Only the WATCH is seamed here; nativeReap and nativeKillGroup stay real.
 //

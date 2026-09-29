@@ -6,7 +6,7 @@
 // package's 71 s.
 //
 // These tests are behind the `slow` build tag: the PR test jobs do not build them and
-// .github/workflows/nightly-slow.yml does (#516, Glenn's two-minute rule -- a package's
+// .github/workflows/nightly-slow.yml does (#516, the two-minute rule -- a package's
 // tests answer in a minute). Nothing here is skipped or weakened; it runs nightly, whole.
 
 package main

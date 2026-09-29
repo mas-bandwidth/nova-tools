@@ -9,7 +9,7 @@ package main
 // logs for details.","ref":"err_fb35c63e"}}`, attempt 2 `Cannot connect to API`. And the
 // launcher's one log line for it read:
 //
-//	vision tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=/home/glenn/...
+//	vision tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=/home/worker/...
 //
 // A fill loop or a manager counting its in-flight cards by that line counts a card that
 // never ran as delivered, and a card that made zero paid calls as done. The shift caught it

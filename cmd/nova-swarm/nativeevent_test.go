@@ -69,7 +69,7 @@ func okRow() swarm.UsageRow {
 func TestCardEndEventIsOKOnlyWhenTheCardEarnedIt(t *testing.T) {
 	t.Parallel()
 
-	green := "RESULT card-1 sha=abc123 — the cell\nGREEN the assertion holds\nBRANCH rowan/card-1\n"
+	green := "RESULT card-1 sha=abc123 — the cell\nGREEN the assertion holds\nBRANCH worker/card-1\n"
 	for _, tc := range []struct {
 		name    string
 		verdict string
@@ -246,7 +246,7 @@ func TestCardEndEmitWritesTheEntry(t *testing.T) {
 // TestCardEndEmitWritesTheCardsDoneKey locks in the KEY, not just the entry. cmdNative hands
 // emitCardEnd WriterOptions with no Stream, so the key is whatever events.Open defaults to;
 // this runs the real Redis store (Open, XADD) against miniredis and asserts the entry is on
-// `cards:done` and that `ev:cards` was never created (Johnny's HOLD on #2619).
+// `cards:done` and that `ev:cards` was never created (the HOLD on #2619).
 func TestCardEndEmitWritesTheCardsDoneKey(t *testing.T) {
 	t.Parallel()
 

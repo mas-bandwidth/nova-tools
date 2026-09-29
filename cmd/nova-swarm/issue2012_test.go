@@ -53,7 +53,7 @@ for c in $CARDS; do
 	echo "$c"
 done
 set -- $ARGS
-git push -q origin $NEW:refs/heads/rowan/integration
+git push -q origin $NEW:refs/heads/worker/integration
 `
 
 func TestIssue2012(t *testing.T) {
@@ -163,7 +163,7 @@ func TestIssue2012(t *testing.T) {
 	})
 
 	t.Run("mapfile-inside-quotes-is-prose", func(t *testing.T) {
-		// Held on #2872 (emma, stella): fleetLineScan kept quoted bytes in bare, so a
+		// Held on #2872: fleetLineScan kept quoted bytes in bare, so a
 		// quoted `mapfile` drifted bash4-builtin. Quoted text is prose; `$( )` is code.
 		body := strings.Join([]string{
 			"#!/usr/bin/env bash",
@@ -182,7 +182,7 @@ func TestIssue2012(t *testing.T) {
 		if exit != 2 || !strings.Contains(stdout, "bash4-builtin: 2:") {
 			t.Fatalf("`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
 		}
-		// Held on #2872 at 9a640fbb (stella): a `$( )` is scanned with its own quote
+		// Held on #2872 at 9a640fbb: a `$( )` is scanned with its own quote
 		// state, so a quoted word inside the substitution is prose too, while a bare
 		// builtin or an unquoted expansion inside it is still code.
 		inner := fleetScript(t, "subst-quoted-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(printf '%s' 'mapfile')\"\ny=$(echo \"readarray\")\nz=\"$(printf '%s' \")\" 'mapfile')\"\n")

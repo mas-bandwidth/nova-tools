@@ -188,7 +188,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 	})
 }
 
-// TestStageOKLinePrintsOnSuccessfulStage is nova-tools#3050: the rowan-tools #187 launcher
+// TestStageOKLinePrintsOnSuccessfulStage is nova-tools#3050: the launcher (#187)
 // detaches 2s after it sees a STAGE OK line on stdout instead of waiting the full 135s.
 // #3050's staging returned silently, so every launch waited out the timeout and printed
 // STAGE UNSEEN even though staging had already finished. RED WITHOUT THE FIX: nativeRun

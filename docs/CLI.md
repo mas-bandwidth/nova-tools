@@ -835,13 +835,11 @@ hundred lines of Go, and the whole test suite runs against it with no provider, 
 and no key worth anything. It is the shortest way to see the contract, and to test a pool
 of your own before a real model touches it.
 
-**`native` takes directory leases (`.lease`, `.slot-lease`), but no bench slot lease (#3877).** A bench's capacity is one number,
+**`native` takes directory leases (`.lease`, `.slot-lease`).** A bench's capacity is one number,
 `bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
 is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
 reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
-card. The file ledger on disk is a second answer to the same question.
-`--slots-store` and `--owner` flags are accepted for compatibility with callers built before
-#3877, but are read by nothing in `native`.
+card. `--slots-store` and `--owner` flags are accepted and ignored by `native`.
 
 **The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
 own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's

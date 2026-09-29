@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// TestNativeLaunchGoesThroughTheOneLauncher is the call site #2646 left open (stella's
+// TestNativeLaunchGoesThroughTheOneLauncher is the call site #2646 left open (the
 // hold): a native launch builds its harness argv with swarm.LaunchArgvFor, the providers
 // table's one launcher, and the argv the child is handed is exactly the one it returned.
 // A provider the table names launches with its own row; one it does not launches with the

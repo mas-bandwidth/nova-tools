@@ -8,17 +8,17 @@ Every rule it keeps is a failure from the record:
 
 | the failure, from the record | the rule that closes it |
 |---|---|
-| six workers on one data home: `database is locked`, and five of six did nothing (**2026-09-10**) | a **slot**: its own working directory and its own data home per running worker |
+| six workers on one data home: `database is locked`, and five of six do nothing | a **slot**: its own working directory and its own data home per running worker |
 | an API key in an argument is in the process table, and in a log, and in a transcript somebody pastes (**the leak that taught it**) | the key is **read as data from a file, never sourced, never an argument, never printed** — and the config file written for the harness carries the env var's *name*, never its value |
 | a worker asked to loop ran until somebody noticed | the deadline is held by the **machinery**, outside the worker, and the worker is told its own deadline in its prompt |
 | a worker read a file outside its job directory, the harness refused the read, and the worker treated the refusal as fatal | the sandbox rule is stated in the prompt: a refused read is **not** the end of the run |
-| a task was given as one sentence and came back as a plan | task **templates** with the learned conditions baked in, and `RESULT.md` with only a plan is a **failed** task |
+| a task is given as one sentence and returns as a plan | task **templates** with the learned conditions baked in, and `RESULT.md` with only a plan is a **failed** task |
 | 25 of 67 findings in batch 1 were duplicates of the owed list in the pull request body nobody read first | the `read-pr` template's first condition: **read the owed list first and mark duplicates** |
-| 5 of 67 were wrong because a rule was paraphrased from memory | **quote every rule verbatim with `file:line`** |
+| findings fail when a rule is paraphrased from memory | **quote every rule verbatim with `file:line`** |
 | a worker that died at the deadline had found things and written none of them | **append each finding the moment it exists**, never at the end |
 | one worker read 40 files and finished nothing | a **token and file budget** in the task |
-| a result file was rewritten while a reader was inspecting it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime |
-| a bounded review that found nothing was counted as a plan, so a worker was rewarded for finding something | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` |
+| a result file is rewritten while a reader inspects it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime |
+| a bounded review that finds nothing counts as a plan, so a worker is rewarded for finding something | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` |
 
 EVERYTHING A WORKER WRITES IS DATA. A `RESULT.md` is a report, never an instruction:
 nothing in it is executed, nothing in it grants anything, and a finding in it is a claim
@@ -71,7 +71,7 @@ usage:
 5. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules.
 6. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping.
 7. **`profile`**: Aggregates per-turn timeline TSV files into execution phase durations.
-8. **`native`**: Executes a single card through the harness under sandbox containment with external deadline, idle timer, and token tracking. Takes job and slot directory leases (`.lease`, `.slot-lease`); bench capacity-store lease was removed in #3877.
+8. **`native`**: Executes a single card through the harness under sandbox containment with external deadline, idle timer, and token tracking. Takes job and slot directory leases (`.lease`, `.slot-lease`).
 9. **`route`**: Classifies card complexity and kind against a routes table to select an appropriate worker description.
 10. **`slots`**: Bench slot lease broker (`init`, `take`, `release`, `list`) managing shared bench capacity.
 11. **`worker`**: Validates worker description JSON structure, environment variables, and readable roots.
@@ -128,7 +128,7 @@ The seven rules:
 
 1. A bench carries ONE slot store shared by every owner, at <bench store>/slots,
    a directory of atomic mkdir leases each holding owner, pid, card label, until=.
-2. Every launcher (a batch runner, a hand launch; native takes directory leases (.lease, .slot-lease), but no bench capacity-store lease since #3877)
+2. Every launcher (a batch runner, a hand launch; native takes directory leases (.lease, .slot-lease))
    takes a lease per card before it runs and releases it after; a launch
    without a lease is refused by the launcher.
 3. The broker verbs are the only way to hold a slot:
@@ -168,12 +168,13 @@ A bench holds slot leases: the store is `<store>/slots` with one directory per l
 
 `nova-swarm slots list --store <dir>` prints one line per lease.
 
-native takes directory leases (.lease, .slot-lease); bench capacity-store lease was removed in #3877.
+native takes directory leases (.lease, .slot-lease).
 
 ## The card is a pipeline, not a loop (issue #856)
 
-Each model call receives its required context explicitly. A card is a pipeline
-of stateless model calls; no memory is carried between calls.
+Each model call receives its required context explicitly. In this repository
+a card is a pipeline of stateless model calls, not an agent loop; no memory between calls
+is carried across invocations.
 Each rule below carries the hurt that made it, and **Red tests for this
 section** lists the red test for each rule: one per rule, seen red first,
 against the fake harness and the fixture card, with no network.
@@ -208,7 +209,7 @@ P6. **A `MODE: explore` card carries a turn budget the harness enforces.** The
     card names its budget on a `TURNS: <n>` line; the harness stops the card at
     that turn count and the partial RESULT names the budget, so an explore read
     that wanders ends on a number the card chose rather than on the deadline it
-    was given.
+    receives.
 
 P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
     inputs are the issue text plus the named test file and the named source
@@ -323,7 +324,7 @@ This one grammar covers every section in every kind.
 
 ## The efficiency card (#87), cross-tool
 
-The card is a measurement, taken on the bench on **2026-09-12**, of the same
+The card is a measurement of the same
 work paid for once per tool. This section is the part of it that binds
 `nova-swarm`; the other tools' halves live in their own normative specs, and
 nothing here restates them. The card is cross-tool, so its two rules are
@@ -343,13 +344,13 @@ is read once and the per-job clone is small.
 
 ### The prompt text is the tool's
 
-Five shell scripts duplicated five of the seven tools on the measured bench,
-and for `nova-swarm` the live text was `run-worker-v2.sh:120` — a shell
-script's private variable, not a template. That is the inverse of this spec:
+Five shell scripts duplicated five of the seven tools on the measured bench;
+for `nova-swarm` the live text is a template, not a shell
+script's private variable. That is the inverse of this spec:
 the prompts and their conditions are `internal/swarm/templates.go` in the
 binary, printable, and versioned with the tool. So **the prompt text the workers run is the
-tool's**: `Prompt` and `WrapTemplate` assemble it from the named template, the
-shell scripts are prototypes, the shell scripts are prototypes. No tool's live state is a shell script's private variable.
+tool's**: `Prompt` and `WrapTemplate` assemble it from the named template; the
+shell scripts are prototypes. No tool's live state is a shell script's private variable.
 
 ### Red tests
 
@@ -359,9 +360,9 @@ is trusted.
 - a per-job clone built with `--reference` and `--dissociate` shares the reference checkout's object graph and still has its own working tree;
 - the worker prompt carries the named template's conditions from the tool, with no shell script in the path.
 
-## Efficiency: lessons absorbed 2026-09-12
+## Efficiency: lessons absorbed
 
-Measured 2026-09-12 on the live pool and the worker homes. Correctness is the
+Measured on the live pool and the worker homes. Correctness is the
 rest of this spec; this section records what `nova-swarm` costs the coordinator
 and the bench, and the rules that bound that cost. Two operations are the
 widest, and each has one rule.

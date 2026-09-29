@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -261,3 +262,55 @@ func TestPreflightDoctorStandsAsideForHelp(t *testing.T) {
 		t.Errorf("native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	}
 }
+
+// TestLaunchFlagSetParityWithBatchAndNative permanently enforces that launchFlagSet's
+// mirror for batch and native matches the real FlagSets declared by the commands.
+func TestLaunchFlagSetParityWithBatchAndNative(t *testing.T) {
+	t.Parallel()
+
+	checkParity := func(verb string, realFS *flag.FlagSet) {
+		t.Helper()
+		mirrorFS := launchFlagSet(verb)
+
+		realFlags := make(map[string]bool)
+		realFS.VisitAll(func(f *flag.Flag) {
+			realFlags[f.Name] = true
+		})
+
+		mirrorFlags := make(map[string]bool)
+		mirrorFS.VisitAll(func(f *flag.Flag) {
+			mirrorFlags[f.Name] = true
+		})
+
+		isBool := func(fs *flag.FlagSet, name string) bool {
+			fl := fs.Lookup(name)
+			if fl == nil {
+				return false
+			}
+			bf, ok := fl.Value.(interface{ IsBoolFlag() bool })
+			return ok && bf.IsBoolFlag()
+		}
+
+		for name := range realFlags {
+			if !mirrorFlags[name] {
+				t.Errorf("%s: real flag %q missing from launchFlagSet mirror", verb, name)
+				continue
+			}
+			if isBool(realFS, name) != isBool(mirrorFS, name) {
+				t.Errorf("%s: flag %q boolean status mismatch: real isBool=%v, mirror isBool=%v", verb, name, isBool(realFS, name), isBool(mirrorFS, name))
+			}
+		}
+		for name := range mirrorFlags {
+			if !realFlags[name] {
+				t.Errorf("%s: mirror flag %q not present in real FlagSet", verb, name)
+			}
+		}
+	}
+
+	bFlags, _ := batchFlagSet()
+	checkParity("batch", bFlags.fs)
+
+	nFlags, _ := nativeFlagSet()
+	checkParity("native", nFlags.fs)
+}
+

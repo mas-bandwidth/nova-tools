@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// SPEC CARD #80 (docs/SPEC-SWARM.md, Efficiency: lessons absorbed 2026-09-12):
+// SPEC CARD #80 (docs/SPEC-SWARM.md, Efficiency: lessons absorbed):
 // the card is one of the seven-tool efficiency cards and records two measured
 // operations of nova-swarm -- the per-job clone and the waits a job holds -- as
 // normative contract (status and triage measurements were excised with the dead
@@ -35,17 +35,17 @@ func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 		"--usage-interval",
 	} {
 		if !strings.Contains(section, want) {
-			t.Errorf("SPEC-SWARM.md Efficiency: lessons absorbed 2026-09-12 names %q; the section holds:\n%s", want, section)
+			t.Errorf("SPEC-SWARM.md Efficiency: lessons absorbed names %q; the section holds:\n%s", want, section)
 		}
 	}
 }
 
-// efficiencySection returns the body of the `## Efficiency: lessons absorbed
-// 2026-09-12` section: the contract lives under that header and ends at the next
+// efficiencySection returns the body of the `## Efficiency: lessons absorbed`
+// section: the contract lives under that header and ends at the next
 // top-level `## ` header.
 func efficiencySection(t *testing.T, spec string) string {
 	t.Helper()
-	const header = "## Efficiency: lessons absorbed 2026-09-12"
+	const header = "## Efficiency: lessons absorbed"
 	start := strings.Index(spec, header)
 	if start < 0 {
 		t.Fatalf("the spec has no %q section", header)
