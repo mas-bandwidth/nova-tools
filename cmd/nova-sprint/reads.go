@@ -323,10 +323,25 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "inbox", err.Error())
 	}
+	ctx := context.Background()
+	if *read {
+		// the cursor is the coordinator's: anyone reads the inbox, and only
+		// the coordinator moves what it shows
+		rc := *c
+		rc.verb = "inbox --read"
+		if rc.actor == "" {
+			return refuse(stderr, "inbox", "--read moves the coordinator's cursor: --actor <name> is required (or NOVA_SPRINT_ACTOR); nothing was changed")
+		}
+		if why, err := coordinatorsAlone(ctx, st, rc); err != nil || why != "" {
+			if err != nil {
+				return a.readFailed("inbox", err, stderr)
+			}
+			return refuse(stderr, "inbox", why)
+		}
+	}
 	if isNumber(*open) {
 		return refuse(stderr, "inbox", "group numbers are not accepted: --open wants a group's id, as inbox prints it")
 	}
-	ctx := context.Background()
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
 	if err != nil {
 		return a.readFailed("inbox", err, stderr)

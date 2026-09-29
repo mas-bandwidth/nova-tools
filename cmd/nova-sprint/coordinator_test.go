@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -157,5 +158,30 @@ func TestEveryVerbHasAClass(t *testing.T) {
 		if verbClasses[name] != classWorker {
 			t.Errorf("%s is a worker's: %q", name, verbClasses[name])
 		}
+	}
+}
+
+// inbox --read moves the coordinator's cursor, so it is the coordinator's;
+// any actor reads the inbox, and nothing another does hides anything.
+func TestInboxReadIsTheCoordinators(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --members m1 --readers reader-a,reader-b")
+	ta.ok("add --stream s1 --count 1")
+	before := ta.applies()
+	code, _, errs := ta.do("inbox --read --actor intruder")
+	if code != 2 || !strings.Contains(errs, "the coordinator's alone: coordinator, not intruder") {
+		t.Fatalf("inbox --read by another: %d %q", code, errs)
+	}
+	cur, _ := ta.m.Cursor(context.Background())
+	if ta.applies() != before || cur != "" {
+		t.Fatalf("a refused inbox --read moved the cursor to %q", cur)
+	}
+	if code, _, errs := ta.do("inbox --actor intruder"); code != 0 {
+		t.Fatalf("inbox by another: %d %q", code, errs)
+	}
+	ta.ok("inbox --read")
+	if cur, _ := ta.m.Cursor(context.Background()); cur == "" {
+		t.Fatalf("the coordinator's inbox --read did not move the cursor")
 	}
 }

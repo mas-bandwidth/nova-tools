@@ -576,7 +576,10 @@ coordinator takes init and teardown only. The workers' verbs (take, finish,
 read, fleet beat) are anyone's who names the member or reader, and their
 actor, when none is given, is that name. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run) are recorded as the machine; the reads
-(queue, inbox, card, check, where, goal show) need no actor. A card's and a
+(queue, inbox, card, check, where, goal show) need no actor, except `inbox
+--read`, which moves the coordinator's cursor and is the coordinator's alone:
+anyone reads the inbox, and nothing another actor does hides anything from
+the coordinator. A card's and a
 control card's text fields
 (brief, fix, finding, report, reason, note, return reason, ci note, did) are
 at most 8 KiB, and every manifest is checked against

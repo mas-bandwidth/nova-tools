@@ -73,6 +73,13 @@ func coordinatorOnly(ctx context.Context, st *store.Store, c common) (string, er
 	if verbClasses[c.verb] != classCoordinator {
 		return "", nil
 	}
+	return coordinatorsAlone(ctx, st, c)
+}
+
+// coordinatorsAlone is why the actor may not do what is the coordinator's
+// alone (a coordinator verb, or inbox --read, which moves the coordinator's
+// cursor): "" is may.
+func coordinatorsAlone(ctx context.Context, st *store.Store, c common) (string, error) {
 	coord, err := st.B.Coordinator(ctx)
 	if err != nil {
 		return "", err

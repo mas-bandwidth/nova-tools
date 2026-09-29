@@ -99,7 +99,8 @@ the recorded result), --json and --max <n> (listed items; 0 is all). The
 coordinator's verbs are the coordinator's alone (the first init names it:
 --coordinator, else the actor); take, finish, read and fleet beat are the
 workers', whose actor is the member or reader named; merge and ci are
-reports; tick and run are the machine's; the reads need no actor. A set is
+reports; tick and run are the machine's; the reads need no actor (inbox
+--read, which moves the coordinator's cursor, is the coordinator's). A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
