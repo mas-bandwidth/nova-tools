@@ -94,8 +94,9 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 		id := fmt.Sprint("c", i)
 		ao, ar := a.Work(id)
 		bo, br := b.Work(id)
-		am := a.Merge("s1", []string{"x", "y", "z"}, []string{"o1", "o2"})
-		bm := b.Merge("s1", []string{"x", "y", "z"}, []string{"o1", "o2"})
+		others := func() []string { return []string{"o1", "o2"} }
+		am := a.Merge("s1", []string{"x", "y", "z"}, others)
+		bm := b.Merge("s1", []string{"x", "y", "z"}, others)
 		au := a.Up(i, []string{"m1", "m2"}, map[string]bool{"m1": true})
 		bu := b.Up(i, []string{"m1", "m2"}, map[string]bool{"m1": true})
 		if ao != bo || ar != br || am != bm || fmt.Sprint(au) != fmt.Sprint(bu) {
@@ -121,5 +122,107 @@ func TestCommandLinesPasteAsTyped(t *testing.T) {
 	want := `nova-sprint finish --as m1 --report 'the tests went red' 'a'\''b'`
 	if got != want {
 		t.Fatalf("%s\nwant %s", got, want)
+	}
+}
+
+// scripted is facts by script: every work and read ok, a cross fact for the
+// streams named, members as the script says.
+type scripted struct {
+	cross map[string]bool
+	down  map[string]bool
+	asked []string // the streams whose facts read the other queues
+}
+
+func (f *scripted) Work(string) (bool, string) { return true, "" }
+func (f *scripted) Read(string) (bool, string) { return true, "" }
+func (f *scripted) Merge(stream string, batch []string, others func() []string) Outcome {
+	if !f.cross[stream] {
+		return Outcome{}
+	}
+	f.asked = append(f.asked, stream)
+	if o := others(); len(o) > 0 {
+		return Outcome{Cross: batch[0] + "=" + o[0]}
+	}
+	return Outcome{}
+}
+func (f *scripted) Up(tick int, members []string, up map[string]bool) map[string]bool {
+	next := map[string]bool{}
+	for _, m := range members {
+		next[m] = !f.down[m]
+	}
+	return next
+}
+
+const twoStreams = `{"landed":0,"all":4,"summary":"0/4 0.0% -> ETA","tables":{"fleet":{"m1":{"status":"up"}},"readers":{},` +
+	`"merge":{"s1":{"state":"merging","queued":"1"},"s2":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1"},"s2":{"merging":"1"}}},` +
+	`"streams":[{"Stream":"s1","State":"merging"},{"Stream":"s2","State":"merging"}]}`
+
+func index(ran [][]string, from int, want string) int {
+	for i := from; i < len(ran); i++ {
+		if strings.HasPrefix(strings.Join(ran[i], " "), want) {
+			return i
+		}
+	}
+	return -1
+}
+
+// I6: the other streams' queues are read just before the merge step whose
+// fact needs them, after every step before it, and not otherwise.
+func TestTheOtherQueuesAreReadWhenAFactNeedsThem(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{twoStreams}, queue: map[string]string{
+		"m1": `{"cards":[]}`, "s1": `{"cards":[{"id":"s1-1","col":"queued"}]}`, "s2": `{"cards":[{"id":"s2-1","col":"queued"}]}`,
+	}, inbox: `{"groups":[]}`}
+	f := &scripted{cross: map[string]bool{"s2": true}}
+	d := &Driver{Run: w.run, Facts: f, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Batch: 5, Ticks: 1}}
+	if _, err := d.Loop(); err != nil {
+		t.Fatal(err)
+	}
+	m1 := index(w.ran, 0, "merge --stream s1")
+	m2 := index(w.ran, 0, "merge --stream s2 --batch 5 --cross s2-1=s1-1")
+	read := index(w.ran, m1, "queue --stream s1")
+	if m1 < 0 || m2 < 0 || read < 0 || read > m2 {
+		t.Fatalf("s1's queue is not read between s1's step and s2's: merge s1 at %d, read at %d, merge s2 at %d\n%v", m1, read, m2, w.ran)
+	}
+	if index(w.ran, 0, "queue --stream s2") > m2 || strings.Join(f.asked, ",") != "s2" {
+		t.Fatalf("a queue read with no fact needing it: %v %v", f.asked, w.ran)
+	}
+	if first := index(w.ran, 0, "queue --stream s2"); first < m1 {
+		t.Fatalf("s2's queue read before s1's step: %v", w.ran)
+	}
+}
+
+// I6: a member the driver took down is brought up before it stops.
+func TestAMemberTakenDownIsBroughtUpBeforeTheDriverStops(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
+	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 2}}
+	if why, err := d.Loop(); err != nil || why != "ticks" {
+		t.Fatalf("%s %v", why, err)
+	}
+	down := index(w.ran, 0, "fleet down m1")
+	up := index(w.ran, down, "fleet up m1")
+	if down < 0 || up < 0 || up != len(w.ran)-1 {
+		t.Fatalf("m1 left down: %v", w.ran)
+	}
+}
+
+// I6: flap brings a down member up with the chance it takes an up one down.
+func TestFlapIsTheSameChanceBothWays(t *testing.T) {
+	t.Parallel()
+	s := NewSeeded(9)
+	s.Flap = 0.2
+	downs, ups := 0, 0
+	for i := 0; i < 20000; i++ {
+		n := s.Up(i, []string{"a", "b"}, map[string]bool{"a": true})
+		if !n["a"] {
+			downs++
+		}
+		if n["b"] {
+			ups++
+		}
+	}
+	if d, u := float64(downs)/20000, float64(ups)/20000; d < 0.18 || d > 0.22 || u < 0.18 || u > 0.22 {
+		t.Fatalf("down %.3f up %.3f", d, u)
 	}
 }

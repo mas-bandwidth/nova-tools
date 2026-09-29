@@ -32,18 +32,18 @@ func init() {
 		{"init", "[--readers <a,b,...>] [--members <m1,m2,...>]", "init --readers reader-a,reader-b,reader-c --members m1,m2", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n>) [--needs <a,b>] [--brief <text>] [--score <n>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
-		{"start", "(<id>... | --stream <s> | --limit <n> | --group <n>)", "start --limit 10", (*app).cmdStart},
+		{"start", "(<id>... | --stream <s> | --limit <n> | --group <id> [--expect <n>])", "start --limit 10", (*app).cmdStart},
 		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1", (*app).cmdFinish},
-		{"ask", "[<id>...] [--stream <s>] [--limit <n>] [--another]", "ask", (*app).cmdAsk},
+		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] [--limit <n>] [--finding <text>]", "read --as reader-a --ok --limit 5", (*app).cmdRead},
-		{"accept", "(<id>... | --stream <s> | --read-ok | --group <n>) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
-		{"rework", "(<id>... | --group <n>) --fix <text> [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
-		{"return", "<id>... [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
-		{"drop", "(<id>... | --stream <s> --col <state> | --group <n>) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
+		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
+		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
+		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
+		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
-		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
+		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
 		{"fleet up", "<member>", "fleet up m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
@@ -52,7 +52,7 @@ func init() {
 		{"ci", "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait start-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
-		{"inbox", "[--open <n>] [--read] [--deadline <duration>] [--stale <duration>]", "inbox", (*app).cmdInbox},
+		{"inbox", "[--open <group>] [--read] [--deadline <duration>] [--stale <duration>]", "inbox", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
@@ -86,9 +86,11 @@ Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
 NOVA_REDIS_ADDR), --prefix <p> (else NOVA_SPRINT_PREFIX: every table, view and
 key of this sprint carries it), --actor, --op <id> (the same id again returns
 the recorded result), --json and --max <n> (listed items; 0 is all). A set is
-ids, a stream, a column, --limit n, or an inbox group (--group n). Each verb
-prints what moved (MOVED), what did not and why (REFUSED, on stderr), its
-summary line, and the sprint's line: landed/all percent -> ETA.
+ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
+inbox prints, which does not move, with --expect <n>, the size it printed,
+which refuses a group that has changed. Each verb prints what moved (MOVED),
+what did not and why (REFUSED, on stderr), its summary line, and the sprint's
+line: landed/all percent -> ETA.
 
 A work card is named with its generation, <card>@<gen>: the generation the
 worker holds, from queue --as <member> (--json: "gen"). take by id and finish
@@ -97,11 +99,58 @@ generation, and a generation that is not the live one is refused as stale.
 take with no card takes the member's oldest ready cards (--limit n, default 1)
 and prints each one's generation.
 
+` + inboxExample + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
 `)
 	return b.String()
 }
+
+// inboxExample is the worked example of reading the inbox and answering it,
+// in nova-sprint help and nova-sprint help inbox.
+const inboxExample = `reading the inbox and answering a judgment:
+
+  $ nova-sprint inbox
+  JUDGMENT finish-0314a1b2-1.1   work came back failed  stream=s1  size=2  waited=4m0s  due=10:14:00  (s1-3,s1-7)  the tests went red
+    rework with a fix:
+      nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1
+    drop:
+      nova-sprint drop --group finish-0314a1b2-1.1 --expect 2 --reason '<why>' --answers finish-0314a1b2-1.1
+  JUDGMENT merge-0315c3d4-1.1   stream stopped: stream branch red  stream=s2  size=10  waited=1m0s  due=10:25:00  (s2-1,s2-2,s2-3,s2-4,s2-5,s2-6,s2-7,s2-8,... all: nova-sprint inbox --open merge-0315c3d4-1.1)  suspects: s2-4 (of the batch of 10)
+    take the suspect off and resume:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint resume --stream s2 --did 'returned s2-4' --answers merge-0315c3d4-1.1
+    rework the suspect:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint rework s2-4 --fix '<fix>'
+      nova-sprint resume --stream s2 --did 'returned s2-4 for rework' --answers merge-0315c3d4-1.1
+    resume with what you did:
+      nova-sprint resume --stream s2 --did '<what you did>' --answers merge-0315c3d4-1.1
+  HAPPENED ask-0316e5f6-1.1   two readers said ok  stream=s1  size=5  (s1-1,s1-2,s1-4,s1-5,s1-6)
+  INBOX OK judgments=2 happened=1 cursor=-
+
+A group is named by its id (its oldest notification's), which does not move
+as groups come and go; a group number is refused. size is what --expect
+takes: when the group has another size now the verb is refused, names what
+was added or is gone, and changes nothing. Each decision is its commands, one
+per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
+lists every member of a group; card <id> is everything about one primary.
+
+one answer to each judgment (every one prints its own, filled in):
+  work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
+  a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
+  conflict on a card          resume --stream <s> --did 'rebased <card>' --answers <note>
+  stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
+  needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
+  merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
+  ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
+  blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
+  reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
+  repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
+  a repeat: stop and look     card <primary>
+  overdue: act                a decision above, or wait <note> --for 30m
+  a stream not moving: look   where, then queue --stream <s>
+`
 
 func versionLine() string { return buildinfo.Line(prog, version) }
 
@@ -122,7 +171,14 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 	}
 	for _, v := range verbs {
 		if v.name == name {
-			return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
+			code := func() (code int) {
+				defer verbflag.Recover(stdout, prog, banner(), &code)
+				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
+			}()
+			if name == "inbox" && code == 0 {
+				fmt.Fprint(stdout, "\n"+inboxExample)
+			}
+			return code
 		}
 	}
 	return refuse(stderr, "help", "unknown verb "+oneline.Escape(name)+"; run: nova-sprint help")
@@ -152,8 +208,8 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 type sel struct {
 	stream, col string
 	limit       int
-	group       int
-	answers     string
+	group       string // an inbox group's id
+	expect      int    // the group's size when it was printed; 0 is not given
 }
 
 func (s *sel) register(fs flagSet, withCol bool) {
@@ -162,7 +218,8 @@ func (s *sel) register(fs flagSet, withCol bool) {
 		fs.StringVar(&s.col, "col", "", "the cards in one column (a state)")
 	}
 	fs.IntVar(&s.limit, "limit", 0, "at most n cards, in work order")
-	fs.IntVar(&s.group, "group", 0, "the primaries of inbox group n")
+	fs.StringVar(&s.group, "group", "", "the members of the inbox group of this id (the id inbox prints; a group number is refused)")
+	fs.IntVar(&s.expect, "expect", 0, "with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes")
 }
 
 func (s *sel) sel(ids []string) sprint.Sel {
@@ -170,6 +227,16 @@ func (s *sel) sel(ids []string) sprint.Sel {
 }
 
 func answers(s string) []string { return sprint.Split(s) }
+
+// listFlag is a flag given again or comma separated: every value, in order.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(v string) error {
+	*l = append(*l, sprint.Split(v)...)
+	return nil
+}
 
 // verbSetup is the flag set of a store verb with the common flags.
 func (a *app) verbSetup(name string) (flagSet, *common) {
@@ -179,54 +246,92 @@ func (a *app) verbSetup(name string) (flagSet, *common) {
 	return fs, c
 }
 
-// groupIDs is the primaries of inbox group n, all of them.
-func groupIDs(ctx context.Context, st *store.Store, n int) ([]string, error) {
+// groupIDs is the members of the inbox group of the id, with the inbox read.
+func groupIDs(ctx context.Context, st *store.Store, id string) (store.InboxView, sprint.Group, error) {
 	v, err := st.Inbox(ctx, defaultDeadline, defaultStale, 10000)
 	if err != nil {
-		return nil, err
+		return v, sprint.Group{}, err
 	}
-	if n < 1 || n > len(v.Groups) {
-		return nil, fmt.Errorf("no inbox group %d (there are %d); run: nova-sprint inbox", n, len(v.Groups))
+	if isNumber(id) {
+		return v, sprint.Group{}, fmt.Errorf("group numbers are not accepted: a group is named by its id, which does not move; %s", groupList(v.Groups))
 	}
-	return groupMembers(v, v.Groups[n-1]), nil
+	g, ok := sprint.FindGroup(v.Groups, id)
+	if !ok {
+		return v, g, fmt.Errorf("no inbox group %s now (answered, or its oldest notification closed); %s", id, groupList(v.Groups))
+	}
+	return v, g, nil
 }
 
-// groupMembers is every subject of a group: the open subjects of its
-// judgments, or the primaries of its notifications.
-func groupMembers(v store.InboxView, g sprint.Group) []string {
-	var out []string
-	seen := map[string]bool{}
-	add := func(s string) {
-		if !seen[s] && !strings.HasPrefix(s, "stream:") {
-			seen[s] = true
-			out = append(out, s)
-		}
+func isNumber(s string) bool {
+	_, err := strconv.Atoi(strings.TrimSpace(s))
+	return err == nil
+}
+
+// groupList is the inbox's groups by id, for a refusal.
+func groupList(groups []sprint.Group) string {
+	if len(groups) == 0 {
+		return "the inbox is empty; run: nova-sprint inbox"
 	}
-	notes := map[string]bool{}
+	var ids []string
+	for _, g := range groups {
+		ids = append(ids, fmt.Sprintf("%s (%s, %s, size %d)", g.ID, g.Type, dashed(g.Stream), g.Size))
+	}
+	return "the groups now: " + strings.Join(ids, "; ") + "; run: nova-sprint inbox"
+}
+
+// groupChange is how a group differs from what the coordinator saw, told by
+// the notifications the verb answers: added is members of notifications it
+// does not name, gone is subjects of the ones it names that are no longer open.
+func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, gone []string) {
+	named := map[string]bool{}
+	for _, a := range answers {
+		named[a] = true
+	}
+	in := map[string]bool{}
 	for _, id := range g.Notes {
-		notes[id] = true
+		in[id] = true
 	}
-	if g.Kind == sprint.Judgment {
+	open := map[string]bool{}
+	byNote := map[string]sprint.Note{}
+	for _, o := range v.Open {
+		if in[o.Note.ID] || named[o.Note.ID] {
+			open[o.Note.ID+"|"+o.Subject()] = true
+			byNote[o.Note.ID] = o.Note
+		}
+	}
+	for _, m := range g.Members {
+		old := false
 		for _, o := range v.Open {
-			if notes[o.Note.ID] {
-				add(o.Subject())
-				if o.Note.StreamLevel {
-					for _, p := range o.Note.Primaries {
-						add(p)
-					}
-				}
+			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && contains(o.Note.Primaries, m)) {
+				old = true
 			}
 		}
-		return out
+		if !old {
+			added = append(added, m)
+		}
 	}
-	for _, n := range v.Recent {
-		if notes[n.ID] {
-			for _, p := range n.Primaries {
-				add(p)
+	for _, a := range answers {
+		n, ok := byNote[a]
+		if !ok {
+			gone = append(gone, "notification "+a+" (closed)")
+			continue
+		}
+		for _, sub := range n.Subjects() {
+			if !open[a+"|"+sub] {
+				gone = append(gone, sub)
 			}
 		}
 	}
-	return out
+	return added, gone
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -254,6 +359,28 @@ type output struct {
 	Error   string `json:"error,omitempty"`
 	Unknown bool   `json:"unknown,omitempty"`
 	Sprint  string `json:"sprint,omitempty"`
+	// Group, with --group: the group's id, how many it acted on, and the
+	// size --expect said it had when printed.
+	Group    string `json:"group,omitempty"`
+	ActedOn  int    `json:"acted_on,omitempty"`
+	Expected int    `json:"expected,omitempty"`
+}
+
+// groupReport is what a verb given --group says about the group.
+type groupReport struct {
+	ID       string
+	ActedOn  int
+	Expected int
+}
+
+// line is the group's line: the count acted on, and the size when printed
+// when --expect said it.
+func (g groupReport) line() string {
+	l := fmt.Sprintf("GROUP %s acted on %d", oneline.Escape(g.ID), g.ActedOn)
+	if g.Expected > 0 {
+		l += fmt.Sprintf(", the group had %d when printed", g.Expected)
+	}
+	return l
 }
 
 func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
@@ -274,7 +401,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	}
 	line := sprintLine(ctx, st)
 	if c.json {
-		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown)}
+		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected}
 		if o.Moved == nil {
 			o.Moved = []string{}
 		}
@@ -292,6 +419,9 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 		fmt.Fprintf(stdout, "REPAIRED %s\n", oneline.Escape(r))
 	}
 	listed(stdout, "MOVED", res.Moved, c.max, verbName)
+	if c.group.ID != "" {
+		fmt.Fprintln(stdout, c.group.line())
+	}
 	var why []string
 	for _, r := range res.Refused {
 		why = append(why, r.Key+": "+r.Why)
@@ -424,19 +554,65 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 
-// withGroup resolves --group into ids.
-func (a *app) withGroup(verbName string, st *store.Store, s *sel, ids []string, stderr io.Writer) ([]string, int) {
-	if s.group == 0 {
+// withGroup resolves --group into ids: the group of the id, checked against
+// --expect. A group of another size than expected is refused, naming what
+// changed, and nothing moves.
+func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store, s *sel, ids []string, stdout, stderr io.Writer) ([]string, int) {
+	if s.group == "" {
+		if s.expect != 0 {
+			return nil, refuse(stderr, verbName, "--expect goes with --group <id>")
+		}
 		return ids, 0
 	}
 	if len(ids) > 0 {
 		return nil, refuse(stderr, verbName, "takes ids or --group, not both")
 	}
-	g, err := groupIDs(context.Background(), st, s.group)
-	if err != nil {
-		return nil, refuse(stderr, verbName, err.Error())
+	if s.expect < 0 {
+		return nil, refuse(stderr, verbName, "--expect wants the group's size, a whole number from 1")
 	}
-	return g, 0
+	v, g, err := groupIDs(context.Background(), st, s.group)
+	if err != nil {
+		if isNumber(s.group) {
+			return nil, refuse(stderr, verbName, err.Error())
+		}
+		fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.Escape(err.Error()))
+		return nil, 1
+	}
+	var ans []string
+	if f := fs.Lookup("answers"); f != nil {
+		ans = answers(f.Value.String())
+	}
+	c.group = groupReport{ID: g.ID, ActedOn: len(g.Members), Expected: s.expect}
+	if s.expect > 0 && len(g.Members) != s.expect {
+		added, gone := groupChange(v, g, ans)
+		if c.json {
+			b, _ := json.Marshal(map[string]any{"error": "the group changed", "group": g.ID, "size": len(g.Members), "expected": s.expect,
+				"added": nonNil(added), "gone": nonNil(gone), "members": nonNil(g.Members), "moved": []string{}})
+			fmt.Fprintln(stdout, string(b))
+			return nil, 1
+		}
+		fmt.Fprintf(stderr, "REFUSED group %s: it has %d now, not %d as printed; nothing changed\n", oneline.Escape(g.ID), len(g.Members), s.expect)
+		if ans == nil {
+			listed(stderr, "NOW", g.Members, c.max, "inbox --open "+g.ID)
+		} else {
+			listed(stderr, "ADDED", added, c.max, "inbox --open "+g.ID)
+			listed(stderr, "GONE", gone, c.max, "inbox --open "+g.ID)
+		}
+		fmt.Fprintf(stderr, "%s FAIL moved=0 group=%s size=%d expected=%d; run: nova-sprint inbox --open %s\n", token(verbName), oneline.Escape(g.ID), len(g.Members), s.expect, oneline.Escape(g.ID))
+		return nil, 1
+	}
+	if len(g.Members) == 0 {
+		fmt.Fprintf(stderr, "%s %s: group %s has no primaries to act on; run: nova-sprint inbox --open %s\n", prog, verbName, oneline.Escape(g.ID), oneline.Escape(g.ID))
+		return nil, 1
+	}
+	return g.Members, 0
+}
+
+func nonNil(xs []string) []string {
+	if xs == nil {
+		return []string{}
+	}
+	return xs
 }
 
 // setVerb is the shape of the verbs over a set of primaries.
@@ -456,7 +632,7 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 	if err != nil {
 		return refuse(stderr, verbName, err.Error())
 	}
-	ids, code := a.withGroup(verbName, st, &s, ids, stderr)
+	ids, code := a.withGroup(verbName, fs, c, st, &s, ids, stdout, stderr)
 	if code != 0 {
 		return code
 	}
@@ -477,7 +653,7 @@ func (a *app) cmdResolve(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdStart(args []string, stdout, stderr io.Writer) int {
 	return a.setVerb("start", args, stdout, stderr, false, nil, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && s.limit == 0 {
-			return "wants ids, --stream <s>, --limit <n> or --group <n>"
+			return "wants ids, --stream <s>, --limit <n> or --group <id>"
 		}
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
@@ -602,12 +778,12 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
-			return "wants ids, --stream <s>, --read-ok or --group <n>"
+			return "wants ids, --stream <s>, --read-ok or --group <id>"
 		}
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
 		r := sprint.AcceptReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor}
-		if s.group > 0 {
+		if s.group != "" {
 			r.Sel = sprint.Sel{Only: ids} // a selection: the eligible move
 		}
 		return store.AcceptStep(r)
@@ -617,11 +793,11 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
-		fix = fs.String("fix", "", "the fix: what the next attempt must change")
+		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	}, func(ids []string, s *sel) string {
-		if *fix == "" || len(ids) == 0 && s.stream == "" {
-			return "wants ids (or --group, --stream) and --fix <text>"
+		if len(ids) == 0 && s.stream == "" {
+			return "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"
 		}
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
@@ -636,7 +812,7 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
-			return "wants ids, --stream <s> or --group <n>"
+			return "wants ids, --stream <s> or --group <id>"
 		}
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
@@ -695,9 +871,17 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
 	rejected := fs.Bool("rejected", false, "fact: the merge queue rejected the batch")
 	note := fs.String("note", "", "what the facts' source said")
+	var suspects listFlag
+	fs.Var(&suspects, "suspect", "with --red: a card of the batch suspected of turning it red; again, comma separated, or ids after it for more")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
+	}
+	if len(suspects) > 0 {
+		suspects, pos = append(suspects, pos...), nil
+		if !*red {
+			return refuse(stderr, "merge", "--suspect goes with --red")
+		}
 	}
 	facts := 0
 	for _, f := range []bool{*conflict != "", *cross != "", *red, *rejected} {
@@ -713,7 +897,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "merge", err.Error())
 	}
 	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Conflict: *conflict, Cross: *cross,
-		Red: *red, Rejected: *rejected, Note: *note, Who: c.actor}), stdout, stderr)
+		Red: *red, Suspects: suspects, Rejected: *rejected, Note: *note, Who: c.actor}), stdout, stderr)
 }
 
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {

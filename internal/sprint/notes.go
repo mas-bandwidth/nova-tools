@@ -79,8 +79,9 @@ type Note struct {
 	Before    int       `json:"before,omitempty"` // how many times before, for this cause
 	At        time.Time `json:"at"`
 	Decisions []string  `json:"decisions,omitempty"`
-	Marked    bool      `json:"marked,omitempty"`  // a repeat: sorts first
-	Answers   string    `json:"answers,omitempty"` // a decided note: the judgment it answers
+	Marked    bool      `json:"marked,omitempty"`   // a repeat: sorts first
+	Answers   string    `json:"answers,omitempty"`  // a decided note: the judgment it answers
+	Suspects  []string  `json:"suspects,omitempty"` // a red branch: the cards of the batch the caller suspects
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.
 	StreamLevel bool `json:"stream_level,omitempty"`

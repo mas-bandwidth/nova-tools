@@ -123,6 +123,7 @@ type common struct {
 	redis, prefix, actor, op string
 	json                     bool
 	max                      int
+	group                    groupReport // set by --group, for the verb's report
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {

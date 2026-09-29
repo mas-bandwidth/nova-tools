@@ -233,7 +233,19 @@ same run is recorded once. Stream-batch CI in merging is the merge step's fact.
 Each carries: id, kind, type, stream, the primaries (a set, bounded, with the
 count), what happened, who reported it, attempt, how many times before, the
 clock time, the decisions. Notifications of one type, stream and cause are
-grouped into one line with a count; a subject is listed and counted once. Marked ones (repeats, overdue) sort first.
+grouped into one line with a count; a subject is listed and counted once.
+Each group has an id that does not move while it is open: the id of its oldest
+open notification (a stalled stream's is `stale:<stream>`); overdue marks a
+group and does not split it. `inbox` prints each group's id and size (the
+members a verb given the group acts on), and each judgment's decisions as the
+commands that make them, one per line, with the group id, `--expect` and
+`--answers` filled in; a cut list of primaries ends with
+`nova-sprint inbox --open <id>`.
+
+A red branch's notification lists the suspects the caller named
+(`merge --red --suspect <id>...`, each a card of the batch), or says none was
+named and gives the batch's first and last card and the command that lists
+the batch; its decisions include resume with what was done. Marked ones (repeats, overdue) sort first.
 A primary that came back a second time for the same cause is marked on the
 notification of that cause, and "stop and look" is added to its decisions.
 
@@ -335,7 +347,11 @@ layer retires this section.
 ## 11. Verbs
 
 Each takes a set and is one step. A set is ids, a stream, a column, `--limit n`,
-or an inbox group (`--group n`). Each prints what moved, what did not and why,
+or an inbox group (`--group <id>`; a group number is refused, naming the ids).
+Every verb taking `--group` takes `--expect <n>`: when the group's members now
+number otherwise the verb is refused, changes nothing, and names the size now
+and the members added or gone; a verb given `--group` prints how many it acted
+on. Each prints what moved, what did not and why,
 and the summary line. Every judgment verb takes `--answers <notification>`.
 Every store verb takes `--redis`, `--prefix`, `--actor`, `--op <id>` (the same
 id again, for the same verb with the same arguments, returns the recorded
@@ -360,18 +376,18 @@ command that loads it.
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
-| rework | delegates the next attempt at once with a fix; ready when no member is up |
+| rework | delegates the next attempt at once with a fix; ready when no member is up; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
-| merge | one mechanical merge step for a stream: `--batch n`, given facts |
+| merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | reader add | declares readers |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
-| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open n`, `--read` |
+| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read` |
 | card | everything about one primary |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch`, with a pending operation and stalled streams |
@@ -394,6 +410,9 @@ summary shortened; what it knows it reads from the read verbs' `--json`. It
 never runs accept, rework, drop, rank, return or resume. It keeps running while
 things wait for the coordinator, says what waits and for how long, tolerates
 the coordinator writing at the same time, and stops when every stream has
-landed. Its facts come through one interface (a worker's result, a reader's
+landed. It reads a stream's merge queue just before that stream's merge step,
+and the other streams' queues only when a fact needs them; `--flap` takes an up
+member down and brings a down member up with the same chance, and the driver
+brings up every member it took down before it stops. Its facts come through one interface (a worker's result, a reader's
 finding, a merge batch's outcome, which members are up); the seeded source is
 one implementation.

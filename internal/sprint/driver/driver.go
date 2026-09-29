@@ -28,10 +28,13 @@ type Facts interface {
 	Work(card string) (ok bool, report string)
 	// Read is what a reader found in a read card.
 	Read(card string) (ok bool, finding string)
-	// Merge is how a stream's batch went on its branch; others are cards of
-	// other streams in their merge queues, which a card may need first.
-	Merge(stream string, batch []string, others []string) Outcome
-	// Up is which members are up this tick, given which are up now.
+	// Merge is how a stream's batch went on its branch. others reads, when
+	// called, the cards queued in the other streams' merge queues, which a
+	// card may need first: a source calls it only for a cross-stream fact,
+	// and it reads them then, after every merge step before this one.
+	Merge(stream string, batch []string, others func() []string) Outcome
+	// Up is which members are up this tick, given which are up now: a member
+	// up goes down, and a member down comes up, with the same chance.
 	Up(tick int, members []string, up map[string]bool) map[string]bool
 }
 
@@ -69,6 +72,7 @@ type Driver struct {
 	Clock  Clock
 	Out    io.Writer
 	Config Config
+	downed map[string]bool // members this driver took down and has not brought up
 }
 
 // coordinatorVerbs are never run by the driver.
@@ -208,6 +212,7 @@ func (d *Driver) Loop() (string, error) {
 		}
 		if landed(w) {
 			fmt.Fprintf(d.Out, "every stream has landed: %s\n", w.Summary)
+			d.restore()
 			return "landed", nil
 		}
 		fmt.Fprintf(d.Out, "tick %d %s\n", tick, d.Clock.Now().Format("15:04:05"))
@@ -218,12 +223,29 @@ func (d *Driver) Loop() (string, error) {
 			fmt.Fprintf(d.Out, "  %s\n", after.Summary)
 			if landed(after) {
 				fmt.Fprintf(d.Out, "every stream has landed: %s\n", after.Summary)
+				d.restore()
 				return "landed", nil
 			}
 		}
 		d.Clock.Sleep(c.Every)
 	}
+	d.restore()
 	return "ticks", nil
+}
+
+// restore brings up every member this driver took down, so a run never ends
+// with the fleet short of what it started with.
+func (d *Driver) restore() {
+	var ms []string
+	for m := range d.downed {
+		ms = append(ms, m)
+	}
+	sort.Strings(ms)
+	for _, m := range ms {
+		if code, _ := d.run(false, "fleet", "up", m); code == 0 {
+			delete(d.downed, m)
+		}
+	}
 }
 
 func landed(w where) bool {
@@ -250,9 +272,16 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	for _, m := range members {
 		switch {
 		case next[m] && !up[m]:
-			d.run(false, "fleet", "up", m)
+			if code, _ := d.run(false, "fleet", "up", m); code == 0 {
+				delete(d.downed, m)
+			}
 		case !next[m] && up[m]:
-			d.run(false, "fleet", "down", m)
+			if code, _ := d.run(false, "fleet", "down", m); code == 0 {
+				if d.downed == nil {
+					d.downed = map[string]bool{}
+				}
+				d.downed[m] = true
+			}
 		}
 	}
 	// The mechanical moves.
@@ -322,47 +351,52 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			d.run(false, append([]string{"read", "--as", r, "--broken", "--finding", f}, broken[f]...)...)
 		}
 	}
-	// Each stream's merge step, with its facts.
+	// Each stream's merge step, with its facts. A stream's queue is read just
+	// before its step, and the other streams' queues only when a fact needs
+	// them, after every step before it has run.
 	merge := w.Tables["merge"]
 	var streams []string
-	queued := map[string][]string{}
 	for _, s := range w.Streams {
 		streams = append(streams, s.Stream)
 	}
 	sort.Strings(streams)
-	for _, s := range streams {
-		st := merge[s]["state"]
-		if st == "stopped" || st == "landed" || atoi(merge[s]["queued"]) == 0 {
-			continue
-		}
+	queued := func(s string) []string {
+		var out []string
 		var q queue
 		if d.read(&q, "queue", "--stream", s) {
 			for _, card := range q.Cards {
 				if card.Col == "queued" {
-					queued[s] = append(queued[s], card.ID)
+					out = append(out, card.ID)
 				}
 			}
 		}
+		return out
 	}
 	for _, s := range streams {
 		st := merge[s]["state"]
 		if st == "stopped" || st == "landed" {
 			continue
 		}
+		var batch []string
+		if atoi(merge[s]["queued"]) > 0 {
+			batch = queued(s)
+		}
 		work := w.Tables["work"][s]
 		open := atoi(work["waiting"]) + atoi(work["ready"]) + atoi(work["working"]) + atoi(work["review"]) + atoi(work["merging"])
-		if len(queued[s]) == 0 && !(open == 0 && atoi(work["landed"]) > 0) && st != "merging" {
+		if len(batch) == 0 && !(open == 0 && atoi(work["landed"]) > 0) && st != "merging" {
 			continue
 		}
-		batch := queued[s]
 		if len(batch) > c.Batch {
 			batch = batch[:c.Batch]
 		}
-		var others []string
-		for _, o := range streams {
-			if o != s {
-				others = append(others, queued[o]...)
+		others := func() []string {
+			var out []string
+			for _, o := range streams {
+				if o != s && merge[o]["state"] != "landed" {
+					out = append(out, queued(o)...)
+				}
 			}
+			return out
 		}
 		args := []string{"merge", "--stream", s, "--batch", strconv.Itoa(c.Batch)}
 		if len(batch) > 0 {

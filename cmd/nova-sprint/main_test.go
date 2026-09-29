@@ -163,11 +163,12 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	}
 	out := ta.ok("inbox")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if !strings.HasPrefix(lines[0], "JUDGMENT 1") || !strings.Contains(lines[0], "work came back failed") || !strings.Contains(lines[0], "rework with a fix | drop") {
+	if !strings.HasPrefix(lines[0], "JUDGMENT ") || !strings.Contains(lines[0], "work came back failed") || !strings.Contains(lines[0], "size=1") {
 		t.Fatalf("judgment first: %s", out)
 	}
-	// the inbox group is a set
-	out = ta.ok("rework --group 1 --fix 'handle the empty case'")
+	// the inbox group is a set, named by its id
+	id := strings.Fields(lines[0])[1]
+	out = ta.ok("rework --group " + id + " --fix 'handle the empty case'")
 	if !strings.Contains(out, "s1-3 review -> working (rework)") {
 		t.Fatalf("rework: %s", out)
 	}

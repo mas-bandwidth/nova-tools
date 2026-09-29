@@ -234,7 +234,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("inbox")
-	open := fs.Int("open", 0, "list every primary and notification of group n")
+	open := fs.String("open", "", "list every member and notification of the group of this id")
 	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)")
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
@@ -246,10 +246,22 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "inbox", err.Error())
 	}
+	if isNumber(*open) {
+		return refuse(stderr, "inbox", "group numbers are not accepted: --open wants a group's id, as inbox prints it")
+	}
 	ctx := context.Background()
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
 	if err != nil {
 		return a.readFailed("inbox", err, stderr)
+	}
+	var opened *sprint.Group
+	if *open != "" {
+		g, ok := sprint.FindGroup(v.Groups, *open)
+		if !ok {
+			fmt.Fprintf(stderr, "%s inbox: no group %s now; %s\n", prog, oneline.Escape(*open), oneline.Escape(groupList(v.Groups)))
+			return 1
+		}
+		opened = &g
 	}
 	if *read && v.Last != "" {
 		if err := st.B.SetCursor(ctx, v.Last); err != nil {
@@ -262,8 +274,8 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			groups = []sprint.Group{}
 		}
 		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now()}
-		if *open > 0 && *open <= len(v.Groups) {
-			out["open"] = groupMembers(v, v.Groups[*open-1])
+		if opened != nil {
+			out["open"] = nonNil(opened.Members)
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
@@ -278,8 +290,14 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			other++
 		}
 		fmt.Fprintln(stdout, groupLine(g, now))
-		if g.N == *open {
-			for _, m := range groupMembers(v, g) {
+		for _, cmd := range g.Commands {
+			fmt.Fprintf(stdout, "  %s:\n", oneline.Escape(cmd.Decision))
+			for _, l := range cmd.Lines {
+				fmt.Fprintf(stdout, "    %s\n", oneline.Escape(l))
+			}
+		}
+		if opened != nil && g.ID == opened.ID {
+			for _, m := range g.Members {
 				fmt.Fprintf(stdout, "  %s\n", oneline.Escape(m))
 			}
 			fmt.Fprintf(stdout, "  notes: %s\n", oneline.Escape(strings.Join(g.Notes, " ")))
@@ -296,20 +314,25 @@ func dashed(s string) string {
 	return s
 }
 
-// groupLine is one inbox group: its number, kind, a mark for a repeat or an
-// overdue one, the type, the stream, how many, how long it waited, the
-// primaries (bounded), and the decisions open to the coordinator.
+// groupLine is one inbox group: its kind, its id (what --group takes), a mark
+// for a repeat or an overdue one, the type, the stream, its size (what --expect
+// takes), how long it waited, the primaries (bounded, then the command that
+// lists them all), and the decisions open to the coordinator.
 func groupLine(g sprint.Group, now time.Time) string {
 	mark := " "
 	if g.Marked {
 		mark = "!"
 	}
 	kind := strings.ToUpper(g.Kind)
-	l := fmt.Sprintf("%s %d %s %s", kind, g.N, mark, g.Type)
+	l := fmt.Sprintf("%s %s %s %s", kind, g.ID, mark, g.Type)
 	if g.Stream != "" {
 		l += "  stream=" + g.Stream
 	}
-	l += "  x" + strconv.Itoa(g.Count)
+	if g.Size > 0 || g.Kind == sprint.Judgment {
+		l += "  size=" + strconv.Itoa(g.Size)
+	} else {
+		l += "  x" + strconv.Itoa(g.Count)
+	}
 	if g.Kind == sprint.Judgment {
 		l += "  waited=" + now.Sub(g.Oldest).Round(time.Second).String()
 		if g.Overdue {
@@ -324,13 +347,19 @@ func groupLine(g sprint.Group, now time.Time) string {
 	if len(g.Primaries) > 0 {
 		ps := g.Primaries
 		more := ""
-		if len(ps) > 8 {
-			ps, more = ps[:8], ",..."
+		if len(ps) > 8 || g.Size > len(ps) {
+			if len(ps) > 8 {
+				ps = ps[:8]
+			}
+			more = ",... all: nova-sprint inbox --open " + g.ID
 		}
 		l += "  (" + strings.Join(ps, ",") + more + ")"
 	}
 	if g.What != "" {
 		l += "  " + g.What
+	}
+	if len(g.Commands) > 0 {
+		return oneline.Escape(l) // the decisions follow, as commands
 	}
 	if len(g.Decisions) > 0 {
 		l += "  -> " + strings.Join(g.Decisions, " | ")

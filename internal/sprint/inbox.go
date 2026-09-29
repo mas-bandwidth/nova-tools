@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -33,13 +34,17 @@ type InboxReq struct {
 	Stale    time.Duration // a moving stream unchanged longer needs a look
 }
 
-// Group is notifications of one kind, type and stream, as one line.
+// Group is notifications of one kind, type and stream, as one line. Its ID is
+// stable while the group is open: the id of its oldest notification (for a
+// stalled stream, stale:<stream>), never its position in the list, so a verb
+// given --group <id> acts on this group or is refused, never on another.
 type Group struct {
-	N         int           `json:"n"`
+	ID        string        `json:"id"`
 	Kind      string        `json:"kind"`
 	Type      string        `json:"type"`
 	Stream    string        `json:"stream,omitempty"`
 	Count     int           `json:"count"`
+	Size      int           `json:"size"` // the members a verb given --group acts on
 	Primaries []string      `json:"primaries,omitempty"`
 	Notes     []string      `json:"notes,omitempty"`
 	Marked    bool          `json:"marked,omitempty"`
@@ -50,7 +55,18 @@ type Group struct {
 	Decisions []string      `json:"decisions,omitempty"`
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
+	Suspects  []string      `json:"suspects,omitempty"` // a red branch: the suspects named
+	// Commands is every decision open to the coordinator as the commands
+	// that make it, filled in: the group's id, --expect and --answers.
+	Commands []Command `json:"commands,omitempty"`
+	// Members is every subject a verb given --group acts on: the open
+	// subjects of its judgments (a stopped stream's: the cards it stopped
+	// on), or the primaries of its notifications; sorted, unbounded.
+	Members []string `json:"-"`
 }
+
+// StaleGroupID is the id of a stalled stream's group.
+func StaleGroupID(stream string) string { return "stale:" + stream }
 
 // Inbox groups: open judgments first (marked ones, repeats and overdue, first
 // of all, then the longest waiting), then streams that have not moved past
@@ -60,16 +76,32 @@ func Inbox(r InboxReq) []Group {
 	var judg []Group
 	at := map[string]int{}
 	seen := map[string]bool{}
+	first := map[int]Note{} // each group's oldest note: its id
+	members := map[int]map[string]bool{}
+	member := func(i int, s string) {
+		if strings.HasPrefix(s, "stream:") {
+			return
+		}
+		if members[i] == nil {
+			members[i] = map[string]bool{}
+		}
+		members[i][s] = true
+	}
 	for _, o := range r.Open {
 		n := o.Note
 		due := n.Due(r.Deadline)
 		overdue := (r.Deadline > 0 || !n.Review.IsZero()) && r.Now.After(due)
-		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked || overdue)
+		// Overdue marks a group; it does not split one, so the grouping (and
+		// every group's members) is the same whatever deadline is read with.
+		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked)
 		i, ok := at[k]
 		if !ok {
 			i = len(judg)
 			at[k] = i
 			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due, Decisions: n.Decisions})
+		}
+		if f, ok := first[i]; !ok || n.At.Before(f.At) || n.At.Equal(f.At) && n.ID < f.ID {
+			first[i] = n
 		}
 		g := &judg[i]
 		if due.Before(g.Due) {
@@ -94,6 +126,7 @@ func Inbox(r InboxReq) []Group {
 				shown = n.Primaries // the cards the stream stopped on
 			}
 			for _, p := range shown {
+				member(i, p)
 				if len(g.Primaries) < MaxListed && !contains(g.Primaries, p) {
 					g.Primaries = append(g.Primaries, p)
 				}
@@ -102,13 +135,23 @@ func Inbox(r InboxReq) []Group {
 		if !contains(g.Notes, n.ID) {
 			g.Notes = append(g.Notes, n.ID)
 		}
+		for _, x := range n.Suspects {
+			if !contains(g.Suspects, x) {
+				g.Suspects = append(g.Suspects, x)
+			}
+		}
 		if overdue && !contains(g.Decisions, "act") {
 			g.Decisions = append(append([]string{}, g.Decisions...), "act")
 		}
 	}
 	for i := range judg {
+		judg[i].ID = first[i].ID
 		judg[i].Waited = r.Now.Sub(judg[i].Oldest)
+		judg[i].Members = sortedSet(members[i])
+		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
+		sort.Strings(judg[i].Notes)
+		judg[i].Commands = commands(judg[i], first[i])
 	}
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
@@ -121,12 +164,15 @@ func Inbox(r InboxReq) []Group {
 		if !st.Stalled(r.Now, r.Stale) {
 			continue
 		}
-		out = append(out, Group{Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
+		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
 			Oldest: st.Progress, Due: st.Progress.Add(r.Stale), Waited: r.Now.Sub(st.Progress), Decisions: Decisions[NStreamStale],
-			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)})
+			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)}
+		g.Commands = commands(g, Note{})
+		out = append(out, g)
 	}
 	var rest []Group
 	at = map[string]int{}
+	restMembers := map[int]map[string]bool{}
 	for _, n := range r.Recent {
 		if n.Kind == Judgment {
 			continue // judgments are shown while open, above
@@ -136,7 +182,8 @@ func Inbox(r InboxReq) []Group {
 		if !ok {
 			i = len(rest)
 			at[k] = i
-			rest = append(rest, Group{Kind: n.Kind, Type: n.Type, Stream: n.Stream, Oldest: n.At, What: n.What})
+			rest = append(rest, Group{ID: n.ID, Kind: n.Kind, Type: n.Type, Stream: n.Stream, Oldest: n.At, What: n.What})
+			restMembers[i] = map[string]bool{}
 		}
 		g := &rest[i]
 		c := n.Count
@@ -145,15 +192,158 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Count += c
 		for _, p := range n.Primaries {
+			restMembers[i][p] = true
 			if len(g.Primaries) < MaxListed && !contains(g.Primaries, p) {
 				g.Primaries = append(g.Primaries, p)
 			}
 		}
 		g.Notes = append(g.Notes, n.ID)
 	}
-	out = append(out, rest...)
-	for i := range out {
-		out[i].N = i + 1
+	for i := range rest {
+		rest[i].Members = sortedSet(restMembers[i])
+		rest[i].Size = len(rest[i].Members)
+	}
+	return append(out, rest...)
+}
+
+// FindGroup is the group of the id, if it is in the inbox.
+func FindGroup(groups []Group, id string) (Group, bool) {
+	for _, g := range groups {
+		if g.ID == id {
+			return g, true
+		}
+	}
+	return Group{}, false
+}
+
+func sortedSet(m map[string]bool) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Command is one decision open to the coordinator as the commands that make
+// it, in order, one per line, ready to copy.
+type Command struct {
+	Decision string   `json:"decision"`
+	Lines    []string `json:"lines"`
+}
+
+// MaxLook bounds the cards "look" lists; past it, the command that lists the
+// whole group.
+const MaxLook = 5
+
+// A placeholder is free text only the coordinator can give.
+const (
+	whyText  = "'<why>'"
+	fixText  = "'<fix>'"
+	didText  = "'<what you did>'"
+	noneText = "'<why nothing is to be done>'"
+)
+
+// commands is the group's decisions as commands, from its oldest note (a
+// stopped stream's card and the card it needs). A decision about cards takes
+// the group with its size and the notifications it answers; a decision about
+// a stopped stream names the cards and resumes the stream.
+func commands(g Group, first Note) []Command {
+	const cmd = "nova-sprint "
+	grp := " --group " + g.ID + " --expect " + itoa(g.Size)
+	ans := " --answers " + strings.Join(g.Notes, ",")
+	s := g.Stream
+	resume := func(did string) string { return cmd + "resume --stream " + s + " --did " + did + ans }
+	look := func() []string {
+		var out []string
+		for i, m := range g.Members {
+			if i == MaxLook {
+				return append(out, cmd+"inbox --open "+g.ID)
+			}
+			out = append(out, cmd+"card "+m)
+		}
+		return out
+	}
+	card, other := "", ""
+	if len(first.Primaries) > 0 {
+		card = first.Primaries[0]
+	}
+	if len(first.Primaries) > 1 {
+		other = first.Primaries[1]
+	}
+	suspects, listBatch := "'<suspect>'", []string{cmd + "queue --stream " + s + " --max " + itoa(g.Size)}
+	if len(g.Suspects) > 0 {
+		suspects, listBatch = strings.Join(g.Suspects, " "), nil
+	}
+	var out []Command
+	add := func(d string, lines ...string) { out = append(out, Command{Decision: d, Lines: lines}) }
+	for _, d := range g.Decisions {
+		switch {
+		case d == RepeatDecision:
+			add(d, look()...)
+		case d == "act" && first.StreamLevel:
+			add(d, cmd+"wait "+first.ID+" --for 30m")
+		case d == "act":
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+g.ID+" --for 30m")
+		case g.Type == NStreamStale:
+			add(d, cmd+"where", cmd+"queue --stream "+s)
+		case g.Type == NConflict:
+			switch d {
+			case "resolve and resume":
+				add(d, resume(didText))
+			case "rework":
+				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
+			case "drop":
+				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
+			}
+		case g.Type == NRed:
+			ret := cmd + "return " + suspects + " --reason 'suspect of the red batch'" + ans
+			switch d {
+			case "take the suspect off and resume":
+				add(d, append(listBatch, ret, resume("'returned "+strings.Trim(suspects, "'")+"'"))...)
+			case "rework the suspect":
+				add(d, append(listBatch, ret, cmd+"rework "+suspects+" --fix "+fixText, resume("'returned "+strings.Trim(suspects, "'")+" for rework'"))...)
+			}
+		case g.Type == NCross:
+			switch d {
+			case "rank that card first":
+				add(d, cmd+"rank "+other+" --first"+ans)
+			case "wait":
+				add(d, cmd+"wait "+first.ID+" --for 30m")
+			case "look at both":
+				add(d, cmd+"card "+card, cmd+"card "+other)
+			case "return":
+				add(d, cmd+"return "+card+" --reason "+whyText+ans, resume("'returned "+card+"'"))
+			case "drop":
+				add(d, cmd+"drop "+card+" --reason "+whyText+ans, resume("'dropped "+card+"'"))
+			}
+		case g.Type == NRejected:
+			switch d {
+			case "resume":
+				add(d, resume(didText))
+			case "return":
+				add(d, cmd+"return"+grp+" --reason "+whyText+ans, resume("'returned the batch'"))
+			case "drop":
+				add(d, cmd+"drop"+grp+" --reason "+whyText+ans, resume("'dropped the batch'"))
+			}
+		case d == "rework with the finding" || d == "rework with a fix" && g.Type == NWorkFailed:
+			add(d, cmd+"rework"+grp+ans) // each takes its own finding or report
+		case d == "rework with a fix" || d == "rework":
+			add(d, cmd+"rework"+grp+" --fix "+fixText+ans)
+		case d == "ask another reader":
+			add(d, cmd+"ask"+grp+" --another"+ans)
+		case d == "drop":
+			add(d, cmd+"drop"+grp+" --reason "+whyText+ans)
+		case d == "return":
+			add(d, cmd+"return"+grp+" --reason "+whyText+ans)
+		case d == "look":
+			add(d, append(look(), cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)...)
+		case d == "replace":
+			add(d, cmd+"drop"+grp+" --reason 'replaced by <new id>'"+ans, cmd+"add --stream "+s+" '<new id>' --brief '<brief>'")
+		}
+	}
+	if g.Type == NRed {
+		add("resume with what you did", resume(didText))
 	}
 	return out
 }

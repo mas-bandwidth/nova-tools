@@ -405,7 +405,9 @@ func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool
 	}
 }
 
-// ReworkReq is the coordinator sending primaries back with a fix.
+// ReworkReq is the coordinator sending primaries back with a fix. With no
+// fix, each primary's fix is its own: the finding of its broken read, or the
+// report of its failed work; a primary with neither is refused by name.
 type ReworkReq struct {
 	Sel
 	Fix     string
@@ -434,6 +436,13 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	q := readyQueues(s, up)
 	orphans := map[string]bool{}
 	for _, c := range chosen {
+		fix := r.Fix
+		if fix == "" {
+			if fix = ownFix(s, c); fix == "" {
+				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
+				continue
+			}
+		}
 		attempt := c.Int("attempt")
 		var asked []string
 		broken := 0
@@ -451,14 +460,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if len(asked) > 0 {
 			askedField = strings.Join(orderLike(s.Readers.Rows, asked, ""), ",")
 		}
-		set := map[string]string{"fix": r.Fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if askedField != "" {
 			set["asked"] = askedField
 		}
 		var u Unit
 		if len(up) > 0 {
 			var why string
-			u, why = deal(s, c, r.Fix, up, q, set, "readers")
+			u, why = deal(s, c, fix, up, q, set, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				continue
@@ -494,6 +503,27 @@ func orphanMerge(s *Snapshot, c *Card) *Card {
 		return m
 	}
 	return nil
+}
+
+// ownFix is a primary's own fix, for a rework given none: the findings of its
+// broken reads at its attempt, else the report of its failed work; "" when it
+// has neither.
+func ownFix(s *Snapshot, c *Card) string {
+	var found []string
+	for _, rc := range s.Readers.Of(c.ID) {
+		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
+			found = append(found, rc.F("finding"))
+		}
+	}
+	if len(found) > 0 {
+		return strings.Join(found, "; ")
+	}
+	if c.F("result") == "failed" {
+		if wc := s.Fleet.Card(c.F("work")); wc != nil {
+			return wc.F("report")
+		}
+	}
+	return ""
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.
