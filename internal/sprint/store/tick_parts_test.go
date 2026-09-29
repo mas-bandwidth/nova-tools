@@ -143,7 +143,7 @@ func TestTheTickLevelsUnevenQueues(t *testing.T) {
 	h := newHarness(t)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 5}))
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 5}})) // five on m1, dealt by hand
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 5}})) // five on m1, dealt by hand
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))    // up levels: 3 and 2
 	// a member's queue grows by hand past the other's by more than one
 	s := h.snap()
@@ -175,7 +175,7 @@ func TestTheTickFinishesAPendingOperationPastItsGrace(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := h.st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
+	if _, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("the cut: %v", err)
 	}
 	h.m.Fail = nil
