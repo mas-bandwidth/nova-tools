@@ -261,6 +261,13 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 		return rep, err
 	}
 
+	// The read is a gate in the lander (nova-tools#4397): refuse when the
+	// newest SCORE record at head is under 8 or absent.
+	if err := GatePRRead(ctx, rdb, o.Repo, o.N, pr.Head.SHA); err != nil {
+		say("%s", err)
+		return rep, err
+	}
+
 	// The one merge, at exactly that sha.
 	title := fmt.Sprintf("Merge pull request #%d", o.N)
 	if pr.Title != "" {

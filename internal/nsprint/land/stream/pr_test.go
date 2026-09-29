@@ -75,6 +75,15 @@ func ghLeg(t *testing.T, c *redis.Client, fields ...string) {
 	}
 }
 
+// scoreLeg seeds a score line for the PR in lines:r:<n> at head.
+func scoreLeg(t *testing.T, c *redis.Client, n int, head string, score int) {
+	t.Helper()
+	line := fmt.Sprintf("SCORE who=emma head=%s score=%d/10", head, score)
+	if err := c.RPush(context.Background(), LinesKey("o/r", n), line).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runLandPR(t *testing.T, f *fakeForge, c *redis.Client) (LandPRReport, string, *GitHub, error) {
 	t.Helper()
 	srv := httptest.NewServer(f.handler(t))
@@ -102,6 +111,7 @@ func TestLandPRMergesOnGreen(t *testing.T) {
 
 	f, c := newFakeForge(), prRedis(t)
 	ghLeg(t, c, "gh", "green", "check:lint", "green 1 2026-09-26T12:00:00Z", "check:go-test-cmd", "green 2 2026-09-26T12:01:00Z", "wf:ci", "green 3 2026-09-26T12:01:00Z")
+	scoreLeg(t, c, 7, prHead, 9)
 	rep, log, gh, err := runLandPR(t, f, c)
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +185,7 @@ func TestLandPRWaitsRedAndDone(t *testing.T) {
 	ghLeg(t, c, "gh", "green", "gh_fail", "")
 	f = newFakeForge()
 	f.pr["head"] = map[string]any{"sha": prHead}
+	scoreLeg(t, c, 7, prHead, 9)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(f.pr)
@@ -217,6 +228,7 @@ func TestLandPRWaitBlocksOnTheHeadsEvent(t *testing.T) {
 	t.Parallel()
 
 	f, c := newFakeForge(), prRedis(t)
+	scoreLeg(t, c, 7, prHead, 9)
 	srv := httptest.NewServer(f.handler(t))
 	t.Cleanup(srv.Close)
 	now := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
@@ -334,6 +346,7 @@ func TestLandPRRefusesAStaleRecordAndFindsTheCard(t *testing.T) {
 	c.ZAdd(ctx, "ws:github:review", redis.Z{Score: 1, Member: "other"}, redis.Z{Score: 2, Member: "gh-client"})
 	c.HSet(ctx, "task:other", "repo", "o/r", "pr", "8", "where", "review")
 	c.HSet(ctx, "task:gh-client", "repo", "o/r", "pr", "7", "where", "landed")
+	scoreLeg(t, c, 7, prHead, 9)
 	rep, log, _, err := runLandPR(t, f, c)
 	if err != nil || rep.State != "merged" || rep.Record != "merged" || rep.Card != "gh-client" || rep.CardMove != "already landed" ||
 		!strings.HasSuffix(log, "PR 7 CARD gh-client already landed\n") {
@@ -363,6 +376,7 @@ func TestLandPRWithNoRecordWritesItFromTheReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.HSet(ctx, "task:prfollow3", "repo", "o/r", "pr", "8", "stream", "github", "where", "landed")
+	scoreLeg(t, c, 7, head, 9)
 	rep, log, _, err := runLandPR(t, f, c)
 	if err != nil || rep.Record != "created" || rep.Card != "" || rep.CardMove != "none" ||
 		!strings.Contains(log, "PR 7 RECORD pr:r:7 outcome=created head=44444444 prev=- state=merged stream=- task=-\n") {
@@ -387,5 +401,52 @@ func TestLandPRWithNoRecordWritesItFromTheReply(t *testing.T) {
 	}
 	if !c.SIsMember(ctx, "pr:r:head:"+head, "7").Val() {
 		t.Fatalf("the head index does not name 7: %v", c.Keys(ctx, "pr:*").Val())
+	}
+}
+
+// TestLandPRRefusesAbsentRead: green at GitHub's head, but no score line
+// exists at head in Redis: REFUSED READ score=none before any merge.
+func TestLandPRRefusesAbsentRead(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	ghLeg(t, c, "gh", "green", "check:lint", "green 1 x", "wf:ci", "green 2 x")
+	rep, log, gh, err := runLandPR(t, f, c)
+	if err == nil {
+		t.Fatalf("expected refusal, got err=nil rep=%+v", rep)
+	}
+	wantRef := fmt.Sprintf("REFUSED READ score=none head=%s remedy=\"nova-sprint read brief --pr 7\"", prHead[:8])
+	if !strings.Contains(err.Error(), wantRef) {
+		t.Fatalf("err %v, want %s", err, wantRef)
+	}
+	if !strings.Contains(log, "PR 7 "+wantRef+"\n") {
+		t.Fatalf("log %q, want PR 7 %s", log, wantRef)
+	}
+	if len(f.merges) != 0 || gh.Calls != 1 {
+		t.Fatalf("merges=%d calls=%d, want 0 merges and 1 call", len(f.merges), gh.Calls)
+	}
+}
+
+// TestLandPRRefusesScoreUnder8: green at GitHub's head, but the newest read
+// at head scored under 8: REFUSED READ score=7 before any merge.
+func TestLandPRRefusesScoreUnder8(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	ghLeg(t, c, "gh", "green", "check:lint", "green 1 x", "wf:ci", "green 2 x")
+	scoreLeg(t, c, 7, prHead, 7)
+	rep, log, gh, err := runLandPR(t, f, c)
+	if err == nil {
+		t.Fatalf("expected refusal, got err=nil rep=%+v", rep)
+	}
+	wantRef := fmt.Sprintf("REFUSED READ score=7 head=%s remedy=\"nova-sprint read brief --pr 7\"", prHead[:8])
+	if !strings.Contains(err.Error(), wantRef) {
+		t.Fatalf("err %v, want %s", err, wantRef)
+	}
+	if !strings.Contains(log, "PR 7 "+wantRef+"\n") {
+		t.Fatalf("log %q, want PR 7 %s", log, wantRef)
+	}
+	if len(f.merges) != 0 || gh.Calls != 1 {
+		t.Fatalf("merges=%d calls=%d, want 0 merges and 1 call", len(f.merges), gh.Calls)
 	}
 }

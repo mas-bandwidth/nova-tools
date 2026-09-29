@@ -363,6 +363,107 @@ func parseScore(s string) int {
 	return n
 }
 
+// ReadRefusal formats the issue #4397 read refusal:
+// REFUSED READ score=<n> head=<sha> remedy="nova-sprint read brief --pr <n>" (or score=none).
+func ReadRefusal(n int, head string, score int) *Refusal {
+	scoreStr := "none"
+	if score >= 0 {
+		scoreStr = strconv.Itoa(score)
+	}
+	return &Refusal{
+		Why:    fmt.Sprintf("READ score=%s head=%s", scoreStr, short(head)),
+		Remedy: fmt.Sprintf("%q", fmt.Sprintf("nova-sprint read brief --pr %d", n)),
+	}
+}
+
+// NewestScoreAt scans typed lines in reverse order (newest line first) for the
+// newest SCORE record at head (matching head prefix of at least 7 hex digits,
+// ignoring jev). It returns the score (0-10), the reviewer who posted it, and
+// whether a valid score was found.
+func NewestScoreAt(lines []string, head string) (score int, who string, found bool) {
+	atHead := func(who, h string) bool {
+		return who != "" && !strings.HasPrefix(who, "jev") && len(h) >= 7 && (strings.HasPrefix(strings.ToLower(head), strings.ToLower(h)) || strings.HasPrefix(strings.ToLower(h), strings.ToLower(head)))
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
+			continue
+		}
+		if c, ok := typedrec.ParseDisposition(l); ok {
+			w := strings.ToLower(c.Who)
+			if !atHead(w, c.Head) {
+				continue
+			}
+			if c.Verdict == "APPROVE" && c.Valid {
+				s := parseScore(c.Score)
+				if s >= 0 {
+					return s, w, true
+				}
+			}
+			continue
+		}
+		f := strings.Fields(l)
+		if len(f) == 0 {
+			continue
+		}
+		if f[0] != "SCORE" {
+			continue
+		}
+		kv := map[string]string{}
+		for _, w := range f[1:] {
+			if k, v, ok := strings.Cut(w, "="); ok {
+				kv[k] = strings.TrimRight(v, ":,;")
+			}
+		}
+		w := strings.ToLower(kv["who"])
+		if !atHead(w, kv["head"]) {
+			continue
+		}
+		scStr := kv["score"]
+		if scStr == "" {
+			for _, item := range f[1:] {
+				if strings.Contains(item, "/10") {
+					scStr = item
+					break
+				}
+			}
+		}
+		s := parseScore(scStr)
+		if s >= 0 {
+			return s, w, true
+		}
+	}
+	return -1, "", false
+}
+
+// GatePRRead checks whether PR n in repo has an 8+ read at head.
+// If absent or score < 8, it returns a *Refusal:
+// REFUSED READ score=<n> head=<sha> remedy="nova-sprint read brief --pr <n>" (or score=none).
+func GatePRRead(ctx context.Context, c redis.Cmdable, repo string, n int, head string) error {
+	recs, err := LoadPRs(ctx, c, repo, []int{n})
+	if err != nil {
+		return err
+	}
+	if len(recs) == 0 {
+		return ReadRefusal(n, head, -1)
+	}
+	r := recs[0]
+	if head == "" {
+		head = r.Head
+	}
+	if head == "" {
+		return ReadRefusal(n, "-", -1)
+	}
+	score, _, ok := NewestScoreAt(r.Reads, head)
+	if !ok {
+		return ReadRefusal(n, head, -1)
+	}
+	if score < 8 {
+		return ReadRefusal(n, head, score)
+	}
+	return nil
+}
+
 // Member is one PR of the stream that lands.
 type Member struct {
 	Task   string
@@ -383,6 +484,7 @@ type Member struct {
 type Skip struct {
 	Task string
 	N    int
+	Head string
 	Why  string
 }
 
@@ -430,8 +532,12 @@ func LoadConfig(ctx context.Context, c redis.Cmdable, repo string) (Config, erro
 	return cfg, nil
 }
 
-// prNumber reads a task's pr field (123, #123, <repo>#123, or a pulls URL)
+// PRNumber reads a task's pr field (123, #123, <repo>#123, or a pulls URL)
 // and reports whether it names this repo (a bare number does).
+func PRNumber(field, repo string) (int, bool) {
+	return prNumber(field, repo)
+}
+
 func prNumber(field, repo string) (int, bool) {
 	field = strings.TrimSpace(field)
 	if field == "" {
@@ -542,6 +648,7 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 		why := ""
 		read := ReadAt(r.Reads, r.Head)
 		jevWhy := jev.Skip(r.Reads, r.Head, jevMode, jevGating)
+		newestScore, newestWho, scoreOK := NewestScoreAt(r.Reads, r.Head)
 		switch {
 		case !r.Exists:
 			why = "no-record"
@@ -555,16 +662,16 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 			why = "hold:" + read.Held
 		case jevWhy != "":
 			why = jevWhy
-		case read.Score < 0:
+		case !scoreOK:
 			why = "no-read-at-head"
-		case read.Score < minScore:
-			why = fmt.Sprintf("score:%d<%d", read.Score, minScore)
+		case newestScore < minScore:
+			why = fmt.Sprintf("score:%d<%d", newestScore, minScore)
 		}
 		if why != "" {
-			skips = append(skips, Skip{Task: cd.task, N: n, Why: why})
+			skips = append(skips, Skip{Task: cd.task, N: n, Head: r.Head, Why: why})
 			continue
 		}
-		out = append(out, Member{Task: cd.task, Stream: cd.stream, N: n, Head: r.Head, ReadyAt: cd.at, Who: read.Who, Score: read.Score})
+		out = append(out, Member{Task: cd.task, Stream: cd.stream, N: n, Head: r.Head, ReadyAt: cd.at, Who: newestWho, Score: newestScore})
 	}
 	// Streams in the order named, the ws ZSET score first within each (the
 	// work order, #4342), equal scores by PR number.

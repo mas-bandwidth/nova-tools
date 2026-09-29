@@ -1980,6 +1980,16 @@ every row posted, 1 a row refused, 2 a row could not run:
 READ POST FILE file=scores.tsv rows=4 posted=3 refused=1 github_calls=0
 ```
 
+`read owed --pr <n> [--repo <r>] [--by <name>] [--redis <addr>]` (#4397)
+cuts the owed work as a fix card behind the original on the same stream for a PR
+already merged whose newest read at head scored under 8. It parses the `Owed: <sentence>`
+from the read lines into the fix card body, placing the card in `waiting` state
+with `depends_on` pointing to the original task card.
+
+```text
+READ OWED repo=mas-bandwidth/nova-tools pr=#7 score=6 card=fix-build-100 stream=landing behind=build-100 body="fix timeout handling in retry loop"
+```
+
 Every brief this repository ships (the nova-sprint brief templates, the read
 template, the `nova-swarm template` cards and the swarm's card fixtures) is
 scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a
@@ -2275,7 +2285,7 @@ QUACK RUN sprint=quack-0926 benches=2 refused=0 pitstop=lifted ms=9
 
 `nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]`
 
-One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token is the seat's when its seats.tsv row names one (#4330), else the environment's (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it). No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
+One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. The read is a gate in the lander (#4397): `land pr` refuses a PR whose newest `SCORE` record at head is under 8 or absent, printing `REFUSED READ score=<n|none> head=<sha8> remedy="nova-sprint read brief --pr <n>"`. Likewise, `land stream` refuses a stream when any member PR lacks an 8+ read at its head, and the merge card renders the refusal beneath that member. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token is the seat's when its seats.tsv row names one (#4330), else the environment's (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it). No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
 
 ```text
 nova-sprint land pr 4304

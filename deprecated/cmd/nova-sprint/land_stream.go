@@ -218,6 +218,16 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	for _, s := range rep.Skips {
 		fmt.Fprintf(out, "SKIP task=%s pr=#%d why=%s\n", s.Task, s.N, oneline.Field(s.Why))
+		if s.Why == "no-read-at-head" || strings.HasPrefix(s.Why, "score:") {
+			scoreStr := "none"
+			if strings.HasPrefix(s.Why, "score:") {
+				var sc int
+				if _, err := fmt.Sscanf(s.Why, "score:%d<", &sc); err == nil {
+					scoreStr = strconv.Itoa(sc)
+				}
+			}
+			fmt.Fprintf(out, "REFUSED READ score=%s head=%s remedy=%q\n", scoreStr, stream.Short(s.Head), fmt.Sprintf("nova-sprint read brief --pr %d", s.N))
+		}
 	}
 	if err != nil {
 		return landExit(errOut, verb, err)

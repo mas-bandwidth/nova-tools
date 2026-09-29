@@ -11,6 +11,7 @@
 //	nova-sprint read post   --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>]
 //	nova-sprint read digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>]
 //	nova-sprint read carry  --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]
+//	nova-sprint read owed   --pr <n> [--repo <r>] [--by <name>] [--redis <addr>]
 //
 // <r> is owner/name or name: every subverb keys the PR record pr:<name>:<n>
 // by the bare name (internal/nsprint/prkey), the key pr record writes.
@@ -37,9 +38,11 @@
 // after the base merge is normalised copies every typed line to the new
 // head with a carried_from receipt; the lander counts a carried read as a
 // read (internal/nsprint/land). A changed diff is REFUSED naming the files,
-// and a re-read is the one remedy.
+// and a re-read is the one remedy. owed cuts a fix card behind the original
+// on the same stream for a merged PR whose newest read at head scored under 8
+// (#4397).
 //
-// Exit 0 done (CARRIED, NOTHING, RECORDED, the brief or the post); 1
+// Exit 0 done (CARRIED, NOTHING, RECORDED, the brief, post or owed); 1
 // refused with the remedy on the line (REFUSED carry, no record, no
 // token); 2 usage, before Redis is touched.
 package main
@@ -65,12 +68,12 @@ import (
 func init() {
 	register(Verb{
 		Name:    "read",
-		Summary: "brief: the read brief from Redis and the mirror (zero GitHub calls); post: store a typed line; digest: record a read's diff digest; carry: typed lines across an identical-diff head move",
+		Summary: "brief: the read brief from Redis and the mirror (zero GitHub calls); post: store a typed line; digest: record a read's diff digest; carry: typed lines across an identical-diff head move; owed: cut fix card for read under 8 on merged PR",
 		Run:     runRead,
 	})
 }
 
-const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>], post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
+const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>], post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>], carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>] or owed --pr <n> [--repo <r>] [--by <name>] [--redis <addr>]"
 
 func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -93,11 +96,26 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	prN := fs.String("pr", "", "")
 	issue := fs.String("issue", "", "")
 	file := fs.String("file", "", "")
+	by := fs.String("by", "", "")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, "read "+sub, readUsage)
 	}
 	if *redisAddr == "" {
 		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
+	}
+	if sub == "owed" {
+		prVal := *prN
+		if prVal == "" {
+			prVal = *n
+		}
+		if prVal == "" || *outDir != "" || *typed != "" || *taskID != "" || *file != "" || *head != "" || *baseRef != "" || *issue != "" || *redisAddr == "" {
+			return refuse(errOut, "read owed", "want owed --pr <n> [--repo <r>] [--by <name>] [--redis <addr>] (or NOVA_SPRINT_REDIS)")
+		}
+		num, err := strconv.Atoi(prVal)
+		if err != nil || num <= 0 {
+			return refuse(errOut, "read owed", "--pr wants a positive PR number, got "+strconv.Quote(prVal))
+		}
+		return runReadOwed(ctx, *redisAddr, *repo, num, *by, out, errOut)
 	}
 	if *prN != "" || *issue != "" {
 		if sub != "brief" || *prN == "" || *n != "" || *outDir != "" || *typed != "" || *taskID != "" || *file != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
@@ -338,4 +356,31 @@ func readMirror(flag, repo string) string {
 		return d
 	}
 	return ""
+}
+
+// runReadOwed is `read owed --pr <n>` (#4397):
+// A read under 8 on a PR already merged cuts the owed work as a fix card
+// behind the original on the same stream.
+func runReadOwed(ctx context.Context, addr, repo string, pr int, by string, out, errOut io.Writer) int {
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return refuse(errOut, "read owed", err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	res, err := read.Owed(ctx, st.Client(), read.OwedOptions{
+		Repo: repo,
+		PR:   pr,
+		By:   by,
+	})
+	if err != nil {
+		rep := repo
+		if rep == "" {
+			rep = "nova-tools"
+		}
+		fmt.Fprintf(errOut, "READ OWED REFUSED repo=%s pr=#%d why=%s\n", rep, pr, oneline.Escape(err.Error()))
+		return 1
+	}
+	fmt.Fprintf(out, "READ OWED repo=%s pr=#%d score=%d card=%s stream=%s behind=%s body=%q\n",
+		res.Repo, res.PR, res.Score, res.Card, res.Stream, res.Behind, res.Body)
+	return 0
 }

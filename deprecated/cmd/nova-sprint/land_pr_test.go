@@ -68,6 +68,21 @@ func TestLandPRVerb(t *testing.T) {
 	}
 	c.Del(context.Background(), "pr:r:12")
 
+	// Missing read refusal (#4397):
+	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
+	if code != 2 || !strings.Contains(out, "PR 12 REFUSED READ score=none head=aaaaaaaa remedy=\"nova-sprint read brief --pr 12\"") {
+		t.Fatalf("missing read refusal: exit %d\n%s%s", code, out, errOut)
+	}
+
+	// Read under 8 refusal (#4397):
+	c.RPush(context.Background(), "pr:r:12:lines", "SCORE who=rev head="+strings.Repeat("a", 40)+" score=7/10")
+	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
+	if code != 2 || !strings.Contains(out, "PR 12 REFUSED READ score=7 head=aaaaaaaa remedy=\"nova-sprint read brief --pr 12\"") {
+		t.Fatalf("read under 8 refusal: exit %d\n%s%s", code, out, errOut)
+	}
+
+	// Read 8+ allows merge (#4397):
+	c.RPush(context.Background(), "pr:r:12:lines", "SCORE who=rev head="+strings.Repeat("a", 40)+" score=8/10")
 	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
 	want := "PR 12 CHECKS green 1/1 head=aaaaaaaa\nPR 12 MERGED " + strings.Repeat("b", 40) + "\n" +
 		"PR 12 RECORD pr:r:12 outcome=created head=aaaaaaaa prev=- state=merged stream=- task=-\n" +

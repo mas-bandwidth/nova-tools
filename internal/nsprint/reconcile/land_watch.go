@@ -114,11 +114,12 @@ func LandGenKey(stream string) string     { return "land:gen:" + stream } // the
 
 // MergeMember is one member of a merge card's brief.
 type MergeMember struct {
-	Task      string
-	PR        string
-	Paths     string  // the record's PATHS
-	Order     float64 // the ws:<stream>:merging score: the work order
-	MergingAt time.Time
+	Task        string
+	PR          string
+	Paths       string  // the record's PATHS
+	Order       float64 // the ws:<stream>:merging score: the work order
+	MergingAt   time.Time
+	ReadRefusal string // REFUSED READ line when newest score at head is under 8 or absent (#4397)
 }
 
 // MergeCard is the card the watch cuts: Kind merge for a stream's landing,
@@ -668,6 +669,9 @@ func MergeBrief(m MergeCard) string {
 			age = m.Now.Sub(mm.MergingAt).Truncate(time.Second).String()
 		}
 		fmt.Fprintf(&b, "  %d. %s pr=%s order=%.0f merging_for=%s\n", i+1, mm.Task, pr, mm.Order, age)
+		if mm.ReadRefusal != "" {
+			fmt.Fprintf(&b, "     %s\n", mm.ReadRefusal)
+		}
 	}
 	b.WriteString("\nRules (all hard; nova-tools #4324):\n")
 	b.WriteString("- One branch per work stream, members in work order, ONE PR into " + m.Base + ", never one member at a time and never a member merged by hand: `gh pr merge` on a member is refused; members land only through nova-sprint land stream.\n")
@@ -988,7 +992,14 @@ func MergeBriefFor(ctx context.Context, c redis.Cmdable, id string, rec map[stri
 	}
 	var paths []string
 	seenPath := map[string]bool{}
-	for _, m := range st.members {
+	for i, m := range st.members {
+		if m.PR != "" && m.PR != "no-pr" {
+			if n, ok := stream.PRNumber(m.PR, repo); ok && n > 0 {
+				if rerr := stream.GatePRRead(ctx, c, repo, n, ""); rerr != nil {
+					st.members[i].ReadRefusal = rerr.Error()
+				}
+			}
+		}
 		for _, p := range strings.Fields(m.Paths) {
 			if !seenPath[p] {
 				seenPath[p] = true

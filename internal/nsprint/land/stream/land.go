@@ -148,6 +148,19 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	if rep.Serial != "" {
 		if !o.Partial {
+			// A member left out due to a read under minScore or absent refuses
+			// the run with the read gate (nova-tools#4397).
+			for _, sk := range rep.LeftOut {
+				if sk.Why == "no-read-at-head" {
+					return rep, ReadRefusal(sk.N, sk.Head, -1)
+				}
+				if strings.HasPrefix(sk.Why, "score:") {
+					var sc int
+					if _, err := fmt.Sscanf(sk.Why, "score:%d<", &sc); err == nil {
+						return rep, ReadRefusal(sk.N, sk.Head, sc)
+					}
+				}
+			}
 			return rep, &Refusal{Why: rep.Serial, Remedy: "read, park or hold-release the members left out (the stream lands as one PR), or --partial to land without them"}
 		}
 		if o.Log != nil {

@@ -1,6 +1,7 @@
 package reconcile_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -29,5 +30,44 @@ func TestStepCountsALandingPastItsWallAsStalled(t *testing.T) {
 	st = reconcile.Step(st, s, false, t0.Add(2*time.Minute), window)
 	if st.Status != reconcile.StatusIdle || st.BlockedSince != 0 {
 		t.Fatalf("cleared: %+v", st)
+	}
+}
+
+// TestMergeBriefIncludesReadRefusal verifies that MergeBrief formats
+// the indented REFUSED READ lines under members that have a read refusal.
+func TestMergeBriefIncludesReadRefusal(t *testing.T) {
+	t.Parallel()
+
+	card := reconcile.MergeCard{
+		Stream: "landing",
+		Slug:   "landing",
+		Base:   "dev",
+		Repo:   "mas-bandwidth/nova-tools",
+		Members: []reconcile.MergeMember{
+			{
+				Task:        "build-1",
+				PR:          "101",
+				Order:       1,
+				ReadRefusal: `REFUSED READ score=none head=aaaaaaaa remedy="nova-sprint read brief --pr 101"`,
+			},
+			{
+				Task:        "build-2",
+				PR:          "102",
+				Order:       2,
+				ReadRefusal: `REFUSED READ score=7 head=bbbbbbbb remedy="nova-sprint read brief --pr 102"`,
+			},
+			{
+				Task:  "build-3",
+				PR:    "103",
+				Order: 3,
+			},
+		},
+	}
+	brief := reconcile.MergeBrief(card)
+	if !strings.Contains(brief, `REFUSED READ score=none head=aaaaaaaa remedy="nova-sprint read brief --pr 101"`) {
+		t.Fatalf("brief missing score=none refusal:\n%s", brief)
+	}
+	if !strings.Contains(brief, `REFUSED READ score=7 head=bbbbbbbb remedy="nova-sprint read brief --pr 102"`) {
+		t.Fatalf("brief missing score=7 refusal:\n%s", brief)
 	}
 }
