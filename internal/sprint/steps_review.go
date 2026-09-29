@@ -143,7 +143,8 @@ type ReadReq struct {
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
 // with the finding. A broken read is a judgment; the second different reader's
-// ok at the primary's head says it is ready to accept.
+// ok at the primary's head is the judgment ready to accept, which accept,
+// rework and drop close.
 func Read(s *Snapshot, r ReadReq) Plan {
 	var p Plan
 	sel := r.Sel
@@ -207,8 +208,8 @@ func Read(s *Snapshot, r ReadReq) Plan {
 						others[o.F("reader")] = true
 					}
 				}
-				if len(others) == 1 {
-					n := happened(NReadyToAccept, pr.Row, s.Now, pr.ID)
+				if len(others) == 1 && !hasOpen(s.Open, NReadyToAccept, pr.ID) {
+					n := judgment(NReadyToAccept, pr.Row, s.Now, 0, pr.ID)
 					n.Who, n.Attempt = r.As, attempt
 					u.Notes = append(u.Notes, n)
 				}
@@ -416,7 +417,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves

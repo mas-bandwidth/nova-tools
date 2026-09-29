@@ -19,7 +19,6 @@ const (
 	NStartedMerging = "stream started merging"
 	NBatchLanded    = "batch landed"
 	NStreamLanded   = "stream landed"
-	NReadyToAccept  = "two readers said ok"
 	NWorkOK         = "work came back ok"
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
@@ -27,6 +26,7 @@ const (
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"
 
+	NReadyToAccept  = "ready to accept" // two different readers said ok at its head
 	NWorkFailed     = "work came back failed"
 	NReadBroken     = "a reader found it broken"
 	NConflict       = "stream stopped: conflict on a card"
@@ -44,6 +44,7 @@ const (
 
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
+	NReadyToAccept:  {"accept", "rework", "drop"},
 	NWorkFailed:     {"rework with a fix", "drop"},
 	NReadBroken:     {"rework with the finding", "ask another reader", "drop"},
 	NConflict:       {"resolve and resume", "rework", "drop"},

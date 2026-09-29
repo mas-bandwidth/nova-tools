@@ -126,7 +126,7 @@ const inboxExample = `reading the inbox and answering a judgment:
       nova-sprint resume --stream s2 --did 'returned s2-4 for rework' --answers merge-0315c3d4-1.1
     resume with what you did:
       nova-sprint resume --stream s2 --did '<what you did>' --answers merge-0315c3d4-1.1
-  HAPPENED ask-0316e5f6-1.1   two readers said ok  stream=s1  size=5  (s1-1,s1-2,s1-4,s1-5,s1-6)
+  HAPPENED finish-0316e5f6-1.1   work came back ok  stream=s1  size=5  (s1-1,s1-2,s1-4,s1-5,s1-6)
   INBOX OK judgments=2 happened=1 cursor=-
 
 A group is named by its id (its oldest notification's), which does not move
@@ -137,6 +137,7 @@ per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
 lists every member of a group; card <id> is everything about one primary.
 
 one answer to each judgment (every one prints its own, filled in):
+  ready to accept             accept --group <id> --expect <n> --answers <notes>
   work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
   a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
   conflict on a card          resume --stream <s> --did 'rebased <card>' --answers <note>
