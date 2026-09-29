@@ -56,7 +56,14 @@ var (
 	containerFromRe  = regexp.MustCompile(`(?m)^FROM\s+(\S+)(?:\s+AS\s+(\S+))?\s*$`)
 	goModGoLineRe    = regexp.MustCompile(`(?m)^go\s+(\S+)\s*$`)
 	goModToolchainRe = regexp.MustCompile(`(?m)^toolchain\s+go(\S+)\s*$`)
-	curlRe           = regexp.MustCompile(`\bcurl -`)
+	curlCallRe       = regexp.MustCompile(`\bcurl\s+(\S+)`)
+	curlPipeRe       = regexp.MustCompile(`\bcurl\s[^;&|]*\|[^|]`)
+	curlFailFlagRe   = regexp.MustCompile(`(?:^|\s)-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)`)
+	curlOutputRe     = regexp.MustCompile(`(?:^|\s)(?:-[a-zA-Z]*o|--output)(?:\s|$)`)
+	wgetRe           = regexp.MustCompile(`\bwget\b`)
+	shaCommandRe     = regexp.MustCompile(`\bsha256sum\b`)
+	shaStdinCheckRe  = regexp.MustCompile(`\bsha256sum\s+-c\s+-(?:\s|$|;|&|\)|\})`)
+	shaArgVarRe      = regexp.MustCompile(`\$\{?[A-Z0-9_]*SHA256[A-Z0-9_]*`)
 )
 
 // containerRuns returns the instruction bodies of the Containerfile with line
@@ -93,6 +100,116 @@ func containerArgs(src string) map[string]string {
 		args[m[1]] = m[2]
 	}
 	return args
+}
+
+// downloadProblems reads the instructions for a download that is not checked
+// against a pinned sha256. A download is a `curl` call (never `wget`, and never
+// an ADD of a URL) that writes a file with -o, fails on an HTTP error with -f
+// and pipes into nothing, in a RUN whose every `sha256sum` is `sha256sum -c -`:
+// the expected sum comes in on stdin from an ARG's value, and is never computed
+// from the download it checks. Every ARG *SHA256* is used by some RUN.
+func downloadProblems(ins []string) []string {
+	var out []string
+	used := strings.Builder{}
+	for _, in := range ins {
+		short := in
+		if len(short) > 110 {
+			short = short[:110]
+		}
+		if strings.HasPrefix(in, "ADD ") && (strings.Contains(in, "http://") || strings.Contains(in, "https://")) {
+			out = append(out, "an ADD fetches a URL with no checksum; download with curl and check a pinned sha256: "+short)
+		}
+		if !strings.HasPrefix(in, "RUN ") {
+			continue
+		}
+		used.WriteString(in)
+		used.WriteString("\n")
+		if wgetRe.MatchString(in) {
+			out = append(out, "a RUN downloads with wget; use curl -fsSL -o <file> and check a pinned sha256: "+short)
+		}
+		downloads := false
+		for _, m := range curlCallRe.FindAllStringSubmatch(in, -1) {
+			arg := m[1]
+			if !strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "http") {
+				continue // the word "curl" in an apt-get install list
+			}
+			downloads = true
+			seg := in[strings.Index(in, m[0])+len("curl"):]
+			if i := strings.IndexAny(seg, ";&|"); i >= 0 {
+				seg = seg[:i]
+			}
+			if !curlFailFlagRe.MatchString(seg) {
+				out = append(out, "a curl call has no -f, so an HTTP error page is taken for the file: "+short)
+			}
+			if !curlOutputRe.MatchString(seg) {
+				out = append(out, "a curl call has no -o <file>: the download must be a file the checksum reads: "+short)
+			}
+		}
+		if curlPipeRe.MatchString(in) {
+			out = append(out, "a curl call pipes its output into another program: "+short)
+		}
+		if !downloads {
+			continue
+		}
+		if n := len(shaCommandRe.FindAllString(in, -1)); n == 0 || n != len(shaStdinCheckRe.FindAllString(in, -1)) {
+			out = append(out, "a RUN downloads and its sha256sum is not always `sha256sum -c -` fed a pinned sum on stdin (a sum computed from the download checks nothing): "+short)
+		}
+		if !shaArgVarRe.MatchString(in) {
+			out = append(out, "a RUN downloads and never reads a pinned ARG *_SHA256 value: "+short)
+		}
+	}
+	for name := range containerArgsFromInstructions(ins) {
+		if !strings.Contains(name, "SHA256") {
+			continue
+		}
+		if !strings.Contains(used.String(), "${"+name+"}") && !strings.Contains(used.String(), "$"+name) {
+			out = append(out, "ARG "+name+" is pinned and no RUN reads it")
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containerArgsFromInstructions(ins []string) map[string]string {
+	args := map[string]string{}
+	for _, in := range ins {
+		if m := containerArgRe.FindStringSubmatch(in); m != nil {
+			args[m[1]] = m[2]
+		}
+	}
+	return args
+}
+
+// TestFunctionalImageDownloadCheckSeesEveryWayAroundIt: the check above holds
+// on a checked download and reddens, with the reason, on each way a download
+// can go unchecked.
+func TestFunctionalImageDownloadCheckSeesEveryWayAroundIt(t *testing.T) {
+	t.Parallel()
+	arg := "ARG X_SHA256=" + strings.Repeat("0", 64)
+	ok := `RUN curl -fsSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`
+	if got := downloadProblems([]string{arg, ok}); len(got) != 0 {
+		t.Fatalf("a checked download is refused: %v", got)
+	}
+	cases := []struct{ name, run, want string }{
+		{"a sum computed from the download", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && sha256sum /tmp/x > /tmp/x.sum && sha256sum -c /tmp/x.sum && echo "${X_SHA256}"`, "sha256sum -c -"},
+		{"curl piped into sh", `RUN curl -fsSL https://example.invalid/i.sh | sh`, "pipes"},
+		{"curl piped into sh, no flags", `RUN curl https://example.invalid/i.sh | sh && echo "${X_SHA256}"`, "pipes"},
+		{"wget", `RUN wget -O /tmp/x https://example.invalid/x && echo "${X_SHA256}"`, "wget"},
+		{"ADD of a URL", `ADD https://example.invalid/x /usr/local/bin/x`, "ADD"},
+		{"no -f", `RUN curl -sSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`, "no -f"},
+		{"no -o", `RUN curl -fsSL https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`, "no -o"},
+		{"no checksum", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && echo "${X_SHA256}"`, "sha256sum -c -"},
+		{"a sum that is not a pinned ARG", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "abc" /tmp/x | sha256sum -c -`, "pinned ARG"},
+	}
+	for _, c := range cases {
+		got := strings.Join(downloadProblems([]string{arg, c.run}), "\n")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: the download check does not say %q: %q", c.name, c.want, got)
+		}
+	}
+	if got := downloadProblems([]string{arg, "ARG UNUSED_SHA256=" + strings.Repeat("0", 64), ok}); len(got) != 1 || !strings.Contains(got[0], "UNUSED_SHA256") {
+		t.Errorf("a pinned ARG no RUN reads is not named: %v", got)
+	}
 }
 
 // TestFunctionalImageBaseIsPinnedByDigest: the base image is named by its
@@ -172,12 +289,13 @@ func TestFunctionalImageInputsArePinned(t *testing.T) {
 	if args["REDIS_VERSION"] == "" || args["SOPS_VERSION"] == "" || args["AGE_VERSION"] == "" {
 		t.Errorf("%s: REDIS_VERSION, SOPS_VERSION and AGE_VERSION are all pinned ARGs; one is missing", functionalImageFile)
 	}
-	for _, in := range containerInstructions(src) {
+	ins := containerInstructions(src)
+	for _, problem := range downloadProblems(ins) {
+		t.Errorf("%s: %s", functionalImageFile, problem)
+	}
+	for _, in := range ins {
 		if !strings.HasPrefix(in, "RUN ") {
 			continue
-		}
-		if curlRe.MatchString(in) && !strings.Contains(in, "sha256sum -c") {
-			t.Errorf("%s: a RUN downloads with curl and never checks a sha256: %.120s", functionalImageFile, in)
 		}
 		if strings.Contains(in, "apt-get install") {
 			if !strings.Contains(in, "--no-install-recommends") {
@@ -389,14 +507,121 @@ func TestFunctionalImageCarriesEveryBinaryTheTierExecs(t *testing.T) {
 				t.Errorf("%s:%d: %s says apt package %q carries it, and no apt-get install in %s names that package", functionalImageList, r.line, r.name, r.provider, functionalImageFile)
 			}
 		case "source":
-			if !strings.Contains(containerfile, r.provider) {
-				t.Errorf("%s:%d: %s says %q carries it, and %s never mentions that", functionalImageList, r.line, r.name, r.provider, functionalImageFile)
+			if problem := sourceProblem(containerfile, r.name, r.provider); problem != "" {
+				t.Errorf("%s:%d: %s says %q carries it, and %s: %s", functionalImageList, r.line, r.name, r.provider, functionalImageFile, problem)
 			}
 		case "absent":
 			if len(strings.Fields(r.provider)) < 3 {
 				t.Errorf("%s:%d: %s is absent from the image and the reason %q is not a sentence", functionalImageList, r.line, r.name, r.provider)
 			}
 		}
+	}
+}
+
+// containerStages splits the instructions by FROM: the stage names, and the
+// instructions of every stage but the last (build) and of the last (final).
+func containerStages(containerfile string) (names map[string]bool, build, final []string) {
+	names = map[string]bool{}
+	var cur []string
+	stages := 0
+	for _, in := range containerInstructions(containerfile) {
+		if strings.HasPrefix(in, "FROM ") {
+			if stages > 0 {
+				build = append(build, cur...)
+			}
+			cur = nil
+			stages++
+			if f := strings.Fields(in); len(f) == 4 && strings.EqualFold(f[2], "AS") {
+				names[f[3]] = true
+			}
+			continue
+		}
+		cur = append(cur, in)
+	}
+	return names, build, cur
+}
+
+// hasWord reports whether text holds name as a whole path element or word
+// (`redis-cli` is not `redis-cli-x`, `age` is not `age.tgz`).
+func hasWord(text, name string) bool {
+	return regexp.MustCompile(`(^|[^A-Za-z0-9_.-])` + regexp.QuoteMeta(name) + `($|[^A-Za-z0-9_.-])`).MatchString(text)
+}
+
+// sourceProblem reports why the Containerfile does not build and carry a
+// program a binaries.txt row calls `source`, or "". Comments never count. The
+// final stage must copy or install the program by name (the manifest's own
+// version lines do not count), and the provider is either a stage the final
+// stage copies that program from, or a word in a RUN of an earlier stage that
+// builds or downloads it.
+func sourceProblem(containerfile, name, provider string) string {
+	stages, build, final := containerStages(containerfile)
+	var installs []string
+	for _, in := range final {
+		if (strings.HasPrefix(in, "COPY ") || strings.HasPrefix(in, "RUN ")) && !strings.Contains(in, "/image-manifest.txt") {
+			installs = append(installs, in)
+		}
+	}
+	named := false
+	for _, in := range installs {
+		if hasWord(in, name) {
+			named = true
+		}
+	}
+	if !named {
+		return "the final stage copies or installs no `" + name + "`"
+	}
+	if stages[provider] {
+		for _, in := range installs {
+			if strings.HasPrefix(in, "COPY --from="+provider+" ") && hasWord(in, name) {
+				return ""
+			}
+		}
+		return "the final stage has no `COPY --from=" + provider + "` of `" + name + "`"
+	}
+	for _, in := range build {
+		if strings.HasPrefix(in, "RUN ") && hasWord(in, provider) {
+			return ""
+		}
+	}
+	return "no RUN of an earlier stage builds or downloads `" + provider + "`"
+}
+
+// TestFunctionalImageSourceCheckSeesADeletedInstall: the source check reads
+// instructions, so a comment that names a program does not carry it, and a
+// program whose download or COPY is deleted is red.
+func TestFunctionalImageSourceCheckSeesADeletedInstall(t *testing.T) {
+	t.Parallel()
+	containerfile := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageFile)))
+	drop := func(substr string) string {
+		var keep []string
+		for _, l := range strings.Split(containerfile, "\n") {
+			if !strings.Contains(l, substr) {
+				keep = append(keep, l)
+			}
+		}
+		return strings.Join(keep, "\n")
+	}
+	for _, c := range []struct{ name, provider, cut string }{
+		{"redis-server", "redis-build", "COPY --from=redis-build"},
+		{"redis-cli", "redis-build", "COPY --from=redis-build"},
+		{"sops", "sops", "sops"},
+		{"age-keygen", "age", "age"},
+		{"go", "fetch", "COPY --from=fetch /usr/local/go"},
+	} {
+		if p := sourceProblem(containerfile, c.name, c.provider); p != "" {
+			t.Errorf("%s: the real Containerfile is refused: %s", c.name, p)
+		}
+		mutated := drop(c.cut)
+		if mutated == containerfile {
+			t.Fatalf("%s: nothing to delete for %q", c.name, c.cut)
+		}
+		if p := sourceProblem(mutated, c.name, c.provider); p == "" {
+			t.Errorf("%s: deleting every line with %q stays green", c.name, c.cut)
+		}
+	}
+	// A comment alone does not carry a program.
+	if p := sourceProblem("FROM x\n# sops is installed elsewhere\n", "sops", "sops"); p == "" {
+		t.Errorf("a comment that names sops carries it")
 	}
 }
 
