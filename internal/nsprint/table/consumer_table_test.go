@@ -251,3 +251,38 @@ func TestConsumerTablePausedStatus(t *testing.T) {
 		}
 	}
 }
+
+// TestConsumerTableIgnoresBenchBeatProbe (#4237): probe results recorded
+// on the bench beat (bench:<b>:beat probe) alone must never touch cards:*
+// sets, and the consumer table tick renders 0 | 0 | 0 | - for a bench
+// whose beat holds a probe result.
+func TestConsumerTableIgnoresBenchBeatProbe(t *testing.T) {
+	t.Parallel()
+	now := table.SprintFixtureNow()
+	ms := func(d time.Duration) string { return strconv.FormatInt(now.Add(d).UnixMilli(), 10) }
+	client, _ := consumerStore(t, [][]string{
+		{"SADD", "benches", "hetzner"},
+		{"HSET", "bench:hetzner:beat", "load1", "0.19", "at", ms(-time.Second), "probe", "OK v0.15.2-1-g1234567 2026-09-29T07:00:00Z"},
+	})
+	snap, err := table.NewSprintReader(client, table.SprintConfig{}).Read(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Consumers) != 1 {
+		t.Fatalf("got %d consumers, want 1", len(snap.Consumers))
+	}
+	r := snap.Consumers[0]
+	if r.Ready != 0 || r.Working != 0 || r.Done() != 0 || r.OK != 0 || r.Fail != 0 {
+		t.Fatalf("consumer counts: ready=%d working=%d done=%d ok=%d fail=%d, want all 0",
+			r.Ready, r.Working, r.Done(), r.OK, r.Fail)
+	}
+	block := consumerBlock(t, snap.Render(now))
+	want := "worker                    | ready | working |  done |  ok% | status | load\n" +
+		"--------------------------+-------+---------+-------+------+--------+------\n" +
+		"hetzner                   |     0 |       0 |     0 |    - | up     | 0.19\n" +
+		"--------------------------+-------+---------+-------+------+--------+------\n" +
+		"total                     |     0 |       0 |     0 |    - |\n"
+	if block != want {
+		t.Fatalf("consumer table:\n%s\nwant:\n%s", block, want)
+	}
+}
