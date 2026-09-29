@@ -72,14 +72,13 @@ if [ -z "$REDIS" ]; then
 fi
 
 # Locate nova-table
-if [ -x "$REPO_ROOT/bin/nova-table" ]; then
-    NOVA_TABLE="$REPO_ROOT/bin/nova-table"
+if [ -n "${NOVA_TABLE_BIN:-}" ] && [ -x "${NOVA_TABLE_BIN:-}" ]; then
+    NOVA_TABLE="$NOVA_TABLE_BIN"
 elif command -v nova-table >/dev/null 2>&1; then
     NOVA_TABLE="nova-table"
 else
-    mkdir -p "$REPO_ROOT/bin"
-    (cd "$REPO_ROOT" && go build -o bin/nova-table ./cmd/nova-table)
-    NOVA_TABLE="$REPO_ROOT/bin/nova-table"
+    echo "error: NOVA_TABLE_BIN not set to executable and nova-table not found in PATH" >&2
+    exit 1
 fi
 
 START_TIME=$(date +%s)

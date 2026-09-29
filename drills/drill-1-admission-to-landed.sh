@@ -27,12 +27,13 @@ export NOVA_SPRINT_REDIS="$REDIS_ADDR"
 
 MANIFEST_DIR="${CARD_DRILL_TMPDIR:-$BASE_DIR}/manifests/drill-1"
 CARD_BIN="$BASE_DIR/scripts/card"
-if [ -n "${NOVA_TABLE_BIN:-}" ]; then
+if [ -n "${NOVA_TABLE_BIN:-}" ] && [ -x "${NOVA_TABLE_BIN:-}" ]; then
   NOVA_TABLE="$NOVA_TABLE_BIN"
-elif [ -x "$BASE_DIR/bin/nova-table" ]; then
-  NOVA_TABLE="$BASE_DIR/bin/nova-table"
-else
+elif command -v nova-table >/dev/null 2>&1; then
   NOVA_TABLE="nova-table"
+else
+  echo "error: NOVA_TABLE_BIN not set to executable and nova-table not found in PATH" >&2
+  exit 1
 fi
 
 mkdir -p "$MANIFEST_DIR"
@@ -206,7 +207,7 @@ verify_receipt "op-drill1-result"
 
 # 6. Record evidence: two independent exact-head reads + required CI
 ALPHA_DIGEST=$(sha256sum "$BASE_DIR/cards/card-alpha.card" | awk '{print $1}')
-HEAD_SHA=$(git -C "$BASE_DIR" rev-parse HEAD 2>/dev/null || echo "56015ede581dd951250627999a49c04489a9eca1")
+HEAD_SHA=$(git -C "$BASE_DIR" rev-parse --verify HEAD^{commit})
 
 cat > "$MANIFEST_DIR/evidence.json" <<EOF
 {
@@ -269,6 +270,7 @@ cat > "$MANIFEST_DIR/move-merge.json" <<EOF
     {
       "id": "card-alpha",
       "to": "merging",
+      "head": "$HEAD_SHA",
       "expect_place": "stream-1:review",
       "expect_revision": "4"
     }

@@ -27,12 +27,13 @@ export NOVA_SPRINT_REDIS="$REDIS_ADDR"
 
 MANIFEST_DIR="${CARD_DRILL_TMPDIR:-$BASE_DIR}/manifests/drill-2"
 CARD_BIN="$BASE_DIR/scripts/card"
-if [ -n "${NOVA_TABLE_BIN:-}" ]; then
+if [ -n "${NOVA_TABLE_BIN:-}" ] && [ -x "${NOVA_TABLE_BIN:-}" ]; then
   NOVA_TABLE="$NOVA_TABLE_BIN"
-elif [ -x "$BASE_DIR/bin/nova-table" ]; then
-  NOVA_TABLE="$BASE_DIR/bin/nova-table"
-else
+elif command -v nova-table >/dev/null 2>&1; then
   NOVA_TABLE="nova-table"
+else
+  echo "error: NOVA_TABLE_BIN not set to executable and nova-table not found in PATH" >&2
+  exit 1
 fi
 
 mkdir -p "$MANIFEST_DIR"
@@ -89,26 +90,72 @@ snapshot_store() {
   local redis_port="${REDIS_ADDR##*:}"
   redis-cli -h "$redis_host" -p "$redis_port" --raw eval '
     local tname = ARGV[1]
-    local keys = redis.call("KEYS", "table:" .. tname .. ":*")
-    local card_keys = redis.call("KEYS", "card:*")
-    for _, k in ipairs(card_keys) do table.insert(keys, k) end
+    local patterns = {
+      "table:" .. tname .. ":*",
+      "card:*",
+      "receipt:" .. tname .. ":*",
+      "evidence:*"
+    }
+    local seen = {}
+    local keys = {}
+    for _, pat in ipairs(patterns) do
+      local matched = redis.call("KEYS", pat)
+      for _, k in ipairs(matched) do
+        if not seen[k] then
+          seen[k] = true
+          table.insert(keys, k)
+        end
+      end
+    end
     table.sort(keys)
+
     local out = {}
     for _, k in ipairs(keys) do
-      local kt = redis.call("TYPE", k).ok
-      if kt == "hash" then
+      local kt = redis.call("TYPE", k)
+      kt = (type(kt) == "table" and kt.ok) and kt.ok or kt
+      local pttl = redis.call("PTTL", k)
+
+      if kt == "string" then
+        local v = redis.call("GET", k)
+        table.insert(out, k .. "|type=string|pttl=" .. pttl .. "|val=" .. v)
+      elseif kt == "hash" then
         local h = redis.call("HGETALL", k)
         local parts = {}
         for i = 1, #h, 2 do
           table.insert(parts, h[i] .. "=" .. h[i+1])
         end
         table.sort(parts)
-        table.insert(out, k .. " [" .. table.concat(parts, ";") .. "]")
+        table.insert(out, k .. "|type=hash|pttl=" .. pttl .. "|val={" .. table.concat(parts, ";") .. "}")
       elseif kt == "zset" then
         local z = redis.call("ZRANGE", k, 0, -1, "WITHSCORES")
-        table.insert(out, k .. " [zset:" .. table.concat(z, ",") .. "]")
-      elseif kt == "string" then
-        table.insert(out, k .. " [str:" .. redis.call("GET", k) .. "]")
+        local parts = {}
+        for i = 1, #z, 2 do
+          table.insert(parts, z[i] .. ":" .. z[i+1])
+        end
+        table.insert(out, k .. "|type=zset|pttl=" .. pttl .. "|val=[" .. table.concat(parts, ",") .. "]")
+      elseif kt == "set" then
+        local s = redis.call("SMEMBERS", k)
+        table.sort(s)
+        table.insert(out, k .. "|type=set|pttl=" .. pttl .. "|val=[" .. table.concat(s, ",") .. "]")
+      elseif kt == "list" then
+        local l = redis.call("LRANGE", k, 0, -1)
+        table.insert(out, k .. "|type=list|pttl=" .. pttl .. "|val=[" .. table.concat(l, ",") .. "]")
+      elseif kt == "stream" then
+        local entries = redis.call("XRANGE", k, "-", "+")
+        local stream_parts = {}
+        for _, e in ipairs(entries) do
+          local eid = e[1]
+          local fv = e[2]
+          local pairs_list = {}
+          for i = 1, #fv, 2 do
+            table.insert(pairs_list, fv[i] .. "=" .. fv[i+1])
+          end
+          table.sort(pairs_list)
+          table.insert(stream_parts, eid .. "={" .. table.concat(pairs_list, ",") .. "}")
+        end
+        table.insert(out, k .. "|type=stream|pttl=" .. pttl .. "|val=[" .. table.concat(stream_parts, ";") .. "]")
+      else
+        table.insert(out, k .. "|type=" .. kt .. "|pttl=" .. pttl)
       end
     end
     return table.concat(out, "\n")
@@ -217,7 +264,7 @@ ELAPSED_MOVE=$((T1_MOVE - T0_MOVE))
 # 5. Replacement: exactly one replacement pair in one batch
 # Replace card-06 with card-06-v2
 T0_REPLACE=$(date +%s)
-cat > "$BASE_DIR/cards/card-06-v2.card" <<'EOF'
+cat > "$MANIFEST_DIR/card-06-v2.card" <<'EOF'
 card-06-v2
 SCHEMA: v2
 ID: card-06-v2
@@ -246,7 +293,7 @@ cat > "$MANIFEST_DIR/replacement.json" <<EOF
     {
       "old_id": "card-06",
       "new_id": "card-06-v2",
-      "new_file": "$BASE_DIR/cards/card-06-v2.card",
+      "new_file": "$MANIFEST_DIR/card-06-v2.card",
       "stream": "stream-2"
     }
   ]
@@ -474,6 +521,31 @@ if [ "$IMAGE_AFTER_6E" != "$BASELINE_IMAGE" ]; then
   exit 1
 fi
 echo "PASSED: store image bit-identical to baseline across all 5 refusal controls"
+
+# 6f. Prove refusal invariance sensitivity: stream-only mutation MUST fail the invariance checker
+echo ""
+echo "--- Testing Refusal Invariance Sensitivity: Stream-Only Mutation Control ---"
+STREAM_KEY="table:${TABLE_NAME}:changes"
+SNAPSHOT_BEFORE_STREAM_MUTATION=$(snapshot_store)
+
+# Inject synthetic entry into the table changes stream
+LEAKED_STREAM_ID=$(redis-cli -h "${REDIS_ADDR%:*}" -p "${REDIS_ADDR##*:}" XADD "$STREAM_KEY" "*" probe_field "stream_leak_probe")
+
+SNAPSHOT_AFTER_STREAM_MUTATION=$(snapshot_store)
+if [ "$SNAPSHOT_AFTER_STREAM_MUTATION" = "$SNAPSHOT_BEFORE_STREAM_MUTATION" ]; then
+  echo "ERROR: refusal invariance checker failed to detect stream-only mutation!" >&2
+  exit 1
+fi
+echo "PASSED: refusal invariance checker successfully detected stream-only mutation (checker rejected modified image)"
+
+# Clean up synthetic stream entry and verify exact baseline restoration
+redis-cli -h "${REDIS_ADDR%:*}" -p "${REDIS_ADDR##*:}" XDEL "$STREAM_KEY" "$LEAKED_STREAM_ID" >/dev/null
+SNAPSHOT_RESTORED=$(snapshot_store)
+if [ "$SNAPSHOT_RESTORED" != "$BASELINE_IMAGE" ]; then
+  echo "ERROR: failed to restore baseline store image after stream sensitivity test!" >&2
+  exit 1
+fi
+echo "PASSED: store image cleanly restored to bit-identical baseline after sensitivity proof"
 
 # 7. Check table consistency after all operations
 run_step "Check table structural consistency" \

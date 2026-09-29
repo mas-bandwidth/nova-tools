@@ -3,11 +3,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // buildNovaTable compiles nova-table from source into a private temp directory
@@ -154,6 +159,7 @@ func TestDrill1AndDrill2Verification(t *testing.T) {
 			"Verified committed receipt for op-drill2-replace-06 in Redis",
 			"server FCALL runtime refusal: REFUSED REVISION",
 			"store image bit-identical to baseline across all 5 refusal controls",
+			"refusal invariance checker successfully detected stream-only mutation",
 			"result: PASSED",
 		} {
 			if !strings.Contains(out2, want) {
@@ -161,4 +167,93 @@ func TestDrill1AndDrill2Verification(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestStellaCardNoopDiagnostic proves that a move to existing cell with no field/score change
+// results in changed_count=0 and after_rev == before_rev (no-op receipt reflection).
+func TestStellaCardNoopDiagnostic(t *testing.T) {
+	t.Parallel()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(wd))
+	bin := buildNovaTable(t, root)
+	addr := throwaway(t)
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { c.Close() })
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(bin, append(args, "--redis", addr)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("setup: %v %s", err, out)
+		}
+	}
+	run("create", "noop_probe", "--columns", "ready", "--member-prefix", "card:")
+	run("row", "add", "noop_probe", "r")
+	rev, err := c.HGet(ctx, "table:noop_probe:revision", "n").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ntable.ApplyBatch(ctx, c, ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "noop_probe",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "seed",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "c",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "r", Col: "ready", Score: 1},
+				Set:    map[string]string{"stream": "r"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := c.HGet(ctx, "card:c", "revision").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(t.TempDir(), "event.json")
+	if err = os.WriteFile(manifest, []byte(`{"schema":1,"table":"noop_probe","epoch":"0","operation_id":"noop","events":[{"id":"c","to":"ready"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("python3", filepath.Join(root, "scripts", "card-manager.py"), "move", "--events", manifest, "--table", "noop_probe", "--redis", addr)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "NOVA_TABLE_BIN="+bin, "PYTHONDONTWRITEBYTECODE=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("manager: %v %s", err, out)
+	}
+	after, err := c.HGet(ctx, "card:c", "revision").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed, err := c.HGet(ctx, "table:noop_probe:op:noop", "result").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("manager=%s actual_member_revision=%s->%s committed=%s", out, before, after, committed)
+	marker := " delta="
+	at := strings.Index(string(out), marker)
+	if at < 0 {
+		t.Fatal("no delta")
+	}
+	var reported struct {
+		ChangedCount int `json:"changed_count"`
+	}
+	if err = json.Unmarshal([]byte(strings.TrimSpace(string(out)[at+len(marker):])), &reported); err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("not a no-op")
+	}
+	if reported.ChangedCount != 0 {
+		t.Fatalf("manager reports changed_count=%d for actual unchanged member", reported.ChangedCount)
+	}
 }

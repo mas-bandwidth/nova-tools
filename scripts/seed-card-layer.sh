@@ -103,19 +103,15 @@ if [ "$DRY_RUN" -eq 0 ] && [ -z "$REDIS" ]; then
 fi
 
 # Locate nova-table executable
-if [ -x "$REPO_ROOT/bin/nova-table" ]; then
-    NOVA_TABLE="$REPO_ROOT/bin/nova-table"
+if [ -n "${NOVA_TABLE_BIN:-}" ] && [ -x "${NOVA_TABLE_BIN:-}" ]; then
+    NOVA_TABLE="$NOVA_TABLE_BIN"
 elif command -v nova-table >/dev/null 2>&1; then
     NOVA_TABLE="nova-table"
 else
-    # Build on demand into bin if missing
-    mkdir -p "$REPO_ROOT/bin"
-    (cd "$REPO_ROOT" && go build -o bin/nova-table ./cmd/nova-table) || {
-        echo "error: failed to build nova-table" >&2
-        exit 1
-    }
-    NOVA_TABLE="$REPO_ROOT/bin/nova-table"
+    echo "error: NOVA_TABLE_BIN not set to executable and nova-table not found in PATH" >&2
+    exit 1
 fi
+
 
 run_cmd() {
     if [ "$DRY_RUN" -eq 1 ]; then

@@ -36,15 +36,13 @@ def get_redis_addr():
 
 def get_nova_table_bin():
     nova_table = os.environ.get("NOVA_TABLE_BIN")
-    if not nova_table:
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        repo_root = os.path.dirname(script_dir)
-        candidate = os.path.join(repo_root, "bin", "nova-table")
-        if os.path.exists(candidate) and os.access(candidate, os.X_OK):
-            nova_table = candidate
-        else:
-            nova_table = "nova-table"
-    return nova_table
+    if nova_table and os.path.exists(nova_table) and os.access(nova_table, os.X_OK):
+        return nova_table
+    import shutil
+    candidate = shutil.which("nova-table")
+    if candidate:
+        return candidate
+    raise RuntimeError("NOVA_TABLE_BIN not set to executable and nova-table not found in PATH")
 
 def nova_table_cmd(*args):
     addr = get_redis_addr()
@@ -69,6 +67,36 @@ def run_nova_table_batch(manifest):
     )
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
+def read_resp(f):
+    line = f.readline()
+    if not line:
+        return None
+    prefix = line[:1]
+    payload = line[1:-2]
+    if prefix == b"+":
+        return payload.decode("utf-8", errors="replace")
+    elif prefix == b"-":
+        raise RuntimeError(f"Redis error: {payload.decode('utf-8', errors='replace')}")
+    elif prefix == b":":
+        return int(payload)
+    elif prefix == b"$":
+        length = int(payload)
+        if length == -1:
+            return None
+        val = f.read(length)
+        f.read(2)  # trailing \r\n
+        return val.decode("utf-8", errors="replace")
+    elif prefix == b"*":
+        count = int(payload)
+        if count == -1:
+            return None
+        items = []
+        for _ in range(count):
+            items.append(read_resp(f))
+        return items
+    else:
+        raise RuntimeError(f"Unknown RESP prefix: {prefix}")
+
 def redis_cmd(*args):
     addr = get_redis_addr()
     if ":" in addr:
@@ -79,75 +107,72 @@ def redis_cmd(*args):
         port = int(addr)
     s = socket.socket()
     s.connect((host, port))
-    parts = ["*" + str(len(args)) + "\r\n"]
+    req = b"*" + str(len(args)).encode("utf-8") + b"\r\n"
     for a in args:
-        encoded = str(a).encode("utf-8")
-        parts.append("$" + str(len(encoded)) + "\r\n" + str(a) + "\r\n")
-    s.sendall("".join(parts).encode("utf-8"))
-    
-    data = b""
-    while True:
-        chunk = s.recv(4096)
-        if not chunk:
-            break
-        data += chunk
-        if len(chunk) < 4096:
-            break
+        if isinstance(a, bytes):
+            encoded = a
+        else:
+            encoded = str(a).encode("utf-8")
+        req += b"$" + str(len(encoded)).encode("utf-8") + b"\r\n" + encoded + b"\r\n"
+    s.sendall(req)
+    f = s.makefile("rb")
+    res = read_resp(f)
     s.close()
-    return data
+    return res
 
 def redis_hgetall(key):
     raw = redis_cmd("HGETALL", key)
-    lines = raw.split(b"\r\n")
-    if not lines or not lines[0].startswith(b"*"):
+    if not isinstance(raw, list):
         return {}
-    num_elements = int(lines[0][1:])
-    result = {}
-    idx = 1
-    for _ in range(num_elements // 2):
-        if idx >= len(lines) or not lines[idx].startswith(b"$"):
-            break
-        k = lines[idx+1].decode("utf-8", errors="replace")
-        idx += 2
-        if idx >= len(lines) or not lines[idx].startswith(b"$"):
-            break
-        v = lines[idx+1].decode("utf-8", errors="replace")
-        idx += 2
-        result[k] = v
-    return result
+    d = {}
+    for i in range(0, len(raw), 2):
+        if i + 1 < len(raw):
+            d[raw[i]] = raw[i+1]
+    return d
 
 def redis_hset(key, mapping):
     args = ["HSET", key]
     for k, v in mapping.items():
         args.extend([str(k), str(v)])
-    return redis_cmd(*args)
+    res = redis_cmd(*args)
+    if not isinstance(res, int) or res < 0:
+        raise RuntimeError(f"HSET {key} failed: {res}")
+    return res
 
 def redis_del(key):
     return redis_cmd("DEL", key)
 
 def get_table_revision(table):
     raw = redis_cmd("HGET", f"table:{table}:revision", "n")
-    lines = raw.split(b"\r\n")
-    if len(lines) > 1 and lines[0].startswith(b"$") and lines[0] != b"$-1":
-        return int(lines[1].decode("utf-8"))
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
     return 0
 
 def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
     """
     Decodes the actual committed receipt from nova-table stdout,
-    verifies it against the independent Redis oprecord and table revision,
-    and retains it in durable Redis storage.
+    verifies it against the independent Redis oprecord, table revision,
+    and change stream, and retains it in durable Redis storage.
     """
+    batch_data = {}
     receipt_data = {}
     for line in nova_table_stdout.splitlines():
         line = line.strip()
-        if line.startswith("TABLE RECEIPT "):
+        if line.startswith("TABLE BATCH "):
+            parts = line.split()
+            for part in parts[2:]:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    batch_data[k] = v
+        elif line.startswith("TABLE RECEIPT "):
             parts = line.split()
             for part in parts[2:]:
                 if "=" in part:
                     k, v = part.split("=", 1)
                     receipt_data[k] = v
-            break
 
     if not receipt_data or "event" not in receipt_data:
         raise RuntimeError(f"failed to decode committed receipt from nova-table stdout:\n{nova_table_stdout}")
@@ -157,6 +182,17 @@ def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
     r_before = int(receipt_data.get("before", "0"))
     r_after = int(receipt_data.get("after", "0"))
     r_outcome = receipt_data.get("outcome", "changed")
+
+    if batch_data:
+        if batch_data.get("table") and batch_data.get("table") != table:
+            raise RuntimeError(f"TABLE BATCH table {batch_data.get('table')} != requested table {table}")
+        if batch_data.get("operation") and batch_data.get("operation") != op_id:
+            raise RuntimeError(f"TABLE BATCH operation {batch_data.get('operation')} != requested operation {op_id}")
+        if batch_data.get("epoch") and str(batch_data.get("epoch")) != str(expected_epoch):
+            raise RuntimeError(f"TABLE BATCH epoch {batch_data.get('epoch')} != expected epoch {expected_epoch}")
+
+    if str(r_epoch) != str(expected_epoch):
+        raise RuntimeError(f"receipt epoch {r_epoch} != expected epoch {expected_epoch}")
 
     # 1. Query independent oprecord in Redis: table:{table}:op:{op_id} or table:{table}:{epoch}:op:{op_id}
     prefix = f"table:{table}" if str(r_epoch) == "0" else f"table:{table}:{r_epoch}"
@@ -177,22 +213,57 @@ def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
     if op_record.get("outcome") != r_outcome:
         raise RuntimeError(f"receipt outcome {r_outcome} does not match oprecord outcome {op_record.get('outcome')}")
 
+    # Decode complete committed batch delta from oprecord["result"]
+    op_result_raw = op_record.get("result", "")
+    if not op_result_raw:
+        raise RuntimeError(f"oprecord at {op_key} missing result field")
+    op_result = json.loads(op_result_raw)
+    if not isinstance(op_result, list) or len(op_result) < 2 or not isinstance(op_result[1], list):
+        raise RuntimeError(f"malformed oprecord result wire format at {op_key}")
+    wire_receipt = op_result[1]
+    if len(wire_receipt) < 7:
+        raise RuntimeError(f"oprecord result wire receipt missing batch_delta at {op_key}")
+    delta_payload = wire_receipt[6]
+    batch_delta = json.loads(delta_payload) if isinstance(delta_payload, str) else delta_payload
+
     # 2. Independent table revision in Redis
     current_rev = get_table_revision(table)
     if current_rev != r_after:
         raise RuntimeError(f"receipt after revision {r_after} does not match Redis table revision {current_rev}")
 
-    # 3. Retain committed receipt in Redis state
+    # 3. Independent change stream entry verification in table:{table}:changes
+    stream_entries = redis_cmd("XRANGE", f"table:{table}:changes", event_id, event_id)
+    if not stream_entries or len(stream_entries) != 1:
+        raise RuntimeError(f"change stream entry {event_id} missing in table:{table}:changes")
+    se = stream_entries[0]
+    sfv = se[1]
+    smap = {sfv[i]: sfv[i+1] for i in range(0, len(sfv), 2)}
+    if smap.get("verb") != "apply":
+        raise RuntimeError(f"stream entry verb is {smap.get('verb')}, expected apply")
+    if smap.get("epoch") != str(r_epoch):
+        raise RuntimeError(f"stream entry epoch {smap.get('epoch')} != {r_epoch}")
+    if int(smap.get("rev_before", "0")) != r_before or int(smap.get("rev_after", "0")) != r_after:
+        raise RuntimeError(f"stream entry revs {smap.get('rev_before')}->{smap.get('rev_after')} != {r_before}->{r_after}")
+    if smap.get("outcome") != r_outcome:
+        raise RuntimeError(f"stream entry outcome {smap.get('outcome')} != {r_outcome}")
+
+    # 4. Retain complete committed receipt in Redis state
     redis_hset(f"receipt:{table}:{op_id}", {
         "operation_id": op_id,
         "table": table,
         "event": event_id,
-        "epoch": r_epoch,
+        "epoch": str(r_epoch),
         "before": str(r_before),
         "after": str(r_after),
         "outcome": r_outcome,
         "verified": "yes",
-        "op_key": op_key
+        "op_key": op_key,
+        "digest": batch_delta.get("digest", ""),
+        "actor": batch_delta.get("actor", ""),
+        "selected_count": str(batch_delta.get("selected_count", 0)),
+        "guard_count": str(batch_delta.get("guard_count", 0)),
+        "changed_count": str(batch_delta.get("changed_count", 0)),
+        "batch_delta": json.dumps(batch_delta)
     })
 
     return {
@@ -201,7 +272,8 @@ def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
         "before": r_before,
         "after": r_after,
         "outcome": r_outcome,
-        "op_key": op_key
+        "op_key": op_key,
+        "batch_delta": batch_delta
     }
 
 def file_digest(path):
@@ -332,12 +404,7 @@ def cmd_add(args):
         return code
 
     rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
-    delta = {
-        "operation_id": op_id,
-        "changed_count": len(delta_members),
-        "guard_count": 0,
-        "members": delta_members
-    }
+    delta = rcpt["batch_delta"]
     print(f"RECEIPT {op_id} event={rcpt['event']} epoch={rcpt['epoch']} before={rcpt['before']} after={rcpt['after']} outcome={rcpt['outcome']} delta={json.dumps(delta)}")
     return 0
 
@@ -453,24 +520,18 @@ def cmd_resolve(args):
         before_table_rev = rcpt["before"]
         after_table_rev = rcpt["after"]
         outcome = rcpt["outcome"]
+        delta = dict(rcpt["batch_delta"])
+        delta["blocked_count"] = len(blocked_members)
+        delta["blocked"] = blocked_members
+    else:
+        delta = {
+            "operation_id": op_id,
+            "changed_count": 0,
+            "blocked_count": len(blocked_members),
+            "members": [],
+            "blocked": blocked_members
+        }
 
-    cleaned_deltas = []
-    for m in delta_members:
-        cleaned_deltas.append({
-            "id": m["id"],
-            "before_place": m["before_place"],
-            "after_place": m["after_place"],
-            "before_rev": m["before_rev"],
-            "after_rev": m["after_rev"]
-        })
-
-    delta = {
-        "operation_id": op_id,
-        "changed_count": len(cleaned_deltas),
-        "blocked_count": len(blocked_members),
-        "members": cleaned_deltas,
-        "blocked": blocked_members
-    }
     event_str = f"event={event_id} " if event_id else ""
     print(f"RECEIPT {op_id} {event_str}epoch={epoch} before={before_table_rev} after={after_table_rev} outcome={outcome} delta={json.dumps(delta)}")
     return 0
@@ -522,7 +583,8 @@ def cmd_move(args):
             "place": place,
             "revision": pre_rev,
             "stream": mem.get("stream", "stream-1"),
-            "kind": mem.get("kind", "")
+            "kind": mem.get("kind", ""),
+            "head": mem.get("head", "")
         }
 
     # Prepare atomic batch mutation
@@ -536,33 +598,53 @@ def cmd_move(args):
         from_col = state["place"].split(":")[-1]
         new_rev = str(int(state["revision"]) + 1)
 
-        # Gate check for moving to merging: require at least 2 distinct reader records with accepted disposition & pass CI
+        # Gate check for moving to merging: require at least 2 distinct reader records with accepted disposition & pass CI matching exact card head
         if to_state == "merging":
+            card_head = ev.get("head") or state.get("head")
+            if not card_head:
+                mem = redis_hgetall(f"card:{cid}")
+                card_head = mem.get("head")
+
+            if not card_head:
+                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=missing_card_head expected=exact_head_commit observed=none changed=no remedy=record exact-head evidence first\n")
+                return 1
+
+            git_check = subprocess.run(["git", "rev-parse", "--verify", f"{card_head}^{{commit}}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if git_check.returncode != 0:
+                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=invalid_card_head expected=exact_commit_sha observed={card_head} changed=no\n")
+                return 1
+            exact_card_head = git_check.stdout.strip()
+
             readers_raw = redis_cmd("SMEMBERS", f"evidence:{cid}:readers")
-            lines = readers_raw.split(b"\r\n")
-            reader_list = []
-            if lines and lines[0].startswith(b"*"):
-                num = int(lines[0][1:])
-                idx = 1
-                for _ in range(num):
-                    if idx >= len(lines) or not lines[idx].startswith(b"$"):
-                        break
-                    r_name = lines[idx+1].decode("utf-8", errors="replace")
-                    reader_list.append(r_name)
-                    idx += 2
-            
+            reader_list = readers_raw if isinstance(readers_raw, list) else []
+
             valid_readers = []
-            for r_name in reader_list:
-                keys_raw = redis_cmd("KEYS", f"evidence:{cid}:*:{r_name}")
-                klines = keys_raw.split(b"\r\n")
-                if len(klines) > 1 and klines[0].startswith(b"*") and int(klines[0][1:]) > 0:
-                    ekey = klines[2].decode("utf-8", errors="replace")
-                    edata = redis_hgetall(ekey)
-                    if edata.get("disposition") in ("accepted", "approved") and edata.get("ci_status") in ("pass", "passed", "green"):
-                        valid_readers.append(r_name)
+            matching_readers = []
+            keys_raw = redis_cmd("KEYS", f"evidence:{cid}:*:*")
+            evidence_keys = keys_raw if isinstance(keys_raw, list) else []
+
+            for ekey in evidence_keys:
+                if ekey.endswith(":readers"):
+                    continue
+                ktype = redis_cmd("TYPE", ekey)
+                if ktype != "hash":
+                    continue
+                edata = redis_hgetall(ekey)
+                r_name = edata.get("reader")
+                if not r_name:
+                    continue
+                if edata.get("disposition") in ("accepted", "approved") and edata.get("ci_status") in ("pass", "passed", "green"):
+                    valid_readers.append(r_name)
+                    rec_head = edata.get("head")
+                    if rec_head == exact_card_head:
+                        matching_readers.append(r_name)
 
             if len(set(valid_readers)) < 2:
                 sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=insufficient_evidence expected=at_least_2_approved_readers observed={len(set(valid_readers))} changed=no remedy=record 2 distinct reader approvals with ci_status=pass\n")
+                return 1
+
+            if len(set(matching_readers)) < 2:
+                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=head_mismatch expected_head={exact_card_head} matching_readers={len(set(matching_readers))} changed=no remedy=reader evidence must match exact card head\n")
                 return 1
 
         set_fields = {}
@@ -570,6 +652,8 @@ def cmd_move(args):
             set_fields["outcome"] = ev["outcome"]
         if "landing_sha" in ev:
             set_fields["landing_sha"] = ev["landing_sha"]
+        if "head" in ev:
+            set_fields["head"] = ev["head"]
 
         exp_rev = str(ev.get("expect_revision", state["revision"]))
         exp_row = stream
@@ -623,11 +707,7 @@ def cmd_move(args):
         return code
 
     rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
-    delta = {
-        "operation_id": op_id,
-        "changed_count": len(delta_members),
-        "members": delta_members
-    }
+    delta = rcpt["batch_delta"]
     print(f"RECEIPT {op_id} event={rcpt['event']} epoch={rcpt['epoch']} before={rcpt['before']} after={rcpt['after']} outcome={rcpt['outcome']} delta={json.dumps(delta)}")
     return 0
 
@@ -676,18 +756,20 @@ def cmd_evidence(args):
             return 1
 
         actual_digest = mem.get("digest")
-        if digest and digest != actual_digest:
+        if not digest or digest != actual_digest:
             sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=digest_mismatch expected={actual_digest} observed={digest} changed=no remedy=re-read card definition\n")
             return 1
 
-        if head:
-            if len(head) != 40 or not all(c in "0123456789abcdefABCDEF" for c in head):
-                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=invalid_head_sha expected=40_char_hex observed={head} changed=no\n")
-                return 1
-            git_check = subprocess.run(["git", "cat-file", "-e", head], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if git_check.returncode != 0:
-                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=head_commit_not_found expected=reachable_git_commit observed={head} changed=no\n")
-                return 1
+        if not head:
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=missing_head expected=exact_commit_sha observed=none changed=no\n")
+            return 1
+
+        # Bind reader evidence to exact head commit
+        git_check = subprocess.run(["git", "rev-parse", "--verify", f"{head}^{{commit}}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if git_check.returncode != 0:
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=head_commit_not_found expected=exact_reachable_commit observed={head} changed=no\n")
+            return 1
+        exact_head = git_check.stdout.strip()
 
         if disposition not in ("accepted", "approved"):
             sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=invalid_disposition expected=accepted observed={disposition} changed=no\n")
@@ -702,8 +784,8 @@ def cmd_evidence(args):
         ev_data = {
             "card_id": cid,
             "operation_id": op_id,
-            "head": head,
-            "digest": digest or actual_digest or "",
+            "head": exact_head,
+            "digest": actual_digest,
             "reader": reader,
             "disposition": disposition,
             "ci_status": ci_status,
@@ -712,6 +794,7 @@ def cmd_evidence(args):
         redis_hset(ev_key, ev_data)
         redis_cmd("SADD", f"evidence:{cid}:readers", reader)
         redis_cmd("SADD", f"evidence:{cid}:{op_id}:readers", reader)
+        redis_hset(f"card:{cid}", {"head": exact_head})
         recorded.append(ev_key)
 
     current_table_rev = get_table_revision(table)
@@ -853,11 +936,7 @@ def cmd_replace(args):
         return code
 
     rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
-    delta = {
-        "operation_id": op_id,
-        "changed_count": len(delta_members),
-        "members": delta_members
-    }
+    delta = rcpt["batch_delta"]
     print(f"RECEIPT {op_id} event={rcpt['event']} epoch={rcpt['epoch']} before={rcpt['before']} after={rcpt['after']} outcome={rcpt['outcome']} delta={json.dumps(delta)}")
     return 0
 
@@ -886,11 +965,11 @@ def cmd_inspect(args):
     table_rev = get_table_revision(table)
     print(f"TABLE INSPECT table={table} revision={table_rev}")
     if not members:
-        raw_keys = redis_cmd("KEYS", "card:*")
-        lines = raw_keys.split(b"\r\n")
-        for line in lines:
-            if line.startswith(b"card:") and b":" not in line[5:]:
-                members.append(line[5:].decode("utf-8"))
+        keys_list = redis_cmd("KEYS", "card:*")
+        if isinstance(keys_list, list):
+            for k in keys_list:
+                if k.startswith("card:") and ":" not in k[5:]:
+                    members.append(k[5:])
 
     for cid in sorted(members):
         mem = redis_hgetall(f"card:{cid}")
