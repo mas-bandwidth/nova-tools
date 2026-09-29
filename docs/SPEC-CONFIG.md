@@ -132,6 +132,10 @@ beat does not carry it, and `beat=none` alone for a machine with no
 beat. Nothing is stored, nothing is typed; what the beat carries is the
 beat writer's, not this tool's.
 
+**`machine sync`** syncs a machine's row from Postgres into Redis (`machine:<m>`
+and `machine:<m>:ceiling`). With `--tailscale`, identity is resolved from the
+tailnet name (`tailscale status --json`), allowing unattended bench startup.
+
 **`fleet`** (`config.fleet`, singleton): the one row of fleet-wide facts.
 The coordinator machine is one machine; which friend drives it is the sprint
 row's.

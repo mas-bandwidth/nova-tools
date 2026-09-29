@@ -97,10 +97,11 @@ func (f *fakeRedis) Close() error { return nil }
 // harness is one test's tool: a Mem store, a fake Redis, an environment
 // map, a fixed clock.
 type harness struct {
-	store *memStore
-	redis *fakeRedis
-	env   map[string]string
-	opens int
+	store     *memStore
+	redis     *fakeRedis
+	env       map[string]string
+	opens     int
+	tailscale func(ctx context.Context) ([]byte, error)
 }
 
 func newHarness() *harness {
@@ -119,6 +120,7 @@ func (h *harness) deps() deps {
 		},
 		openRedis: func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
 		now:       func() time.Time { return time.Unix(1700000000, 0) },
+		tailscaleStatus: h.tailscale,
 	}
 }
 

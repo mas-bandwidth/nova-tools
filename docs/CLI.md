@@ -1712,6 +1712,7 @@ nova-config <kind> list                                                  # one t
 nova-config <kind> show <name>                                           # one line with every field and the stamps
 nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
 nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
+nova-config machine sync [<name>] [--tailscale] [--pg <dsn>] [--redis <addr>] [--as <friend>] [--check]   # sync a machine's configuration to Redis; --tailscale resolves machine identity from tailnet name
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
 nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over

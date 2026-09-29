@@ -19,12 +19,13 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	for _, v := range []string{"version", "kinds", "migrate", "status", "apply"} {
 		cases = append(cases, testverbhelp.Case{Verb: v})
 	}
-	for _, v := range []string{"machine", "machine list", "machine show", "machine history", "machine remove", "machine add", "machine set", "friend add", "fleet set", "fleet show", "sprint set"} {
+	for _, v := range []string{"machine", "machine list", "machine show", "machine history", "machine remove", "machine add", "machine set", "machine sync", "friend add", "fleet set", "fleet show", "sprint set"} {
 		cases = append(cases, testverbhelp.Case{Verb: v})
 	}
 	cases = append(cases, testverbhelp.Case{Verb: "machine list", Flags: conn})
+	cases = append(cases, testverbhelp.Case{Verb: "machine sync", Flags: []string{"--tailscale"}})
 	testverbhelp.Check(t, configRun, cases)
-	testverbhelp.HelpVerb(t, configRun, "nova-config", "status", "machine add", "fleet set", "version")
+	testverbhelp.HelpVerb(t, configRun, "nova-config", "status", "machine add", "machine sync", "fleet set", "version")
 }
 
 func configRun(args []string, stdout, stderr io.Writer) int {

@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,6 +71,7 @@ usage:
   nova-config <kind> show <name>
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
+  nova-config machine sync [<name>] [--tailscale] [--pg <dsn>] [--redis <addr>] [--as <friend>] [--check]
   nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
@@ -153,10 +155,11 @@ type redisSide interface {
 // unit tests hand in config.Mem and a fake Applier; main hands in Postgres
 // and the fleet Redis.
 type deps struct {
-	getenv    func(string) string
-	openStore func(ctx context.Context, dsn string) (pgStore, error)
-	openRedis func(ctx context.Context, addr string) (redisSide, error)
-	now       func() time.Time
+	getenv          func(string) string
+	openStore       func(ctx context.Context, dsn string) (pgStore, error)
+	openRedis       func(ctx context.Context, addr string) (redisSide, error)
+	now             func() time.Time
+	tailscaleStatus func(ctx context.Context) ([]byte, error)
 }
 
 type redisApplier struct {
@@ -180,6 +183,18 @@ func realDeps() deps {
 			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
 		},
 		now: time.Now,
+		tailscaleStatus: func(ctx context.Context) ([]byte, error) {
+			bin := "tailscale"
+			if p, err := exec.LookPath(bin); err != nil {
+				macBin := "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+				if _, err2 := os.Stat(macBin); err2 == nil {
+					bin = macBin
+				}
+			} else {
+				bin = p
+			}
+			return exec.CommandContext(ctx, bin, "status", "--json").Output()
+		},
 	}
 }
 
@@ -395,6 +410,13 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		return runKindList(ctx, k, args[1:], stdout, stderr, d)
 	case "show", "history":
 		return runKindRead(ctx, k, args[0], args[1:], stdout, stderr, d)
+	case "sync":
+		if k.Name == config.KindMachine {
+			return runMachineSync(ctx, args[1:], stdout, stderr, d)
+		}
+	}
+	if k.Name == config.KindMachine {
+		return refuse(stderr, verb, "unknown verb; want add, set, remove, list, show, history or sync")
 	}
 	return refuse(stderr, verb, "unknown verb; want add, set, remove, list, show or history")
 }
