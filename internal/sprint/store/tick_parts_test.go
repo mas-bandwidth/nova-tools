@@ -298,13 +298,12 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	if len(h.openOf(sprint.NWorkLate)) != 0 {
 		t.Fatalf("still open after the finish")
 	}
-	// N5: a read card asked long ago and not begun (the stamp as the ask writes it)
-	s := h.snap()
-	rc := s.Readers.Of("s1-1")[0]
-	h.poke(sprint.Readers, ntable.BatchMemberEntry{ID: rc.ID, Set: map[string]string{"asked": h.now.Add(-sprint.DeadlineUnbegun - time.Minute).Format(time.RFC3339)}})
+	// N5: read cards asked and not begun past the deadline, by the stamp the
+	// ask writes: one judgment per read card
+	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine()
-	if len(h.openOf(sprint.NReadLate)) != 1 {
-		t.Fatalf("the late read card: %d", len(h.openOf(sprint.NReadLate)))
+	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 4 || len(h.openOf(sprint.NReadLate)) != n {
+		t.Fatalf("the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
 	}
 	// N6: a merging stream with no merge step
 	h.readAll()
