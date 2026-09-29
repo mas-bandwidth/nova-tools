@@ -61,6 +61,11 @@ do
     if carry == 1 then out = '1' .. out end
     return out
   end
+  -- T.uintgt(a, b): decimal uint64 strings, a > b.
+  function T.uintgt(a, b)
+    if #a ~= #b then return #a > #b end
+    return a > b
+  end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
@@ -556,7 +561,9 @@ do
       if not rows then return why end
       T.rank(d, rows)
     end
-    local outcome = #d.commands == 0 and not d.newtemplate and not d.definition_changed and d.snap._present ~= '0' and 'noop' or 'changed'
+    -- opts.outcome names the outcome when the caller judges it (a batch whose
+    -- entries change nothing is a noop although it stages a revision step).
+    local outcome = opts.outcome or (#d.commands == 0 and not d.newtemplate and not d.definition_changed and d.snap._present ~= '0' and 'noop' or 'changed')
     if d.newtemplate then
       redis.call('SCARD', 'tables')
       T.hset(d.commands, d.key, d.h)
@@ -575,13 +582,22 @@ do
     local cells = {}
     for cell in pairs(d.cells) do cells[#cells + 1] = cell end
     table.sort(cells)
-    local wireargs = {}
-    for i = 1, #args - 1 do wireargs[#wireargs + 1] = args[i] end
+    -- opts.wireargs replaces the event's args for a caller whose arguments do
+    -- not end in the options JSON.
+    local wireargs = opts.wireargs
+    if not wireargs then
+      wireargs = {}
+      for i = 1, #args - 1 do wireargs[#wireargs + 1] = args[i] end
+    end
     local event = {'XADD', stream, '*', 'verb', verb, 'args', cjson.encode(wireargs),
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
       'members', #d.members == 0 and '[]' or cjson.encode(d.members), 'outcome', outcome}
     if d.renamed_keys then event[#event + 1] = 'renamed_keys'; event[#event + 1] = cjson.encode(d.renamed_keys) end
+    -- opts.event_extra is a flat list of field, value pairs appended to the event.
+    if opts.event_extra then
+      for _, v in ipairs(opts.event_extra) do event[#event + 1] = v end
+    end
     T.stage(d, unpack(event))
     for _, cmd in ipairs(d.commands) do
       if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end
@@ -593,7 +609,13 @@ do
     local before = d.revision
     d.revision = after
     if type(reply) == 'function' then reply = reply() end
-    reply[#reply + 1] = {'RECEIPT', id, d.epoch, before, after, outcome}
+    local receipt = {'RECEIPT', id, d.epoch, before, after, outcome}
+    -- opts.receipt_extra is a seventh receipt element (a batch's delta).
+    if opts.receipt_extra then receipt[7] = opts.receipt_extra end
+    reply[#reply + 1] = receipt
+    -- opts.record runs last, after every staged write, with the finished reply
+    -- (a batch keeps its operation record here, which holds the receipt).
+    if opts.record then opts.record(reply, id, before, after, outcome) end
     return reply
   end
   function T.write(verb, argc, handler, declaration)
@@ -1667,33 +1689,24 @@ do
       return cjson.decode(op_record.result)
     end
 
-    -- Open table definition:
-    local d, err = T.open(table_name, nil, manifest.epoch)
+    -- Open the table exactly as every ordinary write does; the batch commits
+    -- through T.finish, so the definition snapshot, the immutable identity,
+    -- the template and the catalog are kept by the same code.
+    local d, err = T.open(table_name)
     if not d then return err end
     if not d.present then return T.refuse('NOTABLE') end
 
-    -- Unrecorded operation at stale epoch refuses:
+    -- Unrecorded operation at another epoch refuses:
     if manifest.epoch ~= d.active then
+      if T.uintgt(manifest.epoch, d.active) then
+        return T.refuse('EPOCHAHEAD', manifest.epoch, d.active)
+      end
       return T.refuse('STALE', manifest.epoch, d.active)
     end
 
     -- Expected table revision:
     if manifest.expected_table_revision ~= d.revision then
       return T.refuse('REVISION', manifest.expected_table_revision, d.revision)
-    end
-
-    -- Preflight change stream type and capacity:
-    local stream = d.key .. ':changes'
-    local st = redis.call('TYPE', stream)
-    local skind = (type(st) == 'table' and st.ok) and st.ok or st
-    if skind ~= 'none' and skind ~= 'stream' then return T.refuse('STREAMTYPE', stream) end
-    if skind == 'stream' then
-      local info = redis.call('XINFO', 'STREAM', stream)
-      for i = 1, #info, 2 do
-        if info[i] == 'last-generated-id' and info[i + 1] == '18446744073709551615-18446744073709551615' then
-          return T.refuse('STREAMFULL', stream)
-        end
-      end
     end
 
     -- Validate bounds on members:
@@ -2040,9 +2053,6 @@ do
       plan[#plan + 1] = item
     end
 
-    local after_table_rev = T.next(d.revision)
-    if not after_table_rev then return T.refuse('REVISION', d.revision) end
-
     -- Stage mutations:
     local delta_members = {}
     local real_changes = 0
@@ -2124,19 +2134,7 @@ do
     end
 
     local outcome = real_changes == 0 and 'noop' or 'changed'
-
-    -- Stage table revision increment:
-    T.stage(d, 'HSET', d.key .. ':revision', 'n', after_table_rev)
-    if not d.snap.order then T.hset(d.commands, d.prefix .. ':definition', d.h) end
-    T.stage(d, 'HSET', d.prefix .. ':definition', '_present', '1', '_revision', after_table_rev)
-
-    -- Stage change stream entry (XADD):
-    local stream = d.key .. ':changes'
-    local cells_list = {}
-    for c in pairs(d.cells) do cells_list[#cells_list + 1] = c end
-    table.sort(cells_list)
-
-    local delta = {
+    local delta = cjson.encode({
       operation_id = manifest.operation_id,
       digest = digest,
       actor = manifest.actor or '',
@@ -2144,72 +2142,35 @@ do
       guard_count = #guard_entries,
       changed_count = real_changes,
       members = delta_members,
-    }
+    })
 
-    local event = {
-      'XADD', stream, '*',
-      'verb', 'apply',
-      'args', cjson.encode({table_name, manifest.operation_id, digest}),
-      'epoch', d.epoch,
-      'rev_before', d.revision,
-      'rev_after', after_table_rev,
-      'actor', manifest.actor or '',
-      'fence', '',
-      'idem', '',
-      'cells', #cells_list == 0 and '[]' or cjson.encode(cells_list),
-      'members', #d.members == 0 and '[]' or cjson.encode(d.members),
-      'outcome', outcome,
-      'batch_delta', cjson.encode(delta)
-    }
-    T.stage(d, unpack(event))
-
-    -- Check ACLs on all staged commands:
-    for _, cmd in ipairs(d.commands) do
-      if not redis.acl_check_cmd(unpack(cmd)) then
-        return T.refuse('NOPERM', cmd[1], cmd[2])
-      end
-    end
-
+    -- The operation record is the last write, after the commit; its
+    -- permission and type are settled before the first write.
     if not redis.acl_check_cmd('HSET', op_key, 'operation_id', manifest.operation_id) then
       return T.refuse('NOPERM', 'HSET', op_key)
     end
+    local op_type_err = T.check_types({{'HSET', op_key, 'operation_id', manifest.operation_id}})
+    if op_type_err then return op_type_err end
 
-    -- Pre-flight type check on all staged commands and op_key:
-    local type_err = T.check_types(d.commands)
-    if type_err then return type_err end
-
-    local op_kind = redis.call('TYPE', op_key)
-    op_kind = (type(op_kind) == 'table' and op_kind.ok) and op_kind.ok or op_kind
-    if op_kind ~= 'none' and op_kind ~= 'hash' then
-      return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
-    end
-
-    -- Execute all staged commands:
-    local stream_id = ''
-    for _, cmd in ipairs(d.commands) do
-      local res = redis.call(unpack(cmd))
-      if cmd[1] == 'XADD' then stream_id = res end
-    end
-
-    local reply = {
-      'OK',
-      {'RECEIPT', stream_id, d.epoch, d.revision, after_table_rev, outcome, cjson.encode(delta)}
-    }
-
-    -- Persist operation record:
-    redis.call('HSET', op_key,
-      'operation_id', manifest.operation_id,
-      'digest', digest,
-      'request', raw_json,
-      'stream_id', stream_id,
-      'epoch', d.epoch,
-      'rev_before', d.revision,
-      'rev_after', after_table_rev,
-      'outcome', outcome,
-      'result', cjson.encode(reply)
-    )
-
-    return reply
+    return T.finish(d, 'apply', args, {
+      actor = manifest.actor or '', fence = '', idem = '',
+      outcome = outcome,
+      wireargs = {table_name, manifest.operation_id, digest},
+      event_extra = {'batch_delta', delta},
+      receipt_extra = delta,
+      record = function(reply, stream_id, before, after)
+        redis.call('HSET', op_key,
+          'operation_id', manifest.operation_id,
+          'digest', digest,
+          'request', raw_json,
+          'stream_id', stream_id,
+          'epoch', d.epoch,
+          'rev_before', before,
+          'rev_after', after,
+          'outcome', outcome,
+          'result', cjson.encode(reply))
+      end,
+    }, {'OK'})
   end
 
   redis.register_function('ns_table_apply', function(keys, args)

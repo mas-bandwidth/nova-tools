@@ -43,6 +43,7 @@ var (
 	ErrOccupied          = errors.New("shape would delete or hide placed members")
 	ErrOwnedAlias        = errors.New("binding target is table-owned storage")
 	ErrStale             = errors.New("observed epoch is stale")
+	ErrEpochAhead        = errors.New("requested epoch is ahead of the active epoch")
 	ErrMemberEpoch       = errors.New("member belongs to another epoch")
 	ErrPlaced            = errors.New("member already has a place in this table")
 	ErrDrift             = errors.New("member record and owned set disagree")
@@ -185,6 +186,8 @@ func (o operation) refused(reply []any) error {
 	switch refusal {
 	case typedrec.TableRefusalStale:
 		cause = fmt.Errorf("%w: observed %v, active %v", ErrStale, reply[2], reply[3])
+	case typedrec.TableRefusalEpochAhead:
+		cause = fmt.Errorf("%w: requested %v, active %v", ErrEpochAhead, reply[2], reply[3])
 	case typedrec.TableRefusalMemberEpoch:
 		cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
 	case typedrec.TableRefusalMemberExists:
