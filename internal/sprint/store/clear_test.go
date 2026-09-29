@@ -36,7 +36,7 @@ func midFlight(t *testing.T) *harness {
 	s = h.snap()
 	for table, cols := range map[*sprint.Table][]string{
 		s.Work:    {sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging, sprint.Landed},
-		s.Fleet:   {sprint.Ready, sprint.Working, sprint.Done},
+		s.Fleet:   {sprint.Ready, sprint.Working, sprint.DoneOK},
 		s.Readers: {sprint.Asked, sprint.Reading, sprint.OK},
 		s.Merge:   {sprint.Queued, sprint.Merged, sprint.Stuck},
 	} {

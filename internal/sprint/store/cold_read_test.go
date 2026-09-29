@@ -260,7 +260,7 @@ func snapKey(p *probe) string {
 	s := p.snap()
 	var b []string
 	for _, t := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
-		for _, c := range t.Column(append(append([]string{}, sprint.States...), sprint.Asked, sprint.Reading, sprint.OK, sprint.Broken, sprint.Queued, sprint.Merged, sprint.Stuck, sprint.Returned, sprint.Done, sprint.Ctl)...) {
+		for _, c := range t.Column(append(append([]string{}, sprint.States...), sprint.Asked, sprint.Reading, sprint.OK, sprint.Broken, sprint.Queued, sprint.Merged, sprint.Stuck, sprint.Returned, sprint.DoneFailed, sprint.Ctl)...) {
 			b = append(b, fmt.Sprintf("%s/%s:%s:%d", t.Name, c.ID, c.Col, c.Rev))
 		}
 	}

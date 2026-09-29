@@ -147,8 +147,12 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	if shapes[0].Rows[0].Texts[sprint.StateCol] != sprint.StreamLanded || shapes[0].Rows[0].Texts[sprint.CI] != "green" {
 		t.Errorf("merge display cells: %v", shapes[0].Rows[0].Texts)
 	}
-	if got := shapes[1].Rows[0].Texts[sprint.OkPct]; got != "100.0%" {
+	fleet := shapes[1]
+	if got := ntable.CellText(fleet.Columns, fleet.Rows[0], fleet.Column(sprint.OkPct)); got != "100.0%" {
 		t.Errorf("fleet ok%%: %q", got)
+	}
+	if _, written := fleet.Rows[0].Texts[sprint.OkPct]; written {
+		t.Errorf("ok%% is written as text: %v", fleet.Rows[0].Texts)
 	}
 }
 
@@ -385,7 +389,7 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 	}
 	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 		OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: "s1-1.w1", Expect: &ntable.MemberExpect{Absent: true},
-			Create: &ntable.MemberCreateOp{Row: "m1", Col: "done", Score: 1}}}}); err != nil {
+			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"})); err == nil || h.m.Pending() == nil {

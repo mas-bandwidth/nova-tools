@@ -716,9 +716,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if head == "" {
 			head = c.ID
 		}
-		result, okWord, counter := "ok", "yes", "ok"
+		result, okWord, counter, into := "ok", "yes", "ok", DoneOK
 		if r.Failed {
-			result, okWord, counter = "failed", "no", "failed"
+			result, okWord, counter, into = "failed", "no", "failed", DoneFailed
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if r.Report != "" {
@@ -728,7 +728,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 		}
-		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, Done, cardSet))},
+		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		if s.MemberCtl(c.Row) != nil {
 			u.Bumps = append(u.Bumps, Bump{Fleet, CtlID(c.Row), counter, 1})

@@ -127,7 +127,7 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
 	other := w.s.Fleet.Card("s1-1.w1").Row
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
-	if c := w.s.Fleet.Card("s1-1.w1"); c.Col != Done || c.Row != other || c.F("gen") != "2" {
+	if c := w.s.Fleet.Card("s1-1.w1"); c.Col != DoneOK || c.Row != other || c.F("gen") != "2" {
 		t.Fatalf("a done card was redistributed: %+v", c)
 	}
 	// a level move and a withdrawal change the generation too
