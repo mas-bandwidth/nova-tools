@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/privacy"
 )
 
 const (
@@ -664,6 +666,25 @@ func TestARefusalNeverRepeatsTheFailingInput(t *testing.T) {
 		failing := "run: nova-privacy " + strings.Join(c.args, " ")
 		if strings.Contains(errOut, failing) {
 			t.Errorf("%s: the run: line repeats the failing command: %q", name, errOut)
+		}
+	}
+}
+
+// An outcome this tool does not know is never cleared and never read as a
+// finding: it could not run.
+func TestAnUnknownOutcomeIsNeverCleared(t *testing.T) {
+	t.Parallel()
+	for _, o := range []privacy.Outcome{"", "an outcome added later", "unproven-clean", "UNPROVEN-CLEAN "} {
+		if got := exitFor(o); got != exitCouldNotRun {
+			t.Errorf("exitFor(%q) = %d, want %d", o, got, exitCouldNotRun)
+		}
+	}
+	for o, want := range map[privacy.Outcome]int{
+		privacy.UnprovenClean: exitClean, privacy.Flagged: exitFlagged, privacy.CorpusUnreadable: exitUnverified,
+		privacy.NoPrivateCorpus: exitUnverified, privacy.NothingCanEverFire: exitUnverified, privacy.PayloadHasNoWords: exitUnverified,
+	} {
+		if got := exitFor(o); got != want {
+			t.Errorf("exitFor(%s) = %d, want %d", o, got, want)
 		}
 	}
 }
