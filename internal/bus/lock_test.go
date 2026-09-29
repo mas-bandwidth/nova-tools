@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -79,56 +78,6 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(gd, LockName)); statErr != nil {
 		t.Fatalf("the lock is not at %s: %v", filepath.Join(gd, LockName), statErr)
-	}
-}
-
-// Two runs that genuinely race: whichever gets there second waits for the first rather than
-// working beside it, and both eventually run.
-func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	hermetic(t)
-	bare := bareBus(t)
-	clone := cloneBus(t, bare)
-
-	var mu sync.Mutex
-	inside := 0
-	most := 0
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i := range 2 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			release, err := LockCheckout(clone, 5*time.Second)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer release()
-			mu.Lock()
-			inside++
-			if inside > most {
-				most = inside
-			}
-			mu.Unlock()
-			time.Sleep(50 * time.Millisecond)
-			mu.Lock()
-			inside--
-			mu.Unlock()
-		}(i)
-	}
-	wg.Wait()
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("run %d: %v", i, err)
-		}
-	}
-	if most != 1 {
-		t.Fatalf("%d runs were inside the lock at once, want 1", most)
 	}
 }
 
