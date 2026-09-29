@@ -6,6 +6,7 @@ import "fmt"
 // numbers (T.limits) and docs/SPEC-NOVA-TABLE.md states them; a test compares
 // the three. A refusal names the bound and the count found, never the input.
 const (
+	LimitMultiTables      = 16
 	LimitManifestBytes    = 1 << 20 // canonical encoded request
 	LimitChangedEntries   = 128     // entries with changes
 	LimitGuardEntries     = 1024    // guard-only entries
@@ -19,6 +20,7 @@ const (
 	LimitColumns          = 1000               // columns per table
 	LimitRows             = 100000             // rows per table
 	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
+	limitNameMultiTables  = "tables per multi batch"
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"

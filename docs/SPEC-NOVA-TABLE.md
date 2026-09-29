@@ -394,6 +394,7 @@ compares them with this table:
 | columns per table | 1000 |
 | rows per table | 100000 |
 | receipt bytes | 1048576 |
+| tables per multi batch | 16 |
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
@@ -543,16 +544,137 @@ again with the same operation id, which returns the original receipt if the batc
 was applied and applies it if it was not. The caller's epoch is always the
 "requested" epoch and the store's the "active" one.
 
+### Atomic batches across tables (schema 2)
+
+`ntable.ApplyMultiBatch` and `ns_table_apply_multi` apply a bounded set of table
+changes in one server call. Schema 1 keeps its existing wire and replay domain.
+Schema 2 names an explicit operation `scope`, an `operation_id`, optional `actor`,
+2–16 distinct participating tables, and nonempty member entries. Each table has
+`name`, `epoch`, and `expected_table_revision`; all counters are canonical uint64
+strings. The request's encoded byte bound, changed-member-entry bound and guard-only
+entry bound are the existing batch bounds, applied to the whole request rather
+than independently to each table. Scope is a table-name-shaped string of at most
+128 bytes; an operation ID follows the existing operation-ID grammar and is at
+most 256 bytes. Exceeding a bound refuses the whole operation without chunking.
+
+```json
+{
+  "schema": 2,
+  "scope": "sprint-17",
+  "operation_id": "accept-12",
+  "tables": [
+    {"name":"work","epoch":"0","expected_table_revision":"12"},
+    {"name":"merge","epoch":"0","expected_table_revision":"8"}
+  ],
+  "members": [{
+    "id":"p17",
+    "record_table":"work",
+    "expect": {
+      "revision":"5",
+      "fields":{"head":{"equals":"reviewed-head"}},
+      "places":[
+        {"table":"work","row":"build","col":"review"},
+        {"table":"merge","absent":true}
+      ]
+    },
+    "placements":[
+      {"table":"work","move":{"row":"build","col":"merging"}},
+      {"table":"merge","add":{"row":"build","col":"queued","score":1}}
+    ]
+  }]
+}
+```
+
+`record_table` must name a participant. Its immutable member prefix plus `id`
+identifies the physical member record. An operation names that physical record
+only once, even if two record tables resolve to the same prefix. Equal IDs under
+different prefixes are different records and may coexist in one request. All
+placement guards and actions for a member name participant tables with the same
+member prefix and active epoch as its record table; the member retains its single
+immutable epoch. Other member groups in the same operation may have different
+prefixes and epochs. No member is copied to implement a second placement.
+
+The member's `expect` holds its optional revision and field guards and a `places`
+array. A place guard is either `{table,row,col}` or `{table,absent:true}`. Each
+placement action has its corresponding pre-state place guard. A globally absent
+record is guarded by `expect.absent:true` together with an `absent:true` place
+guard for every added table; this permits creating its initial placements with `add`. `add` requires an absent placement in that table and an
+explicit finite numeric score. It also attaches an existing member to a second
+table, without disturbing that member's first placement or score. `move` requires
+a current owned placement and preserves its score when omitted; `remove:true`
+removes only the named placement while retaining the shared record. At most one
+action and one guard name each member/table pair. Duplicate actions, duplicate
+physical members, incompatible shapes and unknown/duplicate JSON keys refuse.
+
+`set` and `unset` apply once to the shared member record, with the same field,
+value, reserved-name and overlap rules as schema 1. Guards on every table and
+member read the one original pre-state. A field changed here cannot satisfy a
+guard elsewhere in the request. The member revision advances once when any of its
+placements, scores or fields effectively changes, regardless of how many tables
+are involved. A new record starts at revision one. Every listed table advances
+its table revision once on acceptance, including a no-op; unlisted table revisions
+do not advance implicitly. A shared member revision guard is needed to detect a
+field change made through another table. This keeps the existing revision scope.
+
+Before the first write, the server validates every participant, including the
+last table's epoch/revision, every source and destination, member/set agreement,
+all revision and stream bounds, the combined receipt size, and the types and
+permissions of the complete staged command list. A refusal changes no participant,
+member, event or operation record. The commit is one FCALL, not a loop of table
+writes or compensating snapshots. The same resource-exhaustion/process-loss and
+uncertain-transport limits stated for schema 1 apply; this does not promise Redis
+rollback after an unpreventable server failure.
+
+Operation identity is `(scope,operation_id)`, independent of table order, names or
+epochs used as lookup keys. A changed request under that identity conflicts;
+byte-identical requests return the original result before live epoch/revision
+checks, without writing. The exact request bytes, their SHA-1 digest and the result
+are stored once in hash `table::batch:<scope>:ops`, field `operation_id`. This scope
+ledger has no expiry and survives table drop/recreation: retry returns historical
+evidence and never applies that old operation to a newly created table. A caller
+uses a new operation ID for new work. Schema 1's table-owned records keep their
+existing drop behavior. No scope deletion or automatic retention policy is added.
+
+One full aggregate event is written to `table::batch:<scope>:changes`. The result
+is `['OK',['MULTI_RECEIPT',aggregate_stream_id,delta_json]]`, with a third outer
+`'REPLAY'` only for a replay. The delta contains `schema:2`, `scope`, `operation_id`, `digest`,
+`actor`, `outcome`, `selected_count`, `guard_count`, `changed_count`, `tables` and
+`members`. A table delta has `name`, `epoch`, `rev_before`, `rev_after`. A member
+delta has `record_table`, `id`, `before_rev`, `after_rev`, `fields_set`,
+`fields_unset`, `fields` and optional `placements`; each placement carries `table`,
+`before_place`, `after_place`, `before_score`, `after_score`. Revision strings,
+nullable exact score strings and the 64-byte field-value/digest representation
+follow schema 1. Counts count physical member entries, not their placements.
+
+The encoded aggregate delta must fit the existing 1 MiB receipt bound, computed
+before writing with pessimistic placeholders for scores read back after writes.
+Each participating table also appends a small `multi_ref` change event with scope,
+operation ID, digest, aggregate stream ID, epoch and its before/after revision.
+These references preserve each table's revision chain; they are pointers to the
+one full receipt, not independent operation receipts. The references, aggregate
+event and one durable operation record commit in the same call. Replay appends
+none of them. An uncertain client retries the same scope, ID and request; it does
+not invent another operation to make a lost reply disappear.
+
 ### CLI batch verb (`nova-table batch`)
 
 `nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]`
-executes an atomic conditional mutation manifest against one table in a single Redis call (`ns_table_apply`).
+executes an atomic conditional mutation manifest in one Redis call: schema 1 uses
+`ns_table_apply` for one table; schema 2 uses `ns_table_apply_multi` for all participants.
 The manifest is a file path, `-` for stdin, or inline JSON that starts with `{`. A path that cannot be
 read is refused with the path and the operating system's error, never as a JSON error.
 
 #### Manifest structure
 
 The manifest is a JSON document containing `schema`, `table`, `epoch`, `expected_table_revision`, `operation_id`, optional `actor`, and `members` (an array of member mutation and guard objects). The manifest states its epoch. `--epoch <n>` given on the command must equal it, and a difference is refused, naming both, before the store is asked; `--actor <name>` given on the command must equal the manifest's actor when the manifest names one, and fills it when the manifest names none. `create` needs a `score`.
+
+For schema 2, use the multi-table manifest above. An explicit `--epoch` must
+match every participant's epoch; the actor rules are the same. Text output begins
+with `TABLE BATCH scope=...`, identifies the aggregate `TABLE RECEIPT`, then prints
+each participant's table revision and each physical member's revision, field
+changes and per-table `PLACEMENT` changes. `--json` includes `schema:2`, scope,
+operation identity, digest, actor, event, replay, counts, tables and members with
+their placements. `--receipt=false` suppresses the aggregate receipt line.
 
 #### Worked example
 
@@ -691,8 +813,8 @@ connection:
 
 write epoch and receipt:
   --actor <string>  actor recorded with the change; it must equal the manifest's actor when the manifest names one
-  --epoch <uint>  the epoch this write observed; it must equal the manifest's epoch
-  --receipt  print the committed event ID, epoch and revision
+  --epoch <uint>  the epoch this write observed; it must equal the manifest epoch for every named table
+  --receipt  print the committed event ID and outcome
 
 exit codes: 0 done, 1 refused, 2 usage
 ```
