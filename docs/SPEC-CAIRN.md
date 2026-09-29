@@ -79,10 +79,15 @@ created or written through the link. For the shape rule a link named `sessions`,
 directory above the store is part of the path given and is not judged. The
 check is made on the open file or directory: after the open the handle is
 compared with the name, and the directories already looked at are compared again,
-so a swap between the check and the use is refused; only the creation of a new
-file, which is by name, is not covered. The answer is the same however
+so a swap between the check and the use is refused. The answer is the same however
 `--store` is spelled, relative or absolute or in another letter case, because
 nothing is resolved.
+
+nova-cairn defends a store against links that are there when a command starts.
+It does not defend against someone who can write inside the store directory and
+replaces a directory while a command runs: in that case an append can report OK
+with its entry file created through the replaced directory, and temporary files
+can remain there.
 
 **A defect in one session's record is that session's.** Two kinds, and each
 has its own answer.
