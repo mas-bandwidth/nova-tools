@@ -56,7 +56,7 @@ import (
 
 // cardMoveVerbs are the table move subverbs no other card form has.
 var cardMoveVerbs = map[string]bool{"owner": true, "deal": true, "work": true, "land": true, "cancel": true, "expire": true,
-	"table": true, "consumers": true, "render": true, "assign": true, "session": true}
+	"table": true, "consumers": true, "render": true, "assign": true, "session": true, "wait": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
 // the move form with --id, --ids or --as (the bench attempt form names a
@@ -85,6 +85,8 @@ func isCardMove(sub string, args []string) bool {
 	switch sub {
 	case "end", "beat":
 		return has("id", "ids", "as")
+	case "ls", "run":
+		return has("as")
 	case "fsck":
 		return !has("sprint")
 	}
@@ -97,6 +99,7 @@ type moveCmd struct {
 	pr, head, doneAlready, score, gates, finding    *string
 	reader, fail, add, rm, token, wrapper           *string
 	harness, child, checkout, findingTest           *string
+	worktree, timeout                               *string
 	// parent is the caller's context: the spec gate at card end --ok --pr
 	// runs under it, not under the store's 30 s
 	parent                                context.Context
@@ -141,6 +144,8 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.child = fs.String("child", "", "")
 	m.checkout = fs.String("repo", "", "")
 	m.findingTest = fs.String("test", "", "")
+	m.worktree = fs.String("worktree", "", "")
+	m.timeout = fs.String("timeout", "", "")
 	m.revoke = fs.Bool("revoke", false, "")
 	m.n = fs.Int("n", 0, "")
 	m.fill = fs.Bool("fill", false, "")
@@ -277,6 +282,14 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 	case "session":
 		if !strings.HasPrefix(*m.as, "bench:") {
 			return "session wants --as bench:<b> (a friend takes its copies through nova-friend pull)"
+		}
+	case "run":
+		if !strings.HasPrefix(*m.as, "friend:") || len(ids) != 1 || *m.result["model"] == "" || *m.harness == "" {
+			return "run wants --as friend:<f> --id <copy> --model <m> --harness <h>"
+		}
+	case "wait":
+		if !strings.HasPrefix(*m.as, "friend:") {
+			return "wait wants --as friend:<f> [--timeout <dur>]"
 		}
 	}
 	return ""
@@ -647,6 +660,57 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			return refuse(errOut, "card render", "write card: "+err.Error())
 		}
 		fmt.Fprintf(errOut, "RENDERED card id=%s brief=%t bytes=%d ms=%d\n", ids[0], *m.brief, len(body), ms())
+		return 0
+	case "run":
+		as, err := consumerArg(*m.as)
+		if err != nil {
+			return refuse(errOut, "card run", err.Error())
+		}
+		repoDir := *m.checkout
+		if repoDir == "" {
+			repoDir = "."
+		}
+		res, err := taskcard.Run(ctx, c, taskcard.RunConfig{
+			As:       as,
+			ID:       ids[0],
+			Model:    *m.result["model"],
+			Harness:  *m.harness,
+			ChildID:  *m.child,
+			Repo:     repoDir,
+			Worktree: *m.worktree,
+			By:       *m.actor,
+		})
+		if err != nil {
+			return refused(err, "id="+ids[0])
+		}
+		fmt.Fprintf(out, "CARD RUN as=%s id=%s model=%s harness=%s pid=%d worktree=%s ms=%d\n",
+			as.String(), res.CopyID, res.Model, res.Harness, res.PID, res.Worktree, ms())
+		return 0
+	case "wait":
+		as, err := consumerArg(*m.as)
+		if err != nil {
+			return refuse(errOut, "card wait", err.Error())
+		}
+		var timeout time.Duration
+		if *m.timeout != "" {
+			var err error
+			timeout, err = time.ParseDuration(*m.timeout)
+			if err != nil {
+				return refuse(errOut, "card wait", "invalid --timeout: "+err.Error())
+			}
+		}
+		waitCtx := m.parent
+		if waitCtx == nil {
+			waitCtx = ctx
+		}
+		res, err := taskcard.Wait(waitCtx, c, taskcard.WaitConfig{
+			As:      as,
+			Timeout: timeout,
+		})
+		if err != nil {
+			return refused(err, "as="+as.String())
+		}
+		fmt.Fprintln(out, res.Line())
 		return 0
 	}
 	return refuse(errOut, "card "+sub, "unknown table move")
