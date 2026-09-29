@@ -2346,6 +2346,15 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `key-families` — every Redis key belongs to a registered key family
+
+**The rule.** Every Redis key pattern written or read in Go and Lua matches a registered key family in `internal/nsprint/audit`; `sprint audit` reports orphans and family tallies, and `--purge <family>` deletes one family through the registry.
+**The mistake it prevents.** Forgotten key families or typos leave orphan keys persisting in Redis after sprints are cleared, corrupting table counts or consuming memory.
+**The test.** `TestEveryKeyFamilyIsRegistered`, with its control `TestEveryKeyFamilyIsRegisteredCatchesUnregisteredKey` (`internal/ci/key_families_class_test.go`).
+**Its allowlist.** None.
+**Its remedy line.** `register the key family in internal/nsprint/audit.DefaultFamilies`.
+**Its narrowings.** String literals and key patterns in `internal/nsprint` and `internal/nsprint/fn/lua`.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/acl"
 )
 
-const aclRowsFixture = "../../internal/nsprint/acl/testdata/acl-rows.tsv"
+const aclRowsFixture = "../../../internal/nsprint/acl/testdata/acl-rows.tsv"
 
 // aclEnv is a getenv holding only NS_ADMIN=password ("" is unset).
 func aclEnv(password string) func(string) string {
@@ -29,7 +29,7 @@ func aclEnv(password string) func(string) string {
 // dialled with.
 func cannedACL(t *testing.T, edit func([]string) []string, err error) (aclReader, *[3]string) {
 	t.Helper()
-	f, rerr := os.Open("../../internal/nsprint/acl/testdata/redis-8.10.2.acl")
+	f, rerr := os.Open("../../../internal/nsprint/acl/testdata/redis-8.10.2.acl")
 	if rerr != nil {
 		t.Fatal(rerr)
 	}

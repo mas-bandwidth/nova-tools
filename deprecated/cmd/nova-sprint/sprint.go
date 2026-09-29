@@ -13,10 +13,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/audit"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
@@ -44,7 +46,7 @@ var sprintGate func(ctx context.Context, name string) (bool, string)
 var sprintStoreOpen = store.Open
 
 func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const want = "want open --sprint <S> [--from <work-set.lisp>], close --sprint <S>, fold --sprint <S>, status [--sprint <S>] [--now <unix>] or clear --why <why> [--force] [--checkpoint <file>] [--redis host:port]"
+	const want = "want open --sprint <S> [--from <work-set.lisp>], close --sprint <S>, fold --sprint <S>, status [--sprint <S>] [--now <unix>], clear --why <why> [--force] [--checkpoint <file>] or audit [--purge <family>] [--redis host:port]"
 	if len(args) == 0 {
 		return refuse(errOut, "sprint", want)
 	}
@@ -53,6 +55,8 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	case "open", "close", "status", "fold":
 	case "clear":
 		return runSprintClear(ctx, args[1:], out, errOut)
+	case "audit":
+		return runSprintAudit(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "sprint", fmt.Sprintf("unknown subverb %s; %s", sub, want))
 	}
@@ -533,4 +537,83 @@ func writeClearCheckpoint(ctx context.Context, client redis.UniversalClient, pat
 		}
 	}
 	return writeAtomic(path, b.String())
+}
+
+// runSprintAudit is `nova-sprint sprint audit [--purge <family>] [--redis <addr>]` (#4334):
+// scans keys in Redis, tallies counts per registered key family, flags unowned keys as ORPHANs,
+// and optionally deletes keys belonging to a registered family (or all orphans) with --purge <family>.
+func runSprintAudit(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "sprint audit"
+	fs := taskFlags(verb)
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
+	purge := fs.String("purge", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	st, err := sprintStoreOpen(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	defer st.Close()
+
+	reg := audit.DefaultRegistry()
+	var purgedCount int64
+	if *purge != "" {
+		if *purge != "orphans" {
+			if _, ok := reg.FindFamily(*purge); !ok {
+				return refuse(errOut, verb, fmt.Sprintf("unknown family %q; see sprint audit for registered families", *purge))
+			}
+		}
+		n, err := reg.Purge(ctx, st.Client(), *purge)
+		if err != nil {
+			return refuse(errOut, verb, err.Error())
+		}
+		purgedCount = n
+	}
+
+	report, err := reg.Audit(ctx, st.Client())
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+
+	activeFamilies := 0
+	for _, c := range report.FamilyCounts {
+		if c > 0 {
+			activeFamilies++
+		}
+	}
+
+	if *purge != "" {
+		fmt.Fprintf(out, "SPRINT AUDIT total=%d families=%d orphans=%d purged=%d\n", report.TotalKeys, activeFamilies, len(report.OrphanKeys), purgedCount)
+		fmt.Fprintf(out, "PURGED family=%s keys=%d\n", *purge, purgedCount)
+	} else {
+		fmt.Fprintf(out, "SPRINT AUDIT total=%d families=%d orphans=%d\n", report.TotalKeys, activeFamilies, len(report.OrphanKeys))
+	}
+
+	var famNames []string
+	for name, count := range report.FamilyCounts {
+		if count > 0 {
+			famNames = append(famNames, name)
+		}
+	}
+	sort.Strings(famNames)
+	for _, name := range famNames {
+		fam, _ := reg.FindFamily(name)
+		pattern := ""
+		if fam != nil {
+			pattern = fam.Pattern
+		}
+		fmt.Fprintf(out, "FAMILY %s keys=%d pattern=%s\n", name, report.FamilyCounts[name], pattern)
+	}
+
+	for _, k := range report.OrphanKeys {
+		fmt.Fprintf(out, "ORPHAN %s\n", k)
+	}
+
+	return 0
 }
