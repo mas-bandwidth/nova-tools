@@ -2329,8 +2329,9 @@ function TK.move(id, to, o)
   -- The review column (#4094): a primary (no friend) that enters review
   -- has its read copies cut in this same call, and one that leaves it
   -- retires the read copies still open (TK.hook is TM.after_move, below).
+  -- A primary moving to done (#4229) drops its live copy and read copies.
   local cut
-  if TK.hook and nxt.friend == '' then
+  if TK.hook and (nxt.friend == '' or to == 'done') then
     local herr
     herr, cut = TK.hook(id, cur, to, o)
     if herr then return 'DRIFT-AFTER ' .. herr .. ' task:' .. id end
@@ -4100,10 +4101,25 @@ end
 -- review has its read copies cut in the same call (#4094: by card end
 -- --ok --pr, a harvest or a rebase copy returning, whichever way it comes
 -- in); one that leaves review retires the read copies still open
--- (o.reads_why, else the move). Returns nil and the copies cut, or the
--- refusal.
+-- (o.reads_why, else the move); a primary moved to done (#4229) drops its
+-- live copy and any open read copies in the same call. Returns nil and the
+-- copies cut, or the refusal.
 function TM.after_move(id, cur, to, o)
-  if cur.where == 'review' and to ~= 'review' then
+  if to == 'done' then
+    if cur.copy ~= '' then
+      local why = o.why or ''
+      if why == '' then why = 'cancel: primary done'
+      elseif not string.find(why, '^cancel') then why = 'cancel: ' .. why end
+      TM.drop(cur.copy, why, o.by)
+      redis.call('HDEL', 'task:' .. id, 'copy')
+    end
+    if cur.reads ~= '' then
+      local why = o.why or ''
+      if why == '' then why = 'cancel: primary done'
+      elseif not string.find(why, '^cancel') then why = 'cancel: ' .. why end
+      TM.retire_reads(id, why, o.by)
+    end
+  elseif cur.where == 'review' and to ~= 'review' then
     TM.retire_reads(id, o.reads_why or ('primary moved to ' .. to), o.by)
   end
   -- a copy's fail enters review for a verdict (o.review): no reads to cut
@@ -4394,7 +4410,7 @@ function TM.cancel(by, why, ids)
             err = 'DRIFT task:' .. id .. ' names copy ' .. cp .. ' that is not live; run nova-sprint card fsck --repair'
           end
           err = err or TK.move(id, 'done', { by = by, why = why, ok = 'fail', copy = '', dry = dry })
-          if not err and not dry and cp ~= '' then TM.retire(cp, r[1], r[2], 'fail', 'cancel: ' .. why, {}, by, r[3]) end
+          if not err and not dry and cp ~= '' then TM.drop(cp, 'cancel: ' .. why, by) end
           to = 'done'
         end
       end
@@ -4641,8 +4657,23 @@ function TM.expire(by, consumers)
     if at and now - at > TM.LEASE then
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if TK.copy_id(id) then
-          local err, info = TM.finish(id, { outcome = 'fail', why = 'consumer down', keep = true, by = by })
-          ended(id, err, info)
+          local pid = TK.str(redis.call('HGET', 'task:' .. id, 'primary'))
+          local p = pid ~= '' and TK.read(pid) or nil
+          local leg = TK.str(redis.call('HGET', 'task:' .. id, 'leg'))
+          if not TM.holds(p, id, leg) then
+            local stream = TK.str(redis.call('HGET', 'task:' .. id, 'stream'))
+            TM.retire(id, c, 'ready', 'fail', 'fail: orphan', {}, by, stream)
+            if pid ~= '' and p then
+              if p.copy == id then redis.call('HDEL', 'task:' .. pid, 'copy') end
+              if leg == 'read' and p.reads ~= '' then
+                TM.set_reads(pid, TM.without(TM.words(p.reads), id))
+              end
+            end
+            ended(id, nil, { to = 'fail' })
+          else
+            local err, info = TM.finish(id, { outcome = 'fail', why = 'consumer down', keep = true, by = by })
+            ended(id, err, info)
+          end
         end
       end
     end
@@ -4652,10 +4683,27 @@ function TM.expire(by, consumers)
         if lease < now then
           -- a lapsed READ is the reader's, not the card's: given back, the
           -- primary stays in review and the deal pass re-cuts its reads
-          -- (#4094 c); a lapsed work or fix copy is a fail, to review (#4072)
-          local keep = TK.str(redis.call('HGET', 'task:' .. id, 'leg')) == 'read'
-          local err, info = TM.finish(id, { outcome = 'fail', why = 'lease lapsed', keep = keep, by = by })
-          ended(id, err, info)
+          -- (#4094 c); a lapsed work or fix copy is a fail, to review (#4072);
+          -- a lapsed orphan copy (its primary is done or gone) is reaped to
+          -- fail: orphan (#4229).
+          local pid = TK.str(redis.call('HGET', 'task:' .. id, 'primary'))
+          local p = pid ~= '' and TK.read(pid) or nil
+          local leg = TK.str(redis.call('HGET', 'task:' .. id, 'leg'))
+          if not TM.holds(p, id, leg) then
+            local stream = TK.str(redis.call('HGET', 'task:' .. id, 'stream'))
+            TM.retire(id, c, 'working', 'fail', 'fail: orphan', {}, by, stream)
+            if pid ~= '' and p then
+              if p.copy == id then redis.call('HDEL', 'task:' .. pid, 'copy') end
+              if leg == 'read' and p.reads ~= '' then
+                TM.set_reads(pid, TM.without(TM.words(p.reads), id))
+              end
+            end
+            ended(id, nil, { to = 'fail' })
+          else
+            local keep = leg == 'read'
+            local err, info = TM.finish(id, { outcome = 'fail', why = 'lease lapsed', keep = keep, by = by })
+            ended(id, err, info)
+          end
         end
       end
     end

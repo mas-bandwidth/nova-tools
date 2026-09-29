@@ -784,3 +784,243 @@ func TestControl17AssignLiveRefusesWithoutRevoke(t *testing.T) {
 	}
 	cleanMoves(t, c, "assign")
 }
+
+// TestPrimaryCancelEndsWorkingCopyInSameCall (#4229): task cancel (and any
+// primary move to done) cancels its working copy in the same call (one Lua
+// call, one receipt per copy). A primary can never be done while a copy is
+// in working. Consumer's working ZCARD drops to 0 and fsck reports zero drift.
+func TestPrimaryCancelEndsWorkingCopyInSameCall(t *testing.T) {
+	t.Parallel()
+
+	c := start(t)
+	ctx := context.Background()
+	k := mustConsumer(t, "friend:f")
+	c.SAdd(ctx, "friends", "f")
+	c.HSet(ctx, k.DesiredKey(), "slots", "1")
+	ids := pushPrimaries(t, c, 1)
+	d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, By: "rowan"})
+	if err != nil || len(d) != 1 {
+		t.Fatalf("deal: %v %v", d, err)
+	}
+	w, err := taskcard.Work(ctx, c, k, "f", 0, true)
+	if err != nil || len(w.IDs) != 1 {
+		t.Fatalf("work: %v %v", w, err)
+	}
+	if n := c.ZCard(ctx, k.KeyAt(0, "working")).Val(); n != 1 {
+		t.Fatalf("working zcard before cancel: %d, want 1", n)
+	}
+
+	// Cancel the primary directly via taskcard.Cancel (which moves primary to done/fail).
+	res, err := taskcard.Cancel(ctx, c, ids[0], "rowan", "feature cancelled")
+	if err != nil {
+		t.Fatalf("taskcard.Cancel: %v", err)
+	}
+	if res.From != "working" || res.To != "done" {
+		t.Fatalf("cancel result: %+v", res)
+	}
+
+	// Primary is done/fail, copy pointer is deleted.
+	ph := c.HGetAll(ctx, taskcard.Key(ids[0])).Val()
+	if ph["where"] != "done" || ph["where_ok"] != "fail" || ph["copy"] != "" {
+		t.Fatalf("primary after cancel: %v", ph)
+	}
+
+	// Working copy ended fail in the same call, with cancel reason.
+	ch := c.HGetAll(ctx, taskcard.Key(d[0].Copy)).Val()
+	if ch["where"] != "fail" || ch["outcome"] != "fail" || !strings.Contains(ch["why"], "feature cancelled") {
+		t.Fatalf("copy after cancel: %v", ch)
+	}
+
+	// Consumer working set is 0, fail set is 1.
+	if n := c.ZCard(ctx, k.KeyAt(0, "working")).Val(); n != 0 {
+		t.Fatalf("working zcard after cancel: %d, want 0", n)
+	}
+	if n := c.ZCard(ctx, k.KeyAt(0, "fail")).Val(); n != 1 {
+		t.Fatalf("fail zcard after cancel: %d, want 1", n)
+	}
+
+	// Exactly one receipt per copy in ws:log and fsck clean.
+	cleanMoves(t, c, "after primary cancel")
+}
+
+// TestLapsedOrphanCopyReapedByExpirePass (#4229): when a work copy's primary
+// is done, and the copy's lease lapses, the next expire pass (TM.expire called
+// by DealPass / ExpireCopies) ends the copy with fail: orphan, corrects the
+// consumer's working set (ZCARD 0), and fsck reports zero drift.
+func TestLapsedOrphanCopyReapedByExpirePass(t *testing.T) {
+	t.Parallel()
+
+	c := start(t)
+	ctx := context.Background()
+	k := mustConsumer(t, "friend:f")
+	c.SAdd(ctx, "friends", "f")
+	c.HSet(ctx, k.DesiredKey(), "slots", "1")
+	ids := pushPrimaries(t, c, 1)
+	d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, By: "rowan"})
+	if err != nil || len(d) != 1 {
+		t.Fatalf("deal: %v %v", d, err)
+	}
+	w, err := taskcard.Work(ctx, c, k, "f", 0, true)
+	if err != nil || len(w.IDs) != 1 {
+		t.Fatalf("work: %v %v", w, err)
+	}
+
+	// Simulate an orphan work copy whose primary is done.
+	created, _ := strconv.ParseFloat(c.HGet(ctx, taskcard.Key(ids[0]), "created_at").Val(), 64)
+	sprint := c.HGet(ctx, taskcard.Key(ids[0]), "sprint").Val()
+	c.HSet(ctx, taskcard.Key(ids[0]), "where", "done", "where_ok", "ok", "state", "closed", "copy", "")
+	c.ZRem(ctx, "ws:"+mvStream+":working", ids[0])
+	c.ZAdd(ctx, "ws:"+mvStream+":done", redis.Z{Score: created, Member: ids[0]})
+	if sprint != "" {
+		c.SRem(ctx, "s:"+sprint+":idx:task:working", ids[0])
+		c.SAdd(ctx, "s:"+sprint+":idx:task:closed", ids[0])
+	}
+
+	// Lapse the copy's lease.
+	c.HSet(ctx, taskcard.Key(d[0].Copy), "lease_until", "1")
+
+	if n := c.ZCard(ctx, k.KeyAt(0, "working")).Val(); n != 1 {
+		t.Fatalf("working zcard before expire: %d, want 1", n)
+	}
+
+	// DealPass / ExpireCopies runs TM.expire.
+	passRes, err := taskcard.DealPass(ctx, c, "reconciler", time.Now())
+	if err != nil {
+		t.Fatalf("DealPass: %v", err)
+	}
+	if passRes.Expired != 1 {
+		t.Fatalf("DealPass Expired count %d, want 1; lines: %v", passRes.Expired, passRes.Lines)
+	}
+	for _, l := range passRes.Lines {
+		if strings.Contains(l, " REFUSED ") {
+			t.Fatalf("DealPass had refused line: %s", l)
+		}
+	}
+
+	// Copy record is ended fail with why "fail: orphan".
+	ch := c.HGetAll(ctx, taskcard.Key(d[0].Copy)).Val()
+	if ch["where"] != "fail" || ch["outcome"] != "fail" || ch["why"] != "fail: orphan" {
+		t.Fatalf("reaped orphan copy record: %v", ch)
+	}
+
+	// Consumer's working set is 0.
+	if n := c.ZCard(ctx, k.KeyAt(0, "working")).Val(); n != 0 {
+		t.Fatalf("working zcard after expire: %d, want 0", n)
+	}
+	if n := c.ZCard(ctx, k.KeyAt(0, "fail")).Val(); n != 1 {
+		t.Fatalf("fail zcard after expire: %d, want 1", n)
+	}
+
+	// fsck reports zero drift.
+	cleanMoves(t, c, "after orphan reap")
+}
+
+// TestLapsedOrphanCopyPrimaryGoneReapedByExpireCopies (#4229): an orphan
+// whose primary was deleted from the store entirely is also reaped to
+// fail: orphan by ExpireCopies with zero drift.
+func TestLapsedOrphanCopyPrimaryGoneReapedByExpireCopies(t *testing.T) {
+	t.Parallel()
+
+	c := start(t)
+	ctx := context.Background()
+	k := mustConsumer(t, "friend:f")
+	c.SAdd(ctx, "friends", "f")
+	c.HSet(ctx, k.DesiredKey(), "slots", "1")
+	ids := pushPrimaries(t, c, 1)
+	d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, By: "rowan"})
+	if err != nil || len(d) != 1 {
+		t.Fatalf("deal: %v %v", d, err)
+	}
+	w, err := taskcard.Work(ctx, c, k, "f", 0, true)
+	if err != nil || len(w.IDs) != 1 {
+		t.Fatalf("work: %v %v", w, err)
+	}
+
+	// Delete primary completely
+	c.Del(ctx, taskcard.Key(ids[0]))
+	c.ZRem(ctx, "ws:"+mvStream+":working", ids[0])
+
+	// Lapse copy lease
+	c.HSet(ctx, taskcard.Key(d[0].Copy), "lease_until", "1")
+
+	x, err := taskcard.ExpireCopies(ctx, c, "reconciler", k)
+	if err != nil || len(x) != 1 || x[0].Copy != d[0].Copy || x[0].To != "fail" || x[0].Why != "" {
+		t.Fatalf("expire copies: %v %v", x, err)
+	}
+
+	ch := c.HGetAll(ctx, taskcard.Key(d[0].Copy)).Val()
+	if ch["where"] != "fail" || ch["outcome"] != "fail" || ch["why"] != "fail: orphan" {
+		t.Fatalf("reaped orphan copy record: %v", ch)
+	}
+
+	if n := c.ZCard(ctx, k.KeyAt(0, "working")).Val(); n != 0 {
+		t.Fatalf("working zcard after expire: %d, want 0", n)
+	}
+
+	cleanMoves(t, c, "after primary gone orphan reap")
+}
+
+// TestPrimaryCancelInReviewEndsReadCopiesInSameCall (#4229): cancelling a
+// primary while it is in review with active read copies retires all read copies
+// to fail in the same call and leaves zero drift.
+func TestPrimaryCancelInReviewEndsReadCopiesInSameCall(t *testing.T) {
+	t.Parallel()
+
+	c := start(t)
+	ctx := context.Background()
+	r1 := enroll(t, c, "friend:r1", 2, "reader")
+	author := enroll(t, c, "bench:b", 2, "")
+	recordPR(c, 100, head(1))
+	ids := pushPrimaries(t, c, 1)
+
+	// Move primary to review, cutting read copies on r1.
+	toReading(t, c, author, ids[0], 100, head(1))
+
+	// Verify primary is in review and names read copies.
+	ph := c.HGetAll(ctx, taskcard.Key(ids[0])).Val()
+	if ph["where"] != "review" || ph["reads"] == "" {
+		t.Fatalf("primary before cancel: %v", ph)
+	}
+	reads := strings.Fields(ph["reads"])
+	if len(reads) == 0 {
+		t.Fatalf("no reads on primary: %v", ph)
+	}
+
+	// Read copies should be in r1:ready.
+	if n := c.ZCard(ctx, r1.KeyAt(0, "ready")).Val(); n != int64(len(reads)) {
+		t.Fatalf("ready zcard on r1 before cancel: %d, want %d", n, len(reads))
+	}
+
+	// Cancel primary in review.
+	res, err := taskcard.Cancel(ctx, c, ids[0], "rowan", "pr abandoned")
+	if err != nil {
+		t.Fatalf("taskcard.Cancel: %v", err)
+	}
+	if res.From != "review" || res.To != "done" {
+		t.Fatalf("cancel result: %+v", res)
+	}
+
+	// Primary is done/fail and reads field is deleted.
+	ph = c.HGetAll(ctx, taskcard.Key(ids[0])).Val()
+	if ph["where"] != "done" || ph["where_ok"] != "fail" || ph["reads"] != "" {
+		t.Fatalf("primary after cancel: %v", ph)
+	}
+
+	// Every read copy is retired to fail.
+	for _, rid := range reads {
+		rh := c.HGetAll(ctx, taskcard.Key(rid)).Val()
+		if rh["where"] != "fail" || rh["outcome"] != "fail" || !strings.Contains(rh["why"], "pr abandoned") {
+			t.Fatalf("read copy %s after cancel: %v", rid, rh)
+		}
+	}
+
+	// r1 ready set is now 0, fail set has the read copies.
+	if n := c.ZCard(ctx, r1.KeyAt(0, "ready")).Val(); n != 0 {
+		t.Fatalf("ready zcard on r1 after cancel: %d, want 0", n)
+	}
+	if n := c.ZCard(ctx, r1.KeyAt(0, "fail")).Val(); n != int64(len(reads)) {
+		t.Fatalf("fail zcard on r1 after cancel: %d, want %d", n, len(reads))
+	}
+
+	cleanMoves(t, c, "after review primary cancel")
+}
