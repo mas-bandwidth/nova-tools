@@ -20,8 +20,12 @@ type fakeEngine struct {
 	mu      sync.Mutex
 	calls   [][]string
 	answers map[string]fakeAnswer
-	// started is what Start's process returns from Wait.
-	startCode int
+	// startCode is what Start's process returns from Wait; startCodes, when
+	// set, gives one code per Start in order.
+	startCode  int
+	startCodes []int
+	// respond, when set, answers first; ok false falls through to answers.
+	respond func(args []string) (a fakeAnswer, ok bool)
 }
 
 type fakeAnswer struct {
@@ -33,6 +37,11 @@ func (f *fakeEngine) Output(_ context.Context, args ...string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string(nil), args...))
+	if f.respond != nil {
+		if a, ok := f.respond(args); ok {
+			return a.out, a.err
+		}
+	}
 	for n := len(args); n > 0; n-- {
 		if a, ok := f.answers[strings.Join(args[:n], " ")]; ok {
 			return a.out, a.err
@@ -45,7 +54,11 @@ func (f *fakeEngine) Start(args []string, _, _ io.Writer) (process, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string(nil), args...))
-	return fakeProcess{code: f.startCode}, nil
+	code := f.startCode
+	if len(f.startCodes) > 0 {
+		code, f.startCodes = f.startCodes[0], f.startCodes[1:]
+	}
+	return fakeProcess{code: code}, nil
 }
 
 type fakeProcess struct{ code int }
@@ -337,6 +350,8 @@ func TestJudgeByDeadlineLabelPlusGrace(t *testing.T) {
 		{ID: "c-young", State: "created", Labels: map[string]string{labelRun: "r3", labelDeadline: dl(now.Unix() + 600)}},
 		{ID: "d-no-deadline", State: "exited", Labels: map[string]string{labelRun: "r4"}},
 		{ID: "e-garbage", State: "exited", Labels: map[string]string{labelRun: "r5", labelDeadline: "soon"}},
+		{ID: "h-zero", State: "exited", Labels: map[string]string{labelRun: "r8", labelDeadline: "0"}},
+		{ID: "i-negative", State: "exited", Labels: map[string]string{labelRun: "r9", labelDeadline: "-5"}},
 		{ID: "f-unlabelled", Names: []string{"nova-functional-decoy"}, State: "exited", Labels: map[string]string{labelDeadline: dl(1)}},
 		{ID: "g-created-never-started", State: "configured", Labels: map[string]string{labelRun: "r7", labelDeadline: dl(now.Unix() - 3600)}},
 	}
@@ -356,6 +371,8 @@ func TestJudgeByDeadlineLabelPlusGrace(t *testing.T) {
 		"c-young":                 {false, "within-deadline"},
 		"d-no-deadline":           {false, "no-deadline-label"},
 		"e-garbage":               {false, "unreadable-deadline"},
+		"h-zero":                  {false, "unreadable-deadline"},
+		"i-negative":              {false, "unreadable-deadline"},
 		"g-created-never-started": {true, ""},
 	} {
 		v, ok := got[id]
@@ -463,6 +480,8 @@ func TestParseRun(t *testing.T) {
 		{[]string{"--src", dir, "--context", ctxDir, "internal/ntable"}, "relative to the source tree"},
 		{[]string{"--src", dir, "--context", ctxDir, "./a b"}, "character"},
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "29s", "./a"}, "under 30s"},
+		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "0s", "./a"}, "under 30s"},
+		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "-1m", "./a"}, "under 30s"},
 		{[]string{"--src", dir, "--context", ctxDir, "--cpus", "0", "./a"}, "--cpus"},
 		{[]string{"--src", dir, "--context", ctxDir, "--memory", "lots", "./a"}, "--memory"},
 		{[]string{"--src", dir, "--context", dir, "./a"}, "no Containerfile"},
@@ -519,7 +538,7 @@ func TestRunContainerPassesTheExitCodeThrough(t *testing.T) {
 	t.Parallel()
 	for _, code := range []int{0, 1, 2, 124} {
 		eng := &fakeEngine{startCode: code}
-		got, ended := runContainer(context.Background(), eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Minute), io.Discard, io.Discard)
+		got, ended := runContainer(context.Background(), eng, realClock{}, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Minute), io.Discard, io.Discard)
 		if got != code || ended != "finished" {
 			t.Errorf("exit %d came back as %d (%s)", code, got, ended)
 		}
@@ -568,7 +587,7 @@ func (h *hangingEngine) Output(ctx context.Context, args ...string) (string, err
 func TestRunContainerRemovesAtTheClientDeadline(t *testing.T) {
 	t.Parallel()
 	eng := &hangingEngine{killed: make(chan struct{})}
-	_, ended := runContainer(context.Background(), eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(50*time.Millisecond), io.Discard, io.Discard)
+	_, ended := runContainer(context.Background(), eng, realClock{}, []string{"run", "x"}, "nova-functional-r", time.Now().Add(50*time.Millisecond), io.Discard, io.Discard)
 	if ended != "deadline" {
 		t.Errorf("ended %q, want deadline", ended)
 	}
@@ -582,7 +601,7 @@ func TestRunContainerRemovesOnInterrupt(t *testing.T) {
 	eng := &hangingEngine{killed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, ended := runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Hour), io.Discard, io.Discard)
+	_, ended := runContainer(ctx, eng, realClock{}, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Hour), io.Discard, io.Discard)
 	if ended != "interrupted" {
 		t.Errorf("ended %q, want interrupted", ended)
 	}
@@ -638,7 +657,7 @@ func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T
 		var stdout, stderr bytes.Buffer
 		// The prefill must finish 0 for the test container to run; the fake
 		// gives both the same code, so a red run is judged at the module step.
-		got := runTier(context.Background(), eng, c, time.Now, &stdout, &stderr)
+		got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr)
 		calls := eng.argvs()
 		if code != 0 {
 			if got != exitCannotRun || !strings.Contains(stderr.String(), "module cache step ended finished with exit 2") {
@@ -678,7 +697,7 @@ func TestRunTierRefusesAnotherUsersCache(t *testing.T) {
 	t.Parallel()
 	eng, c := tierFixture(t, "502", 0)
 	var stdout, stderr bytes.Buffer
-	if got := runTier(context.Background(), eng, c, time.Now, &stdout, &stderr); got != exitCannotRun {
+	if got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr); got != exitCannotRun {
 		t.Errorf("exit %d, want %d", got, exitCannotRun)
 	}
 	for _, call := range eng.argvs() {
@@ -697,5 +716,127 @@ func TestSetupExit(t *testing.T) {
 	cancel()
 	if got := setupExit(ctx); got != exitInterrupted {
 		t.Errorf("setupExit after an interrupt = %d", got)
+	}
+}
+
+// fakeClock holds time still: After records the bound asked for and never
+// fires; Sleep advances the clock.
+type fakeClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	afters []time.Duration
+}
+
+func (f *fakeClock) Now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.now
+}
+
+func (f *fakeClock) After(d time.Duration) <-chan time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.afters = append(f.afters, d)
+	return nil
+}
+
+func (f *fakeClock) Sleep(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.now = f.now.Add(d)
+}
+
+func TestClassify(t *testing.T) {
+	t.Parallel()
+	const dl = 10 * time.Minute
+	for _, tc := range []struct {
+		code      int
+		ended     string
+		elapsed   time.Duration
+		wantEnded string
+		wantExit  int
+	}{
+		{0, "finished", time.Minute, "finished", 0},
+		{0, "finished", dl, "finished", 0},
+		{1, "finished", time.Minute, "finished", 1},
+		{2, "finished", time.Minute, "finished", 2},
+		{2, "finished", dl - 2*time.Second, "finished", 2},
+		{137, "finished", time.Minute, "finished", 137},
+		{137, "finished", dl - innerMargin - time.Second, "finished", 137},
+		{137, "finished", dl - innerMargin, "inner-timeout", 124},
+		{137, "finished", dl - 5*time.Second, "inner-timeout", 124},
+		{124, "finished", time.Minute, "inner-timeout", 124},
+		{124, "finished", dl - innerMargin, "inner-timeout", 124},
+		{2, "finished", dl - time.Second, "deadline", 124},
+		{255, "finished", dl, "deadline", 124},
+		{-1, "finished", time.Minute, "client-lost", 125},
+		{-1, "finished", dl, "client-lost", 125},
+		{-1, "deadline", dl + clientGrace, "deadline", 124},
+		{-1, "interrupted", time.Second, "interrupted", 130},
+	} {
+		ended, exit := classify(tc.code, tc.ended, tc.elapsed, dl)
+		if ended != tc.wantEnded || exit != tc.wantExit {
+			t.Errorf("classify(%d, %s, %s) = %s %d, want %s %d", tc.code, tc.ended, tc.elapsed, ended, exit, tc.wantEnded, tc.wantExit)
+		}
+	}
+}
+
+func TestRunTierClientDeadlines(t *testing.T) {
+	t.Parallel()
+	eng, c := tierFixture(t, "501", 0)
+	clk := &fakeClock{now: time.Unix(1_800_000_000, 0)}
+	var stdout, stderr bytes.Buffer
+	if got := runTier(context.Background(), eng, c, clk, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit %d\n%s", got, stderr.String())
+	}
+	want := []time.Duration{prefillDeadline + clientGrace, c.deadline + clientGrace}
+	if fmt.Sprint(clk.afters) != fmt.Sprint(want) {
+		t.Errorf("client deadlines %v, want the module step's then the run's, each the bound plus the grace: %v", clk.afters, want)
+	}
+}
+
+func TestRunTierExitCodes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		testCode  int
+		wantExit  int
+		wantEnded string
+	}{
+		{0, 0, "finished"},
+		{2, 2, "finished"},
+		{124, 124, "inner-timeout"},
+		{-1, 125, "client-lost"},
+	} {
+		eng, c := tierFixture(t, "501", 0)
+		eng.startCodes = []int{0, tc.testCode}
+		var stdout, stderr bytes.Buffer
+		got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr)
+		if got != tc.wantExit || !strings.Contains(stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ") {
+			t.Errorf("test container exit %d: tool exit %d, want %d ended=%s\n%s", tc.testCode, got, tc.wantExit, tc.wantEnded, stderr.String())
+		}
+	}
+}
+
+func TestRunTierFailsWhenAContainerIsLeft(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		answer fakeAnswer
+		want   string
+	}{
+		{fakeAnswer{out: "abc123\n"}, "containers_left=1"},
+		{fakeAnswer{err: fmt.Errorf("runtime gone")}, "containers_left=unknown"},
+	} {
+		eng, c := tierFixture(t, "501", 0)
+		eng.respond = func(args []string) (fakeAnswer, bool) {
+			if len(args) > 3 && args[0] == "ps" && strings.HasPrefix(args[3], "label="+labelRun+"=") && !strings.HasSuffix(args[3], "-mod") {
+				return tc.answer, true
+			}
+			return fakeAnswer{}, false
+		}
+		var stdout, stderr bytes.Buffer
+		got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr)
+		if got != exitCannotRun || !strings.Contains(stderr.String(), tc.want) {
+			t.Errorf("a green run with a leftover (%v): exit %d, want %d and %s\n%s", tc.answer, got, exitCannotRun, tc.want, stderr.String())
+		}
 	}
 }
