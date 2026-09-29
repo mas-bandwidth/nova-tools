@@ -43,7 +43,11 @@ type dAction struct {
 	Type          string // an ack's judgment type, as the model names it
 	Subject       string // an ack's subject
 	Run           int    // a ci run
-	Cut           bool   // cut the step before its work-table write, then repair
+	// CutAt cuts the step before its CutAt-th table write (1, its first:
+	// nothing of it applied; repaired past the grace); Leave also compares
+	// the state while it is cut, before the repair.
+	CutAt int
+	Leave bool
 }
 
 func (a dAction) id() string {
@@ -53,12 +57,18 @@ func (a dAction) id() string {
 	return ""
 }
 
-// String is the action as the verb line that makes it.
+// String is the action as the verb line that makes it, and how it is cut.
 func (a dAction) String() string {
-	cut := ""
-	if a.Cut {
-		cut = "   [cut before the work table, then repair]"
+	switch {
+	case a.CutAt > 0 && a.Leave:
+		return fmt.Sprintf("%s   [cut before its write %d, looked at, then repair]", a.verb(), a.CutAt)
+	case a.CutAt > 0:
+		return fmt.Sprintf("%s   [cut before its write %d, then repair]", a.verb(), a.CutAt)
 	}
+	return a.verb()
+}
+
+func (a dAction) verb() string {
 	ids := strings.Join(a.IDs, " ")
 	switch a.Kind {
 	case "add":
@@ -76,7 +86,7 @@ func (a dAction) String() string {
 		if a.After != "" {
 			s += " --after " + a.After
 		}
-		return s + cut
+		return s
 	case "tick":
 		return "tick"
 	case "start", "stop":
@@ -88,7 +98,7 @@ func (a dAction) String() string {
 		if !a.OK {
 			v = "--failed"
 		}
-		return fmt.Sprintf("finish --as %s %s@%d %s%s", a.Member, a.Card, a.Gen, v, cut)
+		return fmt.Sprintf("finish --as %s %s@%d %s", a.Member, a.Card, a.Gen, v)
 	case "begin":
 		return fmt.Sprintf("read --as %s --begin %s", a.Reader, a.Card)
 	case "read":
@@ -109,7 +119,7 @@ func (a dAction) String() string {
 		case "rejected":
 			s += " --rejected"
 		}
-		return s + cut
+		return s
 	case "resume":
 		if a.Did == "" {
 			return "resume --stream " + a.Stream
@@ -117,9 +127,9 @@ func (a dAction) String() string {
 		return "resume --stream " + a.Stream + " --did " + a.Did
 	case "fleet":
 		if a.Op == "level" {
-			return "fleet level" + cut
+			return "fleet level"
 		}
-		return "fleet " + a.Op + " " + a.Member + cut
+		return "fleet " + a.Op + " " + a.Member
 	case "ci":
 		v := "--green"
 		if !a.OK {
@@ -129,17 +139,17 @@ func (a dAction) String() string {
 	case "ack":
 		return fmt.Sprintf("ack <%s on %s> --reason looked", a.Type, a.Subject)
 	case "another":
-		return "ask --another " + ids + cut
+		return "ask --another " + ids
 	case "clear":
 		return "clear"
 	case "rework":
-		return "rework " + ids + " --fix f" + cut
+		return "rework " + ids + " --fix f"
 	case "drop", "return":
-		return a.Kind + " " + ids + " --reason r" + cut
+		return a.Kind + " " + ids + " --reason r"
 	case "release":
 		return "release " + ids + " --reason r"
 	}
-	return a.Kind + " " + ids + cut
+	return a.Kind + " " + ids
 }
 
 // dFinding is one difference between the engine and the model, found after
@@ -174,7 +184,15 @@ func (f dFinding) Sig() string {
 		sort.Strings(sigs)
 		return act + ": " + strings.Join(sigs, " ")
 	case "refusal":
-		return act + ": refusal " + f.Detail[:strings.IndexByte(f.Detail+":", ':')]
+		sig := act + ": refusal " + f.Detail[:strings.IndexByte(f.Detail+":", ':')]
+		seen := map[string]bool{}
+		for _, d := range f.Diffs {
+			if !seen[d.Sig()] {
+				seen[d.Sig()] = true
+				sig += " " + d.Sig()
+			}
+		}
+		return sig
 	}
 	return act + ": " + f.Kind
 }
@@ -221,6 +239,14 @@ type dHarness struct {
 	preNote     string
 	preSubjects []string
 	preNeeds    []string
+	// Acted counts, by action, the steps the engine carried out (its state
+	// changed), and Cuts the steps cut short.
+	Acted, Tried map[string]int
+	Cuts         int
+	// cutTable is the table the last action was cut before ("" when it was
+	// not cut).
+	cutTable string
+	mid      *refmodel.State // the state while cut, before repair (Leave)
 }
 
 func newDHarness(t testing.TB) *dHarness {
@@ -229,7 +255,7 @@ func newDHarness(t testing.TB) *dHarness {
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "d-"}, Actor: dCoordinator,
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
-		Sleep: func(time.Duration) {}, Rand: func(int64) int64 { return 0 }, Grace: time.Hour}
+		Sleep: func(time.Duration) {}, Rand: func(int64) int64 { return 0 }, Grace: 20 * time.Second}
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -240,6 +266,7 @@ func newDHarness(t testing.TB) *dHarness {
 		t.Fatal(err)
 	}
 	h.model = refmodel.New(dReaders, nil, dCoordinator)
+	h.Acted, h.Tried = map[string]int{}, map[string]int{}
 	h.seen = map[string]map[string]bool{}
 	return h
 }
@@ -350,9 +377,35 @@ func (h *dHarness) do(a dAction) []dFinding {
 	h.now = h.now.Add(time.Second)
 	h.mu.Unlock()
 	pre := h.observe()
+	h.cutTable, h.mid = "", nil
 	refusedWhy, cutOK := h.engine(a, pre)
 	post := h.observe()
+	h.Tried[a.Kind]++
+	if len(refmodel.Compare(post, pre)) > 0 {
+		h.Acted[a.Kind]++
+	}
 	next, merr := h.modelStep(a, pre, post)
+	var out []dFinding
+	if h.mid != nil && merr == nil && h.cutTable == "d-work" {
+		// D1: cut before its last write, the work table, the store holds
+		// the step's state but for the work table (the model's Crash),
+		// and the fence holds the operation. Repair (line 695) then
+		// finishes it from its record.
+		want := refmodel.Crash(h.model, next, h.mid.Pending)
+		if d := refmodel.Compare(*h.mid, want); len(d) > 0 {
+			out = append(out, dFinding{Seq: append([]dAction(nil), h.seq...), Kind: "state", Detail: "while the step is cut, before repair", Diffs: d})
+			h.findings = append(h.findings, out...)
+		}
+	}
+	return append(out, h.record(a, post, next, merr, refusedWhy, pre, cutOK)...)
+}
+
+// record compares the engine's state after the action with the model's and
+// keeps the findings: the model's refusal (merr) or the engine's (refusedWhy)
+// on one side only, a choice the model does not allow, a cut step that did not
+// repair, and every field that differs. base is the state the action started
+// from.
+func (h *dHarness) record(a dAction, post, next refmodel.State, merr error, refusedWhy string, base refmodel.State, cutOK bool) []dFinding {
 	var out []dFinding
 	seq := append([]dAction(nil), h.seq...)
 	var ce *refmodel.ChoiceError
@@ -361,7 +414,7 @@ func (h *dHarness) do(a dAction) []dFinding {
 		out = append(out, dFinding{Seq: seq, Kind: "choice", Detail: "the engine made a choice the model does not allow: " + ce.Why})
 		next = h.model
 	case merr != nil:
-		if d := refmodel.Compare(post, pre); len(d) > 0 {
+		if d := refmodel.Compare(post, base); len(d) > 0 {
 			out = append(out, dFinding{Seq: seq, Kind: "refusal", Detail: "model refuses: " + merr.Error() + "; the engine acted", Diffs: d})
 		}
 		next = h.model
@@ -375,7 +428,11 @@ func (h *dHarness) do(a dAction) []dFinding {
 	}
 	if len(out) == 0 {
 		if d := refmodel.Compare(post, next); len(d) > 0 {
-			out = append(out, dFinding{Seq: seq, Kind: "state", Diffs: d})
+			f := dFinding{Seq: seq, Kind: "state", Diffs: d}
+			if refusedWhy != "" {
+				f.Detail = "the engine refused: " + refusedWhy
+			}
+			out = append(out, f)
 		}
 	}
 	h.model = next
@@ -393,29 +450,50 @@ func (h *dHarness) do(a dAction) []dFinding {
 // work-table write (when the step writes another table first) and repaired.
 func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK bool) {
 	cutOK = true
-	if a.Cut {
-		applied := false
+	if a.CutAt > 0 {
+		seen := map[string]bool{}
+		cut := ""
 		h.m.Fail = func(point string) error {
-			if strings.HasPrefix(point, "apply ") && strings.HasSuffix(point, " after") {
-				applied = true
+			if !strings.HasPrefix(point, "apply ") || !strings.HasSuffix(point, " before") {
+				return nil
 			}
-			if point == "apply d-work before" && applied {
+			t := strings.TrimSuffix(strings.TrimPrefix(point, "apply "), " before")
+			if !seen[t] {
+				seen[t] = true
+				if len(seen) == a.CutAt {
+					cut = t
+				}
+			}
+			if t == cut {
 				return errors.New("cut")
 			}
 			return nil
 		}
 		defer func() {
 			h.m.Fail = nil
-			if h.pending() != nil {
-				if _, err := h.st.Repair(h.ctx); err != nil || h.pending() != nil {
-					cutOK = false
-				}
+			if h.pending() == nil {
+				return
+			}
+			h.Cuts++
+			h.cutTable = cut
+			if a.Leave {
+				mid := h.observe()
+				h.mid = &mid
+			}
+			if a.CutAt == 1 {
+				// its writer is gone past the grace
+				h.mu.Lock()
+				h.now = h.now.Add(h.st.Grace + time.Second)
+				h.mu.Unlock()
+			}
+			if _, err := h.st.Repair(h.ctx); err != nil || h.pending() != nil {
+				cutOK = false
 			}
 		}()
 	}
 	run := func(step Step) string {
 		res, err := h.st.Run(h.ctx, step)
-		if a.Cut && err != nil && h.pending() != nil {
+		if a.CutAt > 0 && err != nil && h.pending() != nil {
 			return ""
 		}
 		return engineErr(err, res.Refused)
@@ -650,9 +728,6 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	if err != nil {
 		return s, err
 	}
-	if a.Cut && post.Pending == "" {
-		next = refmodel.Repair(next)
-	}
 	return next, nil
 }
 
@@ -744,6 +819,22 @@ func tickChoices(pre, post refmodel.State) refmodel.TickChoices {
 // pick draws the next action from the state the model holds (the engine's,
 // after a resync), biased toward the moves that make progress.
 func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
+	a := h.pick1(rng, n)
+	switch a.Kind {
+	case "tick", "start", "stop", "clear":
+	default:
+		if rng.IntN(12) == 0 {
+			a.CutAt = 1 + rng.IntN(3)
+			if rng.IntN(20) != 0 {
+				a.CutAt = 2 + rng.IntN(2)
+			}
+			a.Leave = rng.IntN(2) == 0
+		}
+	}
+	return a
+}
+
+func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 	s := h.model
 	fresh := func() string { *n++; return fmt.Sprintf("p%d", *n) }
 	placed := func(states ...string) []string {
@@ -765,7 +856,6 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 		}
 		return xs[rng.IntN(len(xs))]
 	}
-	cut := rng.IntN(20) == 0
 	for {
 		switch w := rng.IntN(130); {
 		case w < 20:
@@ -824,7 +914,7 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 			if rng.IntN(10) == 0 {
 				g--
 			}
-			return dAction{Kind: "finish", Member: s.Work[c].Member, Card: c, Gen: g, OK: rng.IntN(5) != 0, Cut: cut}
+			return dAction{Kind: "finish", Member: s.Work[c].Member, Card: c, Gen: g, OK: rng.IntN(5) != 0}
 		case w < 70:
 			var cards []string
 			for _, id := range refmodel.Keys(s.Reads) {
@@ -858,9 +948,9 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 			if rng.IntN(5) == 0 {
 				ids = appendUniq(ids, one(rev))
 			}
-			return dAction{Kind: "accept", IDs: ids, Cut: cut}
+			return dAction{Kind: "accept", IDs: ids}
 		case w < 81:
-			return dAction{Kind: "rework", IDs: []string{one(placed(refmodel.Review))}, Cut: cut}
+			return dAction{Kind: "rework", IDs: []string{one(placed(refmodel.Review))}}
 		case w < 83:
 			var all []string
 			for _, id := range refmodel.Keys(s.Primaries) {
@@ -868,11 +958,11 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 					all = append(all, id)
 				}
 			}
-			return dAction{Kind: "drop", IDs: []string{one(all)}, Cut: cut}
+			return dAction{Kind: "drop", IDs: []string{one(all)}}
 		case w < 85:
 			return dAction{Kind: "rank", IDs: []string{one(placed())}}
 		case w < 87:
-			return dAction{Kind: "return", IDs: []string{one(placed(refmodel.Merging))}, Cut: cut}
+			return dAction{Kind: "return", IDs: []string{one(placed(refmodel.Merging))}}
 		case w < 97:
 			var st []string
 			for _, x := range s.StreamNames() {
@@ -883,7 +973,7 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 			if len(st) == 0 {
 				continue
 			}
-			a := dAction{Kind: "merge", Stream: one(st), Batch: 1 + rng.IntN(3), Fact: "green", Cut: cut}
+			a := dAction{Kind: "merge", Stream: one(st), Batch: 1 + rng.IntN(3), Fact: "green"}
 			q := s.MergeCell(a.Stream, refmodel.Queued)
 			switch f := rng.IntN(20); {
 			case f < 2 && len(q) > 0:
@@ -924,7 +1014,7 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 			case 0:
 				return dAction{Kind: "fleet", Op: "level"}
 			case 1, 2:
-				return dAction{Kind: "fleet", Op: "down", Member: m, Cut: cut}
+				return dAction{Kind: "fleet", Op: "down", Member: m}
 			}
 			return dAction{Kind: "fleet", Op: "up", Member: m}
 		case w < 106:

@@ -1211,16 +1211,16 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 // ------------------------------------------------------------------ the fence
 
 // Crash is SprintTables.tla Crash (line 687): the process writing a step
-// over more than one table is cut before its last write; the operation stays
-// pending. The state it leaves is the step's but for the work table.
+// over more than one table is cut before its last write, the work table; the
+// operation stays pending. The state it leaves is the step's (post) but for
+// the work table, which holds every primary's record, and the judgments,
+// which open and close at the release.
 func Crash(pre, post State, verb string) State {
 	n := post.Clone()
-	for id, p := range pre.Primaries {
-		q := n.Primaries[id]
-		q.State, q.Attempt, q.Head = p.State, p.Attempt, p.Head
-		n.Primaries[id] = q
-	}
-	n.Open = pre.Clone().Open
+	p := pre.Clone()
+	n.Primaries = p.Primaries
+	n.Open = p.Open
+	n.Acked = p.Acked
 	n.Pending = verb
 	return n
 }

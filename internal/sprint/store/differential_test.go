@@ -107,6 +107,14 @@ var dKnown = []dKnownDiff{
 		}
 		return true
 	}},
+	// MODEL (or SPEC). NoNeedCycle and Add's guard judge cycles over every
+	// primary admitted, dropped ones included; the engine judges them over
+	// the primaries on the table, so a chain through a dropped card (whose
+	// need can only be waived, never landed) is no cycle to it. Section 9,
+	// rule 11 says only that add refuses needs that would make a cycle.
+	{"MODEL a need cycle through a dropped primary refuses add", func(f dFinding) bool {
+		return f.Kind == "refusal" && f.Seq[len(f.Seq)-1].Kind == "add" && strings.Contains(f.Detail, "make a cycle")
+	}},
 	// MODEL. The ack of a blocked judgment resolves at once: a waiting
 	// primary whose needs are then met moves to ready, a sentinel is marked
 	// reached; the model's Waive leaves both to Resolve and the tick.
