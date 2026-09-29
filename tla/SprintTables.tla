@@ -134,6 +134,8 @@
 \*                                                         (OwnersRule)
 \*   "nomachinenote"    the machine STOPPED with moves due opens no judgment
 \*                                                         (OwnersRule)
+\*   "nodecision"       a reached sentinel's decisions (release, drop) are
+\*                      guarded off                  (AnswerableJudgments)
 \*   "ackanything"      ack closes a judgment whose decisions do not list it
 \*                                                     (AckOnlyListed)
 \*   "insertnoback"     an inserted sentinel leaves the ready cards behind it
@@ -577,7 +579,7 @@ Waive(p, q) ==
 \* notified, and the waiting primaries it held whose needs are now met become
 \* ready in the same step.
 Release(g) ==
-  /\ Fenced /\ Reached(g)
+  /\ Fenced /\ Reached(g) /\ ~Br("nodecision")
   /\ LET L == Landed \cup {g}
          freed == {q \in Primaries : InWork(q, "waiting") /\ q \notin Sentinels /\ q # g
                      /\ g \in EffNeeds(q) /\ \A x \in EffNeeds(q) : x \in L \/ x \in waived[q]}
@@ -817,6 +819,7 @@ AutoRework(p) ==
 \* waiting primary that needs it is blocked: a judgment notification.
 Drop(p) ==
   /\ Free /\ Placedp(p) /\ ~InWork(p, "landed") /\ Judged(p)
+  /\ ~(Br("nodecision") /\ p \in Sentinels)
   /\ LET s == StreamOf[p]
          wl == {c \in Unfinished : c[2] = p}
          rl == IF Br("dropkeepsreads") THEN {} ELSE OutOf(p)
@@ -1710,6 +1713,23 @@ CutRepaired == (op # NoOp) ~> (op = NoOp)
 
 \* The no-member condition is eventually judged (or clears).
 NoMemberIsJudged == NoMemberCond ~> (FleetNote \in open \/ ~NoMemberCond)
+
+\* ANSWERABLE JUDGMENTS: with nothing pending, every open judgment has an
+\* answer enabled, and taking it leaves the card or stream it names moved,
+\* ended, or held by something other than that judgment alone. (Whether the
+\* answer is right in the world is not something the model can say.)
+Unstuck(n) ==
+  CASE n.t = "stopped"  -> sstate'[n.s] # "stopped" \/ merge'[n.s] # merge[n.s] \/ op' # NoOp
+    [] n.t = "nomember" -> \E m \in Members : mstatus'[m] = "up"
+    [] n.t = "machine"  -> machine' = "running"
+    [] OTHER ->
+         \/ (Cell(n.p))' # Cell(n.p)
+         \/ n.p \in dropped'
+         \/ n \notin open' /\ (~Placedp(n.p) \/ InWork(n.p, "landed"))'
+         \/ \E x \in op'.moves : x[1] = n.p
+         \/ n \notin open' /\ (RuleIn(n.p, open \ {n}, Cardinality(Primaries)))'
+AnswerableJudgments ==
+  op = NoOp => \A n \in open : ENABLED (Answer(n) /\ Unstuck(n))
 
 \* THE DEFINITION OF DONE, with no coordinator fairness (MechSpec): every
 \* primary always eventually ends, or stands at an open judgment that names

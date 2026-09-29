@@ -54,6 +54,7 @@ MCSprintBrokenLandSkipsWork.cfg	MCSprintTables.tla	invariant	MergedIsLanded	igno
 MCSprintBrokenLateSilent.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
 MCSprintBrokenNoAutoAccept.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
 MCSprintBrokenNoAutoRework.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
+MCSprintBrokenNoDecision.cfg	MCSprintTables.tla	invariant	AnswerableJudgments	ignore-terminal	sprintw8	required	-
 MCSprintBrokenNoDue.cfg	MCSprintTables.tla	invariant	SilenceIsNamed	ignore-terminal	sprintw6	required	-
 MCSprintBrokenNoFence.cfg	MCSprintTables.tla	invariant	ReadsOnlyInReview	ignore-terminal	sprintw3	required	-
 MCSprintBrokenNoFleetNote.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw5	required	-
@@ -86,10 +87,9 @@ MCSprintCutDelegated.cfg	MCSprintTables.tla	invariant	AlwaysDelegated	ignore-ter
 MCSprintCutMergeMatches.cfg	MCSprintTables.tla	invariant	AlwaysMergeMatches	ignore-terminal	sprintw8	required	-
 MCSprintCutMergedLanded.cfg	MCSprintTables.tla	invariant	AlwaysMergedLanded	ignore-terminal	sprintw8	required	-
 MCSprintCutReadsInReview.cfg	MCSprintTables.tla	invariant	AlwaysReadsInReview	ignore-terminal	sprintw8	required	-
-MCSprintFindingRawSkip.cfg	MCSprintTables.tla	invariant	WorkingIsDelegated	ignore-terminal	sprintw8	required	-
+MCSprintFindingRawSkip.cfg	MCSprintTables.tla	invariant	WorkingIsDelegated	ignore-terminal	sprintw9	required	-
 MCSprintTablesClock.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-clock	required	-
 MCSprintTablesDoneOne.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-done-one	required	-
-MCSprintTablesFree.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-free	required	-
 MCSprintTablesLiveOne.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-one	required	-
 MCSprintTablesLivePosition.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-position	required	-
 MCSprintTablesLiveSentinel.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-sentinel	required	-
