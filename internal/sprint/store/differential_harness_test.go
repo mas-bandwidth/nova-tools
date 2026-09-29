@@ -255,7 +255,7 @@ func newDHarness(t testing.TB) *dHarness {
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "d-"}, Actor: dCoordinator,
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
-		Sleep: func(time.Duration) {}, Rand: func(int64) int64 { return 0 }, Grace: 20 * time.Second}
+		Sleep: func(time.Duration) {}, Rand: func(int64) int64 { return 0 }, Grace: 200 * time.Millisecond}
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}

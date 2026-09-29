@@ -1,6 +1,6 @@
 // Package refmodel is a reference model of nova-sprint's sprint table, written
-// from the TLA+ module tla/SprintTables.tla (branch rowan/sprint-tables-model)
-// and docs/SPEC-SPRINT.md, and not from the engine. It is small and plain: one
+// from the TLA+ module tla/SprintTables.tla (its sprint-tables-model branch, at
+// 4bf919875) and docs/SPEC-SPRINT.md, and not from the engine. It is small and plain: one
 // struct for the abstract state, and one function per action of the model,
 // named as the model names it, each returning the next state or a refusal.
 // Where the model leaves a choice open (which member a card is dealt to, which

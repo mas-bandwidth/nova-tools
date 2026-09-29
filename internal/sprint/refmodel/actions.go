@@ -4,8 +4,8 @@ import (
 	"sort"
 )
 
-// The line numbers cited are tla/SprintTables.tla at 4bf919875 on the
-// branch rowan/sprint-tables-model.
+// The line numbers cited are tla/SprintTables.tla at 4bf919875, on the
+// model's sprint-tables-model branch.
 
 func free(s State) error {
 	if s.Pending != "" {
