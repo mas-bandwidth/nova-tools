@@ -111,6 +111,82 @@ func Run() {
 	}
 }
 
+func TestAuditExecDeadlineWithCancelInheritsDeadline(t *testing.T) {
+	t.Parallel()
+
+	// WithCancel wrapping a context with deadline MUST NOT be flagged.
+	srcTimed := `package sample
+import (
+	"context"
+	"os/exec"
+	"time"
+)
+func Run() {
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second) // wall-ok: ast test fixture duration
+	ctxCancel, _ := context.WithCancel(ctx)
+	_ = exec.CommandContext(ctxCancel, "echo", "hi")
+}
+`
+	findings, calls, err := AuditExecDeadlineSource("sample.go", []byte(srcTimed), ExecDeadlineOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %d, want 0 (ctxCancel inherits deadline from ctx): %v", len(findings), findings)
+	}
+
+	// WithCancel wrapping context.Background() MUST be flagged.
+	srcUntimed := `package sample
+import (
+	"context"
+	"os/exec"
+)
+func Run() {
+	ctx, _ := context.WithCancel(context.Background())
+	_ = exec.CommandContext(ctx, "echo", "hi")
+}
+`
+	findings, calls, err = AuditExecDeadlineSource("sample.go", []byte(srcUntimed), ExecDeadlineOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 || len(findings) != 1 {
+		t.Fatalf("calls = %d, findings = %d, want 1, 1", calls, len(findings))
+	}
+	if !containsSubstr(findings[0].Detail, "context.WithCancel") {
+		t.Errorf("detail = %q, want mention of context.WithCancel", findings[0].Detail)
+	}
+}
+
+func TestAuditExecDeadlineDirectWithCancelInheritsDeadline(t *testing.T) {
+	t.Parallel()
+
+	src := `package sample
+import (
+	"context"
+	"os/exec"
+	"time"
+)
+func Run() {
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	_ = exec.CommandContext(context.WithCancel(ctx), "echo", "hi")
+}
+`
+	findings, calls, err := AuditExecDeadlineSource("sample.go", []byte(src), ExecDeadlineOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %d, want 0: %v", len(findings), findings)
+	}
+}
+
 func TestAuditExecDeadlineDirectWithTimeout(t *testing.T) {
 	t.Parallel()
 

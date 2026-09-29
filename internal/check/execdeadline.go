@@ -327,8 +327,11 @@ func evaluateContextArg(ctxArg ast.Expr, callPos token.Pos, funcStack []ast.Node
 				return false, "context.Background() has no deadline or timeout; wrap with context.WithTimeout or context.WithDeadline"
 			case "TODO":
 				return false, "context.TODO() has no deadline or timeout; wrap with context.WithTimeout or context.WithDeadline"
-			case "WithCancel":
-				return false, "context.WithCancel has no deadline or timeout; use context.WithTimeout or context.WithDeadline"
+			case "WithCancel", "WithCancelCause":
+				if len(call.Args) > 0 {
+					return evaluateContextArg(call.Args[0], callPos, funcStack, contextPkg, opts)
+				}
+				return false, fmt.Sprintf("context.%s has no deadline or timeout; use context.WithTimeout or context.WithDeadline", sel)
 			case "WithTimeout", "WithDeadline", "WithTimeoutCause", "WithDeadlineCause":
 				return true, ""
 			case "WithValue":
@@ -531,8 +534,21 @@ func evaluateRHSExpr(rhs ast.Expr, pos token.Pos, stack []ast.Node, contextPkg s
 				return deadlineNoDeadline, "context.Background()", ""
 			case "TODO":
 				return deadlineNoDeadline, "context.TODO()", ""
-			case "WithCancel":
-				return deadlineNoDeadline, "context.WithCancel()", ""
+			case "WithCancel", "WithCancelCause":
+				if len(call.Args) > 0 {
+					st, orig, det := evaluateRHSExpr(call.Args[0], pos, stack, contextPkg, opts)
+					if st == deadlineHasDeadline {
+						return deadlineHasDeadline, "", ""
+					}
+					if st == deadlineNoDeadline {
+						if orig != "" {
+							return deadlineNoDeadline, fmt.Sprintf("context.%s(%s)", sel, orig), det
+						}
+						return deadlineNoDeadline, fmt.Sprintf("context.%s()", sel), det
+					}
+					return deadlineUnknown, "", ""
+				}
+				return deadlineNoDeadline, fmt.Sprintf("context.%s()", sel), ""
 			case "WithValue":
 				if len(call.Args) > 0 {
 					return evaluateRHSExpr(call.Args[0], pos, stack, contextPkg, opts)
