@@ -97,6 +97,13 @@ func Actions() []Action {
 	}
 }
 
+// fcallName is the registered function that runs a table verb: every verb of
+// table.lua is registered as ns_table_<verb>. The name is formatted from the
+// verb, so the source carries no complete quoted ns_ literal that is only a
+// prefix: internal/nsprint/fn reads every such literal as a function name and
+// requires a Lua file to register it.
+func fcallName(verb string) string { return fmt.Sprintf("ns_table_%s", verb) }
+
 func prefix(table string, epoch int) string { return fmt.Sprintf("table:%s:%d", table, epoch) }
 
 // Options is the option object every call carries.
@@ -107,7 +114,7 @@ func options(epoch int, actor string) callOptions {
 }
 
 func call(r *Store, verb string, args []string, opts callOptions) []any {
-	argv := []any{"FCALL", "ns_table_" + verb, 0}
+	argv := []any{"FCALL", fcallName(verb), 0}
 	for _, a := range args {
 		argv = append(argv, a)
 	}

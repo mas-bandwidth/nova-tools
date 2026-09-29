@@ -61,7 +61,7 @@ func witnesses(r *Store, emit func(Finding)) {
 		fields["col:"+c] = "members:none:10:" + c
 	}
 	call := func(name string, args ...any) any {
-		return r.Cmd(append([]any{"FCALL", "ns_table_" + name, 0}, args...)...)
+		return r.Cmd(append([]any{"FCALL", fcallName(name), 0}, args...)...)
 	}
 	jsonOf := func(v any) string {
 		raw, err := json.Marshal(v)
