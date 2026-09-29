@@ -344,6 +344,8 @@ func TestCardRunExitCodesAreTheHarnessCodes(t *testing.T) {
 // launched, the start beat, an end DONE with exit 0, and the results dir
 // holds the run's harness.log (START and END) and RESULT.md.
 func TestWrapperRunsTheHarnessInProcess(t *testing.T) {
+	t.Parallel()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -362,7 +364,6 @@ func TestWrapperRunsTheHarnessInProcess(t *testing.T) {
 	if err := client.Set(ctx, card.BodyKey(id.Sprint, sha), body, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_CARD_TOKEN", token)
 
 	h := newHarnessRun(t, id, "")
 	seen := filepath.Join(t.TempDir(), "seen")

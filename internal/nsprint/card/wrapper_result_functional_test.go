@@ -51,6 +51,8 @@ func newGoOrigin(t *testing.T) (origin, base string) {
 // the record. RED AT cfe7adbf: the wrong-BRANCH card is `BRANCH contradictory`
 // and the two-line card `SCHEMA missing`, both valid=0.
 func TestWrapperFillsTheResult(t *testing.T) {
+	t.Parallel()
+
 	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).
@@ -74,6 +76,8 @@ func TestWrapperFillsTheResult(t *testing.T) {
 		{"no-test-line", "native-two", "", "not-run"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := context.Background()
 			st, client := newSprint(t)
 			origin, base := newGoOrigin(t)
@@ -91,11 +95,9 @@ func TestWrapperFillsTheResult(t *testing.T) {
 			if err := os.WriteFile(gate, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv(fakeHarnessEnv, tc.mode)
-			t.Setenv(fakeGateEnv, gate)
-			t.Setenv(fakeOriginEnv, origin)
-			t.Setenv(fakeSlotEnv, filepath.Join(t.TempDir(), "slot"))
+			slotDir := filepath.Join(t.TempDir(), "slot")
 			h := newHarnessRun(t, id, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"="+tc.mode, fakeGateEnv+"="+gate, fakeOriginEnv+"="+origin, fakeSlotEnv+"="+slotDir)
 			rep := card.RunWrapper(ctx, h.cfg, &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token})
 			if rep.Code != card.WrapperExitEnded || rep.Outcome != "DONE" {
 				t.Fatalf("report %s why=%q; want DONE ended", rep.Line(), rep.Why)

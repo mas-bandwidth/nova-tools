@@ -209,6 +209,8 @@ func TestCardClaimIsAFunction(t *testing.T) {
 // end) to DONE on the owner's loaded library, and the server counts no EVAL,
 // EVALSHA, SCRIPT or FUNCTION call from any client.
 func TestCardPathMakesNoEvalCall(t *testing.T) {
+	t.Parallel()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -222,10 +224,9 @@ func TestCardPathMakesNoEvalCall(t *testing.T) {
 	if err := os.WriteFile(gate, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(fakeHarnessEnv, "done")
-	t.Setenv(fakeGateEnv, gate)
 
 	h := newHarnessRun(t, id, self)
+	h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=done", fakeGateEnv+"="+gate)
 	got := make(chan card.WrapperReport, 1)
 	go func() {
 		got <- card.RunWrapper(ctx, h.cfg, &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token})
