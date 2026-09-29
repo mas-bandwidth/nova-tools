@@ -424,6 +424,7 @@ func TestCheckLegacyBefore(t *testing.T) {
 // neither supplies one. The flag wins over both. Not t.Parallel: it moves the process-wide
 // environment, and the refusal must be seen by no other test.
 func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 
@@ -446,17 +447,23 @@ func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
 		mustContain(t, "stdout", "receipts=0")
 
 	// The environment supplies the value when the flag is absent and there is no file.
-	t.Setenv("NOVA_BUS_RECEIPT_MAX_WORDS", "40")
+	envDeps := defaultDeps()
+	envDeps.getenv = func(key string) string {
+		if key == "NOVA_BUS_RECEIPT_MAX_WORDS" {
+			return "40"
+		}
+		return os.Getenv(key)
+	}
 	if err := os.Remove(filepath.Join(checkout, ".nova-bus", "defaults")); err != nil {
 		t.Fatal(err)
 	}
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+	invokeWithDeps(t, envDeps, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=1")
 
 	// The file wins over the environment.
 	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=1\n")
-	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+	invokeWithDeps(t, envDeps, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=0")
 }

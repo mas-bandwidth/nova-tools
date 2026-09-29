@@ -52,10 +52,25 @@ func (w *probeResponseWriter) Write([]byte) (int, error) {
 }
 func (w *probeResponseWriter) WriteHeader(code int) { w.status = code }
 
-// admitCard admits one card and returns its label and its refusal line -- ADMIT REFUSED
-// <label> <why> -- which is empty when the card was admitted. A refusal is the card's own
-// (issue #529): readCards refuses the card, never the batch.
-func admitCard(t *testing.T, body string) (string, string) {
+// makeProbeClient creates an http.Client that routes requests in-memory to handler.
+func makeProbeClient(handler func(http.ResponseWriter, *http.Request)) *http.Client {
+	rec := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		w := &probeResponseWriter{header: make(http.Header)}
+		handler(w, r)
+		return &http.Response{
+			StatusCode: w.status,
+			Header:     w.header,
+			Body:       http.NoBody,
+			Request:    r,
+		}, nil
+	})
+	return &http.Client{Timeout: probeTimeout, Transport: rec}
+}
+
+// admitCardWith admits one card using client and returns its label and its refusal line --
+// ADMIT REFUSED <label> <why> -- which is empty when the card was admitted. A refusal is the
+// card's own (issue #529): readCards refuses the card, never the batch.
+func admitCardWith(t *testing.T, body string, client *http.Client) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	card := writeCard(t, dir, "a.card", body)
@@ -63,7 +78,7 @@ func admitCard(t *testing.T, body string) (string, string) {
 	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cards, err := readCards(tsv)
+	cards, err := readCardsWith(tsv, client)
 	if err != nil {
 		t.Fatalf("the TSV is readable, got %v", err)
 	}
@@ -76,8 +91,14 @@ func admitCard(t *testing.T, body string) (string, string) {
 	return cards[0].label, admitRefusalLine(cards[0].label, cards[0].admitWhy)
 }
 
+func admitCard(t *testing.T, body string) (string, string) {
+	return admitCardWith(t, body, nil)
+}
+
 func TestAdmitAcceptsPublicRepo(t *testing.T) {
-	useProbeTransport(t, func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+
+	client := makeProbeClient(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodHead {
 			t.Errorf("probe wants a HEAD request, got %s", r.Method)
 		}
@@ -87,19 +108,21 @@ func TestAdmitAcceptsPublicRepo(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if _, why := admitCard(t, "RESULT: a\nREPOS: owner/public\nall green"); why != "" {
+	if _, why := admitCardWith(t, "RESULT: a\nREPOS: owner/public\nall green", client); why != "" {
 		t.Fatalf("a public repository is admitted, got: %s", why)
 	}
 }
 
 func TestAdmitRefusesPrivateRepo(t *testing.T) {
-	useProbeTransport(t, func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+
+	client := makeProbeClient(func(w http.ResponseWriter, r *http.Request) {
 		// github answers an unauthenticated request for a private repository with 404 so
 		// the repository's existence is not leaked.
 		w.WriteHeader(http.StatusNotFound)
 	})
 
-	_, why := admitCard(t, "RESULT: a\nREPOS: owner/secret\nall green")
+	_, why := admitCardWith(t, "RESULT: a\nREPOS: owner/secret\nall green", client)
 	if why == "" {
 		t.Fatal("a private repository is refused at admission, got no refusal")
 	}
@@ -110,16 +133,16 @@ func TestAdmitRefusesPrivateRepo(t *testing.T) {
 }
 
 func TestAdmitRefusesWhenProbeFails(t *testing.T) {
+	t.Parallel()
+
 	// A transport error stands in for a network refusal: the probe gets no response at
 	// all, which is a probe failure, never a pass.
 	rec := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial tcp: connection refused")
 	})
-	old := probeClient
-	probeClient = &http.Client{Timeout: probeTimeout, Transport: rec}
-	t.Cleanup(func() { probeClient = old })
+	client := &http.Client{Timeout: probeTimeout, Transport: rec}
 
-	_, why := admitCard(t, "RESULT: a\nhttps://github.com/owner/public\nall green")
+	_, why := admitCardWith(t, "RESULT: a\nhttps://github.com/owner/public\nall green", client)
 	if why == "" {
 		t.Fatal("a failed probe refuses the card, got no refusal")
 	}

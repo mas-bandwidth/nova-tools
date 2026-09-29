@@ -42,11 +42,13 @@ func writeDB(t *testing.T, dataHome, body string) string {
 // The one program this source runs is `sqlite3`, and its absence is a source that cannot be
 // read -- never a source that quietly reports nothing.
 func TestNoSQLiteOnPathIsAnError(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t1\t1\t\t\t\n")
-	t.Setenv("PATH", t.TempDir())
+	noSQLite := func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
 
-	if _, err := ReadProviderUsage(UsageOpenCode, dataHome); err == nil {
+	if _, err := ReadProviderUsageWith(UsageOpenCode, dataHome, noSQLite); err == nil {
 		t.Fatal("no sqlite3 on PATH is a usage source that cannot be read")
 	} else if !strings.Contains(err.Error(), SQLiteBinary) {
 		t.Errorf("the refusal names the program it needs: %v", err)
@@ -60,11 +62,13 @@ func TestNoSQLiteOnPathIsAnError(t *testing.T) {
 // program the read needed. The refusal carries the literal line
 // `USAGE REFUSED reason=no_sqlite` so the missing reader is a fact on the record.
 func TestOpenCodeSourceWithoutSQLiteIsANamedRefusal(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
-	t.Setenv("PATH", t.TempDir())
+	noSQLite := func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
 
-	_, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	_, err := ReadProviderUsageWith(UsageOpenCode, dataHome, noSQLite)
 	if err == nil {
 		t.Fatal("no sqlite3 on PATH is a usage source that cannot be read")
 	}

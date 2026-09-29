@@ -101,11 +101,21 @@ func ReadKeyOrSecret(w Worker) (string, error) {
 // RUN or SUPERVISE line -- the refusal below names the VARIABLE and the remedy, never the
 // value.
 func SecretFromEnv(name string) (string, error) {
-	v := os.Getenv(name)
-	if strings.TrimSpace(v) == "" {
-		return "", fmt.Errorf("the worker description's secret %s is absent or empty in this run's environment; the value is delivered by `nova-secrets exec`, which sets it -- run this binary under `nova-secrets exec --only %s -- <this command>` (or set %s by hand); the value is never a file", name, name, name)
+	return SecretFromSlice(os.Environ(), name)
+}
+
+// SecretFromSlice reads the variable a description names as its `secret` from
+// an explicit environment slice.
+func SecretFromSlice(environ []string, name string) (string, error) {
+	for _, kv := range environ {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			if strings.TrimSpace(v) == "" {
+				break
+			}
+			return v, nil
+		}
 	}
-	return v, nil
+	return "", fmt.Errorf("the worker description's secret %s is absent or empty in this run's environment; the value is delivered by `nova-secrets exec`, which sets it -- run this binary under `nova-secrets exec --only %s -- <this command>` (or set %s by hand); the value is never a file", name, name, name)
 }
 
 func envOr(varName string) string {

@@ -26,24 +26,29 @@ const (
 // only when passwordEnv names its variable, so a throwaway test Redis needs nothing. A user
 // whose password variable is empty is refused with the remedy, never dialed as default.
 func Auth(user, passwordEnv string) (string, string, error) {
+	return AuthLookup(user, passwordEnv, os.Getenv)
+}
+
+// AuthLookup is Auth with an injected environment lookup function.
+func AuthLookup(user, passwordEnv string, getenv func(string) string) (string, string, error) {
 	named := "--user " + user
 	if user == "" {
-		user = os.Getenv(UserEnv)
+		user = getenv(UserEnv)
 		named = UserEnv + "=" + user
 	}
 	if user == "" {
 		if passwordEnv == "" {
 			return "", "", nil
 		}
-		return "", os.Getenv(passwordEnv), nil
+		return "", getenv(passwordEnv), nil
 	}
 	if passwordEnv == "" {
-		passwordEnv = os.Getenv(PasswordEnvEnv)
+		passwordEnv = getenv(PasswordEnvEnv)
 	}
 	if passwordEnv == "" {
 		passwordEnv = DefaultPasswordEnv
 	}
-	password := os.Getenv(passwordEnv)
+	password := getenv(passwordEnv)
 	if password == "" {
 		return "", "", fmt.Errorf("%s but %s is empty; run under nova-secrets exec --only %s", named, passwordEnv, passwordEnv)
 	}

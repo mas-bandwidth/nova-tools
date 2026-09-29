@@ -31,13 +31,13 @@ func privateForge(t *testing.T) (*httptest.Server, *atomic.Int64) {
 // TestCardPushPrivateRepoWithMirror (#3649): a private repo this host holds a
 // bare mirror of passes lint, and the forge is never asked.
 func TestCardPushPrivateRepoWithMirror(t *testing.T) {
-	ctx := context.Background()
-	client := newRedis(t)
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "rowan-tools.git", "objects"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MIRROR_ROOT", root)
+	ctx := card.WithMirrorRoot(context.Background(), root)
+	client := newRedis(t)
 	srv, hits := privateForge(t)
 
 	f := validCard(srv.URL + "/mas-bandwidth/rowan-tools.git")
@@ -55,14 +55,14 @@ func TestCardPushPrivateRepoWithMirror(t *testing.T) {
 // TestCardPushPrivateRepoNoMirrorNamesRemedy (#3649): no mirror and a 404
 // refuses in one line that names mirror-refresh.
 func TestCardPushPrivateRepoNoMirrorNamesRemedy(t *testing.T) {
-	ctx := context.Background()
-	client := newRedis(t)
+	t.Parallel()
 	root := t.TempDir()
 	// A directory without objects/ is not a mirror.
 	if err := os.MkdirAll(filepath.Join(root, "rowan-tools.git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MIRROR_ROOT", root)
+	ctx := card.WithMirrorRoot(context.Background(), root)
+	client := newRedis(t)
 	srv, hits := privateForge(t)
 
 	f := validCard(srv.URL + "/mas-bandwidth/rowan-tools.git")

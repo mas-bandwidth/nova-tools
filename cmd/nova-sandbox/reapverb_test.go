@@ -33,6 +33,7 @@ type reapBench struct {
 	starts  map[int]string    // pid -> what `ps -o lstart=` says now
 	signals []string          // every signal sent, in order, as "<pid>:<sig>"
 	mounts  map[string]string // volume name -> the directory that plays its mount
+	seams   reapSeams
 }
 
 func newReapBench(t *testing.T) *reapBench {
@@ -44,31 +45,25 @@ func newReapBench(t *testing.T) *reapBench {
 		mounts: map[string]string{},
 		vols:   &fakeVolumes{},
 	}
-	oldVols, oldProcs, oldSignal, oldAlive, oldStart, oldGrace :=
-		runVolumes, reapProcs, reapSignal, reapAlive, reapProcStart, reapGraceSleep
-	t.Cleanup(func() {
-		runVolumes, reapProcs, reapSignal, reapAlive, reapProcStart, reapGraceSleep =
-			oldVols, oldProcs, oldSignal, oldAlive, oldStart, oldGrace
-	})
-
-	runVolumes = b.vols
-	reapProcs = func(mount string) ([]int, error) { return b.procs[mount], nil }
-	reapSignal = func(pid int, sig syscall.Signal) error {
-		b.signals = append(b.signals, fmt.Sprintf("%d:%d", pid, sig))
-		if sig == syscall.SIGKILL {
-			b.alive[pid] = false
-		}
-		return nil
+	b.seams = reapSeams{
+		volumes: b.vols,
+		procs:   func(mount string) ([]int, error) { return b.procs[mount], nil },
+		signal: func(pid int, sig syscall.Signal) error {
+			b.signals = append(b.signals, fmt.Sprintf("%d:%d", pid, sig))
+			if sig == syscall.SIGKILL {
+				b.alive[pid] = false
+			}
+			return nil
+		},
+		alive: func(pid int) bool { return b.alive[pid] },
+		procStart: func(pid int) (string, error) {
+			if s, ok := b.starts[pid]; ok {
+				return s, nil
+			}
+			return "", fmt.Errorf("no such process %d", pid)
+		},
+		graceSleep: func() {},
 	}
-	reapAlive = func(pid int) bool { return b.alive[pid] }
-	reapProcStart = func(pid int) (string, error) {
-		if s, ok := b.starts[pid]; ok {
-			return s, nil
-		}
-		return "", fmt.Errorf("no such process %d", pid)
-	}
-	// The grace is production code's own wait and never a test's.
-	reapGraceSleep = func() {}
 	return b
 }
 
@@ -91,21 +86,22 @@ func (b *reapBench) owner(t *testing.T, mount string, pid int, start string) {
 	}
 }
 
-func reapOnce(t *testing.T, dryRun bool) (int, string) {
+func reapOnce(t *testing.T, b *reapBench, dryRun bool) (int, string) {
 	t.Helper()
 	var errb bytes.Buffer
-	return reapAll(dryRun, &errb), errb.String()
+	return reapAll(dryRun, &errb, b.seams), errb.String()
 }
 
 // The SIGKILL case, whole: a volume nobody owns, with a process still holding it open.
 // The process is killed, the volume is deleted, and one line says what happened.
 func TestReapKillsWhatHeldAnOrphanedVolumeAndDeletesIt(t *testing.T) {
+	t.Parallel()
 	b := newReapBench(t)
 	mount := b.volume(t, "orphan", "disk3s9")
 	b.procs[mount] = []int{7001}
 	b.alive[7001] = true
 
-	code, errOut := reapOnce(t, false)
+	code, errOut := reapOnce(t, b, false)
 	if code != 0 {
 		t.Fatalf("a reap that cleaned the machine is exit 0: got %d\n%s", code, errOut)
 	}
@@ -130,13 +126,14 @@ func TestReapKillsWhatHeldAnOrphanedVolumeAndDeletesIt(t *testing.T) {
 // written with is never touched: a reap that takes a volume out from under a working card
 // destroys the work it was called to protect.
 func TestReapNeverTakesAVolumeFromALiveRun(t *testing.T) {
+	t.Parallel()
 	b := newReapBench(t)
 	mount := b.volume(t, "live", "disk3s8")
 	b.owner(t, mount, 7100, "Fri Sep 18 11:26:37 2026")
 	b.alive[7100] = true
 	b.procs[mount] = []int{7100}
 
-	code, errOut := reapOnce(t, false)
+	code, errOut := reapOnce(t, b, false)
 	if code != 0 {
 		t.Fatalf("a live run is not a failure of the reap: got %d\n%s", code, errOut)
 	}
@@ -156,6 +153,7 @@ func TestReapNeverTakesAVolumeFromALiveRun(t *testing.T) {
 // STARTED AT A DIFFERENT TIME is a dead run's marker on a recycled number, and the volume
 // under it is an orphan.
 func TestReapReadsTheStartTimeAndNotJustThePid(t *testing.T) {
+	t.Parallel()
 	b := newReapBench(t)
 	mount := b.volume(t, "recycled", "disk3s7")
 	b.owner(t, mount, 7200, "Fri Sep 18 11:26:37 2026")
@@ -163,7 +161,7 @@ func TestReapReadsTheStartTimeAndNotJustThePid(t *testing.T) {
 	// Same pid, a process that started later: the run that wrote the marker is gone.
 	b.starts[7200] = "Fri Sep 18 14:02:11 2026"
 
-	code, errOut := reapOnce(t, false)
+	code, errOut := reapOnce(t, b, false)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, errOut)
 	}
@@ -174,12 +172,13 @@ func TestReapReadsTheStartTimeAndNotJustThePid(t *testing.T) {
 
 // --dry-run prints and touches nothing, and says the machine is not clean.
 func TestReapDryRunTouchesNothing(t *testing.T) {
+	t.Parallel()
 	b := newReapBench(t)
 	mount := b.volume(t, "orphan", "disk3s9")
 	b.procs[mount] = []int{7300}
 	b.alive[7300] = true
 
-	code, errOut := reapOnce(t, true)
+	code, errOut := reapOnce(t, b, true)
 	if code != exitLeak {
 		t.Fatalf("a dry run that FOUND an orphan is exit %d, because the machine still holds it: got %d\n%s", exitLeak, code, errOut)
 	}
@@ -197,8 +196,9 @@ func TestReapDryRunTouchesNothing(t *testing.T) {
 // A clean machine is one line and exit 0, which is what makes the dry run a gate a card
 // can end on.
 func TestReapOnACleanMachineIsExitZero(t *testing.T) {
-	newReapBench(t)
-	code, errOut := reapOnce(t, true)
+	t.Parallel()
+	b := newReapBench(t)
+	code, errOut := reapOnce(t, b, true)
 	if code != 0 || !strings.Contains(errOut, "SANDBOX REAP OK volumes=0") {
 		t.Fatalf("a machine with no nova- volumes is `SANDBOX REAP OK volumes=0` and exit 0: got %d\n%s", code, errOut)
 	}
@@ -207,11 +207,12 @@ func TestReapOnACleanMachineIsExitZero(t *testing.T) {
 // A delete that fails is exit 3, the same status a leaked volume costs the run verb: the
 // machine still holds it, and a caller that read 0 would believe it was clean.
 func TestReapExitsThreeWhenAVolumeRemains(t *testing.T) {
+	t.Parallel()
 	b := newReapBench(t)
 	b.volume(t, "stuck", "disk3s6")
 	b.vols.deleteErr = fmt.Errorf("Resource busy")
 
-	code, errOut := reapOnce(t, false)
+	code, errOut := reapOnce(t, b, false)
 	if code != exitLeak {
 		t.Fatalf("a volume that would not delete is exit %d: got %d\n%s", exitLeak, code, errOut)
 	}
@@ -223,6 +224,7 @@ func TestReapExitsThreeWhenAVolumeRemains(t *testing.T) {
 // The marker is the run verb's, written before the command starts, so that a reap after a
 // SIGKILL can tell that volume from one a working card is using.
 func TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot(t *testing.T) {
+	t.Parallel()
 	b := newRunBench(t, 0)
 	if code, errOut := runOnce(t, b, runFlagsFor(t)...); code != 0 {
 		t.Fatalf("exit %d\n%s", code, errOut)
@@ -244,12 +246,13 @@ func TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot(t *testing.T) {
 // bias has to be this way round: an unreadable marker on a volume nobody is using would
 // otherwise keep that volume forever, which is the leak the verb exists to end.
 func TestAnUnreadableMarkerIsAnOrphan(t *testing.T) {
+	t.Parallel()
 	b := newReapBench(t)
 	mount := b.volume(t, "junk", "disk3s5")
 	if err := os.WriteFile(filepath.Join(mount, ownerMarker), []byte("not a marker\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	code, errOut := reapOnce(t, false)
+	code, errOut := reapOnce(t, b, false)
 	if code != 0 || !strings.Contains(errOut, "SANDBOX REAP volume=nova-junk procs=0 deleted=yes") {
 		t.Fatalf("a volume with an unreadable marker was kept; it is an orphan: exit %d\n%s", code, errOut)
 	}

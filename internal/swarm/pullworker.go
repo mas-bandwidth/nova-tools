@@ -52,6 +52,9 @@ type PullWorkerOptions struct {
 	Stdout    io.Writer
 	Stderr    io.Writer
 
+	// LookPath is an optional lookup function for binary executables (defaults to exec.LookPath).
+	LookPath func(file string) (string, error)
+
 	// RunCard is an optional test hook to execute a card instead of the container/runner command.
 	RunCard func(ctx context.Context, label, cardPath, workDir string) (int, error)
 }
@@ -336,11 +339,15 @@ func executeRunner(ctx context.Context, runner, cardPath, workDir, label string,
 
 // executeContainer runs the card inside the toolchain container with nova-secrets exec.
 func executeContainer(ctx context.Context, opts PullWorkerOptions, label, cardContent, workDir string) (int, error) {
+	lookPath := opts.LookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	engine := opts.Container
 	if engine == "" {
-		if _, err := exec.LookPath("podman"); err == nil {
+		if _, err := lookPath("podman"); err == nil {
 			engine = "podman"
-		} else if _, err := exec.LookPath("docker"); err == nil {
+		} else if _, err := lookPath("docker"); err == nil {
 			engine = "docker"
 		} else {
 			return 2, fmt.Errorf("neither podman nor docker found on PATH for container run; pass --runner <cmd> or install podman")
@@ -355,11 +362,12 @@ func executeContainer(ctx context.Context, opts PullWorkerOptions, label, cardCo
 		// A seat names a bench whose secrets nova-secrets injects; running the card
 		// without them would fail open, so a missing binary is a refusal, not a bare
 		// container run.
-		if _, err := exec.LookPath("nova-secrets"); err != nil {
+		nsPath, err := lookPath("nova-secrets")
+		if err != nil {
 			return 2, fmt.Errorf("--seat %s wants nova-secrets on PATH to inject the bench secrets, but it is not found", opts.Seat)
 		}
 		wrapped := WrapSecretsExec(opts.Seat, append([]string{engine}, containerArgs...))
-		finalCmd = wrapped[0]
+		finalCmd = nsPath
 		finalArgs = wrapped[1:]
 	} else {
 		finalCmd = engine

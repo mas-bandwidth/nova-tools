@@ -74,6 +74,9 @@ type benchPull struct {
 	poll       time.Duration // how often to ask
 	notes      io.Writer     // where BATCH NOTE lines go
 	clock      pullClock     // nil means the real clock
+	run        func(host string, args ...string) error
+	output     func(host string, args ...string) (string, error)
+	copy       func(host, remote, local string) error
 }
 
 // pullFromBench waits for the card's RESULT.md, copies the three files back by one explicit
@@ -94,18 +97,30 @@ func pullFromBench(p benchPull) error {
 	if err := os.MkdirAll(p.localJob, 0o755); err != nil {
 		return err
 	}
+	run := p.run
+	if run == nil {
+		run = sshRun
+	}
+	output := p.output
+	if output == nil {
+		output = sshOutput
+	}
+	copyFile := p.copy
+	if copyFile == nil {
+		copyFile = scpFile
+	}
 	result := p.remoteJob + "/RESULT.md"
-	found, err := waitForRemoteFile(p.host, result, p.wait, p.poll, clk)
+	found, err := waitForRemoteFile(p.host, result, p.wait, p.poll, clk, run)
 	if err != nil {
 		return err
 	}
 	if !found {
 		// The card wrote its result somewhere else. Under repo/, or one level below it, is
 		// where it has actually been found; anywhere else is not guessed at.
-		if from, err := findResultUnderRepo(p.host, p.remoteJob); err != nil {
+		if from, err := findResultUnderRepo(output, p.host, p.remoteJob); err != nil {
 			return err
 		} else if from != "" {
-			if err := sshRun(p.host, "cp", from, result); err != nil {
+			if err := run(p.host, "cp", from, result); err != nil {
 				return err
 			}
 			if p.notes != nil {
@@ -119,15 +134,15 @@ func pullFromBench(p benchPull) error {
 	// other two are absent on plenty of honest runs and their copy says so by the file not
 	// being here.
 	if found {
-		if err := scpFile(p.host, result, filepath.Join(p.localJob, "RESULT.md")); err != nil {
+		if err := copyFile(p.host, result, filepath.Join(p.localJob, "RESULT.md")); err != nil {
 			return err
 		}
 	}
-	_ = scpFile(p.host, p.remoteJob+"/usage.tsv", filepath.Join(p.localJob, "usage.tsv"))
+	_ = copyFile(p.host, p.remoteJob+"/usage.tsv", filepath.Join(p.localJob, "usage.tsv"))
 	log := filepath.Join(p.localJob, "native.log")
 	// native writes its own log to <slot>/native.log, so the third file comes back from
 	// the slot directory, not the job (#656).
-	if err := scpFile(p.host, p.remoteSlot+"/native.log", log); err == nil {
+	if err := copyFile(p.host, p.remoteSlot+"/native.log", log); err == nil {
 		if err := truncateToTail(log, pullLogTail); err != nil {
 			return err
 		}
@@ -146,10 +161,14 @@ func pullFromBench(p benchPull) error {
 // window on a poll that cannot change. That is also what keeps the test that drives it off
 // the machine's clock: the one place a real wait is the answered-but-not-yet-written file,
 // and there the clock is injected.
-func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullClock) (bool, error) {
+func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullClock, runSSH ...func(string, ...string) error) (bool, error) {
+	ssh := sshRun
+	if len(runSSH) > 0 && runSSH[0] != nil {
+		ssh = runSSH[0]
+	}
 	deadline := clk.Now().Add(wait)
 	for {
-		err := sshRun(host, "test", "-f", path)
+		err := ssh(host, "test", "-f", path)
 		if err == nil {
 			return true, nil
 		}
@@ -167,11 +186,14 @@ func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullCloc
 // findResultUnderRepo looks for the result the card wrote in the wrong place: inside the
 // repository it cloned, or one directory below that. It returns the first path found, or
 // the empty string when there is none.
-func findResultUnderRepo(host, job string) (string, error) {
+func findResultUnderRepo(output func(string, ...string) (string, error), host, job string) (string, error) {
+	if output == nil {
+		output = sshOutput
+	}
 	// ssh joins its arguments into one command line for the remote shell, so the globs and
 	// the redirect are the remote shell's: a `ls` of two patterns, quiet about the ones
 	// that match nothing.
-	out, err := sshOutput(host, "ls", "-1",
+	out, err := output(host, "ls", "-1",
 		job+"/repo/RESULT.md", job+"/repo/*/RESULT.md", "2>/dev/null")
 	if err != nil && isUnreachable(err) {
 		return "", errBenchUnreachable

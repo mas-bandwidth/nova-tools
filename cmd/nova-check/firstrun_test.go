@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,8 +24,13 @@ const exampleSelf = "testdata/example-self"
 
 func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	t.Helper()
+	return runCheckWith(t, stagedEnv{}, args...)
+}
+
+func runCheckWith(t *testing.T, env stagedEnv, args ...string) (exit int, stdout, stderr string) {
+	t.Helper()
 	var out, errb bytes.Buffer
-	exit = run(args, &out, &errb)
+	exit = runWith(args, &out, &errb, env)
 	return exit, out.String(), errb.String()
 }
 
@@ -259,6 +266,8 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // rewritten, which is what the old `localize` did and why it could not have
 // compared the line the document promised.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -281,8 +290,33 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	copyTree(t, fixture, filepath.Join(dir, "self"))
-	t.Chdir(dir)
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		cmd := exec.Command(bin, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_CHECK_AS_TOOL=1")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, runErr
+			}
+		}
+		return onboarding.Result{Code: exitCode, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+	for _, p := range onboarding.Execute(steps, runner) {
 		t.Error(p)
 	}
 }

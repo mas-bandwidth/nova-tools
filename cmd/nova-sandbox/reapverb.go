@@ -93,6 +93,41 @@ var (
 	reapGraceSleep = func() { time.Sleep(reapGrace) }
 )
 
+type reapSeams struct {
+	volumes    volumeManager
+	procs      func(string) ([]int, error)
+	signal     func(int, syscall.Signal) error
+	alive      func(int) bool
+	procStart  func(int) (string, error)
+	graceSleep func()
+	now        func() time.Time
+}
+
+func (s reapSeams) withDefaults() reapSeams {
+	if s.volumes == nil {
+		s.volumes = runVolumes
+	}
+	if s.procs == nil {
+		s.procs = reapProcs
+	}
+	if s.signal == nil {
+		s.signal = reapSignal
+	}
+	if s.alive == nil {
+		s.alive = reapAlive
+	}
+	if s.procStart == nil {
+		s.procStart = reapProcStart
+	}
+	if s.graceSleep == nil {
+		s.graceSleep = reapGraceSleep
+	}
+	if s.now == nil {
+		s.now = runNow
+	}
+	return s
+}
+
 // reapFlags is the verb's argv: one flag, parsed by hand like every other verb's.
 type reapFlags struct {
 	dryRun bool
@@ -117,7 +152,11 @@ func parseReap(args []string) reapFlags {
 }
 
 // reapVerb is the verb: the argv, the platform gate, and then reapAll.
-func reapVerb(args []string, stdout, stderr io.Writer) int {
+func reapVerb(args []string, stdout, stderr io.Writer, optSeams ...reapSeams) int {
+	s := reapSeams{}.withDefaults()
+	if len(optSeams) > 0 {
+		s = optSeams[0].withDefaults()
+	}
 	f := parseReap(args)
 	// The question, before any complaint about the argv that did not ask it.
 	if f.help {
@@ -136,14 +175,22 @@ func reapVerb(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitRefused
 	}
-	return reapAll(f.dryRun, stderr)
+	return reapAllWith(s, f.dryRun, stderr)
 }
 
 // reapAll is the whole of the work, with the platform already known. It is separate from
 // the verb so the logic is tested on every platform with the disk, the process table, the
 // signals and the grace all replaced.
-func reapAll(dryRun bool, stderr io.Writer) int {
-	vols, err := step(stderr, "list", func() ([]diskVolume, error) { return runVolumes.List() })
+func reapAll(dryRun bool, stderr io.Writer, optSeams ...reapSeams) int {
+	s := reapSeams{}.withDefaults()
+	if len(optSeams) > 0 {
+		s = optSeams[0].withDefaults()
+	}
+	return reapAllWith(s, dryRun, stderr)
+}
+
+func reapAllWith(s reapSeams, dryRun bool, stderr io.Writer) int {
+	vols, err := stepWith(s.now, stderr, "list", func() ([]diskVolume, error) { return s.volumes.List() })
 	if err != nil {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=volume_failed: the volumes on this machine could not be listed: %s\n%s\n",
 			oneline.Err(err), reapRemedy)
@@ -151,7 +198,7 @@ func reapAll(dryRun bool, stderr io.Writer) int {
 	}
 	remained := false
 	for _, vol := range vols {
-		if reapOne(dryRun, stderr, vol) {
+		if reapOne(s, dryRun, stderr, vol) {
 			remained = true
 		}
 	}
@@ -165,11 +212,11 @@ func reapAll(dryRun bool, stderr io.Writer) int {
 // reapOne is one volume: whose it is, what holds it, and whether it goes. It answers
 // whether anything REMAINED — a live run's volume does not count, because a card that is
 // working is not a debt.
-func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
+func reapOne(s reapSeams, dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 	name := oneline.Field(vol.Name)
 	var procs []int
 	if vol.Mount != "" {
-		found, err := reapProcs(vol.Mount)
+		found, err := s.procs(vol.Mount)
 		if err != nil {
 			fmt.Fprintf(stderr, "SANDBOX NOTE the processes holding %s open could not be listed: %s; the volume is left alone rather than deleted out from under something\n",
 				oneline.Field(vol.Mount), oneline.Err(err))
@@ -178,7 +225,7 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 		}
 		procs = found
 	}
-	if pid, live := volumeIsLive(vol.Mount); live {
+	if pid, live := volumeIsLive(s, vol.Mount); live {
 		fmt.Fprintf(stderr, "SANDBOX REAP volume=%s procs=%d deleted=no\n", name, len(procs))
 		fmt.Fprintf(stderr, "SANDBOX NOTE %s belongs to a live run (pid=%d); a reap never takes a volume out from under a working card\n", name, pid)
 		return false
@@ -189,10 +236,10 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 		// on a dirty machine.
 		return true
 	}
-	if left := killProcesses(procs); left > 0 {
+	if left := killProcesses(s, procs); left > 0 {
 		fmt.Fprintf(stderr, "SANDBOX NOTE %d process(es) still hold %s open after SIGKILL; the volume cannot be unmounted while they do\n", left, oneline.Field(vol.Mount))
 	}
-	if err := runVolumes.Delete(vol.Disk); err != nil {
+	if err := s.volumes.Delete(vol.Disk); err != nil {
 		fmt.Fprintf(stderr, "SANDBOX REAP volume=%s procs=%d deleted=no\n", name, len(procs))
 		fmt.Fprintf(stderr, "SANDBOX LEAK name=%s volume=%s remedy=\"diskutil apfs deleteVolume %s\"\n",
 			name, oneline.Field(vol.Disk), oneline.Field(vol.Disk))
@@ -207,30 +254,30 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 // the grace, then SIGKILL to whatever is left. It answers how many are STILL there after
 // that, because those are the ones that will make the unmount fail, and a reader who is
 // told the delete failed and not why has to go and find out.
-func killProcesses(pids []int) int {
+func killProcesses(s reapSeams, pids []int) int {
 	if len(pids) == 0 {
 		return 0
 	}
 	for _, pid := range pids {
-		_ = reapSignal(pid, syscall.SIGTERM)
+		_ = s.signal(pid, syscall.SIGTERM)
 	}
-	reapGraceSleep()
+	s.graceSleep()
 	var left []int
 	for _, pid := range pids {
-		if reapAlive(pid) {
+		if s.alive(pid) {
 			left = append(left, pid)
 		}
 	}
 	for _, pid := range left {
-		_ = reapSignal(pid, syscall.SIGKILL)
+		_ = s.signal(pid, syscall.SIGKILL)
 	}
 	if len(left) == 0 {
 		return 0
 	}
-	reapGraceSleep()
+	s.graceSleep()
 	still := 0
 	for _, pid := range left {
-		if reapAlive(pid) {
+		if s.alive(pid) {
 			still++
 		}
 	}
@@ -248,15 +295,15 @@ func killProcesses(pids []int) int {
 // that is kept forever, which is the leak this verb exists to end. The exception is a pid
 // that IS alive whose start time cannot be read at all — there the process is real and
 // only the evidence is missing, and a reap that killed it would be guessing.
-func volumeIsLive(mount string) (int, bool) {
+func volumeIsLive(s reapSeams, mount string) (int, bool) {
 	if mount == "" {
 		return 0, false
 	}
 	pid, start, ok := readOwnerMarker(mount)
-	if !ok || !reapAlive(pid) {
+	if !ok || !s.alive(pid) {
 		return pid, false
 	}
-	now, err := reapProcStart(pid)
+	now, err := s.procStart(pid)
 	if err != nil || strings.TrimSpace(now) == "" || start == "-" {
 		return pid, true
 	}

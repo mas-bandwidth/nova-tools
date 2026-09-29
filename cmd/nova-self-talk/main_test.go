@@ -22,6 +22,13 @@ func write(t *testing.T, dir, name, body string) string {
 	return p
 }
 
+func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_SELF_TALK_AS_TOOL") == "1" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
+
 // Exit 0 when nothing standing; the OK line goes to stdout, stderr is empty.
 func TestExitZeroWhenClean(t *testing.T) {
 	t.Parallel()

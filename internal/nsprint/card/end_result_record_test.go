@@ -29,6 +29,8 @@ import (
 // diff carries no test file for its TEST ends FAILED tests-red, the gate's
 // word leading its why, through the real ns_card_end.
 func TestCardEndStoresResultOnRecord(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
@@ -50,6 +52,8 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 		{"gate-red", "native-two", ". TestPass"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := context.Background()
 			st, client := newSprint(t)
 			origin, base := newGoOrigin(t)
@@ -67,12 +71,9 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 			if err := os.WriteFile(gate, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv(fakeHarnessEnv, tc.mode)
-			t.Setenv(fakeGateEnv, gate)
-			t.Setenv(fakeOriginEnv, origin)
-			t.Setenv(fakeSlotEnv, filepath.Join(t.TempDir(), "slot"))
-			t.Setenv(fakeDoneAlreadyEnv, landed)
+			slotDir := filepath.Join(t.TempDir(), "slot")
 			h := newHarnessRun(t, id, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"="+tc.mode, fakeGateEnv+"="+gate, fakeOriginEnv+"="+origin, fakeSlotEnv+"="+slotDir, fakeDoneAlreadyEnv+"="+landed)
 			h.cfg.Run = (&gateFake{ci: gateAnswer{exit: 0, out: "nova-ci local: packages=0 seconds=0 red=0 make-exit=0\n"}}).run
 			rep := card.RunWrapper(ctx, h.cfg, &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token})
 			hs := hashOf(t, ctx, client, id.Sprint, id.Label)

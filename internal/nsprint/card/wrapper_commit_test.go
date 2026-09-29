@@ -46,6 +46,8 @@ func newOrigin(t *testing.T) string {
 // leaves card scratch out, refuses a file over 1 MB (OVERSIZE, pushed_sha
 // "-"), and the wrapper hands that commit to card end as pushed_sha.
 func TestWrapperCommitsOutputOnCardBranch(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
@@ -116,10 +118,9 @@ func TestWrapperCommitsOutputOnCardBranch(t *testing.T) {
 		seedCard(t, ctx, client, id, "dealt", token)
 		sprintCardNoTest(t, ctx, client, id)
 		gate := filepath.Join(t.TempDir(), "gate")
-		t.Setenv(fakeHarnessEnv, "repo")
-		t.Setenv(fakeGateEnv, gate)
-		t.Setenv(fakeOriginEnv, newOrigin(t))
+		origin := newOrigin(t)
 		h := newHarnessRun(t, id, self)
+		h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=repo", fakeGateEnv+"="+gate, fakeOriginEnv+"="+origin)
 		h.cfg.Run = ciGreen
 		ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
 		// #4227: the end names the checkout the commit lives in, and that
@@ -197,6 +198,8 @@ func newBaseOrigin(t *testing.T) string {
 // the fix on the attempt branch, end.record and the card hash carry pushed_sha, and the
 // wrapper line says COMMITTED with the card's RESULT line.
 func TestWrapperCommitsNativeJobRepo(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
@@ -208,6 +211,8 @@ func TestWrapperCommitsNativeJobRepo(t *testing.T) {
 		{"native", true},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+
 			self, err := os.Executable()
 			if err != nil {
 				t.Fatal(err)
@@ -220,11 +225,9 @@ func TestWrapperCommitsNativeJobRepo(t *testing.T) {
 			sprintCardNoTest(t, ctx, client, id)
 			slot := filepath.Join(t.TempDir(), "nc-flash-0924-quack-fix-1")
 			gate := filepath.Join(t.TempDir(), "gate")
-			t.Setenv(fakeHarnessEnv, tc.mode)
-			t.Setenv(fakeGateEnv, gate)
-			t.Setenv(fakeOriginEnv, newBaseOrigin(t))
-			t.Setenv(fakeSlotEnv, slot)
+			origin := newBaseOrigin(t)
 			h := newHarnessRun(t, id, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"="+tc.mode, fakeGateEnv+"="+gate, fakeOriginEnv+"="+origin, fakeSlotEnv+"="+slot)
 			h.cfg.Run = ciGreen
 			ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
 			got := make(chan card.WrapperReport, 1)

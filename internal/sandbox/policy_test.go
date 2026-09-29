@@ -358,20 +358,19 @@ func TestAncestors(t *testing.T) {
 // where a home directory is most often the place a script sits, so windows is the last
 // place this should have been skipped.
 func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
+	t.Parallel()
+
 	write, read, home, _ := scratch(t)
 	base := t.TempDir()
 	if got, err := filepath.EvalSymlinks(base); err == nil {
 		base = got
 	}
-	// A home of this test's own: callerHomes reads $HOME, and t.Setenv stands a temporary
-	// one in front of the machine's for the length of this test. The passwd home is read
-	// as well and is not this one, so both halves of the guard are live here.
+	// A home of this test's own passed via CallerHomes.
 	callerHome := filepath.Join(base, "home")
 	deeper := filepath.Join(callerHome, "tools")
 	if err := os.MkdirAll(deeper, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", callerHome)
 
 	// The command is named in this platform's own spelling. Nothing here RUNS it — Build
 	// resolves it and stops — but a test that hard-codes a unix name on windows is the
@@ -400,7 +399,9 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 		{"an ancestor of the home", plant(base)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, bad := Build(in(t, write, read, home, tc.command))
+			iv := in(t, write, read, home, tc.command)
+			iv.CallerHomes = []string{callerHome}
+			p, bad := Build(iv)
 			if p != nil || len(bad) == 0 {
 				t.Fatalf("a command at %s was built; its directory would be a read root", tc.command)
 			}
@@ -418,7 +419,9 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 	// One directory deeper is a directory of its own, and it IS a root: the roots table
 	// names "the directory of the resolved command" and that entry is kept, guarded.
 	command := plant(deeper)
-	p, bad := Build(in(t, write, read, home, command))
+	iv := in(t, write, read, home, command)
+	iv.CallerHomes = []string{callerHome}
+	p, bad := Build(iv)
 	if len(bad) > 0 {
 		t.Fatalf("a command in a directory of its own was refused: %v", bad)
 	}
@@ -433,7 +436,7 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 	}
 	// Rule 3's one exemption: a caller that names the directory in its own argv has added
 	// it back itself, so nothing new is granted and there is nothing to refuse.
-	if _, bad := Build(Input{Reads: []string{callerHome}, Writes: []string{write}, Home: home, Argv: []string{plant(callerHome)}}); len(bad) > 0 {
+	if _, bad := Build(Input{Reads: []string{callerHome}, Writes: []string{write}, Home: home, Argv: []string{plant(callerHome)}, CallerHomes: []string{callerHome}}); len(bad) > 0 {
 		t.Fatalf("a home the caller named in its own --read was refused: %v", bad)
 	}
 }

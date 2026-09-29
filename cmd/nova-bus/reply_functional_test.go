@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
@@ -167,6 +169,7 @@ func TestPrepareAndSendAreUnchangedByThisSlice(t *testing.T) {
 // exit 1 `DRAFT REFUSED: --reply-to "bo-999999999999" is not an id on this bus` for the
 // same run with the fetch disabled at the seam.
 func TestReplyRefreshesBeforeItResolves(t *testing.T) {
+	t.Parallel()
 	checkout, bare, drafts := replyBus(t)
 	// A second checkout of the same bare remote pushes a note Ada's checkout has not seen.
 	other := filepath.Join(t.TempDir(), "other")
@@ -187,11 +190,11 @@ func TestReplyRefreshesBeforeItResolves(t *testing.T) {
 	}
 	// The same run with the fetch disabled at the seam: the id is unknown locally.
 	second := t.TempDir()
-	withoutFetch(t, func() {
-		invoke(t, "", replyArgs(checkout, second, "bo-888888888888", body)...).
-			mustCode(t, 1).
-			mustContain(t, "stderr", `DRAFT REFUSED: --reply-to "bo-888888888888" is not an id on this bus`)
-	})
+	deps := defaultDeps()
+	deps.refreshCheckout = func(dir, remote, branch string) (bool, error) { return false, nil }
+	invokeWithDeps(t, deps, "", replyArgs(checkout, second, "bo-888888888888", body)...).
+		mustCode(t, 1).
+		mustContain(t, "stderr", `DRAFT REFUSED: --reply-to "bo-888888888888" is not an id on this bus`)
 	// The other half of the live listing: a note already carried AND already receipted is
 	// still a legal target, because heard is not answered.
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-111111111111",
@@ -867,23 +870,42 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 // start error was discarded. `go build -o <dir>` writes the platform's own executable name
 // -- `nova-bus` here, `nova-bus.exe` there -- so there is no suffix spelled out in this
 // file and no platform named in it.
+var (
+	builtNovaBusOnce sync.Once
+	builtNovaBusPath string
+	builtNovaBusErr  error
+)
+
 func buildNovaBus(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".")
-	build.Env = goenv.Clean(os.Environ())
-	out, err := build.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
+	builtNovaBusOnce.Do(func() {
+		dir, err := os.MkdirTemp(busFixtureRoot, "nova-bus-bin-")
+		if err != nil {
+			builtNovaBusErr = err
+			return
+		}
+		build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".")
+		build.Env = goenv.Clean(os.Environ())
+		out, err := build.CombinedOutput()
+		if err != nil {
+			builtNovaBusErr = fmt.Errorf("go build: %v\n%s", err, out)
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			builtNovaBusErr = err
+			return
+		}
+		if len(entries) != 1 {
+			builtNovaBusErr = fmt.Errorf("go build wrote %d files into %s, want the one binary", len(entries), dir)
+			return
+		}
+		builtNovaBusPath = filepath.Join(dir, entries[0].Name())
+	})
+	if builtNovaBusErr != nil {
+		t.Fatal(builtNovaBusErr)
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("go build wrote %d files into %s, want the one binary", len(entries), dir)
-	}
-	return filepath.Join(dir, entries[0].Name())
+	return builtNovaBusPath
 }
 
 // "No refusal writes a partial draft, and no publish replaces one." -- every row of the
@@ -1229,17 +1251,17 @@ func TestGeneratedReplySendsAndClosesItsTarget(t *testing.T) {
 //
 // expected= `DRAFT REFUSED: another nova-bus is running on this checkout`, exit 1.
 func TestASecondReplyOnOneCheckoutWaitsAndThenRefuses(t *testing.T) {
+	t.Parallel()
 	checkout, _, drafts := replyBus(t)
 	release, err := bus.LockCheckout(checkout, checkoutLockWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	old := checkoutLockWait
-	checkoutLockWait = 50 * 1000 * 1000 // 50ms
-	defer func() { checkoutLockWait = old }()
+	deps := defaultDeps()
+	deps.lockWait = 50 * time.Millisecond
 	body := bodyFile(t, "Yes.\n")
-	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
+	invokeWithDeps(t, deps, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
 		mustCode(t, 1).mustContain(t, "stderr", "DRAFT REFUSED: ")
 	mustEmptyDir(t, drafts)
 }
@@ -1271,23 +1293,41 @@ func withoutFetch(t *testing.T, fn func()) {
 // it; drafts go outside the bus, because send needs its tree clean`, exit 2, nothing
 // written.
 func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
+	t.Parallel()
+	bin := buildNovaBus(t)
 	checkout, _, _ := replyBus(t)
 	body := bodyFile(t, "Yes.\n")
 	inside := filepath.Join(checkout, "scratch")
 	if err := os.MkdirAll(inside, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(checkout)
 	for _, tc := range []struct{ name, bus, draftDir string }{
 		{"a relative draft dir under a relative bus", ".", "scratch"},
 		{"a relative draft dir under an absolute bus", checkout, "scratch"},
 		{"the relative bus root itself", ".", "."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			invoke(t, "", "draft", "--bus", tc.bus, "--as", "Ada", "--reply-to", "bo-abcdef012345",
-				"--body-file", body, "--draft-dir", tc.draftDir, "--remote", "origin", "--branch", "main").
-				mustCode(t, 2).
-				mustContain(t, "stderr", "drafts go outside the bus, because send needs its tree clean")
+			cmd := exec.Command(bin, "draft", "--bus", tc.bus, "--as", "Ada", "--reply-to", "bo-abcdef012345",
+				"--body-file", body, "--draft-dir", tc.draftDir, "--remote", "origin", "--branch", "main")
+			cmd.Dir = checkout
+			var stdout, stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			var code int
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					code = exitErr.ExitCode()
+				} else {
+					t.Fatalf("run failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+				}
+			}
+			if code != 2 {
+				t.Fatalf("exit code %d, want 2\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "drafts go outside the bus, because send needs its tree clean") {
+				t.Fatalf("stderr does not contain expected refusal:\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
+			}
 		})
 	}
 	mustEmptyDir(t, inside)
@@ -1305,15 +1345,15 @@ func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
 // offers no create-exclusive publish; name a --draft-dir on a filesystem that has a
 // create-exclusive publish`, exit 2, nothing written.
 func TestAFilesystemWithNoCreateExclusivePublishIsRefused(t *testing.T) {
+	t.Parallel()
 	checkout, _, drafts := replyBus(t)
 	body := bodyFile(t, "Yes.\n")
-	old := publishDraft
-	publishDraft = func(dir, name string, content []byte) (string, error) {
+	deps := defaultDeps()
+	deps.publishDraft = func(dir, name string, content []byte) (string, error) {
 		return "", fmt.Errorf("%s: link said %q and %s said %q: %w", dir, "operation not supported",
 			"the no-replace rename", "not supported", bus.ErrNoExclusivePublish)
 	}
-	defer func() { publishDraft = old }()
-	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 2)
+	r := invokeWithDeps(t, deps, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 2)
 	r.mustContain(t, "stderr", "DRAFT REFUSED: "+drafts+`: link said "operation not supported"`)
 	r.mustContain(t, "stderr", "this filesystem offers no create-exclusive publish; name a --draft-dir on a filesystem that has a create-exclusive publish")
 	mustEmptyDir(t, drafts)

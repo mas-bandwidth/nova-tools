@@ -17,7 +17,8 @@ import (
 // TestFleetDealRefusesNonUp verifies that ns_card_deal refuses when beat is present
 // but state is DOWN, PROBING, or HELD, and accepts when state is UP.
 func TestFleetDealRefusesNonUp(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -66,7 +67,8 @@ func TestFleetDealRefusesNonUp(t *testing.T) {
 
 // TestFleetPassUpFromState verifies that deal.Pass sets Up based on bench state == UP.
 func TestFleetPassUpFromState(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

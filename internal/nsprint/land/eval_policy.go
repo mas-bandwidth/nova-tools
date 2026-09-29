@@ -82,14 +82,23 @@ var ToolsVersion = ""
 // RunnerID returns the runner identity string (§2.2, §5.5): nova-tools
 // version and go version.
 func RunnerID() string {
-	return fmt.Sprintf("nova-tools-%s/go-%s", toolsVersion(debug.ReadBuildInfo), runtime.Version())
+	return RunnerIDFrom(ToolsVersion)
+}
+
+// RunnerIDFrom returns the runner identity string for a given stamped version.
+func RunnerIDFrom(stamped string) string {
+	return fmt.Sprintf("nova-tools-%s/go-%s", toolsVersionFrom(stamped, debug.ReadBuildInfo), runtime.Version())
 }
 
 // toolsVersion is ToolsVersion, else the main module version when it is a
 // release, else the VCS revision (12 hex, "+dirty" when modified), else "devel".
 func toolsVersion(read func() (*debug.BuildInfo, bool)) string {
-	if ToolsVersion != "" {
-		return ToolsVersion
+	return toolsVersionFrom(ToolsVersion, read)
+}
+
+func toolsVersionFrom(stamped string, read func() (*debug.BuildInfo, bool)) string {
+	if stamped != "" {
+		return stamped
 	}
 	info, ok := read()
 	if !ok || info == nil {

@@ -155,11 +155,34 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 	}
 }
 
+func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_FUSE_AS_TOOL") == "1" {
+		now := time.Now()
+		if fixed := os.Getenv("NOVA_FUSE_FIXED_TIME"); fixed != "" {
+			if parsed, err := time.Parse(time.RFC3339, fixed); err == nil {
+				now = parsed
+			}
+		}
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, now))
+	}
+	dir, err := os.MkdirTemp("", "nova-fuse-ambient-")
+	if err == nil {
+		decoy := filepath.Join(dir, "decoy-box.json")
+		_ = fuse.CreateBox(decoy)
+		_ = os.Setenv("NOVA_FUSE_BOX", decoy)
+	}
+	code := m.Run()
+	if dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+	os.Exit(code)
+}
+
 // TestNoDefaultBoxRefusesToGuess: the destination law. Every verb that touches the box
 // takes it from --box; a missing flag is a refusal, never a fallback -- and NOVA_FUSE_BOX
 // or any other environment variable is NOT honoured as a substitute.
 func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
-	decoy := boxIn(t) // a clear, readable box the env var points at
+	t.Parallel()
 	mustRunnable := [][]string{
 		{"status"},
 		{"check"},
@@ -169,7 +192,6 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 		{"lift", "quarantine", "discord"},
 		{"path"},
 	}
-	t.Setenv("NOVA_FUSE_BOX", decoy)
 	for _, args := range mustRunnable {
 		code, out, errOut := capture(t, args, nowish())
 		if code != 2 {
@@ -189,11 +211,12 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 // the caller's statement, not the environment's -- an env lever that could redirect the
 // check to a decoy would be a lift by another name.
 func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
+	t.Parallel()
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
 
-	t.Setenv("NOVA_FUSE_BOX", boxIn(t)) // absent, i.e. clear
+	// TestMain sets NOVA_FUSE_BOX ambiently to a clear decoy box for the whole process.
 	code, _, errOut := capture(t, []string{"check", "--box", box}, now)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 -- the env var must not redirect the check to a clear box", code)

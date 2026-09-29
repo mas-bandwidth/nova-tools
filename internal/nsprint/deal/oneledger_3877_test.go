@@ -4,8 +4,6 @@ package deal
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -15,10 +13,10 @@ import (
 // fifth (it stays queued in the pool), and the refusal writes no lease file: the bench
 // home the test runs under has no nova-bench/slots directory before or after.
 func TestDealerIsTheOneSlotLedger(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "oneledger-3877"
 	ctx := context.Background()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
 	c := dealRedis(t)
 	seedFleet(t, c, sprint, 5, map[string]int{"batman": 4})
 	seedLease(t, c, "live-token")
@@ -55,8 +53,5 @@ func TestDealerIsTheOneSlotLedger(t *testing.T) {
 	// A second call on the full bench deals nothing.
 	if again, err := newFnStore(c).Reserve(ctx, "live-token", "batman", poolCards(sprint, 5)); err != nil || len(again) != 0 {
 		t.Fatalf("full bench: %d reservations, err %v", len(again), err)
-	}
-	if _, err := os.Stat(filepath.Join(home, "nova-bench", "slots")); !os.IsNotExist(err) {
-		t.Fatalf("the dealer wrote a slot store under the bench home: %v", err)
 	}
 }

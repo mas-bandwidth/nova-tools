@@ -206,10 +206,11 @@ func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
 }
 
 func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
-	prev := persistUnknownFn
-	persistUnknownFn = func(string) error { return errors.New("disk full") }
-	t.Cleanup(func() { persistUnknownFn = prev })
+	hooks := nativeHooks{
+		persistUnknown: func(string) error { return errors.New("disk full") },
+	}
 
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -219,11 +220,11 @@ func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
+	code := runWith([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"},
-		strings.NewReader(""), &stdout, &stderr, time.Now())
+		strings.NewReader(""), &stdout, &stderr, time.Now(), hooks)
 	if code == 0 {
 		t.Fatalf("a failed record exited 0:\n%s", stdout.String())
 	}

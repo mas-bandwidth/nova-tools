@@ -8,6 +8,8 @@ import (
 // A dev build stamped as a Go pseudo-version vX.Y.Z-0.<stamp>-<sha> whose commit is on
 // main after the release tag (vX.Y.(Z-1)) is AHEAD of that release, never DIFFERENT.
 func TestDevBuildAheadOfReleaseReportsAhead(t *testing.T) {
+	t.Parallel()
+
 	installed := printer(t, "v0.15.3-0.20260912135226-f7cdb9c")
 	latest := printer(t, "v0.15.2")
 	p := manifest(t, row("x", "tool", installed, "local:"+latest, "none"))

@@ -47,46 +47,44 @@ type idleSeam struct {
 	ends   chan swarm.IdleEnd
 }
 
-// newIdleSeam installs the seam for one test and restores the real functions after it.
+// newIdleSeam returns the seam and nativeHooks for one test.
 // deliver is called with the watch's own IdleWatch once the wait has started it, and
 // returns the end to send -- so a test that needs the child to have reached a state can
 // wait for THAT state, by its own observable, before declaring the card idle.
-func newIdleSeam(t *testing.T, deliver func(w swarm.IdleWatch) (swarm.IdleEnd, bool)) *idleSeam {
-	t.Helper()
+func newIdleSeam(deliver func(w swarm.IdleWatch) (swarm.IdleEnd, bool)) (*idleSeam, nativeHooks) {
 	s := &idleSeam{ends: make(chan swarm.IdleEnd, 1)}
-	realWatch, realReap, realKill := nativeWatchIdle, nativeReap, nativeKillGroup
-	t.Cleanup(func() { nativeWatchIdle, nativeReap, nativeKillGroup = realWatch, realReap, realKill })
-
-	nativeWatchIdle = func(w swarm.IdleWatch, stop <-chan struct{}) <-chan swarm.IdleEnd {
-		// The production contract, kept: no window means no watch and a nil channel.
-		if w.Idle <= 0 {
-			return nil
-		}
-		s.record("watch-started")
-		out := make(chan swarm.IdleEnd, 1)
-		go func() {
-			end, ok := deliver(w)
-			if !ok {
-				return
+	hooks := nativeHooks{
+		watchIdle: func(w swarm.IdleWatch, stop <-chan struct{}) <-chan swarm.IdleEnd {
+			// The production contract, kept: no window means no watch and a nil channel.
+			if w.Idle <= 0 {
+				return nil
 			}
-			select {
-			case <-stop:
-			default:
-				s.record("idle-declared")
-				out <- end
-			}
-		}()
-		return out
+			s.record("watch-started")
+			out := make(chan swarm.IdleEnd, 1)
+			go func() {
+				end, ok := deliver(w)
+				if !ok {
+					return
+				}
+				select {
+				case <-stop:
+				default:
+					s.record("idle-declared")
+					out <- end
+				}
+			}()
+			return out
+		},
+		reap: func(pgid int, started string, grace time.Duration) bool {
+			s.record("reap")
+			return swarm.Reap(pgid, started, grace)
+		},
+		killGroup: func(pgid int, started string) {
+			s.record("kill")
+			swarm.KillGroup(pgid, started)
+		},
 	}
-	nativeReap = func(pgid int, started string, grace time.Duration) bool {
-		s.record("reap")
-		return realReap(pgid, started, grace)
-	}
-	nativeKillGroup = func(pgid int, started string) {
-		s.record("kill")
-		realKill(pgid, started)
-	}
-	return s
+	return s, hooks
 }
 
 func (s *idleSeam) record(what string) {
@@ -107,6 +105,7 @@ func (s *idleSeam) seen() []string {
 // and the deadline branch never ran, which is provable because it is the only branch that
 // calls nativeKillGroup.
 func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -126,7 +125,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	// undecided until then. That is the thing itself, waited for; not a clock.
 	job := filepath.Join(slot, "jobs", "stillcard")
 	want := swarm.IdleEnd{Idle: 240 * time.Second, Step: "3", Kind: "write", Path: "/etc/hosts", Refused: true}
-	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
+	seam, hooks := newIdleSeam(func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
 		waitForFile(t, filepath.Join(job, "said"), "the fixture harness naming the refusal")
 		return want, true
 	})
@@ -135,7 +134,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 		"--model", "fake/fake-model", "--label", "stillcard", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
-	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	_ = runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), hooks)
 
 	// (1) THE ORDER. Not "it happened within n seconds": this, then this, then this.
 	if got := seam.seen(); strings.Join(got, ",") != "watch-started,idle-declared,reap" {
@@ -206,6 +205,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 // holds that the RUN reaches it, which no test could ask before the seam existed: a
 // no-refusal idle end cannot be arranged by a clock and a fixture at all.
 func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -219,7 +219,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	}
 	job := filepath.Join(slot, "jobs", "quietcard")
 	want := swarm.IdleEnd{Idle: 300 * time.Second, Step: "16"}
-	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
+	seam, hooks := newIdleSeam(func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
 		waitForFile(t, filepath.Join(job, "said"), "the fixture harness speaking before it goes still")
 		return want, true
 	})
@@ -228,7 +228,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 		"--model", "fake/fake-model", "--label", "quietcard", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
-	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	_ = runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), hooks)
 
 	if got := seam.seen(); strings.Join(got, ",") != "watch-started,idle-declared,reap" {
 		t.Fatalf("the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
@@ -261,6 +261,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 // handle. And the card is declared idle only once it has ARMED that handler -- it writes
 // `term-armed` when it does -- so this waits for the thing itself and never for a clock.
 func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -269,7 +270,7 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := filepath.Join(slot, "jobs", "politecard")
-	newIdleSeam(t, func(w swarm.IdleWatch) (swarm.IdleEnd, bool) {
+	_, hooks := newIdleSeam(func(w swarm.IdleWatch) (swarm.IdleEnd, bool) {
 		waitForFile(t, filepath.Join(job, "term-armed"), "the fixture harness arming its TERM handler")
 		return swarm.IdleEnd{Idle: 240 * time.Second}, true
 	})
@@ -278,7 +279,7 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 		"--model", "fake/fake-model", "--label", "politecard", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
-	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	_ = runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), hooks)
 
 	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
 		t.Fatalf("the idle watch is what ended this card:\n%s\n%s", stdout.String(), stderr.String())

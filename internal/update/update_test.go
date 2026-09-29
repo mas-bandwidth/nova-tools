@@ -30,10 +30,16 @@ func TestHelperProcess(t *testing.T) {
 		a = a[1:]
 	}
 	if len(a) < 2 {
-		os.Exit(22)
+		return
 	}
 	a = a[1:]
-	if p := os.Getenv("NOVA_UPDATE_CALLS"); p != "" {
+	if len(a) >= 3 && a[0] == "log-calls" {
+		callsPath := a[1]
+		a = a[2:]
+		f, _ := os.OpenFile(callsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		fmt.Fprintln(f, strings.Join(a, " "))
+		f.Close()
+	} else if p := os.Getenv("NOVA_UPDATE_CALLS"); p != "" {
 		f, _ := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		fmt.Fprintln(f, strings.Join(a, " "))
 		f.Close()
@@ -120,12 +126,17 @@ func TestHelperProcess(t *testing.T) {
 }
 func command(t *testing.T, action string, a ...string) string {
 	t.Helper()
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
-	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", action}, a...), " ")
+}
+func commandWithCalls(t *testing.T, calls, action string, a ...string) string {
+	t.Helper()
+	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", "log-calls", calls, action}, a...), " ")
 }
 func printer(t *testing.T, s string) string {
 	return command(t, "print", base64.StdEncoding.EncodeToString([]byte(s)))
+}
+func printerWithCalls(t *testing.T, calls, s string) string {
+	return commandWithCalls(t, calls, "print", base64.StdEncoding.EncodeToString([]byte(s)))
 }
 func manifest(t *testing.T, rows ...string) string {
 	t.Helper()
@@ -210,6 +221,8 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 	}
 }
 func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
+	t.Parallel()
+
 	// Each case carries its own timeout because they measure two different
 	// things. The hang needs a timeout SHORT enough to fire; the others need one
 	// long enough that starting a race-instrumented child on a loaded box is not
@@ -324,6 +337,8 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	}
 }
 func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
+	t.Parallel()
+
 	p := manifest(t, row("good", "tool", printer(t, "tool v1.2.3-rc1+dirty\n"), "github:o/r", "none"), row("bad", "tool", "nova-version-no-such-binary", "npm:unused", "none"))
 	env := Environment{Client: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
 		t.Error("report used HTTP")
@@ -341,6 +356,8 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	}
 }
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
 	os.WriteFile(state, []byte("1.0.0\n"), 0600)
@@ -365,8 +382,8 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	}
 	need(t, err, "installed 1.1.1, asked 1.3.0")
 	calls := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_CALLS", calls)
-	c, _, _ = run(t, Environment{}, "apply", "--file", p, "--version", "9.0.0", "x")
+	refusalManifest := manifest(t, row("x", "tool", read, "local:"+printerWithCalls(t, calls, "1.3.0"), commandWithCalls(t, calls, "write", state, "1.1.1")))
+	c, _, _ = run(t, Environment{}, "apply", "--file", refusalManifest, "--version", "9.0.0", "x")
 	if c != 2 {
 		t.Fatal(c)
 	}
@@ -374,7 +391,10 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 		t.Fatal("refusal ran a process")
 	}
 }
+
 func TestFourReadLimitAndOverallBudget(t *testing.T) {
+	t.Parallel()
+
 	hang := transportFunc(func(r *http.Request) (*http.Response, error) {
 		<-r.Context().Done()
 		return nil, r.Context().Err()
@@ -487,6 +507,8 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 	}
 }
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
+	t.Parallel()
+
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
@@ -523,6 +545,8 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	}
 }
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
+	t.Parallel()
+
 	rows := []string{}
 	for i := 0; i < 26; i++ {
 		rows = append(rows, row(fmt.Sprint(i), "tool", "1.0.0", "npm:pkg", "none"))
@@ -552,6 +576,8 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // finishing. A ten millisecond grace lost that race under load and reported a
 // healthy tool as UNKNOWN. The grace has to outlast an ordinary handoff.
 func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
+	t.Parallel()
+
 	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "100ms"))}
 	r := Installed(context.Background(), e, 5*time.Second, false)
 	if !r.Known() || r.Version != "1.2.3" {
@@ -562,6 +588,8 @@ func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
+	t.Parallel()
+
 	if r := process(context.Background(), nil, nil, ChildCap); r.Reason != "empty argv" {
 		t.Fatal(r.Reason)
 	}
@@ -585,6 +613,8 @@ func mustArgv(t *testing.T, s string) []string {
 // not REPORT UNKNOWN not_found. The installed column is a version string (v1.2.3) and
 // latest is local:/path/to/binary that prints that same version.
 func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
+	t.Parallel()
+
 	// The fake binary prints "tool v1.2.3", which versionKey extracts as "1.2.3".
 	binCmd := printer(t, "tool v1.2.3\n")
 	// installed is a version string, not a command; latest points to the real binary.

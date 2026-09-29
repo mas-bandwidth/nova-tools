@@ -28,10 +28,12 @@ import (
 // stand-in for a pending replace -- and it lasts a few polls, far LESS than SteadyWindow.
 // The rule is that the job is still classified from the report's CONTENT.
 func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
+	t.Parallel()
 	const body = "# a published report\n\n## Head\nfindings: 1\nrepo: o/n\nrev: abc\nit published before its dispatcher read it.\n\n" +
 		"## Findings\n- one thing, x.go:1\n\n## Per item\n| item | state | evidence |\n| --- | --- | --- |\n| an item | red | x.go:1 |\n"
 
 	t.Run("finish classifies the job from the report", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "pool"), 0o755); err != nil {
 			t.Fatal(err)
@@ -90,6 +92,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 	})
 
 	t.Run("finalize retains the report rather than a marker", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "pool"), 0o755); err != nil {
 			t.Fatal(err)
@@ -167,7 +170,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	}
 	var hits atomic.Int64
 	var restored atomic.Bool
-	forceTransientIO = func(err error) bool {
+	t.Cleanup(armTransient(filepath.Dir(path), func(err error) bool {
 		if err == nil || restored.Load() || errors.Is(err, fs.ErrNotExist) {
 			return transientIO(err)
 		}
@@ -195,8 +198,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 			}
 		}
 		return true
-	}
-	t.Cleanup(func() { forceTransientIO = nil })
+	}))
 	return &hits
 }
 
@@ -214,6 +216,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 // the path the reader named. This test holds both halves at once -- a wrong-path read is
 // still waited out, and is not counted.
 func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
+	t.Parallel()
 	const body = "# a published report\n\n## Head\nfindings: 1\n"
 	dir := t.TempDir()
 	armed := filepath.Join(dir, CopiedResult)
@@ -274,7 +277,9 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 //   - a rehash that collided printed `TRIAGE SKIPPED id=… changed while read` over a report
 //     that had not changed by one byte.
 func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
+	t.Parallel()
 	t.Run("the retained copy collides", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		p, id := revisionPool(t, dir)
 		hits := collideUntilRead(t, filepath.Join(p.ReportsDir(id), CopiedResult), report())
@@ -292,6 +297,7 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 	})
 
 	t.Run("the live report of a running job collides", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		p := emptyPool(t, dir)
 		jobDir := filepath.Join(dir, "job")
@@ -322,6 +328,7 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 	})
 
 	t.Run("the rehash collides", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		p, id := revisionPool(t, dir)
 		copyPath := filepath.Join(p.ReportsDir(id), CopiedResult)

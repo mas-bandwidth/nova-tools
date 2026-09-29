@@ -2,30 +2,63 @@ package main
 
 import (
 	"bytes"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/update"
 )
 
+func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_UPDATE_AS_TOOL") == "1" {
+		os.Exit(update.Main("nova-update", os.Args[1:], "", os.Stdout, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
+
 func TestExecutableFirstRun(t *testing.T) {
-	t.Chdir("../..")
-	var banner bytes.Buffer
-	update.Main("nova-update", []string{"help"}, "", &banner, &banner)
-	examples, err := onboarding.ExampleLines(banner.String(), "nova-update")
+	t.Parallel()
+	root := repoRoot(t)
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCmd := func(args []string) (int, string, string) {
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "NOVA_UPDATE_AS_TOOL=1")
+		var out, errs bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errs
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				t.Fatalf("running %v: %v", args, runErr)
+			}
+		}
+		return exitCode, out.String(), errs.String()
+	}
+
+	_, banner, _ := runCmd([]string{"help"})
+	examples, err := onboarding.ExampleLines(banner, "nova-update")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range examples {
-		var out, errs bytes.Buffer
-		code := update.Main("nova-update", strings.Fields(line)[1:], "", &out, &errs)
+		code, _, errs := runCmd(strings.Fields(line)[1:])
 		if code == 2 {
-			t.Fatalf("%s refused: %s", line, errs.String())
+			t.Fatalf("%s refused: %s", line, errs)
 		}
 	}
-	doc, err := os.ReadFile("docs/TESTS.md")
+	doc, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,17 +67,19 @@ func TestExecutableFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wanted, actual []string
-	var out, errs bytes.Buffer
+	var outBuilder strings.Builder
 	for _, line := range transcript {
 		if strings.HasPrefix(line, "$ ") {
-			if c := update.Main("nova-update", strings.Fields(line)[2:], "", &out, &errs); c != 0 {
-				t.Fatalf("first run: %d %s", c, errs.String())
+			code, out, errs := runCmd(strings.Fields(line)[2:])
+			if code != 0 {
+				t.Fatalf("first run: %d %s", code, errs)
 			}
+			outBuilder.WriteString(out)
 		} else if s := firstRunShape(line); s != "" {
 			wanted = append(wanted, s)
 		}
 	}
-	for _, line := range strings.Split(out.String(), "\n") {
+	for _, line := range strings.Split(outBuilder.String(), "\n") {
 		if s := firstRunShape(line); s != "" {
 			actual = append(actual, s)
 		}
@@ -78,8 +113,9 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 // it passes on an abridged or reordered transcript; this test keeps the whole
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	t.Chdir(repoRoot(t))
-	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
+	t.Parallel()
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +130,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	if len(steps) == 0 {
 		t.Fatal("the `### First run` block holds no nova-update command; this test would pass by running nothing")
 	}
-	for _, p := range onboarding.Execute(steps, runDocumented(t), firstRunNorms(t)...) {
+	for _, p := range onboarding.Execute(steps, runDocumentedIn(t, root), firstRunNorms(t)...) {
 		t.Error(p)
 	}
 }
@@ -159,12 +195,30 @@ func firstRunNorms(t *testing.T) []onboarding.Norm {
 // runDocumented calls this binary's own entry point with the documented
 // arguments. nova-update reads no stdin and this transcript has no `< path`
 // redirect, so there is no stream to open.
-func runDocumented(t *testing.T) onboarding.Runner {
+func runDocumentedIn(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return func(s onboarding.Step) (onboarding.Result, error) {
+		cmd := exec.Command(bin, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_UPDATE_AS_TOOL=1")
 		var out, errb bytes.Buffer
-		code := update.Main("nova-update", s.Args, "", &out, &errb)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, runErr
+			}
+		}
+		return onboarding.Result{Code: exitCode, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
 

@@ -142,9 +142,13 @@ func isLowercaseHex(s string) bool {
 // to trace and verify durability sync ordering and fail-stop behavior.
 var FsyncHook func(path string) error
 
-// FsyncDirectory flushes the directory dentry to stable storage.
-func FsyncDirectory(dirPath string) error {
-	if FsyncHook != nil {
+// FsyncDirectoryWithHook flushes the directory dentry to stable storage, consulting hook first.
+func FsyncDirectoryWithHook(dirPath string, hook func(string) error) error {
+	if hook != nil {
+		if err := hook(dirPath); err != nil {
+			return err
+		}
+	} else if FsyncHook != nil {
 		if err := FsyncHook(dirPath); err != nil {
 			return err
 		}
@@ -163,6 +167,11 @@ func FsyncDirectory(dirPath string) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// FsyncDirectory flushes the directory dentry to stable storage.
+func FsyncDirectory(dirPath string) error {
+	return FsyncDirectoryWithHook(dirPath, nil)
 }
 
 // EnsureDestinationFresh verifies that dir does not exist prior to collection.
@@ -211,6 +220,11 @@ func AtomicNoReplaceRename(tmpPath, targetPath string) error {
 
 // StageMarker writes candidateBatchBytes to filepath.Join(dir, markerTempName), syncs and closes it.
 func StageMarker(dir string, markerTempName string, candidateBatchBytes []byte) error {
+	return StageMarkerWithHook(dir, markerTempName, candidateBatchBytes, nil)
+}
+
+// StageMarkerWithHook writes candidateBatchBytes and notifies hook.
+func StageMarkerWithHook(dir string, markerTempName string, candidateBatchBytes []byte, hook func(string) error) error {
 	if filepath.Base(markerTempName) != markerTempName || !strings.HasSuffix(markerTempName, ".tmp") {
 		return &PackageRefusal{
 			Rule:   RulePackageStrayFile,
@@ -241,7 +255,11 @@ func StageMarker(dir string, markerTempName string, candidateBatchBytes []byte) 
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if FsyncHook != nil {
+	if hook != nil {
+		if err := hook(markerPath); err != nil {
+			return err
+		}
+	} else if FsyncHook != nil {
 		if err := FsyncHook(markerPath); err != nil {
 			return err
 		}
@@ -252,6 +270,12 @@ func StageMarker(dir string, markerTempName string, candidateBatchBytes []byte) 
 // CommitMarker atomically renames markerTempName to batch.json using atomic no-replace,
 // and syncs the directory root.
 func CommitMarker(dir string, markerTempName string) error {
+	return CommitMarkerWithHook(dir, markerTempName, nil)
+}
+
+// CommitMarkerWithHook atomically renames markerTempName to batch.json using atomic no-replace,
+// and syncs the directory root using hook.
+func CommitMarkerWithHook(dir string, markerTempName string, hook func(string) error) error {
 	if filepath.Base(markerTempName) != markerTempName || !strings.HasSuffix(markerTempName, ".tmp") {
 		return &PackageRefusal{
 			Rule:   RulePackageStrayFile,
@@ -264,12 +288,17 @@ func CommitMarker(dir string, markerTempName string) error {
 	if err := AtomicNoReplaceRename(tmpPath, targetPath); err != nil {
 		return err
 	}
-	return FsyncDirectory(dir)
+	return FsyncDirectoryWithHook(dir, hook)
 }
 
 // SyncDirectoryTree walks all subdirectories of dir and fsyncs them bottom-up
 // (deepest leaf directories first, up to dir itself).
 func SyncDirectoryTree(dir string) error {
+	return SyncDirectoryTreeWithHook(dir, nil)
+}
+
+// SyncDirectoryTreeWithHook walks all subdirectories of dir and fsyncs them bottom-up using hook.
+func SyncDirectoryTreeWithHook(dir string, hook func(string) error) error {
 	var dirs []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -302,7 +331,7 @@ func SyncDirectoryTree(dir string) error {
 	})
 
 	for _, d := range dirs {
-		if err := FsyncDirectory(d); err != nil {
+		if err := FsyncDirectoryWithHook(d, hook); err != nil {
 			return err
 		}
 	}

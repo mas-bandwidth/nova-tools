@@ -37,6 +37,9 @@ func mainDocumentedExamples(t *testing.T) []string {
 // which the caller puts on PATH so the example lines run the binary under test.
 func buildBinary(t *testing.T, root, tool string) string {
 	t.Helper()
+	if tool == "nova-version" {
+		return filepath.Dir(buildNovaVersion(t))
+	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, tool)
 	build := exec.Command("go", "build", "-o", bin, "./cmd/"+tool)

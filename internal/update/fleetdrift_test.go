@@ -19,8 +19,8 @@ import (
 // registry is the benches set; the store is a throwaway miniredis. ssh and git
 // on PATH are traps that leave a mark if anything runs them.
 func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
-	t.Setenv("NOVA_TEST_NO_HOST", "1")
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
+	t.Parallel()
+
 	trap := t.TempDir()
 	mark := filepath.Join(trap, "ran")
 	for _, tool := range []string{"ssh", "git", "gh"} {
@@ -29,7 +29,6 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PATH", trap)
 
 	mr := miniredis.RunT(t)
 	mr.SAdd("benches", "fresh", "stale", "quiet")

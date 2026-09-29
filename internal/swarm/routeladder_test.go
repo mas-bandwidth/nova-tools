@@ -225,6 +225,8 @@ func TestRouteCardOnAMechanicalKindMakesNoCallUntilAConfirmedFailure(t *testing.
 // TestRouteCardFollowsTheAnswer: the model a card is dispatched with is the
 // one the ladder's answer names, not the one the fill script wrote in the TSV.
 func TestRouteCardFollowsTheAnswer(t *testing.T) {
+	t.Parallel()
+
 	if !canListen(t) {
 		t.Skip("this sandbox forbids listening sockets")
 	}
@@ -233,8 +235,13 @@ func TestRouteCardFollowsTheAnswer(t *testing.T) {
 	// it, and if it ends up on vendor/low-1 nothing did.
 	srv := jevFake(t, func(options []string) (string, float64) { return highestOption(options), 0.97 })
 	defer srv.Close()
-	t.Setenv("ROUTE_TEST_KEY", "sk-not-a-real-key")
-	client, err := decide.New(srv.URL, "ROUTE_TEST_KEY")
+	lookup := func(key string) string {
+		if key == "ROUTE_TEST_KEY" {
+			return "sk-not-a-real-key"
+		}
+		return ""
+	}
+	client, err := decide.NewWithLookup(srv.URL, "ROUTE_TEST_KEY", lookup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,13 +289,20 @@ func TestRouteCardFollowsTheAnswer(t *testing.T) {
 // a suggestion, so the card keeps the model it came with and the receipt says
 // the route fell back.
 func TestRouteCardBelowTheFloorKeepsTodaysModel(t *testing.T) {
+	t.Parallel()
+
 	if !canListen(t) {
 		t.Skip("this sandbox forbids listening sockets")
 	}
 	srv := jevFake(t, func(options []string) (string, float64) { return highestOption(options), 0.42 })
 	defer srv.Close()
-	t.Setenv("ROUTE_TEST_KEY", "sk-not-a-real-key")
-	client, err := decide.New(srv.URL, "ROUTE_TEST_KEY")
+	lookup := func(key string) string {
+		if key == "ROUTE_TEST_KEY" {
+			return "sk-not-a-real-key"
+		}
+		return ""
+	}
+	client, err := decide.NewWithLookup(srv.URL, "ROUTE_TEST_KEY", lookup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,6 +351,8 @@ func TestRouteCardWithNoKeyKeepsTodaysModel(t *testing.T) {
 // leaves the rules' answer standing, the card keeps today's model, and the
 // call is STILL accounted for -- a refusal cannot unspend it.
 func TestRouteCardKeepsTodaysModelWhenTheProviderRefuses(t *testing.T) {
+	t.Parallel()
+
 	if !canListen(t) {
 		t.Skip("this sandbox forbids listening sockets")
 	}
@@ -344,8 +360,13 @@ func TestRouteCardKeepsTodaysModelWhenTheProviderRefuses(t *testing.T) {
 		http.Error(w, `{"error":"malformed question"}`, http.StatusBadRequest)
 	}))
 	defer srv.Close()
-	t.Setenv("ROUTE_TEST_KEY", "sk-not-a-real-key")
-	client, err := decide.New(srv.URL, "ROUTE_TEST_KEY")
+	lookup := func(key string) string {
+		if key == "ROUTE_TEST_KEY" {
+			return "sk-not-a-real-key"
+		}
+		return ""
+	}
+	client, err := decide.NewWithLookup(srv.URL, "ROUTE_TEST_KEY", lookup)
 	if err != nil {
 		t.Fatal(err)
 	}

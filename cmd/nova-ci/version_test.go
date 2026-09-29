@@ -47,14 +47,10 @@ func TestVersionLineShape(t *testing.T) {
 // a shell variable, and a build stamped with a newline must not make this line say two
 // things.
 func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v1.2.3\nnova-ci v9.9.9 linux/amd64 go1.0 extra"
+	t.Parallel()
 
-	var stdout, stderr bytes.Buffer
-	if code := cmdVersion(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, stderr.String())
-	}
+	var stdout bytes.Buffer
+	printVersionLine("v1.2.3\nnova-ci v9.9.9 linux/amd64 go1.0 extra", &stdout)
 	line := stdout.String()
 	if strings.Count(line, "\n") != 1 {
 		t.Fatalf("a stamped newline broke the line in two: %q", line)

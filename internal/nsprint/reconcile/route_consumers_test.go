@@ -30,6 +30,8 @@ func routeConsumers(t *testing.T, f *prFixture) []redis.XInfoConsumer {
 // TestRouteConsumerStableOverHundredPasses: one instance, 100 passes, one
 // consumer named for the instance, present from the first pass.
 func TestRouteConsumerStableOverHundredPasses(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3808a")
 	for i := 0; i < 100; i++ {
 		f.run(t)
@@ -45,6 +47,8 @@ func TestRouteConsumerStableOverHundredPasses(t *testing.T) {
 // consumers, the live one and the one just left; a dead consumer's pending
 // hold event is claimed and routed before its consumer is deleted.
 func TestRouteConsumerSweepBoundsRestarts(t *testing.T) {
+	t.Parallel()
+
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).
@@ -95,6 +99,8 @@ func TestRouteConsumerSweepBoundsRestarts(t *testing.T) {
 // TestRouteConsumerSweepKeepsRecent: the default hour keeps a
 // fresh consumer from another instance.
 func TestRouteConsumerSweepKeepsRecent(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "ctl-3808c")
 	ev := "s:" + f.S + ":hold:events"
 	if err := f.c.XGroupCreateMkStream(f.ctx, ev, reconcile.RouteGroup, "0").Err(); err != nil {

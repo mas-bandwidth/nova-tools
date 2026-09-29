@@ -23,6 +23,8 @@ import (
 // record of the right class, and no job directory left behind; a wrapper
 // started for a card not dealt to this bench exits 4 and writes nothing.
 func TestWrapperOwnsOneCardEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).
@@ -43,18 +45,17 @@ func TestWrapperOwnsOneCardEndToEnd(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := context.Background()
 			st, client := newSprint(t)
 			id := card.Identity{Sprint: "control-wrap", Label: "card-" + tc.mode, BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
 			token := attemptToken(1, fmt.Sprintf("%032x", i+1))
 			seedCard(t, ctx, client, id, "dealt", token)
 			gate := filepath.Join(t.TempDir(), "gate")
-			t.Setenv(fakeHarnessEnv, tc.mode)
-			t.Setenv(fakeGateEnv, gate)
-			// A token in the wrapper's own environment must not reach the harness.
-			t.Setenv("NOVA_CARD_TOKEN", token)
 
 			h := newHarnessRun(t, id, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"="+tc.mode, fakeGateEnv+"="+gate)
 			ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
 			got := make(chan card.WrapperReport, 1)
 			go func() { got <- card.RunWrapper(ctx, h.cfg, ledger) }()
@@ -127,15 +128,17 @@ func TestWrapperOwnsOneCardEndToEnd(t *testing.T) {
 		{"queued", "queued", "wrap-bench"},
 	} {
 		t.Run("not-dealt-"+tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := context.Background()
 			st, client := newSprint(t)
 			id := card.Identity{Sprint: "control-wrap", Label: "card-" + tc.name, BaseSHA: "0123abcd", Bench: tc.bench, Attempt: 1}
 			token := attemptToken(1, "abcdefabcdefabcdefabcdefabcdefab")
 			seedCard(t, ctx, client, id, tc.state, token)
 			before := hashOf(t, ctx, client, id.Sprint, id.Label)
-			t.Setenv(fakeHarnessEnv, "done")
 
 			h := newHarnessRun(t, card.Identity{Sprint: id.Sprint, Label: id.Label, BaseSHA: id.BaseSHA, Bench: "wrap-bench", Attempt: 1}, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=done")
 			ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
 			rep := card.RunWrapper(ctx, h.cfg, ledger)
 			if rep.Code != card.WrapperExitNotDealt || rep.Outcome != "" {
@@ -201,22 +204,25 @@ func logBy(t *testing.T, ctx context.Context, client *redis.Client, sprint strin
 // 0. A leftover job dir from an earlier run no longer refuses a launched card:
 // it is cleared under JobsRoot through safepath.
 func TestWrapperClaimIsRedisNotMkdir(t *testing.T) {
+	t.Parallel()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("race", func(t *testing.T) {
+		t.Parallel()
+
 		ctx := context.Background()
 		st, client := newSprint(t)
 		id := card.Identity{Sprint: "control-claim", Label: "card-race", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
 		token := attemptToken(1, fmt.Sprintf("%032x", 77))
 		seedCard(t, ctx, client, id, "dealt", token)
 		gate := filepath.Join(t.TempDir(), "gate")
-		t.Setenv(fakeHarnessEnv, "done")
-		t.Setenv(fakeGateEnv, gate)
 
 		h := newHarnessRun(t, id, self)
+		h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=done", fakeGateEnv+"="+gate)
 		job := card.WrapperJobDir(h.cfg.JobsRoot, id.Sprint, id.Label, id.Attempt)
 		race := &raceLedger{
 			job:      job,
@@ -282,6 +288,8 @@ func TestWrapperClaimIsRedisNotMkdir(t *testing.T) {
 	})
 
 	t.Run("leftover-job-dir", func(t *testing.T) {
+		t.Parallel()
+
 		ctx := context.Background()
 		st, client := newSprint(t)
 		id := card.Identity{Sprint: "control-claim", Label: "card-leftover", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
@@ -291,10 +299,9 @@ func TestWrapperClaimIsRedisNotMkdir(t *testing.T) {
 		if err := os.WriteFile(gate, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv(fakeHarnessEnv, "done")
-		t.Setenv(fakeGateEnv, gate)
 
 		h := newHarnessRun(t, id, self)
+		h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=done", fakeGateEnv+"="+gate)
 		job := card.WrapperJobDir(h.cfg.JobsRoot, id.Sprint, id.Label, id.Attempt)
 		if err := os.MkdirAll(filepath.Join(job, "out"), 0o700); err != nil {
 			t.Fatal(err)

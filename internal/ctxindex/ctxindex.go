@@ -103,8 +103,31 @@ var (
 	headRE     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
+// BuildOptions configures Build behavior.
+type BuildOptions struct {
+	BucketSize   int
+	AfterBuckets func(kind string) error
+}
+
 // Build indexes the tracked files of the git clone at repo into out.
 func Build(repo, out string) (Stats, error) {
+	return BuildWithOptions(repo, out, BuildOptions{
+		BucketSize:   BucketSize,
+		AfterBuckets: afterBuckets,
+	})
+}
+
+// BuildWithOptions indexes the tracked files of the git clone at repo into out using opts.
+func BuildWithOptions(repo, out string, opts BuildOptions) (Stats, error) {
+	bucketSize := opts.BucketSize
+	if bucketSize <= 0 {
+		bucketSize = BucketSize
+	}
+	afterFn := opts.AfterBuckets
+	if afterFn == nil {
+		afterFn = func(string) error { return nil }
+	}
+
 	head, err := git(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return Stats{}, err
@@ -159,11 +182,11 @@ func Build(repo, out string) (Stats, error) {
 	}{
 		{"spec", asAny(specs)}, {"test", asAny(tests)}, {"symbol", asAny(symbols)},
 	} {
-		n, err := writeBuckets(dir, kind.name, head, kind.entries)
+		n, err := writeBucketsSize(dir, kind.name, head, kind.entries, bucketSize)
 		if err != nil {
 			return Stats{}, err
 		}
-		if err := afterBuckets(kind.name); err != nil {
+		if err := afterFn(kind.name); err != nil {
 			return Stats{}, err
 		}
 		counts[kind.name] = n
@@ -496,7 +519,10 @@ func (ix *Index) read(kind, key string, v any) (bool, error) {
 
 // bucketCount is the power of two at or above n/BucketSize, at least one.
 func bucketCount(n int) int {
-	size := BucketSize
+	return bucketCountSize(n, BucketSize)
+}
+
+func bucketCountSize(n, size int) int {
 	if size < 1 {
 		size = 1
 	}
@@ -510,10 +536,14 @@ func bucketCount(n int) int {
 // writeBuckets writes every bucket of one index, empty ones included, and returns the
 // bucket count.
 func writeBuckets(out, kind, head string, entries map[string]any) (int, error) {
+	return writeBucketsSize(out, kind, head, entries, BucketSize)
+}
+
+func writeBucketsSize(out, kind, head string, entries map[string]any, bucketSize int) (int, error) {
 	if err := os.MkdirAll(filepath.Join(out, kind), 0o755); err != nil {
 		return 0, err
 	}
-	n := bucketCount(len(entries))
+	n := bucketCountSize(len(entries), bucketSize)
 	buckets := make([]bucketFile, n)
 	for i := range buckets {
 		buckets[i] = bucketFile{Head: head, Entries: map[string]json.RawMessage{}}

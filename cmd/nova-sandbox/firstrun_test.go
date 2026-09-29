@@ -287,13 +287,10 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 
 	j := newWJob(t)
 	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
+	j.useFakeGit(g)
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	useForge(t, &fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}})
-
-	oldGUID := worktreeGUID
-	worktreeGUID = func() string { return "1f450ab70c635e66f675ff8a4e395760" }
-	t.Cleanup(func() { worktreeGUID = oldGUID })
+	j.useForge(&fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}})
+	j.wt.guid = func() string { return "1f450ab70c635e66f675ff8a4e395760" }
 
 	docScratch := "/path/to/workdir/scratch"
 	docRepo := "/path/to/workdir"
@@ -317,7 +314,7 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	{
 		step := wtSteps[0]
 		var out, errb bytes.Buffer
-		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
+		code := runWithDeps(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil, defaultEgressEnv(), j.wt)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		norms := []onboarding.Norm{onboarding.Path(docScratch, j.scratch)}
 		for _, p := range onboarding.Compare(step, res, norms) {
@@ -329,7 +326,7 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	{
 		step := wtSteps[1]
 		var out, errb bytes.Buffer
-		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
+		code := runWithDeps(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil, defaultEgressEnv(), j.wt)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		norms := []onboarding.Norm{onboarding.Path(docScratch, j.scratch)}
 		for _, p := range onboarding.Compare(step, res, norms) {
@@ -341,7 +338,7 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	{
 		step := wtSteps[2]
 		var out, errb bytes.Buffer
-		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
+		code := runWithDeps(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil, defaultEgressEnv(), j.wt)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		for _, p := range onboarding.Compare(step, res, nil) {
 			t.Errorf("worktree prune: %s", p)

@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -133,16 +134,18 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 // never from a flag. Open sends nothing (#3277), so a refused login is the
 // first command's error.
 func TestOpenAuthenticatesFromEnv(t *testing.T) {
+	t.Parallel()
+
 	addr := startRedis(t, "--user", "default", "off", "--user", "bench", "on", ">bench-secret", "~*", "&*", "+@all")
 	ctx := context.Background()
 
-	// An inherited NOVA_SPRINT_REDIS_PASSWORD_ENV would redirect the default path
-	// below to another seat's variable; clear it so the test is deterministic.
-	t.Setenv(store.PasswordEnvEnv, "")
-	t.Setenv(store.UserEnv, "")
-	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
+	mockEnv := map[string]string{
+		store.DefaultPasswordEnv: "bench-secret",
+	}
+	sel := seatcred.WithLookup(func(k string) string { return mockEnv[k] })
+
 	first := func() error {
-		st, err := store.Open(ctx, addr)
+		st, err := store.OpenSeat(ctx, addr, sel)
 		if err != nil {
 			return err
 		}
@@ -158,7 +161,7 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 		t.Fatalf("first command with %s but no %s = %v; want NOAUTH and a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
 	}
 	pipe := func() error {
-		st, err := store.Open(ctx, addr)
+		st, err := store.OpenSeat(ctx, addr, sel)
 		if err != nil {
 			return err
 		}
@@ -170,8 +173,8 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 		t.Fatalf("first batch with %s but no %s = %v; want NOAUTH and the named refusal", store.DefaultPasswordEnv, store.UserEnv, err)
 	}
 
-	t.Setenv(store.UserEnv, "bench")
-	st, err := store.Open(ctx, addr)
+	mockEnv[store.UserEnv] = "bench"
+	st, err := store.OpenSeat(ctx, addr, sel)
 	if err != nil {
 		t.Fatalf("Open as bench with %s: %v", store.DefaultPasswordEnv, err)
 	}
@@ -180,12 +183,12 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 	}
 	_ = st.Close()
 
-	t.Setenv(store.PasswordEnvEnv, "NOVA_REDIS_OTHER_SEAT")
-	t.Setenv("NOVA_REDIS_OTHER_SEAT", "")
-	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_OTHER_SEAT is empty") {
+	mockEnv[store.PasswordEnvEnv] = "NOVA_REDIS_OTHER_SEAT"
+	mockEnv["NOVA_REDIS_OTHER_SEAT"] = ""
+	if _, err := store.OpenSeat(ctx, addr, sel); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_OTHER_SEAT is empty") {
 		t.Fatalf("Open with an empty named password variable = %v; want a refusal naming it", err)
 	}
-	t.Setenv("NOVA_REDIS_OTHER_SEAT", "wrong")
+	mockEnv["NOVA_REDIS_OTHER_SEAT"] = "wrong"
 	if err := first(); err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
 		t.Fatalf("first command with the wrong password = %v; want WRONGPASS", err)
 	}

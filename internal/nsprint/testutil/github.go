@@ -19,8 +19,7 @@ type GitHubStub struct {
 }
 
 // StartGitHubStub starts an httptest.Server that fails t on any HTTP request.
-// It sets GITHUB_API_URL and GH_HOST in the test environment so clients
-// honoring standard GitHub environment variables will target the stub.
+// Callers that need environment variables to target the stub can call Setenv(t).
 func StartGitHubStub(t *testing.T) *GitHubStub {
 	t.Helper()
 	stub := &GitHubStub{}
@@ -34,9 +33,15 @@ func StartGitHubStub(t *testing.T) *GitHubStub {
 	t.Cleanup(func() {
 		stub.Server.Close()
 	})
-	t.Setenv("GITHUB_API_URL", stub.URL)
-	t.Setenv("GH_HOST", stub.Server.Listener.Addr().String())
 	return stub
+}
+
+// Setenv sets GITHUB_API_URL and GH_HOST in the test environment for callers
+// that need child processes or default clients to target the stub.
+func (g *GitHubStub) Setenv(t *testing.T) {
+	t.Helper()
+	t.Setenv("GITHUB_API_URL", g.URL)
+	t.Setenv("GH_HOST", g.Server.Listener.Addr().String())
 }
 
 // Calls returns the count of HTTP requests received by the stub.

@@ -29,6 +29,8 @@ import (
 // Past the grace the refusal must name the pipe rather than blame the version
 // command, and it must say so without echoing a byte the child wrote.
 func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
+	t.Parallel()
+
 	secret := "x 9.9.9-secret"
 	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte(secret+"\n")), (killGrace+time.Second).String()))}
 	r := Installed(context.Background(), e, killGrace+5*time.Second, false)
@@ -51,6 +53,7 @@ func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
 // one it always was -- only an attempt in which the window was MISSED is retried,
 // and a run that never catches it says so rather than passing.
 func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
+	t.Parallel()
 	for attempt := 1; attempt <= stagingAttempts; attempt++ {
 		if reporterDeathWithPendingSaved(t, attempt) {
 			return
@@ -64,6 +67,7 @@ func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
 // its production recovery append before confirmation, then retries to prove byte-identical
 // prior entries and exactly one new contribution.
 func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
+	t.Parallel()
 	for attempt := 1; attempt <= stagingAttempts; attempt++ {
 		if twoPhaseAttempt(t, attempt) {
 			return
@@ -82,6 +86,7 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 // most often. Staged up to stagingAttempts times for that reason; the
 // assertions are untouched.
 func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.T) {
+	t.Parallel()
 	for attempt := 1; attempt <= stagingAttempts; attempt++ {
 		if reporterDeathAfterRemoteConfirmation(t, attempt) {
 			return
@@ -95,6 +100,7 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 // without an actual live kill (killed-alive=false) fails the witness, proving
 // that an uninterrupted run cannot be reported as an interrupted recovery.
 func TestJoinInterruptionNegativeControlWithoutKillFails(t *testing.T) {
+	t.Parallel()
 	r := newReporter(t, "v1.2.3")
 	wrap, record := r.wrapperOnPath(t, killLostResult)
 	code, out, errs := r.send(t, wrap)

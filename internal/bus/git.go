@@ -242,12 +242,28 @@ var gitEnv = []string{
 	"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
 }
 
+type gitSeams struct {
+	gitBin  string
+	timeout time.Duration
+}
+
 func git(dir string, args ...string) (string, error) {
+	return gitWith(gitSeams{}, dir, args...)
+}
+
+func gitWith(s gitSeams, dir string, args ...string) (string, error) {
 	full := append([]string{"-C", dir}, args...)
 	budget := gitTimeout()
+	if s.timeout > 0 {
+		budget = s.timeout
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
+	bin := "git"
+	if s.gitBin != "" {
+		bin = s.gitBin
+	}
+	cmd := exec.CommandContext(ctx, bin, full...)
 	// A push that needs a credential must FAIL rather than block a tool a person is
 	// waiting on, and a pager must never open under a tool whose output is a grammar.
 	cmd.Env = append(cmd.Environ(), gitEnv...)
@@ -789,6 +805,10 @@ var sleepBetweenAttempts = time.Sleep
 // The commit names its paths explicitly, so anything else that happens to be staged is not
 // swept into a note's commit.
 func CommitAndPush(dir string, id Identity, paths []string, message, remote, branch string, attempts int) (PushResult, error) {
+	return commitAndPushWithSleep(dir, id, paths, message, remote, branch, attempts, sleepBetweenAttempts)
+}
+
+func commitAndPushWithSleep(dir string, id Identity, paths []string, message, remote, branch string, attempts int, sleep func(time.Duration)) (PushResult, error) {
 	var res PushResult
 	if attempts < 1 {
 		return res, fmt.Errorf("attempts must be at least 1, got %d", attempts)
@@ -823,7 +843,7 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		// the machine can fetch. The wait grows with the attempt so a busy bus backs
 		// off, and the jitter is what actually breaks the step -- two benches that sleep
 		// the same 50ms are still in step.
-		sleepBetweenAttempts(pushBackoff(attempt))
+		sleep(pushBackoff(attempt))
 		// The remote moved. Take what arrived and replay our own commit on top of it.
 		if _, err := git(dir, "fetch", remote, branch); err != nil {
 			return res, fmt.Errorf("the push was refused and the fetch that would explain it failed: %w", err)

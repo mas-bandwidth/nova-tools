@@ -18,23 +18,26 @@ import (
 // ---------------------------------------------------------------- rule 1: every path is a flag
 
 func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// A complete, valid set of sources sitting under every variable a tool might reach for.
 	bait := mkdir(t, filepath.Join(dir, "bait"))
 	write(t, filepath.Join(bait, "t", "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
 	reposFile(t, bait)
-	t.Setenv("HOME", bait)
-	t.Setenv("TMPDIR", bait)
-	t.Setenv("XDG_DATA_HOME", bait)
+	env := []string{
+		"HOME=" + bait,
+		"TMPDIR=" + bait,
+		"XDG_DATA_HOME=" + bait,
+	}
 
 	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
 	// test sets them and proves it." The proof is the count of source files this process
 	// has opened: a read does not change the number of entries in a directory, so
 	// counting entries proved nothing, and the refusal returns before any source is read.
-	opensBefore := tokens.Opens()
-	r := invoke(t, "fold", "--day", "2026-09-11")
+	r, opened := invokeCmdOpens(t, "", env, "fold", "--day", "2026-09-11")
 	wantExit(t, r, 2)
-	if opened := tokens.Opens() - opensBefore; opened != 0 {
+	if opened != 0 {
 		t.Errorf("the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
 	}
 
@@ -44,9 +47,9 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
-	opensBefore = tokens.Opens()
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
-	if opened := tokens.Opens() - opensBefore; opened != 1 {
+	r2, opened := invokeCmdOpens(t, "", env, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
+	wantExit(t, r2, 0)
+	if opened != 1 {
 		t.Errorf("the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
 	}
 	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
@@ -1288,12 +1291,14 @@ func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 // ---------------------------------------------------------------- rule 16 and 19: sources are read-only, one subprocess
 
 func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00 not really\n")
 	write(t, db+"-wal", "wal\n")
-	logPath := fakeSqlite3(t,
+	logPath, env := fakeSqlite3(t,
 		ocRows(ocSession("s1", "", "/x/schema")),
 		ocRows(ocMessage("msg1", "s1", "2026-09-11T10:00:00Z", "anthropic", "mercury-2.5", "10", "20", "30", "40", "50", "/x/schema")),
 		ocRows(
@@ -1306,7 +1311,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
+	r := invokeCmd(t, "", env, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
 		"--opencode", "bench="+db, "--scratch", scratch)
 	wantExit(t, r, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "mercury-2.5\tschema\t10\t20\t30\t40\t50\t")
@@ -1341,10 +1346,10 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 		t.Error("the live database changed")
 	}
 	// --scratch is required with --opencode and refused without it.
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--opencode", "bench="+db), 2)
+	wantExit(t, invokeCmd(t, "", env, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--opencode", "bench="+db), 2)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1})+"\n")
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--scratch", scratch), 2)
+	wantExit(t, invokeCmd(t, "", env, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--scratch", scratch), 2)
 }
 
 // ---------------------------------------------------------------- rule 17: a day is a UTC day
@@ -1375,6 +1380,8 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 // and it landed in 2026-09-11.tsv with day_basis=utc. A stamp this tool cannot read is
 // rule 3's business: counted and printed, never skipped silently -- it vanished.
 func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1405,14 +1412,14 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	// The same, for the OpenCode reader.
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
-	fakeSqlite3(t,
+	_, env := fakeSqlite3(t,
 		ocRows(ocSession("s1", "", "/x/schema")),
 		ocRows(
 			ocMessage("k1", "s1", "2026-09-11T20:30:00-07:00", "p", "m", "3", "", "", "", "", "/x/schema"),
 			ocMessage("k2", "s1", "", "p", "m", "4", "", "", "", "", "/x/schema")),
 		ocRows(ocPart("k1", "s1", "", "/x/schema/a.go", "", "")))
 	out2 := mkdir(t, filepath.Join(dir, "out2"))
-	r = invoke(t, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir), "--opencode", "b="+db, "--scratch", scratch)
+	r = invokeCmd(t, "", env, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir), "--opencode", "b="+db, "--scratch", scratch)
 	wantExit(t, r, 1)
 	wantContains(t, read(t, filepath.Join(out2, "2026-09-12.tsv")), "m\tschema\t3\t")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")

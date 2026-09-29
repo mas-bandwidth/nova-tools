@@ -56,9 +56,13 @@ func (s BenchRunnerSite) Key() string { return s.File + " " + s.Func }
 
 // FindBenchRunners walks cmd/ and internal/ under root.
 func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
+	return FindBenchRunnersWith(defaultSourceSeams(), root)
+}
+
+func FindBenchRunnersWith(s SourceSeams, root string) ([]BenchRunnerSite, error) {
 	var sites []BenchRunnerSite
 	for _, dir := range []string{"cmd", "internal"} {
-		err := walkSourceDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+		err := s.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -78,11 +82,11 @@ func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
 			if strings.Contains(rel, "/testdata/") {
 				return nil
 			}
-			raw, err := readSourceFile(path)
+			raw, err := s.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			found, err := BenchRunnersInSource(rel, raw)
+			found, err := BenchRunnersInSourceWith(s, rel, raw)
 			if err != nil {
 				return err
 			}
@@ -99,7 +103,11 @@ func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
 
 // BenchRunnersInSource finds the sites in one file's source.
 func BenchRunnersInSource(rel string, src []byte) ([]BenchRunnerSite, error) {
-	fset, file, err := parseSource(rel, src, 0)
+	return BenchRunnersInSourceWith(defaultSourceSeams(), rel, src)
+}
+
+func BenchRunnersInSourceWith(s SourceSeams, rel string, src []byte) ([]BenchRunnerSite, error) {
+	fset, file, err := s.ParseFile(rel, src, 0)
 	if err != nil {
 		return nil, err
 	}

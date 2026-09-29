@@ -27,6 +27,14 @@ func runCLI(t *testing.T, stdin string, args ...string) (exit int, stdout, stder
 	return exit, out.String(), errb.String()
 }
 
+func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_MEMORY_AS_TOOL") == "1" {
+		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	_ = os.Setenv("NOVA_MEMORY_ROOT", corpus)
+	os.Exit(m.Run())
+}
+
 // ---------------------------------------------------------------------------
 // The no-guessing law: every missing flag is a refusal that names the flag.
 
@@ -126,7 +134,8 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 // did not mean, and answering "you already know this" about someone else's
 // memory is the worst possible way to be wrong.
 func TestRootIsNeverTakenFromTheEnvironment(t *testing.T) {
-	t.Setenv("NOVA_MEMORY_ROOT", corpus)
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "stats")
 	if exit != 2 {
 		t.Fatalf("exit = %d, want 2 — an environment variable must not supply the root; stdout: %s", exit, stdout)

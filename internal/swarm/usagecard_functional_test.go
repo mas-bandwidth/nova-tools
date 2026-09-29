@@ -85,12 +85,14 @@ func TestUsageFallsBackToLocalShareStore(t *testing.T) {
 // absence reason. The run must not fail on a number nobody can read; it writes the dash and
 // says why.
 func TestUsageRowWithoutSqlite(t *testing.T) {
+	t.Parallel()
 	dataHome := t.TempDir()
 	loadCardUsageStoreAt(t, filepath.Join(dataHome, "opencode", "opencode.db"))
-	t.Setenv("PATH", t.TempDir())
 	started, ended := cardUsageWindow()
 
-	usage, note, _, reason := ReadCardUsage(dataHome, started, ended)
+	usage, note, _, reason := ReadCardUsageWith(dataHome, started, ended, func(string) (string, error) {
+		return "", exec.ErrNotFound
+	})
 	if note == "" {
 		t.Fatal("no sqlite3 on PATH is a note, not silence")
 	}

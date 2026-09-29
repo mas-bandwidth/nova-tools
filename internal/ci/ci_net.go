@@ -99,6 +99,10 @@ func (r NetResult) ExitCode() int {
 // skipped so the fixtures are never read as offenders) and its allowlist
 // reader, whose `file:line kind date reason` rows are general enough for both.
 func CheckNet(root, allowlistPath string) (NetResult, error) {
+	return CheckNetWith(defaultSourceSeams(), root, allowlistPath)
+}
+
+func CheckNetWith(s SourceSeams, root, allowlistPath string) (NetResult, error) {
 	var res NetResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -106,9 +110,9 @@ func CheckNet(root, allowlistPath string) (NetResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkCITestFiles(root, func(rel string, raw []byte) error {
+	err = walkCITestFilesWith(s, root, func(rel string, raw []byte) error {
 		res.Tests++
-		findings, ok := scanNetFile(rel, raw)
+		findings, ok := scanNetFileWith(s, rel, raw)
 		if ok {
 			res.Findings = append(res.Findings, findings...)
 		}
@@ -174,7 +178,11 @@ func matchNetAllow(entries []waitAllow, used []bool, f NetFinding) int {
 // cannot carry the shapes this check reads. A file whose header carries a
 // nightly or soak build constraint is skipped whole.
 func scanNetFile(rel string, src []byte) ([]NetFinding, bool) {
-	fset, file, err := parseSource(rel, src, parser.ParseComments)
+	return scanNetFileWith(defaultSourceSeams(), rel, src)
+}
+
+func scanNetFileWith(s SourceSeams, rel string, src []byte) ([]NetFinding, bool) {
+	fset, file, err := s.ParseFile(rel, src, parser.ParseComments)
 	if err != nil {
 		return nil, false
 	}

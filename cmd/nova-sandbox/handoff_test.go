@@ -196,6 +196,8 @@ func (d *deletingVolumes) Delete(string) error {
 // the OUT line is printed before the DONE line, and the command's own status is
 // what the verb returns.
 func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
+	t.Parallel()
+
 	mount := t.TempDir()
 	if r, err := filepath.EvalSymlinks(mount); err == nil {
 		mount = r
@@ -203,23 +205,23 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 	out := t.TempDir()
 	vols := &deletingVolumes{mount: mount}
 
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-	runVolumes = vols
-	runSignals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
-	// The "command": it writes the card's receipt and its bundle on the volume,
-	// which is what a real card's last steps do.
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
-		writeOn(t, filepath.Join(mount, "work"), "RESULT.md", "RESULT card1 sha=abc\nDONE\n")
-		writeOn(t, filepath.Join(mount, "work"), "repo.bundle", "PACK\n")
-		done := make(chan int, 1)
-		done <- 0
-		return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
+	seams := runSeams{
+		volumes: vols,
+		signals: func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} },
+		// The "command": it writes the card's receipt and its bundle on the volume,
+		// which is what a real card's last steps do.
+		exec: func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+			writeOn(t, filepath.Join(mount, "work"), "RESULT.md", "RESULT card1 sha=abc\nDONE\n")
+			writeOn(t, filepath.Join(mount, "work"), "repo.bundle", "PACK\n")
+			done := make(chan int, 1)
+			done <- 0
+			return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
+		},
 	}
 
 	args := append([]string{"--name", "card1", "--size", "64m", "--out", out, "--"}, shellOf(t)...)
 	var stdout, stderr bytes.Buffer
-	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
+	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")}, seams)
 	errOut := stderr.String()
 	if code != 0 {
 		t.Fatalf("exit = %d, want the command's own 0\n%s", code, errOut)
@@ -248,26 +250,29 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 // refusal: a zero exit would tell the caller the artifacts are in --out when
 // they are not. The volume is still deleted.
 func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
+	t.Parallel()
+
 	mount := t.TempDir()
 	if r, err := filepath.EvalSymlinks(mount); err == nil {
 		mount = r
 	}
 	out := t.TempDir()
 	vols := &deletingVolumes{mount: mount}
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-	runVolumes = vols
-	runSignals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
-		done := make(chan int, 1)
-		done <- 0
-		return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
+
+	seams := runSeams{
+		volumes: vols,
+		signals: func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} },
+		exec: func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+			done := make(chan int, 1)
+			done <- 0
+			return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
+		},
 	}
 
 	args := append([]string{"--name", "card1", "--size", "64m", "--out", out,
 		"--artifact", "RESULT.md", "--"}, shellOf(t)...)
 	var stdout, stderr bytes.Buffer
-	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
+	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")}, seams)
 	errOut := stderr.String()
 	if code != sandbox.ExitRefused {
 		t.Fatalf("exit = %d, want %d: a clean command whose artifacts did not leave is not a clean run\n%s",

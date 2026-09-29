@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,6 +17,8 @@ import (
 // The git here is a script that sleeps, so the assertion is about the budget and not about
 // a network nobody has.
 func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: kills a hanging git behind a real budget; runs on the self-hosted legs and nightly")
 	}
@@ -26,21 +27,15 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 	}
 	fake := t.TempDir()
 	script := "#!/bin/sh\nexec sleep 30\n"
-	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	restore := gitTimeoutNanos.Load()
-	t.Cleanup(func() { gitTimeoutNanos.Store(restore) })
-	if err := SetGitTimeout(300 * time.Millisecond); err != nil {
+	fakeGit := filepath.Join(fake, "git")
+	if err := testbin.WriteExecutable(fakeGit, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// The assertion is on the refusal and not on elapsed time: a wall-clock bound here
 	// measures the machine's load, and the injected subprocess budget is what is under
 	// test. The refusal firing on the deadline is what says the call was cut short.
-	_, err := git(t.TempDir(), "fetch", "origin", "main")
+	_, err := gitWith(gitSeams{gitBin: fakeGit, timeout: 300 * time.Millisecond}, t.TempDir(), "fetch", "origin", "main")
 	if err == nil {
 		t.Fatal("a git that never returns was waited on forever and reported success")
 	}
@@ -54,21 +49,11 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 
 	// The other way: a budget that is not exceeded is not a refusal. A git that answers
 	// quickly answers.
-	//
-	// On a budget of its own, and a generous one, because THIS half is not about the
-	// deadline. Starting a subprocess out of this test binary is not free -- a fork of a
-	// race-instrumented process is a fork of everything it has mapped -- and under
-	// `-race -count=N` that alone has overrun 300ms here, which failed the test with the
-	// refusal that the OTHER half exists to prove happens. A wall-clock margin that has to
-	// hold for a fork is a wall clock in a test, so it is made wide enough not to be one.
-	if err := SetGitTimeout(30 * time.Second); err != nil {
-		t.Fatal(err)
-	}
 	quick := "#!/bin/sh\necho fine\n"
-	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755); err != nil {
+	if err := testbin.WriteExecutable(fakeGit, []byte(quick), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	out, err := git(t.TempDir(), "fetch", "origin", "main")
+	out, err := gitWith(gitSeams{gitBin: fakeGit, timeout: 30 * time.Second}, t.TempDir(), "fetch", "origin", "main")
 	if err != nil {
 		t.Fatalf("a git well inside the budget was refused: %v", err)
 	}

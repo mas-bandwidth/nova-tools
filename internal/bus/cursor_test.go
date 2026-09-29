@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// Every test in this file owns its own bus under t.TempDir and runs parallel, EXCEPT the
-// ones that assert a delta of NoteParses. That counter is one number for the whole process,
-// so a second test parsing a note beside them would be counted into an assertion that is an
-// exact number. They are the price of instrumentation that is process-wide, and the
-// omission is named here rather than left to be guessed at.
+// Every test in this file owns its own bus under t.TempDir and runs parallel.
+// Counts that assert a delta of parsed notes use NoteParsesIn(root) so tests
+// on independent buses do not see each other's parses.
 
 func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	t.Parallel()
@@ -353,6 +351,7 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 // The count is the claim: the notes it parses are the notes that CHANGED, and the one it is
 // carrying costs nothing at all.
 func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, map[string]string{
 		"from-bo/old.md":        "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-bo/new.md":        "From: Bo\nTo: Ada\nDate: Tue Sep  8 00:01:00 UTC 2026\nId: bo-111111111111\nSubject: new\n\nAnother question?\n",
@@ -367,7 +366,7 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	carried := OpenEntry{ID: "bo-abcdef012345", Kind: OpenNote, Heard: true, From: "Bo", Addr: "to",
 		Date: "2026-09-07T00:01:00Z", Path: "from-bo/old.md", Subject: "old"}
 
-	before := NoteParses()
+	before := NoteParsesIn(root)
 	res, err := InboxSince(root, c, me,
 		[]string{"from-bo/new.md", "from-bo/not-for-me.md"},
 		[]OpenEntry{carried}, 40, LegacyLine{})
@@ -376,7 +375,7 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	}
 	// TWO files opened: the two that changed. The one being carried is printed from its own
 	// entry, and RECEIPTS is not in the change set so it is not read either.
-	if got := NoteParses() - before; got != 2 {
+	if got := NoteParsesIn(root) - before; got != 2 {
 		t.Fatalf("parsed %d notes for 2 changed and 1 open, want 2: the read is not O(new)", got)
 	}
 	if len(res.Open) != 2 {
@@ -429,6 +428,7 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 // it sets is the flag in OPEN -- which is what lets the next run say HEARD without reading
 // RECEIPTS at all. Heard is still not answered: the entry stays.
 func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, map[string]string{
 		"from-bo/old.md":    "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-ada/RECEIPTS": "2026-09-09T12:34:56Z bo-abcdef012345\n",
@@ -452,12 +452,12 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 		t.Fatalf("a receipt outside the change set was read anyway: %+v", res.Open)
 	}
 	// In the change set, it sets the flag, and the entry stays open.
-	before := NoteParses()
+	before := NoteParsesIn(root)
 	res, err = InboxSince(root, c, me, []string{"from-ada/RECEIPTS"}, []OpenEntry{carried}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := NoteParses() - before; got != 0 {
+	if got := NoteParsesIn(root) - before; got != 0 {
 		t.Fatalf("reading RECEIPTS parsed %d notes; it is a line scan", got)
 	}
 	if len(res.Open) != 1 || !res.Open[0].Heard {
@@ -472,6 +472,7 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 // receipted, and is named on every run in between. Dropping it after one mention is how the
 // first version lost it: a `--full` read said so once, and no incremental run ever did again.
 func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, map[string]string{
 		"from-bo/prose.md": "Ada, this is prose and no header at all.\n\nMore prose.\n",
 	})
@@ -490,12 +491,12 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 	}
 	// The run after it, with NOTHING in the change set, still names it -- and that costs one
 	// parse, for this entry and nobody else's note.
-	before := NoteParses()
+	before := NoteParsesIn(root)
 	res, err = InboxSince(root, c, me, nil, res.Open, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := NoteParses() - before; got != 1 {
+	if got := NoteParsesIn(root) - before; got != 1 {
 		t.Fatalf("re-checking one unreadable entry parsed %d notes, want 1", got)
 	}
 	if len(res.Unreadable) != 1 || len(res.Open) != 1 {
@@ -533,6 +534,7 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 // note, which is the O(open) this design exists to remove. The direction is a stale line, not
 // a lost note.
 func TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
 	if err != nil {
@@ -541,12 +543,12 @@ func TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead(t *testing.T) {
 	me := mustParticipant(t, c, "Ada")
 	gone := OpenEntry{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to",
 		Date: "2026-09-07T00:01:00Z", Path: "from-bo/gone.md", Subject: "gone"}
-	before := NoteParses()
+	before := NoteParsesIn(root)
 	res, err := InboxSince(root, c, me, nil, []OpenEntry{gone}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := NoteParses() - before; got != 0 {
+	if got := NoteParsesIn(root) - before; got != 0 {
 		t.Fatalf("a carried entry cost %d parses, want 0", got)
 	}
 	if len(res.Open) != 1 {
@@ -941,6 +943,7 @@ The body.
 // The line applied to a change set and to a full walk, which are the two reads a bus
 // gets, kept in one rule so they cannot draw it differently.
 func TestTheLegacyLineLeavesOldNotesOffTheOpenListInBothReads(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/2026-08-01T0001Z-before-the-line.md"] = `From: Bo
 To: Ada
@@ -980,7 +983,7 @@ The body.
 	// A note already ON the open list from before the line was drawn leaves it too: the
 	// rule is about the note's date and not about how it arrived -- and the date is read
 	// from the ENTRY, so no note is opened to draw the line over a carried one.
-	before := NoteParses()
+	before := NoteParsesIn(root)
 	res, err = InboxSince(root, c, me, nil,
 		[]OpenEntry{{ID: "bo-aaaaaaaaaaaa", Kind: OpenNote, From: "Bo", Addr: "to",
 			Date: "2026-08-01T00:01:00Z", Path: "from-bo/2026-08-01T0001Z-before-the-line.md",
@@ -991,7 +994,7 @@ The body.
 	if len(res.Open) != 0 || res.Legacy != 1 {
 		t.Fatalf("a carried note behind the line stayed: open=%+v legacy=%d", res.Open, res.Legacy)
 	}
-	if got := NoteParses() - before; got != 0 {
+	if got := NoteParsesIn(root) - before; got != 0 {
 		t.Fatalf("drawing the line over a carried entry parsed %d notes, want 0", got)
 	}
 	// An entry with NO recorded date still falls on the same side as its note, because the
@@ -1049,6 +1052,7 @@ The checkpoint is pushed and the suite passed.
 // for a run whose cost is meant to be the size of the change: an unreadable entry is the
 // one entry that costs a parse per run.
 func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/2026-08-15-by-hand.md"] = byHand
 	files["from-bo/2026-09-08-by-hand.md"] = byHand
@@ -1081,7 +1085,7 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 	// And CARRIED, which is the shape the live inbox was in: both already on the open list
 	// from before the line was drawn. The old one leaves the list, is counted, and is not
 	// opened -- one parse for the two entries, and it belongs to the newer file.
-	before := NoteParses()
+	before := NoteParsesIn(root)
 	res, err = InboxSince(root, c, me, nil, []OpenEntry{
 		{Kind: OpenUnreadable, Path: old},
 		{Kind: OpenUnreadable, Path: recent},
@@ -1095,7 +1099,7 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 	if len(res.Open) != 1 || res.Open[0].Path != recent {
 		t.Fatalf("open = %+v, want only the file in front of the line", res.Open)
 	}
-	if got := NoteParses() - before; got != 1 {
+	if got := NoteParsesIn(root) - before; got != 1 {
 		t.Fatalf("the run parsed %d files, want 1: a file behind the line must not be opened", got)
 	}
 

@@ -21,14 +21,8 @@ import (
 // the card's result, and resets the kept worktree to base, so the next card never sees the
 // card's uncommitted state or its history.
 func TestAClipResetsTheWorktreeToBase(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
-
-	// Clip shells out to git, which inherits the test process environment; give it an
-	// identity so the commit never depends on a developer's git config.
-	t.Setenv("GIT_AUTHOR_NAME", "Test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "Test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 
 	// A fake git remote: a bare repository on disk, never the network.
 	remote := filepath.Join(root, "remote.git")
@@ -36,6 +30,8 @@ func TestAClipResetsTheWorktreeToBase(t *testing.T) {
 
 	seed := filepath.Join(root, "seed")
 	gitT(t, "", "clone", "-q", remote, seed)
+	gitT(t, seed, "config", "user.name", "Test")
+	gitT(t, seed, "config", "user.email", "test@example.com")
 	gitT(t, seed, "checkout", "-q", "-b", "dev")
 	mustWrite(t, filepath.Join(seed, "base.txt"), "base\n")
 	gitT(t, seed, "add", "-A")
@@ -44,6 +40,8 @@ func TestAClipResetsTheWorktreeToBase(t *testing.T) {
 
 	wt := filepath.Join(root, "worktrees", "acme", "nova-tools")
 	gitT(t, "", "clone", "-q", remote, wt)
+	gitT(t, wt, "config", "user.name", "Test")
+	gitT(t, wt, "config", "user.email", "test@example.com")
 	gitT(t, wt, "checkout", "-q", "dev")
 	gitT(t, wt, "checkout", "-q", "-b", "rowan/card-9302")
 

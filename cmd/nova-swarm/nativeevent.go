@@ -101,8 +101,12 @@ func emitCardEnd(parent context.Context, opt events.WriterOptions, cfg nativeRun
 // password never enters this process's environment or the harness's. A seat
 // that cannot be read says so in one line and the writer falls back to the
 // environment, which for a bench without the password is silence, as before.
-func seatEventLogin(opt events.WriterOptions) events.WriterOptions {
-	c, ok, err := seatcred.Active()
+func seatEventLogin(opt events.WriterOptions, sel ...*seatcred.Selection) events.WriterOptions {
+	s := seatcred.Process()
+	if len(sel) > 0 && sel[0] != nil {
+		s = sel[0]
+	}
+	c, ok, err := s.Active()
 	if !ok {
 		return opt
 	}
@@ -117,13 +121,17 @@ func seatEventLogin(opt events.WriterOptions) events.WriterOptions {
 		pwName = events.DefaultPasswordEnv
 	}
 	opt.Username = c.User
+	getenv := os.Getenv
+	if s.Getenv() != nil {
+		getenv = s.Getenv()
+	}
 	opt.Lookup = func(name string) string {
 		if name == pwName {
 			v := ""
 			_ = c.Password.Use(func(pw string) error { v = pw; return nil })
 			return v
 		}
-		return os.Getenv(name)
+		return getenv(name)
 	}
 	return opt
 }

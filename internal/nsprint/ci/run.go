@@ -323,6 +323,7 @@ type RunOptions struct {
 	Timeout     time.Duration // per check
 	Out         io.Writer     // one line per step; nil discards
 	Git         string        // git binary; empty: git
+	Environ     []string      // base process environment; empty/nil defaults to os.Environ()
 }
 
 // RunResult is what one pass did.
@@ -403,7 +404,7 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	fmt.Fprintf(out, "CLAIMED %s@%s attempt=%d checks=%d\n", c.Repo, c.SHA[:8], c.Attempt, len(c.Checks))
 	// Every check runs without the seat's Redis and secrets variables
 	// (env.go); the names dropped print once per claim, never a value.
-	env, dropped := checkEnviron()
+	env, dropped := checkEnviron(opt.Environ)
 	scrubbedNames := "-"
 	if len(dropped) > 0 {
 		scrubbedNames = strings.Join(dropped, ",")

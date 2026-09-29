@@ -45,6 +45,10 @@ func workerHelpFlag(arg string) bool {
 // and whether the optional class and budget fields hold. A description with no drift prints
 // one WORKER OK line, exit 0; one with drifts prints them, exit 2, and starts nothing.
 func cmdWorker(args []string, stdout, stderr io.Writer) int {
+	return cmdWorkerWithEnv(args, stdout, stderr, os.Getenv)
+}
+
+func cmdWorkerWithEnv(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) > 0 && workerHelpFlag(args[0]) {
 		verbflag.HelpIfAsked(args[:1], "worker")
 	}
@@ -85,7 +89,7 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " worker check", fmt.Sprintf("--max is 0 or more, got %d; 0 shows all", max))
 	}
 
-	w, drifts := checkWorkerDescription(path, requireEnv, os.Getenv)
+	w, drifts := checkWorkerDescription(path, requireEnv, getenv)
 	if len(drifts) == 0 {
 		fmt.Fprintf(stdout, "WORKER OK %s model=%s provider=%s class=%s\n",
 			oneline.Field(w.Name), oneline.Field(w.Model), oneline.Field(w.Provider), oneline.Field(dash(w.Class)))

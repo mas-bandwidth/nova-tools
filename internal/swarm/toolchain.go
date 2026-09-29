@@ -257,7 +257,11 @@ func toolchainRootPath(r ToolchainRoot, home string) (string, bool) {
 // that is not on PATH, or whose real path is under some other prefix -- a Go unpacked into
 // ~/sdk, a tool from /usr/bin -- names nothing: this entry is brew's copy and only brew's.
 func toolchainVersionDir(prefix, tool string) (string, bool) {
-	launcher, err := exec.LookPath(tool)
+	return toolchainVersionDirWith(prefix, tool, exec.LookPath)
+}
+
+func toolchainVersionDirWith(prefix, tool string, lookPath func(file string) (string, error)) (string, bool) {
+	launcher, err := lookPath(tool)
 	if err != nil {
 		return "", false
 	}

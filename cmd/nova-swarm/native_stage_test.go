@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,47 +13,21 @@ import (
 	"time"
 )
 
-// captureStageLine redirects os.Stdout around fn and returns the first line fn prints that
-// starts with "STAGE ", event-based: a goroutine scans the pipe as fn runs and signals a
-// channel the instant the line lands, so the test needs no sleep and no poll. The 30s
-// select arm is only a safety net far above any real staging time in these tests (a local
-// clone of a few-commit repo), never the thing the test waits on.
-func captureStageLine(t *testing.T, fn func()) string {
+// captureStageLine captures stage output written to the provided writer and returns the first line
+// that starts with "STAGE ".
+func captureStageLine(t *testing.T, fn func(io.Writer)) string {
 	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	orig := os.Stdout
-	os.Stdout = w
-	lineCh := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "STAGE ") {
-				lineCh <- line
-				return
-			}
+	var buf bytes.Buffer
+	fn(&buf)
+	scanner := bufio.NewScanner(&buf)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "STAGE ") {
+			return line
 		}
-		close(lineCh)
-	}()
-
-	fn()
-
-	os.Stdout = orig
-	w.Close()
-	defer r.Close()
-	select {
-	case line, ok := <-lineCh:
-		if !ok {
-			t.Fatalf("nativeRun printed no STAGE OK/FAIL line")
-		}
-		return line
-	case <-time.After(30 * time.Second):
-		t.Fatalf("timed out waiting for a STAGE OK/FAIL line (30s safety bound, not the wait itself)")
-		return ""
 	}
+	t.Fatalf("nativeRun printed no STAGE OK/FAIL line")
+	return ""
 }
 
 // TestStageUsesTheBenchMirrorAndTimesOut tests the stage requirements of mas-bandwidth/nova-tools#2882:
@@ -194,6 +169,8 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 // STAGE UNSEEN even though staging had already finished. RED WITHOUT THE FIX: nativeRun
 // prints nothing starting with "STAGE " and captureStageLine's 30s safety arm fires.
 func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	benchHome := filepath.Join(root, "bench-home")
@@ -220,8 +197,9 @@ func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
 	cardText := []byte("base-repo: https://example.com/mas-bandwidth/sample-repo.git\nbase-sha: " + headSha + "\n")
 	var errOut bytes.Buffer
 	var code int
-	line := captureStageLine(t, func() {
+	line := captureStageLine(t, func(w io.Writer) {
 		_, code = nativeRun(nativeRunConfig{
+			stdout:       w,
 			binary:       bin,
 			model:        "fake/fake-model",
 			label:        "card-stage-ok",
@@ -252,6 +230,8 @@ func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
 // only ever watches for STAGE OK hangs the same way on a staging failure, so the failure
 // path prints STAGE FAIL for exactly the same reason. RED WITHOUT THE FIX: no line printed.
 func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	benchHome := filepath.Join(root, "bench-home")
@@ -259,8 +239,9 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 	cardText := []byte("base-repo: https://example.com/mas-bandwidth/missing-mirror.git\nbase-sha: 1234567890123456789012345678901234567890\n")
 	var errOut bytes.Buffer
 	var code int
-	line := captureStageLine(t, func() {
+	line := captureStageLine(t, func(w io.Writer) {
 		_, code = nativeRun(nativeRunConfig{
+			stdout:       w,
 			binary:       bin,
 			model:        "fake/fake-model",
 			label:        "card-stage-fail",
@@ -292,6 +273,8 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 // FIX: `STAGE OK bench=vision repo= base= secs=0` and no <job>/repo, as on all 12 quack-0925b
 // cards.
 func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	benchHome := filepath.Join(root, "bench-home")
@@ -324,8 +307,9 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 		"base-sha: " + base + "\nPATHS: docs/quack/s00-0302-quack-hulk-flash.txt\n")
 	var errOut bytes.Buffer
 	var code int
-	line := captureStageLine(t, func() {
+	line := captureStageLine(t, func(w io.Writer) {
 		_, code = nativeRun(nativeRunConfig{
+			stdout:       w,
 			binary:       bin,
 			model:        "fake/fake-model",
 			label:        "card-pushed-header",
@@ -364,6 +348,8 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 // (exit 2) before any child starts, never `STAGE OK repo= base=` into an empty job dir.
 // A card with no repo line at all keeps today's behaviour (STAGE OK, nothing to stage).
 func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	benchHome := filepath.Join(root, "bench-home")
@@ -371,8 +357,9 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 	cardText := []byte("RESULT: card-unreadable-repo sha=123456789012\nREPO: nova-tools\nBASE: dev\nbase-sha: 1234567890123456789012345678901234567890\n")
 	var errOut bytes.Buffer
 	var code int
-	line := captureStageLine(t, func() {
+	line := captureStageLine(t, func(w io.Writer) {
 		_, code = nativeRun(nativeRunConfig{
+			stdout:       w,
 			binary:       bin,
 			model:        "fake/fake-model",
 			label:        "card-no-repo-staged",
@@ -399,8 +386,9 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 	// No repo line at all: nothing to stage, the card runs as before.
 	plain := []byte("RESULT: card-no-repo sha=123456789012\nKIND: read\n")
 	errOut.Reset()
-	line = captureStageLine(t, func() {
+	line = captureStageLine(t, func(w io.Writer) {
 		_, code = nativeRun(nativeRunConfig{
+			stdout:       w,
 			binary:       bin,
 			model:        "fake/fake-model",
 			label:        "card-no-repo",

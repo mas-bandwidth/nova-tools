@@ -4,6 +4,9 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,6 +67,26 @@ func steadyDeadline(budget time.Time) time.Time {
 	return budget
 }
 
+// transientMu protects transientDirs.
+var (
+	transientMu   sync.RWMutex
+	transientDirs = make(map[string]func(error) bool)
+)
+
+// armTransient arms a transient error hook for target (directory or file path).
+// It returns an unarm function suitable for t.Cleanup.
+func armTransient(target string, fn func(error) bool) func() {
+	clean := filepath.Clean(target)
+	transientMu.Lock()
+	transientDirs[clean] = fn
+	transientMu.Unlock()
+	return func() {
+		transientMu.Lock()
+		delete(transientDirs, clean)
+		transientMu.Unlock()
+	}
+}
+
 // forceTransientIO is the SEAM for the one thing a unix test cannot produce: a read that
 // collides. It is nil in every build but a test's, and when it is set it decides transience
 // in place of the platform's rule, so that the bound above can be proved on the machine
@@ -75,6 +98,31 @@ func steadyTransient(err error) bool {
 		return forceTransientIO(err)
 	}
 	return transientIO(err)
+}
+
+func steadyTransientFor(path string, err error) bool {
+	if path != "" {
+		clean := filepath.Clean(path)
+		transientMu.RLock()
+		for dir, fn := range transientDirs {
+			if clean == dir || strings.HasPrefix(clean, dir+string(filepath.Separator)) {
+				transientMu.RUnlock()
+				if fn != nil {
+					return fn(err)
+				}
+				return transientIO(err)
+			}
+		}
+		transientMu.RUnlock()
+	}
+	return steadyTransient(err)
+}
+
+func steadyTransientRename(from, to string, err error) bool {
+	if steadyTransientFor(to, err) {
+		return true
+	}
+	return steadyTransientFor(from, err)
 }
 
 // readFileSteady reads a whole file, waiting out a transient collision with a concurrent
@@ -92,7 +140,7 @@ func readFileSteadyBy(path string, budget time.Time) ([]byte, error) {
 	deadline := steadyDeadline(budget)
 	for {
 		raw, err := readRegular(path)
-		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
+		if err == nil || !steadyTransientFor(path, err) || !time.Now().Before(deadline) {
 			return raw, err
 		}
 		time.Sleep(steadyPoll)
@@ -110,7 +158,7 @@ func renameSteadyBy(from, to string, budget time.Time) error {
 	deadline := steadyDeadline(budget)
 	for {
 		err := os.Rename(from, to)
-		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
+		if err == nil || !steadyTransientRename(from, to, err) || !time.Now().Before(deadline) {
 			return err
 		}
 		time.Sleep(steadyPoll)

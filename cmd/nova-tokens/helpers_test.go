@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a
@@ -38,6 +41,88 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	var out, errb bytes.Buffer
 	exit := run(args, &out, &errb, now)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
+}
+
+// invokeWithEnv runs the binary in process with simulated environment lookup.
+func invokeWithEnv(t *testing.T, env map[string]string, args ...string) result {
+	t.Helper()
+	var out, errb bytes.Buffer
+	getenv := func(key string) string {
+		if env != nil {
+			if v, ok := env[key]; ok {
+				return v
+			}
+		}
+		return os.Getenv(key)
+	}
+	exit := runEnv(args, &out, &errb, foldStamp, getenv)
+	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
+}
+
+// invokeCmd runs the binary as a child process with isolated dir and env.
+func invokeCmd(t *testing.T, dir string, env []string, args ...string) result {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmdEnv := append([]string(nil), os.Environ()...)
+	if len(env) > 0 {
+		overrides := make(map[string]string, len(env))
+		for _, kv := range env {
+			if eq := strings.IndexByte(kv, '='); eq != -1 {
+				overrides[kv[:eq]] = kv[eq+1:]
+			}
+		}
+		var filtered []string
+		for _, kv := range cmdEnv {
+			if eq := strings.IndexByte(kv, '='); eq != -1 {
+				if _, ok := overrides[kv[:eq]]; ok {
+					continue
+				}
+			}
+			filtered = append(filtered, kv)
+		}
+		for k, v := range overrides {
+			filtered = append(filtered, k+"="+v)
+		}
+		cmdEnv = filtered
+	}
+	cmdEnv = append(cmdEnv, asToolEnv+"=1")
+	cmd.Env = cmdEnv
+
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err = cmd.Run()
+	exit := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		exit = ee.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
+}
+
+// invokeCmdOpens runs the binary as a child process and returns the result and how many
+// source files that child process opened (via tokens.Opens()).
+func invokeCmdOpens(t *testing.T, dir string, env []string, args ...string) (result, int64) {
+	t.Helper()
+	opensFile := filepath.Join(t.TempDir(), "opens.txt")
+	env = append(env, "NOVA_TOKENS_OPENS_LOG="+opensFile)
+	r := invokeCmd(t, dir, env, args...)
+	raw, err := os.ReadFile(opensFile)
+	if err != nil {
+		t.Fatalf("reading opens count: %v", err)
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		t.Fatalf("parsing opens count %q: %v", string(raw), err)
+	}
+	return r, n
 }
 
 func wantExit(t *testing.T, r result, want int) {
@@ -162,21 +247,29 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 // which is where `providerID`, `modelID`, `tokens.input`, `tokens.cache.write`,
 // `path.cwd` and a tool part's `state.input.*` live. A fake that answered bare columns
 // would be a fixture only this code could read.
-func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string) {
+func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string, env []string) {
 	t.Helper()
 	answers := mkdir(t, filepath.Join(t.TempDir(), "answers"))
 	write(t, filepath.Join(answers, "sessions"), sessions)
 	write(t, filepath.Join(answers, "messages"), messages)
 	write(t, filepath.Join(answers, "parts"), parts)
-	fakeSqlite3OnPath(t, answers)
-	return filepath.Join(answers, fakeArgvLog)
+	bin := placeFakeSqlite3(t)
+	env = []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		fakeSqlite3Env + "=" + answers,
+	}
+	return filepath.Join(answers, fakeArgvLog), env
 }
 
 // fakeSqlite3Sleeping puts a stub sqlite3 on PATH that answers nothing and outlives any
 // timeout a test would set: the subprocess rule 19 is about.
-func fakeSqlite3Sleeping(t *testing.T) {
+func fakeSqlite3Sleeping(t *testing.T) (env []string) {
 	t.Helper()
-	fakeSqlite3OnPath(t, fakeSleepMode)
+	bin := placeFakeSqlite3(t)
+	return []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		fakeSqlite3Env + "=" + fakeSleepMode,
+	}
 }
 
 // The fake sqlite3 is THIS TEST BINARY under another name, re-entered through TestMain.
@@ -194,10 +287,9 @@ const (
 	fakeSleep      = 30 * time.Second
 )
 
-// fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
-// possible) at <tmp>/bin/sqlite3[.exe], puts that directory
-// first on PATH, and hands the placed program its mode through the environment.
-func fakeSqlite3OnPath(t *testing.T, mode string) {
+// placeFakeSqlite3 places the test binary (by link, a copy only where a link is not
+// possible) at <tmp>/bin/sqlite3[.exe] and returns the bin directory.
+func placeFakeSqlite3(t *testing.T) string {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -211,8 +303,7 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 	if err := testbin.Place(self, filepath.Join(bin, name)); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv(fakeSqlite3Env, mode)
+	return bin
 }
 
 // TestMain is the fake's other half: with the mode set in the environment this binary is
@@ -221,11 +312,20 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 // With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
 // a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
 func TestMain(m *testing.M) {
-	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
-		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
+	if strings.HasPrefix(filepath.Base(os.Args[0]), "sqlite3") {
+		if mode := os.Getenv(fakeSqlite3Env); mode != "" {
+			os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
+		}
 	}
 	if os.Getenv(asToolEnv) != "" {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+		code := run(os.Args[1:], os.Stdout, os.Stderr, foldStamp)
+		if logPath := os.Getenv("NOVA_TOKENS_OPENS_LOG"); logPath != "" {
+			_ = os.WriteFile(logPath, []byte(strconv.FormatInt(tokens.Opens(), 10)), 0o644)
+		}
+		os.Exit(code)
+	}
+	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
+		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
 	os.Exit(m.Run())
 }

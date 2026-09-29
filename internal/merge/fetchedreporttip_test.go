@@ -61,13 +61,6 @@ func reportTipLab(t *testing.T) (lane, tip, fetchHeadPath, trackingRef string) {
 	return lane, tip, fetchHeadPath, trackingRef
 }
 
-func reportNonce(t *testing.T, nonce string) {
-	t.Helper()
-	old := newReportFetchNonce
-	newReportFetchNonce = func() (string, error) { return nonce, nil }
-	t.Cleanup(func() { newReportFetchNonce = old })
-}
-
 func reportRefNames(t *testing.T, lane string) []string {
 	t.Helper()
 	out := tipGit(t, lane, "for-each-ref", "--format=%(refname)", reportFetchedRefPrefix)
@@ -344,6 +337,7 @@ func TestWithFetchedReportTipCleanupCASPreservesReplacement(t *testing.T) {
 }
 
 func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *testing.T) {
+	t.Parallel()
 	t.Run("invalid branch", func(t *testing.T) {
 		runner := &reportRunner{}
 		records := NewRecords(t.TempDir(), "refs/heads/nova-merge/lane", "origin", NewGit(t.TempDir(), time.Second, runner), time.Second)
@@ -359,11 +353,11 @@ func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *test
 		lane, _, _, _ := reportTipLab(t)
 		oldTip := tipGit(t, lane, "rev-parse", "HEAD")
 		nonce := strings.Repeat("a", 32)
-		reportNonce(t, nonce)
 		ref := reportFetchedRefPrefix + nonce
 		tipGit(t, lane, "update-ref", ref, oldTip)
 		runner := &reportRunner{}
 		records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
+		records.NewReportFetchNonce = func() (string, error) { return nonce, nil }
 		err := records.WithFetchedReportTip(func(string) error { return nil })
 		if err == nil || !strings.Contains(err.Error(), "could not reserve private") {
 			t.Fatalf("existing private destination must refuse, got %v", err)

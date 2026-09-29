@@ -193,8 +193,16 @@ const winRemedy = "run: nova-sandbox run --name <n> --scratch <C:\\nova> [--time
 // runDisposableWindows is the windows verb from the look onwards. Like runDisposable it is
 // one function on purpose: from the moment the place exists there is exactly ONE path to
 // the exit, and that path deletes it.
-func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
-	started := runNow()
+func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string, optSeams ...runSeams) int {
+	s := runSeams{}.withDefaults()
+	if len(optSeams) > 0 {
+		s = optSeams[0].withDefaults()
+	}
+	return runDisposableWindowsWith(s, f, deadline, stdin, stdout, stderr, env)
+}
+
+func runDisposableWindowsWith(s runSeams, f runFlags, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
+	started := s.now()
 	refuse := func(reason, format string, a ...any) int {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n%s\n",
 			oneline.Field(reason), oneline.Escape(fmt.Sprintf(format, a...)), winRemedy)
@@ -214,7 +222,7 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 	// here rather than inside Start so that a machine with no AppContainer body never gets a
 	// scratch directory made on it and removed again for nothing.
 	if f.place == placeJob {
-		if missing, ok := runWinWall(); !ok {
+		if missing, ok := s.winWall(); !ok {
 			return refuse("no_sandbox",
 				"the windows wall (%s) is not built in this binary: the disposable PLACE is -- the Job Object and the per-run scratch -- and a place without a wall is a directory that gets deleted, which is hygiene and not containment. This tool does not run a command it cannot contain. Two remedies: --place wsb, where the boundary is the VM and not the AppContainer, or run the card on darwin", oneline.Escape(missing))
 		}
@@ -222,7 +230,7 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 
 	dir := filepath.Join(f.scratch, winScratchPrefix+f.name)
 
-	exists, err := step(stderr, "look", func() (bool, error) { return runWinPlace.Exists(dir) })
+	exists, err := stepWith(s.now, stderr, "look", func() (bool, error) { return s.winPlace.Exists(dir) })
 	if err != nil {
 		return refuse("volume_failed", "the scratch directories under %s could not be read: %s", oneline.Escape(f.scratch), oneline.Err(err))
 	}
@@ -232,17 +240,17 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 	}
 
 	if f.place == placeWSB {
-		return runWSB(f, dir, deadline, stderr, started)
+		return runWSBWith(s, f, dir, deadline, stderr, started)
 	}
 
 	// W1: BOTH or NEITHER. The scratch is made first because the job's kill-on-close means
 	// an orphaned job handle dies with this process anyway, while an orphaned directory
 	// does not -- so the half that can leak is the half that is unmade by hand below.
-	if err := stepErr(stderr, "create", func() error { return runWinPlace.MakeScratch(dir) }); err != nil {
+	if err := stepErrWith(s.now, stderr, "create", func() error { return s.winPlace.MakeScratch(dir) }); err != nil {
 		return refuse("volume_failed", "the disposable scratch %s could not be created: %s", oneline.Escape(dir), oneline.Err(err))
 	}
 
-	job, err := step(stderr, "job", func() (winJob, error) { return runWinPlace.CreateJob(f.limits()) })
+	job, err := stepWith(s.now, stderr, "job", func() (winJob, error) { return s.winPlace.CreateJob(f.limits()) })
 	if err != nil {
 		// W1's red test is exactly this path: a windows run creates BOTH or NEITHER. A
 		// scratch with no job leaves a survivor holding the directory this verb deletes, so
@@ -251,17 +259,21 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 		// way out of this verb.
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n%s\n", oneline.Field("volume_failed"),
 			oneline.Escape(fmt.Sprintf("the Job Object could not be created, so the scratch made beside it is being removed and nothing was run: %s", oneline.Err(err))), winRemedy)
-		return finishWindows(stderr, f.name, f.scratch, dir, sandbox.ExitRefused, started)
+		return finishWindowsWith(s, stderr, f.name, f.scratch, dir, sandbox.ExitRefused, started)
 	}
 
 	// ONE exit from here. Whatever the run does, the job is closed and the scratch goes.
-	code := runInWinPlace(f, dir, job, deadline, stdin, stdout, stderr, env)
-	return finishWindows(stderr, f.name, f.scratch, dir, code, started)
+	code := runInWinPlaceWith(s, f, dir, job, deadline, stdin, stdout, stderr, env)
+	return finishWindowsWith(s, stderr, f.name, f.scratch, dir, code, started)
 }
 
 // runInWinPlace builds the wall around the scratch and runs the command inside the job.
 // Its answer is the status the run earned; the place's fate is finishWindows's business.
 func runInWinPlace(f runFlags, dir string, job winJob, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
+	return runInWinPlaceWith(defaultRunSeams(), f, dir, job, deadline, stdin, stdout, stderr, env)
+}
+
+func runInWinPlaceWith(s runSeams, f runFlags, dir string, job winJob, deadline time.Duration, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
 	refuse := func(reason, format string, a ...any) int {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n%s\n",
 			oneline.Field(reason), oneline.Escape(fmt.Sprintf(format, a...)), winRemedy)
@@ -303,7 +315,7 @@ func runInWinPlace(f runFlags, dir string, job winJob, deadline time.Duration, s
 		oneline.Field(p.Net()), oneline.Field(p.Cwd), base64Cwd(p.Cwd), p.AncestorCount(),
 		oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
 
-	started, err := runWinPlace.Start(job, winStartSpec{Policy: p, Env: childEnv, Stdin: stdin, Stdout: stdout, Stderr: stderr})
+	started, err := s.winPlace.Start(job, winStartSpec{Policy: p, Env: childEnv, Stdin: stdin, Stdout: stdout, Stderr: stderr})
 	if err != nil {
 		var r sandbox.Refusal
 		if asRefusal(err, &r) {
@@ -320,14 +332,14 @@ func runInWinPlace(f runFlags, dir string, job winJob, deadline time.Duration, s
 		defer timer.Stop()
 		deadlineC = timer.C
 	}
-	sigs, stop := runSignals()
+	sigs, stop := s.signals()
 	defer stop()
 
 	closeJob := func() {
 		// W2: closing the tool's last handle terminates every process still in the job,
 		// including a grandchild a harness spawned and abandoned. There is no grace and no
 		// escalation, because there is no signal to escalate FROM: windows has none.
-		_ = stepErr(stderr, "kill", func() error { return runWinPlace.CloseJob(job) })
+		_ = stepErrWith(s.now, stderr, "kill", func() error { return s.winPlace.CloseJob(job) })
 	}
 	code, timedOut, interrupted := superviseWindows(started.done, deadlineC, sigs, closeJob)
 	if timedOut {
@@ -381,12 +393,16 @@ func superviseWindows(done <-chan int, deadline <-chan time.Time, sigs <-chan os
 // ERROR_SHARING_VIOLATION, so the only way to remove a directory holding a running .exe is
 // to stop the .exe first.
 func finishWindows(stderr io.Writer, name, root, dir string, code int, started time.Time) int {
-	freed, err := runWinPlace.Used(dir)
+	return finishWindowsWith(defaultRunSeams(), stderr, name, root, dir, code, started)
+}
+
+func finishWindowsWith(s runSeams, stderr io.Writer, name, root, dir string, code int, started time.Time) int {
+	freed, err := s.winPlace.Used(dir)
 	if err != nil {
 		freed = 0
 	}
-	rmErr := stepErr(stderr, "delete", func() error { return runWinPlace.RemoveTree(root, dir, winRemoveWindow) })
-	wall := runNow().Sub(started).Seconds()
+	rmErr := stepErrWith(s.now, stderr, "delete", func() error { return s.winPlace.RemoveTree(root, dir, winRemoveWindow) })
+	wall := s.now().Sub(started).Seconds()
 	if rmErr != nil {
 		fmt.Fprintf(stderr, "SANDBOX DONE name=%s exit=%d wall=%.3f freed=%d\n", oneline.Field(name), code, wall, 0)
 		// The remedy is a line to RUN, in the grammar's own shape: literal quotes around a
@@ -414,12 +430,16 @@ func finishWindows(stderr io.Writer, name, root, dir string, code int, started t
 // running instance per machine, which is why it is never the pool's: a pool of workers each
 // wanting one is a queue of one.
 func runWSB(f runFlags, dir string, deadline time.Duration, stderr io.Writer, started time.Time) int {
+	return runWSBWith(defaultRunSeams(), f, dir, deadline, stderr, started)
+}
+
+func runWSBWith(s runSeams, f runFlags, dir string, deadline time.Duration, stderr io.Writer, started time.Time) int {
 	refuse := func(reason, format string, a ...any) int {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n%s\n",
 			oneline.Field(reason), oneline.Escape(fmt.Sprintf(format, a...)), winRemedy)
 		return sandbox.ExitRefused
 	}
-	edition, ok, err := runWinPlace.WSBAvailable()
+	edition, ok, err := s.winPlace.WSBAvailable()
 	if err != nil {
 		return refuse("no_wsb", "whether this machine has Windows Sandbox could not be read: %s", oneline.Err(err))
 	}
@@ -427,14 +447,14 @@ func runWSB(f runFlags, dir string, deadline time.Duration, stderr io.Writer, st
 		return refuse("no_wsb",
 			"this machine is Windows %s and Windows Sandbox is not available on it: the feature is Pro and Enterprise only and the optional feature Containers-DisposableClientVM must already be enabled. Enable it, or run under the default --place job", oneline.Escape(edition))
 	}
-	if who, running, err := runWinPlace.WSBRunning(); err != nil {
+	if who, running, err := s.winPlace.WSBRunning(); err != nil {
 		return refuse("no_wsb", "whether a Windows Sandbox is already running could not be read: %s", oneline.Err(err))
 	} else if running {
 		return refuse("wsb_busy",
 			"a Windows Sandbox is already running on this machine (%s) and windows permits one instance at a time; this verb refuses rather than waits, because a silent wait on a single-instance resource is a queue nobody can see. Close it, or run under --place job", oneline.Escape(who))
 	}
 
-	if err := stepErr(stderr, "create", func() error { return runWinPlace.MakeScratch(dir) }); err != nil {
+	if err := stepErrWith(s.now, stderr, "create", func() error { return s.winPlace.MakeScratch(dir) }); err != nil {
 		return refuse("volume_failed", "the mapped writable folder %s could not be created: %s", oneline.Escape(dir), oneline.Err(err))
 	}
 
@@ -446,17 +466,17 @@ func runWSB(f runFlags, dir string, deadline time.Duration, stderr io.Writer, st
 		MemMB:   megabytesOf(f.limits().MemoryBytes),
 		Net:     false,
 	})
-	if err := stepErr(stderr, "wsb", func() error { return runWinPlace.StartWSB(file, xml) }); err != nil {
+	if err := stepErrWith(s.now, stderr, "wsb", func() error { return s.winPlace.StartWSB(file, xml) }); err != nil {
 		code := refuse("no_wsb", "WindowsSandbox.exe could not be started on %s: %s", oneline.Escape(file), oneline.Err(err))
-		return finishWindows(stderr, f.name, f.scratch, dir, code, started)
+		return finishWindowsWith(s, stderr, f.name, f.scratch, dir, code, started)
 	}
 
-	code := waitForWSBExit(dir, deadline, stderr)
+	code := waitForWSBExitWith(s, dir, deadline, stderr)
 	if code == exitTimeout {
 		fmt.Fprintf(stderr, "SANDBOX NOTE the guest wrote no %s inside --timeout %s; the VM is closed and its disk discarded, and the command's own status is not knowable from here\n",
 			wsbExitFile, oneline.Field(f.timeout))
 	}
-	return finishWindows(stderr, f.name, f.scratch, dir, code, started)
+	return finishWindowsWith(s, stderr, f.name, f.scratch, dir, code, started)
 }
 
 // waitForWSBExit is the one place the contract bends (W10). WindowsSandbox.exe returns as
@@ -466,6 +486,10 @@ func runWSB(f runFlags, dir string, deadline time.Duration, stderr io.Writer, st
 // this is reached (validateRun), because without one a guest that never writes the file is
 // a wait with no end.
 func waitForWSBExit(dir string, deadline time.Duration, stderr io.Writer) int {
+	return waitForWSBExitWith(defaultRunSeams(), dir, deadline, stderr)
+}
+
+func waitForWSBExitWith(s runSeams, dir string, deadline time.Duration, stderr io.Writer) int {
 	path := filepath.Join(dir, wsbExitFile)
 	var deadlineC <-chan time.Time
 	if deadline > 0 {
@@ -473,9 +497,9 @@ func waitForWSBExit(dir string, deadline time.Duration, stderr io.Writer) int {
 		defer t.Stop()
 		deadlineC = t.C
 	}
-	tick := runWinPoll(wsbPoll)
+	tick := s.winPoll(wsbPoll)
 	for {
-		if code, ok := runWinReadExit(path); ok {
+		if code, ok := s.winReadExit(path); ok {
 			return code
 		}
 		select {

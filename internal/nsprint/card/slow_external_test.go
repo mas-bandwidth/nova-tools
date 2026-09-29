@@ -31,6 +31,8 @@ import (
 // read, and wall_max_s on the card hash. The cap comes from the card's est
 // field, and from cfg:card wall_max_min when the card carries no EST.
 func TestWrapperWallCapEndsTheCard(t *testing.T) {
+	t.Parallel()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +51,8 @@ func TestWrapperWallCapEndsTheCard(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := context.Background()
 			st, client := newSprint(t)
 			id := card.Identity{Sprint: "control-wall", Label: "card-wall-" + tc.name, BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
@@ -57,10 +61,9 @@ func TestWrapperWallCapEndsTheCard(t *testing.T) {
 			if err := tc.seed(ctx, client, id); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv(fakeHarnessEnv, "hang")
-			t.Setenv(fakeGateEnv, filepath.Join(t.TempDir(), "never"))
-
+			never := filepath.Join(t.TempDir(), "never")
 			h := newHarnessRun(t, id, self)
+			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=hang", fakeGateEnv+"="+never)
 			h.cfg.WallAfter = nil // the real timer: the harness really runs past it
 			ledger := &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}
 			start := time.Now()

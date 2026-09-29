@@ -1048,6 +1048,9 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_CHECK_AS_TOOL") == "1" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	code := m.Run()
 	if largeSelf500Dir != "" {
 		_ = os.RemoveAll(largeSelf500Dir)

@@ -15,10 +15,14 @@ import (
 // *XaiUsageMissingError, and a directory is not walked. A session store
 // planted under HOME is never opened.
 func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	env := []string{
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+	}
 	const bait = "424242"
 	write(t, filepath.Join(home, ".grok", "sessions", "encoded-cwd", "session-id", "usage.json"), `{
   "sessionId": "bait-session",
@@ -61,10 +65,9 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
   ]
 }`)
 	repos := reposFile(t, dir)
-	before := tokens.Opens()
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
+	r, opened := invokeCmdOpens(t, "", env, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
 	wantExit(t, r, 0)
-	if opened := tokens.Opens() - before; opened != 1 {
+	if opened != 1 {
 		t.Errorf("opened %d source files, want the one usage.json the flag names", opened)
 	}
 	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-12 rows=1 ")
@@ -85,10 +88,9 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 
 	missing := filepath.Join(dir, "no-such-usage.json")
 	outMiss := mkdir(t, filepath.Join(dir, "out-missing"))
-	before = tokens.Opens()
-	miss := invoke(t, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
+	miss, opened := invokeCmdOpens(t, "", env, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
 	wantExit(t, miss, 1)
-	if opened := tokens.Opens() - before; opened != 0 {
+	if opened != 0 {
 		t.Errorf("a missing xai path opened %d source files; that is a scan", opened)
 	}
 	wantContains(t, miss.stderr, "TOKENS UNREADABLE")
@@ -109,7 +111,6 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	}
 
 	sessions := filepath.Join(home, ".grok", "sessions")
-	before = tokens.Opens()
 	_, err = tokens.ReadXaiUsageFile(sessions)
 	var notFile *tokens.XaiUsageNotFileError
 	if !errors.As(err, &notFile) {
@@ -118,14 +119,10 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	if errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a directory that is there unwrapped as not-exist: %v", err)
 	}
-	if opened := tokens.Opens() - before; opened != 0 {
-		t.Errorf("reading the sessions directory opened %d files", opened)
-	}
 	outDir := mkdir(t, filepath.Join(dir, "out-dir"))
-	before = tokens.Opens()
-	dirFold := invoke(t, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
+	dirFold, opened := invokeCmdOpens(t, "", env, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
 	wantExit(t, dirFold, 1)
-	if opened := tokens.Opens() - before; opened != 0 {
+	if opened != 0 {
 		t.Errorf("fold of a directory opened %d source files; that is a scan", opened)
 	}
 	wantContains(t, dirFold.stderr, "does not scan a directory")

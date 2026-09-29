@@ -35,11 +35,52 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// stagedEnv provides the execution dependencies for staged git operations,
+// allowing tests to substitute a hermetic or fake git runner without
+// mutating the global process environment.
+type stagedEnv struct {
+	gitBin            string // default "" uses "git"
+	dogfoodClock      func() time.Time
+	dogfoodGitRunner  dogfood.Runner
+	dogfoodHelpRunner dogfood.HelpRunner
+}
+
+func (e stagedEnv) clock() func() time.Time {
+	if e.dogfoodClock != nil {
+		return e.dogfoodClock
+	}
+	return dogfoodClock
+}
+
+func (e stagedEnv) gitRunner() dogfood.Runner {
+	if e.dogfoodGitRunner != nil {
+		return e.dogfoodGitRunner
+	}
+	return dogfoodGitRunner
+}
+
+func (e stagedEnv) helpRunner() dogfood.HelpRunner {
+	if e.dogfoodHelpRunner != nil {
+		return e.dogfoodHelpRunner
+	}
+	return dogfoodHelpRunner
+}
+
+func (e stagedEnv) cmd(args ...string) *exec.Cmd {
+	bin := "git"
+	if e.gitBin != "" {
+		bin = e.gitBin
+	}
+	return exec.Command(bin, args...)
+}
 
 // stagedRun drives one `nova-check nocode --staged --dir <repo>` advisory and
 // returns the exit code: 0 with a count of what was classified when the index
@@ -47,6 +88,10 @@ import (
 // finding on stderr, 2 for every refusal. --dir is required at the verb, on
 // the no-guessing law, and this function never sees it empty.
 func stagedRun(dir string, allow []string, deny []string, source string, failMax int, stdout, stderr io.Writer) int {
+	return stagedRunWith(dir, allow, deny, source, failMax, stdout, stderr, stagedEnv{})
+}
+
+func stagedRunWith(dir string, allow []string, deny []string, source string, failMax int, stdout, stderr io.Writer, env stagedEnv) int {
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
@@ -63,15 +108,15 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 
 	// The root test, then the base detector, then the one record source: each
 	// refusal below is exit 2, and none of them may be read as a clean tree.
-	root, rerr := stagedRoot(dir)
+	root, rerr := stagedRootWith(dir, env)
 	if rerr != nil {
 		return refuse(stderr, " nocode", rerr.Error())
 	}
-	base, berr := stagedBase(root)
+	base, berr := stagedBaseWith(root, env)
 	if berr != nil {
 		return refuse(stderr, " nocode", berr.Error())
 	}
-	raw, derr := stagedGit(root, "diff-index", "-r", "--ignore-submodules=none", "--cached", "-z", base, "--")
+	raw, derr := stagedGitWith(env, root, "diff-index", "-r", "--ignore-submodules=none", "--cached", "-z", base, "--")
 	if derr != nil {
 		// Every dynamic piece of a refusal reaches the stream through refuse,
 		// which escapes the whole line; oneline.Err escapes git's text here
@@ -148,7 +193,7 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 		}
 	}
 
-	heads, herr := stagedBlobHeads(root, blobs)
+	heads, herr := stagedBlobHeads(env, root, blobs)
 	if herr != nil {
 		return refuse(stderr, " nocode", oneline.Err(herr))
 	}
@@ -202,7 +247,11 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 // linked worktree and in a submodule, both legitimate places to commit from.
 // The resolved root is what every later git call runs with -C.
 func stagedRoot(dir string) (string, error) {
-	out, err := stagedGit(dir, "rev-parse", "--show-toplevel")
+	return stagedRootWith(dir, stagedEnv{})
+}
+
+func stagedRootWith(dir string, env stagedEnv) (string, error) {
+	out, err := stagedGitWith(env, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", fmt.Errorf("--dir %s is not the root of a git repository (git rev-parse --show-toplevel: %s)", dir, err)
 	}
@@ -249,11 +298,15 @@ func stagedResolved(dir string) (string, error) {
 // is gated like every later one, because skipping the check where there is no
 // HEAD makes the first commit the one place machinery enters unexamined.
 func stagedBase(root string) (string, error) {
-	if err := exec.Command("git", "-C", root, "rev-parse", "-q", "--verify", "HEAD").Run(); err != nil {
+	return stagedBaseWith(root, stagedEnv{})
+}
+
+func stagedBaseWith(root string, env stagedEnv) (string, error) {
+	if err := env.cmd("-C", root, "rev-parse", "-q", "--verify", "HEAD").Run(); err != nil {
 		// Run INSIDE the repository: outside one this command answers the
 		// sha1 spelling regardless of what the repository is, and the sha1
 		// constant 4b825dc6... names no object a sha256 repository knows.
-		out, herr := stagedGit(root, "hash-object", "-t", "tree", os.DevNull)
+		out, herr := stagedGitWith(env, root, "hash-object", "-t", "tree", os.DevNull)
 		if herr != nil {
 			return "", fmt.Errorf("HEAD is unborn and the empty tree could not be obtained inside %s: %s", root, herr)
 		}
@@ -274,7 +327,11 @@ func stagedBase(root string) (string, error) {
 // implementer who read a FAILED diff-index's empty stdout as "nothing is
 // staged" would ship a gate that goes green with the commit unexamined.
 func stagedGit(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	return stagedGitWith(stagedEnv{}, root, args...)
+}
+
+func stagedGitWith(env stagedEnv, root string, args ...string) (string, error) {
+	cmd := env.cmd(append([]string{"-C", root}, args...)...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -408,7 +465,7 @@ type stagedBlobHead struct {
 // buffer a whole object, since a staged blob may be gigabytes while two bytes
 // decide a shebang. `missing` and `ambiguous` replies are one line with no
 // body and desync a reader that assumes one.
-func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHead, error) {
+func stagedBlobHeads(env stagedEnv, root string, recs []stagedRecord) (map[string]stagedBlobHead, error) {
 	var order []string
 	seen := map[string]bool{}
 	for _, r := range recs {
@@ -424,7 +481,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 	if len(order) == 0 {
 		return heads, nil
 	}
-	cmd := exec.Command("git", "-C", root, "cat-file", "--batch")
+	cmd := env.cmd("-C", root, "cat-file", "--batch")
 	// stderr does NOT share the stdout pipe: the batch's diagnostics print
 	// there, and a reader that shares the pipe desynchronises on exactly the
 	// frame this function exists to keep.

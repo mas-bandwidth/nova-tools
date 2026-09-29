@@ -102,8 +102,10 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 // stands, so the test moves there rather than rewriting them -- a rewritten
 // path is no longer the line the document promised.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
-	t.Chdir(repoRoot(t))
-	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
+	t.Parallel()
+
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +129,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// The sitting: every documented command, in order, in one temp-free run.
 	// A command that could not be invoked at all stops the sitting, because
 	// every line after it would be compared against a state that never happened.
-	run := runDocumented(t)
+	run := runDocumented(t, root)
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
 		res, err := run(s)
@@ -143,13 +145,13 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 // runDocumented calls this binary's own entry point with the documented
 // arguments, opening the file a `< path` redirect names -- relative to the
-// checkout root, where the test now stands and where the document's reader does.
-func runDocumented(t *testing.T) onboarding.Runner {
+// checkout root, where the document's reader stands.
+func runDocumented(t *testing.T, root string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		stdin := io.Reader(strings.NewReader(""))
 		if s.Stdin != "" {
-			f, err := os.Open(s.Stdin)
+			f, err := os.Open(filepath.Join(root, s.Stdin))
 			if err != nil {
 				return onboarding.Result{}, err
 			}

@@ -136,6 +136,9 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	fs.SetOutput(io.Discard)
 	var bin, outPath, file string
 	timeout, budget := snapshotChildTimeout, snapshotBudget
+	if env.SnapshotChildTimeout > 0 {
+		timeout = env.SnapshotChildTimeout
+	}
 	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
 	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
 	fs.StringVar(&file, "file", "", "manifest of adopted tools")

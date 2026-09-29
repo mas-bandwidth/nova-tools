@@ -208,6 +208,8 @@ INSERT INTO message (data, time_created) VALUES (json_object('role','assistant',
 // asserted rather than inferred: the loop is driven against a reader that is slower than
 // its own interval, and no two reads are ever in flight together.
 func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	needsSQLite(t)
 	dataHome := t.TempDir()
@@ -226,9 +228,12 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 	if err := testbin.WriteExecutable(filepath.Join(slow, swarm.SQLiteBinary), []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := startLiveSampler(dataHome, 50*time.Millisecond, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
+	cfg := nativeRunConfig{
+		tokens:    1 << 30,
+		sqliteCmd: filepath.Join(slow, swarm.SQLiteBinary),
+	}
+	s := startLiveSampler(dataHome, 50*time.Millisecond, cfg, filepath.Join(dataHome, "harness-output.log"))
 	// THE BARRIER IS THE COUNT, not a clock: wait for the loop to have ANSWERED two reads,
 	// then stop it. A fixed sleep would be a bet on the bench's load, which this repo's own
 	// law refuses.
@@ -255,6 +260,8 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 // unverifiable end, at the unit. A read that FAILS is not a source that reported nothing,
 // and "two failures and then an answer end nothing" is the reset this asserts.
 func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dataHome := t.TempDir()
 	db := filepath.Join(dataHome, "opencode", "opencode.db")
@@ -272,9 +279,12 @@ func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
 		[]byte("#!/bin/sh\necho 'Error: file is not a database' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bad+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := startLiveSampler(dataHome, 20*time.Millisecond, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
+	cfg := nativeRunConfig{
+		tokens:    1 << 30,
+		sqliteCmd: filepath.Join(bad, swarm.SQLiteBinary),
+	}
+	s := startLiveSampler(dataHome, 20*time.Millisecond, cfg, filepath.Join(dataHome, "harness-output.log"))
 	defer s.Stop()
 	deadline := time.Now().Add(30 * time.Second)
 	for {

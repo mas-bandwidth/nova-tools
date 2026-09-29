@@ -59,6 +59,30 @@ type replyOpts struct {
 	reGiven                     bool
 	toGiven, ccGiven            bool
 	subjectGiven                bool
+	publish                     func(dir, name string, content []byte) (string, error)
+	refresh                     func(dir, remote, branch string) (bool, error)
+	lockWait                    time.Duration
+}
+
+func (o replyOpts) publishFn() func(dir, name string, content []byte) (string, error) {
+	if o.publish != nil {
+		return o.publish
+	}
+	return publishDraft
+}
+
+func (o replyOpts) refreshFn() func(dir, remote, branch string) (bool, error) {
+	if o.refresh != nil {
+		return o.refresh
+	}
+	return refreshCheckout
+}
+
+func (o replyOpts) lockWaitDuration() time.Duration {
+	if o.lockWait > 0 {
+		return o.lockWait
+	}
+	return checkoutLockWait
 }
 
 // cmdDraftReply is the whole transaction. Every refusal it makes is one `DRAFT REFUSED`
@@ -156,7 +180,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 
 	// (4) The checkout, held for the fetch and the listing exactly as `wait`'s poll holds
 	// it, and the refresh itself -- which is that poll, and not a second spelling of it.
-	release, code := lockCheckout("DRAFT", o.busDir, stderr)
+	release, code := lockCheckout("DRAFT", o.busDir, stderr, o.lockWaitDuration())
 	if code != 0 {
 		return code
 	}
@@ -166,7 +190,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
-	moved, err := refreshCheckout(o.busDir, o.remote, o.branch)
+	moved, err := o.refreshFn()(o.busDir, o.remote, o.branch)
 	if err != nil {
 		// Never a fall back to the checkout. A refusal costs the caller one turn; a wrong
 		// Re: line costs a thread, and is wrong exactly when nobody is watching.
@@ -273,7 +297,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	if entry.ID == "" {
 		name = bus.LegacyDraftID(target.Path)
 	}
-	path, err := publishDraft(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md", []byte(content))
+	path, err := o.publishFn()(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md", []byte(content))
 	switch {
 	case errors.Is(err, bus.ErrDraftExists):
 		fmt.Fprintf(stderr, "DRAFT REFUSED: a draft already exists at %s; this tool never overwrites a draft\n",

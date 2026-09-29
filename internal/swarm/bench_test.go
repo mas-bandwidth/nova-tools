@@ -142,9 +142,9 @@ func writeBenches(t *testing.T, dir string, rows ...string) string {
 // fakeBin writes a fake ssh and a fake rsync on a temp PATH: ssh records its full argv and
 // exits 0 without running native, rsync records its argv and copies the source locally. The
 // recorded argv lands in ssh.log and rsync.log under dir.
-func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
+func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog, bin string) {
 	t.Helper()
-	bin := filepath.Join(dir, "bin")
+	bin = filepath.Join(dir, "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -175,8 +175,7 @@ func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
 	if err := testbin.WriteExecutable(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	return sshLog, rsyncLog
+	return sshLog, rsyncLog, bin
 }
 
 func strconvQuote(s string) string {
@@ -201,11 +200,12 @@ func readLines(t *testing.T, path string) []string {
 // TestBatchRefusesMoreSlotsThanCores: 16 slots on 1-15 is ADMIT REFUSED bench=b2 slots=16
 // cores=15 and no card starts.
 func TestBatchRefusesMoreSlotsThanCores(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")
 	bench := writeBenches(t, dir, "b2\tb2\t"+benchRoot+"\t1-15\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone")
-	sshLog, _ := fakeBin(t, dir)
+	sshLog := filepath.Join(dir, "ssh.log")
 	var b strings.Builder
 	for i := 0; i < 16; i++ {
 		label := string(rune('a' + i))

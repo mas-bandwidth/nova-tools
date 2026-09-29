@@ -196,7 +196,7 @@ func postAdoptReceipt(ctx context.Context, o options, body []byte, env Environme
 		return "", fmt.Errorf("delivery budget exhausted (retry watch with the same --adopt)")
 	}
 	child, cancel := context.WithTimeout(ctx, allowance)
-	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
+	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap, env)
 	cancel()
 	if prepared.Reason != "" {
 		return "", fmt.Errorf("prepare refused: %s; the bus said: %s (check nova-bus and the named bus; retry watch)", prepared.Reason, busSaid(prepared))
@@ -215,7 +215,7 @@ func postAdoptReceipt(ctx context.Context, o options, body []byte, env Environme
 	args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
 		"--attempts", strconv.Itoa(attempts), "--git-timeout", strconv.Itoa(gitSeconds)}
 	child2, cancel2 := context.WithTimeout(ctx, allowance)
-	r := captureRun(child2, args, []byte(prepared.Stdout), ChildCap)
+	r := captureRun(child2, args, []byte(prepared.Stdout), ChildCap, env)
 	cancel2()
 	for _, l := range strings.Split(r.Stdout, "\n") {
 		if confirmed(l, id) {

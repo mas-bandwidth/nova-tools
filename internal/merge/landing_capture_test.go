@@ -41,7 +41,6 @@ exit 1
 	if err := testbin.WriteExecutable(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("could not write the stub gh: %v", err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // TestCommentsCaptureOverSixtyFourKiBIsReadWhole is #2455's DONE-WHEN: a fake gh answering
@@ -49,6 +48,7 @@ exit 1
 // GH.Verdicts, the read batch and land make, none truncated and none refused as "over the
 // 65536-byte gh cap".
 func TestCommentsCaptureOverSixtyFourKiBIsReadWhole(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeLandingStubGH(t, dir)
 
@@ -90,10 +90,13 @@ func TestCommentsCaptureOverSixtyFourKiBIsReadWhole(t *testing.T) {
 	if err := os.WriteFile(reviewsPath, []byte("[]"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MERGE_TEST_COMMENTS", commentsPath)
-	t.Setenv("NOVA_MERGE_TEST_REVIEWS", reviewsPath)
+	env := append(os.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"NOVA_MERGE_TEST_COMMENTS="+commentsPath,
+		"NOVA_MERGE_TEST_REVIEWS="+reviewsPath,
+	)
 
-	h := NewGH("o/n", 30*time.Second, Exec{})
+	h := NewGH("o/n", 30*time.Second, Exec{Env: env})
 	got, err := h.Verdicts(2421, VerdictOpts{CurrentHead: head})
 	if err != nil {
 		t.Fatalf("Verdicts refused a %d-byte comments capture: %v", len(blob), err)

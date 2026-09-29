@@ -13,7 +13,7 @@ import (
 // are read from the usage block so a verb added later is covered without editing this
 // test; they are not listed here.
 func TestIssue1451EveryBareVerbRefusalNamesTheDoor(t *testing.T) {
-	t.Setenv("NOVA_BUS_RECEIPT_MAX_WORDS", "")
+	t.Parallel()
 
 	// Every verb the usage block names, run BARE. A verb that exits 0 or 1 with no
 	// flags is a valid invocation and not this test's business; only exit 2 is.

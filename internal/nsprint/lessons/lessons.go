@@ -60,9 +60,18 @@ type SupersedeResult struct {
 	Moved       bool
 }
 
+type lessonsSeams struct {
+	lockBusy func(who string)
+}
+
 // Append admits one lesson to repo/docs/LESSONS.md. The full read/check/write
 // transaction is serialized, so successful callers cannot overwrite each other.
 func Append(repo string, lesson Lesson) (Result, error) {
+	return AppendWith(repo, lesson, lessonsSeams{})
+}
+
+// AppendWith admits one lesson using the given test seams.
+func AppendWith(repo string, lesson Lesson, s lessonsSeams) (Result, error) {
 	if strings.TrimSpace(repo) == "" {
 		return Result{}, errors.New("--repo <dir> is required")
 	}
@@ -74,7 +83,7 @@ func Append(repo string, lesson Lesson) (Result, error) {
 	}
 	path := filepath.Join(filepath.Clean(repo), filepath.FromSlash(RelativePath))
 	var result Result
-	err := withLock(repo, lesson.ID, func() error {
+	err := withLockWith(repo, lesson.ID, s, func() error {
 		r, err := appendLocked(path, lesson)
 		result = r
 		return err
@@ -281,7 +290,11 @@ func lineCount(raw []byte) int {
 // waiters both move an old lock aside, and let a paused holder write over its
 // successor. The kernel is the only party that releases a dead holder's lock.
 func withLock(repo, who string, fn func() error) error {
-	release, err := acquireLock(repo, who)
+	return withLockWith(repo, who, lessonsSeams{}, fn)
+}
+
+func withLockWith(repo, who string, s lessonsSeams, fn func() error) error {
+	release, err := acquireLockWith(repo, who, s)
 	if err != nil {
 		return err
 	}
@@ -296,8 +309,16 @@ var lockBusy = func(who string) {}
 // acquireLock takes the lock, queueing behind a live holder for up to
 // lockWait. A refusal after the wait writes nothing.
 func acquireLock(repo, who string) (func(), error) {
+	return acquireLockWith(repo, who, lessonsSeams{})
+}
+
+func acquireLockWith(repo, who string, s lessonsSeams) (func(), error) {
 	path := lockPath(repo)
 	deadline := time.Now().Add(lockWait)
+	busyFn := lockBusy
+	if s.lockBusy != nil {
+		busyFn = s.lockBusy
+	}
 	for {
 		release, err := bus.LockFile(path, 0)
 		if err == nil {
@@ -309,7 +330,7 @@ func acquireLock(repo, who string) (func(), error) {
 		if !time.Now().Before(deadline) {
 			return nil, fmt.Errorf("lesson file is busy after %s: %w", lockWait, err)
 		}
-		lockBusy(who)
+		busyFn(who)
 		time.Sleep(lockPoll)
 	}
 }

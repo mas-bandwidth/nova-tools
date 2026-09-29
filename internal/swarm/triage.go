@@ -58,6 +58,7 @@ type TriageInput struct {
 	Decide    bool
 	Floor     float64
 	KeyEnv    string
+	KeyLookup func(string) string
 	BaseURL   string
 	UsagePath string
 
@@ -144,7 +145,7 @@ func Triage(in TriageInput) int {
 		}
 		do := in.decideDo
 		if do == nil {
-			client, err := decide.New(in.BaseURL, in.KeyEnv)
+			client, err := decide.NewWithLookup(in.BaseURL, in.KeyEnv, in.KeyLookup)
 			if err != nil {
 				fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(err.Error()))
 				return 2

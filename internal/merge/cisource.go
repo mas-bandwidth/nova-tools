@@ -165,12 +165,23 @@ func RedisFromEnv() CISource {
 }
 
 func redisAddrFromEnv() string {
-	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+	return redisAddrFromLookup(os.Getenv)
+}
+
+func redisAddrFromLookup(getenv func(string) string) string {
+	if addr := strings.TrimSpace(getenv("REDIS_ADDR")); addr != "" {
 		return addr
 	}
-	host := envOr("NOVA_REDIS_HOST", "localhost")
-	port := envOr("NOVA_REDIS_PORT", "6379")
+	host := envLookupOr(getenv, "NOVA_REDIS_HOST", "localhost")
+	port := envLookupOr(getenv, "NOVA_REDIS_PORT", "6379")
 	return host + ":" + port
+}
+
+func envLookupOr(getenv func(string) string, name, fallback string) string {
+	if value := strings.TrimSpace(getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func envOr(name, fallback string) string {

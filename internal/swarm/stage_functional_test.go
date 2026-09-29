@@ -148,6 +148,7 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 // TestStageUsesTheBenchMirrorAndTimesOut tests that staging uses the bench mirror,
 // fails on a clone that would go to GitHub without a mirror, and times out when exceeding deadline.
 func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
+	t.Parallel()
 	t.Run("uses bench mirror and dissociates", TestStageCardUsesMirrorAndDissociates)
 	t.Run("fails without bench mirror", TestStageCardFailsWithoutMirror)
 	t.Run("times out and writes result", TestStageCardTimesOutAndWritesResult)
@@ -176,7 +177,6 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	jobDir := filepath.Join(root, "jobs", "card-1")
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -199,6 +199,7 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 			BenchHome: filepath.Join(root, "home"),
 			BenchName: "hulk",
 			Timeout:   1 * time.Second,
+			GitBin:    filepath.Join(bin, "git"),
 		})
 		done <- stageOutcome{res: res, err: err}
 	}()
