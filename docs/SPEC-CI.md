@@ -1817,7 +1817,9 @@ SLEEPS skips and waiting functions: a missing row or a stale one is red),
 ledger at the merge base lacks is red: HEAD's first parent in CI, dev's tip on
 a pull request's merge ref and in the queue, the comparison `classtests` makes;
 the merge base with origin/dev on a developer's branch; a base with no ledger is
-the seed), with the controls
+the seed), `TestSleepsSkipCountOnlyShrinksAgainstTheMergeParent` (the SLEEPS skip
+count and ledger row count only shrink against the merge parent, a ratchet that
+only falls), with the controls
 `TestWallClockWaitDetectorFindsTheWaitsAndNotTheSeam`
 (`internal/ci/unitwaits_class_test.go`) and `TestSleepsLedgerGrowthIsReadOutOfGit`
 (functional-tagged, `internal/ci/unitwaits_git_functional_test.go`: seven
@@ -1834,6 +1836,21 @@ func) or tag the file //go:build functional (the ledger only shrinks)`.
 code under test (a production retry that sleeps) is invisible to it, and the
 printed CI-SLOW line and the nightly enforcing run are the net under that. A
 context deadline handed to the code under test and waited on there is not seen.
+
+### `deadcode` — no unreachable functions in cmd/...
+
+**The rule.** `go tool deadcode ./cmd/...` finds no unreachable functions outside
+internal/ci/testdata/deadcode_allowlist.txt.
+**The mistake it prevents.** Dead functions, uncalled helpers and obsolete verbs rot
+silently in the tree, wasting tokens and confusing readers and tools.
+**The test.** `TestNoDeadCode` (`internal/ci/deadcode_class_test.go`).
+**Its allowlist.** `internal/ci/testdata/deadcode_allowlist.txt`, `<file>:<func>` per
+line; shrink-only.
+**Its remedy line.** `<file>:<line>: unreachable func: <func>; delete the dead function
+or wire it into a command (the allowlist only shrinks)`.
+**Its narrowings.** Entry points are the main packages under `cmd/...`. Functions only
+called from tests or parked packages under `deprecated/` are reported as dead unless
+wired into a live binary.
 
 ### `allowlist` — every list is read through the one helper
 

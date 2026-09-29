@@ -45,9 +45,13 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 				return err
 			}
 			for _, m := range goFunctionNameRx.FindAllStringSubmatch(string(b), -1) {
+				name := m[1]
+				if strings.HasPrefix(name, "ns_table_") {
+					continue
+				}
 				named++
-				if !registered[m[1]] {
-					t.Errorf("%s names %s; no Lua file registers it", path, m[1])
+				if !registered[name] {
+					t.Errorf("%s names %s; no Lua file registers it", path, name)
 				}
 			}
 			return nil

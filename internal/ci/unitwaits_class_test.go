@@ -425,6 +425,59 @@ func TestSleepsLedgerOnlyShrinksAgainstTheMergeParent(t *testing.T) {
 	}
 }
 
+// countSleepsSkips returns the count of SLEEPS skips in rows (rows whose Where
+// starts with #4221 or names a SLEEPS skip).
+func countSleepsSkips(rows []slowtests.SleepRow) int {
+	count := 0
+	for _, r := range rows {
+		if strings.HasPrefix(r.Where, "#4221") {
+			count++
+		}
+	}
+	return count
+}
+
+// TestSleepsSkipCountOnlyShrinksAgainstTheMergeParent: the SLEEPS skip count and
+// total row count in internal/ci/sleeps-skips_allowlist.txt only shrinks against
+// the merge parent (sleepsLedgerBase). It is a ratchet that only falls: a change
+// cannot increase the number of allowed SLEEPS skips or ledger rows.
+func TestSleepsSkipCountOnlyShrinksAgainstTheMergeParent(t *testing.T) {
+	t.Parallel()
+
+	root := repoTree(t).Root
+	parent, err := sleepsLedgerBase(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOut(root, "cat-file", "-e", parent+":"+sleepsLedger); err != nil {
+		t.Logf("%s is not in the merge base %s: this change is the ledger's seed", sleepsLedger, parent[:9])
+		return
+	}
+	baseText, err := gitOut(root, "show", parent+":"+sleepsLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRows, err := slowtests.ParseSleeps(strings.NewReader(baseText))
+	if err != nil {
+		t.Fatalf("%s at %s: %v", sleepsLedger, parent[:9], err)
+	}
+	headRows := readSleepsLedger(t)
+
+	headCount := len(headRows)
+	baseCount := len(baseRows)
+	if headCount > baseCount {
+		t.Errorf("%s row count grew from %d (at %s) to %d; the SLEEPS ledger only shrinks (ratchet that only falls)",
+			sleepsLedger, baseCount, parent[:9], headCount)
+	}
+
+	headSkips := countSleepsSkips(headRows)
+	baseSkips := countSleepsSkips(baseRows)
+	if headSkips > baseSkips {
+		t.Errorf("%s SLEEPS skip count grew from %d (at %s) to %d; the SLEEPS skip count only shrinks (ratchet that only falls)",
+			sleepsLedger, baseSkips, parent[:9], headSkips)
+	}
+}
+
 // PROBE 2 of the #4413 ruling, at the detector: a _test.go with a bare
 // time.Sleep is found; the same wait through a fake clock seam is not; the
 // same bare sleep behind `//go:build functional` is not a unit file; `<-
