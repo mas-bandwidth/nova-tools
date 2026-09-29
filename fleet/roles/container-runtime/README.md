@@ -23,7 +23,7 @@ facts as root) names the runner with `container_runtime_user` instead.
 | subordinate ids | a `/etc/subuid` and `/etc/subgid` row for the user when it has none, read by name or numeric uid. The range starts at `container_runtime_subid_start` or, when another user's range reaches that far, right after the highest range in the file, so it never overlaps another user's (overlapping ranges make two users' container ids the same host ids). An existing row is never rewritten; one that overlaps another user's row, or is smaller than 65536 ids, stops the play |
 | linger | `loginctl enable-linger`, so the user's runtime directory and systemd manager exist with no login session |
 | user namespaces | `user.max_user_namespaces` is read and must be above zero; the role does not change kernel settings |
-| cgroup v2 delegation | the controllers `cpu`, `memory` and `pids` must be delegated to the user's systemd manager; a drop-in is written only where they are not, and the play stops until the manager restarts, because restarting it ends the user's containers |
+| cgroup v2 delegation | the controllers `cpu`, `memory` and `pids` must be delegated to the user's systemd manager; a drop-in (`/etc/systemd/system/user@<uid>.service.d/delegate.conf`, its directory made first) is written only where they are not, for that user's manager and no other's, and the play stops until the manager restarts, because restarting it ends the user's containers |
 | probe | see below |
 
 `--check --diff` names the packages that would be installed and shows the

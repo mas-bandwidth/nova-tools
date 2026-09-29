@@ -104,10 +104,21 @@
   changed_when: false
   check_mode: false
 
+# The drop-in is for this user's manager only (user@<uid>.service.d), never the
+# template of every user's. Its directory is made first: copy does not create
+# parent directories, and the directory is absent until something adds a drop-in.
+- name: the drop-in directory of the user's systemd manager
+  become: true
+  ansible.builtin.file:
+    path: "/etc/systemd/system/user@{{ container_runtime_uid }}.service.d"
+    state: directory
+    mode: "0755"
+  when: container_runtime_controllers | difference(container_runtime_delegated.stdout.split()) | length > 0
+
 - name: delegation drop-in for the missing controllers
   become: true
   ansible.builtin.copy:
-    dest: /etc/systemd/system/user@.service.d/delegate.conf
+    dest: "/etc/systemd/system/user@{{ container_runtime_uid }}.service.d/delegate.conf"
     content: |
       [Service]
       Delegate={{ (container_runtime_delegated.stdout.split() + container_runtime_controllers) | unique | sort | join(' ') }}
