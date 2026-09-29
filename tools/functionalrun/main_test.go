@@ -840,3 +840,40 @@ func TestRunTierFailsWhenAContainerIsLeft(t *testing.T) {
 		}
 	}
 }
+
+// orderWriter fails the test if anything is written before the engine saw a
+// removal.
+type orderWriter struct {
+	t   *testing.T
+	eng *hangingEngine
+}
+
+func (w orderWriter) Write(p []byte) (int, error) {
+	removed := false
+	for _, c := range w.eng.argvs() {
+		if strings.HasPrefix(c, "rm ") {
+			removed = true
+		}
+	}
+	if !removed {
+		w.t.Errorf("logged %q before the container was removed", p)
+	}
+	return len(p), nil
+}
+
+func TestRunContainerRemovesBeforeItLogs(t *testing.T) {
+	t.Parallel()
+	for _, interrupt := range []bool{false, true} {
+		eng := &hangingEngine{killed: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		deadline := time.Now().Add(time.Hour)
+		if interrupt {
+			cancel()
+		} else {
+			deadline = time.Now().Add(20 * time.Millisecond)
+		}
+		w := orderWriter{t: t, eng: eng}
+		runContainer(ctx, eng, realClock{}, []string{"run", "x"}, "nova-functional-r", deadline, w, w)
+		cancel()
+	}
+}

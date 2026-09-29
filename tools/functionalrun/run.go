@@ -151,23 +151,25 @@ func runContainer(ctx context.Context, eng engine, clk clock, args []string, nam
 	}()
 	timer := clk.After(clientDeadline.Sub(clk.Now()))
 	var ended string
+	// Every ending removes the container first and logs after, so a log line
+	// that cannot be written never stands between a run and its removal.
 	select {
 	case r := <-done:
+		// --rm has removed it when the client saw the container exit; this is
+		// then a no-op. A lost client (code < 0) leaves it to this removal.
+		removeContainer(eng, name, stderr)
 		if r.err != nil {
 			fmt.Fprintf(stderr, "functionalrun: waiting for the runtime's client: %v\n", r.err)
 			return exitCannotRun, "finished"
 		}
-		// Belt and braces: --rm has removed it; this is a no-op then.
-		removeContainer(eng, name, stderr)
 		return r.code, "finished"
 	case <-timer:
 		ended = "deadline"
-		fmt.Fprintf(stderr, "functionalrun: %s passed its deadline; removing it\n", name)
 	case <-ctx.Done():
 		ended = "interrupted"
-		fmt.Fprintf(stderr, "functionalrun: interrupted; removing %s\n", name)
 	}
 	removeContainer(eng, name, stderr)
+	fmt.Fprintf(stderr, "functionalrun: %s: %s removed\n", ended, name)
 	// The client returns once its container is gone. If it does not, it is
 	// ended: it is the one process here this tool started.
 	select {

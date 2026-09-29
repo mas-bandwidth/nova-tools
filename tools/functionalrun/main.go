@@ -71,6 +71,10 @@ exit codes (reap): 0 nothing reaped; 1 a container was reaped; 2 could not run.
 `
 
 func main() {
+	// A reader of this tool's output that goes away (a closed pipe, a tee that
+	// died first) must not end it before it removes its container: SIGPIPE is
+	// caught, so a write to the dead pipe fails and the run goes on to its end.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	os.Exit(dispatch(ctx, os.Args[1:], os.Stdout, os.Stderr))
