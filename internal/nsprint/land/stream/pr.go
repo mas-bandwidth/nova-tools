@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cicost"
-	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -58,7 +57,6 @@ type LandPROptions struct {
 	// Await returns what woke it: "head" (a check delivery for head), "pr"
 	// (a pull_request delivery for this PR) or "" (the time passed).
 	Await func(ctx context.Context, head string, d time.Duration) (string, error)
-	Cost  bool // when true, print the CI COST line from ci:cost for the PR's runs
 }
 
 // LandPRWait runs LandPR, and while the pass is waiting and Wait allows,
@@ -68,20 +66,7 @@ type LandPROptions struct {
 // when the leg is green (the merge) or the wake was a pull_request event
 // for this PR (its state moved); a red leg ends the wait with no call, and
 // a timeout or an unrelated delivery costs nothing.
-func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (rep LandPRReport, err error) {
-	log := o.Log
-	if log == nil {
-		log = io.Discard
-	}
-	defer func() {
-		if o.Cost && rdb != nil && rep.Head != "" {
-			if entry, costErr := cicost.ReadHead(ctx, rdb, o.Repo, rep.Head); costErr == nil && entry != nil {
-				fmt.Fprintln(log, entry.Line())
-			} else if entry, costErr := cicost.ReadPR(ctx, rdb, o.Repo, o.N); costErr == nil && entry != nil {
-				fmt.Fprintln(log, entry.Line())
-			}
-		}
-	}()
+func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (LandPRReport, error) {
 	await := o.Await
 	if await == nil && o.Wait > 0 && rdb != nil {
 		var err error
@@ -89,7 +74,7 @@ func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROpti
 			return LandPRReport{}, err
 		}
 	}
-	rep, err = LandPR(ctx, gh, rdb, o)
+	rep, err := LandPR(ctx, gh, rdb, o)
 	if err != nil || rep.State != "waiting" || o.Wait <= 0 {
 		return rep, err
 	}
@@ -100,6 +85,10 @@ func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROpti
 	tick := o.Tick
 	if tick <= 0 {
 		tick = 30 * time.Second
+	}
+	log := o.Log
+	if log == nil {
+		log = io.Discard
 	}
 	deadline := now().Add(o.Wait)
 	for rep.State == "waiting" {
