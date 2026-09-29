@@ -179,6 +179,17 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 	if !strings.Contains(both, doctorStaleLine) || !strings.Contains(both, doctorRebuiltLine) {
 		t.Errorf("the preflight prints both stamps:\n%s", both)
 	}
+
+	// A flag value spelled -h (like `batch --id -h` or `native --card -h`) is NOT a help request:
+	// under a shadowed binary, the preflight must refuse it with exit 2 rather than stand aside.
+	errOut.Reset()
+	if code, stop := preflightDoctor([]string{"batch", "--id", "-h"}, &errOut); !stop || code != 2 {
+		t.Errorf("batch --id -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
+	}
+	errOut.Reset()
+	if code, stop := preflightDoctor([]string{"native", "--card", "-h"}, &errOut); !stop || code != 2 {
+		t.Errorf("native --card -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
+	}
 }
 
 func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
@@ -228,5 +239,25 @@ func TestDoctorSurvivesAnUnreadablePATHBinary(t *testing.T) {
 	code := cmdDoctor([]string{"--path", "/opt/go/bin/gone", "--local", "/home/me/.local/bin/nova-swarm"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
+	}
+}
+
+// Preflight stands aside for -h and --help: asking for help is not a launch.
+func TestPreflightDoctorStandsAsideForHelp(t *testing.T) {
+	t.Parallel()
+	var errOut bytes.Buffer
+	for _, verb := range []string{"batch", "native"} {
+		for _, flag := range []string{"-h", "--help", "-help", "--h"} {
+			if code, stop := preflightDoctor([]string{verb, flag}, &errOut); stop || code != 0 {
+				t.Errorf("%s %s: preflight(exit=%d, stop=%v), want (0, false)", verb, flag, code, stop)
+			}
+		}
+	}
+	// Flag value followed by actual help stands aside
+	if code, stop := preflightDoctor([]string{"batch", "--id", "-h", "-h"}, &errOut); stop || code != 0 {
+		t.Errorf("batch --id -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	}
+	if code, stop := preflightDoctor([]string{"native", "--card", "-h", "-h"}, &errOut); stop || code != 0 {
+		t.Errorf("native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	}
 }

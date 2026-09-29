@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -56,7 +57,10 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(rest); i++ {
 		switch {
 		case workerHelpFlag(rest[i]):
-			verbflag.HelpIfAsked(rest[i:i+1], "worker check", "env", "max")
+			fs := flag.NewFlagSet("worker check", flag.ContinueOnError)
+			fs.Bool("env", false, "")
+			fs.Int("max", bounded.Default, "")
+			panic(verbflag.Help{FS: fs})
 		case rest[i] == "--env":
 			requireEnv = true
 		case rest[i] == "--max":

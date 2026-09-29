@@ -837,7 +837,7 @@ of your own before a real model touches it.
 `bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
 is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
 reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
-card. The file ledger it used to lease from was a second answer to the same question.
+card. The file ledger on disk is a second answer to the same question.
 `--slots-store` and `--owner` flags are accepted for compatibility with callers built before
 #3877, but are read by nothing in `native`.
 
