@@ -385,7 +385,7 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 4 {
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrRevisionMismatch, reply[2], reply[3])
 		} else {
-			cause = fmt.Errorf("%w: %v", ErrRevisionMismatch, reply[2:])
+			cause = fmt.Errorf("%w: the table revision %v is at its maximum and cannot advance", ErrCounterOverflow, reply[2])
 		}
 	case typedrec.TableRefusalMemberRevision:
 		if len(reply) >= 5 {
@@ -468,7 +468,7 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w: %v", ErrCounterOverflow, reply[2:])
+		cause = fmt.Errorf("%w: a revision is at its maximum, 18446744073709551615, and cannot advance", ErrCounterOverflow)
 	case typedrec.TableRefusalMutation:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
