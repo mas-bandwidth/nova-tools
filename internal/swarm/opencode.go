@@ -153,6 +153,13 @@ const LiveSampleLimit = 5 * time.Second
 // cases rule 13d keeps apart -- nothing observed, a partial observation, a read that FAILS
 // -- are the caller's to tell apart, and this function's error is the third of them.
 func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
+	return ReadJobUsageLiveWith(SQLiteBinary, dataHome)
+}
+
+func ReadJobUsageLiveWith(sqliteCmd, dataHome string) (ProviderUsage, error) {
+	if sqliteCmd == "" {
+		sqliteCmd = SQLiteBinary
+	}
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -160,11 +167,11 @@ func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
 	if path == "" {
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+	if _, err := exec.LookPath(sqliteCmd); err != nil {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
-			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
+			ErrNoSQLite, path, sqliteCmd, sqliteCmd)
 	}
-	rows, err := queryOpenCode(path, LiveSampleLimit)
+	rows, err := queryOpenCodeWith(sqliteCmd, path, LiveSampleLimit)
 	if err != nil {
 		return ProviderUsage{}, err
 	}

@@ -29,11 +29,13 @@ type PrewarmCommand struct {
 // guesses a branch or fetches a remote: fleet adoption fetches the bench mirror first and
 // hands this verb the exact full commit it is warming.
 type PrewarmInput struct {
-	Root   string
-	Source string
-	Repo   string
-	Tip    string
-	Run    func(PrewarmCommand) error
+	Root    string
+	Source  string
+	Repo    string
+	Tip     string
+	Run     func(PrewarmCommand) error
+	GitBin  string
+	Environ []string
 }
 
 type PrewarmResult struct {
@@ -175,6 +177,9 @@ func Prewarm(in PrewarmInput) (PrewarmResult, error) {
 	source := filepath.Clean(strings.TrimSpace(in.Source))
 	repo := strings.TrimSpace(in.Repo)
 	tip := strings.ToLower(strings.TrimSpace(in.Tip))
+	gitOutput := func(dir string, args ...string) (string, error) {
+		return gitOutputWith(in.GitBin, in.Environ, dir, args...)
+	}
 	if root == "." || strings.TrimSpace(in.Root) == "" {
 		return PrewarmResult{}, fmt.Errorf("root is required; refusing to guess a swarm root")
 	}
@@ -234,7 +239,7 @@ func Prewarm(in PrewarmInput) (PrewarmResult, error) {
 	if err := os.Remove(receiptPath); err != nil && !os.IsNotExist(err) {
 		return PrewarmResult{}, fmt.Errorf("invalidate prior prewarm receipt: %w", err)
 	}
-	if err := normalizeTrackedTimes(checkout); err != nil {
+	if err := normalizeTrackedTimesWith(in.GitBin, in.Environ, checkout); err != nil {
 		return PrewarmResult{}, fmt.Errorf("pin source mtimes to exact tip: %w", err)
 	}
 
@@ -299,15 +304,25 @@ func fullHexSHA(s string) bool {
 	return err == nil
 }
 
-func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+func gitOutputWith(gitBin string, baseEnv []string, dir string, args ...string) (string, error) {
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	if baseEnv == nil {
+		baseEnv = os.Environ()
+	}
+	cmd := exec.Command(gitBin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(goenv.WithoutSecrets(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(goenv.WithoutSecrets(baseEnv), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func gitOutput(dir string, args ...string) (string, error) {
+	return gitOutputWith("", nil, dir, args...)
 }
 
 func prewarmEnv(root, checkout string) []string {

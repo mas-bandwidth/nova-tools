@@ -32,7 +32,8 @@ type Environment struct {
 	JobAttempt           func(index int)
 	DrainTimer           func(time.Duration) (<-chan time.Time, func() bool)
 	SnapshotChildTimeout time.Duration
-	Path                 string // optional PATH override for child processes
+	Path                 string   // optional PATH override for child processes
+	Env                  []string // optional extra environment variables (KEY=VAL) for child processes
 }
 type options struct {
 	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
@@ -609,7 +610,7 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 	defer cancelRun()
 	runChild := func(argv []string) ProcessResult {
 		ctx, cancel := context.WithTimeout(run, timeout)
-		p := processWith(ctx, argv, nil, ChildCap, env.Path)
+		p := processWith(ctx, argv, nil, ChildCap, env.Path, env.Env)
 		cancel()
 		return p
 	}
@@ -946,6 +947,6 @@ func safeRevision(rev string) string {
 }
 
 // Kept as a narrow seam for command tests and bus delivery; no shell is involved.
-func captureRun(ctx context.Context, args []string, input []byte, cap int) ProcessResult {
-	return process(ctx, args, bytes.NewReader(input), cap)
+func captureRun(ctx context.Context, args []string, input []byte, cap int, env Environment) ProcessResult {
+	return processWith(ctx, args, bytes.NewReader(input), cap, env.Path, env.Env)
 }

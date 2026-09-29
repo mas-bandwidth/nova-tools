@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1273,15 +1274,19 @@ func assertRepoRefusal(t *testing.T, out string) {
 // a refusal naming what was looked for, unless the caller typed --no-wall, in which case the
 // run goes unwalled and says so by its own name.
 func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
-	t.Setenv("PATH", t.TempDir()) // no nova-sandbox on PATH anywhere
 
 	t.Run("no_wall_no_flag", func(t *testing.T) {
+		t.Parallel()
+
 		root, slot := aSlot(t)
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			sandboxLook: func(string) (string, error) { return "", errors.New("not found") },
 		}, &errOut)
 		if code != 2 {
 			t.Fatalf("a run with no wall and no --no-wall exits 2, got %d:\n%s", code, errOut.String())
@@ -1301,6 +1306,8 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 	})
 
 	t.Run("no_wall_with_flag", func(t *testing.T) {
+		t.Parallel()
+
 		root, slot := aSlot(t)
 		var errOut bytes.Buffer
 		res, code := nativeRun(nativeRunConfig{
@@ -1322,8 +1329,12 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 // inside it without --repo rules -- never unwalled, and no refusal -- while the same wall
 // and a named repo is the refusal asserted elsewhere.
 func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
+	t.Parallel()
+
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
+	}
 	bin := nativeHarness(t)
-	nativeSandboxOnPath(t)
 	label := "a-label"
 	root, slot := aSlot(t)
 
@@ -1331,6 +1342,7 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 	res, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: label,
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandboxLook: func(file string) (string, error) { return filepath.Join(builtPathBin, file), nil },
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("a wall without host rules still walls a card naming no repos, got %d:\n%s", code, errOut.String())
@@ -1523,7 +1535,8 @@ func TestNativeSharedGoCaches(t *testing.T) {
 // exactly -- GOMODCACHE, GOCACHE and GOTOOLCHAIN are not set (Go derives the caches from
 // HOME as before), <root>/cache is not made, and the wall's write set does not name it.
 func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -2037,6 +2050,8 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 // to the harness's environment and writes NO auth file under the job. --auth remains only
 // the legacy shape's. The fake harness proves the key is present by length, never by value.
 func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
@@ -2044,7 +2059,6 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 		t.Fatal(err)
 	}
 	desc := nativeWorkerDescription(t, "fake-model", "secret")
-	t.Setenv("FAKE_KEY", fakeKey)
 
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
@@ -2227,6 +2241,7 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 // is refused naming both; --model other/deepseek-v4-flash is refused too, because the
 // provider half matters.
 func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	writeSecretOnly := func(t *testing.T) string {
 		t.Helper()
@@ -2247,9 +2262,9 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		return path
 	}
-	t.Setenv("CARD881_SECRET", fakeKey)
 
 	t.Run("qualified_match_is_accepted", func(t *testing.T) {
+		t.Parallel()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
@@ -2266,6 +2281,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 	})
 
 	t.Run("model_mismatch_is_refused_naming_both", func(t *testing.T) {
+		t.Parallel()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
@@ -2285,6 +2301,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 	})
 
 	t.Run("provider_mismatch_is_refused", func(t *testing.T) {
+		t.Parallel()
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
 		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
@@ -2300,7 +2317,6 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 			"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
 			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 		}
-		t.Setenv("CARD881_SECRET", fakeKey)
 		raw, err := json.MarshalIndent(desc, "", "  ")
 		if err != nil {
 			t.Fatal(err)

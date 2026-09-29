@@ -23,12 +23,13 @@ import (
 // as card a's line made this test red 5 runs in 8 on this bench; the assertion is over the
 // SET of run lines, each matched by its own label, which is what pinning actually claims.
 func TestBatchPinsSlotToCore(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")
 	bench := writeBenches(t, dir, "b2\tb2\t"+benchRoot+"\t1-15\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone")
-	sshLog, _ := fakeBin(t, dir)
+	sshLog, _, bin := fakeBin(t, dir)
 	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
 	b := writeCard(t, dir, "b.card", "RESULT: b\ndone and clean")
 	tsv := filepath.Join(dir, "cards.tsv")
@@ -41,6 +42,7 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
+		BinDir: bin,
 	})
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
@@ -94,12 +96,13 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 
 // TestBatchCopiesCardOnly: exactly one file crosses before the run, and it is the card.
 func TestBatchCopiesCardOnly(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")
 	bench := writeBenches(t, dir, "b2\tb2\t"+benchRoot+"\t-\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone")
-	_, rsyncLog := fakeBin(t, dir)
+	_, rsyncLog, bin := fakeBin(t, dir)
 	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
 	tsv := filepath.Join(dir, "cards.tsv")
 	if err := os.WriteFile(tsv, []byte("a\tb2:1\tmodel\t"+a+"\n"), 0o644); err != nil {
@@ -111,6 +114,7 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
+		BinDir: bin,
 	})
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
@@ -138,12 +142,13 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 // --slot value has no /jobs/ component and the job directory the pull reads the card's
 // files from equals slotDir/jobs/label.
 func TestRemoteRunSlotIsTheSlotDir(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")
 	bench := writeBenches(t, dir, "b2\tb2\t"+benchRoot+"\t-\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone")
-	sshLog, _ := fakeBin(t, dir)
+	sshLog, _, bin := fakeBin(t, dir)
 	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
 	tsv := filepath.Join(dir, "cards.tsv")
 	if err := os.WriteFile(tsv, []byte("a\tb2:1\tmodel\t"+a+"\n"), 0o644); err != nil {
@@ -155,6 +160,7 @@ func TestRemoteRunSlotIsTheSlotDir(t *testing.T) {
 		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 		SlotsStore: aBenchSlotStore(t), SlotOwner: "fake-1",
+		BinDir: bin,
 	})
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())

@@ -41,6 +41,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -153,6 +154,8 @@ type BatchInput struct {
 	RouteSkip string
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// BinDir overrides the directory where ssh, rsync, and scp are found (test seam).
+	BinDir string
 	// ProbeClient is the HTTP client admission checks use to probe repositories.
 	// If nil, the default client is used.
 	ProbeClient *http.Client
@@ -708,7 +711,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile, in.BinDir)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -837,6 +840,12 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		b := benches[c.bench]
+		var pullRun func(string, ...string) error
+		if in.BinDir != "" {
+			pullRun = func(host string, args ...string) error {
+				return execBinRun(in.BinDir, host, args...)
+			}
+		}
 		err := pullFromBench(benchPull{
 			host:       b.Host,
 			remoteSlot: b.Root + "/" + strconv.Itoa(c.slot),
@@ -846,6 +855,7 @@ func Batch(in BatchInput) int {
 			wait:       in.PullWait,
 			poll:       in.PullPoll,
 			notes:      in.Stderr,
+			run:        pullRun,
 		})
 		if err != nil {
 			unreachable[i] = isUnreachable(err)
@@ -2535,4 +2545,14 @@ func storeSpends(root string, cards []batchCard, want func(i int) bool) []cardSp
 	close(work)
 	wg.Wait()
 	return out
+}
+
+func execBinRun(binDir, host string, args ...string) error {
+	bin := filepath.Join(binDir, "ssh")
+	testguard.RefuseHosts(bin, append([]string{host}, args...)...)
+	cmd := exec.Command(bin, append([]string{host}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
+	}
+	return nil
 }

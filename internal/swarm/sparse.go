@@ -103,8 +103,8 @@ func StageJobTree(source, dest string, card []byte) error {
 // translated source path. A fresh clone otherwise makes every source newer than a FASL
 // compiled moments earlier in the exact-tip reference checkout, defeating prewarm.
 // Symlinks are skipped: Chtimes follows them and must never touch a target outside the tree.
-func normalizeTrackedTimes(repo string) error {
-	rawStamp, err := sparseGit(repo, "show", "-s", "--format=%ct", "HEAD")
+func normalizeTrackedTimesWith(gitBin string, baseEnv []string, repo string) error {
+	rawStamp, err := sparseGitWith(gitBin, baseEnv, repo, "show", "-s", "--format=%ct", "HEAD")
 	if err != nil {
 		return err
 	}
@@ -112,9 +112,15 @@ func normalizeTrackedTimes(repo string) error {
 	if err != nil {
 		return fmt.Errorf("git commit timestamp %q: %w", rawStamp, err)
 	}
-	cmd := exec.Command("git", "ls-files", "-z", "--")
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	if baseEnv == nil {
+		baseEnv = os.Environ()
+	}
+	cmd := exec.Command(gitBin, "ls-files", "-z", "--")
 	cmd.Dir = repo
-	cmd.Env = append(goenv.WithoutSecrets(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(goenv.WithoutSecrets(baseEnv), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
 	raw, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("git ls-files: %w", err)
@@ -140,6 +146,10 @@ func normalizeTrackedTimes(repo string) error {
 		}
 	}
 	return nil
+}
+
+func normalizeTrackedTimes(repo string) error {
+	return normalizeTrackedTimesWith("", nil, repo)
 }
 
 // cardPATHS reads the card's PATHS: line. declared is true when the line is
@@ -466,12 +476,18 @@ func listDepDirs(src string, patterns []string) ([]string, error) {
 	return dirs, nil
 }
 
-func sparseGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+func sparseGitWith(gitBin string, baseEnv []string, dir string, args ...string) (string, error) {
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	if baseEnv == nil {
+		baseEnv = os.Environ()
+	}
+	cmd := exec.Command(gitBin, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(goenv.WithoutSecrets(os.Environ()),
+	cmd.Env = append(goenv.WithoutSecrets(baseEnv),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
@@ -486,4 +502,8 @@ func sparseGit(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+func sparseGit(dir string, args ...string) (string, error) {
+	return sparseGitWith("", nil, dir, args...)
 }

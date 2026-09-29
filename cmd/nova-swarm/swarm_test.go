@@ -201,7 +201,10 @@ func TestMain(m *testing.M) {
 		_ = os.Setenv("CAP_BUDGET_ENV", "fake-cap-budget-key")
 	}
 	if os.Getenv("CARD881_SECRET") == "" {
-		_ = os.Setenv("CARD881_SECRET", "fake-card881-secret")
+		_ = os.Setenv("CARD881_SECRET", fakeKey)
+	}
+	if os.Getenv("FAKE_KEY") == "" {
+		_ = os.Setenv("FAKE_KEY", fakeKey)
 	}
 	if err := buildShared(); err != nil {
 		fmt.Fprintf(os.Stderr, "building the binaries these tests run: %v\n", err)

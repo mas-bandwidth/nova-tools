@@ -106,7 +106,7 @@ func identity(e Entry, raw string, report bool) Read {
 type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
 
 func process(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
-	return processWith(ctx, args, input, cap, "")
+	return processWith(ctx, args, input, cap, "", nil)
 }
 
 func lookPathEnv(file, pathEnv string) (string, error) {
@@ -128,7 +128,7 @@ func lookPathEnv(file, pathEnv string) (string, error) {
 	return "", fmt.Errorf("%q not found in PATH", file)
 }
 
-func processWith(ctx context.Context, args []string, input io.Reader, cap int, pathEnv string) ProcessResult {
+func processWith(ctx context.Context, args []string, input io.Reader, cap int, pathEnv string, extraEnv []string) ProcessResult {
 	r := ProcessResult{}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -148,8 +148,12 @@ func processWith(ctx context.Context, args []string, input io.Reader, cap int, p
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := exec.CommandContext(child, path, args[1:]...)
-	if pathEnv != "" {
-		cmd.Env = append(os.Environ(), "PATH="+pathEnv)
+	if pathEnv != "" || len(extraEnv) > 0 {
+		cmd.Env = os.Environ()
+		if pathEnv != "" {
+			cmd.Env = append(cmd.Env, "PATH="+pathEnv)
+		}
+		cmd.Env = append(cmd.Env, extraEnv...)
 	}
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,

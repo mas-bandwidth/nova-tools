@@ -233,8 +233,11 @@ const stageWaitDelay = 2 * time.Second
 
 // stageGit builds one staging git call under ctx: its own process group, killed as a group
 // when ctx ends, no terminal prompt.
-func stageGit(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+func stageGit(ctx context.Context, gitBin string, args ...string) *exec.Cmd {
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	cmd := exec.CommandContext(ctx, gitBin, args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	ownGroup(cmd)
 	cmd.Cancel = func() error {
@@ -260,6 +263,7 @@ type StageOptions struct {
 	BenchHome string
 	BenchName string
 	Timeout   time.Duration
+	GitBin    string // path to git binary, defaults to "git"
 }
 
 // StageResult is the outcome of a staging operation.
@@ -336,12 +340,15 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	defer cancel()
 
 	start := time.Now()
+	stageGit := func(args ...string) *exec.Cmd {
+		return stageGit(ctx, opts.GitBin, args...)
+	}
 	cloneArgs := []string{"clone", "-q", cloneSource, opts.TargetDir}
 	if mirror != "" {
 		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, false)
 	}
 
-	cloneCmd := stageGit(ctx, cloneArgs...)
+	cloneCmd := stageGit(cloneArgs...)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		if stageTimedOut(ctx, err) {
 			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
@@ -352,7 +359,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// Update remote origin to baseRepo if cloned from mirror
 	if cloneSource != baseRepo {
-		remCmd := stageGit(ctx, "-C", opts.TargetDir, "remote", "set-url", "origin", baseRepo)
+		remCmd := stageGit("-C", opts.TargetDir, "remote", "set-url", "origin", baseRepo)
 		_ = remCmd.Run()
 	}
 
@@ -368,46 +375,46 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	branch := CardStageBranch(opts.Card)
 	switch {
 	case baseSha != "":
-		catCmd := stageGit(ctx, "-C", opts.TargetDir, "cat-file", "-e", baseSha+"^{commit}")
+		catCmd := stageGit("-C", opts.TargetDir, "cat-file", "-e", baseSha+"^{commit}")
 		if err := catCmd.Run(); err != nil {
 			// Commit not present locally, fetch from origin
-			fetchCmd := stageGit(ctx, "-C", opts.TargetDir, "fetch", "-q", "origin", baseSha)
+			fetchCmd := stageGit("-C", opts.TargetDir, "fetch", "-q", "origin", baseSha)
 			if out, ferr := fetchCmd.CombinedOutput(); ferr != nil {
 				return fail("fetch", out, ferr)
 			}
 		}
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, baseSha)
+		coCmd := stageGit("-C", opts.TargetDir, "checkout", "-q", "-B", branch, baseSha)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			return fail("checkout", out, cerr)
 		}
 	case cb.Ref != "":
 		// The clone's remote-tracking ref first (the mirror's branch), then the ref as
 		// written (a tag or a sha the clone holds).
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "origin/"+cb.Ref)
+		coCmd := stageGit("-C", opts.TargetDir, "checkout", "-q", "-B", branch, "origin/"+cb.Ref)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			if stageTimedOut(ctx, cerr) {
 				return fail("checkout", out, cerr)
 			}
-			coCmd = stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, cb.Ref)
+			coCmd = stageGit("-C", opts.TargetDir, "checkout", "-q", "-B", branch, cb.Ref)
 			if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 				return fail("checkout", out, cerr)
 			}
 		}
 	default:
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch)
+		coCmd := stageGit("-C", opts.TargetDir, "checkout", "-q", "-B", branch)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			return fail("checkout", out, cerr)
 		}
 	}
-	headCmd := stageGit(ctx, "-C", opts.TargetDir, "rev-parse", "HEAD")
+	headCmd := stageGit("-C", opts.TargetDir, "rev-parse", "HEAD")
 	headOut, herr := headCmd.Output()
 	if herr != nil {
 		return fail("rev-parse", headOut, herr)
 	}
 	head := strings.TrimSpace(string(headOut))
 
-	_ = exec.Command("git", "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
-	_ = exec.Command("git", "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
+	_ = stageGit("-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
+	_ = stageGit("-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
 
 	return StageResult{
 		BaseRepo: baseRepo,

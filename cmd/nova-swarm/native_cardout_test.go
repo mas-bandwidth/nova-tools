@@ -48,6 +48,8 @@ func cardOrigin(t *testing.T) string {
 // NO-COMMIT. With NOVA_CARD_OUT set, native moves the job's repo there and copies the
 // card's RESULT.md beside it, and the wrapper's commit step then commits the fix.
 func TestNativeHandsCardRepoToCardOut(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
@@ -56,7 +58,6 @@ func TestNativeHandsCardRepoToCardOut(t *testing.T) {
 	root, slot := aSlot(t)
 	const label = "quack"
 	out := filepath.Join(t.TempDir(), "job", "out") // the wrapper's out, not under the slot
-	t.Setenv(swarm.CardOutEnv, out)
 	cardPath := filepath.Join(root, "card.md")
 	write(t, cardPath, "RESULT: quack fixed\nFAKE-CARD-REPO "+cardOrigin(t)+"\n")
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
@@ -65,7 +66,8 @@ func TestNativeHandsCardRepoToCardOut(t *testing.T) {
 		"--deadline", "30s", "--idle", "0", "--no-wall",
 		"--results-root", filepath.Join(out, "native")}
 	var stdout, stderr bytes.Buffer
-	if rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now()); rc != 0 {
+	hooks := nativeHooks{cardOut: out}
+	if rc := runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), hooks); rc != 0 {
 		t.Fatalf("native exits 0, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
 	job := filepath.Join(slot, "jobs", label)

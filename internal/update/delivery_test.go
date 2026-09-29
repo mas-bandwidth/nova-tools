@@ -79,7 +79,7 @@ func fakeBus() {
 	fmt.Printf("SEND OK id=%s path=from-fixture/fixture.md commit=synthetic pushed=true attempts=0 state=already-published\n", a["id"])
 	os.Exit(0)
 }
-func fakeBusPath(t *testing.T) string {
+func fakeBusEnv(t *testing.T) (string, Environment) {
 	t.Helper()
 	dir := t.TempDir()
 	name := "nova-bus"
@@ -93,13 +93,29 @@ func fakeBusPath(t *testing.T) string {
 	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
 		t.Fatal(e)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("NOVA_UPDATE_FAKE_BUS", "1")
-	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	log := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_BUS_CALLS", log)
+	env := Environment{
+		Path: dir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		Env: []string{
+			"NOVA_UPDATE_FAKE_BUS=1",
+			"GORACE=atexit_sleep_ms=0",
+			"NOVA_UPDATE_BUS_CALLS=" + log,
+		},
+	}
+	return log, env
+}
+
+func fakeBusPath(t *testing.T) string {
+	t.Helper()
+	log, env := fakeBusEnv(t)
+	t.Setenv("PATH", env.Path)
+	for _, kv := range env.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
 	return log
 }
+
 func calls(t *testing.T, p string) (int, int) {
 	t.Helper()
 	b, e := os.ReadFile(p)
@@ -109,20 +125,24 @@ func calls(t *testing.T, p string) (int, int) {
 	s := string(b)
 	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
 }
+
 func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
-	log := fakeBusPath(t)
+	t.Parallel()
+
+	log, env := fakeBusEnv(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	sp := filepath.Join(t.TempDir(), "s.json")
 	args := []string{"report", "--file", p, "--send", "--snapshot", sp, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main"}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "uncertain")
-	run(t, Environment{}, args...)
+	uncEnv := env
+	uncEnv.Env = append(append([]string(nil), env.Env...), "NOVA_UPDATE_BUS_MODE=uncertain")
+	run(t, uncEnv, args...)
 	s, _ := readSnapshot(sp)
 	var old string
 	for _, v := range s.Pending {
 		old = v.ID
 	}
 	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
-	if c, _, _ := run(t, Environment{}, args...); c != 1 {
+	if c, _, _ := run(t, uncEnv, args...); c != 1 {
 		t.Fatal(c)
 	}
 	if np, ns := calls(t, log); np != 1 || ns != 2 {
@@ -134,8 +154,9 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 			t.Fatal("pending was replaced")
 		}
 	}
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-	if c, o, e := run(t, Environment{}, args...); c != 0 {
+	okEnv := env
+	okEnv.Env = append(append([]string(nil), env.Env...), "NOVA_UPDATE_BUS_MODE=ok")
+	if c, o, e := run(t, okEnv, args...); c != 0 {
 		t.Fatalf("%d %s %s", c, o, e)
 	}
 	if np, ns := calls(t, log); np != 2 || ns != 4 {
@@ -232,6 +253,8 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 // line now reaches the caller's diagnostic -- one line, clipped, and no binary
 // on PATH can turn one event into two.
 func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
+	t.Parallel()
+
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
 		t.Fatalf("%q", got)
 	}
@@ -248,10 +271,10 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	}
 	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
 		t.Run(mode, func(t *testing.T) {
-			fakeBusPath(t)
+			_, env := fakeBusEnv(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+			env.Env = append(append([]string(nil), env.Env...), "NOVA_UPDATE_BUS_MODE="+mode)
+			c, _, errout := run(t, env, "report", "--file", p, "--send", "--snapshot",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 			if c != 1 {
@@ -331,6 +354,8 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 // delivery allowance is what is left of the budget, and the bus is handed finite
 // retry controls that fit inside it.
 func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		remaining            time.Duration
 		attempts, gitSeconds int
@@ -354,9 +379,9 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 			t.Errorf("%s left: a git timeout of %ds promises more than remains", want, g)
 		}
 	}
-	log := fakeBusPath(t)
+	log, env := fakeBusEnv(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	c, out, errs := run(t, env, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
 	if c != 0 {
@@ -407,6 +432,8 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 // A binary on PATH called nova-bus that answers in no grammar this tool knows
 // must not get to write on the caller's event line.
 func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
+	t.Parallel()
+
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"}); got != "SEND FAIL from-x/n.md: a named reason" {
 		t.Fatalf("the bus's own grammar was not relayed: %q", got)
 	}
@@ -418,10 +445,10 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 			t.Errorf("%q was relayed as %q", alien, got)
 		}
 	}
-	fakeBusPath(t)
+	_, env := fakeBusEnv(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	t.Setenv("NOVA_UPDATE_BUS_MODE", "prepare-alien")
-	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+	env.Env = append(append([]string(nil), env.Env...), "NOVA_UPDATE_BUS_MODE=prepare-alien")
+	c, out, errs := run(t, env, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 	if c != 1 {

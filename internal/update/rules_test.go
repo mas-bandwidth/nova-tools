@@ -167,10 +167,16 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 // from the clock it was handed, a report with recipients named but no --send
 // starts no bus, and a run whose children hang still ends inside its budget.
 func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
+	t.Parallel()
+
 	fixed := time.Date(2026, 9, 9, 12, 34, 56, 0, time.UTC)
-	env := Environment{Now: func() time.Time { return fixed }}
+	log, busEnv := fakeBusEnv(t)
+	env := Environment{
+		Now:  func() time.Time { return fixed },
+		Path: busEnv.Path,
+		Env:  busEnv.Env,
+	}
 	snapshot := filepath.Join(t.TempDir(), "s.json")
-	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
 	if c != 0 {

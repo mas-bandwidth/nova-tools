@@ -85,8 +85,9 @@ func madeNothing(t *testing.T, slot string) {
 // the caller asked for and what the bench could offer, and every one of them is
 // `NATIVE REFUSED` at exit 2 with nothing made.
 func TestNativeRefusesABudgetNothingCanObserve(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
-	t.Setenv("CAP_BUDGET_ENV", "a fake key")
 	for _, tc := range []struct {
 		name      string
 		tokens    string
@@ -114,6 +115,8 @@ func TestNativeRefusesABudgetNothingCanObserve(t *testing.T) {
 		{name: "unmetered_no_worker_without_sqlite3_runs", tokens: "unmetered", noSQLite: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			root, slot := aSlot(t)
 			card := budgetCard(t, root)
 			args := budgetNativeArgs(t, bin, card, slot, root, tc.tokens)
@@ -124,13 +127,12 @@ func TestNativeRefusesABudgetNothingCanObserve(t *testing.T) {
 				}
 				args = append(args, "--worker", budgetWorker(t, usage, tc.maxTurns, tc.maxCache))
 			}
-			// The PATH is emptied LAST, after every fixture that needed a real one has
-			// been built, so the only thing this takes away is the usage reader.
+			var hooks nativeHooks
 			if tc.noSQLite {
-				noSQLiteOnPath(t)
+				hooks.sqliteCmd = filepath.Join(t.TempDir(), "nonexistent-sqlite3")
 			}
 			var stdout, stderr bytes.Buffer
-			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+			rc := runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), hooks)
 			if !tc.wantRefus {
 				if rc != 0 {
 					t.Fatalf("this launch runs, got exit %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())

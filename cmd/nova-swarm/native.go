@@ -129,6 +129,8 @@ type nativeRunConfig struct {
 	deadlineFn     func(time.Duration) (<-chan time.Time, func() bool)
 	launchArgv     func(provider, goos string, req swarm.LaunchRequest) ([]string, error)
 	persistUnknown func(string) error
+	sqliteCmd      string
+	sandboxLook    func(string) (string, error)
 }
 
 // nativeHooks packages the seams for the native run lifecycle.
@@ -139,6 +141,8 @@ type nativeHooks struct {
 	deadlineFn     func(time.Duration) (<-chan time.Time, func() bool)
 	launchArgv     func(provider, goos string, req swarm.LaunchRequest) ([]string, error)
 	persistUnknown func(string) error
+	sqliteCmd      string
+	cardOut        string
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -722,7 +726,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	runArgv := launch[1:]
 	wall := cfg.sandbox
 	if wall == "" && !cfg.noWall {
-		found, err := exec.LookPath(swarm.SandboxBinary)
+		look := exec.LookPath
+		if cfg.sandboxLook != nil {
+			look = cfg.sandboxLook
+		}
+		found, err := look(swarm.SandboxBinary)
 		if err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s no wall: %s is on no PATH entry and --sandbox names no file; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes",
 				oneline.Field(cfg.label), oneline.Field(swarm.SandboxBinary)))

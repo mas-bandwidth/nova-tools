@@ -74,6 +74,7 @@ type benchPull struct {
 	poll       time.Duration // how often to ask
 	notes      io.Writer     // where BATCH NOTE lines go
 	clock      pullClock     // nil means the real clock
+	run        func(host string, args ...string) error
 }
 
 // pullFromBench waits for the card's RESULT.md, copies the three files back by one explicit
@@ -94,8 +95,12 @@ func pullFromBench(p benchPull) error {
 	if err := os.MkdirAll(p.localJob, 0o755); err != nil {
 		return err
 	}
+	run := p.run
+	if run == nil {
+		run = sshRun
+	}
 	result := p.remoteJob + "/RESULT.md"
-	found, err := waitForRemoteFile(p.host, result, p.wait, p.poll, clk)
+	found, err := waitForRemoteFile(p.host, result, p.wait, p.poll, clk, run)
 	if err != nil {
 		return err
 	}
@@ -146,10 +151,14 @@ func pullFromBench(p benchPull) error {
 // window on a poll that cannot change. That is also what keeps the test that drives it off
 // the machine's clock: the one place a real wait is the answered-but-not-yet-written file,
 // and there the clock is injected.
-func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullClock) (bool, error) {
+func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullClock, runSSH ...func(string, ...string) error) (bool, error) {
+	ssh := sshRun
+	if len(runSSH) > 0 && runSSH[0] != nil {
+		ssh = runSSH[0]
+	}
 	deadline := clk.Now().Add(wait)
 	for {
-		err := sshRun(host, "test", "-f", path)
+		err := ssh(host, "test", "-f", path)
 		if err == nil {
 			return true, nil
 		}

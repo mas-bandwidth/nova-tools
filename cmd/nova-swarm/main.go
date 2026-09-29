@@ -771,7 +771,7 @@ func cmdNativeWith(args []string, stdout, stderr io.Writer, hooks nativeHooks) i
 	if workerGiven {
 		workerForBudget = &w
 	}
-	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, workerForBudget); reason != "" {
+	if reason := swarm.NativeBudgetSourceRefusalWith(hooks.sqliteCmd, swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, workerForBudget); reason != "" {
 		refuseNative(stderr, reason)
 		return 2
 	}
@@ -845,6 +845,7 @@ func cmdNativeWith(args []string, stdout, stderr io.Writer, hooks nativeHooks) i
 		deadlineFn:     hooks.deadlineFn,
 		launchArgv:     hooks.launchArgv,
 		persistUnknown: hooks.persistUnknown,
+		sqliteCmd:      hooks.sqliteCmd,
 	}
 	if workerGiven {
 		cfg.worker = &w
@@ -950,7 +951,11 @@ func cmdNativeWith(args []string, stdout, stderr io.Writer, hooks nativeHooks) i
 	// chose. The repo moves there after every report line and the card-end entry have read
 	// the job, and before --sweep-now can delete it. No NOVA_CARD_OUT is no hand-off.
 	if res.job != "" {
-		if h, err := swarm.HandOffCardOut(res.job, os.Getenv(swarm.CardOutEnv)); err != nil {
+		cardOut := hooks.cardOut
+		if cardOut == "" {
+			cardOut = os.Getenv(swarm.CardOutEnv)
+		}
+		if h, err := swarm.HandOffCardOut(res.job, cardOut); err != nil {
 			fmt.Fprintf(stderr, "NATIVE NOTE: the card's work was not handed to %s: %s\n", oneline.Field(swarm.CardOutEnv), oneline.Escape(err.Error()))
 		} else if h.Repo != "" {
 			fmt.Fprintf(stderr, "NATIVE NOTE: the card's repo was handed to %s (moved=%t)\n", oneline.Field(h.Repo), h.Moved)

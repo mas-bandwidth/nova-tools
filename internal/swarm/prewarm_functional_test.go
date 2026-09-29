@@ -158,6 +158,7 @@ func TestPrewarmFailedRerunInvalidatesPriorReceipt(t *testing.T) {
 }
 
 func TestPrewarmGitChildrenDropSecrets(t *testing.T) {
+	t.Parallel()
 	source, tip := prewarmFixture(t)
 	realGit, err := exec.LookPath("git")
 	if err != nil {
@@ -169,13 +170,19 @@ func TestPrewarmGitChildrenDropSecrets(t *testing.T) {
 	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("STELLA_REVIEW_TOKEN", "must-not-reach-child")
-	t.Setenv("STELLA_REVIEW_LOG", log)
-	t.Setenv("STELLA_REAL_GIT", realGit)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	env := append(os.Environ(),
+		"STELLA_REVIEW_TOKEN=must-not-reach-child",
+		"STELLA_REVIEW_LOG="+log,
+		"STELLA_REAL_GIT="+realGit,
+	)
 	if _, err := Prewarm(PrewarmInput{
-		Root: filepath.Join(t.TempDir(), "pool"), Source: source, Repo: "acme/tool", Tip: tip,
-		Run: func(PrewarmCommand) error { return nil },
+		Root:    filepath.Join(t.TempDir(), "pool"),
+		Source:  source,
+		Repo:    "acme/tool",
+		Tip:     tip,
+		GitBin:  filepath.Join(bin, "git"),
+		Environ: env,
+		Run:     func(PrewarmCommand) error { return nil },
 	}); err != nil {
 		t.Fatal(err)
 	}
