@@ -106,7 +106,12 @@ max-docs 900
 | `max-docs` | documents per background root, one or more |
 
 Every malformed line is reported in one run, each with its line number. A
-configuration with no source is refused. A source the configuration declares
+configuration with no source is refused. Two sources that are one file, by file
+identity once the path is resolved (the same line twice, `private/./ideas.md`
+beside `private/ideas.md`, a symlink to another source), are refused by name
+(exit 2): a source counted twice doubles every count in it and can push a
+term over the rarity bound, which silences a flag. `privacy.Load` given such a
+`Spec` in process marks the second one unreadable. A source the configuration declares
 that cannot be read is `CORPUS-UNREADABLE`, and the remedy is
 `remove it from <config> or restore the file`.
 

@@ -542,3 +542,13 @@ func TestAPayloadThatIsNotTextNeverClears(t *testing.T) {
 		})
 	}
 }
+
+func TestOneSourceDeclaredTwiceIsRefused(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	tr.write(t, ".nova-privacy", configFixture+"source private/./ideas.md\n")
+	code, out, errOut := screenStdin(tr, "harmless outgoing text")
+	if code != exitCouldNotRun || out != "" || !strings.Contains(errOut, "same file") || !strings.Contains(errOut, "private/./ideas.md") {
+		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
+	}
+}

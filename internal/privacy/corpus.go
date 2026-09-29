@@ -121,8 +121,14 @@ func Load(s Spec) Corpus {
 	if c.Rules.stop == nil {
 		c.Rules = DefaultRules()
 	}
-	for _, src := range s.Sources {
+	dups := duplicateSources(s.Sources)
+	for i, src := range s.Sources {
 		sl := SourceLoad{Path: src.Display, FromFlag: src.FromFlag}
+		if j, ok := dups[i]; ok {
+			sl.Err = fmt.Errorf("it is the same file as %s; a source declared twice doubles every count in it, so declare it once", s.Sources[j].Display)
+			c.Sources = append(c.Sources, sl)
+			continue
+		}
 		b, err := ReadBounded(src.Path, MaxSourceBytes)
 		if err != nil {
 			if errors.Is(err, ErrTooLarge) {
@@ -151,6 +157,41 @@ func Load(s Spec) Corpus {
 		c.loadRoot(root, maxDocs)
 	}
 	return c
+}
+
+// duplicateSources maps the index of every source that is the same file as
+// an earlier one, by file identity after the path is resolved, to the index
+// of the first. A source that cannot be opened has no identity and is left
+// for the read to report.
+func duplicateSources(srcs []SourceSpec) map[int]int {
+	out := map[int]int{}
+	infos := make([]os.FileInfo, len(srcs))
+	for i, src := range srcs {
+		info, err := os.Stat(src.Path)
+		if err != nil {
+			continue
+		}
+		infos[i] = info
+		for j := 0; j < i; j++ {
+			if infos[j] != nil && os.SameFile(infos[j], info) {
+				out[i] = j
+				break
+			}
+		}
+	}
+	return out
+}
+
+// checkDistinctSources refuses two sources that are one file, naming both.
+func checkDistinctSources(srcs []SourceSpec) error {
+	dups := duplicateSources(srcs)
+	var errs []error
+	for i := range srcs {
+		if j, ok := dups[i]; ok {
+			errs = append(errs, fmt.Errorf("sources %s and %s are the same file; a source declared twice doubles every count in it and can silence a flag, so declare it once", srcs[j].Display, srcs[i].Display))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (c *Corpus) warn(format string, a ...any) {
@@ -344,6 +385,9 @@ func (o Options) Spec() (Spec, error) {
 	}
 	if len(spec.Sources) == 0 {
 		return Spec{}, fmt.Errorf("%s declares no source of private material; add a line `source <file>` to it, or name one with --source", cfg)
+	}
+	if err := checkDistinctSources(spec.Sources); err != nil {
+		return Spec{}, err
 	}
 	return spec, nil
 }

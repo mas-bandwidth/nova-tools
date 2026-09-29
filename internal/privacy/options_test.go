@@ -2,6 +2,7 @@ package privacy_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,5 +89,44 @@ func TestSourcesByOptionNeedNoConfiguration(t *testing.T) {
 	s, err := privacy.Options{Root: t.TempDir(), Sources: []string{"a.md"}}.Spec()
 	if err != nil || s.Config != "" || len(s.Sources) != 1 {
 		t.Errorf("spec %+v err %v", s, err)
+	}
+}
+
+// Two sources that are one file would double every count in it, and a term
+// at the rarity bound would fall out of the fingerprints. They are refused at
+// load, by name, however the path is spelled.
+func TestSourcesThatAreOneFileAreRefusedByName(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	if err := os.Symlink(f.path("private/later.md"), f.path("private/linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	for name, cfg := range map[string]string{
+		"the same line twice": "source private/later.md\nsource private/later.md\n",
+		"a second spelling":   "source private/later.md\nsource private/./later.md\n",
+		"a symlink":           "source private/later.md\nsource private/linked.md\n",
+	} {
+		f.write(t, name+".conf", cfg)
+		_, err := privacy.Options{Config: f.path(name + ".conf")}.Spec()
+		if err == nil || !strings.Contains(err.Error(), "same file") || !strings.Contains(err.Error(), "private/later.md") {
+			t.Errorf("%s: err %v, want a refusal naming both sources", name, err)
+		}
+	}
+	_, err := privacy.Options{Sources: []string{f.path("private/later.md"), f.path("private/linked.md")}}.Spec()
+	if err == nil || !strings.Contains(err.Error(), "same file") {
+		t.Errorf("by flag: err %v", err)
+	}
+}
+
+// A Spec built in process with one file twice is caught by Load as well: the
+// second row is unreadable, so the screen does not clear.
+func TestLoadRefusesOneFileDeclaredTwice(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	spec := f.spec
+	spec.Sources = append(spec.Sources, privacy.SourceSpec{Path: f.path("private/./later.md"), Display: "again.md"})
+	r := privacy.Screen(spec, harmless)
+	if r.Outcome != privacy.CorpusUnreadable || !strings.Contains(r.Reason, "again.md") || !strings.Contains(r.Reason, "same file as private/later.md") {
+		t.Errorf("outcome %s reason %q", r.Outcome, r.Reason)
 	}
 }
