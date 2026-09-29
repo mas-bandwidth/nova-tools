@@ -34,7 +34,7 @@ func pushPrimaries(t *testing.T, c *redis.Client, n int) []string {
 		_, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Where: "waiting", Stream: mvStream, Sprint: sprint,
 			Kind: "build", Ref: fmt.Sprintf("nova-tools#%d", 4000+i), Origin: fmt.Sprintf("issue:nova-tools#%d", 4000+i),
 			Title: "primary " + id, Repo: "mas-bandwidth/nova-tools", By: "rowan",
-			Fields: []string{"base", "dev", "base_sha", baseSHA, "paths", "internal/x.go",
+			Fields: []string{"base", "dev", "base_sha", baseSHA, "paths", fmt.Sprintf("internal/x%02d/x.go", i),
 				"done_when", "go test ./internal/x -run TestX passes"}})
 		if err != nil {
 			t.Fatalf("push %s: %v", id, err)

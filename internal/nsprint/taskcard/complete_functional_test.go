@@ -147,7 +147,7 @@ func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
 		if i%2 == 1 {
 			route = taskcard.RouteFriend
 		}
-		if _, err := pushIssue(t, c, id, route, "docs/fixtures/w.txt"); err != nil {
+		if _, err := pushIssue(t, c, id, route, fmt.Sprintf("docs/fixtures/%s.txt", id)); err != nil {
 			t.Fatalf("push %s: %v", id, err)
 		}
 		ids = append(ids, id)

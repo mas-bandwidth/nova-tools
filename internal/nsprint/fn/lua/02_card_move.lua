@@ -422,9 +422,31 @@ function SP.add(stream, member)
   SP.put(stream, seen)
 end
 
--- SP.hits(a, b): the rule, equal or one a prefix of the other at a /.
+local function is_go_file(p)
+  return type(p) == 'string' and #p > 3 and string.sub(p, -3) == '.go'
+end
+
+local function dir_of(p)
+  return string.match(p, '^(.*)/[^/]+$') or '.'
+end
+
+-- SP.hit_path(a, b): returns the path under which a and b overlap: exact file,
+-- directory containment, or the Go package directory when both are .go files;
+-- else nil.
+function SP.hit_path(a, b)
+  if a == b then return a end
+  if string.sub(b, 1, #a + 1) == a .. '/' then return a end
+  if string.sub(a, 1, #b + 1) == b .. '/' then return b end
+  if is_go_file(a) and is_go_file(b) and dir_of(a) == dir_of(b) then
+    return dir_of(a)
+  end
+  return nil
+end
+
+-- SP.hits(a, b): the rule: equal, one a prefix of the other at a /,
+-- or both .go files in the same package directory.
 function SP.hits(a, b)
-  return a == b or string.sub(b, 1, #a + 1) == a .. '/' or string.sub(a, 1, #b + 1) == b .. '/'
+  return SP.hit_path(a, b) ~= nil
 end
 
 -- SP.overlap(mine, theirs): every entry of either side that overlaps an
@@ -507,6 +529,97 @@ function SP.gate(member, mine, s0, w0, s1, join)
     return nil, 'PATHS overlap paths=' .. table.concat(ov, ',') .. ' stream=' .. table.concat(hit, '|')
   end
   return target
+end
+
+local function cm_get_field(fields, key)
+  for i = 1, #fields, 2 do
+    if fields[i] == key then return fields[i + 1] end
+  end
+  return ''
+end
+
+local function cm_set_field(fields, key, val)
+  for i = 1, #fields, 2 do
+    if fields[i] == key then
+      fields[i + 1] = val
+      return
+    end
+  end
+  fields[#fields + 1] = key
+  fields[#fields + 1] = val
+end
+
+local function cm_merge_deps(existing, add_list)
+  local seen, out = {}, {}
+  if existing and existing ~= '' and existing ~= '-' and existing ~= 'none' then
+    for p in string.gmatch(existing, '[^,;%s]+') do
+      if p ~= '' and p ~= '-' and p ~= 'none' and not seen[p] then
+        seen[p] = true
+        out[#out + 1] = p
+      end
+    end
+  end
+  for _, m in ipairs(add_list) do
+    if not seen[m] then
+      seen[m] = true
+      out[#out + 1] = m
+    end
+  end
+  return table.concat(out, ',')
+end
+
+-- SP.within_stream(member, mine, stream): finds older unlanded cards in stream
+-- whose PATHS overlap mine (exact file, directory containment, or Go package).
+-- Returns deps (list of member ids), ov (sorted list of overlap paths), or nil.
+function SP.within_stream(member, mine, stream)
+  if type(stream) ~= 'string' or stream == '' then return nil end
+  local paths = SP.list(mine)
+  if #paths == 0 then return nil end
+  local e = cm_epoch()
+  local hit_cards, hit_paths = {}, {}
+  local deps = {}
+  for _, w in ipairs(SP.WHERE) do
+    local members = redis.call('ZRANGE', cm_wskey(e, stream, w), 0, -1, 'WITHSCORES')
+    for i = 1, #members, 2 do
+      local m = members[i]
+      local created = tonumber(members[i + 1]) or 0
+      if m ~= member and not string.match(m, '^[a-z0-9][a-z0-9%-]*:sentinel$') then
+        local key = SP.key(m)
+        local f = redis.call('HMGET', key, SP.FIELD, 'paths', 'kind', 'phase')
+        local theirs_raw = f[1]
+        if not theirs_raw or theirs_raw == '' then theirs_raw = f[2] end
+        local theirs = SP.list(theirs_raw)
+        local m_kind, m_phase = f[3], f[4]
+        if m_kind ~= 'plan' and m_kind ~= 'stitch' and m_phase ~= 'stitch' and #theirs > 0 then
+          local overlaps = false
+          for _, a in ipairs(paths) do
+            for _, b in ipairs(theirs) do
+              local p = SP.hit_path(a, b)
+              if p then
+                overlaps = true
+                hit_paths[p] = true
+              end
+            end
+          end
+          if overlaps and not hit_cards[m] then
+            hit_cards[m] = true
+            deps[#deps + 1] = { id = m, created = created }
+          end
+        end
+      end
+    end
+  end
+  if #deps == 0 then return nil end
+  table.sort(deps, function(a, b)
+    if a.created ~= b.created then return a.created < b.created end
+    return a.id < b.id
+  end)
+  local dep_ids = {}
+  for _, d in ipairs(deps) do dep_ids[#dep_ids + 1] = d.id end
+  local ov = {}
+  for p in pairs(hit_paths) do ov[#ov + 1] = p end
+  table.sort(ov)
+  return dep_ids, ov
 end
 
 -- SP.entering(s0, w0, s1, w1): the move puts the record into a live set of
@@ -1018,6 +1131,20 @@ local function card_create(id, fields, o)
     local serr = cm_slug_check(cstream)
     if serr then return serr end
   end
+  local kind = cm_get_field(fields, 'kind')
+  local phase = cm_get_field(fields, 'phase')
+  if kind ~= 'plan' and kind ~= 'stitch' and phase ~= 'stitch' then
+    local deps, ov = SP.within_stream(id, mine, cstream)
+    if deps and #deps > 0 then
+      local why = 'overlap:' .. table.concat(ov, ',')
+      o.why = why
+      local cur_blocked = cm_get_field(fields, 'blocked_on')
+      local merged = cm_merge_deps(cur_blocked, deps)
+      cm_set_field(fields, 'blocked_on', merged)
+      cm_set_field(fields, 'depends_on', merged)
+      cm_set_field(fields, 'why', why)
+    end
+  end
   local created = cm_now()
   local h = { id }
   for i = 1, #fields do h[#h + 1] = fields[i] end
@@ -1042,7 +1169,7 @@ local function card_create(id, fields, o)
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
 
   redis.call('SADD', cm_idx(S, 'queued'), label)
-  return card_move(id, 'waiting', { by = o.by, why = 'push', gated = true })
+  return card_move(id, 'waiting', { by = o.by, why = o.why or 'push', gated = true })
 end
 
 -- cm_lease_member(m, w): m is a lease member of a working set, <S>/<id>/<attempt>
@@ -2388,6 +2515,22 @@ function TK.create(id, fields, o)
   if serr then return serr end
   local where = o.where or 'waiting'
   if where ~= 'waiting' and where ~= 'ready' then return 'OFFGRAPH a new task starts in waiting or ready' end
+  local kind = cm_get_field(fields, 'kind')
+  local phase = cm_get_field(fields, 'phase')
+  if kind ~= 'plan' and kind ~= 'stitch' and phase ~= 'stitch' then
+    local deps, ov = SP.within_stream(id, mine, stream)
+    if deps and #deps > 0 then
+      where = 'waiting'
+      o.where = 'waiting'
+      local why = 'overlap:' .. table.concat(ov, ',')
+      o.why = why
+      local cur_blocked = cm_get_field(fields, 'blocked_on')
+      local merged = cm_merge_deps(cur_blocked, deps)
+      cm_set_field(fields, 'blocked_on', merged)
+      cm_set_field(fields, 'depends_on', merged)
+      cm_set_field(fields, 'why', why)
+    end
+  end
   -- a probe never enters a consumer set (nova-tools#4237): refused before any write
   if TK.str(o.friend) ~= '' then
     for i = 1, #fields, 2 do
@@ -3315,6 +3458,36 @@ function TM.cut(c, id, leg, o)
   return nil, cid
 end
 
+-- TM.working_overlap(id, p): returns the id of an older card currently in
+-- working in the same stream whose PATHS overlap id's, else nil.
+function TM.working_overlap(id, p)
+  p = p or TK.read(id)
+  if not p or p.stream == '' then return nil end
+  if p.kind == 'plan' or p.kind == 'stitch' then return nil end
+  local my_phase = redis.call('HGET', 'task:' .. id, 'phase')
+  if my_phase == 'stitch' then return nil end
+  local mine_f = redis.call('HMGET', SP.key(id), SP.FIELD, 'paths')
+  local mine_raw = mine_f[1]
+  if not mine_raw or mine_raw == '' then mine_raw = mine_f[2] end
+  local paths = SP.list(mine_raw)
+  if #paths == 0 then return nil end
+  local e = cm_epoch()
+  local workings = redis.call('ZRANGE', cm_wskey(e, p.stream, 'working'), 0, -1)
+  for _, wid in ipairs(workings) do
+    if wid ~= id and not TK.copy_id(wid) and not string.match(wid, '^[a-z0-9][a-z0-9%-]*:sentinel$') then
+      local f = redis.call('HMGET', SP.key(wid), SP.FIELD, 'paths', 'kind', 'phase')
+      local raw = f[1]
+      if not raw or raw == '' then raw = f[2] end
+      local theirs = SP.list(raw)
+      local w_kind, w_phase = f[3], f[4]
+      if w_kind ~= 'plan' and w_kind ~= 'stitch' and w_phase ~= 'stitch' and #theirs > 0 and SP.overlap(paths, theirs) then
+        return wid
+      end
+    end
+  end
+  return nil
+end
+
 -- TM.deal(c, by, k, stream, ids): named primaries (all or nothing), else
 -- the k oldest primaries c may take, read legs first (they finish work in
 -- flight), then work legs in stream rank order. Returns the reply.
@@ -3335,7 +3508,10 @@ function TM.deal(c, by, k, stream, ids)
       if seen[id] then return { 'REFUSED', 'TWICE ' .. id .. ' is named twice' } end
       seen[id] = true
       if TK.copy_id(id) then return { 'REFUSED', 'COPY ' .. id .. ' is a copy; deal its primary' } end
-      local leg, why = TM.leg(id, TK.read(id))
+      local p = TK.read(id)
+      local leg, why = TM.leg(id, p)
+      local wid = TM.working_overlap(id, p)
+      if wid then why = 'HELD overlap=' .. id .. ' with=' .. wid end
       why = why or TM.may(c, d, id, leg) or TM.cut(c, id, leg, { by = by, dry = true })
       if why then return { 'REFUSED', why } end
       legs[i] = leg
@@ -3359,8 +3535,9 @@ function TM.deal(c, by, k, stream, ids)
           if (#out - 2) / 2 >= k then return nil end
           local id = row[1]
           if not TK.card_id(id) and not TK.copy_id(id) then
-            local leg = TM.leg(id, TK.read(id))
-            if leg == want and not TM.may(c, d, id, leg) and not TM.cut(c, id, leg, { by = by, dry = true }) then
+            local p = TK.read(id)
+            local leg = TM.leg(id, p)
+            if leg == want and not TM.working_overlap(id, p) and not TM.may(c, d, id, leg) and not TM.cut(c, id, leg, { by = by, dry = true }) then
               -- the dry run passed: a cut refused here is drift, named
               -- like the named path's, never a copy quietly left out
               local err = cut(id, leg)
@@ -4934,6 +5111,20 @@ redis.register_function('ns_cm_pass', function(keys, args)
       else
         local dealt = tonumber(reply[2]) or 0
         if dealt > 0 then emit('deal', row.c, dealt, row.free, row.ci) end
+      end
+    end
+  end
+  for _, s in ipairs(TM.streams()) do
+    local workings = redis.call('ZRANGE', cm_wskey(e, s, 'working'), 0, -1)
+    if #workings > 0 then
+      local readies = redis.call('ZRANGE', cm_wskey(e, s, 'ready'), 0, -1)
+      for _, rid in ipairs(readies) do
+        if not TK.card_id(rid) and not TK.copy_id(rid) then
+          local wid = TM.working_overlap(rid, TK.read(rid))
+          if wid then
+            emit('held', rid, wid)
+          end
+        end
       end
     end
   end

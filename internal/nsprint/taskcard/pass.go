@@ -117,7 +117,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 	if len(out) > 0 && out[0] == "REFUSED" {
 		return res, fmt.Errorf("deal pass: ns_cm_reads: %s", strings.Join(out[1:], " "))
 	}
-	arity := map[string]int{"expired": 2, "expire-refused": 2, "reads": 2, "skip": 2, "deal": 4, "deal-refused": 2}
+	arity := map[string]int{"expired": 2, "expire-refused": 2, "reads": 2, "skip": 2, "deal": 4, "deal-refused": 2, "held": 2}
 	for i := 0; i < len(out); {
 		n, ok := arity[out[i]]
 		if !ok || i+n >= len(out) {
@@ -140,6 +140,8 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%s free=%s ci=%s", v[0], v[1], v[2], v[3]))
 		case "deal-refused":
 			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s REFUSED why=%s", v[0], v[1]))
+		case "held":
+			res.Lines = append(res.Lines, fmt.Sprintf("HELD overlap=%s with=%s", v[0], v[1]))
 		}
 		i += 1 + n
 	}

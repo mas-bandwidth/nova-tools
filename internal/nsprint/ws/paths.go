@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -99,9 +100,16 @@ func ParsePaths(csv string) []string {
 	return out
 }
 
-// PathsOverlap is the rule: equal, or one a prefix of the other at a /.
+// PathsOverlap is the rule: equal, one a prefix of the other at a /,
+// or both .go files in the same package directory (path.Dir).
 func PathsOverlap(a, b string) bool {
-	return a == b || strings.HasPrefix(b, a+"/") || strings.HasPrefix(a, b+"/")
+	if a == b || strings.HasPrefix(b, a+"/") || strings.HasPrefix(a, b+"/") {
+		return true
+	}
+	if strings.HasSuffix(a, ".go") && strings.HasSuffix(b, ".go") && path.Dir(a) == path.Dir(b) {
+		return true
+	}
+	return false
 }
 
 // OverlappingPaths is every entry of mine or theirs that overlaps an entry

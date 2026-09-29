@@ -25,7 +25,7 @@ func TestPushManyIsOneRoundTrip(t *testing.T) {
 	}
 	var reqs []taskcard.PushRequest
 	for i := 1; i <= 100; i++ {
-		spec := taskcard.ParseIssue(issueText(i, "internal/nsprint/taskcard/"))
+		spec := taskcard.ParseIssue(issueText(i, fmt.Sprintf("pkg%03d/c.go", i)))
 		spec.Route = taskcard.RouteFlash
 		if i == 50 {
 			spec.Paths = "" // a flash card without PATHS: refused at push, never sent

@@ -22,9 +22,9 @@ func TestSplitPathsReadsAPathsLine(t *testing.T) {
 	}
 }
 
-// TestPathsOverlapIsPrefixAtASlash: equal, or one a prefix of the other at
-// a / boundary; a prefix inside a name is disjoint.
-func TestPathsOverlapIsPrefixAtASlash(t *testing.T) {
+// TestPathsOverlap: equal, or one a prefix of the other at a / boundary,
+// or both .go files in the same package directory; a prefix inside a name is disjoint.
+func TestPathsOverlap(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		a, b string
@@ -34,7 +34,11 @@ func TestPathsOverlapIsPrefixAtASlash(t *testing.T) {
 		{"internal/nsprint/ws", "internal/nsprint/ws/check.go", true},
 		{"internal", "internal/nsprint/ws/check.go", true},
 		{"internal/nsprint/ws", "internal/nsprint/wsx", false},
-		{"internal/nsprint/ws/a.go", "internal/nsprint/ws/b.go", false},
+		{"internal/nsprint/ws/a.go", "internal/nsprint/ws/b.go", true},
+		{"internal/nsprint/ws/a.go", "internal/nsprint/taskcard/b.go", false},
+		{"a.go", "b.go", true},
+		{"a.txt", "b.txt", false},
+		{"internal/nsprint/ws/a.txt", "internal/nsprint/ws/b.txt", false},
 	} {
 		if ws.PathsOverlap(c.a, c.b) != c.hit || ws.PathsOverlap(c.b, c.a) != c.hit {
 			t.Errorf("PathsOverlap(%q, %q) = %v; want %v both ways", c.a, c.b, !c.hit, c.hit)
@@ -135,20 +139,20 @@ func TestPathsParseRefusalReadsTheGate(t *testing.T) {
 
 // TestPathsGateNamesEveryOverlappingStream (#4322, fix round 4): two
 // streams that ws check --repair wrote overlapping (s1 lib/core, s2
-// lib/core/x.go) both hold their paths. A card into lib/core/y.go overlaps
-// s1 alone and names it (--join s1); one into lib/core/x.go or lib/core
+// lib/core/sub/x.go) both hold their paths. A card into lib/core/y.go overlaps
+// s1 alone and names it (--join s1); one into lib/core/sub/x.go or lib/core
 // names s1 and s2 (also=, remedy park the second); an unrelated card
 // passes. The Lua reply's '|'-joined streams read back the same.
 func TestPathsGateNamesEveryOverlappingStream(t *testing.T) {
 	t.Parallel()
-	sp := ws.StreamPaths{"s1": {"lib/core"}, "s2": {"lib/core/x.go"}, "s3": {"app/c"}}
+	sp := ws.StreamPaths{"s1": {"lib/core"}, "s2": {"lib/core/sub/x.go"}, "s3": {"app/c"}}
 	_, no := sp.Gate("s3", []string{"lib/core/y.go"}, "")
 	if want := `REFUSED PATHS overlap stream=s1 paths=lib/core,lib/core/y.go remedy="--join s1"`; no == nil || no.Receipt() != want {
 		t.Fatalf("lib/core/y.go: %v; want %q", no, want)
 	}
-	want := `REFUSED PATHS overlap stream=s1 also=s2 paths=lib/core,lib/core/x.go remedy="nova-sprint scope park --stream s2"`
-	if _, no := sp.Gate("s3", []string{"lib/core/x.go"}, ""); no == nil || no.Receipt() != want {
-		t.Fatalf("lib/core/x.go: %v; want %q", no, want)
+	want := `REFUSED PATHS overlap stream=s1 also=s2 paths=lib/core,lib/core/sub/x.go remedy="nova-sprint scope park --stream s2"`
+	if _, no := sp.Gate("s3", []string{"lib/core/sub/x.go"}, ""); no == nil || no.Receipt() != want {
+		t.Fatalf("lib/core/sub/x.go: %v; want %q", no, want)
 	}
 	if _, no := sp.Gate("s3", []string{"lib/core"}, ""); no == nil || no.Stream != "s1" || strings.Join(no.Also, ",") != "s2" {
 		t.Fatalf("lib/core: %v; want s1 also s2", no)
@@ -156,7 +160,7 @@ func TestPathsGateNamesEveryOverlappingStream(t *testing.T) {
 	if to, no := sp.Gate("s3", []string{"app/d", "lib/zz"}, ""); no != nil || to != "s3" {
 		t.Fatalf("unrelated: to=%q %v", to, no)
 	}
-	no, ok := ws.ParseRefusal("PATHS overlap paths=lib/core,lib/core/x.go stream=s1|s2")
+	no, ok := ws.ParseRefusal("PATHS overlap paths=lib/core,lib/core/sub/x.go stream=s1|s2")
 	if !ok || no.Receipt() != want {
 		t.Fatalf("parse s1|s2: %v %v; want %q", ok, no, want)
 	}

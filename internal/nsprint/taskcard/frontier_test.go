@@ -39,7 +39,7 @@ func pushRouted(t *testing.T, c *redis.Client, id, route string) {
 	_, err := taskcard.Push(context.Background(), c, taskcard.PushRequest{ID: id, Where: "waiting", Stream: mvStream,
 		Sprint: sprint, Kind: "build", Ref: "nova-tools#4300", Origin: "issue:nova-tools#4300", Title: "primary " + id,
 		Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"route", route, "base", "dev", "base_sha", baseSHA, "paths", "internal/x.go",
+		Fields: []string{"route", route, "base", "dev", "base_sha", baseSHA, "paths", fmt.Sprintf("pkg_%s/x.go", id),
 			"done_when", "go test ./internal/x -run TestX passes"}})
 	if err != nil {
 		t.Fatalf("push %s: %v", id, err)
