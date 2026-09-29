@@ -115,6 +115,12 @@ func (inv *AnsibleInventory) JSON() ([]byte, error) {
 	return json.MarshalIndent(inv, "", "  ")
 }
 
+// Has reports whether a machine row has exactly this name.
+func (inv *AnsibleInventory) Has(name string) bool {
+	_, ok := inv.Meta.Hostvars[name]
+	return ok
+}
+
 // UnknownHostError is HostJSON's refusal: no machine row has the name. Known
 // is every machine name the inventory holds, sorted.
 type UnknownHostError struct {

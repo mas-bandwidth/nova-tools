@@ -71,7 +71,7 @@ usage:
       ansible's -i wants an executable: save these two lines as ./nova-inventory, chmod +x it, then ansible-inventory -i ./nova-inventory --list
         #!/bin/sh
         exec nova-config inventory "$@"
-      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb (ansible passes its own environment to the script); NOVA_MACHINE is the machine row this process runs on, the short hostname when unset, and that host gets ansible_connection=local
+      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on, matched by exact machine name and refused with the known names when it names no row; when it is unset the first label of the hostname is matched, and nothing is marked local when that matches no row
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -898,16 +898,24 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 }
 
 // localHost is the machine row this process runs on, which inventory marks
-// ansible_connection=local: the env NOVA_MACHINE, else the short hostname.
-func localHost(getenv func(string) string, hostname func() (string, error)) string {
+// ansible_connection=local. explicit is true when the env NOVA_MACHINE named
+// it (matched by exact machine name, refused when no row has it); otherwise
+// it is the first label of the hostname, matched the same way, and nothing is
+// marked when no row has it.
+func localHost(getenv func(string) string, hostname func() (string, error)) (name string, explicit bool) {
 	if s := getenv(envMachine); s != "" {
-		return s
+		return s, true
 	}
 	if h, err := hostname(); err == nil {
-		return strings.Split(h, ".")[0]
+		return strings.Split(h, ".")[0], false
 	}
-	return ""
+	return "", false
 }
+
+// inventoryTimeout is --timeout's default: how long inventory waits for the
+// store (the connection check and the read), the same 10 s the connection
+// check has always had.
+const inventoryTimeout = 10 * time.Second
 
 func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "inventory"
@@ -942,9 +950,17 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	inv, err := config.BuildInventory(ctx, st, localHost(d.getenv, d.hostname))
+	self, explicit := localHost(d.getenv, d.hostname)
+	inv, err := config.BuildInventory(ctx, st, self)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
+	}
+	if explicit && !inv.Has(self) {
+		next := tool + " machine list"
+		if *pg != "" {
+			next += " --pg " + shq(*pg)
+		}
+		return refused(stderr, verb, fmt.Sprintf("%s=%s names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), next)
 	}
 	if hostGiven {
 		data, err := inv.HostJSON(*host)

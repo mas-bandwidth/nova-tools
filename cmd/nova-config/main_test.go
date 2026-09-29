@@ -898,7 +898,8 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"first run", "nova-config inventory", // a first example
 		"-i wants an executable", "#!/bin/sh", `exec nova-config inventory "$@"`, // the wrapper
 		"_meta.hostvars", "ansible never calls --host", // why --host is not called
-		"the default when neither --list nor --host is given", // what --list is
+		"the default when neither --list nor --host is given",                                     // what --list is
+		"matched by exact machine name", "first label of the hostname", "nothing is marked local", // how NOVA_MACHINE matches
 	}
 	for _, w := range needs {
 		if !strings.Contains(help, w) {
@@ -940,5 +941,47 @@ func TestInventoryDocsCarryNoIssueNumbersOrHistory(t *testing.T) {
 	sec, _, _ = strings.Cut(sec, "\n## ")
 	if m := issue.FindString(sec); m != "" {
 		t.Errorf("the README's inventory section carries %q", m)
+	}
+}
+
+func TestInventoryUnknownNovaMachineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, self := range []string{"nosuch", "BENCH-01", "bench-01.tailnet.ts.net", " bench-01"} {
+		for _, extra := range [][]string{nil, {"--list"}, {"--host", "bench-01"}} {
+			h := inventoryHarness(t, 2)
+			h.env["NOVA_MACHINE"] = self
+			args := append([]string{"inventory"}, extra...)
+			code, out, errs := h.run(t, args...)
+			want := "nova-config inventory: NOVA_MACHINE=" + self + " names no machine row (the name is matched exactly); known machines: bench-01, bench-02; run: nova-config machine list\n"
+			if code != 1 || out != "" || errs != want {
+				t.Fatalf("NOVA_MACHINE=%q %v: exit %d stdout %q stderr %q\nwant %q", self, extra, code, out, errs, want)
+			}
+		}
+	}
+	// The remedy keeps --pg.
+	h := inventoryHarness(t, 1)
+	h.env["NOVA_MACHINE"] = "nosuch"
+	_, _, errs := h.run(t, "inventory", "--pg", dsn)
+	if !strings.HasSuffix(errs, "run: nova-config machine list --pg "+dsn+"\n") {
+		t.Fatalf("remedy does not keep --pg: %q", errs)
+	}
+}
+
+func TestInventoryUnsetNovaMachineAndNoHostnameMatchMarksNothing(t *testing.T) {
+	t.Parallel()
+
+	// The fallback compares the first label of the hostname to the machine
+	// name exactly, like NOVA_MACHINE: a different case is no match.
+	for _, hostname := range []string{"elsewhere.example", "BENCH-01.tailnet.ts.net", ""} {
+		h := inventoryHarness(t, 2)
+		h.hostname = hostname
+		code, out, errs := h.run(t, "inventory")
+		if code != 0 || errs != "" {
+			t.Fatalf("hostname %q: exit %d stderr %q", hostname, code, errs)
+		}
+		if got := localMachines(t, out); len(got) != 0 {
+			t.Fatalf("hostname %q marks %v local", hostname, got)
+		}
 	}
 }
