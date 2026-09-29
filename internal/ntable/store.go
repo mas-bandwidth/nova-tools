@@ -1054,6 +1054,10 @@ func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...
 	if err != nil {
 		return err
 	}
+	// a bind leaves the table with exactly these rows, so the bound is on their number
+	if err := over(limitNameRows, LimitRows, len(t.Rows), ""); err != nil {
+		return fmt.Errorf("table %q: %w; %s", t.Name, err, err.(*LimitError).Advice())
+	}
 	type boundRow struct {
 		Key string `json:"key"`
 		RowSpec
