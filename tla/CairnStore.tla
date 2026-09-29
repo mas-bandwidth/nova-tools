@@ -19,13 +19,22 @@
 \* shape, and refuses a path holding a non-record), Append (files an entry under
 \* a session that has a record, a duplicate when the same text is already
 \* filed, a refusal on a different text under the same id, a refusal when the
-\* session has no record). Index and Receipt read and change nothing, so they
-\* are no action. The outside events are a person keeping the store by hand:
+\* session has no record). Append is three steps by any of several writers on
+\* one machine: Begin (take the store's lock), Read (read what the entry id
+\* holds and decide), Finish (write what was decided, and let go of the lock);
+\* the write trusts the decision, as the code's does once it holds the lock.
+\* Index and Receipt read and change nothing, so they are no action. The outside events are a person keeping the store by hand:
 \* HandBenchFile, HandBlockFile and HandOwnDir, any of which can make a store
 \* mixed, and HandRemoveBlock, HandMoveBenchAway and HandMoveOwnAway, which take
 \* paths away again (the person's own act after a mixed store's refusal, which
 \* names the next action in words; the tool moves and deletes nothing);
 \* handed records that a person mixed the shapes.
+\*
+\* Outside the model: torn writes (a write that stops half way; the model's
+\* Finish is one step), an older-version writer (a nova-cairn older than this one
+\* that writes the own shape into a bench store; the model's tool never does),
+\* and two machines (the lock serialises writers on one machine; two machines
+\* writing one store through git are outside it).
 \*
 \* Reserved names (README) and letter case are outside the model: a top-level
 \* README.md, in any case, is documentation and never a session file
@@ -46,14 +55,23 @@
 \*   "mixedserved"   open on a mixed store proceeds instead of refusing
 \*   "openblocked"   open reports success over a path that holds a non-record,
 \*                   leaving no record behind
+\*   "nolock"        append takes no lock: two writers read "new" for one entry
+\*                   id with different texts and both write, so one id maps to
+\*                   two texts
 \* Each is caught by one property below; the design passes all of them.
 
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Sessions, Entries, Texts, Broken
+CONSTANTS Sessions, Entries, Texts, Writers, Broken
 
-VARIABLES top, blocked, sess, ownMark, ents, handed, last, subj
-vars == <<top, blocked, sess, ownMark, ents, handed, last, subj>>
+VARIABLES top, blocked, sess, ownMark, ents, handed, last, subj, lock, pc, arg, dec
+vars == <<top, blocked, sess, ownMark, ents, handed, last, subj, lock, pc, arg, dec>>
+
+NoWriter == "none"
+Idle == "idle"
+Args == Sessions \X Entries \X Texts
+NoArg == CHOOSE a \in Args : TRUE
+Decisions == {"none", "write", "dup", "conflict", "missing", "mixed"}
 
 BenchPaths == top \cup blocked
 
@@ -73,8 +91,12 @@ TypeOK ==
   /\ ownMark \in BOOLEAN
   /\ ents \subseteq (Sessions \X Entries \X Texts)
   /\ handed \in BOOLEAN
-  /\ last \in {"Init", "Open", "Append", "Refuse", "Hand"}
+  /\ last \in {"Init", "Open", "Begin", "Read", "Append", "Refuse", "Hand"}
   /\ subj \in Sessions
+  /\ lock \in Writers \cup {NoWriter}
+  /\ pc \in [Writers -> {Idle, "began", "decided"}]
+  /\ arg \in [Writers -> Args]
+  /\ dec \in [Writers -> Decisions]
 
 Init ==
   /\ top = {}
@@ -85,6 +107,10 @@ Init ==
   /\ handed = FALSE
   /\ last = "Init"
   /\ subj \in Sessions
+  /\ lock = NoWriter
+  /\ pc = [w \in Writers |-> Idle]
+  /\ arg = [w \in Writers |-> NoArg]
+  /\ dec = [w \in Writers |-> "none"]
 
 HasEntry(s, e) == \E t \in Texts : <<s, e, t>> \in ents
 
@@ -96,7 +122,7 @@ Open(s) ==
   /\ (s \notin blocked \/ Broken = "openblocked")
   /\ last' = "Open"
   /\ subj' = s
-  /\ UNCHANGED <<ents, handed, blocked>>
+  /\ UNCHANGED <<ents, handed, blocked, lock, pc, arg, dec>>
   /\ IF s \in blocked
        THEN UNCHANGED <<top, sess, ownMark>>
      ELSE IF Shape = "bench" /\ Broken # "openown"
@@ -112,63 +138,80 @@ OpenRefusesNonRecord(s) ==
   /\ s \in blocked
   /\ last' = "Refuse"
   /\ subj' = s
-  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed>>
+  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed, lock, pc, arg, dec>>
 
-\* append: a new entry under a session that has a record.
-AppendNew(s, e, t) ==
-  /\ Shape # "mixed"
-  /\ s \in RecordSet
-  /\ ~HasEntry(s, e)
-  /\ ents' = ents \cup {<<s, e, t>>}
-  /\ last' = "Append"
+\* append, step one: a writer takes the store's lock for a request. With the
+\* lock a second writer waits; without it (the nolock witness) it does not.
+Begin(w, s, e, t) ==
+  /\ pc[w] = Idle
+  /\ (lock = NoWriter \/ Broken = "nolock")
+  /\ lock' = IF Broken = "nolock" THEN lock ELSE w
+  /\ pc' = [pc EXCEPT ![w] = "began"]
+  /\ arg' = [arg EXCEPT ![w] = <<s, e, t>>]
+  /\ last' = "Begin"
   /\ subj' = s
-  /\ UNCHANGED <<top, blocked, sess, ownMark, handed>>
+  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed, dec>>
 
-\* append: the same id with the same text succeeds and changes nothing.
-AppendDup(s, e, t) ==
-  /\ Shape # "mixed"
-  /\ s \in RecordSet
-  /\ <<s, e, t>> \in ents
-  /\ last' = "Append"
-  /\ subj' = s
-  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed>>
+\* what a read of the store decides for a request: a mixed store is refused, a
+\* session with no record is refused (naming open), the same words are a
+\* duplicate, different words under the id are a conflict, otherwise it is new.
+Decide(a) ==
+  IF Shape = "mixed" THEN "mixed"
+  ELSE IF a[1] \notin RecordSet THEN "missing"
+  ELSE IF a \in ents THEN "dup"
+  ELSE IF HasEntry(a[1], a[2]) THEN "conflict"
+  ELSE "write"
 
-\* append: the same id with different text is refused.
-AppendConflict(s, e, t) ==
-  /\ Shape # "mixed"
-  /\ s \in RecordSet
-  /\ \E t2 \in Texts : t2 # t /\ <<s, e, t2>> \in ents
-  /\ subj' = s
-  /\ IF Broken = "conflictadds"
-       THEN /\ ents' = ents \cup {<<s, e, t>>}
-            /\ last' = "Append"
-       ELSE /\ UNCHANGED ents
-            /\ last' = "Refuse"
-  /\ UNCHANGED <<top, blocked, sess, ownMark, handed>>
+\* append, step two: the writer reads what the entry id holds and decides.
+Read(w) ==
+  /\ pc[w] = "began"
+  /\ dec' = [dec EXCEPT ![w] = Decide(arg[w])]
+  /\ pc' = [pc EXCEPT ![w] = "decided"]
+  /\ last' = "Read"
+  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed, subj, lock, arg>>
 
-\* append: a session with no record is refused, naming open.
-AppendMissing(s, e, t) ==
-  /\ Shape # "mixed"
-  /\ s \notin RecordSet
-  /\ subj' = s
-  /\ IF Broken = "appendcreates"
-       THEN /\ last' = "Append"
-            /\ ents' = ents \cup {<<s, e, t>>}
-            /\ IF Shape = "bench"
-                 THEN /\ top' = top \cup {s}
-                      /\ UNCHANGED <<sess, ownMark, blocked>>
-                 ELSE /\ sess' = sess \cup {s}
-                      /\ ownMark' = TRUE
-                      /\ UNCHANGED <<top, blocked>>
-       ELSE /\ last' = "Refuse"
-            /\ UNCHANGED <<top, blocked, sess, ownMark, ents>>
+\* append, step three: the writer writes what it decided, without reading again,
+\* and lets go of the lock. A decision the store no longer supports (a person
+\* mixed the shapes or took the record away in between) is refused.
+Finish(w) ==
+  /\ pc[w] = "decided"
+  /\ LET a == arg[w]
+         d == dec[w]
+         intact == Shape # "mixed" /\ a[1] \in RecordSet
+     IN /\ subj' = a[1]
+        /\ pc' = [pc EXCEPT ![w] = Idle]
+        /\ arg' = [arg EXCEPT ![w] = NoArg]
+        /\ dec' = [dec EXCEPT ![w] = "none"]
+        /\ lock' = IF lock = w THEN NoWriter ELSE lock
+        /\ IF d = "write" /\ intact
+             THEN /\ ents' = ents \cup {a}
+                  /\ last' = "Append"
+                  /\ UNCHANGED <<top, blocked, sess, ownMark>>
+           ELSE IF d = "dup" /\ Shape # "mixed"
+             THEN /\ last' = "Append"
+                  /\ UNCHANGED <<top, blocked, sess, ownMark, ents>>
+           ELSE IF d = "conflict" /\ Broken = "conflictadds" /\ intact
+             THEN /\ ents' = ents \cup {a}
+                  /\ last' = "Append"
+                  /\ UNCHANGED <<top, blocked, sess, ownMark>>
+           ELSE IF d = "missing" /\ Broken = "appendcreates" /\ Shape # "mixed"
+             THEN /\ last' = "Append"
+                  /\ ents' = ents \cup {a}
+                  /\ IF Shape = "bench"
+                       THEN /\ top' = top \cup {a[1]}
+                            /\ UNCHANGED <<sess, ownMark, blocked>>
+                       ELSE /\ sess' = sess \cup {a[1]}
+                            /\ ownMark' = TRUE
+                            /\ UNCHANGED <<top, blocked>>
+           ELSE /\ last' = "Refuse"
+                /\ UNCHANGED <<top, blocked, sess, ownMark, ents>>
   /\ UNCHANGED handed
 
 \* every verb on a mixed store is refused, and nothing is written.
 RefuseMixed ==
   /\ Shape = "mixed"
   /\ last' = "Refuse"
-  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed, subj>>
+  /\ UNCHANGED <<top, blocked, sess, ownMark, ents, handed, subj, lock, pc, arg, dec>>
 
 \* a person keeps a session file at the top level by hand.
 HandBenchFile(s) ==
@@ -176,7 +219,7 @@ HandBenchFile(s) ==
   /\ top' = top \cup {s}
   /\ handed' = (handed \/ ownMark)
   /\ last' = "Hand"
-  /\ UNCHANGED <<blocked, sess, ownMark, ents, subj>>
+  /\ UNCHANGED <<blocked, sess, ownMark, ents, subj, lock, pc, arg, dec>>
 
 \* a person leaves a directory or a dangling link named <id>.md at the top level.
 HandBlockFile(s) ==
@@ -184,7 +227,7 @@ HandBlockFile(s) ==
   /\ blocked' = blocked \cup {s}
   /\ handed' = (handed \/ ownMark)
   /\ last' = "Hand"
-  /\ UNCHANGED <<top, sess, ownMark, ents, subj>>
+  /\ UNCHANGED <<top, sess, ownMark, ents, subj, lock, pc, arg, dec>>
 
 \* a person removes such a path.
 HandRemoveBlock(s) ==
@@ -192,7 +235,7 @@ HandRemoveBlock(s) ==
   /\ blocked' = blocked \ {s}
   /\ handed' = (handed /\ (top # {} \/ blocked \ {s} # {}) /\ ownMark)
   /\ last' = "Hand"
-  /\ UNCHANGED <<top, sess, ownMark, ents, subj>>
+  /\ UNCHANGED <<top, sess, ownMark, ents, subj, lock, pc, arg, dec>>
 
 \* a person makes one of sessions/, entries/ or log.jsonl by hand.
 HandOwnDir ==
@@ -200,7 +243,7 @@ HandOwnDir ==
   /\ ownMark' = TRUE
   /\ handed' = (handed \/ BenchPaths # {})
   /\ last' = "Hand"
-  /\ UNCHANGED <<top, blocked, sess, ents, subj>>
+  /\ UNCHANGED <<top, blocked, sess, ents, subj, lock, pc, arg, dec>>
 
 \* a person moves the top-level session paths out of the store, and the entries
 \* filed in them go with them.
@@ -211,7 +254,7 @@ HandMoveBenchAway ==
   /\ ents' = {x \in ents : x[1] \in sess}
   /\ handed' = FALSE
   /\ last' = "Hand"
-  /\ UNCHANGED <<sess, ownMark, subj>>
+  /\ UNCHANGED <<sess, ownMark, subj, lock, pc, arg, dec>>
 
 \* a person moves sessions/, entries/ and log.jsonl out of the store.
 HandMoveOwnAway ==
@@ -221,15 +264,12 @@ HandMoveOwnAway ==
   /\ ents' = {x \in ents : x[1] \in top}
   /\ handed' = FALSE
   /\ last' = "Hand"
-  /\ UNCHANGED <<top, blocked, subj>>
+  /\ UNCHANGED <<top, blocked, subj, lock, pc, arg, dec>>
 
 Next ==
   \/ \E s \in Sessions : Open(s) \/ OpenRefusesNonRecord(s)
-  \/ \E s \in Sessions, e \in Entries, t \in Texts :
-       \/ AppendNew(s, e, t)
-       \/ AppendDup(s, e, t)
-       \/ AppendConflict(s, e, t)
-       \/ AppendMissing(s, e, t)
+  \/ \E w \in Writers : Read(w) \/ Finish(w)
+  \/ \E w \in Writers, s \in Sessions, e \in Entries, t \in Texts : Begin(w, s, e, t)
   \/ RefuseMixed
   \/ \E s \in Sessions : HandBenchFile(s) \/ HandBlockFile(s) \/ HandRemoveBlock(s)
   \/ HandOwnDir
@@ -245,6 +285,12 @@ OneShapeUnlessHanded == Shape = "mixed" => handed
 OneTextPerEntry ==
   \A s \in Sessions, e \in Entries :
     Cardinality({t \in Texts : <<s, e, t>> \in ents}) <= 1
+
+\* The lock is the critical section: at most one writer is between Begin and
+\* Finish, and it is the one that holds the lock.
+OneWriterInTheSection ==
+  /\ Cardinality({w \in Writers : pc[w] # Idle}) <= 1
+  /\ \A w \in Writers : pc[w] # Idle => lock = w
 
 \* An entry belongs to a session that has a record.
 EntriesBelongToRecords == \A x \in ents : x[1] \in top \cup sess
