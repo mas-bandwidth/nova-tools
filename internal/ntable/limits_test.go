@@ -103,6 +103,9 @@ func TestReceiptValueBoundAgreesBetweenServerAndLibrary(t *testing.T) {
 	if got, _ := strconv.Atoi(string(m[1])); got != ReceiptValueBytes {
 		t.Errorf("table.lua %d, limits.go %d", got, ReceiptValueBytes)
 	}
+	if ReceiptValueBytes != 64 {
+		t.Errorf("a receipt holds a value of at most 64 bytes in full, limits.go says %d", ReceiptValueBytes)
+	}
 }
 
 // The batch section of the specification says what is: no process, no gate, no
