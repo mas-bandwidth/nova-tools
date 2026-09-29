@@ -446,7 +446,7 @@ do
     revision = revision or '0'
     if not T.uint(revision) then return nil, T.refuse('REVISION', revision) end
     return {name=name, key=key, prefix=prefix, epoch=epoch, active=active, revision=revision,
-      h=h, cols=cols, cfg=cfg, snap=snap, present=snap._present ~= '0',
+      h=h, cols=cols, ncols=#cols, cfg=cfg, snap=snap, present=snap._present ~= '0',
       newtemplate=not next(template), newidentity=not next(identity), commands={}, cells={}, members={}}
   end
   function T.def(name, historical)
@@ -774,7 +774,8 @@ do
     if not after then return T.refuse('REVISION', d.revision) end
     -- the size of a table: a definition is written by one HSET and a row count
     -- is read by whole-table verbs
-    if d.newtemplate or d.definition_changed then
+    -- (a table already over the bound may shrink or stay, never grow)
+    if d.newtemplate or (d.definition_changed and #d.cols > d.ncols) then
       local over = T.over('columns', #d.cols)
       if over then return over end
     end
