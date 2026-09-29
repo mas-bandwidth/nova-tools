@@ -279,7 +279,11 @@ same run is recorded once. Stream-batch CI in merging is the merge step's fact.
 
 Each carries: id, kind, type, stream, the primaries (a set, bounded, with the
 count), what happened, who reported it, attempt, how many times before, the
-clock time, the decisions. Notifications of one type, stream and cause are
+clock time, the decisions. A judgment about particular cards names them in
+fields of its own: the card a stream stopped on (a conflict, a cross stop), the
+card a cross stop needs and its stream, the sentinel reached, the suspects of a
+red branch. Its printed commands read those fields, never a card's place in its
+set of primaries. Notifications of one type, stream and cause are
 grouped into one line with a count; a subject is listed and counted once.
 Each group has an id that does not move while it is open: the id of its oldest
 open notification (a stalled stream's is `stale:<stream>`); overdue marks a
@@ -389,8 +393,12 @@ and after it reads the tables), before evaluating any guard: if an operation is
 pending, the verb first finishes it (repair) and reads again, or, when that
 operation's writer is still at it or it cannot finish, refuses naming it; it
 never acts on a partial state. The verb takes the fence only at the generation
-it read, so no other operation applied anything since its read. Its manifests
-apply in order; a table's changes over the table layer's bound are several
+it read, so no other operation applied anything since its read. A step changes
+each card once: two changes of one card in one plan that agree (one
+expectation, at most one place change, no field set to two values or both set
+and unset) are one entry; two that disagree refuse the step whole before
+anything is written, naming both causes. Its manifests apply in order; a
+table's changes over the table layer's bound are several
 manifests of that table under one operation id family, so a verb over a large
 set is one invocation. The release of the fence is the logical commit: in one
 step it writes the notifications, opens and closes the judgments, records the
@@ -563,7 +571,9 @@ bounded per tick (200 moves, 50 notes). A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.
 
 The tick writes a judgment once while its condition holds and closes it when
-the condition clears: cannot ask (fewer than two different readers are free),
+the condition clears (closing a primary's last judgment in review, it writes
+the judgment the primary needs next, as every step that leaves one in review
+does): cannot ask (fewer than two different readers are free),
 no fleet member is up, a work card past its deadline (15 minutes dealt and not
 taken, 2 hours taken and not finished), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
