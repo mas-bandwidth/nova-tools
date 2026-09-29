@@ -718,5 +718,3 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 		t.Fatalf("apply --check wrote to redis: %v", h.redis.revs)
 	}
 }
-
-
