@@ -733,4 +733,3 @@ func TestFuseStateMachineTransitions(t *testing.T) {
 		t.Errorf("quarantine should be empty, got %v", b4.Quarantine)
 	}
 }
-

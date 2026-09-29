@@ -420,14 +420,16 @@ func TestRowanParityVerbsMatrix(t *testing.T) {
 // across all conditions, including the seam inversion from rowan-fuse.
 //
 // Rowan-fuse:
-//   0 = Clear
-//   1 = Cannot read box (Err)
-//   2 = Blown fuse (Refused) / usage
+//
+//	0 = Clear
+//	1 = Cannot read box (Err)
+//	2 = Blown fuse (Refused) / usage
 //
 // Nova-fuse (CLI-STYLE):
-//   0 = Clear / verified (Permission granted / write verified)
-//   1 = Blown fuse (FUSE FAIL) / action refused (LIFT FAIL, INIT FAIL)
-//   2 = Cannot run / missing box / unreadable box / lift lockdown / usage error
+//
+//	0 = Clear / verified (Permission granted / write verified)
+//	1 = Blown fuse (FUSE FAIL) / action refused (LIFT FAIL, INIT FAIL)
+//	2 = Cannot run / missing box / unreadable box / lift lockdown / usage error
 func TestRowanParityExitCodes(t *testing.T) {
 	t.Parallel()
 
@@ -847,11 +849,12 @@ func TestLockdownWithAQuarantineBehindItFollowsTheLockdownRule(t *testing.T) {
 // ingestion fuse state machine:
 //
 // States:
-//   S0: AbsentBox (ErrNoBox)
-//   S1: Clear (Empty box: lockdown=nil, quarantine={})
-//   S2: Quarantined (lockdown=nil, quarantine={S1,...})
-//   S3: Lockdown (lockdown!=nil, quarantine={...})
-//   S4: CorruptBox (invalid JSON / malformed structure)
+//
+//	S0: AbsentBox (ErrNoBox)
+//	S1: Clear (Empty box: lockdown=nil, quarantine={})
+//	S2: Quarantined (lockdown=nil, quarantine={S1,...})
+//	S3: Lockdown (lockdown!=nil, quarantine={...})
+//	S4: CorruptBox (invalid JSON / malformed structure)
 //
 // Verifying every permitted and forbidden transition between these states.
 func TestRowanParityStateMachine(t *testing.T) {
@@ -1134,4 +1137,3 @@ func TestRowanParityPublicSurfacesIntegration(t *testing.T) {
 		}
 	}
 }
-
