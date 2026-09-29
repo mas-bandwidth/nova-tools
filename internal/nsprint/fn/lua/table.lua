@@ -1118,7 +1118,14 @@ do
       if err then return nil, err end
     end
     T.stage(d, 'DEL', T.rowskey(d))
-    if op == 'drop' or op == 'drop_definition' then d.present = false end
+    if op == 'drop' or op == 'drop_definition' then
+      d.present = false
+      -- A drop ends the table's incarnation: the operation records written
+      -- before it name an earlier one, and no replay reaches them.
+      local incarnation = T.next(redis.call('HGET', d.key .. ':revision', 'inc') or '0')
+      if not incarnation then return nil, T.refuse('OVERFLOW', d.name) end
+      T.stage(d, 'HSET', d.key .. ':revision', 'inc', incarnation)
+    end
     if op == 'drop_definition' then
       redis.call('SCARD', 'tables')
       T.stage(d, 'DEL', d.key)
@@ -1961,7 +1968,10 @@ do
       return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
     end
     local op_record = T.hash(op_key)
-    if next(op_record) then
+    -- A record written under an earlier incarnation of the table (before a drop)
+    -- is not this table's history: it neither replays nor conflicts.
+    local incarnation = redis.call('HGET', 'table:' .. table_name .. ':revision', 'inc') or '0'
+    if next(op_record) and (op_record.incarnation or '0') == incarnation then
       if op_record.request ~= raw_json then
         return T.refuse('OPCONFLICT', manifest.operation_id)
       end
@@ -2341,6 +2351,7 @@ do
       record = function(reply, stream_id, before, after)
         redis.call('HSET', op_key,
           'operation_id', manifest.operation_id,
+          'incarnation', incarnation,
           'digest', digest,
           'request', raw_json,
           'stream_id', stream_id,

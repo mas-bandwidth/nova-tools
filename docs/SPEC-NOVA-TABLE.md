@@ -436,6 +436,17 @@ a stale epoch refuses. Original result epoch/revisions remain visible, so retry
 cannot masquerade as a new current-epoch action. No retry loop in transport may
 silently invent a new operation ID.
 
+Operation records do not expire. Each accepted operation leaves one record under
+`table:<t>[:<epoch>]:op:<id>` holding its request bytes (at most 1 MiB) and its
+receipt, and it stays for the life of the table's incarnation. A `drop` ends the
+incarnation: the `inc` counter in the table's revision hash advances in the same
+atomic call, and a record written under an earlier incarnation is unreachable,
+so after drop and create a request is never answered from, or refused as a
+conflict with, a receipt for a table that never saw the change. The unreachable
+records remain in the store until an operator deletes the keys; nothing else
+removes a record. A replay is guaranteed only while its record exists, and the
+record of a reused operation id is replaced by the newer request's.
+
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.
 The batch entry point's dedicated operation record supplies its replay contract.
