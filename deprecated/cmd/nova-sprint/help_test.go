@@ -34,7 +34,7 @@ var helpCases = [][]string{
 	{"dev-red", "status"}, {"dev-red", "check"}, {"dev-red", "watch"}, {"dev-red", "unwatch"},
 	{"drain"}, {"est"}, {"file"},
 	{"fleet", "state"}, {"fleet", "is-up"}, {"fleet", "hold"}, {"fleet", "release"}, {"fleet", "config"},
-	{"fleet", "build"}, {"fleet", "build", "set"}, {"fleet", "build", "compile"}, {"fleet", "build", "duty"}, {"fleet", "churn"}, {"fleet", "ps"},
+	{"fleet", "build"}, {"fleet", "build", "set"}, {"fleet", "build", "compile"}, {"fleet", "build", "duty"}, {"fleet", "churn"}, {"fleet", "ps"}, {"fleet", "play"}, {"fleet", "retire"},
 	{"fn", "load"}, {"fn", "check"}, {"fn", "deploy"},
 	{"fold"},
 	{"gh", "budget"},
@@ -139,8 +139,8 @@ func TestVerbHelpNamesEveryFlag(t *testing.T) {
 			continue
 		}
 		code, stdout, stderr := runSprint(append(append([]string{}, args...), "-h")...)
-		if code != 2 || stderr != "" || !strings.HasPrefix(stdout, "usage: nova-sprint "+args[0]) {
-			t.Errorf("%s -h: exit %d stdout %q stderr %q; want the usage line on stdout, exit 2", name, code, stdout, stderr)
+		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "usage: nova-sprint "+args[0]) {
+			t.Errorf("%s -h: exit %d stdout %q stderr %q; want the usage line on stdout, exit 0", name, code, stdout, stderr)
 			continue
 		}
 		fs.VisitAll(func(f *flag.Flag) {

@@ -3,3 +3,6 @@
 module github.com/mas-bandwidth/nova-tools/deprecated
 
 go 1.26.6
+
+replace github.com/mas-bandwidth/nova-tools => ../
+
