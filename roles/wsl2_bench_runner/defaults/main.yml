@@ -16,8 +16,8 @@ bench_wsl2_user_shell: "/bin/bash"
 bench_wsl2_user_sudo: true
 
 # Git identity for runner commits
-bench_wsl2_git_user_name: "Rowan Claude"
-bench_wsl2_git_user_email: "rowan@mas-bandwidth.com"
+bench_wsl2_git_user_name: "Nova Runner"
+bench_wsl2_git_user_email: "runner@mas-bandwidth.com"
 
 # Windows Host Mount & Validation Paths
 bench_wsl2_windows_mount: "/mnt/c"
