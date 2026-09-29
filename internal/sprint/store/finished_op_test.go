@@ -1,7 +1,9 @@
 package store
 
-// Repair never abandons an operation that applied: a slow writer and the
-// tick's repair, driven deterministically through hooks on Mem.
+// Repair never abandons an operation that applied, and a writer is never told
+// its operation was cut when it was finished: a slow writer and the tick's
+// repair, driven deterministically through hooks on Mem, and two tick loops
+// racing workers.
 
 import (
 	"context"
@@ -229,4 +231,138 @@ func TestRepairAppliesWhatHoldsOfAFirstManifestPastTheGrace(t *testing.T) {
 		t.Fatalf("work failed %d, skip judgments %d, abandoned %d", h.written(sprint.NWorkFailed), len(h.skipNotes()), h.written(sprint.NAbandoned))
 	}
 	h.clean("repaired")
+}
+
+// Within the grace the tick finishes a live writer's operation for it: the
+// writer reports its recorded result, as a replay would, and is never told
+// its operation was cut.
+func TestAWriterIsNotToldCutWhenItsOperationWasFinished(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.machine()
+	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+	c := h.snap().Fleet.Cell("m1", sprint.Working)[0]
+	bDone := make(chan struct{})
+	wWaiting := make(chan struct{})
+	W := &hooked{Mem: h.m}
+	sent := false
+	W.onApply = func(n int) {
+		if n == 1 { // a display write moved the table's revision
+			_ = h.m.RowSet(h.ctx, h.st.Names.Table(sprint.Fleet), "m1", map[string]string{"load": "x"})
+			sent = true
+		}
+	}
+	W.onReadSet = func(n int) {
+		if sent { // the writer's member check, after its first send was refused on the revision
+			sent = false
+			close(wWaiting)
+			<-bDone
+		}
+	}
+	ws := &Store{B: W, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: func(time.Duration) {}}
+	var wres Result
+	var werr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wres, werr = ws.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: "m1"}))
+	}()
+	<-wWaiting
+	_, terr := h.st.Tick(h.ctx)
+	close(bDone)
+	<-done
+	t.Logf("tick err %v; worker %+v err %v; s1-1 %s; pending %v", terr, wres, werr, h.state("s1-1"), h.m.Pending())
+	h.clean("after")
+	if h.state("s1-1") != sprint.Review || h.m.Pending() != nil {
+		t.Fatalf("s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
+	}
+	if werr != nil {
+		t.Fatalf("the worker's finish applied and was committed, but the worker was told: %v", werr)
+	}
+	if len(wres.Moved) != 1 || !strings.Contains(wres.Moved[0], "s1-1") {
+		t.Fatalf("the worker's result: %+v", wres)
+	}
+}
+
+// tagged is Mem shared by several writers in one test, each with its own
+// store: nothing more than the backend, so every writer races on one store.
+type tagged struct{ *Mem }
+
+var zombieMembers = []string{"m1", "m2", "m3"}
+
+// zombieSprint is three members up and forty primaries in three streams,
+// with a chain, a diamond and cross-stream needs.
+func zombieSprint(t *testing.T) *harness {
+	h := newHarness(t)
+	for _, m := range zombieMembers {
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m}))
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"c1"}}))
+	for i := 2; i <= 6; i++ {
+		h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{fmt.Sprintf("c%d", i)}, Needs: []string{fmt.Sprintf("c%d", i-1)}}))
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 8}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"d0"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"d1", "d2"}, Needs: []string{"d0"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"d3"}, Needs: []string{"d1", "d2"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 9}))
+	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"x1"}, Needs: []string{"c3", "d3"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s3", Count: 9}))
+	h.clean("setup")
+	return h
+}
+
+// Two tick loops run while workers take and finish every card: every take
+// and finish returns without error (a finished operation is reported as
+// done, whoever finished it), and check holds at the end.
+func TestTwoTickLoopsNeverTellAWriterItWasCut(t *testing.T) {
+	t.Parallel()
+	for trial := 0; trial < 4; trial++ {
+		h := zombieSprint(t)
+		h.startMachine()
+		mk := func(who string) *Store {
+			return &Store{B: tagged{h.m}, Names: h.st.Names, Actor: who, Now: h.st.Now, NewID: h.st.NewID, Sleep: func(time.Duration) {}}
+		}
+		a, b := mk("machine-a"), mk("machine-b")
+		var wg sync.WaitGroup
+		stop := make(chan struct{})
+		loop := func(st *Store) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _ = st.Tick(h.ctx)
+			}
+		}
+		wg.Add(2)
+		go loop(a)
+		go loop(b)
+		var bad error
+		for r := 1; r <= 30 && bad == nil; r++ {
+			for _, m := range zombieMembers {
+				if _, err := h.st.Run(h.ctx, TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m})); err != nil {
+					bad = err
+					break
+				}
+				s := h.snap()
+				for _, c := range s.Fleet.Cell(m, sprint.Working) {
+					if _, err := h.st.Run(h.ctx, FinishStep(sprint.FinishReq{As: m, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: m})); err != nil {
+						bad = err
+					}
+				}
+			}
+			h.tick(time.Second)
+		}
+		close(stop)
+		wg.Wait()
+		if bad != nil {
+			t.Fatalf("trial %d: a writer was told: %v", trial, bad)
+		}
+		h.clean(fmt.Sprintf("trial %d", trial))
+	}
 }

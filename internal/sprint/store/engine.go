@@ -335,7 +335,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
+		// Every operation's result is recorded at its commit, under the
+		// caller's operation id or its own: a writer whose operation another
+		// writer finished reads it there.
 		op.CallerOp = step.CallerOp
+		if op.CallerOp == "" {
+			op.CallerOp = op.ID
+		}
 		res.Op = op.ID
 		res.Notes = len(op.Notes) + len(op.Decided)
 		body, _ := json.Marshal(res)
@@ -352,6 +358,15 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		applied, err := st.apply(ctx, op)
 		var bound *boundError
+		var cut *CutError
+		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
+			// Another writer (the tick, another verb, repair) finished this
+			// operation: its recorded result is this step's, as a replay.
+			raw, _, _ := st.B.Done(ctx, op.CallerOp)
+			if rec, rerr := replay(step, raw); rerr == nil {
+				return st.after(ctx, step, rec)
+			}
+		}
 		if err != nil && !errors.As(err, &bound) {
 			res.Pending = op.ID
 			return res, err
@@ -386,6 +401,18 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = append(res.Refused, sprint.Refusal{Key: k, Why: fmt.Sprintf("the sprint kept changing under this step (%d attempts); run it again", res.Attempts)})
 	}
 	return res, nil
+}
+
+// finishedElsewhere says the fence no longer holds the operation and its
+// result is recorded: another writer finished it. An operation released
+// without a record was abandoned: nothing of it happened.
+func (st *Store) finishedElsewhere(ctx context.Context, op OpRecord) bool {
+	f, err := st.B.ReadFence(ctx)
+	if err != nil || f.Pending != nil && f.Pending.ID == op.ID {
+		return false
+	}
+	_, ok, err := st.B.Done(ctx, op.CallerOp)
+	return err == nil && ok
 }
 
 func (st *Store) after(ctx context.Context, step Step, res Result) (Result, error) {
