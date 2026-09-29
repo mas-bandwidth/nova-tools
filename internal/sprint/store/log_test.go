@@ -145,7 +145,7 @@ func TestAClearKeepsTheOldEpochsLog(t *testing.T) {
 	}
 }
 
-// Johnny's flapping judgment: a lateness raised on an attempt stays raised
+// The flapping judgment: a lateness raised on an attempt stays raised
 // until the attempt ends or the coordinator answers it. A card taken, its
 // member silent past the not-finished deadline (withdrawn), brought back and
 // taken three times more has one not-finished judgment, never closed by the
@@ -220,7 +220,7 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 	}
 }
 
-// Johnny's loop: a card taken and abandoned over and over is redealt at most
+// The take-and-abandon loop: a card taken and abandoned over and over is redealt at most
 // MaxRedeals times in its attempt (the take does not reset the count, and each
 // redeal's line says "redeal n of 3"); the next abandonment leaves it
 // withdrawn, its primary ready and dealt no more, and one bound judgment

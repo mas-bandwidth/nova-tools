@@ -569,7 +569,7 @@ func lateKind(what string) string {
 // it); not taken while the card is not taken (ready or withdrawn); not begun
 // while the read is asked; not reported while it is asked or reading. While
 // its cause stands a lateness stays raised, whether or not it is late at
-// this moment (Johnny's flapping judgment).
+// this moment: no judgment flaps closed and open again.
 func LateStands(s *Snapshot, n Note) bool {
 	kind := lateKind(n.What)
 	switch n.Type {
