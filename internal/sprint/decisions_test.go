@@ -546,3 +546,33 @@ func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 		t.Fatalf("check does not report the card off its reader's row: %v", Check(w.s, nil))
 	}
 }
+
+// Every decision of every judgment type, the tick's included, prints the
+// commands that make it.
+func TestEveryDecisionPrintsItsCommands(t *testing.T) {
+	t.Parallel()
+	all := map[string][]string{}
+	for typ, ds := range Decisions {
+		all[typ] = ds
+	}
+	for typ, ds := range TickDecisions {
+		all[typ] = ds
+	}
+	for typ, ds := range all {
+		for _, level := range []bool{false, true} {
+			n := Note{ID: "n-1.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1", "s2-1"}, StreamLevel: level}
+			g := Group{ID: n.ID, Kind: Judgment, Type: typ, Stream: "s1", Size: 1, Notes: []string{n.ID}, Members: []string{"s1-1"}, Decisions: ds}
+			got := map[string]bool{}
+			for _, c := range commands(g, n, "dev-") {
+				if len(c.Lines) > 0 {
+					got[c.Decision] = true
+				}
+			}
+			for _, d := range ds {
+				if !got[d] {
+					t.Errorf("%s: the decision %q prints no command", typ, d)
+				}
+			}
+		}
+	}
+}

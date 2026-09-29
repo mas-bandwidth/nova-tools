@@ -394,6 +394,20 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, append(look(), cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)...)
 		case d == "check":
 			add(d, cmd+"check")
+		case d == "wait":
+			add(d, cmd+"wait "+first.ID+" --for 30m")
+		case d == "look at the card":
+			add(d, look()...)
+		case d == "repair":
+			add(d, cmd+"repair")
+		case d == "reader add":
+			add(d, cmd+"reader add '<reader>'")
+		case d == "fleet up":
+			add(d, cmd+"fleet up '<member>'")
+		case d == "ask --another":
+			add(d, cmd+"ask"+grp+" --another"+ans)
+		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "merge --stream "):
+			add(d, cmd+d)
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
 		}
