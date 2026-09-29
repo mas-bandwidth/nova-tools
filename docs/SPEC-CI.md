@@ -2346,15 +2346,6 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
-### `ci-spin` — CI spin ceiling ratchet and cost reporting step
-
-**The rule.** Every run's CI cost is reported from the runner's own context in `ci-ok` and recorded to the `ci:cost` stream. The total spin (seconds spent on failed, cancelled or rerun jobs) across recent runs must not exceed the ceiling loaded from `internal/ci/testdata/ci_spin.txt`. The spin ceiling only falls, never rises.
-**The mistake it prevents.** CI spin wastes runner compute and increases feedback latency without producing useful signals. Without a ratchet, spin creep and regressions go unnoticed. Without a cost reporting step in `ci-ok`, run economics and job duration breakdowns are lost.
-**The test.** `TestCISpinCeilingHoldsRatchet` and `TestCIOKReportsCostStepInWorkflow` (`internal/ci/ci_spin_class_test.go`).
-**Its allowlist.** `internal/ci/testdata/ci_spin.txt`, the ceiling value representing maximum permitted spin seconds (currently 0); shrink-only ratchet.
-**Its remedy lines.** `remedy="eliminate flakiness, failure, or retries to bring run spin within the ceiling; the ceiling only ratchets down"`, and `remedy="ensure ci-ok contains the report CI cost step invoking 'go run ./cmd/nova-ci cost'"`.
-**Its narrowings.** `TestCISpinCeilingHoldsRatchet` validates compliance against `internal/ci/testdata/ci_spin.txt` directly. `TestCIOKReportsCostStepInWorkflow` checks that the `report CI cost` step exists in `.github/workflows/ci.yml` under `ci-ok` with `if: always()`, invokes `gh api .../jobs`, and executes `go run ./cmd/nova-ci cost`.
-
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays
