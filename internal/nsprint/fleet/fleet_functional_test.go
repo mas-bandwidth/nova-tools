@@ -39,7 +39,7 @@ func setBeat(t *testing.T, ctx context.Context, c *redis.Client, bench, build st
 
 // TestFleetThresholdsFromConfig runs every row of testdata/thresholds.tsv.
 func TestFleetThresholdsFromConfig(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	file, err := os.Open(filepath.Join("testdata", "thresholds.tsv"))
 	if err != nil {
 		t.Fatalf("open thresholds.tsv: %v", err)
@@ -137,7 +137,7 @@ func TestFleetThresholdsFromConfig(t *testing.T) {
 
 // TestFleetUpAfterOneFromDown is the control for DOWN recovery.
 func TestFleetUpAfterOneFromDown(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -211,7 +211,7 @@ func TestFleetUpAfterOneFromDown(t *testing.T) {
 
 // TestFleetUpAfterOneFromHeld is the control for HELD recovery.
 func TestFleetUpAfterOneFromHeld(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -272,7 +272,7 @@ func TestFleetUpAfterOneFromHeld(t *testing.T) {
 // TestFleetReleaseNeverUp: at up_after 1, 2 and 10, a release with the beat present leaves PROBING,
 // and cap:log holds no ->UP entry written by the release call.
 func TestFleetReleaseNeverUp(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	for _, upAfter := range []int{1, 2, 10} {
 		t.Run(fmt.Sprintf("up_after_%d", upAfter), func(t *testing.T) {
 			addr := testutil.Start(t)
@@ -333,7 +333,7 @@ func TestFleetReleaseNeverUp(t *testing.T) {
 
 // TestFleetStateCarriesBuild covers the adopt contract: build follows the beat, and DOWN keeps the last build seen.
 func TestFleetStateCarriesBuild(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -392,7 +392,7 @@ func TestFleetStateCarriesBuild(t *testing.T) {
 
 // TestFleetStateOneRoundTrip reads 64 benches in one call.
 func TestFleetStateOneRoundTrip(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -426,7 +426,7 @@ func TestFleetStateOneRoundTrip(t *testing.T) {
 
 // TestFleetConfigDefaults verifies that when cfg:fleet is absent, down_after=30 and up_after=10 apply.
 func TestFleetConfigDefaults(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -446,7 +446,7 @@ func TestFleetConfigDefaults(t *testing.T) {
 
 // TestFleetConfigRefusesZero verifies that N < 1 is refused.
 func TestFleetConfigRefusesZero(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -479,7 +479,7 @@ func TestFleetConfigRefusesZero(t *testing.T) {
 // only after ssh_fail_after fresh timeouts; a count cleared by an ok session
 // starts over.
 func TestFleetStepHoldsBenchAfterSSHTimeouts(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

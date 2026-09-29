@@ -99,6 +99,11 @@ func ReadCardUsage(dataHome string, started, ended time.Time) (ProviderUsage, st
 	return ReadCardUsageAfter(dataHome, started, ended, time.Time{})
 }
 
+// ReadCardUsageWith is ReadCardUsage using the supplied lookPath lookup.
+func ReadCardUsageWith(dataHome string, started, ended time.Time, lookPath func(string) (string, error)) (ProviderUsage, string, string, string) {
+	return ReadCardUsageAfterWith(dataHome, started, ended, time.Time{}, lookPath)
+}
+
 // ReadCardUsageAfter is the same read with a FLOOR under the window, and the floor is what
 // keeps a retried card's rows DISJOINT (SPEC-SWARM rule 13d, issue #1545).
 //
@@ -115,6 +120,14 @@ func ReadCardUsage(dataHome string, started, ended time.Time) (ProviderUsage, st
 // `notBefore` is the EARLIER launch's end. The zero time is no floor at all, which is what
 // a first launch has and what every caller outside the retry loop wants.
 func ReadCardUsageAfter(dataHome string, started, ended, notBefore time.Time) (ProviderUsage, string, string, string) {
+	return ReadCardUsageAfterWith(dataHome, started, ended, notBefore, exec.LookPath)
+}
+
+// ReadCardUsageAfterWith is ReadCardUsageAfter using the supplied lookPath lookup.
+func ReadCardUsageAfterWith(dataHome string, started, ended, notBefore time.Time, lookPath func(string) (string, error)) (ProviderUsage, string, string, string) {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	windowStart := started.Add(-5 * time.Second)
 	if !notBefore.IsZero() && windowStart.Before(notBefore) {
 		windowStart = notBefore
@@ -127,7 +140,7 @@ func ReadCardUsageAfter(dataHome string, started, ended, notBefore time.Time) (P
 		if err != nil || st.IsDir() {
 			continue
 		}
-		if _, err := exec.LookPath(SQLiteBinary); err != nil {
+		if _, err := lookPath(SQLiteBinary); err != nil {
 			note := fmt.Sprintf("usage.tsv token columns are %q: %s is not on PATH, and the store is read with %q read-only",
 				Dash, SQLiteBinary, SQLiteBinary)
 			return ProviderUsage{Values: dashCardTokens()}, note, dbPath, "no-sqlite3"

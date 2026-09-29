@@ -175,16 +175,19 @@ func TestParseLineTakesOnlyTheCanonicalLine(t *testing.T) {
 // A second line for the same attempt in one batch never starts a second
 // wrapper, and a malformed line is refused by number without its content.
 func TestLaunchRefusesASecondLaunchOfOneAttempt(t *testing.T) {
+	t.Parallel()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	t.Setenv("NOVA_LAUNCH_TEST_DIR", dir)
 	l := fixtureLines(1)[0]
 	in := l.String() + "\n" + "not a card line\n" + l.String() + "\n"
 	var out strings.Builder
-	res, err := Launch(strings.NewReader(in), &out, Config{Wrapper: exe})
+	res, err := Launch(strings.NewReader(in), &out, Config{
+		Wrapper: exe,
+		Env:     []string{"NOVA_LAUNCH_TEST_DIR=" + dir},
+	})
 	pids := map[string]int{}
 	t.Cleanup(func() { killAll(pids) })
 	for _, s := range strings.Split(out.String(), "\n") {
@@ -270,12 +273,12 @@ func TestLaunchSharesOneBudgetAcrossAcknowledgements(t *testing.T) {
 // read, the lines reached at or after five seconds are REFUSED timeout and never
 // started, and the verb still returns.
 func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
+	t.Parallel()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	t.Setenv("NOVA_LAUNCH_TEST_DIR", dir)
 	var in strings.Builder
 	for _, l := range fixtureLines(8) {
 		in.WriteString(l.String() + "\n")
@@ -283,7 +286,12 @@ func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 	clock := time.Now()
 	tick := func() time.Time { clock = clock.Add(time.Second); return clock }
 	var out strings.Builder
-	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick})
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{
+		Wrapper: exe,
+		Budget:  DefaultBudget,
+		Now:     tick,
+		Env:     []string{"NOVA_LAUNCH_TEST_DIR=" + dir},
+	})
 	pids := map[string]int{}
 	t.Cleanup(func() { killAll(pids) })
 	for _, s := range strings.Split(out.String(), "\n") {
@@ -313,12 +321,12 @@ func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 // Overran must be true: a caller (cmd/nova-sprint's runCardLaunch) reading
 // Refused==0 alone would wrongly call this batch a success.
 func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
+	t.Parallel()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	t.Setenv("NOVA_LAUNCH_TEST_DIR", dir)
 	lines := fixtureLines(3)
 	var in strings.Builder
 	for _, l := range lines {
@@ -338,7 +346,12 @@ func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
 		return clock
 	}
 	var out strings.Builder
-	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick})
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{
+		Wrapper: exe,
+		Budget:  DefaultBudget,
+		Now:     tick,
+		Env:     []string{"NOVA_LAUNCH_TEST_DIR=" + dir},
+	})
 	pids := map[string]int{}
 	t.Cleanup(func() { killAll(pids) })
 	for _, s := range strings.Split(out.String(), "\n") {

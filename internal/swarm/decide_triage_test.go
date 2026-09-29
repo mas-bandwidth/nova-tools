@@ -112,6 +112,7 @@ func triageReportLine(out, id string) string {
 // that error line. Against an httptest fake returning the documented
 // response shape; skipped where the sandbox forbids listening sockets.
 func TestTriageDecideReasonProviderError(t *testing.T) {
+	t.Parallel()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("listening sockets forbidden here (%v); socket-free tests pin the contract", err)
@@ -138,12 +139,13 @@ func TestTriageDecideReasonProviderError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("CARD8333_JEV_KEY", "sekret")
 	var out, errOut bytes.Buffer
 	rc := Triage(TriageInput{
 		Pool: p, Max: 0, All: true,
-		Decide: true, Floor: 0.9, KeyEnv: "CARD8333_JEV_KEY", BaseURL: srv.URL,
-		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+		Decide: true, Floor: 0.9, KeyEnv: "CARD8333_JEV_KEY",
+		KeyLookup: func(string) string { return "sekret" },
+		BaseURL:   srv.URL,
+		Stdout:    &out, Stderr: &errOut, Now: decideTestNow,
 	})
 	if rc != 0 {
 		t.Fatalf("triage rc = %d, stderr: %s", rc, errOut.String())

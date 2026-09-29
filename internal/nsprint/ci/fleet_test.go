@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // TestFleetCIUnhealthyNonUp verifies that ci_healthy treats a bench with beat present
 // but non-UP state (DOWN, PROBING, HELD) as unhealthy, blocking rerun, and treats UP as healthy.
 func TestFleetCIUnhealthyNonUp(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
 	f := newFixture(t, "ctl-a", "ctl-b")
 
 	f.client.HSet(f.ctx, "bench:ctl-a:state", "state", "UP", "at", "1000")

@@ -5,11 +5,13 @@ package swarm
 import (
 	"bytes"
 	"context"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // This test runs the container path through a fake nova-secrets program:
@@ -20,10 +22,10 @@ import (
 // executeContainer path, not just the helper, must hand nova-secrets the wrapped
 // command line.
 func TestExecuteContainerRunsThroughNovaSecrets(t *testing.T) {
+	t.Parallel()
 	log := filepath.Join(t.TempDir(), "args.log")
 	script := "#!/bin/sh\nprintf '%s' \"$*\" > " + `"` + log + `"` + "\n"
 	bin := writeFakeExec(t, "nova-secrets", script)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	workDir := t.TempDir()
 	opts := PullWorkerOptions{
@@ -32,6 +34,12 @@ func TestExecuteContainerRunsThroughNovaSecrets(t *testing.T) {
 		Image:     "nova-card:dev",
 		Model:     "m",
 		Stderr:    &bytes.Buffer{},
+		LookPath: func(name string) (string, error) {
+			if name == "nova-secrets" {
+				return filepath.Join(bin, "nova-secrets"), nil
+			}
+			return exec.LookPath(name)
+		},
 	}
 
 	code, err := executeContainer(context.Background(), opts, "CARD-1", "card", workDir)

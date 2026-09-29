@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,16 +238,15 @@ func TestWorkerRefusesACardWithAnUnsafeLabel(t *testing.T) {
 // --seat without nova-secrets must refuse, never fail open into a bare container
 // run that drops the bench's secrets.
 func TestExecuteContainerRefusesSeatWithoutNovaSecrets(t *testing.T) {
-	empty := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(empty, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", empty)
+	t.Parallel()
 
 	opts := PullWorkerOptions{
 		Seat:      "hulk",
 		Container: "podman",
 		Stderr:    &bytes.Buffer{},
+		LookPath: func(string) (string, error) {
+			return "", exec.ErrNotFound
+		},
 	}
 	code, err := executeContainer(context.Background(), opts, "CARD-1", "card", t.TempDir())
 	if err == nil {
