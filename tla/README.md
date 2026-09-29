@@ -618,11 +618,11 @@ histories.
 The 2026-09-29 Linux container run on `spacegame.losangeles` completed all six
 declared histories; `corrupt-observation` failed exactly `MatchesExecution` as
 expected. The captured Lua hash is
-`0f5c8decb8a93beb559f0f394a1f75cb4ee7de9da84f82c7a32b260c91da6a54`,
+`a0c21236e54eadaecf73c5843db99376976a27896b4a649c7933756c4043645a`,
 the TLC JAR hash is
 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`,
 and the generated `suite.json` hash is
-`99b83203fc86f529db84026591fd9c2ee480fe02bf714054ce85f4a1057ddf84`.
+`d8b29d3fc485e5cf77313af55845b05fc7fc3f3c666005f671b9c12283b0a48d`.
 This execution used `go run`; it did not retain a standalone executable hash.
 These six finite captures establish only the listed histories, not general
-runtime refinement.
+runtime refinement or behavior at the new 16 MiB batch field-value bound.
