@@ -7,11 +7,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
@@ -369,7 +372,7 @@ func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
 	}
 	out, errs := r.run(t, 2, "inventory", "--timeout", "300ms")
 	_ = tx.Rollback()
-	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store; run: nova-config inventory --timeout 900ms") {
+	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store while reading the machines and the fleet row; run: nova-config inventory --timeout 900ms") {
 		t.Fatalf("stdout %q stderr %q", out, errs)
 	}
 	// Released, the same verb answers.
@@ -430,4 +433,69 @@ func TestInventoryOnAnUnmigratedDatabaseRefusesWithMigrate(t *testing.T) {
 	}
 	r.run(t, 0, "migrate")
 	r.run(t, 0, "inventory")
+}
+
+// stallingListener accepts TCP connections and never writes, like a store
+// that is up on its port and never answers.
+func stallingListener(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return l.Addr().String()
+}
+
+// The flag governs the wait for the connection whether it is longer or
+// shorter than the bound a caller without a deadline gets: the connection
+// bound here is 200ms and --timeout 600ms holds the verb for the 600ms.
+func TestInventoryTimeoutFlagGovernsTheConnectionNotAFixedBound(t *testing.T) {
+	t.Parallel()
+
+	addr := stallingListener(t)
+	r := newReal(t, false)
+	r.env["NOVA_PG_DSN"] = "postgres://nova_config@" + addr + "/nova"
+	d := r.deps()
+	d.openStore = func(ctx context.Context, dsn string) (pgStore, error) {
+		return config.OpenPGWithin(ctx, dsn, 200*time.Millisecond)
+	}
+	var out, errb bytes.Buffer
+	start := time.Now()
+	code := run([]string{"inventory", "--timeout", "600ms"}, &out, &errb, d)
+	elapsed := time.Since(start)
+	want := "nova-config inventory: timed out after 600ms waiting for the store while connecting; run: nova-config inventory --timeout 1.8s\n"
+	if code != 2 || out.String() != "" || errb.String() != want {
+		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out.String(), errb.String(), want)
+	}
+	if elapsed < 550*time.Millisecond || elapsed > 3*time.Second {
+		t.Fatalf("the verb waited %s; --timeout 600ms governs the wait, not the 200ms connection bound", elapsed)
+	}
+	// A shorter flag ends the wait sooner.
+	start = time.Now()
+	errb.Reset()
+	code = run([]string{"inventory", "--timeout", "100ms"}, &out, &errb, d)
+	if code != 2 || !strings.Contains(errb.String(), "timed out after 100ms waiting for the store while connecting") || time.Since(start) > 400*time.Millisecond {
+		t.Fatalf("--timeout 100ms: exit %d stderr %q after %s", code, errb.String(), time.Since(start))
+	}
 }

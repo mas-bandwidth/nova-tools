@@ -74,9 +74,20 @@ type PG struct {
 	db *sql.DB
 }
 
+// ConnectTimeout bounds the connection check of OpenPG when the context
+// carries no deadline of its own.
+const ConnectTimeout = 10 * time.Second
+
 // OpenPG opens the store and pings it once, so a wrong address or login is
-// refused here rather than on the first verb.
+// refused here rather than on the first verb. The ping is bounded by the
+// context's deadline when it has one and by ConnectTimeout when it has none.
 func OpenPG(ctx context.Context, dsn string) (*PG, error) {
+	return OpenPGWithin(ctx, dsn, ConnectTimeout)
+}
+
+// OpenPGWithin is OpenPG with the bound for a context that carries no
+// deadline given: a caller's deadline, longer or shorter, always governs.
+func OpenPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres dsn: %w", err)
@@ -87,8 +98,12 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
 	db.SetMaxOpenConns(2)
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	pingCtx := ctx
+	if _, has := ctx.Deadline(); !has {
+		var cancel context.CancelFunc
+		pingCtx, cancel = context.WithTimeout(ctx, noDeadline)
+		defer cancel()
+	}
 	if err := db.PingContext(pingCtx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("postgres at %s: %w", Redact(dsn), err)

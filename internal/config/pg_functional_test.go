@@ -4,9 +4,11 @@ package config
 
 import (
 	"context"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
 )
@@ -109,5 +111,46 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "postgres at postgres@127.0.0.1:1/nova") {
 		t.Fatalf("refusal %q does not name the store", got)
+	}
+}
+
+// Without a deadline of its own the connection check is bounded by the
+// fallback it is given (ConnectTimeout in OpenPG); with one, the caller's
+// deadline governs, longer or shorter.
+func TestOpenPGWithinBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
+	t.Parallel()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	dsn := "postgres://nova_config@" + l.Addr().String() + "/nova"
+
+	start := time.Now()
+	if _, err := OpenPGWithin(context.Background(), dsn, 200*time.Millisecond); err == nil {
+		t.Fatal("a store that never answers opened")
+	}
+	if e := time.Since(start); e < 150*time.Millisecond || e > 2*time.Second {
+		t.Fatalf("no deadline: waited %s, want about the 200ms fallback", e)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	start = time.Now()
+	if _, err := OpenPGWithin(ctx, dsn, 200*time.Millisecond); err == nil {
+		t.Fatal("a store that never answers opened")
+	}
+	if e := time.Since(start); e < 550*time.Millisecond || e > 3*time.Second {
+		t.Fatalf("a 600ms deadline: waited %s, the deadline governs, not the 200ms fallback", e)
 	}
 }
