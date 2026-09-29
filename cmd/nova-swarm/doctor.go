@@ -217,70 +217,16 @@ func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
 // are actually a request for help, rather than a launch carrying a flag value
 // spelled "-h" (like `batch --id -h`).
 func doctorLaunchHelp(verb string, args []string) bool {
-	fs := launchFlagSet(verb)
-	err := fs.Parse(args)
-	return err == flag.ErrHelp
-}
-
-func launchFlagSet(verb string) *flag.FlagSet {
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	var fs *flag.FlagSet
 	switch verb {
 	case "batch":
-		fs.String("tokens", "", "")
-		fs.String("deadline", "", "")
-		fs.String("cards", "", "")
-		fs.String("runner", "", "")
-		fs.String("id", "", "")
-		fs.String("root", "", "")
-		fs.Int("idle", 0, "")
-		fs.Int("max-inflight", 0, "")
-		fs.Int("stall-after", 0, "")
-		fs.String("benches", "", "")
-		fs.String("bench", "", "")
-		fs.String("then", "", "")
-		fs.String("harness", "", "")
-		fs.String("auth", "", "")
-		fs.String("slots", "", "")
-		fs.String("slots-store", "", "")
-		fs.String("owner", "", "")
-		fs.Bool("route", false, "")
-		fs.Bool("no-route", false, "")
-		fs.String("reason", "", "")
-		fs.String("route-registry", "", "")
-		fs.Float64("route-floor", 0, "")
-		fs.String("route-log", "", "")
-		fs.String("route-usage", "", "")
-		fs.String("route-key-env", "", "")
-		fs.String("route-base-url", "", "")
-		fs.String("worker", "", "")
+		f, _ := batchFlagSet()
+		fs = f.fs
 	case "native":
-		fs.String("harness", "", "")
-		fs.String("model", "", "")
-		fs.String("card", "", "")
-		fs.String("slot", "", "")
-		fs.String("root", "", "")
-		fs.String("deadline", "", "")
-		fs.String("idle", "", "")
-		fs.String("label", "", "")
-		fs.String("auth", "", "")
-		fs.String("config", "", "")
-		fs.String("worker", "", "")
-		fs.String("sandbox", "", "")
-		fs.Bool("no-wall", false, "")
-		fs.Bool("no-shared-caches", false, "")
-		fs.String("results-root", "", "")
-		fs.Bool("sweep-now", false, "")
-		fs.String("slots-store", "", "")
-		fs.String("owner", "", "")
-		fs.String("tokens", "", "")
-		fs.String("usage-interval", "", "")
-		fs.String("events-store", "", "")
-		fs.String("bench", "", "")
-		fs.String("stage-timeout", "", "")
-		fs.String("repo", "", "")
-		fs.String("recipient", "", "")
+		f, _ := nativeFlagSet()
+		fs = f.fs
+	default:
+		return false
 	}
-	return fs
+	return fs.Parse(args) == flag.ErrHelp
 }
