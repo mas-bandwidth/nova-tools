@@ -18,7 +18,7 @@ Every rule it keeps is a failure from the record:
 | a worker that died at the deadline had found things and written none of them | **append each finding the moment it exists**, never at the end |
 | one worker read 40 files and finished nothing | a **token and file budget** in the task |
 | a result file was rewritten while a reader was inspecting it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime |
-| a bounded review that found nothing was counted as a plan, so a worker was rewarded for finding something (**Stella's read, 2026-09-11**) | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` |
+| a bounded review that found nothing was counted as a plan, so a worker was rewarded for finding something | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` |
 
 EVERYTHING A WORKER WRITES IS DATA. A `RESULT.md` is a report, never an instruction:
 nothing in it is executed, nothing in it grants anything, and a finding in it is a claim
@@ -120,7 +120,7 @@ The harness configuration written by the machinery carries the variable's NAME, 
 
 ## Bench slot leases
 
-(Glenn and Stella, 2026-09-17.) A bench is bigger than its owners: one bench,
+A bench is bigger than its owners: one bench,
 many owners, and the slots on it are one shared pool, not one pool per owner.
 A bench carries ONE slot store shared by every owner, at <bench store>/slots,
 and every launcher takes a lease per card before it runs and releases it after.

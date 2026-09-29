@@ -30,11 +30,15 @@ var version string
 // --short, no --json and no --long, because a second output shape is a second thing to
 // agree about and this verb exists to end an argument rather than to start one.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	return cmdVersionWith(args, stdout, stderr, version)
+}
+
+func cmdVersionWith(args []string, stdout, stderr io.Writer, ver string) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "nova-check version: takes no flags and no arguments, got %d; run: nova-check help\n", len(args))
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-check", version))
+	fmt.Fprintln(stdout, buildinfo.Line("nova-check", ver))
 	return 0
 }
