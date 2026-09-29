@@ -173,9 +173,23 @@ func TestBatchManifestBytesBound(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
+	// The padding is in a guard's options, which no receipt records: the actor is
+	// echoed in the receipt, so a manifest padded with it can exceed the receipt bound.
 	build := func(rev, op string, size int) string {
-		base := boundsManifest(rev, op, `{"id":"a","expect":{}}`, "")
-		return boundsManifest(rev, op, `{"id":"a","expect":{}}`, strings.Repeat("p", size-len(base)))
+		entry := func(pad string) string {
+			return `{"id":"a","expect":{"fields":{"role":{"one_of":["x"` + pad + `]}}}}`
+		}
+		need := size - len(boundsManifest(rev, op, entry(""), ""))
+		pad := ""
+		for need > 0 {
+			n := min(need-3, 60000) // each option is , " n bytes "
+			if left := need - (n + 3); left > 0 && left < 4 {
+				n -= 4
+			}
+			pad += `,"` + strings.Repeat("p", n) + `"`
+			need -= n + 3
+		}
+		return boundsManifest(rev, op, entry(pad), "")
 	}
 	rev := probeRev(ctx, c)
 	at := build(rev, "at", ntable.LimitManifestBytes)

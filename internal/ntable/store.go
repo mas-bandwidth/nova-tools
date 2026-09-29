@@ -322,7 +322,6 @@ func (o operation) refused(reply []any) error {
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
 	case typedrec.TableRefusalNoRow:
 		cause = errors.New("no such row")
-		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
 	case typedrec.TableRefusalNoCol:
 		cause = errors.New("no such column")
 	case typedrec.TableRefusalText:
