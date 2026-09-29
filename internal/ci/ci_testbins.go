@@ -104,6 +104,11 @@ var checkTestbinDirs = []string{"internal", "cmd"}
 // never from a walk of the repository; testdata directories are skipped so the
 // fixtures are never read as offenders.
 func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
+	return CheckTestbinsWith(root, allowlistPath, defaultSourceSeams())
+}
+
+// CheckTestbinsWith is CheckTestbins reading the tree through seams.
+func CheckTestbinsWith(root, allowlistPath string, seams SourceSeams) (TestbinsResult, error) {
 	var res TestbinsResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -119,7 +124,7 @@ func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 			}
 			return res, statErr
 		}
-		err = walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err = seams.walk(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -133,7 +138,7 @@ func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 			if !strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := seams.readFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -143,7 +148,7 @@ func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 			}
 			rel = filepath.ToSlash(rel)
 			res.Tests++
-			findings, ok := scanTestbinFile(rel, raw)
+			findings, ok := scanTestbinFileWith(rel, raw, seams)
 			if !ok {
 				return nil
 			}
@@ -208,7 +213,11 @@ func matchTestbinAllow(entries []waitAllow, used []bool, f TestbinFinding) int {
 // that is not Go cannot carry the shapes this check reads, and a fixture
 // deliberately holding a broken literal is not the offender itself.
 func scanTestbinFile(rel string, src []byte) ([]TestbinFinding, bool) {
-	fset, file, err := parseSource(rel, src, 0)
+	return scanTestbinFileWith(rel, src, defaultSourceSeams())
+}
+
+func scanTestbinFileWith(rel string, src []byte, seams SourceSeams) ([]TestbinFinding, bool) {
+	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}
