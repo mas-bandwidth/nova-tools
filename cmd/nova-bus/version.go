@@ -47,8 +47,12 @@ var version string
 
 // buildVersion is resolveVersion over this binary's own build information.
 func buildVersion() string {
+	return buildVersionFrom(version)
+}
+
+func buildVersionFrom(stamped string) string {
 	info, ok := debug.ReadBuildInfo()
-	return resolveVersion(version, info, ok)
+	return resolveVersion(stamped, info, ok)
 }
 
 // resolveVersion is internal/buildinfo's Resolve, which is where the order above now
@@ -61,6 +65,14 @@ func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 	return buildinfo.Resolve(stamped, info, ok)
 }
 
+func printVersionLine(stamped string, stdout io.Writer) {
+	fmt.Fprintf(stdout, "nova-bus %s %s/%s %s\n",
+		oneline.Field(buildVersionFrom(stamped)),
+		oneline.Field(runtime.GOOS),
+		oneline.Field(runtime.GOARCH),
+		oneline.Field(runtime.Version()))
+}
+
 // cmdVersion prints the one line. It takes no flags and no arguments: there is no --short,
 // no --json and no --long, because a second output shape is a second thing to agree about
 // and this verb exists to end an argument rather than to start one.
@@ -70,10 +82,6 @@ func cmdVersion(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-bus version: takes no flags and no arguments, got %d\n", len(args))
 		return 2
 	}
-	fmt.Fprintf(stdout, "nova-bus %s %s/%s %s\n",
-		oneline.Field(buildVersion()),
-		oneline.Field(runtime.GOOS),
-		oneline.Field(runtime.GOARCH),
-		oneline.Field(runtime.Version()))
+	printVersionLine(version, stdout)
 	return 0
 }

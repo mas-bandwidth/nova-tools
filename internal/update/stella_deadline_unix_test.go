@@ -12,6 +12,8 @@ import (
 // budget plus a small fixed slack: the deadline closes the held pipe instead of
 // letting a fixed drain grace run past it.
 func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
+	t.Parallel()
+
 	p := manifest(t, row("x", "tool", command(t, "escaped", "30s"), "npm:unused", "none"))
 	started := time.Now()
 	c, out, errs := run(t, Environment{}, "check", "--file", p, "--budget", "300ms", "--timeout", "200ms")

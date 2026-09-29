@@ -25,8 +25,9 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
-	Now    func() time.Time
-	Client *http.Client
+	Now                  func() time.Time
+	Client               *http.Client
+	SnapshotChildTimeout time.Duration
 }
 type options struct {
 	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string

@@ -49,14 +49,10 @@ func TestVersionLineShape(t *testing.T) {
 // must not be able to make this line say two things, or make a build date land in the
 // slot a reader takes for an architecture.
 func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v1.2.3\nnova-bus v9.9.9 linux/amd64 go1.0 extra"
+	t.Parallel()
 
-	var out, errOut bytes.Buffer
-	if code := cmdVersion(nil, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
+	var out bytes.Buffer
+	printVersionLine("v1.2.3\nnova-bus v9.9.9 linux/amd64 go1.0 extra", &out)
 	line := out.String()
 	if strings.Count(line, "\n") != 1 {
 		t.Fatalf("a stamped newline broke the line in two: %q", line)
