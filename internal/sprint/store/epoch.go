@@ -33,10 +33,24 @@ func (e *ClearedError) Error() string {
 }
 
 // pin is the store pinned to the sprint's current epoch; a pinned store is
-// itself.
+// itself. A restore the epoch still owes (a clear cut between its advance and
+// its restore) is performed first.
 func (st *Store) pin(ctx context.Context) (*Store, error) {
+	c, es, err := st.pinOnly(ctx)
+	if err != nil || c == st || !es.Owed {
+		return c, err
+	}
+	if _, err := c.restore(ctx, es.N-1); err != nil {
+		return nil, fmt.Errorf("finishing the clear of %s (the shape of epoch %d at epoch %d): %w", es.Cleared.UTC().Format(time.RFC3339), es.N-1, es.N, err)
+	}
+	return c, nil
+}
+
+// pinOnly is the store pinned to the sprint's current epoch, with the epoch as
+// read, and no restore performed; a pinned store is itself.
+func (st *Store) pinOnly(ctx context.Context) (*Store, EpochState, error) {
 	if st.pinned {
-		return st, nil
+		return st, EpochState{N: st.epoch, Cleared: st.cleared}, nil
 	}
 	root := st.root
 	if root == nil {
@@ -44,7 +58,7 @@ func (st *Store) pin(ctx context.Context) (*Store, error) {
 	}
 	es, err := root.Epoch(ctx)
 	if err != nil {
-		return nil, err
+		return nil, es, err
 	}
 	c := *st
 	c.root, c.B, c.epoch, c.cleared, c.pinned = root, root, es.N, es.Cleared, true
@@ -53,7 +67,7 @@ func (st *Store) pin(ctx context.Context) (*Store, error) {
 		// store uses it as given (a test's wrapper stays in place).
 		c.B = root.AtEpoch(es.N, false)
 	}
-	return &c, nil
+	return &c, es, nil
 }
 
 // repin is the store pinned again, to the epoch the sprint is at now.
@@ -61,6 +75,13 @@ func (st *Store) repin(ctx context.Context) (*Store, error) {
 	c := *st
 	c.pinned = false
 	return c.pin(ctx)
+}
+
+// repinOnly is the store pinned again, with no restore performed.
+func (st *Store) repinOnly(ctx context.Context) (*Store, EpochState, error) {
+	c := *st
+	c.pinned = false
+	return c.pinOnly(ctx)
 }
 
 // At is the store reading an earlier epoch as it was: where, card and inbox

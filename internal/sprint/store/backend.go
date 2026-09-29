@@ -40,14 +40,15 @@ type Backend interface {
 	CheckTable(ctx context.Context, table string) error
 
 	// Epoch reads the sprint's epoch: its number, when it was last cleared,
-	// and the shape a clear still has to restore ("" when none).
+	// and whether the restore of the shape of the epoch before it is owed.
 	Epoch(ctx context.Context) (EpochState, error)
 	// AdvanceEpoch moves the sprint from epoch from to from+1 atomically,
-	// recording the time and the shape to restore; false when the sprint is
-	// no longer at from.
-	AdvanceEpoch(ctx context.Context, from uint64, at time.Time, shape string) (bool, error)
-	// SettleEpoch records that the current epoch's shape is restored.
-	SettleEpoch(ctx context.Context) error
+	// recording the time and that the restore of epoch from's shape is owed;
+	// false when the sprint is no longer at from.
+	AdvanceEpoch(ctx context.Context, from uint64, at time.Time) (bool, error)
+	// SettleEpoch records that the restore owed at epoch n is done; it does
+	// nothing when the sprint is no longer at n.
+	SettleEpoch(ctx context.Context, n uint64) error
 	// AtEpoch is the backend pinned to an epoch: the sprint's keys of that
 	// epoch, and its writes at that epoch. With old, reads of the tables read
 	// that epoch as it was, not the active one.
@@ -96,7 +97,9 @@ type Backend interface {
 type EpochState struct {
 	N       uint64
 	Cleared time.Time
-	Shape   string
+	// Owed says the clear into N has not restored the shape of epoch N-1 at
+	// it yet: the next verb, tick or clear performs the restore first.
+	Owed bool
 }
 
 // Fence is the sprint-wide fence as read: its generation, advanced by every

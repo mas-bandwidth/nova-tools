@@ -319,8 +319,15 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 
 // Tick runs one tick when the machine is RUNNING, and records it on the
 // heartbeat, its error with it when it failed; when the machine is STOPPED
-// it does nothing and writes nothing.
+// it does nothing and writes nothing. The tick holds the epoch it reads
+// before the machine's state: every step it runs carries that epoch, and a
+// clear since (which sets the machine STOPPED first) stops the tick without
+// writing anything at the new epoch.
 func (st *Store) Tick(ctx context.Context) (TickResult, error) {
+	st, err := st.repin(ctx)
+	if err != nil {
+		return TickResult{}, err
+	}
 	m, hb, err := st.Machine(ctx)
 	if err != nil {
 		return TickResult{}, err

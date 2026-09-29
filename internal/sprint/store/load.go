@@ -53,7 +53,7 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 	for i, t := range tables {
 		stored[i] = st.Names.Table(t)
 	}
-	shapes, err := st.B.Shapes(ctx, stored)
+	shapes, err := st.shapes(ctx, stored)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +107,36 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		}
 	}
 	return s, nil
+}
+
+// shapes reads the tables' shapes in one exchange. Reading an earlier epoch,
+// a table the table layer holds no definition of at that epoch (NOTABLE: it
+// keeps one only from the epoch's first write) had no write at it, and is
+// empty at it, when the table itself is there.
+func (st *Store) shapes(ctx context.Context, stored []string) ([]ntable.Table, error) {
+	out, err := st.B.Shapes(ctx, stored)
+	if err == nil || !st.old || refusalCode(err) != "NOTABLE" {
+		return out, err
+	}
+	live, lerr := st.root.Shapes(ctx, stored)
+	if lerr != nil {
+		return nil, err
+	}
+	out = make([]ntable.Table, len(stored))
+	for i, name := range stored {
+		one, err := st.B.Shapes(ctx, []string{name})
+		switch {
+		case err == nil:
+			out[i] = one[0]
+		case refusalCode(err) == "NOTABLE":
+			empty := live[i]
+			empty.Rows, empty.Epoch, empty.Revision = nil, st.epoch, 0
+			out[i] = empty
+		default:
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // readInto reads ids into t in read sets, each of which must see t's revision.

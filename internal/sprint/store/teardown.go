@@ -110,12 +110,13 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 		ids[t] = got
 	}
 	epochs := Epochs{Last: es.N, Old: map[uint64][]ntable.Table{}}
+	names := make([]string, len(All))
+	for i, t := range All {
+		names[i] = st.Names.Table(t)
+	}
 	for e := uint64(0); e < es.N; e++ {
-		names := make([]string, len(All))
-		for i, t := range All {
-			names[i] = st.Names.Table(t)
-		}
-		shapes, err := st.B.AtEpoch(e, true).Shapes(ctx, names)
+		// An epoch that had no write is empty at it (shapes).
+		shapes, err := st.At(e).shapes(ctx, names)
 		if err != nil {
 			return 0, fmt.Errorf("epoch %d of the sprint: %w", e, err)
 		}
@@ -234,7 +235,7 @@ func (m *Mem) takeResidue(t *memTable) {
 	if r == nil {
 		return
 	}
-	t.members, t.rev, t.epochs = r.table.members, r.table.rev, r.table.epochs
+	t.members, t.rev, t.epochs, t.wrote = r.table.members, r.table.rev, r.table.epochs, r.table.wrote
 	delete(m.dropped, t.def.Name)
 }
 
@@ -337,7 +338,7 @@ func (m *Mem) deleteKey(k string) bool {
 		}
 	}
 	if strings.HasSuffix(k, "sprint:epoch") && m.epochSet {
-		m.epochSet, m.epochN, m.cleared, m.shape = false, 0, time.Time{}, ""
+		m.epochSet, m.epochN, m.cleared, m.owed = false, 0, time.Time{}, false
 		return true
 	}
 	for e, l := range m.logs {

@@ -40,10 +40,11 @@ type memState struct {
 	epochSet bool
 	epochN   uint64
 	cleared  time.Time
-	shape    string
+	owed     bool
 	logs     map[uint64]*memLog // the sprint's keys, per epoch
 	kv       map[string]string  // the machine's records (tick.go)
 	seq      int
+	touched  map[uint64]int // store calls that named each epoch, for tests
 	Fail     func(point string) error
 	// Calls counts store exchanges by kind.
 	Calls map[string]int
@@ -69,6 +70,7 @@ type memNote struct {
 type memTable struct {
 	def     ntable.Table
 	epochs  map[uint64]*memEpoch // rows and text cells, per epoch
+	wrote   map[uint64]bool      // the epochs written: the table layer's definition snapshots
 	rev     uint64
 	members map[string]*memMember
 	ops     map[string]memOp
@@ -97,7 +99,7 @@ type memOp struct {
 // NewMem is an empty store.
 func NewMem() *Mem {
 	return &Mem{memState: &memState{tables: map[string]*memTable{}, dropped: map[string]*memResidue{}, views: map[string]ntable.View{},
-		logs: map[uint64]*memLog{}, kv: map[string]string{}, Calls: map[string]int{}}}
+		logs: map[uint64]*memLog{}, kv: map[string]string{}, Calls: map[string]int{}, touched: map[uint64]int{}}}
 }
 
 // AtEpoch is the store pinned to an epoch.
@@ -105,8 +107,39 @@ func (m *Mem) AtEpoch(epoch uint64, old bool) Backend {
 	return &Mem{memState: m.memState, epoch: epoch, old: old}
 }
 
+// touch counts a store call naming the epoch. The caller holds m.mu.
+func (m *Mem) touch(e uint64) { m.touched[e]++ }
+
+// Touched is how many store calls named the epoch: its sprint keys, a read of
+// it as it was, or a write at it. For tests.
+func (m *Mem) Touched(e uint64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.touched[e]
+}
+
+// readable refuses a read of an earlier epoch as the table layer does: an
+// epoch it holds no definition of (none is kept until the epoch's first
+// write) is NOTABLE, and one after the active epoch is EPOCHAHEAD. The caller
+// holds m.mu.
+func (m *Mem) readable(t *memTable) error {
+	if !m.old {
+		return nil
+	}
+	m.touch(m.epoch)
+	a := m.active(t)
+	switch {
+	case m.epoch > a:
+		return refusal("EPOCHAHEAD", fmt.Sprintf("requested epoch %d, active %d", m.epoch, a))
+	case m.epoch != a && !t.wrote[m.epoch]:
+		return refusal("NOTABLE", fmt.Sprintf("no such table %s at epoch %d", t.def.Name, m.epoch))
+	}
+	return nil
+}
+
 // log is the pinned epoch's sprint keys. The caller holds m.mu.
 func (m *Mem) log() *memLog {
+	m.touch(m.epoch)
 	l := m.logs[m.epoch]
 	if l == nil {
 		l = &memLog{done: map[string]string{}, progress: map[string]time.Time{}, notes: map[string]sprint.Note{}, open: map[string]string{}}
@@ -143,10 +176,10 @@ func (t *memTable) at(e uint64) *memEpoch {
 func (m *Mem) Epoch(context.Context) (EpochState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return EpochState{N: m.epochN, Cleared: m.cleared, Shape: m.shape}, nil
+	return EpochState{N: m.epochN, Cleared: m.cleared, Owed: m.owed}, nil
 }
 
-func (m *Mem) AdvanceEpoch(_ context.Context, from uint64, at time.Time, shape string) (bool, error) {
+func (m *Mem) AdvanceEpoch(_ context.Context, from uint64, at time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.fail("advance"); err != nil {
@@ -155,14 +188,16 @@ func (m *Mem) AdvanceEpoch(_ context.Context, from uint64, at time.Time, shape s
 	if m.epochN != from {
 		return false, nil
 	}
-	m.epochSet, m.epochN, m.cleared, m.shape = true, from+1, at, shape
+	m.epochSet, m.epochN, m.cleared, m.owed = true, from+1, at, true
 	return true, nil
 }
 
-func (m *Mem) SettleEpoch(context.Context) error {
+func (m *Mem) SettleEpoch(_ context.Context, n uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.shape = ""
+	if m.epochN == n {
+		m.owed = false
+	}
 	return nil
 }
 
@@ -198,6 +233,9 @@ func (m *Mem) Shapes(_ context.Context, tables []string) ([]ntable.Table, error)
 	for i, name := range tables {
 		t, err := m.table(name)
 		if err != nil {
+			return nil, err
+		}
+		if err := m.readable(t); err != nil {
 			return nil, err
 		}
 		e := m.read(t)
@@ -260,6 +298,9 @@ func (m *Mem) ReadSet(_ context.Context, table string, ids []string) (ntable.Rea
 	}
 	t, err := m.table(table)
 	if err != nil {
+		return ntable.ReadSetResult{}, err
+	}
+	if err := m.readable(t); err != nil {
 		return ntable.ReadSetResult{}, err
 	}
 	e := m.read(t)
@@ -340,7 +381,11 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 		return r, nil
 	}
 	active := m.active(t)
-	if req, err := strconv.ParseUint(man.Epoch, 10, 64); err != nil || req < active {
+	req, perr := strconv.ParseUint(man.Epoch, 10, 64)
+	if perr == nil {
+		m.touch(req)
+	}
+	if perr != nil || req < active {
 		return ntable.Receipt{}, refusal("STALE", fmt.Sprintf("requested epoch %s, active %d", man.Epoch, active))
 	} else if req > active {
 		return ntable.Receipt{}, refusal("EPOCHAHEAD", fmt.Sprintf("requested epoch %s, active %d", man.Epoch, active))
@@ -365,6 +410,7 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	}
 	before := t.rev
 	t.rev++
+	t.wrote[active] = true
 	outcome := "changed"
 	if delta.ChangedCount == 0 {
 		outcome = "noop"
@@ -493,8 +539,10 @@ func (m *Mem) Create(_ context.Context, t ntable.Table) error {
 	}
 	def := t
 	def.Rows = nil
-	m.tables[t.Name] = &memTable{def: def, epochs: map[uint64]*memEpoch{}, members: map[string]*memMember{}, ops: map[string]memOp{}}
-	m.takeResidue(m.tables[t.Name])
+	mt := &memTable{def: def, epochs: map[uint64]*memEpoch{}, wrote: map[uint64]bool{}, members: map[string]*memMember{}, ops: map[string]memOp{}}
+	m.tables[t.Name] = mt
+	m.takeResidue(mt)
+	mt.wrote[m.active(mt)] = true
 	return nil
 }
 
@@ -516,12 +564,14 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 		}
 	}
 	t.rev++
+	t.wrote[m.active(t)] = true
 	return nil
 }
 
 // writeEpoch refuses a write pinned to an epoch that is not the table's
 // active one, as the table layer refuses a stale epoch.
 func (m *Mem) writeEpoch(t *memTable) error {
+	m.touch(m.epoch)
 	if a := m.active(t); m.epoch != a {
 		code := "STALE"
 		if m.epoch > a {
@@ -554,6 +604,7 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 		ep.texts[row][k] = v
 	}
 	t.rev++
+	t.wrote[m.active(t)] = true
 	return nil
 }
 
