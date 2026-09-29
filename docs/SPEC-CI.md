@@ -2346,6 +2346,15 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `spec-gate` — spec gate: 9 with two readers agreeing, or one when alone
+
+**The rule.** A spec moves from `working` to `done` when at least quorum distinct readers score it `>= pass` at the current revision (`cfg:spec pass=9 quorum=2`). Quorum falls to 1 when the count of live readers (active heartbeats within 60s, excluding the spec owner) is <= 1. Every landing (`task land`, `land stream`, `land pr`) of a card whose issue is a spec runs `spec revise` to append a `REVISION` comment, bump the spec's `rev`, and reset the spec to `working` at the new rev (or emits `SPEC unchanged` if no spec text is modified), ensuring the spec never drifts from code.
+**The mistake it prevents.** Requiring two perfect 10/10 scores stalls progress when only one reviewer is available or when minor style points hold up solid specs, and unrevised specs drift from the landed code.
+**The test.** `TestSpecDoneAtNineWithOneReaderUp` (`internal/ci/spec_gate_class_test.go`).
+**Its allowlist.** None.
+**Its remedy lines.** `remedy="ensure spec meets pass score threshold (default 9) with required quorum (2 readers, or 1 when alone); docs/SPEC-CI.md#spec-gate"`.
+**Its narrowings.** Evaluated dynamically through Redis function `ns_spec_mark` based on active friend heartbeats in `friend:<who>:beat` and `cfg:spec` hash settings.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

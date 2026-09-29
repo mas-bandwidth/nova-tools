@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/spec"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -38,9 +39,11 @@ func specStore(t *testing.T) (string, *redis.Client, *store.Store, string) {
 	const S = "spec-t"
 	c.HSet(ctx, "s:"+S, "status", "open")
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
-	c.SAdd(ctx, "friends", "a")
+	c.SAdd(ctx, "friends", "a", "b")
 	c.HSet(ctx, "friend:a:desired", "slots", 4, "paused", "0")
 	c.HSet(ctx, "friend:a:beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
+	c.HSet(ctx, "friend:b:desired", "slots", 4, "paused", "0")
+	c.HSet(ctx, "friend:b:beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	return addr, c, store.New(c), S
 }
 
@@ -54,6 +57,7 @@ func runSpecArgs(t *testing.T, args ...string) (int, string, string) {
 func TestSpecMarkDoneOnTwoTensFiresSpecUnblock(t *testing.T) {
 	addr, c, st, S := specStore(t)
 	ctx := context.Background()
+	c.HSet(ctx, "cfg:spec", "pass", "10", "quorum", "2")
 	const cond = "spec:nova-tools#3370"
 	res, err := task.PushChecked(ctx, st, task.PushRequest{Sprint: S, ID: "b1", Kind: task.KindFix, Title: "build 1", To: "a", Actor: "a", DependsOn: cond})
 	if err != nil || res.Waiting != 1 {
@@ -177,5 +181,150 @@ func TestReadPostSpecLineWritesFacts(t *testing.T) {
 	code = runRead(ctx, []string{"post", "--repo", "nova-tools", "--n", "3364", "--line", "SPEC who=emma sha=" + sha + " score=10", "--no-github", "--redis", addr}, &out, &errOut)
 	if code != 1 || !strings.Contains(errOut.String(), "rev=") || c.LLen(ctx, "pr:nova-tools:3364:lines").Val() != 1 {
 		t.Fatalf("SPEC without rev: exit %d err %q", code, errOut.String())
+	}
+}
+
+func TestSpecDoneAtNineWithOneReaderUp(t *testing.T) {
+	addr, c, _, _ := specStore(t)
+	ctx := context.Background()
+
+	// 1. One reader up: single 9 moves spec to done
+	c.Del(ctx, "friends")
+	c.SAdd(ctx, "friends", "reader1")
+	c.HSet(ctx, "friend:reader1:beat", "host", "box", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
+
+	code, out, errOut := runSpecArgs(t, "mark", "nova-tools#201", "--rev", "1", "--who", "reader1", "--score", "9", "--stream", "dev", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "answer=DONE state=done tens=1") {
+		t.Fatalf("1 reader up 9: exit %d out %q err %q", code, out, errOut)
+	}
+
+	// 2. Two readers up: one 9 leaves it working; score 8 does not count; second distinct 9 finishes it
+	c.SAdd(ctx, "friends", "reader2")
+	c.HSet(ctx, "friend:reader2:beat", "host", "box", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
+
+	code, out, errOut = runSpecArgs(t, "mark", "nova-tools#202", "--rev", "1", "--who", "reader1", "--score", "9", "--stream", "dev", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "answer=RECORDED state=working tens=1") {
+		t.Fatalf("2 readers up 1st 9: exit %d out %q err %q", code, out, errOut)
+	}
+
+	code, out, errOut = runSpecArgs(t, "mark", "nova-tools#202", "--rev", "1", "--who", "reader2", "--score", "8", "--stream", "dev", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "answer=RECORDED state=working tens=1") {
+		t.Fatalf("2 readers up score 8: exit %d out %q err %q", code, out, errOut)
+	}
+
+	code, out, errOut = runSpecArgs(t, "mark", "nova-tools#202", "--rev", "1", "--who", "reader2", "--score", "9", "--stream", "dev", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "answer=DONE state=done tens=2") {
+		t.Fatalf("2 readers up 2nd 9: exit %d out %q err %q", code, out, errOut)
+	}
+}
+
+func TestLandRevisesTheSpec(t *testing.T) {
+	addr, c, _, S := specStore(t)
+	ctx := context.Background()
+
+	// Seed spec issue nova-tools#100
+	c.HSet(ctx, "pr:nova-tools:100", "spec_rev", "1", "spec_state", "done", "spec_stream", "dev", "owner", "author1")
+	c.ZAdd(ctx, "specs:dev:done", redis.Z{Score: 100, Member: "nova-tools#100"})
+	c.SAdd(ctx, "specs:streams", "dev")
+
+	// 1. Task card whose issue is a spec and paths touch spec
+	_, err := taskcard.Push(ctx, c, taskcard.PushRequest{
+		ID:     "card-touch-spec",
+		Sprint: S,
+		Stream: "dev",
+		Ref:    "mas-bandwidth/nova-tools#100",
+		Title:  "update sprint spec for 9 quorum",
+		PR:     "201",
+		By:     "a",
+		Where:  "ready",
+		Fields: []string{"paths", "docs/SPEC-SPRINT.md"},
+	})
+	if err != nil {
+		t.Fatalf("push card: %v", err)
+	}
+
+	if code, out, errOut := runSprint("task", "take", "--id", "card-touch-spec", "--actor", "a", "--redis", addr); code != 0 {
+		t.Fatalf("take card: exit %d err %q out %q", code, errOut, out)
+	}
+
+	// Land the card via nova-sprint task land
+	code, out, errOut := runSprint("task", "land", "--id", "card-touch-spec", "--actor", "a", "--sha", strings.Repeat("a", 40), "--why", "landed fix", "--redis", addr)
+	if code != 0 {
+		t.Fatalf("land card: exit %d err %q out %q", code, errOut, out)
+	}
+	if !strings.Contains(out, "SPEC REVISED nova-tools#100 rev=2 state=working from-pr=201") {
+		t.Fatalf("expected spec revised output, got %q", out)
+	}
+
+	rec := c.HMGet(ctx, "pr:nova-tools:100", "spec_rev", "spec_state").Val()
+	if rec[0] != "2" || rec[1] != "working" {
+		t.Fatalf("expected rev=2 state=working, got rev=%v state=%v", rec[0], rec[1])
+	}
+	if c.ZScore(ctx, "specs:dev:working", "nova-tools#100").Err() != nil {
+		t.Fatalf("expected nova-tools#100 in specs:dev:working")
+	}
+	if c.ZScore(ctx, "specs:dev:done", "nova-tools#100").Err() != redis.Nil {
+		t.Fatalf("expected nova-tools#100 removed from specs:dev:done")
+	}
+	lines := c.LRange(ctx, "pr:nova-tools:100:lines", 0, -1).Val()
+	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "REVISION from-pr=201:") {
+		t.Fatalf("expected revision line in lines, got %v", lines)
+	}
+
+	// 2. Task card whose issue is a spec, but paths do NOT touch spec text
+	_, err = taskcard.Push(ctx, c, taskcard.PushRequest{
+		ID:     "card-no-touch-spec",
+		Sprint: S,
+		Stream: "dev",
+		Ref:    "mas-bandwidth/nova-tools#100",
+		Title:  "internal code only",
+		PR:     "202",
+		By:     "a",
+		Where:  "ready",
+		Fields: []string{"paths", "internal/nsprint/x.go"},
+	})
+	if err != nil {
+		t.Fatalf("push card 2: %v", err)
+	}
+
+	if code, out, errOut := runSprint("task", "take", "--id", "card-no-touch-spec", "--actor", "a", "--redis", addr); code != 0 {
+		t.Fatalf("take card 2: exit %d err %q out %q", code, errOut, out)
+	}
+
+	code, out, errOut = runSprint("task", "land", "--id", "card-no-touch-spec", "--actor", "a", "--sha", strings.Repeat("b", 40), "--why", "landed code only", "--redis", addr)
+	if code != 0 {
+		t.Fatalf("land card 2: exit %d err %q out %q", code, errOut, out)
+	}
+	if !strings.Contains(out, "SPEC unchanged") {
+		t.Fatalf("expected SPEC unchanged, got %q", out)
+	}
+	if rev := c.HGet(ctx, "pr:nova-tools:100", "spec_rev").Val(); rev != "2" {
+		t.Fatalf("expected rev to remain 2, got %s", rev)
+	}
+}
+
+func TestSpecReviseSubcommand(t *testing.T) {
+	addr, c, _, _ := specStore(t)
+	ctx := context.Background()
+
+	// Seed spec issue
+	c.HSet(ctx, "pr:nova-tools:300", "spec_rev", "1", "spec_state", "done", "spec_stream", "dev")
+	c.ZAdd(ctx, "specs:dev:done", redis.Z{Score: 100, Member: "nova-tools#300"})
+	c.SAdd(ctx, "specs:streams", "dev")
+
+	// Revise with note
+	code, out, errOut := runSpecArgs(t, "revise", "nova-tools#300", "--from-pr", "12", "--note", "clarified quorum", "--no-github", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "SPEC REVISED nova-tools#300 rev=2 state=working from-pr=12") {
+		t.Fatalf("revise valid: exit %d out %q err %q", code, out, errOut)
+	}
+	rec := c.HMGet(ctx, "pr:nova-tools:300", "spec_rev", "spec_state").Val()
+	if rec[0] != "2" || rec[1] != "working" {
+		t.Fatalf("expected rev=2 state=working, got rev=%v state=%v", rec[0], rec[1])
+	}
+
+	// Revise with unchanged note emits SPEC unchanged
+	code, out, errOut = runSpecArgs(t, "revise", "nova-tools#300", "--from-pr", "13", "--note", "unchanged", "--no-github", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "SPEC unchanged") {
+		t.Fatalf("revise unchanged: exit %d out %q err %q", code, out, errOut)
 	}
 }

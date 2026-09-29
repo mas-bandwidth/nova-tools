@@ -29,7 +29,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/spec"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
@@ -425,7 +428,11 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		return code
 	case "land":
 		if *c.stream == "" {
-			return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
+			code := moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
+			if code == 0 {
+				c.specReviseAfterLand(ctx, cl, *c.id, out, errOut)
+			}
+			return code
 		}
 		// the stream lander's step: every merging member, one call; the
 		// lines name what the lander closes with the CLOSE line
@@ -435,6 +442,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		for _, m := range r.Landed {
 			_, _ = fmt.Fprintf(out, "LANDED %s ref=%s origin=%s\n", m.ID, quoteField(m.Ref), quoteField(m.Origin))
+			c.specReviseAfterLand(ctx, cl, m.ID, out, errOut)
 		}
 		ids := make([]string, 0, len(r.Refused))
 		for id := range r.Refused {
@@ -686,4 +694,80 @@ func dashIf(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func (c *cardCmd) specReviseAfterLand(ctx context.Context, cl redis.Cmdable, cardID string, out, errOut io.Writer) {
+	fallbackWhy := ""
+	if c != nil && c.why != nil {
+		fallbackWhy = *c.why
+	}
+	specReviseCard(ctx, cl, cardID, fallbackWhy, out, errOut)
+}
+
+func specReviseCard(ctx context.Context, cl redis.Cmdable, cardID string, fallbackWhy string, out, errOut io.Writer) {
+	card, err := cl.HGetAll(ctx, taskcard.Key(cardID)).Result()
+	if err != nil || len(card) == 0 {
+		return
+	}
+	ref := card["ref"]
+	if ref == "" {
+		return
+	}
+	repo, n, err := parseRepoPR(ref)
+	if err != nil {
+		return
+	}
+	owner, name, err := prkey.Split(repo)
+	if err != nil {
+		return
+	}
+	rec, err := cl.HMGet(ctx, "pr:"+name+":"+strconv.Itoa(n), "spec_rev", "spec_state").Result()
+	if err != nil || len(rec) < 2 {
+		return
+	}
+	specRev, _ := rec[0].(string)
+	specState, _ := rec[1].(string)
+	if specRev == "" && specState == "" {
+		return
+	}
+	paths := card["paths"]
+	if !spec.TouchesSpec(paths) {
+		_, _ = fmt.Fprintln(out, "SPEC unchanged")
+		return
+	}
+	fromPR, _ := strconv.Atoi(card["pr"])
+	note := card["why"]
+	if note == "" || strings.HasPrefix(note, "merged ") {
+		note = card["title"]
+	}
+	if (note == "" || strings.HasPrefix(note, "merged ")) && fallbackWhy != "" && !strings.HasPrefix(fallbackWhy, "merged ") {
+		note = fallbackWhy
+	}
+	if note == "" {
+		note = "landed " + cardID
+	}
+	line := fmt.Sprintf("REVISION from-pr=%d: %s", fromPR, note)
+	r, err := spec.Revise(ctx, cl, spec.ReviseRequest{
+		Repo:   name,
+		N:      strconv.Itoa(n),
+		FromPR: fromPR,
+		Note:   note,
+		Line:   line,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(errOut, "spec revise: %v\n", err)
+		return
+	}
+	if r.ExitCode() != 0 {
+		_, _ = fmt.Fprintf(errOut, "SPEC REVISE REFUSED %s#%d why=%s\n", name, n, r.Why)
+		return
+	}
+	if token := ghToken(); token != "" {
+		if owner == "" {
+			owner = devRedEnv("NOVA_GH_OWNER", devRedOwner)
+		}
+		poster := &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: owner, Token: token, Redis: cl}
+		_, _ = poster.Comment(ctx, name, strconv.Itoa(n), line)
+	}
+	_, _ = fmt.Fprintf(out, "SPEC REVISED %s#%d rev=%d state=%s from-pr=%d\n", name, n, r.Rev, r.State, fromPR)
 }

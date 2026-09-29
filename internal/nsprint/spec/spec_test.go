@@ -42,3 +42,26 @@ func TestBlock(t *testing.T) {
 		t.Fatalf("block = %q", got)
 	}
 }
+
+func TestTouchesSpec(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		paths string
+		want  bool
+	}{
+		{"docs/SPEC-SPRINT.md", true},
+		{"deprecated/docs/SPEC.md", true},
+		{"specs/something.md", true},
+		{"SPEC.md", true},
+		{"SPEC", true},
+		{"internal/x.go,docs/SPEC-CI.md", true},
+		{"internal/x.go docs/SPEC-CI.md", true},
+		{"internal/nsprint/spec/spec.go", false},
+		{"cmd/nova-sprint/main.go", false},
+		{"", false},
+	} {
+		if got := TouchesSpec(tc.paths); got != tc.want {
+			t.Errorf("TouchesSpec(%q) = %v, want %v", tc.paths, got, tc.want)
+		}
+	}
+}

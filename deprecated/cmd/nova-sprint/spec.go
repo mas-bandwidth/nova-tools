@@ -19,8 +19,10 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/spec"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -28,19 +30,19 @@ import (
 func init() {
 	register(Verb{
 		Name:    "spec",
-		Summary: "mark: a SPEC line's facts to Redis in one call, the second 10 releases its builds; list: the specs block (working | done per stream) from Redis",
+		Summary: "mark: a SPEC line's facts to Redis in one call; list: specs block from Redis; revise: bump rev and reset to working at landing",
 		Run:     runSpec,
 	})
 }
 
-const specUsage = "want mark <repo>#<n> --rev <k> --who <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>] or list [--stream <name>] [--redis <addr>]"
+const specUsage = "want mark <repo>#<n> --rev <k> --who <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>] or list [--stream <name>] [--redis <addr>] or revise <repo>#<n> --from-pr <m> --note \"<what changed>\" [--no-github] [--redis <addr>]"
 
 func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || (args[0] != "mark" && args[0] != "list") {
+	if len(args) == 0 || (args[0] != "mark" && args[0] != "list" && args[0] != "revise") {
 		return refuse(errOut, "spec", specUsage)
 	}
 	sub := args[0]
-	pos, flags := holdSplitArgs(args[1:], map[string]bool{"rev": true, "who": true, "score": true, "stream": true, "sprint": true, "redis": true})
+	pos, flags := holdSplitArgs(args[1:], map[string]bool{"rev": true, "who": true, "score": true, "stream": true, "sprint": true, "redis": true, "from-pr": true, "note": true, "no-github": false})
 	fs := taskFlags("spec " + sub)
 	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	rev := fs.Int("rev", 0, "")
@@ -48,6 +50,9 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 	score := fs.Int("score", -1, "")
 	stream := fs.String("stream", "", "")
 	sprint := fs.String("sprint", "", "")
+	fromPR := fs.Int("from-pr", 0, "")
+	note := fs.String("note", "", "")
+	noGitHub := fs.Bool("no-github", false, "")
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, "spec "+sub, specUsage)
 	}
@@ -58,6 +63,8 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "spec "+sub, "needs --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	var m spec.Mark
+	var reviseRepo, reviseName string
+	var reviseN int
 	if sub == "mark" {
 		if len(pos) != 1 {
 			return refuse(errOut, "spec mark", specUsage)
@@ -72,6 +79,19 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		m = spec.Mark{Repo: name, N: strconv.Itoa(n), Who: *who, Rev: *rev, Score: *score, Stream: *stream, Sprint: *sprint, Actor: *who}
 		m.Line = fmt.Sprintf("SPEC who=%s rev=%d score=%d", m.Who, m.Rev, m.Score)
+	} else if sub == "revise" {
+		if len(pos) != 1 || *fromPR <= 0 {
+			return refuse(errOut, "spec revise", "want revise <repo>#<n> --from-pr <m> --note \"<what changed>\"")
+		}
+		var err error
+		reviseRepo, reviseN, err = parseRepoPR(pos[0])
+		if err != nil {
+			return refuse(errOut, "spec revise", "want <repo>#<n>, got "+strconv.Quote(pos[0]))
+		}
+		_, reviseName, err = prkey.Split(reviseRepo)
+		if err != nil {
+			return refuse(errOut, "spec revise", err.Error())
+		}
 	} else if len(pos) != 0 || *who != "" || *rev != 0 || *score != -1 || *sprint != "" {
 		return refuse(errOut, "spec list", "want list [--stream <name>] [--redis <addr>]")
 	}
@@ -91,6 +111,41 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return 1
 		}
 		fmt.Fprintln(out, r.Line(m))
+		return 0
+	}
+	if sub == "revise" {
+		trimmedNote := strings.TrimSpace(*note)
+		if trimmedNote == "" || trimmedNote == "none" || trimmedNote == "unchanged" {
+			fmt.Fprintln(out, "SPEC unchanged")
+			return 0
+		}
+		line := fmt.Sprintf("REVISION from-pr=%d: %s", *fromPR, trimmedNote)
+		r, err := spec.Revise(ctx, st.Client(), spec.ReviseRequest{
+			Repo:   reviseName,
+			N:      strconv.Itoa(reviseN),
+			FromPR: *fromPR,
+			Note:   trimmedNote,
+			Line:   line,
+		})
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint spec revise: %v\n", err)
+			return 2
+		}
+		if r.ExitCode() != 0 {
+			fmt.Fprintf(errOut, "SPEC REVISE REFUSED %s#%d why=%s\n", reviseName, reviseN, r.Why)
+			return 1
+		}
+		if !*noGitHub {
+			if token := ghToken(); token != "" {
+				owner, _, _ := prkey.Split(reviseRepo)
+				if owner == "" {
+					owner = devRedEnv("NOVA_GH_OWNER", devRedOwner)
+				}
+				poster := &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: owner, Token: token, Redis: st.Client()}
+				_, _ = poster.Comment(ctx, reviseName, strconv.Itoa(reviseN), line)
+			}
+		}
+		fmt.Fprintf(out, "SPEC REVISED %s#%d rev=%d state=%s from-pr=%d\n", reviseName, reviseN, r.Rev, r.State, *fromPR)
 		return 0
 	}
 	l, err := spec.List(ctx, st.Client(), *stream)

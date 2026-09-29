@@ -172,7 +172,14 @@ default (read 10, card 30, fix 120, decision 30, repair 90, evaluation 120
 minutes). The defaults move when a person moves them, with the numbers on the
 line — do not guess, measure.
 
+## Spec gate and revisions
+
+Specs are tracked per sprint and stream in Redis (#3370, #4400):
+- **Gate**: A spec moves from `working` to `done` when at least `quorum` distinct readers score it `>= pass` at the current `rev` (`cfg:spec pass=9 quorum=2`). Quorum falls to 1 when the live readers count (`friend:<f>:beat` within 60s, excluding the spec owner) is <= 1.
+- **Revision at landing**: When a card lands (`task land`, `land stream`, or `land pr`), if the card's issue is a spec and changes touch spec files, `spec revise` appends a `REVISION from-pr=<m>: <note>` comment, bumps `rev`, and resets the spec to `working` at the new rev. If no spec text was modified, `SPEC unchanged` is emitted.
+
 ## Exit codes
 
 `0` the verb ran; `1` the check ran and said no (a task nothing could route);
 `2` the invocation was unusable, one line naming what was wrong and the remedy.
+

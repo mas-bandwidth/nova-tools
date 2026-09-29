@@ -20,8 +20,9 @@ import (
 
 // Function names registered by unblock_spec.lua.
 const (
-	FunctionMark = "ns_spec_mark"
-	FunctionList = "ns_spec_list"
+	FunctionMark   = "ns_spec_mark"
+	FunctionList   = "ns_spec_list"
+	FunctionRevise = "ns_spec_revise"
 )
 
 // Mark is one SPEC fact. Repo is the bare repo name (the record key's name),
@@ -60,7 +61,7 @@ func (r Result) Line(m Mark) string {
 }
 
 // Do is one ns_spec_mark call.
-func Do(ctx context.Context, c *redis.Client, m Mark) (Result, error) {
+func Do(ctx context.Context, c redis.Cmdable, m Mark) (Result, error) {
 	raw, err := c.FCall(ctx, FunctionMark, nil, m.Repo, m.N, m.Who, strconv.Itoa(m.Rev), strconv.Itoa(m.Score), m.Stream, m.Line, m.Sprint, m.Actor).Result()
 	if err != nil {
 		return Result{}, fmt.Errorf("%s: %w", FunctionMark, err)
@@ -85,6 +86,73 @@ func Do(ctx context.Context, c *redis.Client, m Mark) (Result, error) {
 	r.Released, _ = strconv.Atoi(s(3))
 	r.Lines, _ = strconv.Atoi(s(5))
 	return r, nil
+}
+
+// ReviseRequest is a request to revise a spec at landing.
+type ReviseRequest struct {
+	Repo   string
+	N      string
+	FromPR int
+	Note   string
+	Line   string
+}
+
+// ReviseResult is the reply from ns_spec_revise.
+type ReviseResult struct {
+	Answer string
+	State  string
+	Rev    int
+	Stream string
+	Why    string
+}
+
+// ExitCode is 0 for REVISED or UNCHANGED, 1 for refusal.
+func (r ReviseResult) ExitCode() int {
+	if r.Answer == "REVISED" || r.Answer == "UNCHANGED" {
+		return 0
+	}
+	return 1
+}
+
+// Revise calls ns_spec_revise.
+func Revise(ctx context.Context, c redis.Cmdable, req ReviseRequest) (ReviseResult, error) {
+	raw, err := c.FCall(ctx, FunctionRevise, nil, req.Repo, req.N, strconv.Itoa(req.FromPR), req.Note, req.Line).Result()
+	if err != nil {
+		return ReviseResult{}, fmt.Errorf("%s: %w", FunctionRevise, err)
+	}
+	v, ok := raw.([]any)
+	if !ok || len(v) == 0 {
+		return ReviseResult{}, fmt.Errorf("%s: unexpected reply %T", FunctionRevise, raw)
+	}
+	s := func(i int) string {
+		if i < len(v) {
+			return fmt.Sprint(v[i])
+		}
+		return ""
+	}
+	r := ReviseResult{Answer: s(0)}
+	if r.ExitCode() != 0 {
+		r.Why = s(1)
+		return r, nil
+	}
+	r.State = s(1)
+	r.Rev, _ = strconv.Atoi(s(2))
+	r.Stream = s(3)
+	return r, nil
+}
+
+// TouchesSpec reports whether a paths list includes any spec file.
+func TouchesSpec(paths string) bool {
+	for _, p := range strings.FieldsFunc(paths, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.Contains(p, "SPEC") || strings.HasPrefix(p, "specs/") || strings.HasPrefix(p, "docs/SPEC") || strings.HasPrefix(p, "deprecated/docs/SPEC") {
+			return true
+		}
+	}
+	return false
 }
 
 // Facts are what a SPEC line carries.

@@ -2108,17 +2108,18 @@ its outcome with `jev.Join`, one call each.
 
 ### spec
 
-The specs table in Redis (#3370, part of #3364). A SPEC line's facts go
+The specs table in Redis (#3370, part of #3364, #4400). A SPEC line's facts go
 onto the record `pr:<repo>:<n>` in the same call that stores the line
 (`spec_rev`, `spec_state`, `spec_stream`, `spec_score:<who>` = `<rev>
 <score>`), and the spec is in exactly one of `specs:<stream>:working` or
 `specs:<stream>:done` (ZSETs of `<repo>#<n>`, score = the spec's first mark
-in ms, so every list reads oldest first). Done is two distinct `who=` with
-score 10 at the current rev; a newer rev resets the count and a line at an
-older rev is refused `STALE_REV` with nothing written. On done the same call
-releases every task waiting on `spec:<repo>#<n>` (the DEPENDS-ON release).
-Both subverbs are one FCALL of a function in
-`internal/nsprint/fn/lua/unblock_spec.lua`.
+in ms, so every list reads oldest first). Done is at least quorum distinct `who=`
+scoring `>= pass` at the current rev (`cfg:spec pass=9 quorum=2`; quorum falls to
+1 when the count of live readers with active heartbeats within 60s, excluding the
+spec owner, is <= 1); a newer rev resets the count and a line at an older rev is
+refused `STALE_REV` with nothing written. On done the same call releases every task
+waiting on `spec:<repo>#<n>` (the DEPENDS-ON release). Subverbs are FCALL of functions
+in `internal/nsprint/fn/lua/unblock_spec.lua`.
 
 - `nova-sprint spec mark <repo>#<n> --rev <k> --who <friend> --score <s>
   [--stream <name>] [--sprint <S>] [--redis <addr>]` stores `SPEC
@@ -2126,6 +2127,12 @@ Both subverbs are one FCALL of a function in
   is the same call, and its comment mirror follows the Redis write.
 - `nova-sprint spec list [--stream <name>] [--redis <addr>]` prints the
   specs block from Redis alone; `--stream` adds that stream's ids.
+- `nova-sprint spec revise <repo>#<n> --from-pr <m> --note "<what changed>"
+  [--no-github] [--redis <addr>]` appends a `REVISION` comment naming the PR and
+  the change, bumps the spec's `rev`, and resets the spec to `working` at the new rev.
+  If the note is empty, "none", or "unchanged", prints `SPEC unchanged`. (Also
+  executed automatically during `task land`, `land stream`, and `land pr` for cards
+  whose issue is a spec).
 
 ```
 SPEC MARK nova-tools#3370 who=emma rev=3 score=10 answer=DONE state=done tens=2 released=1 stream=nova-sprint

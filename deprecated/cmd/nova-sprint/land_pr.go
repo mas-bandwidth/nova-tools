@@ -106,6 +106,9 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		orDash(strings.Join(rep.Failed, ",")), token(rep.Record), token(rep.Card), token(rep.CardMove), c.Calls)
 	switch rep.State {
 	case "merged":
+		if rep.Card != "" && rep.Card != "-" && rep.Card != "none" {
+			specReviseCard(ctx, st.Client(), rep.Card, "", out, errOut)
+		}
 		return 0
 	case "waiting":
 		return 3
