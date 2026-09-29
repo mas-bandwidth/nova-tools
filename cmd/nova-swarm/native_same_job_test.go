@@ -11,7 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// ISSUE #1585, Stella's finding, as two `native` runs in one physical job directory.
+// ISSUE #1585, as two `native` runs in one physical job directory.
 //
 // The bench store gives two concurrent runs different SEATS, and #1562's identity repair
 // makes those seats correct. Their `<slot>/jobs/<label>` was still ONE PATH, and so were
@@ -128,7 +128,7 @@ func awaitLease(t *testing.T, path string) string {
 	}
 }
 
-// STELLA'S SECOND P1 AT THE VERB (#1585, her HOLD on 6146897a). With `.lease` a path the
+// SECOND P1 AT THE VERB (#1585, HOLD on 6146897a). With `.lease` a path the
 // launcher cannot establish ownership at -- an owned directory, here -- the take used to
 // answer "no lease, carry on", and BOTH of two runs were told they held the job directory.
 // A run that cannot prove it owns its job directory now does not start, and it says so in

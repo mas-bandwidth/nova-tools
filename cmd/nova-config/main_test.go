@@ -3,7 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,10 +107,14 @@ type harness struct {
 	redis *fakeRedis
 	env   map[string]string
 	opens int
+	// hostname is what the machine reports as its own name.
+	hostname string
+	// override, when set, is the store openStore hands out instead of store.
+	override pgStore
 }
 
 func newHarness() *harness {
-	return &harness{store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
 }
 
 func (h *harness) deps() deps {
@@ -115,10 +125,14 @@ func (h *harness) deps() deps {
 			if strings.Contains(dsn, "closed") {
 				return nil, fmt.Errorf("postgres at %s: connection refused", config.Redact(dsn))
 			}
+			if h.override != nil {
+				return h.override, nil
+			}
 			return h.store, nil
 		},
 		openRedis: func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
 		now:       func() time.Time { return time.Unix(1700000000, 0) },
+		hostname:  func() (string, error) { return h.hostname, nil },
 	}
 }
 
@@ -549,5 +563,682 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	_, errs = step(1, "apply", "--kind", "friend")
 	if !strings.HasPrefix(errs, "nova-config apply: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status") {
 		t.Fatalf("conflict: %q", errs)
+	}
+}
+
+func TestInventoryVerb(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "operator"
+	h.env["NOVA_MACHINE"] = "bench-alpha"
+
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+
+	step(0, "migrate")
+	step(0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "64", "--runners", "1")
+	step(0, "machine", "add", "bench-beta", "--user", "user-b", "--seat", "seat-beta", "--slots", "40", "--runners", "0")
+	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha")
+
+	// 1. nova-config inventory
+	out, _ := step(0, "inventory")
+	var inv config.AnsibleInventory
+	if err := json.Unmarshal([]byte(out), &inv); err != nil {
+		t.Fatalf("unmarshal inventory: %v\noutput:\n%s", err, out)
+	}
+
+	if len(inv.All.Hosts) != 2 || inv.All.Hosts[0] != "bench-alpha" || inv.All.Hosts[1] != "bench-beta" {
+		t.Fatalf("all hosts: got %v, want [bench-alpha bench-beta]", inv.All.Hosts)
+	}
+	if len(inv.Benches.Hosts) != 2 || inv.Benches.Hosts[0] != "bench-alpha" || inv.Benches.Hosts[1] != "bench-beta" {
+		t.Fatalf("benches hosts: got %v, want [bench-alpha bench-beta]", inv.Benches.Hosts)
+	}
+	if len(inv.Coordinator.Hosts) != 1 || inv.Coordinator.Hosts[0] != "bench-alpha" {
+		t.Fatalf("coordinator hosts: got %v, want [bench-alpha]", inv.Coordinator.Hosts)
+	}
+	if len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "bench-beta" {
+		t.Fatalf("store hosts: got %v, want [bench-beta]", inv.Store.Hosts)
+	}
+	if len(inv.Runners.Hosts) != 1 || inv.Runners.Hosts[0] != "bench-alpha" {
+		t.Fatalf("runners hosts: got %v, want [bench-alpha]", inv.Runners.Hosts)
+	}
+
+	alphaHV := inv.Meta.Hostvars["bench-alpha"]
+	if alphaHV["ansible_host"] != "bench-alpha" || alphaHV["ansible_user"] != "user-a" || alphaHV["nova_seat"] != "seat-alpha" || alphaHV["kind"] != "machine" {
+		t.Fatalf("bench-alpha hostvars: %v", alphaHV)
+	}
+	if alphaHV["slots"] != float64(64) || alphaHV["runners"] != float64(1) {
+		t.Fatalf("bench-alpha slots/runners: %v %v", alphaHV["slots"], alphaHV["runners"])
+	}
+	if alphaHV["ansible_connection"] != "local" {
+		t.Fatalf("bench-alpha ansible_connection want local, got %v", alphaHV["ansible_connection"])
+	}
+
+	betaHV := inv.Meta.Hostvars["bench-beta"]
+	if betaHV["ansible_host"] != "bench-beta" || betaHV["ansible_user"] != "user-b" || betaHV["slots"] != float64(40) || betaHV["runners"] != float64(0) {
+		t.Fatalf("bench-beta hostvars: %v", betaHV)
+	}
+	if _, ok := betaHV["ansible_connection"]; ok {
+		t.Fatalf("bench-beta should not have ansible_connection: %v", betaHV)
+	}
+
+	// 2. nova-config inventory --list
+	listOut, _ := step(0, "inventory", "--list")
+	if listOut != out {
+		t.Fatalf("inventory --list output differs from inventory:\n%s\nvs\n%s", listOut, out)
+	}
+
+	// 3. nova-config inventory --host bench-alpha
+	hostOut, _ := step(0, "inventory", "--host", "bench-alpha")
+	var hostMap map[string]any
+	if err := json.Unmarshal([]byte(hostOut), &hostMap); err != nil {
+		t.Fatalf("unmarshal --host bench-alpha: %v\noutput:\n%s", err, hostOut)
+	}
+	if hostMap["ansible_host"] != "bench-alpha" || hostMap["ansible_user"] != "user-a" || hostMap["ansible_connection"] != "local" {
+		t.Fatalf("hostMap: %v", hostMap)
+	}
+}
+
+func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "operator"
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+
+	step(0, "migrate")
+	step(0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "64", "--runners", "1")
+	step(0, "machine", "add", "bench-beta", "--user", "user-b", "--seat", "seat-beta", "--slots", "40", "--runners", "0")
+	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha")
+
+	// Apply so Redis and Postgres are synchronized
+	step(0, "apply", "--kind", "machine")
+	step(0, "apply", "--kind", "fleet")
+
+	// Verify apply --check reports zero drift when synchronized
+	out, _ := step(0, "apply", "--check", "--kind", "machine")
+	if out != "CONFIG CHECK kind=machine add=0 set=0 remove=0 rev=2 applied=2\n" {
+		t.Fatalf("want no drift for machine, got:\n%s", out)
+	}
+	out, _ = step(0, "apply", "--check", "--kind", "fleet")
+	if out != "CONFIG CHECK kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n" {
+		t.Fatalf("want no drift for fleet, got:\n%s", out)
+	}
+
+	// 1. Detect drift: update machine slots in Postgres
+	step(0, "machine", "set", "bench-beta", "--slots", "80")
+	out, _ = step(0, "apply", "--check", "--kind", "machine")
+	wantDrift := "CHECK SET kind=machine name=bench-beta changed=slots\nCONFIG CHECK kind=machine add=0 set=1 remove=0 rev=4 applied=2\n"
+	if out != wantDrift {
+		t.Fatalf("drift on machine slots:\ngot:\n%s\nwant:\n%s", out, wantDrift)
+	}
+
+	// 2. Detect drift: add new machine in Postgres
+	step(0, "machine", "add", "bench-gamma", "--user", "user-c", "--seat", "seat-gamma", "--slots", "32")
+	out, _ = step(0, "apply", "--check", "--kind", "machine")
+	wantDrift = "CHECK SET kind=machine name=bench-beta changed=slots\nCHECK ADD kind=machine name=bench-gamma\nCONFIG CHECK kind=machine add=1 set=1 remove=0 rev=5 applied=2\n"
+	if out != wantDrift {
+		t.Fatalf("drift on machine add+set:\ngot:\n%s\nwant:\n%s", out, wantDrift)
+	}
+
+	// 3. Detect drift: change fleet coordinator in Postgres
+	step(0, "fleet", "set", "--coordinator", "bench-beta")
+	out, _ = step(0, "apply", "--check", "--kind", "fleet")
+	wantDrift = "CHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=6 applied=3\n"
+	if out != wantDrift {
+		t.Fatalf("drift on fleet coordinator:\ngot:\n%s\nwant:\n%s", out, wantDrift)
+	}
+
+	// 4. Detect drift: machine removed from Postgres but present in Redis
+	// Manually inject a stale machine into fake redis
+	h.redis.views["machine"]["bench-retired"] = config.View{"user": "nobody", "seat": "none", "slots": "10", "runners": "0"}
+	out, _ = step(0, "apply", "--check", "--kind", "machine")
+	if !strings.Contains(out, "CHECK REMOVE kind=machine name=bench-retired") {
+		t.Fatalf("drift on machine remove missing:\ngot:\n%s", out)
+	}
+
+	// Verify apply --check wrote NOTHING to redis
+	// Redis revs should still be 2 and 3
+	if h.redis.revs["machine"] != 2 || h.redis.revs["fleet"] != 3 {
+		t.Fatalf("apply --check wrote to redis: %v", h.redis.revs)
+	}
+}
+
+// inventoryHarness is a harness with n machine rows named bench-01 ...
+// bench-nn, added to the store directly.
+func inventoryHarness(t *testing.T, n int) *harness {
+	t.Helper()
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	machine, _ := config.Lookup(config.KindMachine)
+	for i := 1; i <= n; i++ {
+		row, err := machine.NewRow(fmt.Sprintf("bench-%02d", i), map[string]string{"user": "user-a", "seat": "seat-a", "slots": "8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.store.Insert(context.Background(), config.KindMachine, row, "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return h
+}
+
+func TestInventoryHostNamingNoMachineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 3)
+	code, out, errs := h.run(t, "inventory", "--host", "nosuch")
+	if code != 1 || out != "" {
+		t.Fatalf("exit %d stdout %q, want 1 and nothing", code, out)
+	}
+	want := "nova-config inventory: --host \"nosuch\" names no machine row; known machines: bench-01, bench-02, bench-03; run: nova-config machine list\n"
+	if errs != want {
+		t.Fatalf("refusal:\n got %q\nwant %q", errs, want)
+	}
+
+	// The remedy keeps the effective --pg.
+	_, _, errs = h.run(t, "inventory", "--pg", dsn, "--host", "nosuch")
+	if !strings.HasSuffix(errs, "run: nova-config machine list --pg "+dsn+"\n") {
+		t.Fatalf("remedy does not keep --pg: %q", errs)
+	}
+
+	// An empty store lists none.
+	_, _, errs = inventoryHarness(t, 0).run(t, "inventory", "--host", "nosuch")
+	if !strings.Contains(errs, "known machines: none;") {
+		t.Fatalf("empty store: %q", errs)
+	}
+}
+
+func TestInventoryHostRefusalListsAtMostTwentyNames(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 25)
+	code, _, errs := h.run(t, "inventory", "--host", "nosuch")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errs, "bench-20 and 5 more;") || strings.Contains(errs, "bench-21") {
+		t.Fatalf("the list is not bounded at 20: %q", errs)
+	}
+}
+
+func TestInventoryHostAndListForRealMachinesStillAnswer(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	code, out, errs := h.run(t, "inventory", "--host", "bench-02")
+	if code != 0 || errs != "" {
+		t.Fatalf("--host bench-02: exit %d stderr %q", code, errs)
+	}
+	var hv map[string]any
+	if err := json.Unmarshal([]byte(out), &hv); err != nil || hv["ansible_host"] != "bench-02" {
+		t.Fatalf("--host bench-02: %v %q", err, out)
+	}
+	_, def, _ := h.run(t, "inventory")
+	code, listed, _ := h.run(t, "inventory", "--list")
+	if code != 0 || listed != def || !strings.Contains(listed, "_meta") {
+		t.Fatalf("--list differs from the default or lacks _meta:\n%s", listed)
+	}
+}
+
+func TestInventoryBadFlagsAreRefusedBeforeTheStoreIsOpened(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"inventory", "--list", "--host", "bench-01"}, []string{"--list", "--host", "exclusive"}},
+		{[]string{"inventory", "--host", "bench-01", "--list"}, []string{"--list", "--host", "exclusive"}},
+		{[]string{"inventory", "--host="}, []string{"--host", "empty"}},
+		{[]string{"inventory", "--host", ""}, []string{"--host", "empty"}},
+		{[]string{"inventory", "--host"}, []string{"host"}},
+		{[]string{"inventory", "bench-01"}, []string{"no arguments"}},
+	} {
+		h := inventoryHarness(t, 1)
+		code, out, errs := h.run(t, tc.args...)
+		if code != 2 || out != "" {
+			t.Fatalf("%v: exit %d stdout %q, want 2 and nothing (stderr %q)", tc.args, code, out, errs)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(errs, w) {
+				t.Fatalf("%v: refusal %q lacks %q", tc.args, errs, w)
+			}
+		}
+		if strings.Count(errs, "\n") != 1 {
+			t.Fatalf("%v: refusal is not one line: %q", tc.args, errs)
+		}
+		if h.opens != 0 {
+			t.Fatalf("%v: opened the store %d times before refusing", tc.args, h.opens)
+		}
+	}
+}
+
+// localMachines is the machines of an inventory that carry
+// ansible_connection=local.
+func localMachines(t *testing.T, out string) []string {
+	t.Helper()
+	var inv config.AnsibleInventory
+	if err := json.Unmarshal([]byte(out), &inv); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	var local []string
+	for _, n := range inv.All.Hosts {
+		if inv.Meta.Hostvars[n]["ansible_connection"] == "local" {
+			local = append(local, n)
+		}
+	}
+	return local
+}
+
+func TestInventoryLocalMachineComesFromNovaMachine(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 3)
+	h.env["NOVA_MACHINE"] = "bench-02"
+	code, out, errs := h.run(t, "inventory")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d stderr %q", code, errs)
+	}
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-02" {
+		t.Fatalf("NOVA_MACHINE=bench-02 marks %v local", got)
+	}
+}
+
+func TestInventoryLocalMachineFallsBackToTheShortHostname(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 3)
+	h.hostname = "bench-03.tailnet.example"
+	_, out, _ := h.run(t, "inventory")
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-03" {
+		t.Fatalf("hostname bench-03.tailnet.example marks %v local", got)
+	}
+	// NOVA_MACHINE outranks the hostname.
+	h.env["NOVA_MACHINE"] = "bench-01"
+	_, out, _ = h.run(t, "inventory")
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-01" {
+		t.Fatalf("NOVA_MACHINE=bench-01 with hostname bench-03 marks %v local", got)
+	}
+}
+
+func TestInventoryIgnoresTheOldFleetSelfName(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.env["FLEET_SELF"] = "bench-01"
+	_, out, _ := h.run(t, "inventory")
+	if got := localMachines(t, out); len(got) != 0 {
+		t.Fatalf("FLEET_SELF still marks %v local", got)
+	}
+}
+
+// helpCommands returns the printf and chmod commands the inventory help
+// prints, each as printed (the help left-trims its lines).
+func helpCommands(t *testing.T, help string) (printf, chmod string) {
+	t.Helper()
+	for _, l := range strings.Split(help, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "printf "):
+			printf = l
+		case strings.HasPrefix(l, "chmod +x "):
+			chmod = l
+		}
+	}
+	if printf == "" || chmod == "" {
+		t.Fatalf("inventory -h prints no printf and chmod commands:\n%s", help)
+	}
+	return printf, chmod
+}
+
+func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	code, help, errs := h.run(t, "inventory", "-h")
+	if code != 0 || errs != "" {
+		t.Fatalf("inventory -h: exit %d stderr %q", code, errs)
+	}
+	needs := []string{
+		"--list", "--host", "--pg", "--timeout", // every flag
+		"NOVA_PG_DSN", "NOVA_PG_PASSWORD_ENV", "NOVA_MACHINE", // every variable
+		"first run", "nova-config inventory", // a first example
+		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True", // the wrapper
+		"_meta.hostvars", "ansible never calls --host", // why --host is not called
+		"the default when neither --list nor --host is given",                                                                                         // what --list is
+		"all and benches are every machine row", "coordinator and store come from the fleet row", "runners is every machine with at least one runner", // the groups
+		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset", // how NOVA_MACHINE matches
+		"this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)", // its exit codes
+	}
+	for _, w := range needs {
+		if !strings.Contains(help, w) {
+			t.Errorf("inventory -h lacks %q:\n%s", w, help)
+		}
+	}
+	printf, chmod := helpCommands(t, help)
+
+	// The printed commands are the ones the docs carry.
+	for _, doc := range []string{"docs/CLI.md", "docs/nova-config/README.md"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(doc)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "unparsed_is_failed = True", "older than the store", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+			if !strings.Contains(string(raw), w) {
+				t.Errorf("%s lacks %q", doc, w)
+			}
+		}
+	}
+
+	// Run the printed commands in a temp dir: the wrapper starts with
+	// #!/bin/sh at byte 0, is executable, and runs the tool with ansible's
+	// arguments. nova-config on the PATH is this test binary serving the
+	// inventory of an in-memory store (TestInventoryHelperProcess).
+	dir := t.TempDir()
+	sh := func(script string, env ...string) (string, error) {
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = append([]string{"PATH=" + dir + ":/usr/bin:/bin"}, env...)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := sh(printf + "\n" + chmod); err != nil {
+		t.Fatalf("the printed commands failed: %v\n%s", err, out)
+	}
+	wrapper, err := os.ReadFile(filepath.Join(dir, "nova-inventory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wrapper) != "#!/bin/sh\nexec nova-config inventory \"$@\"\n" {
+		t.Fatalf("the wrapper is %q", wrapper)
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "nova-inventory")); err != nil || fi.Mode()&0o111 == 0 {
+		t.Fatalf("the wrapper is not executable: %v %v", fi, err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim := "#!/bin/sh\nNOVA_CONFIG_TEST_HELPER=1 exec '" + self + "' -test.run='^TestInventoryHelperProcess$' -- \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "nova-config"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range []string{"--list", "--host bench-02"} {
+		out, err := sh("./nova-inventory " + args)
+		if err != nil || !strings.Contains(out, `"ansible_host": "bench-`) {
+			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// TestInventoryHelperProcess is the tool the wrapper test puts on the PATH:
+// the test binary, run with the wrapper's arguments against an in-memory
+// store. It does nothing in a normal test run.
+func TestInventoryHelperProcess(t *testing.T) {
+	t.Parallel()
+
+	if os.Getenv("NOVA_CONFIG_TEST_HELPER") != "1" {
+		return
+	}
+	var args []string
+	for i, a := range os.Args {
+		if a == "--" {
+			args = os.Args[i+1:]
+			break
+		}
+	}
+	h := inventoryHarness(t, 2)
+	os.Exit(run(args, os.Stdout, os.Stderr, h.deps()))
+}
+
+func TestInventoryDocsCarryNoIssueNumbersOrHistory(t *testing.T) {
+	t.Parallel()
+
+	issue := regexp.MustCompile(`#[0-9]+|ideas#|\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
+	code, help, _ := newHarness().run(t, "inventory", "-h")
+	if code != 0 {
+		t.Fatalf("inventory -h exits %d", code)
+	}
+	if m := issue.FindString(help); m != "" {
+		t.Errorf("inventory -h carries %q", m)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "nova-config", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sec, ok := strings.Cut(string(raw), "## Ansible inventory")
+	if !ok {
+		t.Fatal("README has no Ansible inventory section")
+	}
+	sec, _, _ = strings.Cut(sec, "\n## ")
+	if m := issue.FindString(sec); m != "" {
+		t.Errorf("the README's inventory section carries %q", m)
+	}
+	if strings.Contains(sec, "registry_seat") || !strings.Contains(sec, "`nova_seat`") || !strings.Contains(sec, "group_vars") {
+		t.Errorf("the README's inventory section must name nova_seat, say a deployment maps it in group_vars, and not name registry_seat")
+	}
+}
+
+func TestInventoryUnknownNovaMachineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, self := range []string{"nosuch", "BENCH-01", "bench-01.tailnet.ts.net", " bench-01"} {
+		for _, extra := range [][]string{nil, {"--list"}, {"--host", "bench-01"}} {
+			h := inventoryHarness(t, 2)
+			h.env["NOVA_MACHINE"] = self
+			args := append([]string{"inventory"}, extra...)
+			code, out, errs := h.run(t, args...)
+			want := "nova-config inventory: NOVA_MACHINE=" + strconv.Quote(self) + " names no machine row (the name is matched exactly); known machines: bench-01, bench-02; run: nova-config machine list\n"
+			if code != 1 || out != "" || errs != want {
+				t.Fatalf("NOVA_MACHINE=%q %v: exit %d stdout %q stderr %q\nwant %q", self, extra, code, out, errs, want)
+			}
+		}
+	}
+	// The remedy keeps --pg.
+	h := inventoryHarness(t, 1)
+	h.env["NOVA_MACHINE"] = "nosuch"
+	_, _, errs := h.run(t, "inventory", "--pg", dsn)
+	if !strings.HasSuffix(errs, "run: nova-config machine list --pg "+dsn+"\n") {
+		t.Fatalf("remedy does not keep --pg: %q", errs)
+	}
+}
+
+func TestInventoryUnsetNovaMachineAndNoHostnameMatchMarksNothing(t *testing.T) {
+	t.Parallel()
+
+	// The fallback compares the lower-cased first label of the hostname to
+	// the machine name exactly, like NOVA_MACHINE.
+	for _, hostname := range []string{"elsewhere.example", "bench-011.local", "bench.01", ""} {
+		h := inventoryHarness(t, 2)
+		h.hostname = hostname
+		code, out, errs := h.run(t, "inventory")
+		if code != 0 || errs != "" {
+			t.Fatalf("hostname %q: exit %d stderr %q", hostname, code, errs)
+		}
+		if got := localMachines(t, out); len(got) != 0 {
+			t.Fatalf("hostname %q marks %v local", hostname, got)
+		}
+	}
+}
+
+// blockedStore never answers the inventory read until its context ends,
+// like a store holding a lock on the machines table.
+type blockedStore struct{ *memStore }
+
+func (b blockedStore) MachinesAndFleet(ctx context.Context) ([]config.Row, config.Row, error) {
+	<-ctx.Done()
+	return nil, config.Row{}, ctx.Err()
+}
+
+func TestInventoryTimesOutWaitingForTheStore(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.override = blockedStore{h.store}
+	code, out, errs := h.run(t, "inventory", "--pg", dsn, "--host", "bench-01", "--timeout", "50ms")
+	want := "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --pg " + dsn + " --host bench-01 --timeout 150ms\n"
+	if code != 2 || out != "" || errs != want {
+		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out, errs, want)
+	}
+
+	// The printed remedy runs through the real CLI once the store answers.
+	h.override = nil
+	remedy := strings.Fields(strings.TrimPrefix(strings.TrimSuffix(errs, "\n"), "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: "))
+	code, out, errs = h.run(t, remedy[1:]...)
+	if code != 0 || errs != "" || !strings.Contains(out, "ansible_host") {
+		t.Fatalf("remedy %v: exit %d stdout %q stderr %q", remedy, code, out, errs)
+	}
+}
+
+func TestInventoryTimeoutMustBePositive(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{"0", "0s", "-1s", "soon"} {
+		h := inventoryHarness(t, 1)
+		code, out, errs := h.run(t, "inventory", "--timeout", v)
+		if code != 2 || out != "" || !strings.Contains(errs, "timeout") || h.opens != 0 {
+			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q opens %d", v, code, out, errs, h.opens)
+		}
+	}
+}
+
+func TestInventoryOnAStoreNotMigratedOrOlderRefusesWithMigrate(t *testing.T) {
+	t.Parallel()
+
+	all, err := config.Migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, have := range []int{0, len(all) - 1} {
+		for _, pgFlag := range []bool{false, true} {
+			h := inventoryHarness(t, 1)
+			h.store.version = have
+			args := []string{"inventory"}
+			next := "nova-config migrate"
+			if pgFlag {
+				args = append(args, "--pg", dsn)
+				next += " --pg " + dsn
+			}
+			code, out, errs := h.run(t, args...)
+			want := fmt.Sprintf("nova-config inventory: schema config is at version %d and this binary carries %d; run: %s\n", have, len(all), next)
+			if code != 1 || out != "" || errs != want {
+				t.Fatalf("version %d: exit %d stdout %q stderr %q\nwant %q", have, code, out, errs, want)
+			}
+		}
+	}
+}
+
+func TestInventoryRefusedConnectionKeepsTheGenericRefusal(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 1)
+	code, out, errs := h.run(t, "inventory", "--pg", "postgres://nova_config@127.0.0.1:5432/closed")
+	if code != 2 || out != "" || !strings.Contains(errs, "connection refused") || strings.Contains(errs, "timed out") || !strings.HasSuffix(errs, "; run: nova-config help\n") {
+		t.Fatalf("exit %d stdout %q stderr %q", code, out, errs)
+	}
+}
+
+func TestInventoryRefusalsQuoteTheValueSoAStraySpaceShows(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 1)
+	_, _, errs := h.run(t, "inventory", "--host", "bench-01 ")
+	if !strings.Contains(errs, `--host "bench-01 " names no machine row`) {
+		t.Fatalf("--host: %q", errs)
+	}
+	h.env["NOVA_MACHINE"] = " bench-01"
+	_, _, errs = h.run(t, "inventory")
+	if !strings.Contains(errs, `NOVA_MACHINE=" bench-01" names no machine row`) {
+		t.Fatalf("NOVA_MACHINE: %q", errs)
+	}
+}
+
+func TestInventoryHostnameFallbackLowercasesTheFirstLabel(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.hostname = "Bench-02.local"
+	code, out, errs := h.run(t, "inventory")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d stderr %q", code, errs)
+	}
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-02" {
+		t.Fatalf("hostname Bench-02.local marks %v local, want bench-02", got)
+	}
+	// NOVA_MACHINE is not lowered: it is matched exactly.
+	h.env["NOVA_MACHINE"] = "Bench-02"
+	if code, _, _ := h.run(t, "inventory"); code != 1 {
+		t.Fatalf("NOVA_MACHINE=Bench-02 exits %d, want 1", code)
+	}
+}
+
+func TestInventoryEmptyNovaMachineIsUnset(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.env["NOVA_MACHINE"] = ""
+	h.hostname = "bench-01.local"
+	code, out, errs := h.run(t, "inventory")
+	if code != 0 || errs != "" {
+		t.Fatalf("an empty NOVA_MACHINE exits %d with stderr %q, want 0 (unset)", code, errs)
+	}
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-01" {
+		t.Fatalf("an empty NOVA_MACHINE marks %v, want the hostname's bench-01", got)
+	}
+}
+
+func TestInventoryHelpKeepsTheToolWideExitFooter(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	for _, verb := range []string{"inventory", "status", "apply"} {
+		_, help, _ := h.run(t, verb, "-h")
+		if !strings.HasSuffix(help, "exit codes: 0 done, 1 refused, 2 usage\n") {
+			t.Errorf("%s -h footer changed:\n%s", verb, help)
+		}
+	}
+	_, top, _ := h.run(t, "help")
+	if !strings.Contains(top, "exit codes: 0 done, 1 refused, 2 usage") {
+		t.Errorf("the tool-wide footer changed")
+	}
+}
+
+func TestInventoryOnAStoreMigratedAheadOfTheBinaryRefuses(t *testing.T) {
+	t.Parallel()
+
+	all, err := config.Migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := inventoryHarness(t, 1)
+	h.store.version = len(all) + 1
+	code, out, errs := h.run(t, "inventory")
+	want := fmt.Sprintf("nova-config inventory: schema config is at version %d and this binary carries %d; this nova-config is older than the store; install a nova-config whose migrations reach version %d\n", len(all)+1, len(all), len(all)+1)
+	if code != 1 || out != "" || errs != want {
+		t.Fatalf("exit %d stdout %q stderr %q\nwant 1, nothing, %q", code, out, errs, want)
+	}
+	// A store at exactly the binary's version is read.
+	h.store.version = len(all)
+	if code, out, _ := h.run(t, "inventory"); code != 0 || out == "" {
+		t.Fatalf("a store at the binary's version: exit %d", code)
 	}
 }

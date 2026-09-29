@@ -127,6 +127,7 @@ var DefaultCatalog = []Entry{
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
 	E("tools/ci", "CI helper and build scripts", "go test ./internal/ci", "make test"),
+	E("tools/functionalrun", "the functional tier inside one container per run, and the reaper of its overdue containers", "go test ./tools/functionalrun", "make test-functional-container"),
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
 	E("tools/sessiontrace", "bounded shell trace replay against TableSession", "go test ./tools/sessiontrace", "go test ./tools/sessiontrace"),

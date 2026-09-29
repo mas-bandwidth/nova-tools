@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// STELLA'S HOLD ON #1478 (comment 5737662335), P1 AND P2. Both are real, and both are about
+// THE HOLD ON #1478 (comment 5737662335), P1 AND P2. Both are real, and both are about
 // the same mistake: the first version read the shell's line as if it were a sentence about a
 // program, when it is a sentence about a PATH and says nothing about what was done to it.
 //
@@ -56,7 +56,7 @@ func TestDeniedPathWithASpaceStillRefuses(t *testing.T) {
 }
 
 // TestRefusalClaimsNoCauseItCannotProve is P2. A shell's `Permission denied` on a path is
-// evidence that SOMETHING was denied and nothing more: Stella's own witness is a bash
+// evidence that SOMETHING was denied and nothing more: a witness is a bash
 // redirection to an unwritable output that printed exactly this shape and then RECOVERED,
 // exit 0, having attempted no program at all. The refusal may not call that path a program,
 // may not assert that a gate never ran or that nothing was compiled, and may not prescribe
@@ -138,7 +138,7 @@ func TestWalledRefusalOffersTheReadRootsAsOnePossibility(t *testing.T) {
 	}
 }
 
-// TestADenialTheCardRewroteStillRefuses is Johnny's hold on #1478 at 29047871, the #1892
+// TestADenialTheCardRewroteStillRefuses is the hold on #1478 at 29047871, the #1892
 // class: the shell-denial verdict was read from `<job>/harness-output.log` by path after the
 // child exited, and that name is in the card's own --write directory and is its cwd. A card
 // that printed the denial and then replaced the file (or removed it, so the read failed) got

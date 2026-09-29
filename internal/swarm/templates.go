@@ -30,7 +30,7 @@ const templateReadPR = `read-pr — read one pull request against the rules
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
 3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+4. A FILE BUDGET: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop. Say in RESULT.md which files you
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
@@ -72,7 +72,7 @@ const templateProbeRow = `probe-row — make one claim true or false
 2. The probe is a command, a file:line, or a measurement — never an opinion.
    Paste the command and its tail into RESULT.md.
 3. Append the result the moment you have it.
-4. A file budget: read at most <n> files (the task's --files). When the budget
+4. A file budget: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop.
 5. A probe that could not be run is a RESULT with ` + "`not done`" + ` and the reason.
    That is a complete task; a guess is not.
@@ -87,7 +87,7 @@ const templateFixCard = `fix-card — take one card and land the fix
 3. Quote the rule the fix serves, verbatim, with file:line.
 4. Write the gate you ran and its result into RESULT.md's Gates table. A fix
    with no gate is ` + "`not done`" + `.
-5. A file budget: read at most <n> files (the task's --files). When the budget
+5. A file budget: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop.
 6. Leave what you did not do under ` + "`Left owed`" + `, named so the next worker can
    pick it up with no other context.

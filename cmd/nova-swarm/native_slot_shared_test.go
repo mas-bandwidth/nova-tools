@@ -22,7 +22,7 @@ import (
 // SPEC-SWARM's "the races, taken out" closed on purpose.
 //
 // The bound this test crosses is SPEC-SWARM's own sentence under **Slots**: a worker
-// has "its own data home" and "a slot is held by exactly one worker". Johnny's receipt
+// has "its own data home" and "a slot is held by exactly one worker". A receipt
 // had both runs print NATIVE OK naming the same opencode.db.
 func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 	t.Parallel()
