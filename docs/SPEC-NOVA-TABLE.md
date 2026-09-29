@@ -688,22 +688,13 @@ exit codes: 0 done, 1 refused, 2 usage
 
 ### Model
 
-The member/epoch table model has an atomic batch action, member revisions, field
-guards, operation records and one receipt per accepted batch, over the one-place and
-epoch definitions; the per-verb model cases are separate. The batch configuration
-has 3 members, 2 rows, 2 columns, 2 epochs and batch sizes 1..3, with a guard-only
-dependency and a cross-row move. A larger configuration is not replaced by a smaller
-one when it exceeds a budget. TLC runs on a bench.
+No model of the batch action is in this tree. `tla/EpochMemberTable.tla` models the
+per-verb member/epoch table over the one-place and epoch definitions; it has no batch
+action, member revisions, field guards, operation records or receipts. What checks the
+batch here is the tests.
 
-The model's reversed witnesses catch: a second member validation failure after a
-first member writes; guard evaluation against partially updated state; duplicate
-placement; stale epoch, table or member revision; missing revision advancement by an
-ordinary writer; wrong-type or permission refusal after partial writes; a lost reply
-causing a second effect; a request-hash collision without byte comparison; a receipt
-emitted before its complete delta; and a stale retry reported as a new operation.
-
-The tests around it: trip and commit tests with complete unchanged-store refusal
-tests; bounded randomized batches on owned Redis (16 fixed seeds, 128 steps each)
-with runtime checks; Go receipt replay with one batch receipt per action; N=1 and the
-maximum configured N separately, including a late invalid entry, interacting moves and
-a replay; and the ordinary callers' regression suite.
+The tests: trip and commit tests with complete unchanged-store refusal tests; bounded
+randomized batches on owned Redis (16 fixed seeds, 128 steps each) with runtime checks;
+Go receipt replay with one batch receipt per action; N=1 and the maximum configured N
+separately, including a late invalid entry, interacting moves and a replay; and the
+ordinary callers' regression suite.
