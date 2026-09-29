@@ -140,6 +140,7 @@ do
     read_set_members = 1024,
     columns = 1000, rows = 100000,
     receipt_bytes = 1048576, batch_value_bytes = 16777216,
+    batch_cells = 256,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
@@ -148,6 +149,7 @@ do
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
     columns = 'columns per table', rows = 'rows per table',
     receipt_bytes = 'receipt bytes', batch_value_bytes = 'value bytes per batch',
+    batch_cells = 'cells a batch may scan',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -629,6 +631,20 @@ do
         end
       end
     end
+  end
+  -- Cells the stray scan would score: one per row per column. 0 is a real
+  -- count, so the cache stays nil until this call has asked.
+  function T.cell_count(d)
+    if d.cell_count == nil then
+      d.cell_count = redis.call('ZCARD', T.rowskey(d)) * #d.cols
+    end
+    return d.cell_count
+  end
+  -- A create, or a move of a member with no place, may be applied only inside
+  -- this many cells. The record holds no place, so the scan is the only record
+  -- of a stray; over the bound the batch is refused and the scan does not run.
+  function T.bound_batch_cells(d)
+    return T.over('batch_cells', T.cell_count(d))
   end
   function T.check_placement(d, id, expected_place)
     for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
@@ -2272,6 +2288,20 @@ do
       end
     end
 
+    -- A batch with a create scores every cell for a stray place the record
+    -- does not hold. Over the cell bound that walk does not start.
+    local creates = false
+    for _, entry in ipairs(members_list) do
+      if entry.create then
+        creates = true
+        break
+      end
+    end
+    if creates then
+      local over_cells = T.bound_batch_cells(d)
+      if over_cells then return over_cells end
+    end
+
     for _, entry in ipairs(members_list) do
       local id = entry.id
       local record, exists, why = T.member_head(d, id)
@@ -2297,6 +2327,12 @@ do
         member_scores[id] = tonumber(score)
         member_score_text[id] = score
       else
+        -- A move of a member with no place is the same scan. A create was
+        -- bounded above, before this loop.
+        if entry.move then
+          local over_cells = T.bound_batch_cells(d)
+          if over_cells then return over_cells end
+        end
         local drift = T.unindexed(d, id, 'set-only')
         if drift then return drift end
       end

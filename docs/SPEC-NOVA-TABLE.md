@@ -395,6 +395,7 @@ compares them with this table:
 | rows per table | 100000 |
 | receipt bytes | 1048576 |
 | value bytes per batch | 16777216 |
+| cells a batch may scan | 256 |
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
@@ -423,11 +424,16 @@ near its bound (128 members, 48 fields each), 0.05 to 0.07 s; refused for its re
 (a manifest of 886,533 bytes), 0.40 s, which is the time to decode and check the
 manifest; refused for its value bytes over a store holding 256 MiB in the named
 fields, 0.013 s. Decoding and checking a manifest of about 1 MiB is most of the time of
-the larger figures. A create or move of an unplaced member also checks the table's
-cells for a stray placement, so the time of such a batch grows with the table's size,
-which the value bounds do not limit: 128 creates held the store 0.36 s on a table of
+the larger figures. A create, or a move of a member that has no place, checks the
+table's cells for a stray placement. The place is not on the record, so the cells are
+the only record of a stray and the scan stays while the table is inside `cells a batch
+may scan` (rows times columns). Over that bound the batch is refused `LIMIT`, naming
+the bound and the cell count, before any cell is scored. A table of 1,000 rows and
+one column is over the bound. 128 creates held the store 0.36 s on a table of
 1,000 rows and 4.1 s on a table of 10,000 rows. The figures above are for a table of
-two rows.
+two rows. `ns_table_apply` counts the cells and applies this bound. The Go validator
+holds the same number; a manifest does not carry the table's cells, so the validator
+does not refuse a manifest on this bound.
 
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
 a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;

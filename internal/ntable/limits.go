@@ -6,20 +6,26 @@ import "fmt"
 // numbers (T.limits) and docs/SPEC-NOVA-TABLE.md states them; a test compares
 // the three. A refusal names the bound and the count found, never the input.
 const (
-	LimitManifestBytes    = 1 << 20 // canonical encoded request
-	LimitChangedEntries   = 128     // entries with changes
-	LimitGuardEntries     = 1024    // guard-only entries
-	LimitMemberIDBytes    = 256
-	LimitFieldValueBytes  = 64 << 10
-	LimitSetFields        = 128  // set fields per member
-	LimitUnsetFields      = 1000 // unset fields per member
-	LimitFieldGuards      = 1000 // guards per member
-	LimitOneOfOptions     = 1000 // options in one guard
-	LimitReadSetMembers   = 1024
-	LimitColumns          = 1000               // columns per table
-	LimitRows             = 100000             // rows per table
-	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
-	LimitBatchValueBytes  = 16 << 20           // bytes of the field values a batch's entries name, before and after
+	LimitManifestBytes   = 1 << 20 // canonical encoded request
+	LimitChangedEntries  = 128     // entries with changes
+	LimitGuardEntries    = 1024    // guard-only entries
+	LimitMemberIDBytes   = 256
+	LimitFieldValueBytes = 64 << 10
+	LimitSetFields       = 128  // set fields per member
+	LimitUnsetFields     = 1000 // unset fields per member
+	LimitFieldGuards     = 1000 // guards per member
+	LimitOneOfOptions    = 1000 // options in one guard
+	LimitReadSetMembers  = 1024
+	LimitColumns         = 1000               // columns per table
+	LimitRows            = 100000             // rows per table
+	LimitReceiptBytes    = LimitManifestBytes // the encoded batch delta of one receipt
+	LimitBatchValueBytes = 16 << 20           // bytes of the field values a batch's entries name, before and after
+	// LimitBatchCells is the most cells (rows × columns) a batch that creates a
+	// member, or moves a member that has no place, may be applied to. That batch
+	// scores every cell looking for a stray the record does not name. The
+	// manifest validator cannot see the table, so only the server applies this
+	// bound, and it refuses before the scan.
+	LimitBatchCells       = 256
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"
@@ -34,6 +40,7 @@ const (
 	limitNameRows         = "rows per table"
 	limitNameReceipt      = "receipt bytes"
 	limitNameBatchValues  = "value bytes per batch"
+	limitNameBatchCells   = "cells a batch may scan"
 )
 
 // ReceiptValueBytes is the longest field value a receipt, the change event and
@@ -146,6 +153,8 @@ func (e *LimitError) Advice() string {
 		return fmt.Sprintf("a batch touches at most %d bytes of field values (every before-value and after-value of the fields its entries name); change fewer members or fields in one manifest, split across manifests with their own operation ids", e.Bound)
 	case limitNameReceipt:
 		return fmt.Sprintf("the receipt of one batch is at most %d bytes and records every changed field; change fewer members or fewer fields in one manifest, split across manifests with their own operation ids", e.Bound)
+	case limitNameBatchCells:
+		return fmt.Sprintf("a batch that creates a member, or moves a member that has no place, may be applied to a table of at most %d cells (rows times columns); remove rows or columns until the table is inside the bound", e.Bound)
 	}
 	return "narrow the request"
 }
