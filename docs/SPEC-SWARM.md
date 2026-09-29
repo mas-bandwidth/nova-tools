@@ -349,7 +349,7 @@ script's private variable, not a template. That is the inverse of this spec:
 the prompts and their conditions are `internal/swarm/templates.go` in the
 binary, printable, and versioned with the tool. So **the prompt text the workers run is the
 tool's**: `Prompt` and `WrapTemplate` assemble it from the named template, the
-shell scripts are prototypes, the shell scripts are prototypes. No tool's live state is a shell script's private variable.
+shell scripts are prototypes. No tool's live state is a shell script's private variable.
 
 ### Red tests
 

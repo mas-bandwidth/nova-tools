@@ -735,11 +735,13 @@ a missing flag, an unreadable pool or worker description, a key file that is
 absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
-default number of workers, no default deadline, no default file budget and no
-default token budget. --files is required because a budget this tool supplied
-would be a guess about somebody else's task; --tokens is required for the same
-reason, and --tokens unmetered is a caller's statement that this provider has
-no live accounting and the deadline is the only stop. Zero is refused for both.
+default number of workers, no default deadline, and no default token budget.
+batch takes --cards; native, lint, route, and verify take --card (because the
+card they inspect or run would be a guess about somebody else's task); the
+remaining verbs take neither. --tokens is required on batch and native because a
+budget this tool supplied would be a guess about somebody else's task, and
+--tokens unmetered is a caller's statement that this provider has no live
+accounting and the deadline is the only stop. Zero is refused for tokens.
 
 THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
 description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
