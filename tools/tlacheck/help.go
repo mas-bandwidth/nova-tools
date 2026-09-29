@@ -74,10 +74,13 @@ Each run of tlacheck run covers one group. The committed tla/RUNS.tsv holds ever
 the runs are merged in the order of the case plan. Refused: a record for a case the plan does
 not declare, a case recorded twice, a declared case with no record, and a record whose
 fingerprint is not the one this checkout gives its case (a run on other models, another plan
-row or another runner than this binary was built from). A record in --keep that is not
-current is not kept, and its case is then a declared case with no record.
+row or another runner than this binary was built from), and records measured with more than
+one jar. A record in --keep that is not current is not kept: the merge then names it as stale,
+with its group and the tlacheck run commands that measure it again. A --keep record of a case
+the plan no longer declares is dropped and named (DROP OK config= why=not-in-the-plan). A file in
+another column layout than this tool writes is refused naming both layouts.
 
-output: MERGE OK runs= records= out=
+output: MERGE OK runs= records= out=, and DROP OK config= why= for each kept record dropped.
 first run: tlacheck merge --root . --out /tmp/RUNS.tsv /tmp/tlc-a/RUNS.tsv /tmp/tlc-b/RUNS.tsv
 `
 

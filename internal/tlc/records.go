@@ -2,6 +2,7 @@ package tlc
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,18 +58,29 @@ func WriteRecords(w io.Writer, records []Record) error {
 	return nil
 }
 
-// ReadRecords reads a records file and refuses a wrong header or a short row.
+// ReadRecords reads a records file and refuses a header that is not the
+// current layout (naming the layout it found and the one expected) and a short
+// row.
 func ReadRecords(r io.Reader) ([]Record, error) {
 	cr := csv.NewReader(r)
 	cr.Comma = '\t'
 	cr.LazyQuotes = true
-	cr.FieldsPerRecord = len(RecordsHeader)
+	cr.FieldsPerRecord = -1
 	rows, err := cr.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("records are not tab-separated with %d fields: %v", len(RecordsHeader), err)
+		return nil, fmt.Errorf("records are not tab-separated text: %v", err)
 	}
-	if len(rows) == 0 || strings.Join(rows[0], "\t") != strings.Join(RecordsHeader, "\t") {
-		return nil, fmt.Errorf("records have an incorrect TSV header")
+	if len(rows) == 0 {
+		return nil, errors.New("records are empty: no header")
+	}
+	if strings.Join(rows[0], "\t") != strings.Join(RecordsHeader, "\t") {
+		return nil, fmt.Errorf("records are in another layout: found %d columns (%s), this tool reads and writes %d (%s)",
+			len(rows[0]), strings.Join(rows[0], ","), len(RecordsHeader), strings.Join(RecordsHeader, ","))
+	}
+	for n, f := range rows[1:] {
+		if len(f) != len(RecordsHeader) {
+			return nil, fmt.Errorf("record on line %d has %d fields, want %d", n+2, len(f), len(RecordsHeader))
+		}
 	}
 	var out []Record
 	for _, f := range rows[1:] {
@@ -153,7 +165,7 @@ func Merge(src Source, cases []Case, runs ...[]Record) ([]Record, error) {
 		merged = append(merged, r)
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("no record for %d declared cases (%s)", len(missing), strings.Join(missing, ", "))
+		return nil, &MissingError{Cases: missing}
 	}
 	if err := OneJar(cases, merged); err != nil {
 		return nil, err
@@ -251,33 +263,61 @@ func StaleGroups(src Source, cases []Case, records []Record) ([]string, error) {
 	return out, nil
 }
 
+// Dropped is a record of the file a merge keeps that the merge does not carry,
+// and why.
+type Dropped struct {
+	Config string
+	Group  string // the case's group, "" when the plan no longer declares the case
+	Why    string // DroppedStale or DroppedGone
+}
+
+// The reasons a kept record is dropped.
+const (
+	DroppedStale = "stale"           // its case reads other inputs than it was measured on
+	DroppedGone  = "not-in-the-plan" // the plan no longer declares its case
+)
+
 // Carry returns the records of base that a merge keeps beside the records of
 // runs: those of declared cases that no run measured again and that are still
-// current. A base record that is stale is left out, so the merge names its case
-// as missing instead of carrying a measurement of other inputs.
-func Carry(src Source, cases []Case, base []Record, runs ...[]Record) ([]Record, error) {
+// current. A base record that is stale, or whose case the plan no longer
+// declares, is left out and returned as dropped, so the merge can name it
+// instead of carrying a measurement of other inputs.
+func Carry(src Source, cases []Case, base []Record, runs ...[]Record) (kept []Record, dropped []Dropped, err error) {
 	measured := map[string]bool{}
 	for _, run := range runs {
 		for _, r := range run {
 			measured[r.Config] = true
 		}
 	}
-	declared := map[string]bool{}
+	group := map[string]string{}
 	for _, c := range cases {
-		declared[c.Config] = true
+		group[c.Config] = c.Group
 	}
-	var kept []Record
 	for _, r := range base {
-		if measured[r.Config] || !declared[r.Config] {
+		if measured[r.Config] {
+			continue
+		}
+		g, declared := group[r.Config]
+		if !declared {
+			dropped = append(dropped, Dropped{Config: r.Config, Why: DroppedGone})
 			continue
 		}
 		fresh, err := current(src, r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if fresh {
 			kept = append(kept, r)
+		} else {
+			dropped = append(dropped, Dropped{Config: r.Config, Group: g, Why: DroppedStale})
 		}
 	}
-	return kept, nil
+	return kept, dropped, nil
+}
+
+// MissingError is a merge that lacks a record for declared cases.
+type MissingError struct{ Cases []string }
+
+func (e *MissingError) Error() string {
+	return fmt.Sprintf("no record for %d declared cases (%s)", len(e.Cases), strings.Join(e.Cases, ", "))
 }

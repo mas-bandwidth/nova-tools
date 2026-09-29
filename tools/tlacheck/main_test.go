@@ -523,11 +523,71 @@ func TestOnlyTheStaleGroupsAreRunAndMergedOntoTheCommittedRecords(t *testing.T) 
 		t.Fatal(err)
 	}
 	e, out, errs = testEnv(t, nil)
-	if r := do(e, out, errs, "merge", "--root", root, "--keep", runs, "--out", merged, runGroup("beta")); r.code != 1 || !strings.Contains(r.stderr, "no record for 3 declared cases") {
+	if r := do(e, out, errs, "merge", "--root", root, "--keep", runs, "--out", merged, runGroup("beta")); r.code != 1 || !strings.Contains(r.stderr, "3 kept records are stale, measured on inputs their cases no longer read: MCA.cfg (group alpha), MCABroken.cfg (group alpha), MCCard.cfg (group gamma)") || strings.Contains(r.stderr, "no record for") || !strings.Contains(r.stderr, "tlacheck run --root "+root+" --jar <jar> --dir <a clean directory>/alpha --group alpha") || !strings.Contains(r.stderr, "--group gamma") || !strings.Contains(r.stderr, "then merge again with --keep") {
 		t.Fatalf("a stale kept record: %+v", r)
 	}
 	if got := groups(); got != `["alpha","beta","gamma"]` {
 		t.Fatalf("stale groups after editing the module every case reads = %s", got)
+	}
+}
+
+// The messages of a merge that cannot carry what it was asked to keep.
+func TestMergeKeepNamesWhatItCannotCarry(t *testing.T) {
+	t.Parallel()
+	root, jar := checkout(t)
+	codes := map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}
+	var runs []string
+	for _, group := range []string{"alpha", "beta", "gamma"} {
+		e, out, errs := testEnv(t, scriptedTLC(t, codes, nil))
+		dir := filepath.Join(t.TempDir(), group)
+		if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
+			t.Fatalf("%s: %+v", group, r)
+		}
+		runs = append(runs, filepath.Join(dir, tlc.RunsFile))
+	}
+	keep := filepath.Join(t.TempDir(), "keep.tsv")
+	e, out, errs := testEnv(t, nil)
+	if r := do(e, out, errs, append([]string{"merge", "--root", root, "--out", keep}, runs...)...); r.code != 0 {
+		t.Fatalf("%+v", r)
+	}
+	merged := filepath.Join(t.TempDir(), "merged.tsv")
+
+	// A kept record of a case the plan no longer declares is dropped, by name.
+	raw := string(mustRead(t, keep))
+	extra := strings.Split(strings.Split(raw, "\n")[1], "\t")
+	extra[0] = "MCGone.cfg"
+	if err := os.WriteFile(keep, []byte(raw+strings.Join(extra, "\t")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out, errs = testEnv(t, nil)
+	r := do(e, out, errs, "merge", "--root", root, "--keep", keep, "--out", merged, runs[0], runs[1], runs[2])
+	if r.code != 0 || !strings.Contains(r.stdout, "DROP OK config=MCGone.cfg why=not-in-the-plan keep=") {
+		t.Fatalf("a record for a case no longer in the plan: %+v", r)
+	}
+	if recs, err := tlc.ReadRecordsFile(merged); err != nil || len(recs) != 4 {
+		t.Fatalf("merged %d records (%v), want the plan's four", len(recs), err)
+	}
+
+	// A file in the old column layout is refused naming both layouts.
+	old := filepath.Join(t.TempDir(), "old.tsv")
+	oldText := "config\tmodule\tinput_sha256\tjar_sha256\thost\tstarted_utc\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n"
+	if err := os.WriteFile(old, []byte(oldText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out, errs = testEnv(t, nil)
+	r = do(e, out, errs, "merge", "--root", root, "--keep", old, "--out", merged, runs[0])
+	for _, want := range []string{"cannot read the records to keep", "another layout: found 15 columns", "reads and writes 18", "take the tla/RUNS.tsv of the base branch"} {
+		if r.code != 2 || !strings.Contains(r.stderr, want) {
+			t.Errorf("an old layout: %q lacks %q (code %d)", r.stderr, want, r.code)
+		}
+	}
+	// groups --stale reads the committed records in the same way.
+	if err := os.WriteFile(filepath.Join(root, "tla", tlc.RunsFile), []byte(oldText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out, errs = testEnv(t, nil)
+	if r := do(e, out, errs, "groups", "--root", root, "--stale"); r.code != 2 || !strings.Contains(r.stderr, "another layout") || !strings.Contains(r.stderr, "take the tla/RUNS.tsv of the base branch") {
+		t.Errorf("groups --stale on an old layout: %+v", r)
 	}
 }
 

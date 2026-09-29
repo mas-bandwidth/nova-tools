@@ -222,8 +222,8 @@ func tlcRecordProblems(root string) []string {
 		}
 		if want, files, err := src.Fingerprint(name); err == nil {
 			if row[tc["input_sha256"]] != want || row[tc["input_files"]] != strconv.Itoa(files) {
-				bad("TLC %s record is stale: it was measured on inputs %s (%d files) and the case now reads %s (%d files): %s; run its group on a Linux bench (`tlacheck inputs --case %s` prints each file and its hash)",
-					name, row[tc["input_sha256"]], atoiOrZero(row[tc["input_files"]]), want, files, tlcInputList(src, name), name)
+				bad("TLC %s record is stale: it was measured on inputs %s (%d files) and the case now reads %s (%d files): %s. The case is in group %s: run `tlacheck groups --stale` for the groups to run again, run each on a Linux bench into a clean directory, then `tlacheck merge --keep tla/RUNS.tsv` (tla/README.md gives the commands; `tlacheck inputs --case %s` prints each file and its hash)",
+					name, row[tc["input_sha256"]], atoiOrZero(row[tc["input_files"]]), want, files, tlcInputList(src, name), p[5], name)
 			}
 		}
 		if w := row[tc["workers"]]; w != "1" && w != "2" {
@@ -478,7 +478,8 @@ func TestTLCStaleRecordNamesTheCaseAndItsInputFiles(t *testing.T) {
 		t.Fatalf("problems %v", problems)
 	}
 	for i, config := range []string{"MCA.cfg", "MCB.cfg"} {
-		for _, want := range []string{"TLC " + config + " record is stale", "tla/Shared.tla", "tla/" + config, "tlacheck inputs --case " + config} {
+		group := map[string]string{"MCA.cfg": "alpha", "MCB.cfg": "beta"}[config]
+		for _, want := range []string{"TLC " + config + " record is stale", "tla/Shared.tla", "tla/" + config, "tlacheck inputs --case " + config, "group " + group + ":", "`tlacheck groups --stale`", "`tlacheck merge --keep tla/RUNS.tsv`", "clean directory"} {
 			if !strings.Contains(problems[i], want) {
 				t.Errorf("%q does not name %q", problems[i], want)
 			}

@@ -2,6 +2,7 @@ package tlc
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -162,4 +163,51 @@ func TestMergeRefusesRecordsOfMoreThanOneJar(t *testing.T) {
 
 func badRow(files, workers, exit string) string {
 	return strings.Join([]string{"MCA.cfg", "MCA.tla", "x", files, "j", "21.0.1", "h", "t", workers, "1", "1", "1", exit, "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n"
+}
+
+// Records in another column layout are refused naming the layout found and the
+// one expected, whatever their field counts.
+func TestReadRecordsNamesTheLayoutItFoundAndTheOneItExpects(t *testing.T) {
+	t.Parallel()
+	old := "config\tmodule\tinput_sha256\tjar_sha256\thost\tstarted_utc\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n" +
+		"MCA.cfg\tMCA.tla\tx\tj\th\tt\t1\t1\t1\t0\tPASS\tpass\t-\t110\tbounded\n"
+	_, err := ReadRecords(strings.NewReader(old))
+	if err == nil {
+		t.Fatal("the old layout was read")
+	}
+	for _, want := range []string{"another layout", "found 15 columns (config,module,input_sha256,jar_sha256,", "reads and writes 18 (config,module,input_sha256,input_files,jar_sha256,java_version,"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q lacks %q", err, want)
+		}
+	}
+	if _, err := ReadRecords(strings.NewReader(strings.Join(RecordsHeader, "\t") + "\nMCA.cfg\tMCA.tla\n")); err == nil || !strings.Contains(err.Error(), "line 2 has 2 fields, want 18") {
+		t.Errorf("a short row: %v", err)
+	}
+}
+
+// A kept record is dropped for one of two reasons, and each is named.
+func TestCarryNamesEachRecordItDrops(t *testing.T) {
+	t.Parallel()
+	src, cases, recs := mergeTree(t)
+	for i := range cases {
+		cases[i].Group = []string{"alpha", "beta", "gamma"}[i]
+	}
+	stale := recs["MCB.cfg"]
+	stale.InputSHA256 = strings.Repeat("0", 64)
+	gone := rec("MCGone.cfg", "x")
+	measured := recs["MCC.cfg"]
+	measured.InputSHA256 = strings.Repeat("1", 64) // replaced by the run below, so not dropped
+	kept, dropped, err := Carry(src, cases, []Record{recs["MCA.cfg"], stale, gone, measured}, []Record{recs["MCC.cfg"]})
+	if err != nil || len(kept) != 1 || kept[0].Config != "MCA.cfg" {
+		t.Fatalf("kept %+v, %v", kept, err)
+	}
+	want := []Dropped{{Config: "MCB.cfg", Group: "beta", Why: DroppedStale}, {Config: "MCGone.cfg", Why: DroppedGone}}
+	if !reflect.DeepEqual(dropped, want) {
+		t.Fatalf("dropped %+v, want %+v", dropped, want)
+	}
+	_, err = Merge(src, cases, kept, []Record{recs["MCC.cfg"]})
+	var missing *MissingError
+	if !errors.As(err, &missing) || !reflect.DeepEqual(missing.Cases, []string{"MCB.cfg"}) {
+		t.Fatalf("merge error %v", err)
+	}
 }

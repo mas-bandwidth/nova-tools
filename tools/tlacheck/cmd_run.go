@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -54,7 +56,7 @@ func cmdGroups(e env, args []string) int {
 		}
 		records, err := tlc.ReadRecordsFile(filepath.Join(*root, "tla", tlc.RunsFile))
 		if err != nil {
-			return refuse(e, "groups", "cannot read the records: "+err.Error(), tool+" groups -h")
+			return refuse(e, "groups", "cannot read the records: "+err.Error()+layoutHint(err), tool+" groups -h")
 		}
 		if groups, err = tlc.StaleGroups(src, cases, records); err != nil {
 			return refuse(e, "groups", err.Error(), tool+" groups -h")
@@ -179,19 +181,30 @@ func cmdMerge(e env, args []string) int {
 		runs = append(runs, recs)
 	}
 	measured := len(runs)
+	var dropped []tlc.Dropped
 	if *keep != "" {
 		base, err := tlc.ReadRecordsFile(*keep)
 		if err != nil {
-			return refuse(e, "merge", "cannot read the records to keep: "+err.Error(), tool+" merge -h")
+			return refuse(e, "merge", "cannot read the records to keep: "+err.Error()+layoutHint(err), tool+" merge -h")
 		}
-		carried, err := tlc.Carry(src, cases, base, runs...)
+		var carried []tlc.Record
+		carried, dropped, err = tlc.Carry(src, cases, base, runs...)
 		if err != nil {
 			return refuse(e, "merge", err.Error(), tool+" merge -h")
 		}
 		runs = append(runs, carried)
+		for _, d := range dropped {
+			if d.Why == tlc.DroppedGone {
+				event(e.stdout, "DROP", "OK", "config", d.Config, "why", d.Why, "keep", *keep)
+			}
+		}
 	}
 	merged, err := tlc.Merge(src, cases, runs...)
 	if err != nil {
+		var missing *tlc.MissingError
+		if errors.As(err, &missing) {
+			err = errors.New(explainMissing(missing, dropped, *root, *keep, *out))
+		}
 		eventWhy(e.stderr, "MERGE", "FAIL", err.Error(), "runs", fmt.Sprint(measured))
 		return 1
 	}
@@ -208,6 +221,53 @@ func cmdMerge(e env, args []string) int {
 	}
 	event(e.stdout, "MERGE", "OK", "runs", fmt.Sprint(measured), "records", fmt.Sprint(len(merged)), "out", abs)
 	return 0
+}
+
+// layoutHint is what to do about records in another layout than this tool's.
+func layoutHint(err error) string {
+	if !strings.Contains(err.Error(), "another layout") {
+		return ""
+	}
+	return "; take the tla/RUNS.tsv of the base branch, which is in the layout this tool writes, or run every group and merge without --keep"
+}
+
+// explainMissing says why a merge has no record for some declared cases: a kept
+// record that is stale is named as stale, with its group and the commands that
+// measure it again, and the rest are named as missing.
+func explainMissing(missing *tlc.MissingError, dropped []tlc.Dropped, root, keep, out string) string {
+	staleGroup := map[string]string{}
+	for _, d := range dropped {
+		if d.Why == tlc.DroppedStale {
+			staleGroup[d.Config] = d.Group
+		}
+	}
+	var stale, absent, groups []string
+	seen := map[string]bool{}
+	for _, c := range missing.Cases {
+		if g, ok := staleGroup[c]; ok {
+			stale = append(stale, c+" (group "+g+")")
+			if !seen[g] {
+				seen[g] = true
+				groups = append(groups, g)
+			}
+			continue
+		}
+		absent = append(absent, c)
+	}
+	sort.Strings(groups)
+	var parts []string
+	if len(stale) > 0 {
+		var cmds []string
+		for _, g := range groups {
+			cmds = append(cmds, tool+" run --root "+root+" --jar <jar> --dir <a clean directory>/"+g+" --group "+g)
+		}
+		parts = append(parts, fmt.Sprintf("%d kept records are stale, measured on inputs their cases no longer read: %s; run their groups again, each into a clean directory (%s), then merge again with --keep %s and those runs",
+			len(stale), strings.Join(stale, ", "), strings.Join(cmds, "; "), keep))
+	}
+	if len(absent) > 0 {
+		parts = append(parts, (&tlc.MissingError{Cases: absent}).Error())
+	}
+	return strings.Join(parts, "; and ")
 }
 
 func cmdInputs(e env, args []string) int {
