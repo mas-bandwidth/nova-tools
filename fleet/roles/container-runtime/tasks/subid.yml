@@ -39,6 +39,8 @@
     that: item is match('^[^:]+:[0-9]+:[0-9]+$')
     fail_msg: "/etc/{{ container_runtime_subid_file }} holds a line the role cannot read as name:start:count: {{ item }}"
   loop: "{{ container_runtime_subid_lines }}"
+  loop_control:
+    label: "a row of /etc/{{ container_runtime_subid_file }}"
 
 # mine: the user's rows; others: everyone else's. The block computes the
 # highest range end among the others and the others' rows that overlap one of

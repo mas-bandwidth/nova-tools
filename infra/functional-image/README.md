@@ -74,7 +74,8 @@ separate step that has the network, and is mounted read only for every run. The
 build cache is written by the code under test, so it is kept per trust domain
 (see "The build cache" below); the commands name it `nova-gocache-<domain>`:
 
-    podman run --rm -v "$PWD":/src:ro -v nova-gomod:/gomodcache \
+    podman run --rm --timeout 600 --security-opt no-new-privileges --cap-drop all \
+      -v "$PWD":/src:ro -v nova-gomod:/gomodcache \
       -e GOPROXY=https://proxy.golang.org -w /src nova-functional go mod download
 
 The run:

@@ -20,7 +20,7 @@ facts as root) names the runner with `container_runtime_user` instead.
 | step | how |
 |---|---|
 | podman | the distribution's `podman` with its rootless helpers (`uidmap`, `passt`, `crun`, `conmon`, `netavark`, `aardvark-dns`, `catatonit`, `dbus-user-session`), through apt |
-| subordinate ids | a `/etc/subuid` and `/etc/subgid` row for the user when it has none, read by name or numeric uid. The range starts at `container_runtime_subid_start` or, when another user's range reaches that far, right after the highest range in the file, so it never overlaps another user's (overlapping ranges make two users' container ids the same host ids). An existing row is never rewritten; one that overlaps another user's row, or is smaller than 65536 ids, stops the play |
+| subordinate ids | a `/etc/subuid` and `/etc/subgid` row for the user when it has none, read by name or numeric uid. The range starts at `container_runtime_subid_start` or, when another user's range reaches that far, right after the highest range in the file, so it never overlaps another user's (overlapping ranges make two users' container ids the same host ids). An existing row is never rewritten; one that overlaps another user's row, or is smaller than `container_runtime_subid_count` ids, stops the play |
 | linger | `loginctl enable-linger`, so the user's runtime directory and systemd manager exist with no login session |
 | user namespaces | `user.max_user_namespaces` is read and must be above zero; the role does not change kernel settings |
 | cgroup v2 delegation | the controllers `cpu`, `memory` and `pids` must be delegated to the user's systemd manager; a drop-in (`/etc/systemd/system/user@<uid>.service.d/delegate.conf`, its directory made first) is written only where they are not, for that user's manager and no other's, and the play stops until the manager restarts, because restarting it ends the user's containers |
@@ -56,7 +56,7 @@ The probe image is the base of the functional image; a class test
 | `container_runtime_min_uid` | `1000` | the lowest uid the role acts for; root is refused whatever it is set to |
 | `container_runtime_packages` | the list above | packages to install |
 | `container_runtime_install_recommends` | `true` | apt recommends; the rootless helpers are recommended by `podman` |
-| `container_runtime_subid_start`, `container_runtime_subid_count` | `100000`, `65536` | the range given when the user has no row: it starts at the first id at or above `_start` that no other user's range in the file covers |
+| `container_runtime_subid_start`, `container_runtime_subid_count` | `100000`, `65536` | the range given when the user has no row: it starts at `_start`, or right after the highest range end in the file when that is higher |
 | `container_runtime_controllers` | `cpu`, `memory`, `pids` | controllers a limit needs delegated |
 | `container_runtime_probe_image` | the base image of the functional image, by digest | image the probe runs |
 | `container_runtime_probe_pids`, `_memory_bytes`, `_cpus`, `_timeout` | `128`, `268435456`, `2`, `60` | the probe's limits; `_cpus` may be fractional (`1.5`) |
