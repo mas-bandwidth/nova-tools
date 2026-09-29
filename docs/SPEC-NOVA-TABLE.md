@@ -267,7 +267,8 @@ marked complete. Bound/external cells are not writable through this interface.
 
 `ns_table_apply` is one application call with one conditional mutation manifest.
 It creates placed members, moves existing members across owned cells (including
-across rows), and sets/unsets permitted member fields. All guards read one pre-state;
+across rows), removes owned placement while retaining the member record, and
+sets/unsets permitted member fields. All guards read one pre-state;
 all mutations share one logical commit and one batch receipt. The primitive handles
 mechanical conditions, not card lifecycle policy, prose, reviews, jobs or leases.
 Clients may prepare using the read-only call, but a write is one call, not a loop.
@@ -325,14 +326,26 @@ A member appears exactly once: its expected revision, position, extra field guar
 move and field updates are grouped in that entry. A move plus set/unset is one
 member mutation; duplicate entries are never merged. Create requires absence of
 both record and any owned placement; create plus move, remove, or an existing
-member expectation refuses. A guard-only entry participates in validation but not
-the changed count. All references, including guard-only dependencies, are explicit.
+member expectation refuses. Remove is expressed only as `"remove": true`; any
+other value refuses. A field cannot occur in both `set` and `unset` in one entry.
+An existing member may omit its revision guard; omission means no member-revision
+comparison, not a comparison against zero. Its other explicit guards and the
+expected table revision still apply. A guard-only entry participates in validation
+but not the changed count. All references, including guard-only dependencies, are
+explicit.
 
 The member `revision` is a table-owned counter. A legacy existing member with no
 record revision reads as zero. A newly created member starts at one; any accepted
-change to its placement or application fields increments it once, irrespective of
-how many fields changed. Ordinary table member writers use the same revision
-helper so they cannot bypass a prepared batch's guard. Epoch, placement/index fields
+change to its placement, score or application fields increments it once,
+irrespective of how many fields changed. A move with no score preserves the current score; an
+explicit finite score replaces it. An entry whose placement, score and application
+fields remain unchanged does not increment the member revision or changed count.
+In particular, moving to the current cell at the current score is a member no-op
+unless its application fields change. A score-only change increments the member
+revision once. Removal requires existing owned placement; an already-unplaced
+member refuses with `NOTMEMBER` before writes. Removal clears that placement and
+retains the member record, application fields and advanced member revision.
+Ordinary table member writers use the same revision helper so they cannot bypass a prepared batch's guard. Epoch, placement/index fields
 and revision cannot be set/unset through application metadata. Counter overflow
 refuses before any write. Table revision remains the existing table-wide counter;
 its expected value rejects changes to the complete observed scope between read and
@@ -400,7 +413,10 @@ The batch entry point's dedicated operation record supplies its replay contract.
 Extend the existing receipt through an explicit batch delta, preserving ordinary
 verb receipt compatibility. One receipt identifies operation/request digest, table,
 epoch, before/after table revision, actor, changed/noop result and all affected
-members' before/after placements, revisions and application-field changes. Include
+members' before/after placements, scores, revisions and application-field changes.
+For each affected application field, include its before and after values with
+absence distinguished from a present empty string. An absent placement has no
+score. Set/unset instructions alone do not supply the before values. Include
 explicit guard/selection counts; a missing member is not silently omitted. One
 batch receipt maps to one model action. Returning the original result on retry
 must return the same receipt identity.
