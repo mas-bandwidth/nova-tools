@@ -82,6 +82,7 @@ CONSTANTS Streams, Primaries, Members, Readers,
           StreamOf,   \* [Primaries -> Streams]
           Needs,      \* [Primaries -> SUBSET Primaries]
           Score0,     \* [Primaries -> Nat], distinct
+          Admitted0,  \* the primaries admitted before the first step
           MaxAttempt, MaxStuck, MaxReturns, MaxDowns, MaxRanks,
           Fixes, Broken
 
@@ -103,8 +104,9 @@ Causes == {"conflict", "red", "needs"}
 NoteTypes == {"failed", "broken", "reads", "blocked", "stopped"}
 \* A judgment notification: its type, the primary, the stream, the cause.
 Note(t, p, why) == [t |-> t, p |-> p, s |-> StreamOf[p], why |-> why]
-Notes == {Note(t, p, None) : t \in NoteTypes \ {"stopped"}, p \in Primaries}
-         \cup {Note("stopped", p, c) : p \in Primaries, c \in Causes}
+\* The cause of a stop is not kept in the model's notification: the verbs
+\* the model's coordinator may answer with are the same for the three causes.
+Notes == {Note(t, p, None) : t \in NoteTypes, p \in Primaries}
 
 VARIABLES added, dropped, work, fleet, readers, merge, sstate, mstatus,
           score, attempt, head, stuckN, returnsN, result,
@@ -185,8 +187,10 @@ ApplyWork(o) ==
 \* ------------------------------------------------------------------ init
 
 Init ==
-  /\ added = {} /\ dropped = {}
-  /\ work = [s \in Streams |-> [c \in WorkCells |-> {}]]
+  /\ added = Admitted0 /\ dropped = {}
+  /\ work = [s \in Streams |-> [c \in WorkCells |->
+              {p \in Admitted0 : StreamOf[p] = s /\
+                 c = IF Needs[p] = {} THEN "ready" ELSE "waiting"}]]
   /\ fleet = [m \in Members |-> [c \in FleetCells |-> {}]]
   /\ readers = [r \in Readers |-> [c \in ReadCells |-> {}]]
   /\ merge = [s \in Streams |-> [c \in MergeCells |-> {}]]
@@ -426,7 +430,7 @@ MergeStop(s, p, why) ==
   /\ merge' = [merge EXCEPT ![s]["queued"] = @ \ {p}, ![s]["stuck"] = @ \cup {p}]
   /\ sstate' = [sstate EXCEPT ![s] = "stopped"]
   /\ stuckN' = [stuckN EXCEPT ![p] = @ + 1]
-  /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {Note("stopped", p, why)}
+  /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {Note("stopped", p, None)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, returnsN, result, made, gone, twice, op, crashed,
                  downs, ranks>>
