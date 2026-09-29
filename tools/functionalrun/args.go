@@ -73,6 +73,17 @@ func timeoutSeconds(d time.Duration) int {
 
 func containerName(runID string) string { return namePrefix + runID }
 
+// mountedSrc is the host path of the source volume. Both argv builders read
+// it from runConfig.src, so the two mounts cannot drift.
+//
+// filepath.EvalSymlinks, not a second absolutizing step: a relative path
+// that is not a symlink stays itself, and a symlink the runtime cannot stat
+// becomes the path that exists. The error is returned; the unresolved path
+// is not mounted.
+func mountedSrc(src string) (string, error) {
+	return filepath.EvalSymlinks(src)
+}
+
 // testArgs is the argv of the test container: the functional tier of the
 // packages through the Makefile's own target, so the selection and the go test
 // flags are the ones make test-functional runs anywhere.

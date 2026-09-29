@@ -124,6 +124,12 @@ func parseRun(args []string) (runConfig, error) {
 	if err != nil {
 		return c, fmt.Errorf("--src: %v", err)
 	}
+	// Abs leaves a symlinked directory spelled as the link. mountedSrc
+	// resolves it before either volume argument is built.
+	src, err = mountedSrc(src)
+	if err != nil {
+		return c, fmt.Errorf("--src: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(src, "go.mod")); err != nil {
 		return c, fmt.Errorf("--src %s holds no go.mod", src)
 	}
