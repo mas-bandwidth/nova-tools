@@ -346,6 +346,17 @@ type batchFlags struct {
 
 func batchFlagSet() (*flags, *batchFlags) {
 	f := newFlags("batch")
+	// --max-inflight caps how many of this batch's cards run against ONE provider/model/key
+	// at a time, and --stall-after ends a card that has produced no first token in that
+	// many seconds, so a free tier that queues forever does not hold the batch. Both default
+	// to zero, which is off.
+	//
+	// With routing, the model a card is dispatched with is the ladder's answer rather than
+	// the string the fill script wrote in the TSV, and the TSV's model is the fallback.
+	// Routing is the launcher's default: --route is kept for callers that spell it out, and
+	// --no-route --reason is the one way out. --route-log and --route-usage name the
+	// accounting home; without one the rules answer, no model call is made, and the receipt
+	// says why=no-accounting, because a call nobody can account for is not made.
 	bf := &batchFlags{
 		tokens:        f.fs.String("tokens", "", ""),
 		deadline:      f.fs.String("deadline", "", ""),
@@ -706,6 +717,15 @@ type nativeFlags struct {
 
 func nativeFlagSet() (*flags, *nativeFlags) {
 	f := newFlags("native")
+	// --idle bounds stillness, which is not the bound on length: a card is idle only when
+	// neither its own output nor its process tree has moved for this long, so a `go test`
+	// printing nothing for minutes is not a dead card. The default is `batch --idle`'s 300s,
+	// and 0 turns the watch off.
+	//
+	// --results-root is where RESULT.md, usage.tsv and the report are published; empty
+	// derives <root>/results from the root this run is given. --sweep-now deletes the job
+	// directory after that publish, so a bench sweep never deletes the results with the
+	// working directory.
 	nf := &nativeFlags{
 		harness:         f.fs.String("harness", "", ""),
 		model:           f.fs.String("model", "", ""),
@@ -724,10 +744,20 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 		resultsRootFlag: f.fs.String("results-root", "", ""),
 		sweepNow:        f.fs.Bool("sweep-now", false, ""),
 	}
+	// native takes no bench slot lease: a bench's capacity is one place, the dealer's, and a
+	// second ledger here would give a second answer. --slots-store and --owner are accepted
+	// so a caller that passes them is not refused on an unknown flag, and they are read by
+	// nothing.
 	_ = f.fs.String("slots-store", "", "")
 	_ = f.fs.String("owner", "", "")
 	nf.tokensWord = f.fs.String("tokens", "", "")
 	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
+	// --events-store names the fleet Redis this card's one `ok`/`fail` entry is XADDed to.
+	// It is optional and defaults to the environment (NOVA_REDIS_ADDR, else
+	// NOVA_REDIS_HOST:NOVA_REDIS_PORT), and the whole emit is SILENTLY SKIPPED unless
+	// NOVA_REDIS_BENCH_PASSWORD is also in the environment. A bench that has not been given
+	// the store's password must still run cards, so there is no refusal and no default host
+	// (internal/events/writer.go). The password is never a flag and is never printed.
 	nf.eventsStore = f.fs.String("events-store", "", "")
 	nf.benchFlag = f.fs.String("bench", "", "")
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "")
