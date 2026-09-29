@@ -648,7 +648,8 @@ func TestWindowsATimeoutClosesTheJobAndExits124(t *testing.T) {
 // is what a real job's kill-on-close does.
 type hangingPlace struct {
 	*fakeWinPlace
-	done chan int
+	done    chan int
+	started chan struct{}
 }
 
 func (p *hangingPlace) Start(job winJob, spec winStartSpec) (winStarted, error) {
@@ -657,6 +658,9 @@ func (p *hangingPlace) Start(job winJob, spec winStartSpec) (winStarted, error) 
 	p.calls = append(p.calls, "start:"+job.(string))
 	p.gotSpec = spec
 	p.done = make(chan int, 1)
+	if p.started != nil {
+		close(p.started)
+	}
 	return winStarted{done: p.done, pid: 4242}, nil
 }
 
@@ -678,13 +682,10 @@ func (p *hangingPlace) CloseJob(job winJob) error {
 // termination gave the child is what the receipt carries, and the receipt is what says how
 // the run ended.
 func TestWindowsHasNo128PlusN(t *testing.T) {
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := newWinBench(t, 0)
 	old := runWinPlace
-	hang := &hangingPlace{fakeWinPlace: b.place}
+	started := make(chan struct{})
+	hang := &hangingPlace{fakeWinPlace: b.place, started: started}
 	runWinPlace = hang
 	t.Cleanup(func() { runWinPlace = old })
 
@@ -695,16 +696,10 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 		code, errOut = b.exec(t, b.args(t)...)
 		close(done)
 	}()
-	// Let the run reach its wait, then ask the tool to stop.
-	for i := 0; i < 200 && !strings.Contains(b.order(), "start:"); i++ {
-		time.Sleep(5 * time.Millisecond)
-	}
+	// Wait until the run starts the job, then ask the tool to stop.
+	<-started
 	b.sigs <- os.Interrupt
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the verb did not return after the tool was asked to stop; a wait without an end is the thing this verb never does")
-	}
+	<-done
 	if code > 128 {
 		t.Errorf("the windows verb returned %d, which reads as 128+N; windows has no signals and there is no such status to give", code)
 	}
