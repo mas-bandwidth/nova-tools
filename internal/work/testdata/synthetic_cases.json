@@ -1,0 +1,126 @@
+{
+  "description": "Strict synthetic JSON fixtures covering branches not observed in live API captures (ideas#824, stella-f2f5ede0dd21)",
+  "schema_version": "nova-work/synthetic-fixtures-v1",
+  "cases": [
+    {
+      "name": "multiple_assignees_and_unknown_fields",
+      "description": "Exercises multiple assignees as full user objects with preserved unknown attributes",
+      "issue": {
+        "id": 9007199254740993,
+        "number": 101,
+        "title": "Synthetic test: multiple assignees and lossless extra keys",
+        "state": "open",
+        "body": "This synthetic issue covers multiple assignees and unknown JSON fields.",
+        "user": {
+          "login": "synthetic-author",
+          "id": 8801,
+          "type": "User",
+          "unknown_custom_role": "architecture-lead"
+        },
+        "assignees": [
+          {
+            "login": "synthetic-user-1",
+            "id": 8802,
+            "type": "User",
+            "tier": "core"
+          },
+          {
+            "login": "synthetic-user-2",
+            "id": 8803,
+            "type": "User",
+            "tier": "reviewer"
+          }
+        ],
+        "labels": [
+          {
+            "id": 5501,
+            "name": "synthetic-tag",
+            "color": "abcdef",
+            "custom_namespace_id": 42
+          }
+        ],
+        "comments": []
+      }
+    },
+    {
+      "name": "empty_string_body",
+      "description": "Exercises explicit empty string body (\"\" distinct from null or omitted)",
+      "issue": {
+        "id": 9007199254740994,
+        "number": 102,
+        "title": "Synthetic test: empty string body",
+        "state": "open",
+        "body": "",
+        "user": {
+          "login": "synthetic-author",
+          "id": 8801,
+          "type": "User"
+        },
+        "assignees": [],
+        "labels": [],
+        "comments": []
+      }
+    },
+    {
+      "name": "missing_body_key",
+      "description": "Exercises omitted body key (missing observation distinct from null and \"\")",
+      "issue": {
+        "id": 9007199254740995,
+        "number": 103,
+        "title": "Synthetic test: missing body key",
+        "state": "open",
+        "user": {
+          "login": "synthetic-author",
+          "id": 8801,
+          "type": "User"
+        },
+        "assignees": [],
+        "labels": [],
+        "comments": []
+      }
+    },
+    {
+      "name": "comment_with_edit_history",
+      "description": "Exercises comments with genuine edit history and unequal timestamps",
+      "issue": {
+        "id": 9007199254740996,
+        "number": 104,
+        "title": "Synthetic test: comment edit history",
+        "state": "open",
+        "body": "Issue testing comment revision history.",
+        "user": {
+          "login": "synthetic-author",
+          "id": 8801,
+          "type": "User"
+        },
+        "assignees": [],
+        "labels": [],
+        "comments": [
+          {
+            "id": 9901,
+            "user": {
+              "login": "synthetic-editor",
+              "id": 8804,
+              "type": "User"
+            },
+            "created_at": "2026-09-28T20:00:00Z",
+            "updated_at": "2026-09-28T20:15:30Z",
+            "body": "Revised comment text after benchmark review.",
+            "edited": true,
+            "edit_history": [
+              {
+                "edited_at": "2026-09-28T20:15:30Z",
+                "editor": {
+                  "login": "synthetic-editor",
+                  "id": 8804,
+                  "type": "User"
+                },
+                "previous_body": "Original comment text before revision."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

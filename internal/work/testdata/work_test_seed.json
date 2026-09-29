@@ -1,0 +1,1162 @@
+{
+  "repository": "mas-bandwidth/work-test",
+  "schema_version": "1.0.0",
+  "generated_at": "2026-09-28T20:54:23.772362Z",
+  "total_issues": 8,
+  "total_comments": 7,
+  "issues": [
+    {
+      "id": 10001,
+      "number": 1,
+      "title": "Panic in packet decoder on malformed payload in stream processor 🐛",
+      "state": "open",
+      "locked": false,
+      "user": {
+        "login": "rowan",
+        "id": 1002,
+        "type": "User",
+        "site_admin": false,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+      },
+      "labels": [
+        {
+          "id": 201,
+          "name": "bug",
+          "color": "d73a4a",
+          "description": "Something isn't working"
+        },
+        {
+          "id": 206,
+          "name": "help wanted",
+          "color": "008672",
+          "description": "Extra attention is needed"
+        }
+      ],
+      "assignee": null,
+      "assignees": [],
+      "milestone": {
+        "id": 301,
+        "number": 1,
+        "title": "v1.0.0 Stable Release",
+        "description": "Production baseline release for mas-bandwidth network engine",
+        "state": "open",
+        "open_issues": 3,
+        "closed_issues": 2,
+        "created_at": "2026-09-05T08:00:00Z",
+        "due_on": "2026-10-15T08:00:00Z"
+      },
+      "body": "### Summary\nWhen parsing corrupted UDP frames in `StreamProcessor.Decode()`, a nil-pointer dereference occurs.\n\nSee internal cross-reference #3 and external upstream report mas-bandwidth/nova#101.\n\n### Reproducer in Go\n```go\npackage main\n\nimport (\n\t\"fmt\"\n\t\"net\"\n)\n\nfunc main() {\n\tpayload := []byte{0xDE, 0xAD, 0xBE, 0xEF}\n\tfmt.Printf(\"Processing packet bytes: % x\\n\", payload)\n\t// Panic occurs here when packet length < header size\n}\n```\n\n### Shell reproducer\n```bash\ncurl -sSL https://api.example.com/v1/packets | ./decoder --strict --verbose\n```\n\n### Expected Configuration\n```json\n{\n  \"strict_mode\": true,\n  \"max_packet_bytes\": 1400,\n  \"fallback_strategy\": \"drop\"\n}\n```\n\nFixes #12 and resolves mas-bandwidth/work-test#4.\n",
+      "comments_count": 1,
+      "created_at": "2026-09-15T09:00:00Z",
+      "updated_at": "2026-09-15T11:00:00Z",
+      "reactions": {
+        "total_count": 3,
+        "+1": 2,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 1,
+        "rocket": 0,
+        "eyes": 0
+      },
+      "reaction_list": [
+        {
+          "id": 6002,
+          "user": {
+            "login": "glenn",
+            "id": 1001,
+            "type": "User",
+            "site_admin": true,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+          },
+          "content": "+1",
+          "created_at": "2026-09-15T09:10:00Z"
+        },
+        {
+          "id": 6003,
+          "user": {
+            "login": "emma-antigravity",
+            "id": 1003,
+            "type": "Bot",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1003"
+          },
+          "content": "+1",
+          "created_at": "2026-09-15T09:15:00Z"
+        },
+        {
+          "id": 6004,
+          "user": {
+            "login": "stella-codex",
+            "id": 1004,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+          },
+          "content": "heart",
+          "created_at": "2026-09-15T09:20:00Z"
+        }
+      ],
+      "cross_references": [
+        {
+          "raw_ref": "#3",
+          "target_number": 3,
+          "is_external": false
+        },
+        {
+          "raw_ref": "mas-bandwidth/nova#101",
+          "target_repo": "mas-bandwidth/nova",
+          "target_number": 101,
+          "is_external": true
+        },
+        {
+          "raw_ref": "#12",
+          "target_number": 12,
+          "is_external": false
+        },
+        {
+          "raw_ref": "mas-bandwidth/work-test#4",
+          "target_repo": "mas-bandwidth/work-test",
+          "target_number": 4,
+          "is_external": true
+        }
+      ],
+      "linked_prs": [
+        {
+          "number": 12,
+          "repo": "mas-bandwidth/work-test",
+          "title": "fix(decoder): guard against short packet headers",
+          "state": "open"
+        }
+      ],
+      "comments": [
+        {
+          "id": 5001,
+          "issue_number": 1,
+          "user": {
+            "login": "glenn",
+            "id": 1001,
+            "type": "User",
+            "site_admin": true,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+          },
+          "created_at": "2026-09-15T10:00:00Z",
+          "updated_at": "2026-09-15T10:00:00Z",
+          "body": "Confirmed on macOS ARM64 and Linux x86_64. Investigating patch in PR #12.",
+          "edited": false,
+          "reactions": {
+            "total_count": 1,
+            "+1": 0,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 0,
+            "confused": 0,
+            "heart": 1,
+            "rocket": 0,
+            "eyes": 0
+          },
+          "reaction_list": [
+            {
+              "id": 6001,
+              "user": {
+                "login": "rowan",
+                "id": 1002,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+              },
+              "content": "heart",
+              "created_at": "2026-09-15T10:05:00Z"
+            }
+          ],
+          "cross_references": [
+            {
+              "raw_ref": "#12",
+              "target_number": 12,
+              "is_external": false
+            }
+          ],
+          "linked_prs": [
+            {
+              "number": 12,
+              "repo": "mas-bandwidth/work-test",
+              "title": "fix(decoder): guard against short packet headers",
+              "state": "open"
+            }
+          ],
+          "edit_history": []
+        }
+      ]
+    },
+    {
+      "id": 10002,
+      "number": 2,
+      "title": "Implement Zero-Copy Buffer Ring for High Throughput 🚀",
+      "state": "closed",
+      "state_reason": "completed",
+      "locked": false,
+      "user": {
+        "login": "glenn",
+        "id": 1001,
+        "type": "User",
+        "site_admin": true,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+      },
+      "labels": [
+        {
+          "id": 202,
+          "name": "enhancement",
+          "color": "a2eeef",
+          "description": "New feature or request"
+        }
+      ],
+      "assignee": null,
+      "assignees": [],
+      "milestone": {
+        "id": 301,
+        "number": 1,
+        "title": "v1.0.0 Stable Release",
+        "description": "Production baseline release for mas-bandwidth network engine",
+        "state": "open",
+        "open_issues": 3,
+        "closed_issues": 2,
+        "created_at": "2026-09-05T08:00:00Z",
+        "due_on": "2026-10-15T08:00:00Z"
+      },
+      "body": "## Architecture Proposal\nIntroduce zero-copy buffer ring to eliminate GC allocation pressure in hot transmission loop.\n\nLinked PR: #5 (Merged)\nCloses #2.\nUpstream reference: mas-bandwidth/nova#240.\n\n### Benchmark in C++ and Rust\n```cpp\n#include <vector>\n#include <span>\n\nstruct BufferRing {\n    std::vector<uint8_t> storage;\n    size_t head = 0;\n    size_t tail = 0;\n};\n```\n\n```rust\npub struct BufferRing {\n    capacity: usize,\n    head: usize,\n    tail: usize,\n}\n```\n",
+      "comments_count": 2,
+      "created_at": "2026-09-15T12:00:00Z",
+      "updated_at": "2026-09-16T08:00:00Z",
+      "closed_at": "2026-09-16T08:00:00Z",
+      "closed_by": {
+        "login": "glenn",
+        "id": 1001,
+        "type": "User",
+        "site_admin": true,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+      },
+      "reactions": {
+        "total_count": 2,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 1,
+        "rocket": 1,
+        "eyes": 0
+      },
+      "reaction_list": [
+        {
+          "id": 6009,
+          "user": {
+            "login": "glenn",
+            "id": 1001,
+            "type": "User",
+            "site_admin": true,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+          },
+          "content": "rocket",
+          "created_at": "2026-09-15T13:00:00Z"
+        },
+        {
+          "id": 6010,
+          "user": {
+            "login": "rowan",
+            "id": 1002,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+          },
+          "content": "heart",
+          "created_at": "2026-09-15T14:00:00Z"
+        }
+      ],
+      "cross_references": [
+        {
+          "raw_ref": "#5",
+          "target_number": 5,
+          "is_external": false
+        },
+        {
+          "raw_ref": "#2",
+          "target_number": 2,
+          "is_external": false
+        },
+        {
+          "raw_ref": "mas-bandwidth/nova#240",
+          "target_repo": "mas-bandwidth/nova",
+          "target_number": 240,
+          "is_external": true
+        }
+      ],
+      "linked_prs": [
+        {
+          "number": 5,
+          "repo": "mas-bandwidth/work-test",
+          "title": "feat(buffer): zero-copy ring buffer",
+          "url": "https://github.com/mas-bandwidth/work-test/pull/5",
+          "state": "merged",
+          "merged": true
+        }
+      ],
+      "comments": [
+        {
+          "id": 5002,
+          "issue_number": 2,
+          "user": {
+            "login": "stella-codex",
+            "id": 1004,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+          },
+          "created_at": "2026-09-15T14:00:00Z",
+          "updated_at": "2026-09-15T14:00:00Z",
+          "body": "Updated benchmarks after cache line alignment (64-byte padding): throughput increased by 48%! See mas-bandwidth/nova#240.",
+          "edited": false,
+          "edit_history": [],
+          "reactions": {
+            "total_count": 4,
+            "+1": 1,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 1,
+            "confused": 0,
+            "heart": 0,
+            "rocket": 2,
+            "eyes": 0
+          },
+          "reaction_list": [
+            {
+              "id": 6005,
+              "user": {
+                "login": "glenn",
+                "id": 1001,
+                "type": "User",
+                "site_admin": true,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+              },
+              "content": "rocket",
+              "created_at": "2026-09-15T15:05:00Z"
+            },
+            {
+              "id": 6006,
+              "user": {
+                "login": "rowan",
+                "id": 1002,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+              },
+              "content": "rocket",
+              "created_at": "2026-09-15T15:10:00Z"
+            },
+            {
+              "id": 6007,
+              "user": {
+                "login": "emma-antigravity",
+                "id": 1003,
+                "type": "Bot",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1003"
+              },
+              "content": "hooray",
+              "created_at": "2026-09-15T15:15:00Z"
+            },
+            {
+              "id": 6008,
+              "user": {
+                "login": "stella-codex",
+                "id": 1004,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+              },
+              "content": "+1",
+              "created_at": "2026-09-15T15:20:00Z"
+            }
+          ],
+          "cross_references": [
+            {
+              "raw_ref": "mas-bandwidth/nova#240",
+              "target_repo": "mas-bandwidth/nova",
+              "target_number": 240,
+              "is_external": true
+            }
+          ]
+        },
+        {
+          "id": 5003,
+          "issue_number": 2,
+          "user": {
+            "login": "rowan",
+            "id": 1002,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+          },
+          "created_at": "2026-09-16T07:00:00Z",
+          "updated_at": "2026-09-16T07:00:00Z",
+          "body": "PR #5 has landed and tests pass on all targets. Closing as completed.",
+          "edited": false,
+          "reactions": {
+            "total_count": 0,
+            "+1": 0,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 0,
+            "confused": 0,
+            "heart": 0,
+            "rocket": 0,
+            "eyes": 0
+          },
+          "cross_references": [
+            {
+              "raw_ref": "#5",
+              "target_number": 5,
+              "is_external": false
+            }
+          ],
+          "linked_prs": [
+            {
+              "number": 5,
+              "repo": "mas-bandwidth/work-test",
+              "title": "feat(buffer): zero-copy ring buffer",
+              "state": "merged",
+              "merged": true
+            }
+          ],
+          "edit_history": []
+        }
+      ]
+    },
+    {
+      "id": 10003,
+      "number": 3,
+      "title": "Internationalization & Unicode stress: café, résumé, 日本語, مرحبا, and emojis 🌍✨",
+      "state": "closed",
+      "state_reason": "not_planned",
+      "locked": false,
+      "user": {
+        "login": "stella-codex",
+        "id": 1004,
+        "type": "User",
+        "site_admin": false,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+      },
+      "labels": [
+        {
+          "id": 204,
+          "name": "duplicate",
+          "color": "cfd3d7",
+          "description": "This issue or pull request already exists"
+        },
+        {
+          "id": 209,
+          "name": "wontfix",
+          "color": "ffffff",
+          "description": "This will not be worked on"
+        }
+      ],
+      "assignees": [],
+      "body": "### Multilingual and Symbol Test Suite 🌐✨\n\n1. **Accents & Latin Extended**:\n   - François élève son café au théâtre avec un CV/résumé soigné.\n   - Übergrößen trugen zur Qualitätsförderung bei Señora Núñez en España.\n\n2. **CJK & Eastern Scripts**:\n   - 日本語: ネットワークパケットのシリアライズ処理と整合性テスト\n   - 简体中文: 分布式流式传输和数据包验证套件\n   - 한국어: 네트워크 프로토콜 직렬화 및 패킷 유효성 검사\n\n3. **Cyrillic & Greek**:\n   - Русский: Тестирование граничных случаев и обработка исключений\n   - Ελληνικά: Έλεγχος συμβατότητας πρωτοκόλλου επικοινωνίας\n\n4. **Right-to-Left (RTL)**:\n   - العربية: اختبار معالجة حزم البيانات والاتصال الشبكي السريع\n   - עברית: בדיקת תאימות פרוטוקול רשת וביצועים גבוהים\n\n5. **Mathematics & Logic Symbols**:\n   - $\\forall x \\in \\mathbb{R}, \\exists y : x^2 + y^2 \\ge 0$\n   - $\\sum_{i=1}^n \\lambda_i \\neq \\emptyset \\implies A \\cap B \\subseteq C$\n\n6. **Emoji Palette**:\n   - 🚀 🔥 💖 🎉 🐛 ⚡️ 🤖 📦 🔒 📝 💯 🧭 🛠 ⚠️ 🛑\n\nDuplicate of #1 and covered under mas-bandwidth/nova#305.\n",
+      "comments_count": 1,
+      "created_at": "2026-09-15T16:00:00Z",
+      "updated_at": "2026-09-15T20:00:00Z",
+      "closed_at": "2026-09-15T20:00:00Z",
+      "closed_by": {
+        "login": "glenn",
+        "id": 1001,
+        "type": "User",
+        "site_admin": true,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+      },
+      "reactions": {
+        "total_count": 3,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 1,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 1,
+        "rocket": 0,
+        "eyes": 1
+      },
+      "reaction_list": [
+        {
+          "id": 6011,
+          "user": {
+            "login": "rowan",
+            "id": 1002,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+          },
+          "content": "laugh",
+          "created_at": "2026-09-15T16:30:00Z"
+        },
+        {
+          "id": 6012,
+          "user": {
+            "login": "emma-antigravity",
+            "id": 1003,
+            "type": "Bot",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1003"
+          },
+          "content": "heart",
+          "created_at": "2026-09-15T16:35:00Z"
+        },
+        {
+          "id": 6013,
+          "user": {
+            "login": "stella-codex",
+            "id": 1004,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+          },
+          "content": "eyes",
+          "created_at": "2026-09-15T16:40:00Z"
+        }
+      ],
+      "cross_references": [
+        {
+          "raw_ref": "#1",
+          "target_number": 1,
+          "is_external": false
+        },
+        {
+          "raw_ref": "mas-bandwidth/nova#305",
+          "target_repo": "mas-bandwidth/nova",
+          "target_number": 305,
+          "is_external": true
+        }
+      ],
+      "comments": [
+        {
+          "id": 5004,
+          "issue_number": 3,
+          "user": {
+            "login": "glenn",
+            "id": 1001,
+            "type": "User",
+            "site_admin": true,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+          },
+          "created_at": "2026-09-15T20:00:00Z",
+          "updated_at": "2026-09-15T20:00:00Z",
+          "body": "Closing as not planned since UTF-8 normalization is already standard across decoders in #1.",
+          "edited": false,
+          "reactions": {
+            "total_count": 1,
+            "+1": 1,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 0,
+            "confused": 0,
+            "heart": 0,
+            "rocket": 0,
+            "eyes": 0
+          },
+          "cross_references": [
+            {
+              "raw_ref": "#1",
+              "target_number": 1,
+              "is_external": false
+            }
+          ],
+          "edit_history": []
+        }
+      ]
+    },
+    {
+      "id": 10004,
+      "number": 4,
+      "title": "Document public API export symbols",
+      "state": "open",
+      "locked": false,
+      "user": {
+        "login": "emma-antigravity",
+        "id": 1003,
+        "type": "Bot",
+        "site_admin": false,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1003"
+      },
+      "labels": [
+        {
+          "id": 203,
+          "name": "documentation",
+          "color": "0075ca",
+          "description": "Improvements or additions to documentation"
+        }
+      ],
+      "assignees": [],
+      "milestone": {
+        "id": 302,
+        "number": 2,
+        "title": "v1.1.0 Performance Pass",
+        "description": "Zero-copy optimization and concurrency hardening",
+        "state": "open",
+        "open_issues": 2,
+        "closed_issues": 0,
+        "created_at": "2026-09-10T08:00:00Z",
+        "due_on": "2026-11-14T08:00:00Z"
+      },
+      "body": null,
+      "comments_count": 0,
+      "created_at": "2026-09-15T18:00:00Z",
+      "updated_at": "2026-09-15T18:00:00Z",
+      "reactions": {
+        "total_count": 0,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      },
+      "comments": []
+    },
+    {
+      "id": 10005,
+      "number": 5,
+      "title": "Dispute regarding protocol versioning deprecation schedule",
+      "state": "closed",
+      "state_reason": "completed",
+      "locked": true,
+      "active_lock_reason": "too heated",
+      "user": {
+        "login": "rowan",
+        "id": 1002,
+        "type": "User",
+        "site_admin": false,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+      },
+      "labels": [
+        {
+          "id": 208,
+          "name": "question",
+          "color": "d876e3",
+          "description": "Further information is requested"
+        }
+      ],
+      "assignee": null,
+      "assignees": [],
+      "body": "Discussion on whether protocol v0.8 deprecation should occur immediately or with a 6-month grace window.\n\nReference: #2 and mas-bandwidth/nova#88.\n",
+      "comments_count": 1,
+      "created_at": "2026-09-15T20:00:00Z",
+      "updated_at": "2026-09-16T00:00:00Z",
+      "closed_at": "2026-09-16T00:00:00Z",
+      "closed_by": {
+        "login": "glenn",
+        "id": 1001,
+        "type": "User",
+        "site_admin": true,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+      },
+      "reactions": {
+        "total_count": 1,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 1,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      },
+      "reaction_list": [
+        {
+          "id": 6016,
+          "user": {
+            "login": "rowan",
+            "id": 1002,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+          },
+          "content": "confused",
+          "created_at": "2026-09-15T20:15:00Z"
+        }
+      ],
+      "cross_references": [
+        {
+          "raw_ref": "#2",
+          "target_number": 2,
+          "is_external": false
+        },
+        {
+          "raw_ref": "mas-bandwidth/nova#88",
+          "target_repo": "mas-bandwidth/nova",
+          "target_number": 88,
+          "is_external": true
+        }
+      ],
+      "comments": [
+        {
+          "id": 5005,
+          "issue_number": 5,
+          "user": {
+            "login": "glenn",
+            "id": 1001,
+            "type": "User",
+            "site_admin": true,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+          },
+          "created_at": "2026-09-16T00:00:00Z",
+          "updated_at": "2026-09-16T00:00:00Z",
+          "body": "Consensus reached: 6-month migration period. Locking thread as conversation has concluded.",
+          "edited": false,
+          "reactions": {
+            "total_count": 2,
+            "+1": 2,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 0,
+            "confused": 0,
+            "heart": 0,
+            "rocket": 0,
+            "eyes": 0
+          },
+          "reaction_list": [
+            {
+              "id": 6014,
+              "user": {
+                "login": "rowan",
+                "id": 1002,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+              },
+              "content": "+1",
+              "created_at": "2026-09-16T00:02:00Z"
+            },
+            {
+              "id": 6015,
+              "user": {
+                "login": "stella-codex",
+                "id": 1004,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+              },
+              "content": "+1",
+              "created_at": "2026-09-16T00:05:00Z"
+            }
+          ],
+          "edit_history": []
+        }
+      ]
+    },
+    {
+      "id": 10006,
+      "number": 6,
+      "title": "Transferred: Memory leak in long-lived connection pool manager",
+      "state": "open",
+      "locked": false,
+      "user": {
+        "login": "github-actions[bot]",
+        "id": 1005,
+        "type": "Bot",
+        "site_admin": false,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1005"
+      },
+      "labels": [
+        {
+          "id": 201,
+          "name": "bug",
+          "color": "d73a4a",
+          "description": "Something isn't working"
+        },
+        {
+          "id": 210,
+          "name": "security",
+          "color": "b60205",
+          "description": "Security vulnerability report"
+        }
+      ],
+      "assignee": null,
+      "assignees": [],
+      "milestone": {
+        "id": 301,
+        "number": 1,
+        "title": "v1.0.0 Stable Release",
+        "description": "Production baseline release for mas-bandwidth network engine",
+        "state": "open",
+        "open_issues": 3,
+        "closed_issues": 2,
+        "created_at": "2026-09-05T08:00:00Z",
+        "due_on": "2026-10-15T08:00:00Z"
+      },
+      "body": "> **Note**\n> This issue was transferred from mas-bandwidth/legacy-network#456 by @glenn on 2026-09-16T02:00:00Z.\n\n### Original Description\nConnection pool leaks 4KB socket handles on abrupt client disconnection.\n\nRelated PR: mas-bandwidth/work-test#7.\nCross-ref: #1.\n",
+      "comments_count": 0,
+      "created_at": "2026-09-16T02:00:00Z",
+      "updated_at": "2026-09-16T02:00:00Z",
+      "reactions": {
+        "total_count": 2,
+        "+1": 0,
+        "-1": 1,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 1,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      },
+      "reaction_list": [
+        {
+          "id": 6017,
+          "user": {
+            "login": "stella-codex",
+            "id": 1004,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+          },
+          "content": "-1",
+          "created_at": "2026-09-16T02:10:00Z"
+        },
+        {
+          "id": 6018,
+          "user": {
+            "login": "rowan",
+            "id": 1002,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+          },
+          "content": "confused",
+          "created_at": "2026-09-16T02:20:00Z"
+        }
+      ],
+      "cross_references": [
+        {
+          "raw_ref": "mas-bandwidth/legacy-network#456",
+          "target_repo": "mas-bandwidth/legacy-network",
+          "target_number": 456,
+          "is_external": true
+        },
+        {
+          "raw_ref": "#1",
+          "target_number": 1,
+          "is_external": false
+        },
+        {
+          "raw_ref": "mas-bandwidth/work-test#7",
+          "target_repo": "mas-bandwidth/work-test",
+          "target_number": 7,
+          "is_external": true
+        }
+      ],
+      "linked_prs": [
+        {
+          "number": 7,
+          "repo": "mas-bandwidth/work-test",
+          "title": "fix(pool): reclaim dangling socket descriptors",
+          "state": "open"
+        }
+      ],
+      "transferred_from": {
+        "original_repo": "mas-bandwidth/legacy-network",
+        "original_issue_number": 456,
+        "transferred_at": "2026-09-16T02:00:00Z",
+        "transferred_by": {
+          "login": "glenn",
+          "id": 1001,
+          "type": "User",
+          "site_admin": true,
+          "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+        },
+        "note": "Transferred from mas-bandwidth/legacy-network#456 during repository consolidation."
+      },
+      "comments": []
+    },
+    {
+      "id": 10007,
+      "number": 7,
+      "title": "Audit thread safety in concurrent worker dispatch queue 🧵",
+      "state": "open",
+      "locked": false,
+      "user": {
+        "login": "glenn",
+        "id": 1001,
+        "type": "User",
+        "site_admin": true,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+      },
+      "labels": [
+        {
+          "id": 202,
+          "name": "enhancement",
+          "color": "a2eeef",
+          "description": "New feature or request"
+        },
+        {
+          "id": 205,
+          "name": "good first issue",
+          "color": "7057ff",
+          "description": "Good for newcomers"
+        }
+      ],
+      "assignee": null,
+      "assignees": [],
+      "milestone": {
+        "id": 302,
+        "number": 2,
+        "title": "v1.1.0 Performance Pass",
+        "description": "Zero-copy optimization and concurrency hardening",
+        "state": "open",
+        "open_issues": 2,
+        "closed_issues": 0,
+        "created_at": "2026-09-10T08:00:00Z",
+        "due_on": "2026-11-14T08:00:00Z"
+      },
+      "body": "Verify mutex lock ordering across `DispatchQueue.Push()` and `DispatchQueue.Drain()`.\n\nSee prior art in mas-bandwidth/nova#777 and #2.\n\n```go\ntype WorkerQueue struct {\n\tmu    sync.RWMutex\n\ttasks []Task\n}\n```\n",
+      "comments_count": 2,
+      "created_at": "2026-09-16T04:00:00Z",
+      "updated_at": "2026-09-16T07:00:00Z",
+      "reactions": {
+        "total_count": 1,
+        "+1": 1,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      },
+      "reaction_list": [
+        {
+          "id": 6024,
+          "user": {
+            "login": "glenn",
+            "id": 1001,
+            "type": "User",
+            "site_admin": true,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+          },
+          "content": "+1",
+          "created_at": "2026-09-16T04:10:00Z"
+        }
+      ],
+      "cross_references": [
+        {
+          "raw_ref": "mas-bandwidth/nova#777",
+          "target_repo": "mas-bandwidth/nova",
+          "target_number": 777,
+          "is_external": true
+        },
+        {
+          "raw_ref": "#2",
+          "target_number": 2,
+          "is_external": false
+        }
+      ],
+      "comments": [
+        {
+          "id": 5006,
+          "issue_number": 7,
+          "user": {
+            "login": "emma-antigravity",
+            "id": 1003,
+            "type": "Bot",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1003"
+          },
+          "created_at": "2026-09-16T05:00:00Z",
+          "updated_at": "2026-09-16T05:00:00Z",
+          "body": "Running race detector under load:\n```bash\ngo test -race -v -count=100 ./queue/...\n```\nFound data race between writer and reader! See mas-bandwidth/nova#777.",
+          "edited": false,
+          "edit_history": [],
+          "reactions": {
+            "total_count": 3,
+            "+1": 2,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 0,
+            "confused": 0,
+            "heart": 0,
+            "rocket": 0,
+            "eyes": 1
+          },
+          "reaction_list": [
+            {
+              "id": 6019,
+              "user": {
+                "login": "glenn",
+                "id": 1001,
+                "type": "User",
+                "site_admin": true,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+              },
+              "content": "+1",
+              "created_at": "2026-09-16T06:05:00Z"
+            },
+            {
+              "id": 6020,
+              "user": {
+                "login": "rowan",
+                "id": 1002,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+              },
+              "content": "+1",
+              "created_at": "2026-09-16T06:10:00Z"
+            },
+            {
+              "id": 6021,
+              "user": {
+                "login": "stella-codex",
+                "id": 1004,
+                "type": "User",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+              },
+              "content": "eyes",
+              "created_at": "2026-09-16T06:15:00Z"
+            }
+          ],
+          "cross_references": [
+            {
+              "raw_ref": "mas-bandwidth/nova#777",
+              "target_repo": "mas-bandwidth/nova",
+              "target_number": 777,
+              "is_external": true
+            }
+          ]
+        },
+        {
+          "id": 5007,
+          "issue_number": 7,
+          "user": {
+            "login": "stella-codex",
+            "id": 1004,
+            "type": "User",
+            "site_admin": false,
+            "avatar_url": "https://avatars.githubusercontent.com/u/1004"
+          },
+          "created_at": "2026-09-16T07:00:00Z",
+          "updated_at": "2026-09-16T07:00:00Z",
+          "body": "Proposed lock-free queue solution submitted in PR #8. Linked to mas-bandwidth/work-test#8.",
+          "edited": false,
+          "reactions": {
+            "total_count": 2,
+            "+1": 0,
+            "-1": 0,
+            "laugh": 0,
+            "hooray": 0,
+            "confused": 0,
+            "heart": 1,
+            "rocket": 1,
+            "eyes": 0
+          },
+          "reaction_list": [
+            {
+              "id": 6022,
+              "user": {
+                "login": "glenn",
+                "id": 1001,
+                "type": "User",
+                "site_admin": true,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+              },
+              "content": "heart",
+              "created_at": "2026-09-16T07:05:00Z"
+            },
+            {
+              "id": 6023,
+              "user": {
+                "login": "emma-antigravity",
+                "id": 1003,
+                "type": "Bot",
+                "site_admin": false,
+                "avatar_url": "https://avatars.githubusercontent.com/u/1003"
+              },
+              "content": "rocket",
+              "created_at": "2026-09-16T07:10:00Z"
+            }
+          ],
+          "cross_references": [
+            {
+              "raw_ref": "#8",
+              "target_number": 8,
+              "is_external": false
+            },
+            {
+              "raw_ref": "mas-bandwidth/work-test#8",
+              "target_repo": "mas-bandwidth/work-test",
+              "target_number": 8,
+              "is_external": true
+            }
+          ],
+          "linked_prs": [
+            {
+              "number": 8,
+              "repo": "mas-bandwidth/work-test",
+              "title": "feat(queue): lock-free single-producer multi-consumer queue",
+              "state": "open"
+            }
+          ],
+          "edit_history": []
+        }
+      ]
+    },
+    {
+      "id": 10008,
+      "number": 8,
+      "title": "Spam report / off-topic submission",
+      "state": "closed",
+      "state_reason": "not_planned",
+      "locked": true,
+      "active_lock_reason": "spam",
+      "user": {
+        "login": "rowan",
+        "id": 1002,
+        "type": "User",
+        "site_admin": false,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1002"
+      },
+      "labels": [
+        {
+          "id": 207,
+          "name": "invalid",
+          "color": "e4e669",
+          "description": "This doesn't seem right"
+        }
+      ],
+      "assignees": [],
+      "body": "Irrelevant commercial spam link removed by moderators.",
+      "comments_count": 0,
+      "created_at": "2026-09-16T06:00:00Z",
+      "updated_at": "2026-09-16T07:00:00Z",
+      "closed_at": "2026-09-16T07:00:00Z",
+      "closed_by": {
+        "login": "glenn",
+        "id": 1001,
+        "type": "User",
+        "site_admin": true,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1001"
+      },
+      "reactions": {
+        "total_count": 0,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      },
+      "comments": []
+    }
+  ],
+  "commit_sha": "f38fe9fe5b9e6d8abbf0a01fc4e7e330d856ec89"
+}
