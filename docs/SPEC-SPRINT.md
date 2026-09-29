@@ -253,6 +253,7 @@ resumed because the card it needed landed.
 | ci red on a primary | rework with a fix, return, drop, look |
 | a primary came back a second time for the same cause | stop and look |
 | a primary is blocked on something dropped | drop, ack (the ack waives the dropped need) |
+| a primary is blocked on something missing | drop, ack (the ack waives the named missing need) |
 | reads exhausted | ask another reader, rework, drop |
 | ready to accept | accept, rework, drop |
 | returned to review | rework, accept (while its reads stand at its head), drop |
@@ -276,7 +277,14 @@ overdue; only an add that admits a card closes it. add with a need on a
 dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
-whom and when.
+whom and when. An add counts only valid candidate IDs as proposed dependencies;
+a dependent whose prerequisite is neither stored nor admitted is refused too.
+Other valid cards retain per-card partial acceptance. A stored waiting primary
+or sentinel whose need has no record gets one missing-need judgment from
+resolve or the tick, naming those needs. Acknowledging it waives only its
+named needs that are still missing; it never waives a live prerequisite or a
+missing need discovered later. When the named prerequisites exist again,
+resolve closes that missing-need judgment and still waits for them to land.
 
 A primary in review is never silent. With ok reads from two different readers
 at its head, some open judgment on it offers accept (ready to accept, or
@@ -364,8 +372,8 @@ exactly, member by member, never by their counts.
 9. A stopped stream has an open judgment notification.
 10. (`check` reports a pending operation under this number.)
 11. A primary anywhere but waiting has every need landed or waived. A need that
-    was dropped and acknowledged is recorded on the card as waived, by whom and
-    when, and counts as satisfied; nothing else does. add refuses needs that
+    was dropped or missing and acknowledged is recorded on the card as waived,
+    by whom and when, and counts as satisfied; nothing else does. add refuses needs that
     would make a cycle, naming it.
 
 Rules 2, 3, 4, 5 and 9 hold whenever no operation is pending; 1, 6, 7, 8 and

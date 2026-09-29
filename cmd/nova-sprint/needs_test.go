@@ -47,3 +47,17 @@ func TestCardShowsTheWaivedNeeds(t *testing.T) {
 	}
 	ta.clean()
 }
+
+func TestAddDoesNotAdmitAWaiterOfAnInvalidID(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	code, out, errs := ta.do("add --stream s1 --needs bad.id bad.id waiter")
+	if code != 1 || !strings.Contains(out+errs, "bad.id") || !strings.Contains(out+errs, "waiter") {
+		t.Fatalf("refusal: code=%d out=%s errors=%s", code, out, errs)
+	}
+	if out := ta.ok("queue --stream s1 --col waiting"); strings.Contains(out, "waiter work:") {
+		t.Fatalf("admitted waiter: %s", out)
+	}
+	ta.clean()
+}
