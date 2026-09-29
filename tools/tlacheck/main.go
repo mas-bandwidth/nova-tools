@@ -14,11 +14,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -34,18 +36,29 @@ type env struct {
 	stdout, stderr io.Writer
 	getenv         func(string) string
 	lookPath       func(string) (string, error)
-	hostname       func() (string, error)
+	cpus           func() int                        // logical CPUs of this machine
+	javaVersion    func(java string) (string, error) // the version `java -version` reports
+	parseOnly      bool                              // stop each verb once its flags are read: the tests hold documented commands to the real parser
 	exec           tlc.Executor
 	goos           string
+	goarch         string
 	tmpDir         string // where a disposable store's directory goes; the system default when empty
 }
 
 func main() {
 	os.Exit(run(os.Args[1:], env{
 		stdout: os.Stdout, stderr: os.Stderr,
-		getenv: os.Getenv, lookPath: tlc.LookPath, hostname: os.Hostname,
-		exec: tlc.Execute, goos: hostOS,
+		getenv: os.Getenv, lookPath: tlc.LookPath, cpus: runtime.NumCPU, javaVersion: javaVersion,
+		exec: tlc.Execute, goos: hostOS, goarch: hostArch,
 	}))
+}
+
+// javaVersion runs the java it is given with -version, bounded, and returns
+// the version it reports. It runs java, so it belongs on a bench.
+func javaVersion(java string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return tlc.ReadJavaVersion(ctx, java)
 }
 
 type verb struct {
@@ -60,6 +73,7 @@ func verbs() []verb {
 		{"run", "run the declared cases of tla/CASES.tsv and write the run records", helpRun, cmdRun},
 		{"groups", "print the required case groups as JSON", helpGroups, cmdGroups},
 		{"merge", "join the records of several runs into one records file", helpMerge, cmdMerge},
+		{"inputs", "print the files a case's TLC run reads, with their hashes", helpInputs, cmdInputs},
 		{"table", "check the table model: contracts, findings, controls", helpTable, cmdTable},
 		{"member", "check the member and epoch protocol and its mutation controls", helpMember, cmdMember},
 		{"replay", "replay table.lua receipts and check them against EpochMemberTable", helpReplay, cmdReplay},
@@ -139,7 +153,8 @@ func flags(name string) *flag.FlagSet {
 }
 
 // parse reads the flags of a verb. It returns done when the invocation is
-// finished (help printed, or refused) with the exit code to return.
+// finished (help printed, or refused) with the exit code to return; a test env
+// that only parses (parseOnly) finishes every invocation whose flags are good.
 //
 // A flag after a positional is a late flag and is refused by name, except after
 // a literal "--".
@@ -166,7 +181,7 @@ func parse(e env, name string, fs *flag.FlagSet, args []string, help string) (do
 			}
 		}
 	}
-	return false, 0
+	return e.parseOnly, 0
 }
 
 // refuse prints a refusal: the verb, the cause, and the next command, on one
