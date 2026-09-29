@@ -1539,6 +1539,9 @@ different runs.
 `TestFunctionalImageBuildLeavesNothingBehind`,
 `TestContainerRuntimeRefusesRootBeforeItsFirstChange`,
 `TestContainerRuntimeSubidsNeverReuseARange`,
+`TestContainerRuntimeSubidExpressionsArePinned` (the allocation's Jinja, pinned
+as the text that was evaluated with ansible's template engine on constructed
+subuid files, since the unit tier has no ansible),
 `TestContainerRuntimeDropInHasItsDirectory` and
 `TestContainerRuntimeProbeValuesAreNumbers`
 (`internal/ci/functional_image_runtime_class_test.go`). The

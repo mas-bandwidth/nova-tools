@@ -140,6 +140,61 @@ func TestContainerRuntimeSubidsNeverReuseARange(t *testing.T) {
 	}
 }
 
+// The allocation expressions of tasks/subid.yml, pinned as text (whitespace
+// folded). The unit tier has no ansible and no Jinja engine, so the logic cannot
+// be evaluated here; it is held instead by the exact text that was evaluated,
+// with ansible's own template engine, on constructed subuid files (another
+// user's range at the fixed start, rows by numeric uid, a user with a row in one
+// file only, comments, CRLF, prefix names, regexp characters, zero counts,
+// ranges at the 2^32 edge): the expected row was never another user's range and
+// never changed another user's row. A change to any of these expressions is a
+// change to that logic: evaluate it again on such files, then change the pin.
+var subidPins = map[string]string{
+	"container_runtime_subid_lines":     `{{ ((container_runtime_subid_slurp.content | default('') | b64decode).splitlines() if container_runtime_subid_stat.stat.exists else []) | map('trim') | reject('equalto', '') | reject('match', '#') | list }}`,
+	"container_runtime_subid":           `{%- set names = [container_runtime_user, container_runtime_uid | string] -%} {%- set rows = container_runtime_subid_lines | map('split', ':') | list -%} {%- set mine = rows | selectattr('0', 'in', names) | list -%} {%- set others = rows | rejectattr('0', 'in', names) | list -%} {%- set ns = namespace(end=0, clash=[]) -%} {%- for o in others -%} {%- set o_end = o[1] | int + o[2] | int -%} {%- if o_end > ns.end -%}{%- set ns.end = o_end -%}{%- endif -%} {%- for m in mine -%} {%- if o[2] | int > 0 and m[2] | int > 0 and o[1] | int < m[1] | int + m[2] | int and m[1] | int < o_end -%} {%- set ns.clash = ns.clash + [o | join(':')] -%} {%- endif -%} {%- endfor -%} {%- endfor -%} {{ {'mine': mine | map('join', ':') | list, 'longest': (mine | map(attribute=2) | map('int') | list | max) if mine | length > 0 else 0, 'others_end': ns.end, 'clash': ns.clash | unique | list} }}`,
+	"container_runtime_subid_new_start": `{{ [container_runtime_subid_start | int, container_runtime_subid.others_end | int] | max }}`,
+}
+
+var subidAssertPins = map[string]string{
+	"every row is name:start:count":                    `item is match('^[^:]+:[0-9]+:[0-9]+$')`,
+	"the user's existing rows overlap no other user's": `container_runtime_subid.clash | length == 0`,
+	"an existing subordinate id range is large enough": `container_runtime_subid.mine | length == 0 or container_runtime_subid.longest | int >= container_runtime_subid_count | int`,
+	"a new range fits in the 32-bit id space":          `container_runtime_subid_new_start | int + container_runtime_subid_count | int < 4294967296`,
+}
+
+func fold(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// TestContainerRuntimeSubidExpressionsArePinned: see subidPins. Turning the
+// `max` of the range end into `min`, inverting the overlap test or reading the
+// end from the first row only each changes a pinned expression and is red.
+func TestContainerRuntimeSubidExpressionsArePinned(t *testing.T) {
+	t.Parallel()
+	facts := map[string]string{}
+	asserts := map[string]string{}
+	for _, k := range roleTasks(t, "tasks/subid.yml") {
+		for name, v := range k.args("ansible.builtin.set_fact") {
+			if s, ok := v.(string); ok {
+				facts[name] = fold(s)
+			}
+		}
+		if m := k.args("ansible.builtin.assert"); m != nil {
+			if s, ok := m["that"].(string); ok {
+				asserts[k.name()] = fold(s)
+			}
+		}
+	}
+	for name, want := range subidPins {
+		if got := facts[name]; got != fold(want) {
+			t.Errorf("%s/tasks/subid.yml: the expression of %s is not the one that was evaluated on constructed files.\n got: %s\nwant: %s\nevaluate the change with ansible's template engine on files where another user holds the fixed start and where ranges touch 2^32, then update subidPins", containerRuntimeRole, name, got, fold(want))
+		}
+	}
+	for name, want := range subidAssertPins {
+		if got := asserts[name]; got != fold(want) {
+			t.Errorf("%s/tasks/subid.yml: the assert %q is %q, want the pinned %q", containerRuntimeRole, name, got, fold(want))
+		}
+	}
+}
+
 // TestContainerRuntimeDropInHasItsDirectory: copy does not create parent
 // directories, so a directory task precedes the delegation drop-in, and the
 // drop-in is for the runner's manager (user@<uid>.service.d), not the template
