@@ -64,7 +64,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		var free []string
 		for _, rd := range s.Readers.Rows {
-			if !have[rd] {
+			// a reader with a card at this attempt, even retired, has read it
+			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil {
 				free = append(free, rd)
 			}
 		}
@@ -93,7 +94,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			chosenReaders = append(chosenReaders, shortest(left, q))
 		}
 		if len(chosenReaders) < want {
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and has %d free; run: nova-sprint reader add <name>", want, len(chosenReaders)))
+			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; run: nova-sprint reader add <name>", want, len(chosenReaders), attempt, c.ID))
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}

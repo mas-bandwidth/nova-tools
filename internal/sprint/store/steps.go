@@ -48,6 +48,17 @@ func FinishStep(r sprint.FinishReq) Step {
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers),
+		// Every read card id each reader could get at the primaries' attempts,
+		// placed or retired: a reader who already has one is not free.
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			var ids []string
+			for _, c := range s.Work.Column(sprint.Review) {
+				for _, rd := range s.Readers.Rows {
+					ids = append(ids, sprint.ReadCardID(c.ID, c.Int("attempt"), rd))
+				}
+			}
+			return map[string][]string{sprint.Readers: ids}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ask(s, r) }}
 }
 

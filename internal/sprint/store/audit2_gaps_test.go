@@ -566,7 +566,7 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 // exists (retired), so the create is refused by the table layer on every
 // plan and the verb ends "the sprint kept changing ... run it again", which
 // can never succeed.
-func TestAudit2DefectAskAnotherHitsARetiredCard(t *testing.T) {
+func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t) // readers a, b, c
 	h.setup(1)
@@ -583,8 +583,14 @@ func TestAudit2DefectAskAnotherHitsARetiredCard(t *testing.T) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	if len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "kept changing") {
-		t.Fatalf("ask --another: %+v (defect fixed?)", res)
+	if len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "already read attempt") || !strings.Contains(res.Refused[0].Why, "reader add") || res.Attempts != 1 {
+		t.Fatalf("ask --another: %+v", res)
+	}
+	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}); err != nil {
+		t.Fatal(err)
+	}
+	if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true})); len(res.Moved) != 1 {
+		t.Fatalf("ask --another with a new reader: %+v", res)
 	}
 }
 
@@ -664,4 +670,31 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 		}
 	}
 	noStoredIDs(t, v)
+}
+
+// The tick's ask on a returned primary whose reads were all retired by
+// accept does not choose a reader who already read its attempt: it asks the
+// others, or says it cannot, and never loses every attempt to the create.
+func TestTheTickAsksNoReaderWhoAlreadyReadTheAttempt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t) // readers a, b, c
+	h.setup(1)
+	h.a2ToReview("s1-1", false)
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	for _, c := range h.snap().Readers.Of("s1-1") {
+		h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
+	}
+	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
+	h.startMachine()
+	for i := 0; i < 3; i++ {
+		res := h.machine()
+		for _, p := range res.Parts {
+			if p.Lost {
+				t.Fatalf("the %s part lost every attempt: %+v", p.Name, p.Result)
+			}
+		}
+		h.tick(time.Second)
+	}
+	h.clean("asked")
 }
