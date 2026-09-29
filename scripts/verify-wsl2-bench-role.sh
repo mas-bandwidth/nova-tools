@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/verify-wsl2-bench-role.sh — Verification suite for WSL2 bench Ansible role
-# Rowan Item 14 / PR #4601
+# PR #4601
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

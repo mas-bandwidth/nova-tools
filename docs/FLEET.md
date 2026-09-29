@@ -11,7 +11,7 @@ runners ([#1458](https://github.com/mas-bandwidth/nova-tools/issues/1458), PR #4
 The fleet is comprised of dedicated runner benches managed through the tailnet:
 
 1. **macOS Benches (Darwin ARM64 / Apple Silicon):**
-   Run native Darwin runners (e.g. Mac Studio coordinator and runner instances).
+   Run native Darwin runners (e.g. Darwin coordinator and runner instances).
 2. **Linux Benches (Linux x64 / ARM64):**
    Run native Linux bench environments (`tools/bench-standard.sh`).
 3. **Windows WSL2 Benches (Linux x64 under WSL2):**

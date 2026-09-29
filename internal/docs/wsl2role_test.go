@@ -17,10 +17,10 @@ import (
 // check mode validation, idempotency guards, Windows path validation, and no hardcoded homes.
 
 const (
-	wsl2PlaybookPath    = "../../playbooks/wsl2_bench_runner.yml"
-	wsl2RolePath        = "../../roles/wsl2_bench_runner"
-	fleetPlaybookPath   = "../../fleet/bench-wsl2.yml"
-	fleetRolePath       = "../../fleet/roles/bench-wsl2"
+	wsl2PlaybookPath     = "../../playbooks/wsl2_bench_runner.yml"
+	wsl2RolePath         = "../../roles/wsl2_bench_runner"
+	fleetPlaybookPath    = "../../fleet/bench-wsl2.yml"
+	fleetRolePath        = "../../fleet/roles/bench-wsl2"
 	wsl2VerifyScriptPath = "../../scripts/verify-wsl2-bench-role.sh"
 )
 

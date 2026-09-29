@@ -1,6 +1,6 @@
 ---
 # bench-wsl2.yml: one Windows machine running WSL2 joined to the fleet as a Linux bench.
-# Converged on one such machine when Glenn names it; until then the role and its check mode.
+# Converged on one such machine when named; until then the role and its check mode.
 - name: configure WSL2 Linux bench
   hosts: "{{ target | default('wsl2_benches:benches') }}"
   gather_facts: true

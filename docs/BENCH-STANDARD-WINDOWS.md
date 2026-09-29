@@ -96,5 +96,5 @@ ansible-playbook --syntax-check fleet/bench-wsl2.yml
 ansible-playbook -i inventory.py playbooks/wsl2_bench_runner.yml --check --diff
 ```
 Automated verification is run via `scripts/verify-wsl2-bench-role.sh`.
-The role is converged on a Windows WSL2 machine when Glenn names it.
+The role is converged on a Windows WSL2 machine when named.
 

@@ -1,6 +1,6 @@
 ---
 galaxy_info:
-  author: Emma Antigravity <emma@mas-bandwidth.com>
+  author: Mas Bandwidth <nova@mas-bandwidth.com>
   description: WSL2 Linux bench runner role for Windows machines
   license: proprietary
   min_ansible_version: "2.14"

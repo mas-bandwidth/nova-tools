@@ -12,7 +12,7 @@ import (
 )
 
 // fleet_test.go validates the WSL2 bench Ansible role structure and machine integration
-// with nova-config (Rowan Item 10 / ideas#820).
+// with nova-config (ideas#820).
 
 const (
 	fleetBenchPlaybook = "../../fleet/bench-wsl2.yml"
@@ -221,10 +221,10 @@ func TestWSL2BenchMachineIntegration(t *testing.T) {
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
-	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["NOVA_FRIEND"] = "operator"
 
 	// 1. Add WSL2 bench to Postgres via nova-config machine add
-	code, out, errs := h.run(t, "machine", "add", "wsl2-bench-1", "--user", "glenn", "--seat", "swarm-wsl2", "--slots", "32", "--runners", "1")
+	code, out, errs := h.run(t, "machine", "add", "wsl2-bench-1", "--user", "runner", "--seat", "swarm-wsl2", "--slots", "32", "--runners", "1")
 	if code != 0 {
 		t.Fatalf("machine add failed (exit %d): stdout=%s stderr=%s", code, out, errs)
 	}
@@ -247,7 +247,7 @@ func TestWSL2BenchMachineIntegration(t *testing.T) {
 	if row == nil {
 		t.Fatal("expected wsl2-bench-1 in redis views, got nil")
 	}
-	if row["slots"] != "32" || row["seat"] != "swarm-wsl2" || row["user"] != "glenn" {
+	if row["slots"] != "32" || row["seat"] != "swarm-wsl2" || row["user"] != "runner" {
 		t.Errorf("unexpected machine row values: %+v", row)
 	}
 
@@ -256,7 +256,7 @@ func TestWSL2BenchMachineIntegration(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("machine show failed (exit %d): stdout=%s stderr=%s", code, out, errs)
 	}
-	for _, expected := range []string{"user=glenn", "seat=swarm-wsl2", "slots=32"} {
+	for _, expected := range []string{"user=runner", "seat=swarm-wsl2", "slots=32"} {
 		if !strings.Contains(out, expected) {
 			t.Errorf("machine show output missing %q:\n%s", expected, out)
 		}
