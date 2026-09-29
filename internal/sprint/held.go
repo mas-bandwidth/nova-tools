@@ -543,9 +543,17 @@ func (c *held) decisions(pr *Card) []string {
 	case pr.Col == Review && pr.F("result") == "failed":
 		out = []string{"rework", "drop"}
 	case pr.Col == Review && len(readsAt(c.s, pr, pr.Int("attempt"))) > 0:
-		out = []string{"ask --another", "rework", "drop"} // ask alone is refused: asked already
+		_, free := readersForAsk(c.s, pr, pr.Int("attempt"))
+		if len(free) > 0 {
+			out = append(out, "ask --another") // ask alone is refused: asked already
+		}
+		out = append(out, "rework", "drop")
 	case pr.Col == Review:
-		out = []string{"ask", "rework", "drop"}
+		_, free := readersForAsk(c.s, pr, pr.Int("attempt"))
+		if len(free) >= 2 {
+			out = append(out, "ask")
+		}
+		out = append(out, "rework", "drop")
 	case pr.Col == Merging:
 		out = []string{"return", "drop"}
 	default:

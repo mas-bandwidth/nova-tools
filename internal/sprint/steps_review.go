@@ -28,6 +28,23 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// readersForAsk is the reader eligibility shared by Ask and the stall
+// decisions. A placed card naming the reader, or any card at its derived id
+// (including a retired one), rules out asking that reader again.
+func readersForAsk(s *Snapshot, pr *Card, attempt int) (all, free []string) {
+	have := map[string]bool{}
+	for _, rc := range readsAt(s, pr, attempt) {
+		have[rc.F("reader")] = true
+		all = append(all, rc.F("reader"))
+	}
+	for _, rd := range s.Readers.Rows {
+		if !have[rd] && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+			free = append(free, rd)
+		}
+	}
+	return all, free
+}
+
 // Ask deals every primary in review that lacks reads to TWO DIFFERENT readers,
 // each to the shortest asked queue, in work order; a primary reworked after a
 // read is asked of the same readers again. With Another, a primary already
@@ -56,19 +73,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
-		have := map[string]bool{}
-		var all []string
-		for _, rc := range readsAt(s, c, attempt) {
-			have[rc.F("reader")] = true
-			all = append(all, rc.F("reader"))
-		}
-		var free []string
-		for _, rd := range s.Readers.Rows {
-			// a reader with a card at this attempt, even retired, has read it
-			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil {
-				free = append(free, rd)
-			}
-		}
+		all, free := readersForAsk(s, c, attempt)
 		want := 2
 		if r.Another {
 			want = 1

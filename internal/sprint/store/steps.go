@@ -51,15 +51,24 @@ func AskStep(r sprint.AskReq) Step {
 		// Every read card id each reader could get at the primaries' attempts,
 		// placed or retired: a reader who already has one is not free.
 		Extras: func(s *sprint.Snapshot) map[string][]string {
-			var ids []string
-			for _, c := range s.Work.Column(sprint.Review) {
-				for _, rd := range s.Readers.Rows {
-					ids = append(ids, sprint.ReadCardID(c.ID, c.Int("attempt"), rd))
-				}
-			}
-			return map[string][]string{sprint.Readers: ids}
+			return map[string][]string{sprint.Readers: reviewReadCandidateIDs(s)}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ask(s, r) }}
+}
+
+// reviewReadCandidateIDs includes records with no place. Ask and the tick's
+// held check need the same current-attempt reader eligibility evidence.
+func reviewReadCandidateIDs(s *sprint.Snapshot) []string {
+	var ids []string
+	if s.Readers == nil {
+		return ids
+	}
+	for _, c := range s.Work.Column(sprint.Review) {
+		for _, rd := range s.Readers.Rows {
+			ids = append(ids, sprint.ReadCardID(c.ID, c.Int("attempt"), rd))
+		}
+	}
+	return ids
 }
 
 // ReadStep is a reader recording its reads.

@@ -315,28 +315,11 @@ func (r TickResult) Notes() int {
 }
 
 // tickExtras is what the tick's parts read beyond the placed cards: the needs
-// of waiting primaries that are off the table, which may have been dropped.
+// of waiting primaries that are off the table, which may have been dropped,
+// and current-attempt read records, including retired ones. The held check
+// must see the same candidate records as Ask before offering a reader.
 func tickExtras(s *sprint.Snapshot) map[string][]string {
-	// and the read card ids the ask part could create for primaries in review
-	// with no read card placed at their attempt: one retired there means that
-	// reader already read it.
-	var reads []string
-	if s.Readers != nil {
-		for _, c := range s.Work.Column(sprint.Review) {
-			attempt := c.Int("attempt")
-			placed := false
-			for _, rd := range s.Readers.Rows {
-				placed = placed || s.Readers.Placed(sprint.ReadCardID(c.ID, attempt, rd)) != nil
-			}
-			if placed {
-				continue
-			}
-			for _, rd := range s.Readers.Rows {
-				reads = append(reads, sprint.ReadCardID(c.ID, attempt, rd))
-			}
-		}
-	}
-	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads}
+	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reviewReadCandidateIDs(s)}
 }
 
 // TickPartStep is one part of the tick as a step of the engine: fenced,

@@ -304,6 +304,62 @@ func TestAStallOffersOnlyEnabledDecisions(t *testing.T) {
 		}
 		t.Errorf("a decision not expected: %s", d)
 	}
+	p := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true})
+	if len(p.Units) != 1 || len(p.Refused) != 0 {
+		t.Fatalf("offered ask --another was not accepted: %+v", p)
+	}
+	w.must(p)
+	if got := len(readsAt(w.s, w.s.Work.Card("s1-1"), 1)); got != 3 {
+		t.Fatalf("after ask --another: %d read cards, want 3", got)
+	}
+}
+
+func TestAStallWithNoUnreadReaderDoesNotOfferAnother(t *testing.T) {
+	t.Parallel()
+	w := dealt(t)
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
+	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	if len(reads) != 3 {
+		t.Fatalf("readers asked: %d, want 3", len(reads))
+	}
+	for _, rc := range reads {
+		w.must(Read(w.s, ReadReq{As: rc.Row, Verdict: "broken", Finding: "f", Sel: Sel{IDs: []string{rc.ID}}}))
+	}
+	w.s.Open = nil // The broken-read judgments were closed without a resolving step.
+	f := mustStall(t, running(w), "s1-1", "")
+	if contains(f.Decisions, "ask") || contains(f.Decisions, "ask --another") {
+		t.Fatalf("no unread reader is free, but stall offers ask: %v", f.Decisions)
+	}
+	for _, d := range []string{"rework", "drop", "wait"} {
+		if !contains(f.Decisions, d) {
+			t.Fatalf("stall omits %s: %v", d, f.Decisions)
+		}
+	}
+	p := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true})
+	if len(p.Units) != 0 || len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, "0 is free") {
+		t.Fatalf("ask --another unexpectedly accepted: %+v", p)
+	}
+}
+
+func TestAnInitialAskWithoutTwoFreeReadersIsNotOffered(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(Add(w.s, AddReq{Stream: "s1", Count: 1}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
+	pr := w.s.Work.Card("s1-1")
+	decisions := newHeld(running(w), w.s.Now).decisions(pr)
+	if contains(decisions, "ask") || contains(decisions, "ask --another") {
+		t.Fatalf("one reader cannot satisfy initial ask: %v", decisions)
+	}
+	p := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})
+	if len(p.Units) != 0 || len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, "needs 2 different readers") {
+		t.Fatalf("initial ask unexpectedly accepted: %+v", p)
+	}
 }
 
 // "Stopped with moves due" counts the asks the tick would make (reader
