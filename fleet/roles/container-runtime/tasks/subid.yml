@@ -92,10 +92,12 @@
       {{ [container_runtime_subid_start | int, container_runtime_subid.others_end | int] | max }}
   when: container_runtime_subid.mine | length == 0
 
+# The last id of the range is start + count - 1 and must stay below 4294967295:
+# the kernel refuses a mapping that reaches (u32)-1.
 - name: a new range fits in the 32-bit id space
   ansible.builtin.assert:
     quiet: true
-    that: container_runtime_subid_new_start | int + container_runtime_subid_count | int <= 4294967296
+    that: container_runtime_subid_new_start | int + container_runtime_subid_count | int < 4294967296
     fail_msg: >-
       /etc/{{ container_runtime_subid_file }} leaves no room for
       {{ container_runtime_subid_count }} ids after its highest range (end
