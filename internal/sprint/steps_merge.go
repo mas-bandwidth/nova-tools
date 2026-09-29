@@ -157,7 +157,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		pr := s.Work.Placed(r.Conflict)
 		ctlSet["card"] = r.Conflict
 		u := stop("conflict", NConflict, []string{r.Conflict}, pr.Int("stuck"), "other")
-		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, nil)))
+		// a conflict stop has no cross need: whatever the card once needed
+		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, nil, "need_card", "need_stream")))
 		if pr != nil {
 			u.Changes = append(u.Changes, change(Work, setEntry(pr, map[string]string{"stuck": itoa(pr.Int("stuck") + 1)})))
 		}
@@ -337,6 +338,9 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	stuck := s.Merge.Cell(r.Stream, Stuck)
 	for _, c := range stuck {
+		if ctl.F("cause") != "cross" {
+			break // only a cross stop waits for a need
+		}
 		if need := c.F("need_card"); need != "" && s.StateOf(need) != Landed {
 			p.refuse(r.Stream, fmt.Sprintf("unresolved: %s needs %s (stream %s) landed first, and it is %s", c.ID, need, orDash(c.F("need_stream")), orDash(s.StateOf(need))))
 			return p

@@ -584,7 +584,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
 		if m := orphanMerge(s, c); m != nil {
-			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil)))
+			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")))
 			u.Moved += "; its orphan merge card off " + m.Col
 			orphans[c.ID] = true
 		}
@@ -673,7 +673,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		m := s.Merge.Placed(c.ID)
 		if orphanMerge(s, c) != nil {
 			leaving[c.ID] = true
-			u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil))},
+			u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream"))},
 				Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s review: its orphan merge card off %s", c.ID, m.Col)}
 			if j, ok := reviewJudgment(s, c, reviewStep{closing: noteIDs(u.Closes), who: r.Who}); ok {
 				u.Notes = append(u.Notes, j)
@@ -686,7 +686,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 			set["return_reason"] = r.Reason
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-			change(Merge, moveEntry(m, c.Row, Returned, nil)),
+			change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")),
 			change(Work, moveEntry(c, c.Row, Review, set)),
 		}, Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)}
 		// The stream's red or rejected judgment names return as a decision: the

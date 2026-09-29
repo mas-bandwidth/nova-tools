@@ -73,16 +73,6 @@ var dKnown = []dKnownDiff{
 	// waiting with nothing open, for good (and stalled, to inbox, after its
 	// deadline).
 	{"ENGINE release of a stream's only landed card leaves the stream waiting", sigHas("release", "stream.state=waiting/landed")},
-	// ENGINE. D6 and section 7: a stuck card's cross-stream need is
-	// resolved when the needed card lands; the model clears need[p] on
-	// return and on a conflict stop (MergeStop sets it to the fact's q). The
-	// engine keeps need_card on the merge card through return (the move to
-	// returned, steps_review.go:672 and :685), accept, and a later conflict
-	// stop (steps_merge.go:160), and resume holds every stuck card to its
-	// need_card whatever the stop's cause (steps_merge.go:340): a card
-	// stopped once on a cross need, returned and accepted again, then stopped
-	// on a conflict, cannot be resumed until the unrelated card lands.
-	{"ENGINE a cross need survives return and wedges a later conflict stop", sigHas("merge", "merge.need")},
 	// ENGINE or SPEC. Section 16: a sentinel inserted in line sends the
 	// ready cards behind it back to waiting; the engine treats a ready
 	// primary whose card was withdrawn (no member up) as in flight: it
