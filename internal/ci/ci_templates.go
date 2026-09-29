@@ -94,6 +94,10 @@ func (r TemplatesResult) ExitCode() int {
 // repository; testdata directories are skipped so the fixtures are never read
 // as offenders.
 func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
+	return CheckTemplatesWith(defaultSourceSeams(), root, allowlistPath)
+}
+
+func CheckTemplatesWith(s SourceSeams, root, allowlistPath string) (TemplatesResult, error) {
 	var res TemplatesResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -101,7 +105,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkSourceDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err = s.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -119,7 +123,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		raw, readErr := readSourceFile(path)
+		raw, readErr := s.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
@@ -129,7 +133,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		res.Tests++
-		findings, ok := scanTemplateFile(rel, raw)
+		findings, ok := scanTemplateFileWith(s, rel, raw)
 		if !ok {
 			return nil
 		}
@@ -178,7 +182,11 @@ func matchTemplateAllow(entries []waitAllow, f TemplateFinding) int {
 // Go cannot carry the shape this check reads, and a fixture deliberately
 // holding a broken literal is not the offender itself.
 func scanTemplateFile(rel string, src []byte) ([]TemplateFinding, bool) {
-	fset, file, err := parseSource(rel, src, 0)
+	return scanTemplateFileWith(defaultSourceSeams(), rel, src)
+}
+
+func scanTemplateFileWith(s SourceSeams, rel string, src []byte) ([]TemplateFinding, bool) {
+	fset, file, err := s.ParseFile(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

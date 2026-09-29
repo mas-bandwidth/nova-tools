@@ -19,9 +19,12 @@ import (
 )
 
 func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"uncertain", "hang"} {
+		mode := mode
 		t.Run(mode, func(t *testing.T) {
-			log := fakeBusPath(t)
+			t.Parallel()
+			log, baseEnv := fakeBusEnv(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			statePath := filepath.Join(t.TempDir(), "s.json")
 			args := []string{"report", "--file", p, "--send", "--snapshot", statePath, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--timeout", "5s"}
@@ -34,8 +37,9 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 				// thirty-second sleep.
 				args = append(args, "--budget", "10s")
 			}
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			code, _, errout := run(t, Environment{}, args...)
+			runEnv := baseEnv
+			runEnv.Env = append(append([]string(nil), baseEnv.Env...), "NOVA_UPDATE_BUS_MODE="+mode)
+			code, _, errout := run(t, runEnv, args...)
 			if code != 1 {
 				t.Fatal(code)
 			}
@@ -51,8 +55,9 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 					t.Fatal("no ID retained")
 				}
 			}
-			t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-			code, out, errout := run(t, Environment{}, args...)
+			okEnv := baseEnv
+			okEnv.Env = append(append([]string(nil), baseEnv.Env...), "NOVA_UPDATE_BUS_MODE=ok")
+			code, out, errout := run(t, okEnv, args...)
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, out, errout)
 			}
@@ -61,7 +66,7 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 			if nprep != 1 || nsend != 2 {
 				t.Fatal(nprep, nsend)
 			}
-			code, out, errout = run(t, Environment{}, args...)
+			code, out, errout = run(t, okEnv, args...)
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, out, errout)
 			}
@@ -78,6 +83,7 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 // facts -- one note plus one INDEX row on the remote, and zero bus invocations
 // on the next run of a report that has not changed.
 func TestJoinRealBusPublishesOneNoteAndOneIndexRow(t *testing.T) {
+	t.Parallel()
 	r := newReporter(t, "v1.2.3")
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
@@ -110,6 +116,7 @@ func TestJoinRealBusPublishesOneNoteAndOneIndexRow(t *testing.T) {
 // hook comes off and the SAME snapshot is sent again, and exactly one note with
 // the original identity lands.
 func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
+	t.Parallel()
 	r := newReporter(t, "v1.2.3")
 	restore, how := r.bus.refusePushes(t)
 	t.Logf("pushes are refused by %s", how)
@@ -150,8 +157,11 @@ func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
 // to hold one complete contribution -- one note and one INDEX row -- no matter
 // which boundary the death landed on.
 func TestJoinChildDeathAtWriteBoundariesRecoversOneContribution(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{killBeforeNote, killAfterNote, killAfterIndex, killAfterAttrs, killAfterCmt} {
+		boundary := boundary
 		t.Run(boundary, func(t *testing.T) {
+			t.Parallel()
 			missed := 0
 			for attempt := 1; attempt <= stagingAttempts; attempt++ {
 				if stagedADeath(t, boundary, attempt) {
@@ -170,6 +180,7 @@ func TestJoinChildDeathAtWriteBoundariesRecoversOneContribution(t *testing.T) {
 // and reading the answer leaves behind. Nothing here is platform-specific, so
 // this case runs on Windows too.
 func TestJoinLostConfirmationRecoversWithoutASecondNote(t *testing.T) {
+	t.Parallel()
 	r := newReporter(t, "v1.2.3")
 	wrap, record := r.wrapperOnPath(t, killLostResult)
 	code, out, errs := r.send(t, wrap)

@@ -238,6 +238,8 @@ func TestSupersedeRetryAfterArchivePublishedRemovesActiveCopy(t *testing.T) {
 // Now no waiter may be acknowledged while the holder lives, and every
 // acknowledged row, the holder's included, survives.
 func TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "docs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -256,15 +258,16 @@ func TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives(t *testing.T) {
 	}
 
 	busy := make(chan string, 1024)
-	lockBusy = func(who string) {
-		select {
-		case busy <- who:
-		default:
-		}
+	seams := lessonsSeams{
+		lockBusy: func(who string) {
+			select {
+			case busy <- who:
+			default:
+			}
+		},
 	}
-	t.Cleanup(func() { lockBusy = func(string) {} })
 
-	release, err := acquireLock(repo, "holder")
+	release, err := acquireLockWith(repo, "holder", seams)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +290,7 @@ func TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("waiter-%02d", i)
-			_, errs[i] = Append(repo, Lesson{ID: id, Component: "brief", Kind: "read", Failure: "failure " + id, Prevention: "prevent " + id, Evidence: "nova-tools#3552-" + id, Status: "active", ReviewedBy: "owner"})
+			_, errs[i] = AppendWith(repo, Lesson{ID: id, Component: "brief", Kind: "read", Failure: "failure " + id, Prevention: "prevent " + id, Evidence: "nova-tools#3552-" + id, Status: "active", ReviewedBy: "owner"}, seams)
 			if errs[i] == nil {
 				acked.Add(1)
 			}

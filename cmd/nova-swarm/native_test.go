@@ -1004,21 +1004,12 @@ func TestNativeRunChildDirIsJobDir(t *testing.T) {
 // The test chdirs away from the slot, the root, and the job directory, then runs the
 // walled path and asserts the fake harness's pwd is exactly the job directory.
 func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
 	label := "foreign-cwd-label"
-
-	foreign := t.TempDir()
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
@@ -1036,7 +1027,7 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 	}
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 	if !sameDir(got, jobDir) {
-		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, jobDir)
+		t.Errorf("the child's cwd is %q, want the job directory %q", got, jobDir)
 	}
 }
 
@@ -1364,7 +1355,7 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 // happens from a foreign cwd, proving the child's own environment and directory are the
 // run's, not the caller's.
 func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
@@ -1373,26 +1364,19 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	// Plant a foreign environment the run must shed: HOME and the two XDG homes outside the
 	// wall, a TMPDIR the wall would deny, and a provider key whose value the log must redact.
 	foreign := t.TempDir()
-	t.Setenv("HOME", filepath.Join(foreign, "home"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(foreign, "config"))
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(foreign, "cache"))
-	t.Setenv("TMPDIR", filepath.Join(foreign, "tmp"))
-	t.Setenv("FAKE_KEY", "planted-secret-value")
-
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
+	plantedEnv := append(os.Environ(),
+		"HOME="+filepath.Join(foreign, "home"),
+		"XDG_CONFIG_HOME="+filepath.Join(foreign, "config"),
+		"XDG_CACHE_HOME="+filepath.Join(foreign, "cache"),
+		"TMPDIR="+filepath.Join(foreign, "tmp"),
+		"FAKE_KEY=planted-secret-value",
+	)
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: label,
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
-		sandbox: sandbox,
+		sandbox: sandbox, environ: plantedEnv,
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
@@ -1591,6 +1575,7 @@ func nativeLoggedEnv(t *testing.T, log string) map[string][]string {
 // unwalled half is the one the sixth run proved: with no wall the child must still be in the
 // job directory, not the invoker's.
 func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 
@@ -1602,22 +1587,11 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 		{"unwalled", "", true},
 		{"walled", sandbox, false},
 	} {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.sandbox != "" {
-				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
-			}
+			t.Parallel()
 			root, slot := aSlot(t)
 			label := "foreign-cwd-" + tc.name
-
-			foreign := t.TempDir()
-			orig, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chdir(foreign); err != nil {
-				t.Fatalf("chdir to a foreign directory: %v", err)
-			}
-			defer func() { _ = os.Chdir(orig) }()
 
 			var errOut bytes.Buffer
 			_, code := nativeRun(nativeRunConfig{
@@ -1635,7 +1609,7 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 			}
 			got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 			if !sameDir(got, jobDir) {
-				t.Errorf("from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, jobDir)
+				t.Errorf("the %s child's cwd is %q, want the job directory %q", tc.name, got, jobDir)
 			}
 		})
 	}
@@ -1690,7 +1664,7 @@ func resolvedPath(t *testing.T, path string) string {
 // directory with the slot and root spelled relatively, and the test asserts the wall argv
 // carries the resolved absolute slot.
 func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Parallel()
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 	foreign := t.TempDir()
@@ -1701,19 +1675,15 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	}
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	orig, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
-	relRoot, err := filepath.Rel(foreign, root)
+	relRoot, err := filepath.Rel(cwd, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relSlot, err := filepath.Rel(foreign, slot)
+	relSlot, err := filepath.Rel(cwd, slot)
 	if err != nil {
 		t.Fatal(err)
 	}

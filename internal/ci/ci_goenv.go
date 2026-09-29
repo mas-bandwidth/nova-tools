@@ -107,6 +107,10 @@ func (r GoEnvResult) ExitCode() int {
 // caller, never from a walk of the repository; testdata directories and
 // internal/goenv itself are skipped.
 func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
+	return CheckGoEnvWith(defaultSourceSeams(), root, allowlistPath)
+}
+
+func CheckGoEnvWith(s SourceSeams, root, allowlistPath string) (GoEnvResult, error) {
 	var res GoEnvResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -114,9 +118,9 @@ func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkCIGoFiles(root, func(rel string, raw []byte) error {
+	err = walkCIGoFilesWith(s, root, func(rel string, raw []byte) error {
 		res.Files++
-		findings, ok := scanGoEnvFile(rel, raw)
+		findings, ok := scanGoEnvFileWith(s, rel, raw)
 		if ok {
 			res.Findings = append(res.Findings, findings...)
 		}
@@ -174,6 +178,10 @@ func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 // tests included. testdata, .git and vendor directories are skipped, and so is
 // internal/goenv, which is the rule's own implementation.
 func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
+	return walkCIGoFilesWith(defaultSourceSeams(), root, fn)
+}
+
+func walkCIGoFilesWith(s SourceSeams, root string, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkGoEnvDirs {
 		base := filepath.Join(root, dir)
 		if _, statErr := os.Stat(base); statErr != nil {
@@ -182,7 +190,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := s.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -204,7 +212,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 			if rel == goEnvPkgDir || strings.HasPrefix(rel, goEnvPkgDir+"/") {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := s.ReadFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -222,7 +230,11 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 // read-but-clean rather than as an error: the checker refuses environments,
 // never syntax, and the compiler has the better message for a broken file.
 func scanGoEnvFile(rel string, raw []byte) ([]GoEnvFinding, bool) {
-	fset, file, err := parseSource(rel, raw, 0)
+	return scanGoEnvFileWith(defaultSourceSeams(), rel, raw)
+}
+
+func scanGoEnvFileWith(s SourceSeams, rel string, raw []byte) ([]GoEnvFinding, bool) {
+	fset, file, err := s.ParseFile(rel, raw, 0)
 	if err != nil {
 		return nil, false
 	}

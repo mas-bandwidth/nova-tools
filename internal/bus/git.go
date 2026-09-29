@@ -242,12 +242,28 @@ var gitEnv = []string{
 	"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
 }
 
+type gitSeams struct {
+	gitBin  string
+	timeout time.Duration
+}
+
 func git(dir string, args ...string) (string, error) {
+	return gitWith(gitSeams{}, dir, args...)
+}
+
+func gitWith(s gitSeams, dir string, args ...string) (string, error) {
 	full := append([]string{"-C", dir}, args...)
 	budget := gitTimeout()
+	if s.timeout > 0 {
+		budget = s.timeout
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
+	bin := "git"
+	if s.gitBin != "" {
+		bin = s.gitBin
+	}
+	cmd := exec.CommandContext(ctx, bin, full...)
 	// A push that needs a credential must FAIL rather than block a tool a person is
 	// waiting on, and a pager must never open under a tool whose output is a grammar.
 	cmd.Env = append(cmd.Environ(), gitEnv...)

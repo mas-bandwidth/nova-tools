@@ -895,6 +895,8 @@ func resolvedPath(t *testing.T, path string) string {
 // the test asserts each is the resolved absolute root, never the relative spelling it was
 // handed.
 func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -911,18 +913,12 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		publishCard("{job}"),
 	)
-	// Run from a foreign working directory so a relative root is meaningful: relRoot is the
-	// same directory as root, spelled without its leading path.
-	foreign := t.TempDir()
-	orig, err := os.Getwd()
+	// Pass a relative root spelled without its leading absolute path.
+	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
-	relRoot, err := filepath.Rel(foreign, root)
+	relRoot, err := filepath.Rel(cwd, root)
 	if err != nil {
 		t.Fatal(err)
 	}

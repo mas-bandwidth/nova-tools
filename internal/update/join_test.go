@@ -114,6 +114,16 @@ func removeJoinBinaries() {
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	c.Env = append(os.Environ(),
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+		"GIT_ALLOW_PROTOCOL=file",
+		"GIT_AUTHOR_NAME=Ada",
+		"GIT_AUTHOR_EMAIL=ada@example.com",
+		"GIT_COMMITTER_NAME=Ada",
+		"GIT_COMMITTER_EMAIL=ada@example.com",
+	)
 	out, err := c.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -123,28 +133,37 @@ func git(t *testing.T, dir string, args ...string) string {
 
 type busFixture struct {
 	checkout, bare, lane, as, to string
+	gitEnv                       []string
 }
 
 // hermeticGit keeps a person's real Git configuration, credentials and hooks out
 // of a test that runs Git for real.
-func hermeticGit(t *testing.T) {
+func hermeticGit(t *testing.T) {}
+
+func hermeticGitEnv(t *testing.T) []string {
 	t.Helper()
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(cfg, []byte("[user]\n\tname = Ada\n\temail = ada@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	t.Setenv("GIT_TERMINAL_PROMPT", "0")
-	t.Setenv("GIT_ASKPASS", "")
-	t.Setenv("GIT_ALLOW_PROTOCOL", "file")
+	return []string{
+		"GIT_CONFIG_GLOBAL=" + cfg,
+		"GIT_CONFIG_SYSTEM=" + os.DevNull,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+		"GIT_ALLOW_PROTOCOL=file",
+		"GIT_AUTHOR_NAME=Ada",
+		"GIT_AUTHOR_EMAIL=ada@example.com",
+		"GIT_COMMITTER_NAME=Ada",
+		"GIT_COMMITTER_EMAIL=ada@example.com",
+	}
 }
 
 // realBus builds a bare remote and a checkout of it holding a roster and one
 // existing note from another participant, which is the shape a live bus has.
 func realBus(t *testing.T) busFixture {
 	t.Helper()
-	hermeticGit(t)
+	gitEnv := hermeticGitEnv(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "bus.git")
 	git(t, root, "init", "--bare", "--quiet", "--initial-branch=main", bare)
@@ -170,7 +189,7 @@ func realBus(t *testing.T) busFixture {
 	git(t, checkout, "add", "-A")
 	git(t, checkout, "commit", "-q", "-m", "the bus")
 	git(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
-	return busFixture{checkout: checkout, bare: bare, lane: "from-ada", as: "Ada", to: "Bo"}
+	return busFixture{checkout: checkout, bare: bare, lane: "from-ada", as: "Ada", to: "Bo", gitEnv: gitEnv}
 }
 
 // published reads what actually reached the REMOTE: the notes in the reporter's
@@ -231,6 +250,7 @@ type reporter struct {
 	bin      string
 	manifest string
 	snapshot string
+	env      []string
 }
 
 func newReporter(t *testing.T, version string) reporter {
@@ -242,7 +262,6 @@ func newReporter(t *testing.T, version string) reporter {
 	if err := os.WriteFile(m, []byte(Header+"\n"+row("x", "tool", printer(t, version), "npm:unused", "none")+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json")}
 }
 func (r reporter) args() []string {
@@ -255,8 +274,13 @@ func (r reporter) args() []string {
 // is how the real nova-bus -- or a wrapper standing in front of it -- is found.
 func (r reporter) send(t *testing.T, pathDir string) (int, string, string) {
 	t.Helper()
-	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return run(t, Environment{}, r.args()...)
+	extra := append([]string{"NOVA_UPDATE_HELPER=1"}, r.bus.gitEnv...)
+	extra = append(extra, r.env...)
+	env := Environment{
+		Path: pathDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		Env:  extra,
+	}
+	return run(t, env, r.args()...)
 }
 func (r reporter) pendingID(t *testing.T) string {
 	t.Helper()
@@ -483,7 +507,7 @@ func headOf(checkout string) string {
 
 // wrapperOnPath copies this test binary to <dir>/nova-bus and points it at the
 // real one, so the caller's own exec.LookPath finds the wrapper.
-func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record string) {
+func (r *reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record string) {
 	t.Helper()
 	dir = t.TempDir()
 	self, err := os.Executable()
@@ -494,11 +518,13 @@ func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record stri
 		t.Fatal(err)
 	}
 	record = filepath.Join(dir, "record")
-	t.Setenv("NOVA_UPDATE_JOIN_REAL", filepath.Join(r.bin, exeName("nova-bus")))
-	t.Setenv("NOVA_UPDATE_JOIN_KILL", boundary)
-	t.Setenv("NOVA_UPDATE_JOIN_CHECKOUT", r.bus.checkout)
-	t.Setenv("NOVA_UPDATE_JOIN_LANE", r.bus.lane)
-	t.Setenv("NOVA_UPDATE_JOIN_RECORD", record)
+	r.env = []string{
+		"NOVA_UPDATE_JOIN_REAL=" + filepath.Join(r.bin, exeName("nova-bus")),
+		"NOVA_UPDATE_JOIN_KILL=" + boundary,
+		"NOVA_UPDATE_JOIN_CHECKOUT=" + r.bus.checkout,
+		"NOVA_UPDATE_JOIN_LANE=" + r.bus.lane,
+		"NOVA_UPDATE_JOIN_RECORD=" + record,
+	}
 	return dir, record
 }
 
@@ -506,8 +532,11 @@ func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record stri
 // real binary with nothing in front of it.
 func clearWrapper(t *testing.T) {
 	t.Helper()
-	t.Setenv("NOVA_UPDATE_JOIN_KILL", "")
-	t.Setenv("NOVA_UPDATE_JOIN_REAL", "")
+}
+
+func (r *reporter) clearWrapper(t *testing.T) {
+	t.Helper()
+	r.env = nil
 }
 
 // stagingAttempts bounds how many times a boundary is staged before the case
@@ -833,8 +862,13 @@ func (r reporter) indexShape(t *testing.T) string {
 // group that will not go empty after the kill.
 func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached func() bool) bool {
 	t.Helper()
-	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	c := exec.Command(filepath.Join(r.bin, exeName("nova-update")), r.args()...)
+	c.Env = append(os.Environ(),
+		"PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"NOVA_UPDATE_HELPER=1",
+	)
+	c.Env = append(c.Env, r.bus.gitEnv...)
+	c.Env = append(c.Env, r.env...)
 	c.Stdout, c.Stderr = io.Discard, io.Discard
 	setGroup(c)
 	if err := c.Start(); err != nil {

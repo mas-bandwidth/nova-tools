@@ -78,6 +78,7 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
 func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+	t.Parallel()
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
 	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
 	// mocked-clock unit test or a functional program (nova-tools #4221).
@@ -89,10 +90,11 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	dir := t.TempDir()
 	snapA := filepath.Join(dir, "a.json")
 	snapB := filepath.Join(dir, "b.json")
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	runReport := func(m, snap string) {
 		t.Helper()
-		if out, err := exec.Command(bin, "report", "--file", m, "--snapshot", snap).CombinedOutput(); err != nil {
+		c := exec.Command(bin, "report", "--file", m, "--snapshot", snap)
+		c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
+		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
 	}
@@ -107,6 +109,7 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	for attempt := 0; attempt < 12 && !surviving; attempt++ {
 		p := manifest(t, row("x", "tool", printer(t, fmt.Sprintf("v3.%d.0", attempt)), "npm:unused", "none"))
 		c := exec.Command(bin, "report", "--file", p, "--snapshot", snapA)
+		c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
 		setGroup(c)
 		if err := c.Start(); err != nil {
 			t.Fatal(err)
