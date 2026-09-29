@@ -180,11 +180,19 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	go func() { copyWG.Wait(); close(done) }()
 	held := false
 	if drain := drainAllowance(ctx); drain > 0 {
-		t := time.NewTimer(drain)
+		var timerChan <-chan time.Time
+		var stopTimer func() bool
+		if seam, ok := ctx.Value(drainTimerKey{}).(func(time.Duration) (<-chan time.Time, func() bool)); ok && seam != nil {
+			timerChan, stopTimer = seam(drain)
+		} else {
+			t := time.NewTimer(drain)
+			timerChan = t.C
+			stopTimer = t.Stop
+		}
 		select {
 		case <-done:
-			t.Stop()
-		case <-t.C:
+			stopTimer()
+		case <-timerChan:
 			held = true
 			stdoutRead.Close()
 			stderrRead.Close()
@@ -236,6 +244,13 @@ func drainAllowance(ctx context.Context) time.Duration {
 		drain = drainFloor
 	}
 	return drain
+}
+
+type drainTimerKey struct{}
+
+// WithDrainTimer attaches a custom drain timer seam to the context.
+func WithDrainTimer(ctx context.Context, fn func(time.Duration) (<-chan time.Time, func() bool)) context.Context {
+	return context.WithValue(ctx, drainTimerKey{}, fn)
 }
 
 // clip bounds a diagnostic clause. A reason a person cannot read is not a

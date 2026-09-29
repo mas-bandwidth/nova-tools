@@ -444,14 +444,34 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 		entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
 	}
 
+	var workersStarted atomic.Int32
+	fifthAttempted := make(chan struct{})
+	var fifthOnce sync.Once
+
+	env := Environment{
+		Client: client,
+		WorkerStart: func(id int) {
+			workersStarted.Add(1)
+		},
+		JobAttempt: func(i int) {
+			if i == 4 {
+				fifthOnce.Do(func() { close(fifthAttempted) })
+			}
+		},
+	}
+
 	done := make(chan struct{})
 	go func() {
-		readEntries(context.Background(), entries, options{timeout: 5 * time.Second}, Environment{Client: client}, false)
+		readEntries(context.Background(), entries, options{timeout: 5 * time.Second}, env, false)
 		close(done)
 	}()
 
 	<-ready4
+	<-fifthAttempted
 
+	if n := workersStarted.Load(); n != 4 {
+		t.Fatalf("expected 4 workers launched, got %d", n)
+	}
 	if cur := active.Load(); cur != 4 {
 		t.Fatalf("expected active == 4 at barrier, got %d", cur)
 	}

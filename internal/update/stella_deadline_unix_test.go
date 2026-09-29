@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -43,8 +44,19 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 		}
 	}()
 
+	var drainMu sync.Mutex
+	var observedDrain time.Duration
+	drainSeam := func(d time.Duration) (<-chan time.Time, func() bool) {
+		drainMu.Lock()
+		observedDrain = d
+		drainMu.Unlock()
+		ch := make(chan time.Time, 1)
+		ch <- time.Now()
+		return ch, func() bool { return true }
+	}
+
 	started := time.Now()
-	c, out, errs := run(t, Environment{Context: ctx}, "check", "--file", p, "--budget", "30s", "--timeout", "2s")
+	c, out, errs := run(t, Environment{Context: ctx, DrainTimer: drainSeam}, "check", "--file", p, "--budget", "30s", "--timeout", "2s")
 
 	select {
 	case <-readyCh:
@@ -52,6 +64,13 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 		// pipe-holder was spawned and holding the pipe before timeout/cancellation.
 	default:
 		t.Fatalf("escaped pipe-holder was not verified ready before exit; c=%d out=%s errs=%s", c, out, errs)
+	}
+
+	drainMu.Lock()
+	drain := observedDrain
+	drainMu.Unlock()
+	if drain != 50*time.Millisecond {
+		t.Fatalf("drain allowance = %v, want 50ms (drainFloor)", drain)
 	}
 
 	if c != 1 {
