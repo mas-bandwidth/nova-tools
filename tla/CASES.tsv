@@ -1,5 +1,13 @@
 config	module	expected	property	deadlock	group	gate	debt
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
+MCCardManager.cfg	MCCardManager.tla	pass	-	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenDigestInPlace.cfg	MCCardManager.tla	invariant	DigestPinned	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenOneAtATime.cfg	MCCardManager.tla	invariant	OnePreState	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenReadyEarly.cfg	MCCardManager.tla	invariant	ReadyImpliesDepsMet	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenResurrect.cfg	MCCardManager.tla	action	TerminalIsQuiet	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenReturn.cfg	MCCardManager.tla	action	NoReadyWaitingOscillation	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenSecondPlace.cfg	MCCardManager.tla	invariant	OnePlace	ignore-terminal	cardmanager	required	-
+MCCardManagerBrokenStaleEvidence.cfg	MCCardManager.tla	invariant	EvidenceBoundToHead	ignore-terminal	cardmanager	required	-
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
 MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-fixed-point	required	-
