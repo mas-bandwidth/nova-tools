@@ -379,3 +379,37 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 		t.Fatalf("ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
 	}
 }
+
+// G3: a primary in review whose reads are exhausted (no read outstanding, not
+// two different readers' ok at its head, no open judgment) is a judgment,
+// written by the step that causes the condition: a read, or an ack.
+func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
+		c := w.s.Fleet.Card(id)
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
+	}
+	w.must(Ask(w.s, AskReq{}))
+	// s1-1: both broken; ask another closes both; the third says ok.
+	r1 := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	w.must(Read(w.s, ReadReq{As: r1[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r1[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r1[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r1[1].ID}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
+	third := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[2]
+	w.must(Read(w.s, ReadReq{As: third.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{third.ID}}}))
+	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReadsExhausted || !contains(o[0].Note.Decisions, "ask another reader") {
+		t.Fatalf("reads exhausted by a read: %v", o)
+	}
+	// s1-2: one ok, one broken; ack closes the broken judgment: exhausted.
+	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[1].ID}}}))
+	broken := w.openOn("s1-2")[0].Note.ID
+	w.must(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
+	if o := w.openOn("s1-2"); len(o) != 1 || o[0].Note.Type != NReadsExhausted {
+		t.Fatalf("reads exhausted by an ack: %v", o)
+	}
+}

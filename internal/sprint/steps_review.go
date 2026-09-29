@@ -213,10 +213,42 @@ func Read(s *Snapshot, r ReadReq) Plan {
 					u.Notes = append(u.Notes, n)
 				}
 			}
+			if col == OK && exhausted(s, pr, map[string]string{c.ID: OK}) && len(closesFor(s.Open, nil, pr.ID)) == 0 {
+				n := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
+				n.Who, n.Attempt, n.What = r.As, attempt, "no read is outstanding and two different readers have not said ok at "+orDash(pr.F("head"))
+				u.Notes = append(u.Notes, n)
+			}
 		}
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// exhausted says a primary in review, asked at its attempt, has no read card
+// outstanding and not ok reads from two different readers at its head, with
+// the read cards as this step leaves them (moved: card id -> its column after).
+func exhausted(s *Snapshot, pr *Card, moved map[string]string) bool {
+	if !pr.Placed() || pr.Col != Review {
+		return false
+	}
+	reads := readsAt(s, pr, pr.Int("attempt"))
+	if len(reads) == 0 {
+		return false
+	}
+	oks := map[string]bool{}
+	for _, rc := range reads {
+		col := rc.Col
+		if m, ok := moved[rc.ID]; ok {
+			col = m
+		}
+		if col == Asked || col == Reading {
+			return false
+		}
+		if col == OK && rc.F("head") == pr.F("head") {
+			oks[rc.F("reader")] = true
+		}
+	}
+	return len(oks) < 2
 }
 
 // AcceptReq is the coordinator accepting primaries in review.

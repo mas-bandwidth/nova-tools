@@ -12,7 +12,9 @@ type AckReq struct {
 
 // Ack closes the named judgments, every subject of each, and records the
 // reason as their answer. It is refused for the judgment of a stream that is
-// stopped: that judgment stays open until the stream resumes.
+// stopped: that judgment stays open until the stream resumes. A primary whose
+// last open judgment it closes, and whose reads are exhausted, is a judgment
+// of its own.
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
 	for _, id := range r.Notes {
@@ -33,6 +35,23 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 		u := Unit{Key: id, Stream: n.Stream, Closes: entries, Moved: fmt.Sprintf("%s (%s) acknowledged: %s", id, n.Type, r.Reason)}
 		u.Notes = append(u.Notes, decided(entries[0], "ack: "+r.Reason, r.Who, s.Now))
+		for _, o := range entries {
+			pr := s.Work.Placed(o.Subject())
+			if pr == nil || !exhausted(s, pr, nil) {
+				continue
+			}
+			left := 0
+			for _, x := range closesFor(s.Open, nil, pr.ID) {
+				if x.Note.ID != id {
+					left++
+				}
+			}
+			if left == 0 {
+				j := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
+				j.Who, j.Attempt = r.Who, pr.Int("attempt")
+				u.Notes = append(u.Notes, j)
+			}
+		}
 		p.Units = append(p.Units, u)
 	}
 	return p

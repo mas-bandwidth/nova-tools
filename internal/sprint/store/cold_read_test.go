@@ -753,8 +753,8 @@ func TestReadsExhaustedIsAJudgment(t *testing.T) {
 			p.read(rc.F("reader"), rc.ID, "ok")
 		}
 	}
-	t.Logf("state %s, open on s1-1: %d", p.state("s1-1"), len(p.openOn("s1-1")))
-	if len(p.openOn("s1-1")) == 0 {
-		t.Logf("MODEL-DIFF(readsexhausted): s1-1 sits in review with one ok, nothing outstanding and no open judgment")
+	o := p.openOn("s1-1")
+	if len(o) != 1 || o[0].Note.Type != sprint.NReadsExhausted {
+		t.Errorf("s1-1 sits in review with one ok, nothing outstanding, and open judgments %v", o)
 	}
 }

@@ -26,31 +26,33 @@ const (
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 
-	NWorkFailed   = "work came back failed"
-	NReadBroken   = "a reader found it broken"
-	NConflict     = "stream stopped: conflict on a card"
-	NRed          = "stream stopped: stream branch red"
-	NCross        = "stream stopped: needs a card of another stream first"
-	NRejected     = "stream stopped: the merge queue rejected"
-	NBlocked      = "a primary is blocked on something dropped"
-	NCIRed        = "ci red"
-	NOverdue      = "a judgment notification has waited past its deadline"
-	NStreamStale  = "a stream has not changed state or count past its deadline"
-	NRepeatSuffix = "; a second time for the same cause"
+	NWorkFailed     = "work came back failed"
+	NReadBroken     = "a reader found it broken"
+	NConflict       = "stream stopped: conflict on a card"
+	NRed            = "stream stopped: stream branch red"
+	NCross          = "stream stopped: needs a card of another stream first"
+	NRejected       = "stream stopped: the merge queue rejected"
+	NBlocked        = "a primary is blocked on something dropped"
+	NCIRed          = "ci red"
+	NReadsExhausted = "reads exhausted"
+	NOverdue        = "a judgment notification has waited past its deadline"
+	NStreamStale    = "a stream has not changed state or count past its deadline"
+	NRepeatSuffix   = "; a second time for the same cause"
 )
 
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
-	NWorkFailed:  {"rework with a fix", "drop"},
-	NReadBroken:  {"rework with the finding", "ask another reader", "drop"},
-	NConflict:    {"resolve and resume", "rework", "drop"},
-	NRed:         {"take the suspect off and resume", "rework the suspect"},
-	NCross:       {"rank that card first", "wait", "look at both"},
-	NRejected:    {"resume", "return", "drop"},
-	NBlocked:     {"replace", "drop"},
-	NCIRed:       {"rework with a fix", "return", "drop", "look"},
-	NOverdue:     {"act"},
-	NStreamStale: {"look"},
+	NWorkFailed:     {"rework with a fix", "drop"},
+	NReadBroken:     {"rework with the finding", "ask another reader", "drop"},
+	NConflict:       {"resolve and resume", "rework", "drop"},
+	NRed:            {"take the suspect off and resume", "rework the suspect"},
+	NCross:          {"rank that card first", "wait", "look at both"},
+	NRejected:       {"resume", "return", "drop"},
+	NBlocked:        {"replace", "drop"},
+	NCIRed:          {"rework with a fix", "return", "drop", "look"},
+	NReadsExhausted: {"ask another reader", "rework", "drop"},
+	NOverdue:        {"act"},
+	NStreamStale:    {"look"},
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second

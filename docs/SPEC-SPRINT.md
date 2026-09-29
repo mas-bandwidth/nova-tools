@@ -124,6 +124,10 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A primary is acceptable when two different readers have an ok read card at
   its current attempt and head. One reader's ok alone is never enough, whoever
   the reader.
+- A primary in review whose reads are exhausted (asked, with no read card
+  asked or reading, without two different readers' ok at its head, and with no
+  open judgment) is a judgment, "reads exhausted", written by the step that
+  causes the condition (a read, or an ack of its last judgment).
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
   the primary's read cards are retired in the same step and its readers are
@@ -191,6 +195,7 @@ cards returned to ready because no member is up; ci green on a primary.
 | ci red on a primary | rework with a fix, return, drop, look |
 | a primary came back a second time for the same cause | stop and look |
 | a primary is blocked on something dropped | replace, drop |
+| reads exhausted | ask another reader, rework, drop |
 | a judgment notification has waited past its due time | act |
 | a stream has made no progress past its deadline | look |
 
