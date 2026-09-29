@@ -96,7 +96,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and has %d free; run: nova-sprint reader add <name>", want, len(chosenReaders)))
 			continue
 		}
-		u := Unit{Key: c.ID}
+		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, rd := range chosenReaders {
 			q[rd]++
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
@@ -106,12 +106,29 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
-			u.Closes = closesFor(s.Open, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken}, c.ID)
 		}
 		p.Units = append(p.Units, u)
 	}
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
+}
+
+// NamedExtras is the named cards a step must read as records when they are not
+// on the table: a report against a retired card is refused naming the retirement.
+func NamedExtras(table string, ids []string) func(*Snapshot) map[string][]string {
+	return func(s *Snapshot) map[string][]string {
+		var out []string
+		for _, id := range ids {
+			if s.T(table).Placed(id) == nil {
+				out = append(out, id)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return map[string][]string{table: out}
+	}
 }
 
 // ReadReq is a reader moving its own read cards.
@@ -143,6 +160,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
+		if !c.Placed() && c.F("retired") != "" {
+			return "retired at " + c.F("retired") + " by " + orDash(c.F("retired_by")) + ": the primary was sent back; its next attempt is read on a new card"
+		}
 		if !c.Placed() || c.Row != r.As {
 			return "not " + r.As + "'s to read (it is " + placeWord(c) + ")"
 		}
@@ -154,7 +174,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Begin {
-			p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, nil))},
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, nil))},
 				Moved: c.ID + " asked -> reading"})
 			continue
 		}
@@ -166,7 +186,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if r.Finding != "" {
 			set["finding"] = r.Finding
 		}
-		u := Unit{Key: c.ID, Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set))},
+		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}
 		if pr != nil {
 			attempt := c.Int("attempt")
@@ -220,7 +240,9 @@ func okReaders(s *Snapshot, pr *Card) []*Card {
 
 // Accept moves review -> merging and places the primary in merge queued with
 // its score. It is refused without ok reads from two different readers at the
-// primary's head, whoever the readers.
+// primary's head, whoever the readers. Named ids are all or nothing under one
+// pre-state; a selection (a stream, the primaries with two ok reads, an inbox
+// group) moves the eligible and lists the rest with the reason.
 func Accept(s *Snapshot, r AcceptReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Review), rowOf, func(c *Card) string {
@@ -242,9 +264,15 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
+	if len(r.IDs) > 0 && len(p.Refused) > 0 {
+		for _, c := range chosen {
+			p.refuse(c.ID, "eligible, not moved: the named set is all or nothing and another card of it was refused")
+		}
+		return p
+	}
 	for _, c := range chosen {
 		oks := okReaders(s, c)
-		u := Unit{Key: c.ID}
+		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, o := range oks {
 			u.Changes = append(u.Changes, change(Readers, guardEntry(o)))
 		}
@@ -259,11 +287,10 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		}
 		readers := oks[0].F("reader") + "," + oks[1].F("reader")
 		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, map[string]string{"readers": readers, "accepted": stamp(s.Now)})))
-		u.Closes = closesFor(s.Open, c.ID)
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
 		p.Units = append(p.Units, u)
 	}
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
 }
 
@@ -275,9 +302,15 @@ type ReworkReq struct {
 	Who     string
 }
 
-// Rework moves review -> ready with the fix, retires the primary's read cards
-// and counts the reads; the next work card attempt is cut when it is started
-// again, and when the fixed work returns it is asked of the same readers.
+// ReworkResolves is the judgments a rework discharges on its primary.
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed}
+
+// Rework delegates at once: the next work card attempt, carrying the fix, is
+// cut into the up member with the shortest ready queue and the primary moves
+// review -> working in the same step; its read cards are retired and the
+// readers' identities kept, so the fixed work is asked of them again when it
+// returns. With no member up, the primary moves review -> ready with the fix
+// and start cuts its card later.
 func Rework(s *Snapshot, r ReworkReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Review), rowOf, func(c *Card) string {
@@ -286,11 +319,13 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		return inState(c, Review)
 	}, s.primaryCard)
+	up := s.UpMembers()
+	q := readyQueues(s, up)
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		var asked []string
 		broken := 0
-		u := Unit{Key: c.ID}
+		var retire []Change
 		for _, rc := range s.Readers.Of(c.ID) {
 			if rc.Int("attempt") == attempt && !contains(asked, rc.F("reader")) {
 				asked = append(asked, rc.F("reader"))
@@ -298,7 +333,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			if rc.Col == Broken {
 				broken++
 			}
-			u.Changes = append(u.Changes, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now)})))
+			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
 		askedField := c.F("asked")
 		if len(asked) > 0 {
@@ -308,12 +343,25 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if askedField != "" {
 			set["asked"] = askedField
 		}
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Ready, set, "result", "readers")))
-		u.Closes = closesFor(s.Open, c.ID)
-		u.Moved = fmt.Sprintf("%s review -> ready (fix; %d read cards retired)", c.ID, len(u.Changes)-1)
+		var u Unit
+		if len(up) > 0 {
+			var why string
+			u, why = deal(s, c, r.Fix, up, q, set, "readers")
+			if why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
+			u.Changes = append(retire, u.Changes...)
+			u.Moved = strings.Replace(u.Moved, " review -> working", " review -> working (rework)", 1)
+		} else {
+			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, "result", "readers"))),
+				Moved: c.ID + " review -> ready (rework; no fleet member is up: start delegates it)"}
+		}
+		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
+		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
 		p.Units = append(p.Units, u)
 	}
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
 }
 
@@ -344,12 +392,12 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 			change(Merge, moveEntry(m, c.Row, Returned, nil)),
 			change(Work, moveEntry(c, c.Row, Review, set)),
-		}, Closes: closesFor(s.Open, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)})
+		}, Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)})
 	}
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
 }
 
@@ -392,7 +440,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		dropping[c.ID] = true
 	}
 	for _, c := range chosen {
-		u := Unit{Key: c.ID}
+		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, fc := range s.Fleet.Of(c.ID) {
 			if fc.Col == Ready || fc.Col == Working {
 				u.Changes = append(u.Changes, change(Fleet, removeEntry(fc, map[string]string{"dropped": stamp(s.Now)})))
@@ -416,11 +464,11 @@ func Drop(s *Snapshot, r DropReq) Plan {
 			n.What, n.Who = w.ID+" needs "+c.ID+", dropped", r.Who
 			u.Notes = append(u.Notes, n)
 		}
-		u.Closes = closesFor(s.Open, c.ID)
+		u.Closes = closesFor(s.Open, nil, c.ID)
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
 }
 
@@ -463,7 +511,7 @@ func Rank(s *Snapshot, r RankReq) Plan {
 			score++
 			continue
 		}
-		u := Unit{Key: c.ID}
+		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, fc := range s.Fleet.Of(c.ID) {
 			u.Changes = append(u.Changes, change(Fleet, scoreEntry(fc, score)))
 		}
@@ -474,45 +522,65 @@ func Rank(s *Snapshot, r RankReq) Plan {
 			u.Changes = append(u.Changes, change(Merge, scoreEntry(m, score)))
 		}
 		u.Changes = append(u.Changes, change(Work, scoreEntry(c, score)))
-		u.Closes = closesFor(s.Open, c.ID)
 		u.Moved = fmt.Sprintf("%s score %s -> %s (%d copies)", c.ID, fmtScore(c.Score), fmtScore(score), len(u.Changes)-1)
 		p.Units = append(p.Units, u)
 		score++
 	}
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
 }
 
-// CIReq records a CI result for primaries, in any state.
+// CIReq records a CI observation for primaries, in any state.
 type CIReq struct {
 	Sel
-	Red  bool
-	Note string
-	Who  string
+	Red    bool
+	Head   string // the head the run tested; "" is the primary's current head
+	Run    string // the run's identity: a retried report of one run is recorded once
+	Source string
+	Note   string
+	Who    string
 }
 
-// RecordCI records the result on the primary; red is a judgment, green happened.
-// A CI result recorded for a primary is always a notification.
+// RecordCI records the observation on the primary: status, head, run and
+// source. It always notifies (red is a judgment, green happened), and moves
+// no card. A result for a head that is not the primary's current one is
+// labelled as such; a report of a run already recorded with the same status
+// is refused as a repeat and writes nothing. Green on the current head
+// discharges a red judgment on the primary.
 func RecordCI(s *Snapshot, r CIReq) Plan {
 	var p Plan
 	var all []*Card
 	for _, st := range States {
 		all = append(all, s.Work.Column(st)...)
 	}
-	chosen := pick(&p, r.Sel, all, rowOf, func(c *Card) string {
-		if !c.Placed() {
-			return "not on the table"
-		}
-		return ""
-	}, s.primaryCard)
 	result := "green"
 	if r.Red {
 		result = "red"
 	}
+	chosen := pick(&p, r.Sel, all, rowOf, func(c *Card) string {
+		if !c.Placed() {
+			return "not on the table"
+		}
+		if r.Run != "" && c.F("ci_run") == r.Run && c.F("ci") == result {
+			return "run " + r.Run + " is recorded already (" + result + ")"
+		}
+		return ""
+	}, s.primaryCard)
 	for _, c := range chosen {
-		set := map[string]string{"ci": result, "ci_at": stamp(s.Now)}
-		if r.Note != "" {
-			set["ci_note"] = r.Note
+		head := r.Head
+		if head == "" {
+			head = c.F("head")
+		}
+		set := map[string]string{"ci": result, "ci_at": stamp(s.Now), "ci_head": head}
+		for k, v := range map[string]string{"ci_run": r.Run, "ci_source": r.Source, "ci_note": r.Note} {
+			if v != "" {
+				set[k] = v
+			}
+		}
+		what := r.Note
+		old := head != c.F("head")
+		if old {
+			what = strings.TrimSpace("for an old head " + head + " (current " + orDash(c.F("head")) + "); " + r.Note)
 		}
 		var n Note
 		if r.Red {
@@ -520,9 +588,16 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		} else {
 			n = happened(NCIGreen, c.Row, s.Now, c.ID)
 		}
-		n.What, n.Who, n.Attempt = r.Note, r.Who, c.Int("attempt")
-		p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{change(Work, setEntry(c, set))}, Notes: []Note{n},
-			Moved: fmt.Sprintf("%s ci %s (%s)", c.ID, result, c.Col)})
+		n.What, n.Who, n.Attempt = what, r.Who, c.Int("attempt")
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set))}, Notes: []Note{n},
+			Moved: fmt.Sprintf("%s ci %s (%s)", c.ID, result, c.Col)}
+		if old {
+			u.Moved += " for an old head"
+		}
+		if !r.Red && !old {
+			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)
+		}
+		p.Units = append(p.Units, u)
 	}
 	return p
 }

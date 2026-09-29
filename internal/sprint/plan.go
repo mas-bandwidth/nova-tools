@@ -24,6 +24,7 @@ type Bump struct {
 // the notifications the move causes, and the open judgments it answers.
 type Unit struct {
 	Key     string // the primary or card the unit is about
+	Stream  string // the stream whose progress it is
 	Changes []Change
 	Bumps   []Bump
 	Notes   []Note
@@ -143,33 +144,47 @@ func unsetPresent(c *Card, names []string) []string {
 
 func change(table string, e ntable.BatchMemberEntry) Change { return Change{Table: table, Entry: e} }
 
-// closesFor is every open judgment on the subject.
-func closesFor(open []Open, subjects ...string) []Open {
+// closesFor is the open judgments of the types (every type when none is
+// named) on the subject: the per-card, per-cause obligations a verb resolves
+// by acting on the card. A stream-level judgment is never closed here: it
+// stays open while its stream is stopped.
+func closesFor(open []Open, types []string, subject string) []Open {
 	var out []Open
 	for _, o := range open {
-		for _, s := range subjects {
-			if o.Subject() == s {
-				out = append(out, o)
-				break
-			}
+		if o.Subject() != subject || o.Note.StreamLevel {
+			continue
+		}
+		if len(types) == 0 || contains(types, o.Note.Type) {
+			out = append(out, o)
 		}
 	}
 	return out
 }
 
-// answering is the open judgments named by --answers (note ids), on every
-// subject. A stream-level judgment is left open: it closes when its stream
-// resumes.
-func answering(open []Open, ids []string) []Open {
-	var out []Open
-	for _, o := range open {
-		for _, id := range ids {
-			if o.Note.ID == id && !o.Note.StreamLevel {
-				out = append(out, o)
+// answered checks --answers: every named notification must be one the step
+// resolves some obligation of; one it does not is refused by its id. Naming a
+// notification closes nothing by itself.
+func answered(p *Plan, open []Open, ids []string) {
+	for _, id := range ids {
+		known, resolved := false, false
+		for _, o := range open {
+			known = known || o.Note.ID == id
+		}
+		for _, u := range p.Units {
+			for _, c := range u.Closes {
+				resolved = resolved || c.Note.ID == id
 			}
 		}
+		for _, c := range p.Closes {
+			resolved = resolved || c.Note.ID == id
+		}
+		switch {
+		case !known:
+			p.refuse(id, "no open judgment "+id+"; run: nova-sprint inbox")
+		case !resolved:
+			p.refuse(id, "this step resolves no obligation of "+id)
+		}
 	}
-	return out
 }
 
 // hasOpen says an open judgment of the type is open on the subject.

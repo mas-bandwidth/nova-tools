@@ -116,7 +116,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if needs != "" {
 			fields["needs"] = needs
 		}
-		u := Unit{Key: id, Changes: append(head, change(Work, createEntry(id, r.Stream, col, score, fields))),
+		u := Unit{Key: id, Stream: r.Stream, Changes: append(head, change(Work, createEntry(id, r.Stream, col, score, fields))),
 			Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", id, col, r.Stream, fmtScore(score))}
 		head = nil
 		p.Units = append(p.Units, u)
@@ -193,7 +193,7 @@ func Resolve(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
 			Moved: c.ID + " waiting -> ready"})
 	}
 	return p
@@ -218,29 +218,50 @@ func Start(s *Snapshot, r StartReq) Plan {
 		}
 		return p
 	}
+	q := readyQueues(s, up)
+	for _, c := range chosen {
+		u, why := deal(s, c, c.F("fix"), up, q, nil)
+		if why != "" {
+			p.refuse(c.ID, why)
+			continue
+		}
+		p.Units = append(p.Units, u)
+	}
+	return p
+}
+
+// readyQueues is the up members' ready queue lengths.
+func readyQueues(s *Snapshot, up []string) map[string]int {
 	q := map[string]int{}
 	for _, m := range up {
 		q[m] = s.Fleet.Count(m, Ready)
 	}
-	for _, c := range chosen {
-		attempt := c.Int("attempt") + 1
-		card := WorkCardID(c.ID, attempt)
-		if s.Fleet.Card(card) != nil {
-			p.refuse(c.ID, "work card "+card+" exists already")
-			continue
-		}
-		m := shortest(up, q)
-		q[m]++
-		fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt)}
-		if f := c.F("fix"); f != "" {
-			fields["fix"] = f
-		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{
-			change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
-			change(Work, moveEntry(c, c.Row, Working, map[string]string{"attempt": itoa(attempt), "work": card}, "result")),
-		}, Moved: fmt.Sprintf("%s ready -> working card=%s member=%s", c.ID, card, m)})
+	return q
+}
+
+// deal cuts the primary's next attempt's work card, carrying the fix and the
+// primary's score, into the ready queue of the up member with the shortest
+// queue, at generation 1, and moves the primary to working with set.
+func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set map[string]string, unset ...string) (Unit, string) {
+	attempt := c.Int("attempt") + 1
+	card := WorkCardID(c.ID, attempt)
+	if s.Fleet.Card(card) != nil {
+		return Unit{}, "work card " + card + " exists already"
 	}
-	return p
+	m := shortest(up, q)
+	q[m]++
+	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m}
+	if fix != "" {
+		fields["fix"] = fix
+	}
+	if set == nil {
+		set = map[string]string{}
+	}
+	set["attempt"], set["work"] = itoa(attempt), card
+	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
+		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
+		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
+	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s", c.ID, c.Col, card, m)}, ""
 }
 
 // shortest is the name with the smallest count, the first in order on a tie.
@@ -254,11 +275,22 @@ func shortest(names []string, q map[string]int) string {
 	return best
 }
 
-// TakeReq is a worker taking its work cards.
+// TakeReq is a worker taking its work cards. Gens names the generation the
+// worker holds for a named card; a card whose live generation differs has
+// been dealt again, and the take is refused as stale.
 type TakeReq struct {
 	Sel
-	As  string
-	Who string
+	As   string
+	Gens map[string]int
+	Who  string
+}
+
+// liveGen is the refusal of a named generation that is not the card's live one.
+func liveGen(c *Card, gens map[string]int) string {
+	if g, ok := gens[c.ID]; ok && g != c.Int("gen") {
+		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, c.Int("gen"), orDash(c.Row))
+	}
+	return ""
 }
 
 // Take moves the member's work cards fleet ready -> working.
@@ -281,14 +313,17 @@ func Take(s *Snapshot, r TakeReq) Plan {
 		return p
 	}
 	chosen := pick(&p, sel, s.Fleet.Cell(r.As, Ready), fieldStream, func(c *Card) string {
+		if why := liveGen(c, r.Gens); why != "" {
+			return why
+		}
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
 		}
 		return ""
 	}, s.Fleet.Card)
 	for _, c := range chosen {
-		p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, map[string]string{"taken": stamp(s.Now)}))},
-			Moved: c.ID + " ready -> working member=" + r.As})
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, map[string]string{"taken": stamp(s.Now)}))},
+			Moved: fmt.Sprintf("%s ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p
 }
@@ -297,6 +332,7 @@ func Take(s *Snapshot, r TakeReq) Plan {
 type FinishReq struct {
 	Sel
 	As     string
+	Gens   map[string]int // the generation held, per named card
 	Failed bool
 	Head   string
 	Report string
@@ -314,6 +350,9 @@ func Finish(s *Snapshot, r FinishReq) Plan {
 		all = s.Fleet.Column(Working)
 	}
 	chosen := pick(&p, r.Sel, all, fieldStream, func(c *Card) string {
+		if why := liveGen(c, r.Gens); why != "" {
+			return why
+		}
 		if !c.Placed() || c.Col != Working {
 			return "not working (it is " + placeWord(c) + ")"
 		}
@@ -347,7 +386,7 @@ func Finish(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 		}
-		u := Unit{Key: c.ID, Changes: []Change{change(Fleet, moveEntry(c, c.Row, Done, cardSet))},
+		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, Done, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		if s.MemberCtl(c.Row) != nil {
 			u.Bumps = append(u.Bumps, Bump{Fleet, CtlID(c.Row), counter, 1})
@@ -457,11 +496,13 @@ func FleetStep(s *Snapshot, r FleetReq) Plan {
 			if len(up) > 0 {
 				m := shortest(up, q)
 				q[m]++
-				p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nil, "taken"))},
-					Moved: fmt.Sprintf("%s %s:%s -> %s:ready", c.ID, c.Row, c.Col, m)})
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nextGen(c, m), "taken"))},
+					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d", c.ID, c.Row, c.Col, m, c.Int("gen")+1)})
 				continue
 			}
-			u := Unit{Key: c.ID, Changes: []Change{change(Fleet, removeEntry(c, map[string]string{"withdrawn": stamp(s.Now)}))},
+			set := nextGen(c, "")
+			set["withdrawn"] = stamp(s.Now)
+			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, removeEntry(c, set))},
 				Moved: c.ID + " withdrawn"}
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
 				u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
@@ -517,9 +558,19 @@ func level(s *Snapshot, p *Plan, up []string) {
 		c := q[len(q)-1]
 		queues[long] = q[:len(q)-1]
 		queues[short] = append(queues[short], c)
-		p.Units = append(p.Units, Unit{Key: c.ID, Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nil))},
-			Moved: fmt.Sprintf("%s %s:ready -> %s:ready", c.ID, long, short)})
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short)))},
+			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, short, c.Int("gen")+1)})
 	}
+}
+
+// nextGen is the fields of a work card dealt again: a new generation, bound
+// to the member it is dealt to ("" when it is withdrawn).
+func nextGen(c *Card, member string) map[string]string {
+	set := map[string]string{"gen": itoa(c.Int("gen") + 1)}
+	if member != "" {
+		set["member"] = member
+	}
+	return set
 }
 
 func contains(xs []string, x string) bool {

@@ -5,12 +5,19 @@ import (
 	"time"
 )
 
-// StreamClock is a stream's state and the last time it changed state or count.
+// StreamClock is a stream's state, since (the last change of its state) and
+// progress (the last change of its state or of any of its counts).
 type StreamClock struct {
-	Stream  string
-	State   string
-	Changed time.Time
-	Queued  int
+	Stream   string
+	State    string
+	Since    time.Time
+	Progress time.Time
+}
+
+// Stalled says a stream that has not landed has made no progress for longer
+// than stale. It is pull visibility: nothing here detects a dead process.
+func (c StreamClock) Stalled(now time.Time, stale time.Duration) bool {
+	return c.State != StreamLanded && stale > 0 && !c.Progress.IsZero() && now.Sub(c.Progress) > stale
 }
 
 // InboxReq is what the inbox is computed from, at read time: the open
@@ -38,6 +45,7 @@ type Group struct {
 	Marked    bool          `json:"marked,omitempty"`
 	Overdue   bool          `json:"overdue,omitempty"`
 	Oldest    time.Time     `json:"oldest"`
+	Due       time.Time     `json:"due"`
 	Waited    time.Duration `json:"waited_ns"`
 	Decisions []string      `json:"decisions,omitempty"`
 	What      string        `json:"what,omitempty"`
@@ -54,15 +62,19 @@ func Inbox(r InboxReq) []Group {
 	seen := map[string]bool{}
 	for _, o := range r.Open {
 		n := o.Note
-		overdue := r.Deadline > 0 && r.Now.Sub(n.At) > r.Deadline
+		due := n.Due(r.Deadline)
+		overdue := (r.Deadline > 0 || !n.Review.IsZero()) && r.Now.After(due)
 		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked || overdue)
 		i, ok := at[k]
 		if !ok {
 			i = len(judg)
 			at[k] = i
-			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Decisions: n.Decisions})
+			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due, Decisions: n.Decisions})
 		}
 		g := &judg[i]
+		if due.Before(g.Due) {
+			g.Due = due
+		}
 		g.Marked = g.Marked || n.Marked || overdue
 		g.Overdue = g.Overdue || overdue
 		if n.At.Before(g.Oldest) {
@@ -100,12 +112,12 @@ func Inbox(r InboxReq) []Group {
 	})
 	out := judg
 	for _, st := range r.Streams {
-		moving := st.State == StreamMerging || (st.State == StreamWaiting && st.Queued > 0)
-		if !moving || r.Stale <= 0 || r.Now.Sub(st.Changed) <= r.Stale {
+		if !st.Stalled(r.Now, r.Stale) {
 			continue
 		}
 		out = append(out, Group{Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
-			Oldest: st.Changed, Waited: r.Now.Sub(st.Changed), Decisions: Decisions[NStreamStale], What: "state " + st.State})
+			Oldest: st.Progress, Due: st.Progress.Add(r.Stale), Waited: r.Now.Sub(st.Progress), Decisions: Decisions[NStreamStale],
+			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)})
 	}
 	var rest []Group
 	at = map[string]int{}

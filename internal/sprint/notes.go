@@ -79,6 +79,18 @@ type Note struct {
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.
 	StreamLevel bool `json:"stream_level,omitempty"`
+	// Review is the next review time the coordinator set with wait; the
+	// judgment stays open and shown, and is due then.
+	Review time.Time `json:"review,omitempty"`
+}
+
+// Due is when the judgment is overdue: its review time when one is set, else
+// its time plus the deadline.
+func (n Note) Due(deadline time.Duration) time.Time {
+	if !n.Review.IsZero() {
+		return n.Review
+	}
+	return n.At.Add(deadline)
 }
 
 // Open is one open judgment on one of its subjects (a primary, or a whole

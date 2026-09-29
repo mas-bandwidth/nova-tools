@@ -6,6 +6,7 @@ package sprint
 type Sel struct {
 	IDs    []string
 	Stream string
+	Col    string // a column of the verb's table: only cards placed there
 	Limit  int
 	Only   []string
 }
@@ -47,6 +48,9 @@ func pick(p *Plan, sel Sel, all []*Card, streamOf func(*Card) string, eligible f
 	var out []*Card
 	for _, c := range all {
 		if sel.Stream != "" && streamOf(c) != sel.Stream {
+			continue
+		}
+		if sel.Col != "" && c.Col != sel.Col {
 			continue
 		}
 		if eligible(c) != "" {

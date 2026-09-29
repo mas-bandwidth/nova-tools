@@ -54,10 +54,12 @@ func sortedKeys(m primarySet) []string {
 
 // Check is what is always true, over an observed state with all four tables
 // loaded (docs/SPEC-SPRINT.md section 9). Sets of primaries are compared
-// exactly, member by member, never by their counts. openOps are the steps
-// recorded and not finished.
-func Check(s *Snapshot, openOps []string) []Violation {
+// exactly, member by member, never by their counts. pending is the operation
+// the sprint's fence holds, if any: rules 2, 3, 4, 5, 7 and 9 hold whenever no
+// operation is pending, and are not judged while one is; 1, 6 and 8 always.
+func Check(s *Snapshot, pending []string) []Violation {
 	var out []Violation
+	quiet := len(pending) == 0
 	// 1. One place in each table: the loaded cards are keyed by id, so a card
 	// seen in two cells is caught by the loader; here, every placed card is on
 	// a declared row.
@@ -79,10 +81,12 @@ func Check(s *Snapshot, openOps []string) []Violation {
 			out = append(out, Violation{2, fmt.Sprintf("%s is dealt, and its primary %s names %s as its work card", c.ID, pr.ID, orDash(pr.F("work")))})
 		}
 	}
-	out = append(out, diff(2, working, dealt, "work working", "fleet ready+working")...)
+	if quiet {
+		out = append(out, diff(2, working, dealt, "work working", "fleet ready+working")...)
+	}
 	// 3. Read cards in asked or reading belong to primaries in review.
 	for _, c := range s.Readers.Column(Asked, Reading) {
-		if st := s.StateOf(c.F("primary")); st != Review {
+		if st := s.StateOf(c.F("primary")); quiet && st != Review {
 			out = append(out, Violation{3, fmt.Sprintf("%s is %s and its primary %s is %s", c.ID, c.Col, c.F("primary"), orDash(st))})
 		}
 	}
@@ -97,7 +101,9 @@ func Check(s *Snapshot, openOps []string) []Violation {
 			out = append(out, Violation{4, fmt.Sprintf("%s is queued in stream %s and belongs to %s", c.ID, c.Row, pr.Row)})
 		}
 	}
-	out = append(out, diff(4, merging, inMerge, "work merging", "merge queued+stuck")...)
+	if quiet {
+		out = append(out, diff(4, merging, inMerge, "work merging", "merge queued+stuck")...)
+	}
 	// 5. Merge merged = work landed.
 	landed, merged := primarySet{}, primarySet{}
 	for _, c := range s.Work.Column(Landed) {
@@ -106,7 +112,9 @@ func Check(s *Snapshot, openOps []string) []Violation {
 	for _, c := range s.Merge.Column(Merged) {
 		merged.add(c.ID, c.Col)
 	}
-	out = append(out, diff(5, landed, merged, "work landed", "merge merged")...)
+	if quiet {
+		out = append(out, diff(5, landed, merged, "work landed", "merge merged")...)
+	}
 	// 6. Nothing enters merging without ok reads from two different readers at its head.
 	for _, c := range s.Work.Column(Merging, Landed) {
 		readers := map[string]bool{}
@@ -129,16 +137,21 @@ func Check(s *Snapshot, openOps []string) []Violation {
 			if t == s.Merge {
 				pid = c.ID
 			}
-			if pr := s.Work.Card(pid); pr != nil && pr.Placed() && pr.Score != c.Score {
+			if pr := s.Work.Card(pid); quiet && pr != nil && pr.Placed() && pr.Score != c.Score {
 				out = append(out, Violation{7, fmt.Sprintf("%s: %s has score %s and its primary %s has %s", t.Name, c.ID, fmtScore(c.Score), pid, fmtScore(pr.Score))})
 			}
 		}
 	}
 	// 8. No card lost or made twice: a card in flight names a primary on the
-	// table; a primary has one live work card at most.
+	// table, and a primary has at most one live work card.
 	for _, c := range append(s.Fleet.Column(Ready, Working), s.Readers.Column(Asked, Reading)...) {
 		if s.Work.Placed(c.F("primary")) == nil {
 			out = append(out, Violation{8, fmt.Sprintf("%s is in flight and its primary %s is not on the table", c.ID, orDash(c.F("primary")))})
+		}
+	}
+	for _, p := range sortedKeys(dealt) {
+		if len(dealt[p]) > 1 {
+			out = append(out, Violation{8, fmt.Sprintf("%s has %d live work cards (%s)", p, len(dealt[p]), strings.Join(dealt[p], ","))})
 		}
 	}
 	for _, c := range s.Merge.Column(Queued, Stuck, Merged, Returned) {
@@ -146,15 +159,10 @@ func Check(s *Snapshot, openOps []string) []Violation {
 			out = append(out, Violation{8, fmt.Sprintf("%s is in merge %s and not on the work table", c.ID, c.Col)})
 		}
 	}
-	for _, c := range s.Work.Column(Working) {
-		if s.Fleet.Placed(c.F("work")) == nil {
-			out = append(out, Violation{8, fmt.Sprintf("%s is working and its work card %s is not on the fleet table", c.ID, orDash(c.F("work")))})
-		}
-	}
 	// 9. A stopped stream has an open judgment notification.
 	for _, st := range s.Merge.Rows {
 		ctl := s.StreamCtl(st)
-		if ctl.F("state") != StreamStopped {
+		if !quiet || ctl.F("state") != StreamStopped {
 			continue
 		}
 		open := false
@@ -167,9 +175,9 @@ func Check(s *Snapshot, openOps []string) []Violation {
 			out = append(out, Violation{9, fmt.Sprintf("stream %s is stopped (%s) with no open judgment notification", st, ctl.F("cause"))})
 		}
 	}
-	// 10. A step cut short.
-	for _, op := range openOps {
-		out = append(out, Violation{10, "a step was cut short: operation " + op + "; run: nova-sprint repair"})
+	// 10. A step that did not finish: the fence holds it.
+	for _, op := range pending {
+		out = append(out, Violation{10, "operation " + op + " is pending; run: nova-sprint repair"})
 	}
 	return out
 }

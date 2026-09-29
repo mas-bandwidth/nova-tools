@@ -49,17 +49,27 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 		p.refuse(r.Stream, "landed")
 		return p
 	}
+	// A stuck card is a barrier: the step never passes an earlier stuck card.
 	queued := s.Merge.Cell(r.Stream, Queued)
+	if stuck := s.Merge.Cell(r.Stream, Stuck); len(stuck) > 0 {
+		var before []*Card
+		for _, c := range queued {
+			if c.Score < stuck[0].Score || (c.Score == stuck[0].Score && c.ID < stuck[0].ID) {
+				before = append(before, c)
+			}
+		}
+		queued = before
+	}
 	now := stamp(s.Now)
 	if len(queued) == 0 {
 		switch {
 		case streamDone(s, r.Stream, 0):
 			n := happened(NStreamLanded, r.Stream, s.Now)
 			n.Who = r.Who
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamLanded, "since": now}))},
+			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamLanded, "since": now}))},
 				Notes: []Note{n}, Moved: "stream " + r.Stream + " " + state + " -> landed"})
 		case state == StreamMerging:
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": now}))},
+			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": now}))},
 				Moved: "stream " + r.Stream + " merging -> waiting (nothing queued)"})
 		}
 		return p
@@ -85,7 +95,7 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
 		j.StreamLevel, j.Who, j.What = true, r.Who, r.Note
-		return Unit{Key: ctl.ID, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, unset...))}, Notes: append(notes, j)}
+		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, unset...))}, Notes: append(notes, j)}
 	}
 	switch {
 	case r.Conflict != "":
@@ -105,14 +115,20 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 		p.Units = append(p.Units, u)
 	case r.Cross != "":
 		card, other, ok := strings.Cut(r.Cross, "=")
-		if m := s.Merge.Placed(card); !ok || m == nil || m.Row != r.Stream || m.Col != Queued {
+		m := s.Merge.Placed(card)
+		if !ok || m == nil || m.Row != r.Stream || m.Col != Queued {
 			p.refuse(card, "the cross fact wants <card>=<other> with the card queued in stream "+r.Stream)
 			return p
 		}
+		otherStream := s.Work.Card(other).F("stream")
+		if c := s.Work.Card(other); c != nil && c.Row != "" {
+			otherStream = c.Row
+		}
 		ctlSet["card"], ctlSet["other"] = card, other
 		u := stop("cross", NCross, []string{card, other}, 0)
-		u.Notes[len(u.Notes)-1].What = card + " needs " + other + " first"
-		u.Moved = fmt.Sprintf("stream %s stopped: %s needs %s first", r.Stream, card, other)
+		u.Notes[len(u.Notes)-1].What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
+		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, map[string]string{"need_card": other, "need_stream": otherStream})))
+		u.Moved = fmt.Sprintf("stream %s stopped: %s queued -> stuck, needs %s (stream %s) landed first", r.Stream, card, other, orDash(otherStream))
 		p.Units = append(p.Units, u)
 	case r.Red:
 		ctlSet["ci"] = "red"
@@ -135,7 +151,7 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
 		}
 		for i, c := range batch {
-			u := Unit{Key: c.ID}
+			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
 				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
 				u.Notes = notes
@@ -173,9 +189,13 @@ type ResumeReq struct {
 	Who     string
 }
 
-// Resume moves a stopped stream's stuck cards back to queued, in their score
-// order, and the stream to merging (waiting when nothing is queued). It
-// answers every judgment open on the stream.
+// Resume moves a stopped stream's stuck cards whose cause is resolved back to
+// queued at their unchanged scores and the stream to merging (waiting when
+// nothing is queued). It is refused while a cause is unresolved, naming it: a
+// stuck card that needs a card of another stream waits until that card has
+// landed (ranking it is not landing it). The other causes (a conflict, a red
+// branch, a rejected batch) are resolved by the coordinator, who says what
+// was done. It answers every judgment open on the stream.
 func Resume(s *Snapshot, r ResumeReq) Plan {
 	var p Plan
 	ctl := s.StreamCtl(r.Stream)
@@ -188,6 +208,12 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		return p
 	}
 	stuck := s.Merge.Cell(r.Stream, Stuck)
+	for _, c := range stuck {
+		if need := c.F("need_card"); need != "" && s.StateOf(need) != Landed {
+			p.refuse(r.Stream, fmt.Sprintf("unresolved: %s needs %s (stream %s) landed first, and it is %s", c.ID, need, orDash(c.F("need_stream")), orDash(s.StateOf(need))))
+			return p
+		}
+	}
 	state := StreamWaiting
 	if len(stuck)+s.Merge.Count(r.Stream, Queued) > 0 {
 		state = StreamMerging
@@ -196,13 +222,17 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other"))},
-		Closes: closesFor(s.Open, StreamSubject(r.Stream)),
-		Moved:  fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other"))},
+		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
+	for _, o := range s.Open {
+		if o.Subject() == StreamSubject(r.Stream) {
+			u.Closes = append(u.Closes, o)
+		}
+	}
 	for _, c := range stuck {
-		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil)))
+		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil, "need_card", "need_stream")))
 	}
 	p.Units = append(p.Units, u)
-	p.Closes = answering(s.Open, r.Answers)
+	answered(&p, s.Open, r.Answers)
 	return p
 }

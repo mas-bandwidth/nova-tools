@@ -10,7 +10,7 @@ func TestLifecycleIsTheSpecTable(t *testing.T) {
 	t.Parallel()
 	legal := map[[2]State]bool{
 		{Waiting, Ready}: true, {Ready, Working}: true, {Working, Review}: true, {Working, Ready}: true,
-		{Review, Merging}: true, {Review, Ready}: true, {Merging, Review}: true, {Merging, Landed}: true,
+		{Review, Merging}: true, {Review, Working}: true, {Review, Ready}: true, {Merging, Review}: true, {Merging, Landed}: true,
 	}
 	for _, a := range States {
 		for _, b := range States {
@@ -120,19 +120,15 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	}
 	score := w.s.Work.Card("s1-2").Score
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "off by one"}))
-	if w.state("s1-2") != Ready || len(w.openOn("s1-2")) != 0 || len(w.s.Readers.Of("s1-2")) != 0 {
+	if w.state("s1-2") != Working || len(w.openOn("s1-2")) != 0 || len(w.s.Readers.Of("s1-2")) != 0 {
 		t.Fatalf("rework: %s, open %v, read cards %d", w.state("s1-2"), w.openOn("s1-2"), len(w.s.Readers.Of("s1-2")))
 	}
 	if w.s.Work.Card("s1-2").Score != score {
 		t.Fatalf("rework changed the score")
 	}
-	if head := w.s.Work.Column(Ready); len(head) == 0 || head[0].ID != "s1-2" {
-		t.Fatalf("the reworked primary is not at the head of ready")
-	}
 	w.clean("rework")
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 	card := w.s.Work.Card("s1-2").F("work")
-	if card != "s1-2.w2" {
+	if card != "s1-2.w2" || w.s.Fleet.Card(card).F("fix") != "off by one" {
 		t.Fatalf("the next attempt's card is %s", card)
 	}
 	member := w.s.Fleet.Card(card).Row
@@ -245,7 +241,7 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 	}
 	// Answering the stream's judgment elsewhere leaves it open: rule 9.
 	p := Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "x", Answers: []string{w.openOn(StreamSubject("s1"))[0].Note.ID}})
-	if len(p.Refused) != 1 || len(p.Closes) != 0 {
+	if len(p.Refused) != 2 || len(p.Closes) != 0 || len(p.Units) != 0 {
 		t.Fatalf("rework of a merging primary: %+v", p)
 	}
 	w.must(Resume(w.s, ResumeReq{Stream: "s1", Did: "rebased"}))
@@ -259,19 +255,13 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 	}
 	w.clean("landed")
 
-	// Red and cross stop the stream the same way; the second stuck is marked.
+	// Red stops the stream the same way; the second stuck is marked.
 	w2 := setup(t, 2)
 	accepted(w2, "s1-1", "s1-2")
 	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Red: true}))
 	if w2.s.StreamCtl("s1").F("cause") != "red" || len(w2.notesOf(NRed)) != 1 || w2.notesOf(NRed)[0].Count != 2 {
 		t.Fatalf("red: %v", w2.notesOf(NRed))
 	}
-	w2.must(Resume(w2.s, ResumeReq{Stream: "s1"}))
-	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Cross: "s1-1=s2-9"}))
-	if w2.s.StreamCtl("s1").F("other") != "s2-9" {
-		t.Fatalf("cross not recorded")
-	}
-	w2.clean("cross")
 	w2.must(Resume(w2.s, ResumeReq{Stream: "s1"}))
 	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
 	w2.must(Resume(w2.s, ResumeReq{Stream: "s1"}))
@@ -403,12 +393,12 @@ func TestCheckFindsEveryBrokenRule(t *testing.T) {
 		tb.cells, tb.byPrimary = nil, nil
 	}
 	got := map[int]bool{}
-	for _, v := range Check(s, []string{"op-1"}) {
+	for _, v := range Check(s, nil) {
 		got[v.Rule] = true
 	}
-	for _, r := range []int{2, 3, 4, 5, 6, 8, 9, 10} {
+	for _, r := range []int{2, 3, 4, 5, 6, 9} {
 		if !got[r] {
-			t.Errorf("rule %d not found; got %v", r, Check(s, []string{"op-1"}))
+			t.Errorf("rule %d not found; got %v", r, Check(s, nil))
 		}
 	}
 }
@@ -424,7 +414,7 @@ func TestInboxJudgmentFirstMarkedFirstOverdueAtReadTime(t *testing.T) {
 	}
 	recent := []Note{{ID: "n4", Kind: Happened, Type: NWorkOK, Stream: "s1", Primaries: []string{"x", "y"}, Count: 2, At: t0}}
 	g := Inbox(InboxReq{Now: now, Open: open, Recent: recent, Deadline: 30 * time.Minute, Stale: 10 * time.Minute,
-		Streams: []StreamClock{{Stream: "s3", State: StreamMerging, Changed: t0}}})
+		Streams: []StreamClock{{Stream: "s3", State: StreamMerging, Since: t0, Progress: t0}}})
 	if len(g) != 5 {
 		t.Fatalf("groups: %+v", g)
 	}
