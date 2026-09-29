@@ -66,46 +66,50 @@ list it, and `README` (in any case) is refused as a session id by every verb
 with a message naming the reserved name. Any other top-level `<id>.md` beside
 `sessions/`, `entries/` or `log.jsonl` is a mixed store.
 
-A symlink named `sessions`, `entries` or `log.jsonl` counts as an own-shape
-marker whatever it points at, and a symlink named `<id>.md` counts as a session
-file. A session record is a regular file, or a symlink that resolves to one
-inside the store; the tool never reads or appends a session record that lies
-outside the directory it was given. The check is made on the open file, not
-only on the path: a record link re-pointed between the check and the open
-is refused before anything is read or written through it. (Only the record is
-confined. A symlinked `log.jsonl` or `entries/` is an own-shape marker and is
-followed.) The answer is the same however `--store` is spelled, relative or
-absolute. Where a verb finds anything else at a session's record path (a
-directory, a symlink to a directory, to nothing or to somewhere outside the
-store, a device), it refuses at exit 2 naming the path, what is there and the
-next action (move or remove it, or choose another session id); `open` never
-reports success over it, and no verb answers "no such session" for it.
+**nova-cairn does not follow a symbolic link.** A link at the store directory's
+own name as given, at `sessions/`, `entries/`, a session's entry directory,
+`log.jsonl`, or at a record (`<id>.md`, `sessions/<id>.md`, an entry file) is
+refused by every verb that reaches it, for a read and for a write, in both
+shapes. The refusal is one text at exit 2: it names the path, says it is a
+symbolic link and that nova-cairn does not follow links, and gives a command
+that shows where it leads and writes nothing (`ls -ld -- <path>`). Nothing is
+created or written through the link. For the shape rule a link named `sessions`,
+`entries` or `log.jsonl` still counts as an own-shape marker and a link named
+`<id>.md` as a session file; the verb then meets it and refuses. A link in a
+directory above the store is part of the path given and is not judged. The
+check is made on the open file or directory: after the open the handle is
+compared with the name, and the directories already looked at are compared again,
+so a swap between the check and the use is refused; only the creation of a new
+file, which is by name, is not covered. The answer is the same however
+`--store` is spelled, relative or absolute or in another letter case, because
+nothing is resolved.
 
 **A defect in one session's record is that session's.** Two kinds, and each
 has its own answer.
 
-- The record's path holds no record (a directory, a dangling or outside link,
-  a device): the verbs addressed to that session (`open`,
-  `append`, `receipt`, `index --session`) refuse at exit 2.
-- The record is a file but its content is damaged (an invalid heading, a
-  duplicate entry): `index --session` prints that session's flagged row and exits
-  1, `receipt` for it refuses at exit 2, and `open` and `append` still work,
-  because they read the record only to find their own entry and add a section
-  after it; they rewrite nothing.
+- The record's path holds no record (a directory, a link, a device): the verbs
+  addressed to that session (`open`, `append`, `receipt`, `index --session`)
+  refuse at exit 2 naming the path, what is there and the next action.
+- The record is a file whose headings are damaged (an invalid stamp or entry
+  id, a repeated entry heading): `index --session` prints that session's
+  flagged row and exits 1, `receipt` for it refuses at exit 2, and `open` and
+  `append` still work, because they read the record only to find their own
+  entry and add a section after it; they rewrite nothing.
 
-In both, `index` over a bench store reports the session as one flagged row,
-`INDEX FLAGGED session=<id> cause=<why>`, while every other session is listed;
-`index` prints all its rows and the coverage line first and then exits 1 when any
-row was flagged. In the tool's own shape `index` reads the entry files, a damaged
-one refuses the whole call at exit 2, and a session file that is a dangling link
-is met by the verbs addressed to it, not by a flagged row. Only a store-level
-condition (two shapes, a store path that is not a directory, an unreadable
-directory) refuses every verb.
+In both, `index` reports the session as one flagged row, `INDEX FLAGGED
+session=<id> cause=<why>`, while every other session is listed; `index` prints
+all its rows and the coverage line first and then exits 1 when any row was
+flagged. In the tool's own shape an entry directory that is a link is flagged the same
+way; a session file that is a directory or a link is met by the verbs addressed
+to it, not by a flagged row; a damaged entry file (not JSON) refuses the whole
+call at exit 2. Only a store-level
+condition (two shapes, a store path that is not a directory, a link at the store
+directory, `sessions/` or `entries/`, an unreadable directory) refuses every
+verb.
 
-A directory named `<id>.md` is not a session file, and neither is `<id>.MD`:
-`index` and the coverage ledger skip them and flag nothing. A verb addressed to
-the directory refuses, as above. Two links inside the store to one file are two
-sessions over one record, and its entries are listed under both.
+In a bench store a top-level directory named `<id>.md`, and `<id>.MD`, are not
+session files: `index` and the coverage ledger skip them and flag nothing. A verb
+addressed to the directory refuses, as above.
 
 Only the exact name `<id>.md` is a session file: `s1.MD` is not one on any
 file system, and `index` and the coverage ledger skip it. On a disk that folds
@@ -246,15 +250,14 @@ New regression cases must demonstrate the defect before the repair.
 39. `TestEmptyAndAbsentStoresGetTheOwnShape` and `TestEmptyStoreOpenGetsTheOwnShapeAtTheCLI` — an empty or absent store directory gets the tool's own layout.
 40. `TestBenchStoreOpenRemedyKeepsTheBenchShape` and `TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb` — the same behaviour at the command line: exit codes, one-line refusals, the listing after each verb. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` runs the printed remedy on a bench store in the functional tier.
 41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.
-42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkToARegularFileIsARecord`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory, a symlink to a directory and a dangling symlink at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlink to a regular file is a record; a symlinked own-shape marker is a marker.
+42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory and a link at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlinked own-shape marker is a marker.
 43. `TestBenchSourceIsRecordedInheritedAndReported` — on a bench store `open --source` prints the pointer it recorded, an `append` with no `--source` carries it, and `receipt` and `index` report it; a hand-kept record reports `source=-`; a source never forms a section.
-    `TestSessionSourceOfABenchRecordIsConfined` reads the header through the same check as every read of a record, and `TestAnUnreadableBenchHeaderIsAnErrorNotNoSource` refuses a header that exists and cannot be read.
+    `TestSessionSourceRefusesALinkAndAnUnreadableHeader` reads the header through the same check as every read of a record, and refuses a header that exists and cannot be read.
 44. `TestMixedShapeMessageNamesThePathsOfEachShape` and `TestIDRefusalsNameTheRuleBroken` — the mixed-store refusal names the paths of each shape and the next action in words, and prints no `mv`, `rm` or `find`; an identifier refusal names the rule broken (empty, over 128 bytes, a directory name, `..`, whitespace, a control character, a slash) and never echoes an over-long id whole.
 45. `TestCaseFoldedRecordNamesAreNotSessionFiles` — a file named `s1.MD` is not a session file: the store-wide readers skip it, and on a case-folding disk `open`, `append`, `receipt` and `index --session` refuse naming the fold and write nothing through it (on a case-keeping disk `open s1` creates `s1.md` beside it; the test probes the disk and asserts the outcome for whichever it is).
 46. `TestStoreHoldingOnlyReadmeIsAnEmptyStore` and `TestConcurrentBenchOpensWriteOneHeader` — a store holding only a `README.md` is an empty store in the tool's own shape; many concurrent `open`s of one new bench session write exactly one header and leave no temporary file. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` (functional tier) builds the binary and runs the printed remedy through `sh -c` with it first on `PATH`.
-49. `TestSymlinkResolvingOutsideTheStoreIsRefused` and `TestSymlinkToARegularFileInsideTheStoreIsARecord` — a link that resolves outside the store is refused by every verb naming the link and its target and nothing is written through it; a link to a regular file inside the store is a record.
-    `TestAppendNeverWritesOutsideTheStoreWhileTheLinkIsSwapped` re-points a record link between a file inside and a file outside while appends run, in both shapes, and the outside file is never touched; `TestAnOpenedRecordMustBeTheFileTheNameLeadsToInsideTheStore` fixes the check on the open file; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs the same store named relative and absolute.
+49. `TestNoVerbFollowsASymbolicLink` — a link at the store as given, `sessions/`, `entries/`, an entry directory, `log.jsonl` or a record, in either shape, is refused with the one text and nothing is written where it leads. `TestARecordSwappedForALinkNeverCarriesAWriteOutside`, `TestAnAncestorOfTheStoreSwappedUnderAppendsLosesAndInventsNothing` and `TestAStoreSwappedForALinkNeverCarriesAWriteOutside` run the swaps of a record, of an ancestor and of the store while a fixed number of appends run, in a temp directory each; `TestADirectoryThatChangesAfterItWasCheckedIsRefused` fixes the check on a directory looked at earlier; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs one store named relative and absolute.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
-    `TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable` fixes the two kinds of damage (a path with no record refuses; a damaged file is flagged, refused by `receipt`, and still opened and appended), `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` fixes what index skips, and `TestAnOwnShapeDamagedEntryRefusesTheIndex` fixes the own shape.
+    `TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append leaves no entry file, no pointer line and no log line.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.

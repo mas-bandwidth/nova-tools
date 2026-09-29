@@ -151,7 +151,7 @@ func TestOpenOverADanglingSymlinkRefusesAtExitTwo(t *testing.T) {
 	} {
 		code, out, errOut := runCode("", args...)
 		if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 ||
-			!strings.Contains(errOut, "a dangling symlink") || !strings.Contains(errOut, "s1.md") || strings.Contains(errOut, "open first") {
+			!strings.Contains(errOut, "is a symbolic link") || !strings.Contains(errOut, "s1.md") || strings.Contains(errOut, "open first") || strings.Contains(errOut, "run: nova-cairn help") {
 			t.Errorf("%v: exit=%d out=%q err=%q", args, code, out, errOut)
 		}
 	}
@@ -226,7 +226,7 @@ func TestIndexAtTheCLIFlagsOneBadSessionAmongFive(t *testing.T) {
 	if code != 1 || errOut != "" {
 		t.Fatalf("exit=%d err=%q out=%q", code, errOut, out)
 	}
-	for _, want := range []string{"session=s1 entry=e1", "session=s4 entry=e1", "INDEX FLAGGED session=bad cause=", "a dangling symlink", "INDEX COVERAGE sessions=5 entries=4"} {
+	for _, want := range []string{"session=s1 entry=e1", "session=s4 entry=e1", "INDEX FLAGGED session=bad cause=", "is a symbolic link", "INDEX COVERAGE sessions=5 entries=4"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("index lacks %q: %s", want, out)
 		}

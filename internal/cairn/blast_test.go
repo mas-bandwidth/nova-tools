@@ -105,3 +105,72 @@ func TestAnOwnShapeDamagedEntryRefusesTheIndex(t *testing.T) {
 		t.Fatalf("want a refusal of the whole index, got %+v %v", res, err)
 	}
 }
+
+// An own-shape append that the record refuses stores nothing: no entry file,
+// no pointer line, no log line. The record is opened and read before the entry
+// is written.
+func TestARefusedOwnAppendStoresNothing(t *testing.T) {
+	t.Parallel()
+	moveAndLink := func(path string) {
+		os.Rename(path, path+".moved")
+		os.Symlink(path+".moved", path)
+	}
+	for name, spoil := range map[string]func(store string){
+		"record is a directory": func(s string) { os.Remove(sessionFile(s, "x")); os.Mkdir(sessionFile(s, "x"), 0o755) },
+		"record is a link":      func(s string) { moveAndLink(sessionFile(s, "x")) },
+		"entries is a link":     func(s string) { moveAndLink(filepath.Join(s, "entries")) },
+		"log is a link":         func(s string) { moveAndLink(filepath.Join(s, "log.jsonl")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := laidStore(t, true)
+			spoil(store)
+			before := treeOf(store)
+			if _, err := Append(store, "x", "e2", "more words", "", benchNow, PublishManual); err == nil {
+				t.Fatal("the append was not refused")
+			}
+			if after := treeOf(store); after != before {
+				t.Fatalf("a refused append stored something:\n%s\n%s", before, after)
+			}
+		})
+	}
+}
+
+// SessionSource reads a bench header through the same check as every other
+// read: a link is refused, and a header that exists and cannot be read is an
+// error naming the record, never "no source".
+func TestSessionSourceRefusesALinkAndAnUnreadableHeader(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	header := "# Cairn s1\n\nSession s1 opened 2026-09-29T08:00:00Z\nSource: marker\n"
+	outside := filepath.Join(t.TempDir(), "elsewhere.md")
+	if err := os.WriteFile(outside, []byte(header), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(benchFile(store, "ok"), []byte(header), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, benchFile(store, "leak")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if got, err := SessionSource(store, "ok"); err != nil || got != "marker" {
+		t.Fatalf("a record in the store: %q %v", got, err)
+	}
+	if got, err := SessionSource(store, "leak"); err == nil || got != "" || !strings.Contains(err.Error(), "does not follow links") {
+		t.Fatalf("a link gave its source %q, %v", got, err)
+	}
+	if got, err := SessionSource(store, "absent"); err != nil || got != "" {
+		t.Fatalf("no record at all is no source: %q %v", got, err)
+	}
+	locked := benchFile(store, "locked")
+	if err := os.WriteFile(locked, []byte(header), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.Open(locked); err == nil {
+		f.Close()
+		t.Skip("mode 000 stays readable here (root or a lax file system)")
+	}
+	if got, err := SessionSource(store, "locked"); err == nil || got != "" || !strings.Contains(err.Error(), locked) {
+		t.Fatalf("an unreadable header must be an error naming the record: %q %v", got, err)
+	}
+}

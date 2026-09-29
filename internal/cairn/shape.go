@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -57,14 +58,20 @@ func (e *MixedShapeError) Error() string {
 		opPhrase(e.Op), e.Store, strings.Join(shown, ", "), more, strings.Join(e.Own, ", "))
 }
 
-// dirs reads each directory at most once per verb. Names that come out of a
-// listing are exact by construction, so a verb that looks at many records
-// (index) asks the disk about the store's directory once, not once per record.
-// The read function is a field so a test can count the reads.
+// dirs is what one verb knows about the store's directories. It reads each
+// directory at most once, so a verb that looks at many records (index) asks the
+// disk about the store's directory once, not once per record. It refuses links:
+// nova-cairn does not follow a symbolic link at the store directory's own name,
+// at sessions/, entries/, an entry directory, log.jsonl or a record. Every
+// directory looked at is remembered with its identity, and every file opened is
+// proved to be the file at its name, in directories still the ones first seen,
+// so a swap between the check and the use is refused. The read function is a
+// field so a test can count the reads.
 type dirs struct {
+	op       string // the verb, for refusals
 	read     func(string) ([]os.DirEntry, error)
 	listed   map[string]dirListing
-	realRoot map[string]string
+	verified map[string]os.FileInfo
 }
 
 type dirListing struct {
@@ -73,7 +80,9 @@ type dirListing struct {
 }
 
 func newDirs() *dirs {
-	return &dirs{read: os.ReadDir, listed: map[string]dirListing{}, realRoot: map[string]string{}}
+	d := &dirs{op: "read", listed: map[string]dirListing{}, verified: map[string]os.FileInfo{}}
+	d.read = d.readChecked
+	return d
 }
 
 func (d *dirs) list(path string) ([]os.DirEntry, error) {
@@ -85,29 +94,105 @@ func (d *dirs) list(path string) ([]os.DirEntry, error) {
 	return entries, err
 }
 
-// resolvedRoot is the store directory, absolute and with its symlinks resolved,
-// once. Both sides of a containment test are spelled this way, so the answer
-// does not depend on whether --store was written relative or absolute.
-func (d *dirs) resolvedRoot(root string) string {
-	if r, ok := d.realRoot[root]; ok {
-		return r
+func isLink(fi os.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }
+
+// checkDir refuses a directory that is a link and remembers the identity of one
+// that is not. A directory that is not there is the caller's to judge.
+func (d *dirs) checkDir(path string) error {
+	path = filepath.Clean(path)
+	li, err := os.Lstat(path)
+	if err != nil {
+		return err
 	}
-	r := resolved(root)
-	d.realRoot[root] = r
-	return r
+	if isLink(li) {
+		return linkRefusal(d.op, path)
+	}
+	if was, ok := d.verified[path]; ok && !os.SameFile(was, li) {
+		return changedRefusal(d.op, path)
+	}
+	d.verified[path] = li
+	return nil
 }
 
-// resolved is path made absolute with its symlinks resolved; when it cannot be
-// resolved (nothing there), the absolute spelling.
-func resolved(path string) string {
-	abs, err := filepath.Abs(path)
+// recheck proves every directory looked at is still the same one, and no link.
+func (d *dirs) recheck() error {
+	for path, was := range d.verified {
+		if li, err := os.Lstat(path); err != nil || isLink(li) || !os.SameFile(was, li) {
+			return changedRefusal(d.op, path)
+		}
+	}
+	return nil
+}
+
+// readChecked lists a directory through the open handle, after proving the
+// handle is the directory at the name.
+func (d *dirs) readChecked(path string) ([]os.DirEntry, error) {
+	path = filepath.Clean(path)
+	if err := d.checkDir(path); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
 	if err != nil {
-		abs = path
+		return nil, err
 	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return real
+	defer f.Close()
+	if held, err := f.Stat(); err != nil || !os.SameFile(held, d.verified[path]) {
+		return nil, changedRefusal(d.op, path)
 	}
-	return abs
+	entries, err := f.ReadDir(-1)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, err
+}
+
+// openFile opens the file at path and proves the handle is the regular file at
+// that name, that the name is no link, and that the directories above are still
+// the ones checked. What is read or written afterwards goes through the handle.
+func (d *dirs) openFile(path string, flag int, perm os.FileMode) (*os.File, error) {
+	if err := d.recheck(); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, flag|noFollow, perm)
+	li, lerr := os.Lstat(path)
+	if lerr == nil && isLink(li) {
+		if f != nil {
+			f.Close()
+		}
+		return nil, linkRefusal(d.op, path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if held, err := f.Stat(); err != nil || lerr != nil || !held.Mode().IsRegular() || !os.SameFile(held, li) || d.recheck() != nil {
+		f.Close()
+		return nil, changedRefusal(d.op, path)
+	}
+	return f, nil
+}
+
+// readFile is the whole content of the file at path, read through openFile.
+func (d *dirs) readFile(path string) ([]byte, error) {
+	f, err := d.openFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// linkRefusal is the one refusal for a symbolic link: it names the path, says
+// what it is and that the tool does not follow links, and gives a command that
+// shows where it leads and writes nothing.
+func linkRefusal(op, path string) error {
+	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: %q is a symbolic link and nova-cairn does not follow links; "+
+		"see where it leads with: %s; then put the real file or directory there, or use another store or session id",
+		opPhrase(op), path, shellLine("ls -ld -- %s", shellWord{"path", path}))}
+}
+
+// changedRefusal is the refusal for a path that stopped being what the verb
+// checked while the verb ran.
+func changedRefusal(op, path string) error {
+	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: %q changed while the command was running; nothing was written through it, run the same command again",
+		opPhrase(op), path)}
 }
 
 // storeShape reads the store's contents and names its shape. A directory that
@@ -116,9 +201,14 @@ func resolved(path string) string {
 func storeShape(op, store string) (shape, error) { return storeShapeIn(newDirs(), op, store) }
 
 func storeShapeIn(d *dirs, op, store string) (shape, error) {
+	d.op = op
 	files, err := d.list(store)
 	if os.IsNotExist(err) {
 		return shapeOwn, nil
+	}
+	var refused *RecordPathError
+	if errors.As(err, &refused) {
+		return shapeOwn, err
 	}
 	if err != nil {
 		return shapeOwn, fmt.Errorf("cannot %s: cannot read store %q: %v", opPhrase(op), store, err)
@@ -186,15 +276,13 @@ func sourceLine(line string) string {
 }
 
 // openBench creates the bench record for a session that has none. An
-// existing regular file, or a symlink that resolves to one inside the store, is
-// already open and stays as it is. Anything else at the record path (a
-// directory, a symlink to a directory, to nothing or to somewhere outside the
-// store, a device) is refused, naming the path and what is there: open
-// reporting success over it would leave every later verb unable to find the
-// record.
-func openBench(store, session, source, stamp string) error {
+// existing regular file is already open and stays as it is. Anything else at
+// the record path (a directory, a link, a device) is refused, naming the path
+// and what is there: open reporting success over it would leave every later
+// verb unable to find the record.
+func openBench(d *dirs, store, session, source, stamp string) error {
 	name := benchFile(store, session)
-	exists, err := recordState(newDirs(), "open", store, name)
+	exists, err := recordState(d, "open", name)
 	if err != nil || exists {
 		return err
 	}
@@ -203,7 +291,7 @@ func openBench(store, session, source, stamp string) error {
 	if err != nil && errors.Is(err, os.ErrExist) {
 		// Whatever is there now, it is judged by what it is, not by the fact
 		// that something exists.
-		exists, err = recordState(newDirs(), "open", store, name)
+		exists, err = recordState(d, "open", name)
 		if err == nil && !exists {
 			return fmt.Errorf("cannot open a session: %q changed while it was being created; run the same command again", name)
 		}
@@ -212,12 +300,18 @@ func openBench(store, session, source, stamp string) error {
 	return err
 }
 
-// recordState judges the path a session record lives at, inside the store at
-// root. It reports whether a record stands there: true for a regular file or a
-// symlink that resolves to one inside the store, false when nothing is there,
+// recordState judges the path a session record lives at. It reports whether a
+// record stands there: true for a regular file, false when nothing is there,
 // and an error naming the path, what was found and the next action for anything
-// else. The error is about this one session's path only.
-func recordState(d *dirs, op, root, path string) (bool, error) {
+// else, a symbolic link included. The error is about this one session's path
+// only.
+func recordState(d *dirs, op, path string) (bool, error) {
+	if err := d.checkDir(filepath.Dir(path)); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
 	li, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -227,33 +321,13 @@ func recordState(d *dirs, op, root, path string) (bool, error) {
 	}
 	found := ""
 	switch {
-	case li.Mode()&os.ModeSymlink != 0:
-		target, _ := os.Readlink(path)
-		si, serr := os.Stat(path)
-		switch {
-		case serr != nil && os.IsNotExist(serr):
-			found = fmt.Sprintf("a dangling symlink (its target %q does not exist)", target)
-		case serr != nil:
-			found = fmt.Sprintf("a symlink whose target %q cannot be read: %v", target, serr)
-		case si.IsDir():
-			found = fmt.Sprintf("a symlink to a directory (%q)", target)
-		case !si.Mode().IsRegular():
-			found = fmt.Sprintf("a symlink to %q, which is not a regular file (%s)", target, si.Mode().Type())
-		default:
-			// A link to a regular file is a record only while it stays in the
-			// store: the tool never reads or appends a session record outside
-			// the directory it was given. openRecord repeats this judgement on
-			// the open file, which is what a re-pointed link meets.
-			if !within(d.resolvedRoot(root), resolved(path)) {
-				found = fmt.Sprintf("a symlink to %q, which resolves outside the store", target)
-			}
-		}
+	case isLink(li):
+		return false, linkRefusal(op, path)
 	case li.IsDir():
 		found = "a directory"
 	case !li.Mode().IsRegular():
 		found = fmt.Sprintf("not a regular file (%s)", li.Mode().Type())
-	}
-	if found == "" {
+	default:
 		// On a disk that folds case, the path above may have reached a file
 		// whose name differs from the one asked for. Only the exact name is a
 		// session file, so the other is neither read nor written through.
@@ -262,90 +336,10 @@ func recordState(d *dirs, op, root, path string) (bool, error) {
 				"only the exact name %q is a session file: rename that file or choose another session id",
 				opPhrase(op), path, listed, filepath.Base(path))}
 		}
+		return true, nil
 	}
-	if found != "" {
-		return false, &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is %s; move or remove it, or choose another session id",
-			opPhrase(op), path, found)}
-	}
-	return true, nil
-}
-
-// openRecord opens the session record at path, in the store at root, and proves
-// the file it holds is inside the store. recordState judges a PATH, and a path
-// can be re-pointed between that judgement and this open; so the judgement is
-// made again on the OPEN FILE: the name is resolved once more, must lie inside
-// the store, and must lead to the very file this descriptor holds. What is read
-// or written afterwards goes through the descriptor, so no name is followed a
-// second time. The store's own record is the only thing it opens.
-func openRecord(d *dirs, op, root, path string, flag int) (*os.File, error) {
-	f, err := os.OpenFile(path, flag, 0)
-	if err != nil {
-		return nil, err
-	}
-	if err := holdsRecord(d, op, root, path, f); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return f, nil
-}
-
-// holdsRecord is the check openRecord makes on the open file f, the one
-// recordState makes on the path and no stricter: f is a regular file, and it is
-// the file the name leads to; when the name is a link, that file lies inside
-// the store.
-func holdsRecord(d *dirs, op, root, path string, f *os.File) error {
-	held, err := f.Stat()
-	if err == nil {
-		var named os.FileInfo
-		if named, err = os.Lstat(path); err == nil && named.Mode()&os.ModeSymlink != 0 {
-			real := resolved(path)
-			if !within(d.resolvedRoot(root), real) {
-				err = errors.New("outside the store")
-			} else {
-				named, err = os.Stat(real)
-			}
-		}
-		if err == nil && held.Mode().IsRegular() && os.SameFile(held, named) {
-			return nil
-		}
-	}
-	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is not the file that was checked "+
-		"(it changed, or leads outside the store); run the same command again", opPhrase(op), path)}
-}
-
-// readRecord is the whole content of the session record at path, read through
-// openRecord.
-func readRecord(d *dirs, op, root, path string) ([]byte, error) {
-	f, err := openRecord(d, op, root, path, os.O_RDONLY)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(f)
-}
-
-// appendRecord adds content to the end of the session record at path, through
-// openRecord, and fsyncs before return.
-func appendRecord(d *dirs, op, root, path, content string) error {
-	f, err := openRecord(d, op, root, path, os.O_WRONLY|os.O_APPEND)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// within reports whether path is root or lies under it.
-func within(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return false, &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is %s; move or remove it, or choose another session id",
+		opPhrase(op), path, found)}
 }
 
 // foldedName reports the directory entry that path reached by letter case

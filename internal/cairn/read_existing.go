@@ -3,21 +3,25 @@ package cairn
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 // Read verbs require an existing directory. An empty directory is a valid
 // empty store; a missing directory is a wrong input, not an empty answer.
-func existingStore(store string) error {
+func existingStore(op, store string) error {
 	if store == "" {
 		return fmt.Errorf("no store given; refusing to guess")
 	}
-	info, err := os.Stat(store)
+	li, err := os.Lstat(filepath.Clean(store))
 	if err != nil {
 		return fmt.Errorf("cannot read store %q: %w", store, err)
 	}
-	if !info.IsDir() {
+	if isLink(li) {
+		return linkRefusal(op, store)
+	}
+	if !li.IsDir() {
 		return fmt.Errorf("store %q is not a directory", store)
 	}
 	return nil
@@ -34,7 +38,7 @@ func recordForRead(d *dirs, op, store, session string, sh shape) (string, bool, 
 	if sh == shapeBench {
 		path, bench = benchFile(store, session), true
 	}
-	ok, err := recordState(d, op, store, path)
+	ok, err := recordState(d, op, path)
 	if err != nil {
 		return "", false, err
 	}
@@ -47,8 +51,8 @@ func recordForRead(d *dirs, op, store, session string, sh shape) (string, bool, 
 // Flat records store only a dated heading and prose. Source and publication
 // policy are not recoverable from this format; never infer them from a later
 // caller, unrelated log or prose. Body sizing matches benchSection's trimming.
-func benchReceipts(d *dirs, op, store, path, session string) ([]ReceiptInfo, error) {
-	raw, err := readRecord(d, op, store, path)
+func benchReceipts(d *dirs, path, session string) ([]ReceiptInfo, error) {
+	raw, err := d.readFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +103,7 @@ func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[st
 		path, _, err := recordForRead(d, "index", store, id, shapeBench)
 		if err == nil {
 			var receipts []ReceiptInfo
-			if receipts, err = benchReceipts(d, "index", store, path, id); err == nil {
+			if receipts, err = benchReceipts(d, path, id); err == nil {
 				for _, rc := range receipts {
 					rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
 				}
@@ -107,9 +111,7 @@ func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[st
 		}
 		if err != nil {
 			// This session's own defect: flag it and go on to the next.
-			// The cause is the session's; "cannot index the store" is not.
-			cause := strings.TrimPrefix(err.Error(), "cannot "+opPhrase("index")+": ")
-			flagged = append(flagged, FlaggedSession{Session: id, Cause: cause})
+			flagged = append(flagged, flaggedSession(id, err))
 		}
 	}
 	return rows, flat, flagged, sessions, nil
