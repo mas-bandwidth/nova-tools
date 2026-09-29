@@ -237,6 +237,98 @@ func TestContainerRuntimeSubidExpressionsArePinned(t *testing.T) {
 	}
 }
 
+// roleKeywords are the task keys that are not modules. Every other key of a
+// task must be a module written with its full name, `ansible.builtin.<name>`:
+// the tests above read modules by that name, so a short-form `lineinfile:` or
+// `copy:` would be a task they cannot see.
+var roleKeywords = map[string]bool{
+	"name": true, "register": true, "when": true, "loop": true, "loop_control": true,
+	"become": true, "become_user": true, "environment": true, "changed_when": true,
+	"failed_when": true, "check_mode": true,
+}
+
+// subidTasks is tasks/subid.yml in order: task name, module, and the `when` of
+// the task ("" for none). A task added, removed, reordered or given a `when`
+// is a change to the allocation and is red until it is evaluated and pinned.
+var subidTasks = [][3]string{
+	{"/etc/{{ container_runtime_subid_file }} exists", "stat", ""},
+	{"the rows of /etc/{{ container_runtime_subid_file }}", "slurp", "container_runtime_subid_stat.stat.exists"},
+	{"the rows, as name:start:count lines", "set_fact", ""},
+	{"every row is name:start:count", "assert", ""},
+	{"the user's rows against everyone else's", "set_fact", ""},
+	{"the user's existing rows overlap no other user's", "assert", ""},
+	{"an existing subordinate id range is large enough", "assert", ""},
+	{"the start of the range a missing row gets", "set_fact", "container_runtime_subid.mine | length == 0"},
+	{"a new range fits in the 32-bit id space", "assert", "container_runtime_subid.mine | length == 0"},
+	{"a row for the user in /etc/{{ container_runtime_subid_file }}", "lineinfile", "container_runtime_subid.mine | length == 0"},
+}
+
+// TestContainerRuntimeTasksCannotHideAWeakening: the role's tasks are read in
+// full. A short-form module name, `ignore_errors` anywhere, a `block`, `rescue`
+// or `always`, a `failed_when`, `vars`, `check_mode` or `changed_when` in
+// tasks/subid.yml, and any task or `when` of subid.yml other than the pinned
+// list are red, so a task cannot be added, softened or switched off without
+// this test changing.
+func TestContainerRuntimeTasksCannotHideAWeakening(t *testing.T) {
+	t.Parallel()
+	for _, file := range []string{"tasks/main.yml", "tasks/subid.yml"} {
+		for i, k := range roleTasks(t, file) {
+			for key := range k {
+				switch {
+				case roleKeywords[key], strings.HasPrefix(key, "ansible.builtin."):
+				case key == "ignore_errors" || key == "block" || key == "rescue" || key == "always":
+					t.Errorf("%s/%s: task %d (%q) has %q; the role fails or it does not run, and no task hides others", containerRuntimeRole, file, i+1, k.name(), key)
+				default:
+					t.Errorf("%s/%s: task %d (%q) has the key %q, which is not a keyword or an ansible.builtin.<module>; a short-form module name is a task the class tests cannot read", containerRuntimeRole, file, i+1, k.name(), key)
+				}
+			}
+			if file == "tasks/subid.yml" {
+				for _, key := range []string{"failed_when", "changed_when", "check_mode", "vars"} {
+					if _, ok := k[key]; ok {
+						t.Errorf("%s/%s: task %d (%q) has %q; the allocation's tasks take no such key", containerRuntimeRole, file, i+1, k.name(), key)
+					}
+				}
+			}
+		}
+	}
+	got := roleTasks(t, "tasks/subid.yml")
+	if len(got) != len(subidTasks) {
+		t.Fatalf("%s/tasks/subid.yml has %d tasks, the pinned list has %d; evaluate the change on constructed files and update subidTasks", containerRuntimeRole, len(got), len(subidTasks))
+	}
+	for i, k := range got {
+		module := ""
+		for key := range k {
+			if m, ok := strings.CutPrefix(key, "ansible.builtin."); ok {
+				module = m
+			}
+		}
+		when := ""
+		if w, ok := k["when"]; ok {
+			when = fold(fmt.Sprint(w))
+		}
+		if want := subidTasks[i]; k.name() != want[0] || module != want[1] || when != want[2] {
+			t.Errorf("%s/tasks/subid.yml: task %d is (%q, %s, when %q), the pinned task is (%q, %s, when %q)", containerRuntimeRole, i+1, k.name(), module, when, want[0], want[1], want[2])
+		}
+	}
+	// main.yml writes only what the role means to write: one drop-in directory
+	// and one drop-in file, no other file, copy, template or line.
+	counts := map[string]int{}
+	for _, k := range roleTasks(t, "tasks/main.yml") {
+		for key := range k {
+			switch key {
+			case "ansible.builtin.file", "ansible.builtin.copy", "ansible.builtin.template", "ansible.builtin.lineinfile", "ansible.builtin.blockinfile", "ansible.builtin.replace":
+				counts[key]++
+			}
+		}
+	}
+	want := map[string]int{"ansible.builtin.file": 1, "ansible.builtin.copy": 1}
+	for _, key := range []string{"ansible.builtin.file", "ansible.builtin.copy", "ansible.builtin.template", "ansible.builtin.lineinfile", "ansible.builtin.blockinfile", "ansible.builtin.replace"} {
+		if counts[key] != want[key] {
+			t.Errorf("%s/tasks/main.yml has %d %s tasks, want %d (the drop-in directory and the drop-in file only; subordinate id rows are written by subid.yml)", containerRuntimeRole, counts[key], key, want[key])
+		}
+	}
+}
+
 // TestContainerRuntimeDropInHasItsDirectory: copy does not create parent
 // directories, so a directory task precedes the delegation drop-in, and the
 // drop-in is for the runner's manager (user@<uid>.service.d), not the template

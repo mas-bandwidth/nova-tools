@@ -1541,6 +1541,7 @@ different runs.
 `TestFunctionalImageReadmeRunCommandCarriesEveryFlag`,
 `TestContainerRuntimeRefusesRootBeforeItsFirstChange`,
 `TestContainerRuntimeSubidsNeverReuseARange`,
+`TestContainerRuntimeTasksCannotHideAWeakening` (short-form module names, `ignore_errors`, `block`, and the pinned task list and `when`s of `subid.yml`),
 `TestContainerRuntimeSubidExpressionsArePinned` (the allocation's Jinja, pinned
 as the text that was evaluated with ansible's template engine on constructed
 subuid files, since the unit tier has no ansible),
