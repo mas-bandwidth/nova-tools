@@ -63,7 +63,7 @@ func script(t *testing.T, seen *[]Run) Executor {
 
 func suiteOptions(root string, cases []Case, out string, exec Executor, clock *fakeClock) Options {
 	return Options{
-		Root: root, Cases: cases, Out: out, Budget: 110 * time.Second, Workers: 2, Host: "bench",
+		Root: root, Cases: cases, Out: out, Budget: 110 * time.Second, Workers: 2, Platform: "linux-amd64", CPUs: 8,
 		Jar:  Jar{Path: "/j/tla2tools.jar", Source: "flag", SHA256: strings.Repeat("b", 64)},
 		Java: "/usr/bin/java", JavaVer: "21.0.12.1", Clock: clock.Now, Exec: exec,
 	}
@@ -94,7 +94,7 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := res.Records[0]
-	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), JavaVersion: "21.0.12.1", Workers: 2, Host: "bench",
+	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), JavaVersion: "21.0.12.1", Workers: 2, Host: "linux-amd64", CPUs: 8,
 		StartedUTC: "2026-09-28T12:00:00.250000+00:00", Generated: "15518", Distinct: "263", Seconds: "0.250",
 		Exit: 0, Result: "PASS", Expected: "pass", Property: "-", Budget: "110", Mode: "bounded"}
 	if first != want {
@@ -533,5 +533,19 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	o.JavaVer = ""
 	if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no java version") {
 		t.Fatalf("a suite with no java version: %v", err)
+	}
+	for name, mutate := range map[string]func(*Options){
+		"a machine name": func(o *Options) { o.Platform = "spacegame.losangeles" },
+		"no platform":    func(o *Options) { o.Platform = "" },
+		"no CPU count":   func(o *Options) { o.CPUs = 0 },
+	} {
+		o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o3"), script(t, &seen), clock)
+		mutate(&o)
+		if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no platform label and CPU count") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if res.Records[0].Host != "linux-amd64" || res.Records[0].CPUs != 8 {
+		t.Errorf("record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
 	}
 }

@@ -44,30 +44,56 @@ timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -confi
 
 `-deadlock` on the java commands turns TLC's deadlock check off: these models end in a terminal stutter by design, and the safety and liveness properties are what they check; the bare java commands carry no cap of their own, so they are wrapped in `timeout`. The runners live here and not in the self repo because the self repo is text only.
 
-`RUNS.tsv` holds one record per declared case. Its `input_sha256` is the fingerprint of the inputs that case was measured on, and its `input_files` is how many inputs that is. The record also names the jar (`jar_sha256`), the java version (`java_version`) and the TLC workers the case ran with (`workers`); none of the three is an input. A case's inputs are exactly what its TLC run reads:
+`RUNS.tsv` holds one record per declared case. Its `input_sha256` is the fingerprint of the inputs that case was measured on, and its `input_files` is how many inputs that is. The record also names the jar (`jar_sha256`), the java version (`java_version`), the platform (`host`), the logical CPUs of the machine that ran TLC (`cpus`) and the TLC workers the case ran with (`workers`); none of them is an input. `host` holds a platform label the tool computes, `<goos>-<goarch>` of the machine that ran TLC (`linux-amd64`), from the closed list `Platforms` in `internal/tlc/records.go` (TLC runs on Linux only); it never holds a machine's name, and no flag or environment variable sets it. `cpus` and `java_version` say what capacity and runtime measured the record; the class test refuses a `host` cell that is not in the list. A case's inputs are exactly what its TLC run reads:
 
 - its configuration (`MCFoo.cfg`);
 - the module `CASES.tsv` names for it, and every module that one `EXTENDS` or `INSTANCE`s, transitively (`EXTENDS A, B`, `INSTANCE M`, `LOCAL INSTANCE M` and `F(x) == INSTANCE M WITH ...` are read from the module text at every depth of nested modules, not from comments or strings). A name with no file under `tla/` must be one of the ten modules the TLC jar bundles (`Bags`, `FiniteSets`, `Integers`, `Naturals`, `Randomization`, `RealTime`, `Reals`, `Sequences`, `TLC`, `Toolbox`), which read nothing from the tree. That list is `standardModules` in `internal/tlc/inputs.go`; it is bookkeeping, so extending it stales nothing. Any other name refuses the case, and the refusal says the two ways out: add the module file under `tla/`, or add the name to that list when the jar bundles it;
 - the case's own row of `CASES.tsv`, under the file's header, and no other row;
 - the runner's result files, as the binary was built: `outcome.go`, `run.go` and `suite.go` of `internal/tlc`, which decide how a result is produced and read (the command line, flags, workers and timeouts of a TLC run, and the reading of its output into pass or fail). The package's other non-test files (`cases.go`, `doc.go`, `fingerprint.go`, `inputs.go`, `jar.go`, `records.go`) are bookkeeping and are in no fingerprint; `ResultFiles` and `BookkeepingFiles` in `fingerprint.go` name each file in exactly one list, and a test refuses a file in neither.
 
-The fingerprint is the SHA-256 over those inputs in path order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline. It holds no timestamp, no host and no absolute path. The jar is not an input: the record names it in `jar_sha256`, and `host` is the machine name the run reported.
+The fingerprint is the SHA-256 over those inputs in path order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline. It holds no timestamp, no host and no absolute path. The jar is not an input: the record names it in `jar_sha256`.
 
 Editing one model therefore stales the records of the cases that read it and no other: a change to a module stales every case whose module extends or instantiates it, a change to a configuration or to a case's own row stales that case, and a change to a result file of the runner stales every case. `tlacheck inputs --case <config>` prints each input with its hash, then the fingerprint and the count (`inputs`, `groups --stale`, `merge` and `run` refuse a binary whose embedded result files differ from the ones under `--root`, and say to build `tlacheck` from that tree); a record is current when its two columns equal them. `TestTLCRecordsCoverCurrentModels` refuses a stale record by naming its case and the files it reads, a configuration with no record, a record with no configuration, and a case whose module or extended modules cannot be found.
 
-To refresh the records after an edit, ask which groups hold a stale case, run those on a bench with a binary built from the committed files, and join the runs onto the committed records:
+### Refreshing the records after a model edit
+
+The author of a model change refreshes only the records the change staled. Start from the branch with the change rebased on the base branch (`git rebase origin/dev`), including a branch that still holds records in an older column layout: the base branch's `tla/RUNS.tsv` replaces the branch's, and the runs below measure again whatever the edit staled. The commands run as they stand, in this order, from the checkout root.
+
+1. Take the base branch's records, build `tlacheck` from this tree, and ask which groups are stale (the tool refuses a binary built from other runner files than this tree's, and records in another layout than its own, and says so):
 
 ```sh
+git fetch origin
+git checkout origin/dev -- tla/RUNS.tsv
 go build -o /tmp/tlacheck ./tools/tlacheck
-for g in $(/tmp/tlacheck groups --root . --stale | tr -d '[]"' | tr ',' ' '); do
-  /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-runs/$g --group $g
-done
-/tmp/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv /tmp/tlc-runs/*/RUNS.tsv
+/tmp/tlacheck groups --root . --stale
 ```
 
-`merge` keeps a record of `tla/RUNS.tsv` only when its case was not measured again and the record is current; it refuses a run whose record is not the fingerprint its case has at this checkout, so records of another runner or of a model edited since the run never join. To measure every case, run every group (`cut -f6 tla/CASES.tsv | sed 1d | sort -u`) and merge without `--keep`.
+`[]` means the edit staled nothing: `tla/RUNS.tsv` is already current, and steps 2 and 3 have nothing to do. Otherwise the output lists the groups to run.
 
-(A group that ends over its budget exits 1 and still writes its records; the bench cases with declared debt are recorded as the failed measurements they are.)
+2. On a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sort -u | sed 1d`): one jar measures the whole file, and `merge` refuses a set of records with more than one:
+
+```sh
+runs=$(mktemp -d)
+stale=$(/tmp/tlacheck groups --root . --stale | tr -d '[]"' | tr ',' ' ')
+for g in $stale; do
+  /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir "$runs/$g" --group "$g"
+done
+test -z "$stale" || /tmp/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv "$runs"/*/RUNS.tsv
+```
+
+A group that ends over its budget exits 1 and still writes its records (the cases with declared debt are recorded as the failed measurements they are); a case that is not a declared debt and fails is a defect in the model or the plan, and the class test refuses its record.
+
+3. Commit `tla/RUNS.tsv` with the change. `merge --keep` keeps a record of the base branch's file only when its case was not measured again and the record is current; a stale record it cannot carry is named as stale with its group, and a kept record of a case the plan no longer declares is dropped and named.
+
+To measure every case instead (a new jar, or a runner change that stales everything), run every group and merge without `--keep`:
+
+```sh
+runs=$(mktemp -d)
+for g in $(cut -f6 tla/CASES.tsv | sed 1d | sort -u); do
+  /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir "$runs/$g" --group "$g"
+done
+/tmp/tlacheck merge --root . --out tla/RUNS.tsv "$runs"/*/RUNS.tsv
+```
 
 ## Table execution and receipt replay
 

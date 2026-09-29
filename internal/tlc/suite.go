@@ -39,16 +39,17 @@ func CheckLimits(budget time.Duration, workers int, manual bool) error {
 
 // Options is one suite: the selected cases under one budget.
 type Options struct {
-	Root    string        // checkout root; the models are root/tla
-	Cases   []Case        // the selected cases, in order
-	Jar     Jar           // the TLC jar
-	Java    string        // the java program
-	JavaVer string        // the version java reported (JavaVersion); recorded
-	Out     string        // output directory: logs, RUNS.tsv and the private copy of the models
-	Budget  time.Duration // the whole suite's limit
-	Workers int           // TLC workers for a case expected to pass; counterexample cases use one
-	Manual  bool          // mode=manual in the records
-	Host    string        // the host name recorded
+	Root     string        // checkout root; the models are root/tla
+	Cases    []Case        // the selected cases, in order
+	Jar      Jar           // the TLC jar
+	Java     string        // the java program
+	JavaVer  string        // the version java reported (JavaVersion); recorded
+	Out      string        // output directory: logs, RUNS.tsv and the private copy of the models
+	Budget   time.Duration // the whole suite's limit
+	Workers  int           // TLC workers for a case expected to pass; counterexample cases use one
+	Manual   bool          // mode=manual in the records
+	Platform string        // the platform label recorded in the host column (Platform)
+	CPUs     int           // logical CPUs of the machine, recorded
 
 	Clock  func() time.Time // time.Now when nil
 	Exec   Executor         // Execute when nil
@@ -113,6 +114,9 @@ func RunSuite(o Options) (Result, error) {
 	var res Result
 	if o.JavaVer == "" {
 		return res, errors.New("no java version to record")
+	}
+	if !ValidPlatform(o.Platform) || o.CPUs < 1 {
+		return res, fmt.Errorf("no platform label and CPU count to record: platform %q, %d CPUs", o.Platform, o.CPUs)
 	}
 	out, err := filepath.Abs(o.Out)
 	if err != nil {
@@ -221,7 +225,7 @@ func RunSuite(o Options) (Result, error) {
 		ok := Accepts(c, code, string(raw), string(cfg)) && outcome.HasStats()
 		rec := Record{
 			Config: c.Config, Module: c.Module, InputSHA256: digests[c.Config].fingerprint, InputFiles: digests[c.Config].files, JarSHA256: o.Jar.SHA256, JavaVersion: o.JavaVer, Workers: workers,
-			Host: o.Host, StartedUTC: started.UTC().Format("2006-01-02T15:04:05.000000-07:00"),
+			Host: o.Platform, CPUs: o.CPUs, StartedUTC: started.UTC().Format("2006-01-02T15:04:05.000000-07:00"),
 			Generated: outcome.Generated, Distinct: outcome.Distinct,
 			Seconds: fmt.Sprintf("%.3f", clock().Sub(started).Seconds()),
 			Exit:    code, Result: "PASS", Expected: c.Expected, Property: c.Property,

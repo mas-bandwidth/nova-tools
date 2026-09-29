@@ -104,7 +104,7 @@ var tc = func() map[string]int {
 	return m
 }()
 
-var tlcRunHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "java_version", "host", "started_utc", "workers", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
+var tlcRunHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "java_version", "host", "cpus", "started_utc", "workers", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
 
 func readTLCTSV(path string, header []string) ([][]string, error) {
 	f, err := os.Open(path)
@@ -232,8 +232,14 @@ func tlcRecordProblems(root string) []string {
 		if v := row[tc["java_version"]]; v == "" || strings.ContainsAny(v, " \t") {
 			bad("TLC %s records no java version", name)
 		}
+		if h := row[tc["host"]]; !tlc.ValidPlatform(h) {
+			bad("TLC %s records host %q: the column holds the platform label the tool computes (<goos>-<goarch>, one of %s), never a machine name", name, h, strings.Join(tlc.Platforms, ", "))
+		}
+		if n, err := strconv.Atoi(row[tc["cpus"]]); err != nil || n < 1 || n > 4096 {
+			bad("TLC %s records %q logical CPUs", name, row[tc["cpus"]])
+		}
 		jar, err := hex.DecodeString(row[tc["jar_sha256"]])
-		if err != nil || len(jar) != sha256.Size || strings.TrimSpace(row[tc["host"]]) == "" {
+		if err != nil || len(jar) != sha256.Size {
 			bad("TLC %s is missing jar identity or bench provenance", name)
 		}
 		if _, err := time.Parse(time.RFC3339Nano, row[tc["started_utc"]]); err != nil {
@@ -380,7 +386,7 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 			f.t.Fatal(err)
 		}
 		row := make([]string, len(tlcRunHeader))
-		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "java_version": "21.0.12.1", "workers": "2", "host": "fixture-bench", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
+		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "java_version": "21.0.12.1", "workers": "2", "host": "linux-amd64", "cpus": "8", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
 			row[tc[name]] = v
 		}
 		if edit != nil {
@@ -614,6 +620,37 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 			// here, so only the runner stales it too.
 			if slices.Contains(stale, "MCLone.cfg") != strings.HasPrefix(path, "internal/tlc/") {
 				t.Fatalf("changing %s left MCLone.cfg's record wrong: stale %v", path, stale)
+			}
+		})
+	}
+}
+
+// The host column holds a platform label the tool computes, from a closed list;
+// a machine's name in the record file is refused, and the CPU count is a count.
+func TestTLCRecordHostIsAPlatformLabel(t *testing.T) {
+	t.Parallel()
+	for name, tc2 := range map[string]struct {
+		column, value string
+		ok            bool
+	}{
+		"a platform":           {"host", "linux-arm64", true},
+		"a machine name":       {"host", "spacegame.losangeles", false},
+		"a short host name":    {"host", "bench", false},
+		"an operating system":  {"host", "linux", false},
+		"another OS":           {"host", "darwin-arm64", false},
+		"an unlisted arch":     {"host", "linux-sparc", false},
+		"a label with a space": {"host", "linux-amd64 ", false},
+		"no cpus":              {"cpus", "0", false},
+		"cpus that are text":   {"cpus", "many", false},
+		"cpus":                 {"cpus", "64", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newTLCFixture(t)
+			f.seal(func(row []string) []string { row[tc[tc2.column]] = tc2.value; return row })
+			problems := tlcRecordProblems(f.root)
+			if tc2.ok != (len(problems) == 0) {
+				t.Fatalf("%s=%q: problems %v", tc2.column, tc2.value, problems)
 			}
 		})
 	}

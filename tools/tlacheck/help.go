@@ -6,6 +6,9 @@ import "runtime"
 // start TLC anywhere but Linux; the tests set the env's own.
 var hostOS = runtime.GOOS
 
+// hostArch is the architecture the checks run on.
+var hostArch = runtime.GOARCH
+
 const helpRun = `tlacheck run: run the declared cases of tla/CASES.tsv under one budget and write the run records.
 
 usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--java <java>]
@@ -32,7 +35,8 @@ declared invariant, action or temporal property. A timeout, a parse failure or a
 violation is a failure. A case that ends the budget early fails the run.
 
 RUNS.tsv holds one record per case: config, module, the fingerprint of what the case reads,
-the number of files under it, the jar's digest, the java version, host, UTC start, the TLC workers, states generated and distinct
+the number of files under it, the jar's digest, the java version, host (the platform label
+<goos>-<goarch> the tool computes, never a machine name), the logical CPU count, UTC start, the TLC workers, states generated and distinct
 ("-" when unknown), seconds, exit, result, expected, property, budget and mode. The
 fingerprint covers the case's configuration, its module and the modules that one extends or
 instantiates, the case's own row of CASES.tsv and the runner's result files (tlacheck inputs prints

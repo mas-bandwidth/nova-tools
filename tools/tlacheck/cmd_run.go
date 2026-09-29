@@ -125,9 +125,9 @@ func cmdRun(e env, args []string) int {
 	if stop {
 		return code
 	}
-	host, err := e.hostname()
-	if err != nil || host == "" {
-		host = "unknown"
+	platform, err := tlc.Platform(e.goos, e.goarch)
+	if err != nil {
+		return refuse(e, "run", err.Error()+"; nothing was run", "ssh <bench> "+tool+" run ...")
 	}
 	javaVer, err := e.javaVersion(java)
 	if err != nil {
@@ -137,7 +137,7 @@ func cmdRun(e env, args []string) int {
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
 		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
-		Budget:    *timeout, Workers: *workers, Manual: *manual, Host: host, Exec: e.exec,
+		Budget:    *timeout, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout
 			if r.Result != "PASS" {

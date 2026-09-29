@@ -12,7 +12,7 @@ import (
 
 func rec(config, inputs string) Record {
 	return Record{Config: config, Module: "MCA.tla", InputSHA256: inputs, InputFiles: 3, JarSHA256: strings.Repeat("a", 64), JavaVersion: "21.0.1",
-		Host: "bench", StartedUTC: "2026-01-01T00:00:00.000000+00:00", Workers: 2, Generated: "10", Distinct: "5",
+		Host: "linux-amd64", CPUs: 8, StartedUTC: "2026-01-01T00:00:00.000000+00:00", Workers: 2, Generated: "10", Distinct: "5",
 		Seconds: "1.250", Exit: 0, Result: "PASS", Expected: "pass", Property: "-", Budget: "110", Mode: "bounded"}
 }
 
@@ -24,7 +24,7 @@ func TestRecordsRoundTrip(t *testing.T) {
 	if err := WriteRecords(&b, in); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\tjava_version\thost\tstarted_utc\tworkers\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n") {
+	if !strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\tjava_version\thost\tcpus\tstarted_utc\tworkers\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n") {
 		t.Fatalf("header: %q", strings.SplitN(b.String(), "\n", 2)[0])
 	}
 	out, err := ReadRecords(&b)
@@ -47,6 +47,7 @@ func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {
 		"a bad count of files":   good + badRow("none", "2", "0"),
 		"no files":               good + badRow("0", "2", "0"),
 		"no workers":             good + badRow("3", "0", "0"),
+		"no cpus":                good + strings.Replace(badRow("3", "2", "0"), "\t8\t", "\t0\t", 1),
 		"a bad count of workers": good + badRow("3", "two", "0"),
 		"a bad exit":             good + badRow("3", "2", "abc"),
 	} {
@@ -162,7 +163,7 @@ func TestMergeRefusesRecordsOfMoreThanOneJar(t *testing.T) {
 }
 
 func badRow(files, workers, exit string) string {
-	return strings.Join([]string{"MCA.cfg", "MCA.tla", "x", files, "j", "21.0.1", "h", "t", workers, "1", "1", "1", exit, "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n"
+	return strings.Join([]string{"MCA.cfg", "MCA.tla", "x", files, "j", "21.0.1", "linux-amd64", "8", "t", workers, "1", "1", "1", exit, "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n"
 }
 
 // Records in another column layout are refused naming the layout found and the
@@ -175,12 +176,12 @@ func TestReadRecordsNamesTheLayoutItFoundAndTheOneItExpects(t *testing.T) {
 	if err == nil {
 		t.Fatal("the old layout was read")
 	}
-	for _, want := range []string{"another layout", "found 15 columns (config,module,input_sha256,jar_sha256,", "reads and writes 18 (config,module,input_sha256,input_files,jar_sha256,java_version,"} {
+	for _, want := range []string{"another layout", "found 15 columns (config,module,input_sha256,jar_sha256,", "reads and writes 19 (config,module,input_sha256,input_files,jar_sha256,java_version,"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%q lacks %q", err, want)
 		}
 	}
-	if _, err := ReadRecords(strings.NewReader(strings.Join(RecordsHeader, "\t") + "\nMCA.cfg\tMCA.tla\n")); err == nil || !strings.Contains(err.Error(), "line 2 has 2 fields, want 18") {
+	if _, err := ReadRecords(strings.NewReader(strings.Join(RecordsHeader, "\t") + "\nMCA.cfg\tMCA.tla\n")); err == nil || !strings.Contains(err.Error(), "line 2 has 2 fields, want 19") {
 		t.Errorf("a short row: %v", err)
 	}
 }
@@ -209,5 +210,30 @@ func TestCarryNamesEachRecordItDrops(t *testing.T) {
 	var missing *MissingError
 	if !errors.As(err, &missing) || !reflect.DeepEqual(missing.Cases, []string{"MCB.cfg"}) {
 		t.Fatalf("merge error %v", err)
+	}
+}
+
+// The host column holds a platform label, never a machine name.
+func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
+	t.Parallel()
+	for goos, archs := range map[string][]string{"linux": {"amd64", "arm64", "riscv64"}} {
+		for _, arch := range archs {
+			if got, err := Platform(goos, arch); err != nil || got != goos+"-"+arch {
+				t.Errorf("%s/%s: %q, %v", goos, arch, got, err)
+			}
+		}
+	}
+	for _, bad := range [][2]string{{"darwin", "arm64"}, {"windows", "amd64"}, {"linux", "sparc"}, {"", ""}, {"linux", ""}} {
+		if got, err := Platform(bad[0], bad[1]); err == nil {
+			t.Errorf("%v gave %q", bad, got)
+		}
+	}
+	for _, name := range []string{"spacegame.losangeles", "bench", "linux", "linux-", "Linux-amd64", "linux-amd64 ", "-amd64", ""} {
+		if ValidPlatform(name) {
+			t.Errorf("%q is a platform label", name)
+		}
+	}
+	if !ValidPlatform("linux-amd64") {
+		t.Error("linux-amd64 is not a platform label")
 	}
 }

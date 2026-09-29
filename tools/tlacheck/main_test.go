@@ -51,9 +51,9 @@ func testEnv(t *testing.T, exec tlc.Executor) (env, *bytes.Buffer, *bytes.Buffer
 		stdout: &out, stderr: &errs,
 		getenv:      func(string) string { return "" },
 		lookPath:    func(name string) (string, error) { return "/usr/bin/" + name, nil },
-		hostname:    func() (string, error) { return "bench", nil },
+		cpus:        func() int { return 8 },
 		javaVersion: func(string) (string, error) { return "21.0.12.1", nil },
-		exec:        exec, goos: "linux",
+		exec:        exec, goos: "linux", goarch: "amd64",
 	}, &out, &errs
 }
 
@@ -250,7 +250,7 @@ func TestRunWritesRecordsAndReportsEachCase(t *testing.T) {
 		t.Errorf("fields: %q / %q", lines[0], lines[2])
 	}
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
-	if err != nil || len(recs) != 2 || recs[0].Host != "bench" || recs[0].Budget != "100" || recs[1].Exit != 12 {
+	if err != nil || len(recs) != 2 || recs[0].Host != "linux-amd64" || recs[0].CPUs != 8 || recs[0].Budget != "100" || recs[1].Exit != 12 {
 		t.Fatalf("records = %+v, %v", recs, err)
 	}
 	if len(runs) != 2 || runs[0].Workers != 1 {
@@ -278,6 +278,37 @@ func TestRunRecordsTheJavaVersionAndWorkersAndRefusesWhenJavaHasNone(t *testing.
 	}
 	if _, err := os.Stat(filepath.Join(dir2, tlc.RunsFile)); err == nil {
 		t.Fatal("records written for a java with no version")
+	}
+}
+
+// The host column is the tool's own platform label, and there is no way to
+// write a machine name: no flag, no environment variable.
+func TestRunWritesThePlatformLabelAndNeverAHostName(t *testing.T) {
+	t.Parallel()
+	root, jar := checkout(t)
+	e, out, errs := testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil))
+	e.goarch, e.cpus = "arm64", func() int { return 64 }
+	e.getenv = func(name string) string { return "HOSTNAME-or-" + name }
+	dir := filepath.Join(t.TempDir(), "run")
+	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha"); r.code != 0 {
+		t.Fatalf("%+v", r)
+	}
+	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
+	if err != nil || len(recs) != 2 || recs[0].Host != "linux-arm64" || recs[0].CPUs != 64 || recs[1].Host != "linux-arm64" {
+		t.Fatalf("records %+v, %v", recs, err)
+	}
+	raw := string(mustRead(t, filepath.Join(dir, tlc.RunsFile)))
+	if strings.Contains(raw, "HOSTNAME") || strings.Contains(raw, "bench") {
+		t.Errorf("the records name a host: %q", raw)
+	}
+	e, out, errs = testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran on an unlisted platform"); return 0 })
+	e.goarch = "sparc"
+	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r2"), "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, `platform "linux-sparc" is not one the runner records`) {
+		t.Errorf("an unlisted architecture: %+v", r)
+	}
+	e, out, errs = testEnv(t, nil)
+	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r3"), "--group", "alpha", "--host", "x"); r.code != 2 || !strings.Contains(r.stderr, "unknown flag") {
+		t.Errorf("a --host flag exists: %+v", r)
 	}
 }
 
@@ -576,7 +607,7 @@ func TestMergeKeepNamesWhatItCannotCarry(t *testing.T) {
 	}
 	e, out, errs = testEnv(t, nil)
 	r = do(e, out, errs, "merge", "--root", root, "--keep", old, "--out", merged, runs[0])
-	for _, want := range []string{"cannot read the records to keep", "another layout: found 15 columns", "reads and writes 18", "take the tla/RUNS.tsv of the base branch"} {
+	for _, want := range []string{"cannot read the records to keep", "another layout: found 15 columns", "reads and writes 19", "take the tla/RUNS.tsv of the base branch"} {
 		if r.code != 2 || !strings.Contains(r.stderr, want) {
 			t.Errorf("an old layout: %q lacks %q (code %d)", r.stderr, want, r.code)
 		}
@@ -588,6 +619,64 @@ func TestMergeKeepNamesWhatItCannotCarry(t *testing.T) {
 	e, out, errs = testEnv(t, nil)
 	if r := do(e, out, errs, "groups", "--root", root, "--stale"); r.code != 2 || !strings.Contains(r.stderr, "another layout") || !strings.Contains(r.stderr, "take the tla/RUNS.tsv of the base branch") {
 		t.Errorf("groups --stale on an old layout: %+v", r)
+	}
+}
+
+// The commands tla/README.md shows are held to the real flag parser: each
+// tlacheck invocation in a fenced block is run through the verb's own flag set
+// with the verb stopped once its flags are read, so a flag that is renamed,
+// dropped or misplaced turns this red. The README also has to show the
+// refresh procedure's four verbs.
+func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "tla", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation := regexp.MustCompile(`tlacheck\s+([a-z]+)((?:\s+[^\s|)&;><]+)*)`)
+	var commands [][]string
+	inBlock := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "```") {
+			inBlock = !inBlock
+			continue
+		}
+		if !inBlock {
+			continue
+		}
+		for _, m := range invocation.FindAllStringSubmatch(line, -1) {
+			args := []string{m[1]}
+			for _, a := range strings.Fields(strings.ReplaceAll(m[2], `"`, "")) {
+				args = append(args, a)
+			}
+			commands = append(commands, args)
+		}
+	}
+	shown := map[string]int{}
+	for _, args := range commands {
+		shown[args[0]]++
+		e, out, errs := testEnv(t, func(context.Context, tlc.Run, string) int { t.Errorf("%v ran TLC", args); return 0 })
+		e.parseOnly = true
+		if r := do(e, out, errs, args...); r.code != 0 || r.stdout != "" || r.stderr != "" {
+			t.Errorf("tlacheck %s: the real parser refuses it: %+v", strings.Join(args, " "), r)
+		}
+	}
+	for _, verb := range []string{"groups", "run", "merge", "inputs"} {
+		if shown[verb] == 0 {
+			t.Errorf("the README shows no tlacheck %s command", verb)
+		}
+	}
+	if shown["groups"] < 1 || len(commands) < 8 {
+		t.Errorf("only %d commands found in the README's blocks: %v", len(commands), commands)
+	}
+	// The control: the parser does refuse a flag it does not have, a flag after a
+	// positional and a missing flag value, so a pass above means something.
+	for _, args := range [][]string{{"run", "--dir", "x", "--bogus"}, {"merge", "--out", "o", "a.tsv", "--keep", "k"}, {"groups", "--root"}} {
+		e, out, errs := testEnv(t, nil)
+		e.parseOnly = true
+		if r := do(e, out, errs, args...); r.code != 2 {
+			t.Errorf("%v was parsed: %+v", args, r)
+		}
 	}
 }
 

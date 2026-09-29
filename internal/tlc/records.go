@@ -18,7 +18,8 @@ type Record struct {
 	InputFiles  int    // how many inputs the fingerprint covers
 	JarSHA256   string
 	JavaVersion string // the version java reported, as JavaVersion reads it
-	Host        string
+	Host        string // the platform label of the machine that ran TLC (Platform), never a machine name
+	CPUs        int    // logical CPUs of that machine
 	StartedUTC  string // RFC 3339, microseconds, +00:00
 	Workers     int    // TLC workers this case ran with
 	Generated   string // states generated; "-" when unknown
@@ -33,10 +34,10 @@ type Record struct {
 }
 
 // RecordsHeader is the header of tla/RUNS.tsv.
-var RecordsHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "java_version", "host", "started_utc", "workers", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
+var RecordsHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "java_version", "host", "cpus", "started_utc", "workers", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
 
 func (r Record) fields() []string {
-	return []string{r.Config, r.Module, r.InputSHA256, fmt.Sprint(r.InputFiles), r.JarSHA256, r.JavaVersion, r.Host, r.StartedUTC, fmt.Sprint(r.Workers), r.Generated, r.Distinct, r.Seconds, fmt.Sprint(r.Exit), r.Result, r.Expected, r.Property, r.Budget, r.Mode}
+	return []string{r.Config, r.Module, r.InputSHA256, fmt.Sprint(r.InputFiles), r.JarSHA256, r.JavaVersion, r.Host, fmt.Sprint(r.CPUs), r.StartedUTC, fmt.Sprint(r.Workers), r.Generated, r.Distinct, r.Seconds, fmt.Sprint(r.Exit), r.Result, r.Expected, r.Property, r.Budget, r.Mode}
 }
 
 // WriteRecords writes the header and the records, one line each.
@@ -82,21 +83,71 @@ func ReadRecords(r io.Reader) ([]Record, error) {
 			return nil, fmt.Errorf("record on line %d has %d fields, want %d", n+2, len(f), len(RecordsHeader))
 		}
 	}
+	col := map[string]int{}
+	for i, name := range RecordsHeader {
+		col[name] = i
+	}
 	var out []Record
 	for _, f := range rows[1:] {
-		var files, workers, code int
-		if _, err := fmt.Sscanf(f[3], "%d", &files); err != nil || files < 1 {
-			return nil, fmt.Errorf("record %s has input_files %q, not a count", f[0], f[3])
+		count := func(name string) (int, error) {
+			var n int
+			if _, err := fmt.Sscanf(f[col[name]], "%d", &n); err != nil || n < 1 {
+				return 0, fmt.Errorf("record %s has %s %q, not a count", f[0], name, f[col[name]])
+			}
+			return n, nil
 		}
-		if _, err := fmt.Sscanf(f[8], "%d", &workers); err != nil || workers < 1 {
-			return nil, fmt.Errorf("record %s has workers %q, not a count", f[0], f[8])
+		files, err := count("input_files")
+		if err != nil {
+			return nil, err
 		}
-		if _, err := fmt.Sscanf(f[12], "%d", &code); err != nil {
-			return nil, fmt.Errorf("record %s has exit %q, not a number", f[0], f[12])
+		workers, err := count("workers")
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, Record{Config: f[0], Module: f[1], InputSHA256: f[2], InputFiles: files, JarSHA256: f[4], JavaVersion: f[5], Host: f[6], StartedUTC: f[7], Workers: workers, Generated: f[9], Distinct: f[10], Seconds: f[11], Exit: code, Result: f[13], Expected: f[14], Property: f[15], Budget: f[16], Mode: f[17]})
+		cpus, err := count("cpus")
+		if err != nil {
+			return nil, err
+		}
+		var code int
+		if _, err := fmt.Sscanf(f[col["exit"]], "%d", &code); err != nil {
+			return nil, fmt.Errorf("record %s has exit %q, not a number", f[0], f[col["exit"]])
+		}
+		g := func(name string) string { return f[col[name]] }
+		out = append(out, Record{Config: g("config"), Module: g("module"), InputSHA256: g("input_sha256"), InputFiles: files,
+			JarSHA256: g("jar_sha256"), JavaVersion: g("java_version"), Host: g("host"), CPUs: cpus, StartedUTC: g("started_utc"),
+			Workers: workers, Generated: g("generated"), Distinct: g("distinct"), Seconds: g("seconds"), Exit: code,
+			Result: g("result"), Expected: g("expected"), Property: g("property"), Budget: g("budget"), Mode: g("mode")})
 	}
 	return out, nil
+}
+
+// Platforms are the platform labels a record's host column may hold: the
+// <goos>-<goarch> pairs of the operating systems the runner accepts (Linux
+// only: TLC runs on a Linux bench) over the architectures Go supports there.
+// The column never holds a machine's name.
+var Platforms = []string{
+	"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-loong64", "linux-mips", "linux-mips64",
+	"linux-mips64le", "linux-mipsle", "linux-ppc64", "linux-ppc64le", "linux-riscv64", "linux-s390x",
+}
+
+// Platform is the label of the machine that runs TLC: goos and goarch as Go
+// names them, joined by a dash. It refuses a pair that is not in Platforms.
+func Platform(goos, goarch string) (string, error) {
+	label := goos + "-" + goarch
+	if !ValidPlatform(label) {
+		return "", fmt.Errorf("platform %q is not one the runner records (%s)", label, strings.Join(Platforms, ", "))
+	}
+	return label, nil
+}
+
+// ValidPlatform reports whether label is in Platforms.
+func ValidPlatform(label string) bool {
+	for _, p := range Platforms {
+		if p == label {
+			return true
+		}
+	}
+	return false
 }
 
 // ReadRecordsFile reads the records at path.

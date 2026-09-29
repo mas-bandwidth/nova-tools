@@ -2303,8 +2303,10 @@ proofs or silently replaced by smaller configurations.
 
 `tla/RUNS.tsv` retains each measured module/configuration, generated and distinct
 states, elapsed time, result, exit, declared expectation, budget and run mode.
-It also records the bench (the machine name the run reported), UTC start, installed jar
-hash, an input fingerprint and the count of files under it. The fingerprint covers what
+It also records the platform of the bench (`host`: the label `<goos>-<goarch>` the tool
+computes, from the closed list `Platforms` in `internal/tlc/records.go`, never a machine's
+name), its logical CPU count (`cpus`), the java version, the TLC workers of the case, UTC
+start, installed jar hash, an input fingerprint and the count of files under it. The fingerprint covers what
 that case's TLC run reads and nothing else: its configuration; the module `CASES.tsv`
 names for it and, transitively, every module that one `EXTENDS` or `INSTANCE`s (a name
 with no file under `tla/` must be one of the ten modules the TLC jar bundles, the `standardModules` list in
@@ -2345,7 +2347,8 @@ stales that case only, an edit to the shared module stales the cases that extend
 other, an edit to one row of the case plan stales that case only, an edit to the runner
 stales every case, and edits to files no case reads stale none.
 `TestTLCEveryFileACaseReadsStalesIt` changes each file a case reads, one at a time, and
-each change stales the case. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
+each change stales the case. `TestTLCRecordHostIsAPlatformLabel` refuses a `host` cell that is not a listed platform label
+and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
 set of records measured with more than one jar, naming each jar with its record count and the
 groups to run again. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
