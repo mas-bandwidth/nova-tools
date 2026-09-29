@@ -1,3 +1,0 @@
-# CI spin ceiling: maximum allowed spin (seconds of failed, cancelled and rerun jobs)
-# over the last N dev runs. This number only falls.
-0
