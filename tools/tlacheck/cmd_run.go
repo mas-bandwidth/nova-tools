@@ -113,7 +113,7 @@ func cmdRun(e env, args []string) int {
 	records := filepath.Join(*dir, tlc.RunsFile)
 	switch {
 	case res.Refused != "":
-		eventWhy(e.stderr, "RUN", "FAIL", res.Refused+"; no records were written", "cases", fmt.Sprint(len(res.Records)))
+		eventWhy(e.stderr, "RUN", "FAIL", res.Refused+"; no records were written; run the same command again", "cases", fmt.Sprint(len(res.Records)))
 		return 1
 	case res.Failed && len(res.Records) != len(chosen):
 		eventWhy(e.stderr, "RUN", "FAIL", "the budget ended before the last case", "cases", fmt.Sprint(len(res.Records)), "of", fmt.Sprint(len(chosen)), "records", records)

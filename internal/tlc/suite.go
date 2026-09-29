@@ -1,11 +1,13 @@
 package tlc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -92,9 +94,24 @@ func RunSuite(o Options) (Result, error) {
 	// The digest is taken first and the copy is checked against it: TLC checks
 	// the copy, the records name the digest, and a module edited between the two
 	// would make them different bytes. Then the suite refuses to run.
-	digest, err := Fingerprint(o.Root)
+	digest, plan, err := fingerprint(o.Root, filepath.Join(o.Root, "tla"))
 	if err != nil {
 		return res, err
+	}
+	// The cases to run were parsed before this digest. They are run only if the
+	// plan the digest names still holds each of them: an edit to CASES.tsv
+	// between the parse and the digest would otherwise run stale cases under a
+	// fresh digest.
+	current, err := ParseCases(bytes.NewReader(plan))
+	if err != nil {
+		return res, fmt.Errorf("the case plan is refused: %v", err)
+	}
+	for _, c := range o.Cases {
+		if !slices.Contains(current, c) {
+			res.Failed = true
+			res.Refused = "CASES.tsv changed after the cases were read (" + c.Config + " is not as it was)"
+			return res, nil
+		}
 	}
 	if o.beforeCopy != nil {
 		o.beforeCopy()
@@ -102,7 +119,7 @@ func RunSuite(o Options) (Result, error) {
 	if err := CopyModels(filepath.Join(o.Root, "tla"), res.Work); err != nil {
 		return res, err
 	}
-	copied, err := fingerprint(o.Root, res.Work)
+	copied, _, err := fingerprint(o.Root, res.Work)
 	if err != nil {
 		return res, err
 	}

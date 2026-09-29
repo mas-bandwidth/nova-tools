@@ -46,30 +46,34 @@ func RunnerFiles() (map[string][]byte, error) {
 // NUL, its bytes and a NUL, in path order; internal/ci computes the same from
 // a checkout.
 func Fingerprint(root string) (string, error) {
-	return fingerprint(root, filepath.Join(root, "tla"))
+	digest, _, err := fingerprint(root, filepath.Join(root, "tla"))
+	return digest, err
 }
 
 // fingerprint is Fingerprint with the modules and configurations read from
 // tlaDir, which is root/tla or a copy of it. The case plan is always read from
 // root/tla, and every path is digested as tla/<name>, so a faithful copy has
 // the fingerprint of its source.
-func fingerprint(root, tlaDir string) (string, error) {
+//
+// It also returns the bytes of the case plan that the digest covers, so a
+// caller can parse the plan from exactly the bytes the digest names.
+func fingerprint(root, tlaDir string) (string, []byte, error) {
 	files, err := RunnerFiles()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	paths := []string{filepath.Join(root, "tla", CasesFile)}
 	for _, pattern := range []string{"*.tla", "MC*.cfg"} {
 		matches, err := filepath.Glob(filepath.Join(tlaDir, pattern))
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		paths = append(paths, matches...)
 	}
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
 		if err != nil {
-			return "", fmt.Errorf("cannot read %s: %v", p, err)
+			return "", nil, fmt.Errorf("cannot read %s: %v", p, err)
 		}
 		files["tla/"+filepath.Base(p)] = raw
 	}
@@ -85,5 +89,5 @@ func fingerprint(root, tlaDir string) (string, error) {
 		h.Write(files[name])
 		h.Write([]byte{0})
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hex.EncodeToString(h.Sum(nil)), files["tla/"+CasesFile], nil
 }
