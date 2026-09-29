@@ -74,6 +74,7 @@ backed by Redis data structures.
 | `table:<name>:identity` | Hash | Immutable table identity: `epoch_key`, `epoch_field`, `member_prefix` |
 | `table:<name>:revision` | Hash | Revision counter tracking mutations |
 | `table:<name>:changes` | Stream | Audit stream of table mutations |
+| `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id |
 | `table:<name>:rows` | Sorted Set | Row keys in display order with ordinal scores (epoch 0) |
 | `table:<name>:<epoch>:rows` | Sorted Set | Row keys in display order for `<epoch>` |
 | `table:<name>:row:<row>` | Hash | Row labels, external column bindings (`key:<col>`), text cell contents (epoch 0) |
@@ -249,38 +250,6 @@ When `watch --check` detects an invariant violation on any snapshotted table:
    human operators and coordinators so that remediation can be investigated and
    applied deliberately.
 
-## Batch extension acceptance
-
-The batch model is required for acceptance; the runtime tests do not
-replace it. It must add an atomic batch action, member revisions, field guards,
-operation records and one receipt per accepted batch to the member/epoch table
-model. It reuses the one-place/epoch definitions and preserves the per-verb
-model cases separately. A named batch wrapper/config uses 3 members, 2 rows,
-2 columns, 2 epochs and batch sizes 1..3. Its cases include a guard-only
-dependency and a cross-row move. Evidence retains exact model, config,
-executable and input hashes; a larger configuration that exceeds a budget is
-not silently replaced by a smaller one. TLC runs on a bench.
-
-Reversed witnesses must catch a second member validation failure after a first
-member writes; guards evaluated against a partially updated state; duplicate
-placement; stale epoch, table or member revision; missing revision advancement
-by an ordinary writer; wrong-type or permission refusal after partial writes;
-lost reply causing a second effect; request-hash collision without byte
-comparison; a receipt emitted before its complete delta; and stale retry
-reported as a new operation.
-
-The full table-layer gate requires the model and reversed witnesses; trip,
-commit and complete unchanged-store refusal tests; bounded randomized batches
-on owned Redis (16 fixed seeds, 128 steps each) with runtime checks; Go receipt
-replay with one batch receipt per action; real-use rehearsal on an owned store;
-two independent exact-revision reads of at least 9/10 with accepting
-dispositions; and the maintainer's interactive mini-quack with every verb and
-refusal, a watched table, and findings repaired and repeated until clean.
-Separate cases test N=1 and maximum configured N, including a late invalid
-entry, interacting moves and a replay. Ordinary table callers retain their
-regression suite. The card layer resumes only after this extension passes the
-table gate; a green card test cannot substitute for proving the lower layer.
-
 ## Batched member read and conditional write
 
 The data-oriented rule is **batch always**: members are plain data in arrays,
@@ -293,9 +262,10 @@ the same atomic change.
 
 ### Scope and calls
 
-`ns_table_read_set` is one read-only application call over one table and active
-epoch. Its explicit scope is a member-ID array or a complete declared row/column
-selection. It returns table identity, epoch/revision, every selected member's
+`ns_table_read_set` is one read-only application call over one table and one
+materialised epoch. An omitted epoch selects the active epoch; an explicit epoch
+selects that materialised epoch. Its scope is a member-ID array or a complete
+declared row/column selection. It returns table identity, epoch/revision, every selected member's
 record revision, fields, verified owned placement and score, and explicit missing
 members. A selection beyond the declared bound refuses; it cannot return a prefix
 marked complete. Bound/external cells are not writable through this interface.
@@ -440,8 +410,12 @@ A test compares the shared constants with this table:
 The 128 set-fields and 1000 unset-fields limits are intentionally different.
 The field-value byte limit applies to each value in `set`.
 The read-set member limit counts unique IDs in a selection. Manifest size
-counts the encoded bytes supplied to the server, including whitespace and JSON
-escaping; ID and field-value sizes count decoded UTF-8 bytes.
+counts the encoded bytes at each boundary, including whitespace and JSON
+escaping. The CLI bounds its raw input first; `ApplyBatch` then re-encodes the
+manifest with `json.Marshal`, bounds that compact encoding, and sends it to the
+server. The re-encoding removes input whitespace and escapes `<`, `>` and `&`.
+The server bounds the bytes it receives. ID and field-value sizes count decoded
+UTF-8 bytes.
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
@@ -484,7 +458,8 @@ bound, its value and the count found (and the member at fault for a per-member
 bound), and never echoing the input. The raw 1 MiB envelope is checked before
 operation lookup, including for a retry. Decoded manifest bounds are checked
 for an unrecorded request after lookup. The early touched-value and minimum
-receipt checks use field lengths before reading or hashing values; the final
+receipt checks use field lengths before reading stored field values or hashing
+them. The request manifest is hashed earlier. The final
 conservative receipt-size preflight also runs before writes. No automatic chunking turns
 one requested transaction into several. A caller can explicitly narrow its
 next request, accepting the separately identified transaction scope.
@@ -584,7 +559,8 @@ store or a value the manifest sets, is recorded as its length and its SHA-1
 (`before_bytes`, `before_sha1`, `after_bytes`, `after_sha1`, with the value's own side
 null; a null side with no length is an absent field), in the receipt, in the change
 event's `batch_delta` and in the operation record's result alike, never in full. The
-record's request is the manifest as sent, in full, because replay compares bytes; a
+record's request is the full manifest payload received by the server (the Go
+re-encoding for a CLI call), because replay compares those bytes; a
 value a manifest sets is in the manifest, so the record holds it in full there. And the
 receipt's size, the byte length of its encoded batch delta, is at most `receipt bytes`,
 which is the manifest bound, 1 MiB. The size is computed before the first write, with
@@ -606,7 +582,10 @@ that needs the full historical bytes of values above 64 bytes must retain
 separate evidence; a length and SHA-1 cannot reconstruct those bytes.
 A score in a receipt, a change event, a read set or the CLI is the exact decimal
 string the store holds, as the ordinary verbs write it (`0.30000000000000004`,
-not `0.3`); two different scores never render alike. A batch's change event has
+not `0.3`); two different scores never render alike. An unplaced before/after
+score in a batch delta is JSON `null`. An ordinary change event's `score` remains
+a string: empty when no score was supplied, or the stored decimal string supplied
+by that verb (including a removal's previous score). A batch's change event has
 the fields an ordinary verb's has for the same change, plus `batch_delta`. One
 batch receipt maps to one model action. Returning the original result on retry
 must return the same receipt identity.
