@@ -17,7 +17,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "fleet",
-		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>|dev: the whole roll, build, fn, fn check, the bench play, self update and the beat verify), config, build, churn (the process-age sample), ps (what runs on every bench, from the beats), and play (one rowan-tools play, a receipt per bench and role); roll is retired into release",
+		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>|dev: the whole roll, build, fn, fn check, the bench play, self update and the beat verify), config, build, churn (the process-age sample), ps (what runs on every bench, from the beats), play (one rowan-tools play, a receipt per bench and role), doctor (the 7-dimension bench health screen from Redis alone), and runners (declared vs registered vs online runner audit, and set); roll is retired into release",
 		Run:     runFleet,
 	})
 }
@@ -59,7 +59,7 @@ func unreachable(stderr io.Writer, verb, what string) int {
 
 func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "fleet", "wants state, is-up, hold, release, config, build, churn, ps, or play")
+		return refuse(errOut, "fleet", "wants state, is-up, hold, release, config, build, churn, ps, play, doctor, or runners")
 	}
 	switch args[0] {
 	case "state":
@@ -82,8 +82,12 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFleetPS(ctx, args[1:], out, errOut)
 	case "play":
 		return runFleetPlay(ctx, args[1:], out, errOut)
+	case "doctor":
+		return runFleetDoctor(ctx, args[1:], out, errOut)
+	case "runners":
+		return runFleetRunners(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, build, churn, ps, or play", args[0]))
+		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, build, churn, ps, play, doctor, or runners", args[0]))
 	}
 }
 
