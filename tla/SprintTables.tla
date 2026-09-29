@@ -40,6 +40,7 @@
 \*                     cut, a red CI); the instance bounds it by MaxBad
 \*   returnsN, ranks   bounds of the coordinator's free choices
 \*   waived[p]         the dropped needs of p the coordinator waived
+\*   released          the sentinels the coordinator released
 \*
 \* D1, the fence. A step over more than one table records the operation, then
 \* writes every table but the work table (Phase 1, one step here), then the
@@ -91,6 +92,10 @@
 \*                                           (ReadsExhaustedIsNotified, G3)
 \*   "admitcycle"       add admits a primary whose needs make a cycle
 \*                                                         (NoNeedCycle)
+\*   "sentinelself"     a reached sentinel lands by itself
+\*                                              (SentinelLandsByRelease)
+\*   "pastsentinel"     a primary resolves past a reached, unreleased
+\*                      sentinel and is dealt                (SentinelHolds)
 
 EXTENDS Naturals, FiniteSets
 
@@ -99,6 +104,7 @@ CONSTANTS Streams, Primaries, Members, Readers,
           Needs,      \* [Primaries -> SUBSET Primaries]
           Score0,     \* [Primaries -> Nat], distinct
           Admitted0,  \* the primaries admitted before the first step
+          Sentinels,  \* the primaries of kind sentinel
           MaxAttempt, MaxBad, MaxReturns, MaxRanks,
           FreeCoordinator,
           Broken
@@ -117,7 +123,7 @@ WorkCards == {WC(p, a) : p \in Primaries, a \in Attempts}
 ReadCards == {RC(p, a, r) : p \in Primaries, a \in Attempts, r \in Readers}
 Cards == WorkCards \cup ReadCards
 CardCauses == {"conflict", "needs"}
-CardNoteTypes == {"failed", "broken", "reads", "blocked", "ci", "skipped"}
+CardNoteTypes == {"failed", "broken", "reads", "blocked", "ci", "skipped", "reached"}
 \* A judgment notification about a card, and a stream's stopped judgment.
 Note(t, p) == [t |-> t, p |-> p, s |-> StreamOf[p]]
 StopNote(s) == [t |-> "stopped", p |-> None, s |-> s]
@@ -127,12 +133,12 @@ Notes == {Note(t, p) : t \in CardNoteTypes, p \in Primaries}
 VARIABLES added, dropped, work, fleet, readers, merge, sstate, mstatus,
           score, attempt, head, pair, gen, held, fin, result,
           made, gone, twice, cause, need, open, op, crashed,
-          bad, returnsN, ranks, waived
+          bad, returnsN, ranks, waived, released
 
 vars == <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
           score, attempt, head, pair, gen, held, fin, result,
           made, gone, twice, cause, need, open, op, crashed,
-          bad, returnsN, ranks, waived>>
+          bad, returnsN, ranks, waived, released>>
 
 \* ------------------------------------------------------------------ views
 
@@ -142,6 +148,13 @@ Cell(p) == IF \E c \in WorkCells : InWork(p, c)
 Landed == {p \in Primaries : InWork(p, "landed")}
 \* NEEDS: every need has landed, or was dropped and waived by the coordinator.
 NeedsMet(p) == \A q \in Needs[p] : InWork(q, "landed") \/ q \in waived[p]
+\* SENTINELS: a sentinel whose needs have all landed (or been waived) is
+\* reached; the judgments a step opens for the sentinels it leaves reached,
+\* given the landed set and the waived needs after it.
+ReachedIn(g, L, W) == g \in Sentinels /\ InWork(g, "waiting")
+                      /\ \A q \in Needs[g] : q \in L \/ q \in W[g]
+Reached(g) == ReachedIn(g, Landed, waived)
+ReachNotes(L, W) == {Note("reached", g) : g \in {x \in Sentinels : ReachedIn(x, L, W)}}
 RECURSIVE Reach(_, _)
 Reach(X, n) == IF n = 0 THEN X ELSE Reach(X \cup UNION {Needs[x] : x \in X}, n - 1)
 \* p needs itself through the needs of the primaries in S.
@@ -186,7 +199,8 @@ ExhaustNote(p, outs, oks, opn) ==
 \* stopped stream stays stopped until resume (D5); landed when every admitted
 \* primary of the stream has landed or left.
 AllDone(s, mergedNow, leaving) ==
-  \A p \in added : StreamOf[p] = s => p \in mergedNow \/ p \in dropped \cup leaving
+  \A p \in added : StreamOf[p] = s =>
+    p \in mergedNow \/ p \in dropped \cup leaving \/ (p \in Sentinels /\ InWork(p, "landed"))
 StreamAfter(s, q, st, was, mergedNow, leaving) ==
   IF was = "stopped" THEN "stopped"
   ELSE IF q # {} THEN "merging"
@@ -241,6 +255,7 @@ ApplyWork(o) ==
                                   ELSE head[p]]
   /\ open' = (open \ {n \in open : Closes(n, o)}) \cup o.notes
              \cup {Note("skipped", p) : p \in skipped}
+             \cup ReachNotes(Landed \cup {x[1] : x \in {y \in ok : y[3] = "landed"}}, waived)
 
 \* ------------------------------------------------------------------ init
 
@@ -265,10 +280,11 @@ Init ==
   /\ made = {} /\ gone = {} /\ twice = FALSE
   /\ cause = [p \in Primaries |-> None]
   /\ need = [p \in Primaries |-> None]
-  /\ open = {}
+  /\ open = {Note("reached", g) : g \in {x \in Sentinels \cap Admitted0 : Needs[x] = {}}}
   /\ op = NoOp /\ crashed = FALSE
   /\ bad = 0 /\ returnsN = [p \in Primaries |-> 0] /\ ranks = 0
   /\ waived = [p \in Primaries |-> {}]
+  /\ released = {}
 
 \* ------------------------------------------------------------------ verbs
 
@@ -277,32 +293,56 @@ Add(p) ==
   /\ Fenced /\ p \in Primaries \ added
   /\ Br("admitcycle") \/ ~InCycle(p, added \cup {p})
   /\ added' = added \cup {p}
-  /\ LET to == IF NeedsMet(p) THEN "ready" ELSE "waiting"
+  /\ LET to == IF NeedsMet(p) /\ p \notin Sentinels THEN "ready" ELSE "waiting"
      IN work' = [work EXCEPT ![StreamOf[p]][to] = @ \cup {p}]
-  /\ open' = IF Needs[p] \cap dropped # {} THEN open \cup {Note("blocked", p)} ELSE open
+  /\ open' = open \cup (IF Needs[p] \cap dropped # {} THEN {Note("blocked", p)} ELSE {})
+                   \cup (IF p \in Sentinels /\ NeedsMet(p) THEN {Note("reached", p)} ELSE {})
   /\ UNCHANGED <<dropped, fleet, readers, merge, sstate, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, cause,
-                 need, op, crashed, bad, returnsN, ranks, waived>>
+                 need, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* resolve: waiting -> ready where needs have landed.
 Resolve(p) ==
-  /\ Fenced /\ InWork(p, "waiting") /\ NeedsMet(p)
+  /\ Fenced /\ InWork(p, "waiting") /\ p \notin Sentinels
+  /\ NeedsMet(p) \/ (Br("pastsentinel") /\ \A q \in Needs[p] :
+                       InWork(q, "landed") \/ q \in waived[p] \/ Reached(q))
   /\ work' = [work EXCEPT ![StreamOf[p]]["waiting"] = @ \ {p},
                           ![StreamOf[p]]["ready"] = @ \cup {p}]
   /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* waive: the coordinator waives a dropped need of a waiting primary; the
 \* blocked judgment closes when no dropped need is left unwaived.
 Waive(p, q) ==
   /\ Fenced /\ InWork(p, "waiting") /\ q \in Needs[p] \cap dropped /\ q \notin waived[p]
   /\ waived' = [waived EXCEPT ![p] = @ \cup {q}]
-  /\ open' = IF Needs[p] \cap dropped \subseteq waived[p] \cup {q}
-             THEN open \ {Note("blocked", p)} ELSE open
+  /\ open' = (IF Needs[p] \cap dropped \subseteq waived[p] \cup {q}
+              THEN open \ {Note("blocked", p)} ELSE open)
+             \cup ReachNotes(Landed, [waived EXCEPT ![p] = @ \cup {q}])
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, op, crashed, bad, returnsN, ranks>>
+                 twice, cause, need, op, crashed, bad, returnsN, ranks, released>>
+
+\* release: the coordinator lands a reached sentinel (waiting -> landed), the
+\* only way a sentinel lands; its reached judgment closes, the release is
+\* notified, and the waiting primaries it held whose needs are now met become
+\* ready in the same step.
+Release(g) ==
+  /\ Fenced /\ Reached(g)
+  /\ LET L == Landed \cup {g}
+         freed == {q \in Primaries : InWork(q, "waiting") /\ q \notin Sentinels /\ q # g
+                     /\ g \in Needs[q] /\ \A x \in Needs[q] : x \in L \/ x \in waived[q]}
+     IN /\ work' = [s \in Streams |-> [c \in WorkCells |->
+                     CASE c = "waiting" -> work[s][c] \ ({g} \cup freed)
+                       [] c = "ready"   -> work[s][c] \cup {q \in freed : StreamOf[q] = s}
+                       [] c = "landed"  -> work[s][c] \cup (IF StreamOf[g] = s THEN {g} ELSE {})
+                       [] OTHER         -> work[s][c]]]
+        /\ open' = (open \ {Note("reached", g)}) \cup ReachNotes(L, waived)
+  /\ released' = released \cup {g}
+  /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus, score,
+                 attempt, head, pair, gen, held, fin, result, made, gone, twice,
+                 cause, need, op, crashed, bad, returnsN, ranks, waived>>
 
 \* start: ready -> working; the work card of the attempt is dealt to the up
 \* member with the shortest ready queue: cut, or, if it was withdrawn, the
@@ -319,7 +359,7 @@ Start(p) ==
   /\ Begin(Op("start", {<<p, "ready", "working">>}, {}, {}, {}, {}))
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, held, fin, result, cause, need, open, bad,
-                 returnsN, ranks, waived>>
+                 returnsN, ranks, waived, released>>
 
 \* take: the worker on an up member moves a work card ready -> working and
 \* holds it at its generation (F2: take names the generation).
@@ -329,7 +369,7 @@ Take(m, c) ==
   /\ held' = [held EXCEPT ![m] = @ \cup {<<c, gen[c]>>}]
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* finish: a worker reports the card it holds, naming its generation (F2),
 \* done ok or failed. Accepted only for the live generation in its member's
@@ -358,7 +398,7 @@ Finish(m, c, g, v) ==
      ELSE Begin(Op("finish", {<<c[2], "working", "review">>}, {}, {<<c[2], c[3]>>},
                    IF v = "failed" THEN {Note("failed", c[2])} ELSE {}, {}))
   /\ UNCHANGED <<added, dropped, work, merge, sstate, mstatus, score, attempt,
-                 head, pair, gen, gone, cause, need, open, returnsN, ranks, waived>>
+                 head, pair, gen, gone, cause, need, open, returnsN, ranks, waived, released>>
 
 \* A finish refused as stale: it changes nothing but the worker's hold.
 FinishRefused(m, c, g) ==
@@ -367,7 +407,7 @@ FinishRefused(m, c, g) ==
   /\ held' = [held EXCEPT ![m] = @ \ {<<c, g>>}]
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* ask: a primary in review whose work did not fail (G2), with no read card
 \* on the table, is dealt to two different readers: the two kept on it (D2),
@@ -389,7 +429,7 @@ Ask(p) ==
        /\ twice' = (twice \/ \E r \in two : RC(p, attempt[p], r) \in made)
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, gen, held, fin, result, gone, cause, need, open,
-                 op, crashed, bad, returnsN, ranks, waived>>
+                 op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* ask --another: the coordinator's judgment, free (F1): one more reader for
 \* a primary in review (under the judged-coordinator bound, only for a card a
@@ -402,7 +442,7 @@ AskAnother(p, r) ==
   /\ open' = open \ {Note("broken", p), Note("reads", p)}
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, gone, twice, cause,
-                 need, op, crashed, bad, returnsN, ranks, waived>>
+                 need, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* A reader moves its own read card asked -> reading.
 ReadStart(r, c) ==
@@ -410,7 +450,7 @@ ReadStart(r, c) ==
   /\ readers' = [readers EXCEPT ![r]["asked"] = @ \ {c}, ![r]["reading"] = @ \cup {c}]
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* read: a reader records ok or broken; a report against a retired card finds
 \* no card and is refused. Broken notifies for judgment; the read that leaves
@@ -426,7 +466,7 @@ Read(r, c, v) ==
      IN open' = opn \cup ExhaustNote(p, OutOf(p) \ {c}, oks, opn)
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, made, gone, twice, cause,
-                 need, op, crashed, returnsN, ranks, waived>>
+                 need, op, crashed, returnsN, ranks, waived, released>>
 
 \* accept: a named set, all or nothing (D4): review -> merging and into merge
 \* queued; refused unless every one has two different readers ok at its head.
@@ -447,7 +487,7 @@ Accept(S) ==
   /\ Begin(Op("accept", {<<p, "review", "merging">> : p \in S}, {}, {}, {}, S))
   /\ UNCHANGED <<added, dropped, work, fleet, mstatus, score, attempt, head,
                  pair, gen, held, fin, result, made, twice, cause, need, open,
-                 bad, returnsN, ranks, waived>>
+                 bad, returnsN, ranks, waived, released>>
 
 \* rework (D2): the primary's read cards retire; with a member up the next
 \* work card is cut into the shortest ready queue and the primary goes
@@ -470,13 +510,13 @@ Rework(p) ==
   /\ score' = IF Br("reworktail") THEN [score EXCEPT ![p] = MaxScore + 1] ELSE score
   /\ UNCHANGED <<added, dropped, work, merge, sstate, mstatus, attempt, head,
                  pair, gen, held, fin, result, cause, need, open, bad, returnsN,
-                 ranks, waived>>
+                 ranks, waived, released>>
 
 \* drop: off the table with the reason. Its unfinished work card is withdrawn,
 \* its outstanding read cards retire, its merge place goes; work last. A
 \* waiting primary that needs it is blocked: a judgment notification.
 Drop(p) ==
-  /\ Free /\ Placedp(p) /\ ~InWork(p, "landed") /\ Judged(p)
+  /\ Free /\ Placedp(p) /\ ~InWork(p, "landed") /\ Judged(p) /\ p \notin Sentinels
   /\ LET s == StreamOf[p]
          wl == {c \in Unfinished : c[2] = p}
          rl == IF Br("dropkeepsreads") THEN {} ELSE OutOf(p)
@@ -494,7 +534,7 @@ Drop(p) ==
   /\ cause' = [cause EXCEPT ![p] = None]
   /\ need' = [need EXCEPT ![p] = None]
   /\ UNCHANGED <<added, dropped, work, mstatus, score, attempt, head, pair, gen,
-                 held, fin, result, made, twice, open, bad, returnsN, ranks, waived>>
+                 held, fin, result, made, twice, open, bad, returnsN, ranks, waived, released>>
 
 \* rank: the coordinator changes a score; here, ranks a card first. Refused
 \* for a landed primary (G6).
@@ -506,7 +546,7 @@ Rank(p) ==
   /\ ranks' = ranks + 1
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, waived>>
+                 cause, need, open, op, crashed, bad, returnsN, waived, released>>
 
 \* return: merging -> review; the card leaves merge queued or stuck (with its
 \* cause); it answers the card's judgments (F3). Merge first, work last.
@@ -524,7 +564,7 @@ Return(p) ==
   /\ Begin(Op("return", {<<p, "merging", "review">>}, {}, {}, {}, {p}))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, open,
-                 bad, ranks, waived>>
+                 bad, ranks, waived, released>>
 
 \* merge, given the fact green: the batch, a prefix of the stream's queued and
 \* stuck cards in score order (a stuck card is a barrier, D6), lands on the
@@ -542,7 +582,7 @@ MergeGreen(s, B) ==
      ELSE Begin(Op("land", {<<b, "merging", "landed">> : b \in B}, {}, {}, {}, {}))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, cause,
-                 need, open, bad, returnsN, ranks, waived>>
+                 need, open, bad, returnsN, ranks, waived, released>>
 
 \* merge, given a fact on a card that stops the stream: a conflict on it, or
 \* its need of a card q of another stream first, recorded as data (D6);
@@ -561,7 +601,7 @@ MergeStop(s, p, why, q) ==
   /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {StopNote(s)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, op,
-                 crashed, returnsN, ranks, waived>>
+                 crashed, returnsN, ranks, waived, released>>
 
 \* merge, given a fact on the stream: its branch red, or the merge queue
 \* rejected the batch. The stream stops; no card moves; the coordinator is
@@ -573,7 +613,7 @@ MergeRed(s) ==
   /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {StopNote(s)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, op, crashed, returnsN, ranks, waived>>
+                 cause, need, op, crashed, returnsN, ranks, waived, released>>
 
 \* resume (D6, G5), with what was done (--did): refused while a stuck card's
 \* cross-stream need has not landed; a conflict or a red branch is resolved
@@ -593,7 +633,7 @@ Resume(s) ==
   /\ open' = open \ {StopNote(s)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, need, op,
-                 crashed, bad, returnsN, ranks, waived>>
+                 crashed, bad, returnsN, ranks, waived, released>>
 
 \* A member goes down (reported, or fleet down): its unfinished work cards are
 \* dealt to the up member with the shortest ready queue at a new generation;
@@ -627,7 +667,7 @@ FleetDown(m) ==
                          {}, {}, {}, {}))
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, score, attempt,
                  head, pair, held, fin, result, made, twice, cause, need, open,
-                 returnsN, ranks, waived>>
+                 returnsN, ranks, waived, released>>
 
 \* A member comes up: ready queues are levelled in one call; the newest cards
 \* (highest score) of the longest queue move to it at a new generation.
@@ -646,18 +686,18 @@ FleetUp(m) ==
                /\ gen' = Bump(mv)
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, score, attempt,
                  head, pair, held, fin, result, made, gone, twice, cause, need,
-                 open, op, crashed, bad, returnsN, ranks, waived>>
+                 open, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* ci (D8): a red CI observation on a placed primary in any state. It
 \* notifies for judgment and moves nothing. (Green only notifies what
 \* happened.)
 CiRed(p) ==
-  /\ Fenced /\ Placedp(p)
+  /\ Fenced /\ Placedp(p) /\ p \notin Sentinels
   /\ Spend(TRUE)
   /\ open' = open \cup {Note("ci", p)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, op, crashed, returnsN, ranks, waived>>
+                 twice, cause, need, op, crashed, returnsN, ranks, waived, released>>
 
 \* ack <note> --reason (F3): the coordinator looked and nothing is to be done;
 \* the judgment closes with the reason. Refused for a stopped stream's
@@ -672,7 +712,17 @@ Ack(n) ==
                           ELSE ExhaustNote(n.p, OutOf(n.p), OkReaders(n.p), opn))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, op, crashed, bad, returnsN, ranks, waived>>
+                 twice, cause, need, op, crashed, bad, returnsN, ranks, waived, released>>
+
+\* The reversed witness "sentinelself": a reached sentinel lands by itself.
+SentinelSelf(g) ==
+  /\ Br("sentinelself") /\ Fenced /\ Reached(g)
+  /\ work' = [work EXCEPT ![StreamOf[g]]["waiting"] = @ \ {g},
+                          ![StreamOf[g]]["landed"] = @ \cup {g}]
+  /\ open' = open \ {Note("reached", g)}
+  /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus, score,
+                 attempt, head, pair, gen, held, fin, result, made, gone, twice,
+                 cause, need, op, crashed, bad, returnsN, ranks, waived, released>>
 
 \* The last write of a step over two tables: the same process (Continue), or
 \* repair after the process was cut (Crash), from the operation record.
@@ -682,7 +732,7 @@ Continue ==
   /\ op' = NoOp
   /\ UNCHANGED <<added, fleet, readers, merge, sstate, mstatus, score, pair, gen,
                  held, fin, result, made, gone, twice, cause, need, crashed, bad,
-                 returnsN, ranks, waived>>
+                 returnsN, ranks, waived, released>>
 
 Crash ==
   /\ op # NoOp /\ ~crashed
@@ -690,7 +740,7 @@ Crash ==
   /\ crashed' = TRUE
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, open, op, returnsN, ranks, waived>>
+                 twice, cause, need, open, op, returnsN, ranks, waived, released>>
 
 Repair ==
   /\ op # NoOp /\ crashed /\ ~Br("norepair")
@@ -698,7 +748,7 @@ Repair ==
   /\ op' = NoOp /\ crashed' = FALSE
   /\ UNCHANGED <<added, fleet, readers, merge, sstate, mstatus, score, pair, gen,
                  held, fin, result, made, gone, twice, cause, need, bad,
-                 returnsN, ranks, waived>>
+                 returnsN, ranks, waived, released>>
 
 \* ------------------------------------------------------------------ next
 
@@ -711,6 +761,7 @@ Answer(n) ==
        [] n.t = "blocked" -> Drop(n.p) \/ \E q \in Primaries : Waive(n.p, q)
        [] n.t = "ci"      -> Ack(n) \/ Rework(n.p) \/ Return(n.p) \/ Drop(n.p)
        [] n.t = "skipped" -> Ack(n) \/ Drop(n.p)
+       [] n.t = "reached" -> Release(n.p)
        [] n.t = "stopped" -> Resume(n.s) \/
              \E p \in merge[n.s]["stuck"] \cup merge[n.s]["queued"] : Return(p) \/ Drop(p)
 
@@ -725,6 +776,7 @@ Next ==
        \/ Rank(p) \/ Return(p) \/ CiRed(p)
        \/ \E r \in Readers : AskAnother(p, r)
        \/ \E q \in Primaries : Waive(p, q)
+       \/ Release(p) \/ SentinelSelf(p)
   \/ \E n \in open : Ack(n)
   \/ \E S \in SUBSET Primaries : Accept(S)
   \/ \E m \in Members :
@@ -806,7 +858,7 @@ MergeMatches == \A s \in Streams :
 MergeMatchesWork == op = NoOp => MergeMatches
 
 \* 5. Primaries in merge merged = primaries in work landed.
-MergedLanded == \A s \in Streams : merge[s]["merged"] = work[s]["landed"]
+MergedLanded == \A s \in Streams : merge[s]["merged"] = work[s]["landed"] \ Sentinels
 MergedIsLanded == op = NoOp => MergedLanded
 
 \* The same four stated for every state, pending operation or not: the cut
@@ -818,9 +870,10 @@ AlwaysMergeMatches == MergeMatches
 AlwaysMergedLanded == MergedLanded
 
 \* 6. No primary enters merging without ok read cards from two different
-\* readers at its head (and they stay: landed keeps them).
+\* readers at its head (and they stay: landed keeps them). A sentinel is
+\* never read.
 AcceptedHadTwoReaders ==
-  \A p \in Primaries :
+  \A p \in Primaries \ Sentinels :
     (InWork(p, "merging") \/ InWork(p, "landed")) => Cardinality(OkReaders(p)) >= 2
 
 \* 7. A score never changes except by rank (an action property).
@@ -873,6 +926,22 @@ NeedsMetOutsideWaiting ==
 
 \* NEEDS. A cycle of needs is never admitted.
 NoNeedCycle == \A p \in added : ~InCycle(p, added)
+
+\* SENTINELS. No primary that needs a sentinel leaves waiting before the
+\* sentinel has landed.
+SentinelHolds ==
+  \A p \in Primaries, g \in Sentinels :
+    (g \in Needs[p] /\ Placedp(p) /\ ~InWork(p, "waiting")) => InWork(g, "landed")
+
+\* SENTINELS. A reached sentinel has an open judgment.
+ReachedIsNotified == op = NoOp => \A g \in Sentinels : Reached(g) => Note("reached", g) \in open
+
+\* SENTINELS. A sentinel lands only by release, and is never dealt, read or
+\* merged.
+SentinelLandsByRelease == \A g \in Sentinels : InWork(g, "landed") => g \in released
+SentinelNeverDealt ==
+  /\ \A c \in made : c[2] \notin Sentinels
+  /\ \A s \in Streams, x \in MergeCells : merge[s][x] \cap Sentinels = {}
 
 \* Section 7, 1: in work order, the head of the stream's queued cell first.
 MergeInWorkOrder ==

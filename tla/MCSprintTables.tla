@@ -18,7 +18,11 @@ MCNeedsCross == [p \in Primaries |-> IF p \in {"p2", "p3"} THEN {"p1"} ELSE {}]
 \* A cycle across streams, which add must refuse.
 MCNeedsCycle == [p \in Primaries |-> CASE p = "p1" -> {"p3"} [] p = "p3" -> {"p1"} [] OTHER -> {}]
 MCNone == {}
-MCScore0 == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p2" -> 2 [] p = "p3" -> 3]
+\* The sentinel instance: g (s1) needs p1; p3 (s2) needs g.
+MCPrimariesG == {"p1", "g", "p3"}
+MCNeedsG == [p \in Primaries |-> CASE p = "g" -> {"p1"} [] p = "p3" -> {"g"} [] OTHER -> {}]
+MCSentinels == {"g"}
+MCScore0 == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p2" -> 2 [] p = "p3" -> 3 [] p = "g" -> 4]
 \* Admission: every primary before the first step, or p2 admitted by add.
 MCAllAdmitted == Primaries
 MCLateAdd == {"p1", "p3"}
