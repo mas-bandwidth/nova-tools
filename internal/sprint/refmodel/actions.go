@@ -728,29 +728,34 @@ func (s State) streamAfter(stream, was string, landing, leaving []string) string
 			return SMerging
 		}
 	}
+	landed := false
 	for id, p := range s.Primaries {
-		if p.Stream != stream || p.State == Off || p.State == Landed || has(landing, id) || has(leaving, id) {
+		if p.Stream != stream || p.State == Off || has(leaving, id) {
+			continue
+		}
+		if p.State == Landed || has(landing, id) {
+			landed = true
 			continue
 		}
 		return SWaiting
+	}
+	if !landed {
+		return SWaiting // every primary dropped: the stream is empty, not landed
 	}
 	return SLanded
 }
 
 // sprintDone is the spec's sprint-done condition (section 8): every primary
-// landed or off the table, at least one landed.
+// landed or off the table, even with none landed.
 func (s State) sprintDone() bool {
-	landed := 0
 	for _, p := range s.Primaries {
 		switch p.State {
-		case Landed:
-			landed++
-		case Off:
+		case Landed, Off:
 		default:
 			return false
 		}
 	}
-	return landed > 0
+	return len(s.Primaries) > 0
 }
 
 // Rank is SprintTables.tla Rank(p) (line 501): ranks a card first, refused

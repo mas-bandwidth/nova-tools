@@ -49,14 +49,6 @@ func onlyOpen(verb string, types ...string) func(dFinding) bool {
 }
 
 var dKnown = []dKnownDiff{
-	// ENGINE. Section 8: the sprint is done when every primary is landed or
-	// off the table, "at least one landed"; sprintDone
-	// (internal/sprint/steps_merge.go:286) never checks the landed count.
-	{"ENGINE sprint done written with none landed", sigHas("drop", "open.done=yes/no")},
-	// MODEL. StreamAfter calls a stream whose every primary left "landed"
-	// (AllDone is vacuously true); the engine's settle
-	// (steps_review.go:489) wants one landed; the spec is silent on it.
-	{"MODEL a stream whose every primary was dropped is landed", sigHas("drop", "stream.state=waiting/landed")},
 	// ENGINE. D2 and section 6: the readers kept on a primary are two and
 	// "both readers are asked again"; ask --another appends its reader to
 	// the primary's asked field (steps_review.go:106), finish asks every

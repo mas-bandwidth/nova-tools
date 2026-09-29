@@ -47,3 +47,20 @@ func TestReleasingTheOnlyCardLandsItsStream(t *testing.T) {
 	}
 	h.clean("released")
 }
+
+// 3. A sprint whose every card was dropped is done, 0 landed; a stream with
+// every primary dropped is empty (waiting, no since), never landed.
+func TestAnAllDroppedSprintIsDoneAndItsStreamEmpty(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p1"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p1"}}, Reason: "gone"}))
+	open := h.openOf(sprint.NSprintDone)
+	if len(open) != 1 || open[0].Note.What != "0 landed, 1 dropped" {
+		t.Fatalf("the sprint is done: %+v", open)
+	}
+	if c := h.snap().StreamCtl("s3"); c.F("state") != sprint.StreamWaiting || c.F("since") != "" {
+		t.Fatalf("the empty stream: %v", c.Fields)
+	}
+	h.clean("all dropped")
+}
