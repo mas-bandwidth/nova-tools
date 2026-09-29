@@ -314,8 +314,9 @@ func TestCacheVolumesArePerUserAndCarryNoRunLabel(t *testing.T) {
 func TestEnsureVolume(t *testing.T) {
 	t.Parallel()
 	inspect := strings.Join(volumeInspectArgs("v"), " ")
+	create := strings.Join(volumeCreateArgs("v", "gocache", "501"), " ")
 
-	mine := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501\n"}}}
+	mine := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501|gocache\n"}}}
 	if err := ensureVolume(context.Background(), mine, "v", "gocache", "501"); err != nil {
 		t.Errorf("this user's volume is refused: %v", err)
 	}
@@ -323,10 +324,20 @@ func TestEnsureVolume(t *testing.T) {
 		t.Errorf("an existing volume of this user is touched beyond the inspect: %q", mine.argvs())
 	}
 
-	theirs := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "502\n"}}}
+	theirs := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "502|gocache\n"}}}
 	err := ensureVolume(context.Background(), theirs, "v", "gocache", "501")
 	if err == nil || !strings.Contains(err.Error(), "--gocache-volume") {
 		t.Errorf("another user's volume is not refused with the flag to use: %v", err)
+	}
+
+	swapped := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501|gomod\n"}}}
+	err = ensureVolume(context.Background(), swapped, "v", "gocache", "501")
+	if err == nil || !strings.Contains(err.Error(), `a "gomod" cache, not a gocache cache`) {
+		t.Errorf("the module cache is taken as the build cache: %v", err)
+	}
+	unlabelled := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501|\n"}}}
+	if err := ensureVolume(context.Background(), unlabelled, "v", "gocache", "501"); err == nil {
+		t.Errorf("a volume with no kind label is taken as the build cache")
 	}
 
 	missing := &fakeEngine{answers: map[string]fakeAnswer{inspect: {err: fmt.Errorf("no such volume")}}}
@@ -334,8 +345,36 @@ func TestEnsureVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := missing.argvs()
-	if len(calls) != 2 || calls[1] != strings.Join(volumeCreateArgs("v", "gocache", "501"), " ") {
+	if len(calls) != 2 || calls[1] != create {
 		t.Errorf("a missing volume is not created with its owner: %q", calls)
+	}
+
+	// Two first runs at once: this one's create loses, and it looks again.
+	for _, tc := range []struct {
+		second string
+		ok     bool
+	}{{"501|gocache", true}, {"502|gocache", false}, {"501|gomod", false}} {
+		inspected := 0
+		race := &fakeEngine{respond: func(args []string) (fakeAnswer, bool) {
+			switch strings.Join(args, " ") {
+			case inspect:
+				inspected++
+				if inspected == 1 {
+					return fakeAnswer{err: fmt.Errorf("no such volume")}, true
+				}
+				return fakeAnswer{out: tc.second}, true
+			case create:
+				return fakeAnswer{err: fmt.Errorf("volume already exists")}, true
+			}
+			return fakeAnswer{}, false
+		}}
+		err := ensureVolume(context.Background(), race, "v", "gocache", "501")
+		if (err == nil) != tc.ok {
+			t.Errorf("lost the create race to %q: err %v, want ok=%t", tc.second, err, tc.ok)
+		}
+		if calls := race.argvs(); len(calls) != 3 || calls[2] != inspect {
+			t.Errorf("a lost create does not look again: %q", calls)
+		}
 	}
 }
 
@@ -645,8 +684,8 @@ func tierFixture(t *testing.T, owner string, startCode int) (*fakeEngine, runCon
 	eng := &fakeEngine{startCode: startCode, answers: map[string]fakeAnswer{
 		strings.Join(reapListArgs(), " "):                                {out: "[]"},
 		"image inspect --format {{.Id}} localhost/nova-functional:given": {out: "sha256:img\n"},
-		strings.Join(volumeInspectArgs(c.gocache), " "):                  {out: owner + "\n"},
-		strings.Join(volumeInspectArgs(c.gomod), " "):                    {out: owner + "\n"},
+		strings.Join(volumeInspectArgs(c.gocache), " "):                  {out: owner + "|gocache\n"},
+		strings.Join(volumeInspectArgs(c.gomod), " "):                    {out: owner + "|gomod\n"},
 	}}
 	return eng, c
 }

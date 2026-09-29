@@ -174,7 +174,7 @@ func reapListArgs() []string {
 }
 
 func volumeInspectArgs(name string) []string {
-	return []string{"volume", "inspect", "--format", `{{index .Labels "` + labelOwner + `"}}`, name}
+	return []string{"volume", "inspect", "--format", `{{index .Labels "` + labelOwner + `"}}|{{index .Labels "` + labelCache + `"}}`, name}
 }
 
 func volumeCreateArgs(name, kind, ownerID string) []string {

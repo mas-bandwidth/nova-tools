@@ -296,21 +296,31 @@ func orFinished(s string) string {
 	return s
 }
 
-// ensureVolume creates a cache volume labelled with its owner, or checks that
-// an existing one is this user's. A volume of another user is refused, never
-// written.
+// ensureVolume creates a cache volume labelled with its owner and its kind,
+// or checks that an existing one is this user's and of this kind. A volume of
+// another owner, or of the other kind (the two caches swapped), is refused,
+// never written. Two first runs at once may both find it missing: the one
+// whose create fails looks again and checks what the other created.
 func ensureVolume(ctx context.Context, eng engine, name, kind, ownerID string) error {
 	vctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out, err := eng.Output(vctx, volumeInspectArgs(name)...)
 	if err != nil {
-		if _, cerr := eng.Output(vctx, volumeCreateArgs(name, kind, ownerID)...); cerr != nil {
+		_, cerr := eng.Output(vctx, volumeCreateArgs(name, kind, ownerID)...)
+		if cerr == nil {
+			return nil
+		}
+		out, err = eng.Output(vctx, volumeInspectArgs(name)...)
+		if err != nil {
 			return fmt.Errorf("creating the %s volume %s: %v", kind, name, cerr)
 		}
-		return nil
 	}
-	if owner := strings.TrimSpace(out); owner != ownerID {
+	owner, got, _ := strings.Cut(strings.TrimSpace(out), "|")
+	if owner != ownerID {
 		return fmt.Errorf("the %s volume %s belongs to owner %q, not to uid %s; pass --%s-volume <name>", kind, name, owner, ownerID, kind)
+	}
+	if got != kind {
+		return fmt.Errorf("the volume %s is a %q cache, not a %s cache; pass --%s-volume <name>", name, got, kind, kind)
 	}
 	return nil
 }
