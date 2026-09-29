@@ -76,3 +76,34 @@ func TestEmbeddedSourcesAreTheResultFiles(t *testing.T) {
 		t.Fatalf("the embedded directory holds %d files, ResultFiles %d", len(entries), len(ResultFiles))
 	}
 }
+
+func TestCheckRunnerComparesTheEmbeddedResultFilesWithTheRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := CheckRunner(root); err != nil {
+		t.Fatalf("a root with no runner sources: %v", err)
+	}
+	if err := CheckRunner(filepath.Join("..", "..")); err != nil {
+		t.Fatalf("this repository: %v", err)
+	}
+	dir := filepath.Join(root, RunnerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	built, _ := RunnerFiles()
+	for path, raw := range built {
+		if err := os.WriteFile(filepath.Join(root, path), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CheckRunner(root); err != nil {
+		t.Fatalf("the same files: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "suite.go"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := CheckRunner(root)
+	if err == nil || !strings.Contains(err.Error(), "internal/tlc/suite.go differ") || !strings.Contains(err.Error(), "build tlacheck from this tree") {
+		t.Fatalf("an edited result file: %v", err)
+	}
+}

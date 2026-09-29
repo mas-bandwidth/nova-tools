@@ -1,6 +1,12 @@
 package tlc
 
-import "embed"
+import (
+	"embed"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // The runner's files that decide how a result is produced and read: the command
 // line of a TLC run, its flags, its workers and its timeouts (run.go, suite.go)
@@ -42,4 +48,31 @@ func RunnerFiles() (map[string][]byte, error) {
 		out[RunnerDir+"/"+name] = raw
 	}
 	return out, nil
+}
+
+// CheckRunner holds the result files this binary was built from to the ones
+// under root: a binary built from another checkout computes fingerprints that
+// the checkout does not, so its verdict on what is stale is wrong. It returns
+// an error naming the files that differ. A root that holds no internal/tlc has
+// no runner to compare (a bench copy of tla/ only), and nothing is checked.
+func CheckRunner(root string) error {
+	dir := filepath.Join(root, filepath.FromSlash(RunnerDir))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil
+	}
+	built, err := RunnerFiles()
+	if err != nil {
+		return err
+	}
+	var differ []string
+	for _, name := range ResultFiles {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(raw) != string(built[RunnerDir+"/"+name]) {
+			differ = append(differ, RunnerDir+"/"+name)
+		}
+	}
+	if len(differ) > 0 {
+		return fmt.Errorf("this tlacheck was built from other runner files than the ones under %s (%s differ); build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck", root, strings.Join(differ, ", "))
+	}
+	return nil
 }

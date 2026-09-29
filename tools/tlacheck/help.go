@@ -57,6 +57,10 @@ usage: tlacheck groups [--root <checkout>] [--stale]
 Payload: exactly one line of JSON on stdout, the sorted groups that hold a required case (the
 matrix a CI run derives), or with --stale the groups that need a run. Nothing else is printed
 there; refusals go to stderr. Exit 0, or 2 when the case plan or the records cannot be read or
+The result files this binary was built from must be the ones under --root (when --root holds
+internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+checkout would call the wrong records stale, so with --stale the verb refuses and says to build tlacheck from
+this tree.
 are refused.
 first run: tlacheck groups --root .
 `
@@ -79,6 +83,11 @@ one jar. A record in --keep that is not current is not kept: the merge then name
 with its group and the tlacheck run commands that measure it again. A --keep record of a case
 the plan no longer declares is dropped and named (DROP OK config= why=not-in-the-plan). A file in
 another column layout than this tool writes is refused naming both layouts.
+
+The result files this binary was built from must be the ones under --root (when --root holds
+internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
+this tree.
 
 output: MERGE OK runs= records= out=, and DROP OK config= why= for each kept record dropped.
 first run: tlacheck merge --root . --out /tmp/RUNS.tsv /tmp/tlc-a/RUNS.tsv /tmp/tlc-b/RUNS.tsv
@@ -204,6 +213,10 @@ built. The package's other files are bookkeeping and in no fingerprint.
 The fingerprint in a record is the SHA-256 over the paths and hashes listed here, in path
 order, and the record's input_files is their count. A change to none of them leaves the
 record current. The jar is not an input: a record names it in its own column.
+The result files this binary was built from must be the ones under --root (when --root holds
+internal/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
+checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
+this tree.
 
 Payload: one INPUT OK path= sha256= line per input, sorted by path, then INPUTS OK case=
 files= fingerprint=, all on stdout. Refusals go to stderr. Exit 0, or 2 when the case is not

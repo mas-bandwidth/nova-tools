@@ -29,6 +29,16 @@ func findTLC(e env, verb, jarFlag, javaFlag string) (tlc.Jar, string, int, bool)
 	return jar, java, 0, false
 }
 
+// checkRunner refuses a binary that was built from other runner files than the
+// checkout's: what it calls stale, and the fingerprints it writes, would be
+// wrong with no sign of it.
+func checkRunner(e env, verb, root string) (int, bool) {
+	if err := tlc.CheckRunner(root); err != nil {
+		return refuse(e, verb, err.Error(), tool+" "+verb+" -h"), true
+	}
+	return 0, false
+}
+
 func loadCases(e env, verb, root string) ([]tlc.Case, int, bool) {
 	cases, err := tlc.LoadCases(root)
 	if err != nil {
@@ -50,6 +60,9 @@ func cmdGroups(e env, args []string) int {
 	}
 	groups := tlc.RequiredGroups(cases)
 	if *stale {
+		if code, stop := checkRunner(e, "groups", *root); stop {
+			return code
+		}
 		src, err := tlc.SourceAt(*root)
 		if err != nil {
 			return refuse(e, "groups", err.Error(), tool+" groups -h")
@@ -90,6 +103,9 @@ func cmdRun(e env, args []string) int {
 	}
 	cases, code, stop := loadCases(e, "run", *root)
 	if stop {
+		return code
+	}
+	if code, stop := checkRunner(e, "run", *root); stop {
 		return code
 	}
 	if *manual && (e.getenv("GITHUB_ACTIONS") == "true" || e.getenv("NOVA_CI") == "1") {
@@ -166,6 +182,9 @@ func cmdMerge(e env, args []string) int {
 	}
 	cases, code, stop := loadCases(e, "merge", *root)
 	if stop {
+		return code
+	}
+	if code, stop := checkRunner(e, "merge", *root); stop {
 		return code
 	}
 	src, err := tlc.SourceAt(*root)
@@ -297,6 +316,9 @@ func cmdInputs(e env, args []string) int {
 	}
 	if !known {
 		return refuse(e, "inputs", "no case "+oneline.Quote(*name)+" in tla/CASES.tsv (the config column names them)", tool+" inputs -h")
+	}
+	if code, stop := checkRunner(e, "inputs", *root); stop {
+		return code
 	}
 	src, err := tlc.SourceAt(*root)
 	if err != nil {

@@ -591,6 +591,74 @@ func TestMergeKeepNamesWhatItCannotCarry(t *testing.T) {
 	}
 }
 
+// A binary built from other runner files than the checkout's would call the
+// wrong records stale, so every verb that takes a fingerprint refuses it.
+func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
+	t.Parallel()
+	root, jar := checkout(t)
+	dir := filepath.Join(root, "internal", "tlc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	built, err := tlc.RunnerFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, raw := range built {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := filepath.Join(root, "tla", tlc.RunsFile)
+	if err := os.WriteFile(runs, []byte(strings.Join(tlc.RecordsHeader, "\t")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	verbs := map[string][]string{
+		"groups --stale": {"groups", "--root", root, "--stale"},
+		"inputs":         {"inputs", "--root", root, "--case", "MCA.cfg"},
+		"merge":          {"merge", "--root", root, "--keep", runs, "--out", filepath.Join(t.TempDir(), "o.tsv")},
+		"run":            {"run", "--root", root, "--jar", jar, "--dir", filepath.Join(t.TempDir(), "r"), "--group", "alpha"},
+	}
+	ok := func(name string, args []string, wantCode int) result {
+		e, out, errs := testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil))
+		return do(e, out, errs, args...)
+	}
+	// The files as the binary has them are accepted (merge with nothing to keep
+	// still needs a record for every case, so its code is 1, not a refusal).
+	for name, args := range verbs {
+		if r := ok(name, args, 0); r.code == 2 && strings.Contains(r.stderr, "built from other runner files") {
+			t.Errorf("%s refused the matching runner files: %+v", name, r)
+		}
+	}
+	// One result file edited under the root: each refuses, naming it and the remedy.
+	if err := os.WriteFile(filepath.Join(dir, "run.go"), []byte("another runner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range verbs {
+		r := ok(name, args, 2)
+		if r.code != 2 || !strings.Contains(r.stderr, "built from other runner files than the ones under "+root) || !strings.Contains(r.stderr, "internal/tlc/run.go differ") || strings.Contains(r.stderr, "outcome.go") || !strings.Contains(r.stderr, "build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck") || r.stdout != "" && name != "run" {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+	// A bookkeeping file that differs is no concern of the fingerprint.
+	if err := os.WriteFile(filepath.Join(dir, "run.go"), built["internal/tlc/run.go"], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := ok("inputs", verbs["inputs"], 0); r.code != 0 {
+		t.Errorf("a bookkeeping file that differs: %+v", r)
+	}
+	// A missing result file is a difference too.
+	if err := os.Remove(filepath.Join(dir, "outcome.go")); err != nil {
+		t.Fatal(err)
+	}
+	if r := ok("inputs", verbs["inputs"], 2); r.code != 2 || !strings.Contains(r.stderr, "internal/tlc/outcome.go differ") {
+		t.Errorf("a missing result file: %+v", r)
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(path)
