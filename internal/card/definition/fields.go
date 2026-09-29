@@ -100,7 +100,7 @@ func looseHeaderLine(t string) (variant, canon string, ok bool) {
 	k := t[:i]
 	for j := 0; j < len(k); j++ {
 		c := k[j]
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == ' ' || c == '\t' || c == '_' || c == '-') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != ' ' && c != '\t' && c != '_' && c != '-' {
 			return "", "", false
 		}
 	}

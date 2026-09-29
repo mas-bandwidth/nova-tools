@@ -699,13 +699,12 @@ func (v validator) opMoves(r *Receipt, index map[ID]int) {
 	for i := range r.Changed {
 		ch := &r.Changed[i]
 		id := knownID(string(ch.ID))
-		switch {
-		case ch.Before == nil:
+		if ch.Before == nil {
 			news++
 			if ch.After.State != Initial {
 				v.c.add(i, id, "after.state", CauseInvalidValue, quote(string(ch.After.State)), string(Initial), "the new side of a replacement starts in "+string(Initial))
 			}
-		default:
+		} else {
 			olds++
 			if !Replaceable(ch.Before.State) || ch.After.State != Unplaced || ch.After.Outcome != ReplaceOutcome() {
 				v.c.add(i, id, "after.state", CauseInvalidValue, quote(moveText(ch.Before.State, ch.After)), "a card in "+joinStrings(ReplaceableStates())+" leaving the table as "+string(ReplaceOutcome()),

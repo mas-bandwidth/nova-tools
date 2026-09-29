@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-func counters(c Counters) Counters { return c }
-
 func sampleReceipt() *Receipt {
 	return &Receipt{
 		Schema: SchemaVersion, Operation: OpApplyEvents, OperationID: "op-17", RequestHash: Digest(dig2),
@@ -134,7 +132,7 @@ func TestReceiptRefusals(t *testing.T) {
 		{"negative guards", func(r *Receipt) { r.Counts.Guards = -1 }, wantTriples("-1|counts.guards|invalid-value")},
 		{"blocked reason empty", func(r *Receipt) { r.Blocked[0].Reason = "" }, wantTriples("-1|blocked[0].reason|required")},
 		{"blocked reason newline", func(r *Receipt) { r.Blocked[0].Reason = "a\nb" }, wantTriples("-1|blocked[0].reason|control-character")},
-		{"blocked reason bidi", func(r *Receipt) { r.Blocked[0].Reason = "a‮b" }, wantTriples("-1|blocked[0].reason|control-character")},
+		{"blocked reason bidi", func(r *Receipt) { r.Blocked[0].Reason = "a\u202eb" }, wantTriples("-1|blocked[0].reason|control-character")},
 		{"ineligible id", func(r *Receipt) { r.Ineligible[0].ID = "" }, wantTriples("-1|ineligible[0].id|required")},
 		{"missing id", func(r *Receipt) { r.Missing[0] = "x y" }, wantTriples("-1|missing[0]|invalid-value")},
 
@@ -212,7 +210,7 @@ func TestReceiptRefusals(t *testing.T) {
 		{"readiness text at the bound", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = longString(MaxNoteBytes) }, nil},
 		{"readiness text over the bound", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = longString(MaxNoteBytes + 1) }, wantTriples("0|notifications[0].readiness|too-long")},
 		{"readiness text newline", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = "a\nb" }, wantTriples("0|notifications[0].readiness|control-character")},
-		{"readiness text bidi", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = "a‮b" }, wantTriples("0|notifications[0].readiness|control-character")},
+		{"readiness text bidi", func(r *Receipt) { r.Changed[0].Notifications[0].Readiness = "a\u202eb" }, wantTriples("0|notifications[0].readiness|control-character")},
 		{"notification counter", func(r *Receipt) { r.Changed[0].Notifications[0].Counters.Red = "x" }, wantTriples("0|notifications[0].counters.red|invalid-value")},
 		{"too many notifications", func(r *Receipt) {
 			n := r.Changed[0].Notifications[0]
@@ -310,14 +308,14 @@ func TestRejectionChangedIsDerived(t *testing.T) {
 func TestReceiptAndRejectionLinesAreOneLine(t *testing.T) {
 	t.Parallel()
 	r := sampleRejection()
-	r.Card, r.Expected, r.Observed, r.Next = "x\nrefused admit: fake", "a\nb", "‮", "n\x00"
-	if l := r.Line(); strings.ContainsAny(l, "\n\r\x00‮") {
+	r.Card, r.Expected, r.Observed, r.Next = "x\nrefused admit: fake", "a\nb", "\u202e", "n\x00"
+	if l := r.Line(); strings.ContainsAny(l, "\n\r\x00\u202e") {
 		t.Fatalf("line: %q", l)
 	}
 	c := sampleReceipt()
-	c.OperationID, c.Table, c.Actor = "x\nbatch fake", "t\r\nu", "a‮b"
+	c.OperationID, c.Table, c.Actor = "x\nbatch fake", "t\r\nu", "a\u202eb"
 	c.Changed[0].ID, c.Blocked[0].Reason = "y\nz", "why\nwhat"
-	if l := c.Line(); strings.ContainsAny(l, "\n\r\x00‮") {
+	if l := c.Line(); strings.ContainsAny(l, "\n\r\x00\u202e") {
 		t.Fatalf("line: %q", l)
 	}
 }

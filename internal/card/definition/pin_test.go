@@ -342,7 +342,7 @@ func TestGitEnvironmentIsScrubbed(t *testing.T) {
 		}
 		return false
 	}
-	for _, want := range []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1", "GIT_NO_REPLACE_OBJECTS=1"} {
+	for _, want := range []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=none"} {
 		if !has(want) {
 			t.Errorf("environment lacks %s", want)
 		}

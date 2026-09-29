@@ -38,44 +38,41 @@ func admit(t *testing.T, files map[string]string, paths ...string) ([]Admission,
 // run on the pinned bytes.
 func TestAdmissionsRunsValidateOnThePinnedBytes(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name  string
-		files map[string]string
-		want  Cause
-	}{
-		{"two files with one ID give no records", map[string]string{"a.md": cardFor("same"), "b.md": cardFor("same")}, CauseRepeatedID},
-		{"a cycle across two files", map[string]string{
-			"a.md": strings.Replace(cardFor("a"), "DEPENDS-ON: -", "DEPENDS-ON: b", 1),
-			"b.md": strings.Replace(cardFor("b"), "DEPENDS-ON: -", "DEPENDS-ON: a", 1)}, CauseCycle},
-		{"a card that depends on itself", map[string]string{
-			"a.md": strings.Replace(cardFor("a"), "DEPENDS-ON: -", "DEPENDS-ON: a", 1), "b.md": cardFor("b")}, CauseSelfDependent},
-		{"a fix-red card with no test is not a read card", map[string]string{
-			"a.md": strings.Replace(cardFor("a"), "TEST: internal/queue TestNameRefusesEmpty", "TEST: none because", 1), "b.md": cardFor("b")}, CauseInvalidTest},
+	read := strings.Replace(strings.Replace(cardFor("b"), "KIND: fix-red", "KIND: read", 1), "TEST: internal/queue TestNameRefusesEmpty", "TEST: none a read", 1)
+	dir, commit := repoWith(t, map[string]string{
+		"dup/a.md": cardFor("same"), "dup/b.md": cardFor("same"),
+		"cycle/a.md": strings.Replace(cardFor("a"), "DEPENDS-ON: -", "DEPENDS-ON: b", 1), "cycle/b.md": strings.Replace(cardFor("b"), "DEPENDS-ON: -", "DEPENDS-ON: a", 1),
+		"self/a.md": strings.Replace(cardFor("a"), "DEPENDS-ON: -", "DEPENDS-ON: a", 1), "self/b.md": cardFor("b"),
+		"notest/a.md": strings.Replace(cardFor("a"), "TEST: internal/queue TestNameRefusesEmpty", "TEST: none because", 1), "notest/b.md": cardFor("b"),
+		"ok/a.md": cardFor("a"), "ok/b.md": read,
+	})
+	admitPaths := func(paths ...string) ([]Admission, *Refusals) {
+		return Admissions(context.Background(), dir, commit, paths, WithIdentity("example.com/owner/cards"))
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			var paths []string
-			for _, p := range []string{"a.md", "b.md"} {
-				if _, ok := c.files[p]; ok {
-					paths = append(paths, p)
-				}
-			}
-			as, refs := admit(t, c.files, paths...)
-			if as != nil || refs == nil {
-				t.Fatalf("records beside a refusal: %v", as)
-			}
-			found := false
-			for _, r := range refs.List {
-				found = found || r.Cause == c.want
-			}
-			if !found {
-				t.Fatalf("no %s in %v", c.want, refs.Lines())
-			}
-		})
+	for _, c := range []struct {
+		name string
+		dir  string
+		want Cause
+	}{
+		{"two files with one ID give no records", "dup", CauseRepeatedID},
+		{"a cycle across two files", "cycle", CauseCycle},
+		{"a card that depends on itself", "self", CauseSelfDependent},
+		{"a fix-red card with no test is not a read card", "notest", CauseInvalidTest},
+	} {
+		as, refs := admitPaths(c.dir+"/a.md", c.dir+"/b.md")
+		if as != nil || refs == nil {
+			t.Fatalf("%s: records beside a refusal: %v", c.name, as)
+		}
+		found := false
+		for _, r := range refs.List {
+			found = found || r.Cause == c.want
+		}
+		if !found {
+			t.Errorf("%s: no %s in %v", c.name, c.want, refs.Lines())
+		}
 	}
 	// The records say what the committed bytes say, whatever else is at hand.
-	as, refs := admit(t, map[string]string{"a.md": cardFor("a"), "b.md": strings.Replace(strings.Replace(cardFor("b"), "KIND: fix-red", "KIND: read", 1), "TEST: internal/queue TestNameRefusesEmpty", "TEST: none a read", 1)}, "a.md", "b.md")
+	as, refs := admitPaths("ok/a.md", "ok/b.md")
 	if refs != nil {
 		t.Fatal(refs.Lines())
 	}
@@ -263,7 +260,7 @@ func TestContractLineIsThisProfilesOwn(t *testing.T) {
 		"not hex":         "RESULT: card-alpha sha=" + strings.Repeat("g", 40),
 		"empty sha":       "RESULT: card-alpha sha=",
 		"a long note":     "RESULT: card-alpha " + strings.Repeat("n", MaxContractNoteBytes+1),
-		"a bidi note":     "RESULT: card-alpha a‮b",
+		"a bidi note":     "RESULT: card-alpha a\u202eb",
 		"id none":         "RESULT: none",
 		"id with a colon": "RESULT: card:alpha",
 	}
@@ -373,7 +370,7 @@ func TestRefusalFloodIsCappedAndCheap(t *testing.T) {
 	// the bound is loose because the tests of the package run alongside.
 	var m0, m1 runtime.MemStats
 	runtime.ReadMemStats(&m0)
-	parse(srcs)
+	_, _ = parse(srcs)
 	runtime.ReadMemStats(&m1)
 	t.Logf("%d MiB allocated for %d bytes of input", (m1.TotalAlloc-m0.TotalAlloc)>>20, len(body)*MaxFiles)
 	if alloc := (m1.TotalAlloc - m0.TotalAlloc) >> 20; alloc > 200 {

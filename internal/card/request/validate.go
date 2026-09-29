@@ -154,7 +154,7 @@ func (v validator) count(field string, n, max int, unit string) int {
 
 // expect checks a guard; the revision is optional only when revOptional says so.
 func (v validator) expect(index int, id, prefix string, e Expect, revOptional bool) {
-	if !(revOptional && e.Revision == "") {
+	if !revOptional || e.Revision != "" {
 		v.counter(index, id, prefix+".revision", e.Revision, true)
 	}
 	v.name(index, id, prefix+".place.row", e.Place.Row)
@@ -517,11 +517,12 @@ func (v validator) record(i int, id string, j int, r *Record, seen map[string]bo
 	p := "records[" + strconv.Itoa(j) + "]."
 	bad := false
 	if !r.Kind.valid() || r.Kind == KindQueue {
-		if r.Kind == "" {
+		switch r.Kind {
+		case "":
 			v.c.add(i, id, p+"kind", CauseRequired, "", "one of read, ci, sweep, landing", "set the field")
-		} else if r.Kind == KindQueue {
+		case KindQueue:
 			v.c.add(i, id, p+"kind", CauseNotApplicable, quote(string(r.Kind)), "read, ci, sweep or landing", "a queue rejection is written by the queue-rejected lifecycle input, never submitted")
-		} else {
+		default:
 			v.text(i, id, p+"kind", string(r.Kind), MaxIdentityBytes, func(string) bool { return false }, "one of read, ci, sweep, landing")
 		}
 		bad = true

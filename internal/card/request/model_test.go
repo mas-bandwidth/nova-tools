@@ -216,7 +216,7 @@ func destinationOrUnplaced(d State) string {
 
 // compareModel returns the differences between the model and the Go tables, sorted,
 // one line each; none when they agree.
-func compareModel(m *modelInfo) []string {
+func compareModel(m *modelInfo, eventOf map[string][]InputType) []string {
 	var diff []string
 	goStates := map[string]bool{}
 	for _, s := range States() {
@@ -235,7 +235,7 @@ func compareModel(m *modelInfo) []string {
 		}
 	}
 	mapped := map[InputType]bool{}
-	for ev, inputs := range modelEventOf {
+	for ev, inputs := range eventOf {
 		for _, it := range inputs {
 			mapped[it] = true
 		}
@@ -261,7 +261,7 @@ func compareModel(m *modelInfo) []string {
 		}
 	}
 	for ev := range m.edges {
-		if _, ok := modelEventOf[ev]; !ok {
+		if _, ok := eventOf[ev]; !ok {
 			diff = append(diff, fmt.Sprintf("the model's event %q has no Go input (add it to modelEventOf if it is one)", ev))
 		}
 	}
@@ -315,7 +315,7 @@ func TestLifecycleAgreesWithTheModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the extractor cannot read the model (its conventions changed; see model_test.go): %v", err)
 	}
-	if diff := compareModel(m); len(diff) > 0 {
+	if diff := compareModel(m, modelEventOf); len(diff) > 0 {
 		t.Fatalf("the Go lifecycle (lifecycle.go) and the TLA+ model (tla/CardManager.tla) differ; a change to one is a change to the other, in the same PR, with TLC run:\n  %s",
 			strings.Join(diff, "\n  "))
 	}
@@ -378,7 +378,7 @@ func TestComparisonNamesTheDifferencesFromTheModelOfPR4599(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	diff := strings.Join(compareModel(m), "\n")
+	diff := strings.Join(compareModel(m, modelEventOf), "\n")
 	for _, want := range []string{
 		`state "done" is in the model and not in the Go states`,
 		`the model's event "complete" (review>done) has no Go input`,
@@ -415,14 +415,17 @@ func TestComparisonAgreesWithAModelOfTheGoLifecycle(t *testing.T) {
 	text = strings.Replace(text, `[] e = "cancel"   -> St(c) \in Open`, `[] e = "cancel"   -> St(c) \in Open`, 1)
 	text = strings.Replace(text, `St(c) \in {"waiting", "ready", "review", "merging"}`, `St(c) \in {"waiting", "ready"}`, 1)
 	// the model's events are also the events the Go inputs map to, less complete
-	saved := modelEventOf["complete"]
-	delete(modelEventOf, "complete")
-	defer func() { modelEventOf["complete"] = saved }()
+	eventOf := map[string][]InputType{}
+	for ev, inputs := range modelEventOf {
+		if ev != "complete" {
+			eventOf[ev] = inputs
+		}
+	}
 	m, err := extractModel(text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := compareModel(m); len(diff) != 0 {
+	if diff := compareModel(m, eventOf); len(diff) != 0 {
 		t.Fatalf("a model of the Go lifecycle differs from it:\n  %s", strings.Join(diff, "\n  "))
 	}
 }

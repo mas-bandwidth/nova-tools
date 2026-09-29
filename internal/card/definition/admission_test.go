@@ -162,7 +162,7 @@ func keysInOrder(t *testing.T, b []byte) []string {
 // request's, no HTML escape, arrays sorted, an empty optional field left out.
 func TestEncodingUsesTheSharedEncoder(t *testing.T) {
 	t.Parallel()
-	a := Admission{ID: "a", Title: "<b>&</b> \"q\" \\   \x7f é 日", Doors: "tab\there", DependsOn: []string{"z", "b"}, Paths: []string{"y/*", "a/*"}}
+	a := Admission{ID: "a", Title: "<b>&</b> \"q\" \\ \u2028 \x7f é 日", Doors: "tab\there", DependsOn: []string{"z", "b"}, Paths: []string{"y/*", "a/*"}}
 	enc := EncodeAdmissions([]Admission{a})
 	s := string(enc[0])
 	for _, want := range []string{"<b>&</b>", "\\\"q\\\"", "q\\\" \\\\ ", "\\u2028", "\\u007f", "tab\\u0009here", " é 日", `"depends_on":["b","z"]`, `"paths":["a/*","y/*"]`} {

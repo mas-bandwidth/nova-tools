@@ -328,21 +328,20 @@ func parseFile(c *card.Collector, name string, data []byte) Definition {
 		}
 		switch key {
 		case KeySchema:
-			switch {
-			case v == "":
+			switch v {
+			case "":
 				fail(key, bad(CauseEmptyValue, "", "SCHEMA has a value", "write SCHEMA: v2"))
-			case v == SchemaV2:
+			case SchemaV2:
 				d.Schema = v
-			case v == "v3":
+			case "v3":
 				fail(key, bad(CauseUnsupportedSchema, card.Value(v), "v3 is refused by name: the Work-path profile is not implemented", "write SCHEMA: v2 and card IDs in DEPENDS-ON"))
 			default:
 				fail(key, bad(CauseUnsupportedSchema, card.Value(v), "SCHEMA is v2", "write SCHEMA: v2"))
 			}
 		case KeyID:
-			switch {
-			case v == "":
+			if v == "" {
 				fail(key, bad(CauseEmptyValue, "", "ID has a value", "write the card ID after ID:"))
-			default:
+			} else {
 				if p := idProblem(key, v); p != nil {
 					fail(key, p)
 				} else if con.id != "" && v != con.id {

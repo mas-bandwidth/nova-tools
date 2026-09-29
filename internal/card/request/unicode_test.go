@@ -8,11 +8,11 @@ import (
 // hidden are characters no one-line text may carry: they change how text reads
 // without changing what it is, or break a line.
 var hidden = map[string]string{
-	"right-to-left override": "a‮b", "left-to-right override": "a‭b", "bidi embedding": "a‪b",
-	"bidi isolate": "a⁦b", "pop isolate": "a⁩b", "left-to-right mark": "a‎b", "right-to-left mark": "a‏b",
-	"arabic letter mark": "a؜b", "zero-width space": "a​b", "zero-width non-joiner": "a‌b", "zero-width joiner": "a‍b",
-	"word joiner": "a⁠b", "byte-order mark": "a\ufeffb", "soft hyphen": "a­b", "line separator": "a b",
-	"paragraph separator": "a b", "next line": "a\u0085b", "tag character": "a\U000e0041b", "invisible times": "a⁢b",
+	"right-to-left override": "a\u202eb", "left-to-right override": "a\u202db", "bidi embedding": "a\u202ab",
+	"bidi isolate": "a\u2066b", "pop isolate": "a\u2069b", "left-to-right mark": "a\u200eb", "right-to-left mark": "a\u200fb",
+	"arabic letter mark": "a\u061cb", "zero-width space": "a\u200bb", "zero-width non-joiner": "a\u200cb", "zero-width joiner": "a\u200db",
+	"word joiner": "a\u2060b", "byte-order mark": "a\ufeffb", "soft hyphen": "a\u00adb", "line separator": "a\u2028b",
+	"paragraph separator": "a\u2029b", "next line": "a\u0085b", "tag character": "a\U000e0041b", "invisible times": "a\u2062b",
 	"newline": "a\nb", "tab": "a\tb", "nul": "a\x00b", "delete": "a\x7fb",
 }
 
@@ -117,7 +117,7 @@ func TestFreeTextRefusesHiddenCharacters(t *testing.T) {
 // the same character and refuses.
 func TestParseRefusesEscapedHiddenCharacters(t *testing.T) {
 	t.Parallel()
-	for _, esc := range []string{`‮`, `​`, ` `, `\ufeff`, `⁦`} {
+	for _, esc := range []string{`\u202e`, `\u200b`, `\u2028`, `\ufeff`, `\u2066`} {
 		doc := fmt.Sprintf(`{"schema":1,"operation":"apply_events","table":"work","epoch":"3","expected_table_revision":"12","actor":"coordinator","inputs":[{"id":"c1","type":"cancel","expect":{"revision":"2","place":{"row":"build","col":"ready"}},"digest":"%s","issuer":"i","source":"s","reason":"a%sb"}]}`, dig, esc)
 		if got := parseRefusals(t, doc); !equalStrings(got, wantTriples("0|reason|control-character")) {
 			t.Errorf("%s: %v", esc, got)

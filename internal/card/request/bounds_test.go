@@ -225,18 +225,6 @@ func outsideDeps(v *Valid) int {
 	return n
 }
 
-func countByte(b []byte, c byte) int {
-	n := 0
-	for _, x := range b {
-		if x == c {
-			n++
-		}
-	}
-	return n
-}
-
-func escapable(b []byte) int { return countByte(b, '"') + countByte(b, '\\') }
-
 // Each request bound is within the bound of the field of the manager design's
 // size table (its per-entry maxima assume these), so its per-entry sums hold.
 func TestFieldBoundsAreWithinTheManagerDesign(t *testing.T) {

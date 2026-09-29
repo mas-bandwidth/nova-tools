@@ -193,10 +193,7 @@ func genRequest(rng *rand.Rand, op Operation) *Request {
 			r.Admissions = append(r.Admissions, newAdm(fmt.Sprintf("c%d", i)))
 		}
 	case OpApplyEvents:
-		var types []InputType
-		for _, t := range InputTypes() {
-			types = append(types, t)
-		}
+		types := InputTypes()
 		for i := 0; i < n; i++ {
 			t := types[rng.Intn(len(types))]
 			src := SourceStates(t)
@@ -313,7 +310,7 @@ func jsonWriter(rng *rand.Rand, b *strings.Builder, v any) {
 	case json.Number:
 		b.WriteString(t.String())
 	case bool:
-		b.WriteString(fmt.Sprint(t))
+		fmt.Fprint(b, t)
 	default:
 		b.WriteString("null")
 	}
@@ -341,7 +338,7 @@ func jsonString(rng *rand.Rand, b *strings.Builder, s string) {
 // leaves calls f on every settable string and int of v, in a fixed order.
 func leaves(v reflect.Value, f func(reflect.Value)) {
 	switch v.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if !v.IsNil() {
 			leaves(v.Elem(), f)
 		}
