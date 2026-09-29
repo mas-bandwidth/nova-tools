@@ -146,8 +146,8 @@ func TestDefaultResolverGuardsRealEnvironment(t *testing.T) {
 		t.Fatalf("Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "nonexistent-seat-probe-4717") || (!strings.Contains(msg, "store") && !strings.Contains(msg, ".yaml") && !strings.Contains(msg, "seat")) {
-		t.Fatalf("Active() error %q does not name nonexistent seat or store path", msg)
+	if !strings.Contains(msg, "is absent") || strings.Contains(msg, "HOME is unset") {
+		t.Fatalf("Active() error %q does not demonstrate real environment store lookup: want error stating store file is absent", msg)
 	}
 }
 
