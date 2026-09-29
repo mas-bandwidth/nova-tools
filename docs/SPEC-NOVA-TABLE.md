@@ -477,6 +477,16 @@ For each affected application field, include its before and after values with
 absence distinguished from a present empty string. An absent placement has no
 score. Set/unset instructions alone do not supply the before values. Include
 explicit guard/selection counts; a missing member is not silently omitted.
+A receipt is bounded by its manifest, not by the values the manifest replaces: a
+field value of at most 256 bytes (`ReceiptValueBytes`) is recorded in full, and a
+longer one is recorded as its length and its SHA-1 (`before_bytes`, `before_sha1`,
+`after_bytes`, `after_sha1`, with the value's own side null; a null side with no
+length is an absent field). The digest is SHA-1 because it is the only digest a
+script has natively (`sha1hex`; a SHA-256 in script code would cost seconds on a
+few megabytes); it identifies a value for evidence, it is not a security boundary.
+`fields_set` lists only the set instructions whose values are recorded in full;
+every changed field is in `fields`. A batch that unsets 128 fields of 64 KiB leaves
+a receipt of tens of kilobytes, and a replay returns it unchanged.
 A score in a receipt, a change event, a read set or the CLI is the exact decimal
 string the store holds, as the ordinary verbs write it (`0.30000000000000004`,
 not `0.3`); two different scores never render alike. A batch's change event has

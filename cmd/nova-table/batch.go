@@ -167,13 +167,7 @@ func batchJSON(table string, r ntable.Receipt, delta ntable.BatchDelta, trips in
 	}
 	members := make([]map[string]any, 0, len(delta.Members))
 	for _, m := range delta.Members {
-		fields := map[string][2]*string{}
-		for name, c := range m.Fields {
-			if (c.Before == nil && c.After == nil) || (c.Before != nil && c.After != nil && *c.Before == *c.After) {
-				continue
-			}
-			fields[name] = [2]*string{c.Before, c.After}
-		}
+		fields := changedFields(m)
 		members = append(members, map[string]any{
 			"id": m.ID, "place": pair(orNil(m.BeforePlace), orNil(m.AfterPlace)),
 			"score":           pair(m.BeforeScoreText, m.AfterScoreText),
@@ -203,20 +197,36 @@ func scoreOrDash(v *string) string {
 	return *v
 }
 
-// fieldChanges is the member's changed application fields as one JSON object,
-// name to [before, after], null for absent: {"role":["x","y"],"k":[null,"v"]}.
-// A field a set names with its present value, or an unset names when absent,
-// changes nothing and is not listed.
-func fieldChanges(m ntable.BatchMemberDelta) string {
-	changes := map[string][2]*string{}
+// changedFields is the member's changed application fields: name to [before,
+// after], where a value is its string, null for absent, or {"bytes": n, "sha1":
+// "..."} for a value too long for a receipt to record. A field whose two sides
+// are equal changed nothing and is not listed.
+func changedFields(m ntable.BatchMemberDelta) map[string][2]any {
+	side := func(text *string, n int, sha string) (any, string) {
+		switch {
+		case text != nil:
+			return *text, "v:" + *text
+		case n > 0:
+			return map[string]any{"bytes": n, "sha1": sha}, fmt.Sprintf("l:%d:%s", n, sha)
+		}
+		return nil, "absent"
+	}
+	out := map[string][2]any{}
 	for name, c := range m.Fields {
-		before, after := c.Before, c.After
-		if (before == nil && after == nil) || (before != nil && after != nil && *before == *after) {
+		before, bk := side(c.Before, c.BeforeBytes, c.BeforeSHA1)
+		after, ak := side(c.After, c.AfterBytes, c.AfterSHA1)
+		if bk == ak {
 			continue
 		}
-		changes[name] = [2]*string{before, after}
+		out[name] = [2]any{before, after}
 	}
-	b, err := json.Marshal(changes)
+	return out
+}
+
+// fieldChanges is changedFields as one JSON object on one line:
+// {"role":["x","y"],"k":[null,"v"]}.
+func fieldChanges(m ntable.BatchMemberDelta) string {
+	b, err := json.Marshal(changedFields(m))
 	if err != nil {
 		return "{}"
 	}

@@ -83,3 +83,19 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 		}
 	}
 }
+
+// The receipt's value bound is one number in the server and in the library.
+func TestReceiptValueBoundAgreesBetweenServerAndLibrary(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("../nsprint/fn/lua/table.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`T\.receipt_value_bytes = (\d+)`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("table.lua has no T.receipt_value_bytes")
+	}
+	if got, _ := strconv.Atoi(string(m[1])); got != ReceiptValueBytes {
+		t.Errorf("table.lua %d, limits.go %d", got, ReceiptValueBytes)
+	}
+}

@@ -32,6 +32,10 @@ const (
 	limitNameRows         = "rows per table"
 )
 
+// ReceiptValueBytes is the longest field value a receipt records in full; a longer
+// one is recorded as its length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1).
+const ReceiptValueBytes = 256
+
 // LimitError is a named LIMIT refusal: the bound and the count found, and the
 // member at fault when one is. It wraps ErrLimit.
 type LimitError struct {

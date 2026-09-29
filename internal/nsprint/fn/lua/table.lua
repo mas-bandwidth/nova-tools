@@ -159,6 +159,38 @@ do
     if type(s) ~= 'string' or #s <= 64 then return s end
     return string.sub(s, 1, 32) .. '...(' .. #s .. ' bytes)'
   end
+  -- A receipt records a field value in full when it is at most this many bytes;
+  -- a longer one is its length and its SHA-1 (sha1hex is the digest the script
+  -- API has). A receipt is then bounded by its manifest, not by the values the
+  -- manifest replaces.
+  T.receipt_value_bytes = 256
+  -- T.fieldchange(before, after): the change of one field as a receipt records it.
+  -- Absent is null with no bytes; a value too long to record is null with its
+  -- bytes and sha1.
+  function T.fieldchange(before, after)
+    local change = {before = cjson.null, after = cjson.null}
+    for _, side in ipairs({{'before', before}, {'after', after}}) do
+      local key, value = side[1], side[2]
+      if value ~= nil then
+        if #value > T.receipt_value_bytes then
+          change[key .. '_bytes'] = #value
+          change[key .. '_sha1'] = redis.sha1hex(value)
+        else
+          change[key] = value
+        end
+      end
+    end
+    return change
+  end
+  -- T.smallvalues(set): the fields of a set instruction whose values a receipt
+  -- records in full; the others appear in the receipt's fields by length and sha1.
+  function T.smallvalues(set)
+    local kept = {}
+    for f, v in pairs(set or {}) do
+      if #v <= T.receipt_value_bytes then kept[f] = v end
+    end
+    return kept
+  end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
@@ -2204,10 +2236,7 @@ do
           if bval ~= val then
             fields_changed = true
           end
-          member_fields[f] = {
-            before = bval ~= nil and bval or cjson.null,
-            after = val,
-          }
+          member_fields[f] = T.fieldchange(bval, val)
         end
       end
       if entry.unset then
@@ -2216,10 +2245,7 @@ do
           if bval ~= nil then
             fields_changed = true
           end
-          member_fields[f] = {
-            before = bval ~= nil and bval or cjson.null,
-            after = cjson.null,
-          }
+          member_fields[f] = T.fieldchange(bval, nil)
         end
       end
       item.fields = member_fields
@@ -2355,7 +2381,7 @@ do
         after_score = item.after_score,
         before_rev = item.before_rev,
         after_rev = item.after_rev,
-        fields_set = entry.set or {},
+        fields_set = T.smallvalues(entry.set),
         fields_unset = entry.unset or {},
         fields = item.fields,
       }

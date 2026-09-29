@@ -1312,9 +1312,17 @@ func parseScoreText(t *string) (*float64, error) {
 
 // FieldChange records before and after values for an application field.
 // Absence is represented by nil, distinguished from a present empty string.
+//
+// A value longer than ReceiptValueBytes is not recorded: its side is nil and
+// carries the value's length and SHA-1 (BeforeBytes, BeforeSHA1), so a nil side
+// with no length is an absent field and a nil side with a length is a long one.
 type FieldChange struct {
-	Before *string `json:"before"`
-	After  *string `json:"after"`
+	Before      *string `json:"before"`
+	After       *string `json:"after"`
+	BeforeBytes int     `json:"before_bytes,omitempty"`
+	BeforeSHA1  string  `json:"before_sha1,omitempty"`
+	AfterBytes  int     `json:"after_bytes,omitempty"`
+	AfterSHA1   string  `json:"after_sha1,omitempty"`
 }
 
 // BatchMemberDelta records before and after state for a member affected by a batch.
