@@ -174,8 +174,8 @@ native takes directory leases (.lease, .slot-lease).
 ## The card is a pipeline, not a loop (issue #856)
 
 Each model call receives its required context explicitly. In this repository
-a card is a pipeline of stateless model calls, not an agent loop; no memory between calls
-is carried across invocations.
+a card is a pipeline of stateless model calls, not an agent loop: there is
+no memory between calls.
 Each rule below carries the hurt that made it, and **Red tests for this
 section** lists the red test for each rule: one per rule, seen red first,
 against the fake harness and the fixture card, with no network.

@@ -82,7 +82,7 @@ help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
 	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
 	@echo "make tlc-groups  JSON list of required model groups"
-	@echo "make tlc-test    pure runner controls without Java or network"
+	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
@@ -120,18 +120,18 @@ TLC_BUDGET ?= 110
 .PHONY: tlc tlc-full tlc-groups tlc-test
 tlc:
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
-	python3 tools/tlc.py --jar "$(TLC_JAR)" --out "$(TLC_OUT)" --group "$(TLC_GROUP)" --budget "$(TLC_BUDGET)"
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s"
 
 tlc-full:
 	@test "$(origin TLC_BUDGET)" != "file" || { echo 'make tlc-full: supply TLC_BUDGET explicitly' >&2; exit 2; }
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc-full: set TLC_JAR, TLC_OUT, TLC_GROUP and an explicit TLC_BUDGET' >&2; exit 2; }
-	python3 tools/tlc.py --jar "$(TLC_JAR)" --out "$(TLC_OUT)" --group "$(TLC_GROUP)" --budget "$(TLC_BUDGET)" --manual
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s" --manual
 
 tlc-test:
-	PYTHONDONTWRITEBYTECODE=1 python3 tools/test_tlc.py
+	$(GO) test -count=1 ./internal/tlc ./internal/tablemodel ./tools/tlacheck
 
 tlc-groups:
-	@python3 tools/tlc.py --list-groups
+	@$(GO) run ./tools/tlacheck groups --root .
 
 
 new-rule:
