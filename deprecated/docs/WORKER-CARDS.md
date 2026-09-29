@@ -423,6 +423,28 @@ reader sees it (practices 4 and 23 as a gate the wrapper runs, not prose the mod
 when a run shows a class the gate lets through. **Rollback:** practices 4 and 23 as prose.
 **Held by:** Rowan.
 
+## 28. A card is a spec (EVIDENCE, PATHS with lines, SEAMS, RULES, RECEIPTS, KEEP)
+
+A work card is an executable specification, not a vague request (nova-tools#4313). To eliminate
+hallucinated context, unbounded exploration, and drifted implementations, every work card
+carries the full contract required for both the worker to succeed and the gate to verify the work:
+
+- `EVIDENCE:` which issue, log, run, or experiment showed the need. Grounding must be concrete.
+- `PATHS:` file:line pointers: exactly where to cut, not just package paths (e.g.,
+  `internal/cardhdr/spec.go:20-50`). Line pointers tell the worker where to look and ensure
+  package matching works across tooling.
+- `SEAMS:` what to mock (never real external systems, no network, no sleeps, clock injected).
+- `RULES:` the standard test rules (`t.Parallel, no sleeps, no network, no child process; touched packages only`).
+  Defaults to standard rules when omitted in spec parsing.
+- `RECEIPTS:` typed lines the change must print (`grep -v ^# RESULT.md | grep :`). Proves the result.
+- `KEEP:` what not to touch and why, protecting critical invariants and delicate sections from side-effects.
+
+**Push gate:** A work card (KIND other than `plan` or `stitch`) is refused at push without
+`EVIDENCE`, `PATHS`, `RECEIPTS`, and `DONE-WHEN`.
+
+**Copy render:** The copy render and friend brief quote all spec headers under the `---` brief
+so child workers and friends receive the complete spec verbatim.
+
 ## The depends-on token (#2636)
 
 `depends-on` is not one of the four §5 tokens above, and it is not one of the twelve

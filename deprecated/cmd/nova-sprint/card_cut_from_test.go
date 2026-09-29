@@ -18,8 +18,7 @@ import (
 const cutFromSHA = "0123456789abcdef0123456789abcdef01234567"
 
 // cutInv is a body cell that makes a row one invariant (#4396): its
-// INVARIANT and CLASS-TEST lines, a newline written \n as a cell writes it.
-const cutInv = `INVARIANT: the card holds one thing.\nCLASS-TEST: TestTheCard`
+const cutInv = `INVARIANT: the card holds one thing.\nCLASS-TEST: TestTheCard\nEVIDENCE: issue #4313\nRECEIPTS: TestTheCard passes`
 
 // fakeCutForge is the one GitHub writer in tests: issues numbered from 5000,
 // every title and body kept; failAt makes that call fail.

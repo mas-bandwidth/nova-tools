@@ -20,6 +20,11 @@ func TestSplitPathsReadsAPathsLine(t *testing.T) {
 	if p := ws.ParsePaths(want); ws.JoinPaths(p) != want {
 		t.Fatalf("ParsePaths round trip = %q", ws.JoinPaths(p))
 	}
+	got = ws.SplitPaths("cmd/a.go:42 internal/b/file.go:10-25 internal/c.go:L1-L10")
+	want = "cmd/a.go,internal/b/file.go,internal/c.go"
+	if ws.JoinPaths(got) != want {
+		t.Fatalf("SplitPaths with line pointers = %q; want %q", ws.JoinPaths(got), want)
+	}
 }
 
 // TestPathsOverlapIsPrefixAtASlash: equal, or one a prefix of the other at

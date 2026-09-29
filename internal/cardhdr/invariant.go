@@ -263,6 +263,7 @@ func Packages(paths string, files []string) []string {
 	for _, tok := range strings.FieldsFunc(paths, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == ';' }) {
 		tok = strings.Trim(tok, "`'\"")
 		tok = strings.TrimPrefix(tok, "./")
+		tok, _ = SplitPathPointer(tok)
 		dir := strings.HasSuffix(tok, "/") || strings.HasSuffix(tok, "/...")
 		tok = strings.TrimSuffix(strings.TrimSuffix(tok, "..."), "/")
 		if tok == "" || tok == "." || !pathTokenRE.MatchString(tok) {

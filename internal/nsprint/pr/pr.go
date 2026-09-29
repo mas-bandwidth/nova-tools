@@ -24,6 +24,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // ErrRefused is wrapped by every CanonPaths refusal.
@@ -83,6 +85,7 @@ func CanonPaths(line string) ([]string, error) {
 			}
 		}
 		c := strings.TrimPrefix(path.Clean(e), "./")
+		c, _ = cardhdr.SplitPathPointer(c)
 		if c == "." || c == "" {
 			return nil, refuse("empty", entry)
 		}

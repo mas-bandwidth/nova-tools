@@ -109,3 +109,84 @@ func TestCopyCardCarriesTheTestLine(t *testing.T) {
 		t.Fatalf("a read carries a TEST line:\n%s", body)
 	}
 }
+
+// TestCopyCardCarriesSpecHeadersAndQuotesThemAllInBrief (#4313): a copy card carries
+// the spec headers from the primary record, and its brief quotes them all so child workers
+// receive the complete spec.
+func TestCopyCardCarriesSpecHeadersAndQuotesThemAllInBrief(t *testing.T) {
+	t.Parallel()
+
+	rec := map[string]string{
+		"primary": "p1", "leg": "work", "kind": "build", "repo": "mas-bandwidth/nova-tools",
+		"base": "dev", "base_sha": strings.Repeat("ab", 20), "paths": "internal/cardhdr/spec.go:20-50",
+		"done_when": "TestSpecPasses passes", "title": "spec card", "test": "./internal/cardhdr TestSpecPasses",
+		"evidence": "issue #4313", "seams": "mock the store", "rules": "t.Parallel, no sleeps",
+		"receipts": "RESULT.md line 2 is DONE", "keep": "keep legacy parsers untouched",
+		"body": "implement the spec",
+	}
+
+	c := card.CopyCardFrom("p1~1", rec)
+	if c.Evidence != "issue #4313" || c.Seams != "mock the store" || c.Rules != "t.Parallel, no sleeps" ||
+		c.Receipts != "RESULT.md line 2 is DONE" || c.Keep != "keep legacy parsers untouched" {
+		t.Fatalf("CopyCardFrom did not populate spec fields: %+v", c)
+	}
+
+	// RenderCopy for bench
+	body, err := card.RenderCopy(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sbody := string(body)
+
+	// Headers present
+	for _, want := range []string{
+		"\nEVIDENCE: issue #4313\n",
+		"\nSEAMS: mock the store\n",
+		"\nRULES: t.Parallel, no sleeps\n",
+		"\nRECEIPTS: RESULT.md line 2 is DONE\n",
+		"\nKEEP: keep legacy parsers untouched\n",
+		"\nPATHS: internal/cardhdr/spec.go:20-50\n",
+	} {
+		if !strings.Contains(sbody, want) {
+			t.Fatalf("RenderCopy header lacks %q:\n%s", want, sbody)
+		}
+	}
+
+	// Quoted under --- in brief
+	for _, want := range []string{
+		"> EVIDENCE: issue #4313",
+		"> PATHS: internal/cardhdr/spec.go:20-50",
+		"> SEAMS: mock the store",
+		"> RULES: t.Parallel, no sleeps",
+		"> RECEIPTS: RESULT.md line 2 is DONE",
+		"> KEEP: keep legacy parsers untouched",
+		"> DONE-WHEN: TestSpecPasses passes",
+		"> implement the spec",
+	} {
+		if !strings.Contains(sbody, want) {
+			t.Fatalf("RenderCopy brief lacks quoted %q:\n%s", want, sbody)
+		}
+	}
+
+	// Friend copy brief quotes them all too
+	c.Consumer = "friend:emma"
+	fbody, err := card.RenderCopy(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sfbody := string(fbody)
+	for _, want := range []string{
+		"> EVIDENCE: issue #4313",
+		"> PATHS: internal/cardhdr/spec.go:20-50",
+		"> SEAMS: mock the store",
+		"> RULES: t.Parallel, no sleeps",
+		"> RECEIPTS: RESULT.md line 2 is DONE",
+		"> KEEP: keep legacy parsers untouched",
+		"> DONE-WHEN: TestSpecPasses passes",
+		"> implement the spec",
+	} {
+		if !strings.Contains(sfbody, want) {
+			t.Fatalf("Friend brief lacks quoted %q:\n%s", want, sfbody)
+		}
+	}
+}

@@ -75,6 +75,8 @@ type CopyCard struct {
 	// card work and nova-friend pull record); the card's WORKER line (not WHO,
 	// which is the primary's who-may-do-it header, cut.go cutKeys).
 	Model, Harness, Child string
+	// Spec fields carried from primary (#4313).
+	Evidence, Seams, Rules, Receipts, Keep string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -83,7 +85,8 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"]}
+		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"],
+		Evidence: rec["evidence"], Seams: rec["seams"], Rules: rec["rules"], Receipts: rec["receipts"], Keep: rec["keep"]}
 }
 
 // WorkerLine is the copy's WORKER value: model=<m> harness=<h> child=<c>, each
@@ -249,9 +252,49 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 		fmt.Fprintf(&sb, "END: %s (the PR's number, its head commit and your checkout); when you cannot: %s.\n", endOK, endFail)
 		sb.WriteString(beat)
 		sb.WriteString("\n---\n")
-		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
+		sb.WriteString(taskcard.Quote(c.Brief()))
 	}
 	return sb.String()
+}
+
+// Brief returns the copy's spec brief for the quoted section under ---.
+// It ensures all spec keys (EVIDENCE, PATHS, SEAMS, RULES, RECEIPTS, KEEP, DONE-WHEN)
+// are quoted so child workers receive the complete spec.
+func (c CopyCard) Brief() string {
+	body := strings.TrimSpace(c.Body)
+	if c.Evidence == "" && c.Receipts == "" && c.Seams == "" && c.Keep == "" {
+		return body
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(body, "\n") {
+		if k, _, ok := cardhdr.KeyValue(line); ok {
+			seen[k] = true
+		}
+	}
+	var specLines []string
+	add := func(k, v string) {
+		if !seen[k] && strings.TrimSpace(v) != "" {
+			specLines = append(specLines, k+": "+v)
+		}
+	}
+	add("EVIDENCE", c.Evidence)
+	add("PATHS", c.Paths)
+	add("SEAMS", c.Seams)
+	rules := c.Rules
+	if rules == "" && (c.Evidence != "" || c.Receipts != "") {
+		rules = cardhdr.StandardRules
+	}
+	add("RULES", rules)
+	add("RECEIPTS", c.Receipts)
+	add("KEEP", c.Keep)
+	add("DONE-WHEN", c.DoneWhen)
+	if len(specLines) == 0 {
+		return body
+	}
+	if body == "" || body == "-" {
+		return strings.Join(specLines, "\n")
+	}
+	return strings.Join(specLines, "\n") + "\n\n" + body
 }
 
 // RenderCopy is the card file of a copy. It refuses a record that lacks
@@ -360,7 +403,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		sb.WriteString("RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>.\n")
 		fmt.Fprintf(&sb, "DO: the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, commit, write RESULT.md per RESULT-FORMAT, and exit; do not read other files, do not explore.\n", oneLine(c.Origin))
 		sb.WriteString("\n---\n")
-		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
+		sb.WriteString(taskcard.Quote(c.Brief()))
 		body = sb.String()
 	}
 	// The copy carries the primary's route, one of the three model types
@@ -391,6 +434,15 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	line("base-repo", "https://github.com/"+full)
 	line("base-sha", baseSHA)
 	line("PATHS", c.Paths)
+	line("EVIDENCE", c.Evidence)
+	line("SEAMS", c.Seams)
+	rules := c.Rules
+	if rules == "" && (c.Evidence != "" || c.Receipts != "") {
+		rules = cardhdr.StandardRules
+	}
+	line("RULES", rules)
+	line("RECEIPTS", c.Receipts)
+	line("KEEP", c.Keep)
 	if c.Leg != "read" && c.Leg != "fix" {
 		// a fix copy's TEST is the finding test it names (FindingTestLine)
 		line("TEST", c.Test)

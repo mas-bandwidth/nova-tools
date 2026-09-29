@@ -544,7 +544,30 @@ func cutSpec(r *cutRow, o cutFromOpts, text string) taskcard.Spec {
 	if text != "" {
 		s = taskcard.ParseIssue(text)
 	} else {
-		s = taskcard.Spec{Route: r.route, Who: r.who, Paths: r.paths, DoneWhen: r.doneWhen, Est: r.est, Task: r.title, Test: r.test}
+		if r.body != "" {
+			s = taskcard.ParseIssue(r.body)
+		}
+		if r.route != "" {
+			s.Route = r.route
+		}
+		if r.who != "" {
+			s.Who = r.who
+		}
+		if r.paths != "" {
+			s.Paths = r.paths
+		}
+		if r.doneWhen != "" {
+			s.DoneWhen = r.doneWhen
+		}
+		if r.est != "" {
+			s.Est = r.est
+		}
+		if r.title != "" {
+			s.Task = r.title
+		}
+		if r.test != "" {
+			s.Test = r.test
+		}
 	}
 	if r.stitch {
 		s.Kind = taskcard.KindStitch

@@ -35,6 +35,7 @@ type Spec struct {
 	Route, Who, Kind, Type, Repo, Base, BaseSHA, Paths, Test string
 	DependsOn, DoneWhen, Est, Priority, Source, Task, Body   string
 	Stream, Origin                                           string // header lines that fill the push's own options
+	Evidence, Seams, Rules, Receipts, Keep                   string // card as spec fields (#4313)
 }
 
 // specFields maps each header key an issue may carry to the record field it
@@ -44,6 +45,7 @@ var specFields = []struct{ key, field string }{
 	{"BASE", "base"}, {"base-sha", "base_sha"}, {"PATHS", "paths"}, {"TEST", "test"},
 	{"DEPENDS-ON", "depends_on"}, {"DONE-WHEN", "done_when"}, {"EST", "est"}, {"PRIORITY", "priority"},
 	{"SOURCE", "source"}, {"TASK", "task"}, {"STREAM", "stream"}, {"ORIGIN", "origin"},
+	{"EVIDENCE", "evidence"}, {"SEAMS", "seams"}, {"RULES", "rules"}, {"RECEIPTS", "receipts"}, {"KEEP", "keep"},
 }
 
 func (s *Spec) slot(field string) *string {
@@ -82,6 +84,16 @@ func (s *Spec) slot(field string) *string {
 		return &s.Stream
 	case "origin":
 		return &s.Origin
+	case "evidence":
+		return &s.Evidence
+	case "seams":
+		return &s.Seams
+	case "rules":
+		return &s.Rules
+	case "receipts":
+		return &s.Receipts
+	case "keep":
+		return &s.Keep
 	case "body":
 		return &s.Body
 	}
@@ -134,7 +146,8 @@ var (
 // accepts; a friend needs nothing more than the record.
 func (s *Spec) Complete(ref, origin string) []string {
 	for _, p := range []*string{&s.Route, &s.Who, &s.Kind, &s.Type, &s.Repo, &s.Base, &s.BaseSHA, &s.Paths,
-		&s.Test, &s.DependsOn, &s.DoneWhen, &s.Est, &s.Priority, &s.Source, &s.Task} {
+		&s.Test, &s.DependsOn, &s.DoneWhen, &s.Est, &s.Priority, &s.Source, &s.Task,
+		&s.Evidence, &s.Seams, &s.Rules, &s.Receipts, &s.Keep} {
 		*p = strings.TrimSpace(onelineRE.ReplaceAllString(*p, " "))
 	}
 	s.Route = strings.ToLower(s.Route)
@@ -157,6 +170,7 @@ func (s *Spec) Complete(ref, origin string) []string {
 	def(&s.DependsOn, "none")
 	def(&s.Est, "30")
 	def(&s.Priority, "0")
+	def(&s.Rules, cardhdr.StandardRules)
 	if s.Source == "" {
 		s.Source = "task"
 		if strings.Contains(origin, "github.com/") || refRE.MatchString(ref) {
@@ -177,21 +191,31 @@ func (s *Spec) Complete(ref, origin string) []string {
 	if !shaRE.MatchString(s.BaseSHA) {
 		missing = append(missing, "base-sha")
 	}
-	need("PATHS", s.Paths)
-	need("DONE-WHEN", s.DoneWhen)
-	if _, err := ResultKind(s.Kind); err != nil {
-		missing = append(missing, "KIND")
+	if s.Kind == KindPlan {
+		// A plan has no runner kind and is exempt from work card spec checks (#4313, #4388).
+	} else {
+		if _, err := ResultKind(s.Kind); err != nil {
+			missing = append(missing, "KIND")
+		}
+		if s.Kind != KindStitch {
+			need("EVIDENCE", s.Evidence)
+			need("PATHS", s.Paths)
+			need("RECEIPTS", s.Receipts)
+			need("DONE-WHEN", s.DoneWhen)
+		}
 	}
 	// The card is a spec (#4313): a swarm card names the test that proves
 	// it, or says why it has none, and the wrapper holds it to that. A card
 	// with no TEST line whose DONE-WHEN names no test is told so, not that
 	// its (derived) none says no why.
-	test := s.Test
-	if derived && test == "none" {
-		test = ""
-	}
-	if _, why := cardhdr.ParseTest(test); why != "" {
-		missing = append(missing, "TEST ("+why+")")
+	if s.Kind != KindPlan {
+		test := s.Test
+		if derived && test == "none" {
+			test = ""
+		}
+		if _, why := cardhdr.ParseTest(test); why != "" {
+			missing = append(missing, "TEST ("+why+")")
+		}
 	}
 	return missing
 }
@@ -409,6 +433,21 @@ func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	line("SOURCE", s.Source)
 	line("TASK", task)
 	line("DONE-WHEN", s.DoneWhen)
+	if s.Evidence != "" {
+		line("EVIDENCE", s.Evidence)
+	}
+	if s.Seams != "" {
+		line("SEAMS", s.Seams)
+	}
+	if s.Rules != "" {
+		line("RULES", s.Rules)
+	}
+	if s.Receipts != "" {
+		line("RECEIPTS", s.Receipts)
+	}
+	if s.Keep != "" {
+		line("KEEP", s.Keep)
+	}
 	line("NO-SUBAGENTS", LineNoSubagents)
 	line("WALL", LineWall)
 	line("RESULT-FORMAT", fmt.Sprintf("RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>; then SCHEMA: v2, KIND: %s, ATTEMPT: 1, CHECK: pass|fail|not-run, REPO: %s, BRANCH: <branch you committed>, PATHS: <space-separated paths changed>, RED: <the test failing on base-sha>, GREEN: <the same test passing at your head>; then a \"## Gates\" section and a \"## Left owed\" section, each with at least one \"- \" row.", kind, s.Repo))
@@ -420,8 +459,44 @@ func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	line("PR-BODY", fmt.Sprintf("the PR body must carry `STREAM: %s` and the DONE-WHEN line above, verbatim; put both lines, verbatim, in the commit message body under line 1.", dash(rec["stream"])))
 	line("DO", fmt.Sprintf("the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, run TEST, write RESULT.md per RESULT-FORMAT, and exit.", dash(firstNonEmpty(rec["origin"], rec["ref"]))))
 	b.WriteString("\n---\n")
-	b.WriteString(quote(dash(s.Body)))
+	b.WriteString(quote(dash(s.Brief())))
 	return []byte(b.String()), nil
+}
+
+// Brief returns the spec lines and issue text for the quoted section under ---.
+// It ensures that all spec keys (EVIDENCE, PATHS, SEAMS, RULES, RECEIPTS, KEEP, DONE-WHEN)
+// are quoted so child workers receive the complete spec.
+func (s Spec) Brief() string {
+	body := strings.TrimSpace(s.Body)
+	if s.Evidence == "" && s.Receipts == "" && s.Seams == "" && s.Keep == "" {
+		return body
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(body, "\n") {
+		if k, _, ok := cardhdr.KeyValue(line); ok {
+			seen[k] = true
+		}
+	}
+	var specLines []string
+	add := func(k, v string) {
+		if !seen[k] && strings.TrimSpace(v) != "" {
+			specLines = append(specLines, k+": "+v)
+		}
+	}
+	add("EVIDENCE", s.Evidence)
+	add("PATHS", s.Paths)
+	add("SEAMS", s.Seams)
+	add("RULES", s.Rules)
+	add("RECEIPTS", s.Receipts)
+	add("KEEP", s.Keep)
+	add("DONE-WHEN", s.DoneWhen)
+	if len(specLines) == 0 {
+		return body
+	}
+	if body == "" || body == "-" {
+		return strings.Join(specLines, "\n")
+	}
+	return strings.Join(specLines, "\n") + "\n\n" + body
 }
 
 func firstNonEmpty(vs ...string) string {

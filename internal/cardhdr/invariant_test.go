@@ -271,12 +271,14 @@ func TestPackagesCountsDistinctPackages(t *testing.T) {
 		"internal/cardhdr/invariant.go, docs/CLI.md": {"internal/cardhdr"},
 		// a directory spans every package below it
 		"internal/nsprint/...": {"internal/nsprint/card", "internal/nsprint/task"},
+		// file:line pointers strip line numbers cleanly
+		"cmd/nova-sprint/card.go:42, cmd/nova-sprint/card_cut_from.go:100-120": {"cmd/nova-sprint"},
 	} {
 		if got := Packages(paths, tree); !reflect.DeepEqual(got, want) {
 			t.Errorf("Packages(%q) = %v, want %v", paths, got, want)
 		}
 	}
-	if got := Packages("a/b/x.go (new), a/b/y.go and docs/x.md, ./c/", nil); !reflect.DeepEqual(got, []string{"a/b", "c"}) {
+	if got := Packages("a/b/x.go:12 (new), a/b/y.go:42-50 and docs/x.md, ./c/:5", nil); !reflect.DeepEqual(got, []string{"a/b", "c"}) {
 		t.Errorf("Packages by shape = %v, want [a/b c]", got)
 	}
 }

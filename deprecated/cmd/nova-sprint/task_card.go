@@ -42,6 +42,7 @@ usage:
   nova-sprint task push    --actor <a> --id <id> [--stream <s>] [--friend|--to <f>] [--waiting | --depends-on <c>]
                            [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
                            [--issue <file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
+                           [--receipts <r>] [--seams <s>] [--rules <rl>] [--keep <k>]
   nova-sprint task take    --actor <f> [--id <id>] [--n <k>] [--model <m>] [--harness <h>] [--child <id>]
   nova-sprint task beat    --actor <f> --id <id>
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
@@ -127,6 +128,7 @@ type cardCmd struct {
 	redis, actor, sprint, id, why, stream, friend   *string
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
+	receipts, seams, rules, keep                    *string
 	ok                                              *string
 	issue, route, base, baseSHA, paths, join        *string
 	model, harness, child                           *string
@@ -155,6 +157,10 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.on = fs.String("on", "", "")
 	fs.StringVar(c.on, "depends-on", "", "")
 	c.evidence = fs.String("evidence", "", "")
+	c.receipts = fs.String("receipts", "", "")
+	c.seams = fs.String("seams", "", "")
+	c.rules = fs.String("rules", "", "")
+	c.keep = fs.String("keep", "", "")
 	c.sha = fs.String("sha", "", "")
 	c.where = fs.String("where", "", "")
 	c.toFriend = fs.String("to-friend", "", "")
@@ -538,7 +544,8 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 // spec is push's card content (#3911): the --issue text through the one
 // parser, then the flags over it; nil when the push names neither.
 func (c *cardCmd) spec() (*taskcard.Spec, error) {
-	if *c.issue == "" && *c.route == "" && *c.base == "" && *c.baseSHA == "" && *c.paths == "" {
+	if *c.issue == "" && *c.route == "" && *c.base == "" && *c.baseSHA == "" && *c.paths == "" &&
+		*c.evidence == "" && *c.receipts == "" && *c.seams == "" && *c.rules == "" && *c.keep == "" {
 		return nil, nil
 	}
 	var s taskcard.Spec
@@ -558,7 +565,10 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 	for _, kv := range []struct {
 		v   string
 		dst *string
-	}{{*c.route, &s.Route}, {*c.base, &s.Base}, {*c.baseSHA, &s.BaseSHA}, {*c.paths, &s.Paths}, {*c.repo, &s.Repo}} {
+	}{
+		{*c.route, &s.Route}, {*c.base, &s.Base}, {*c.baseSHA, &s.BaseSHA}, {*c.paths, &s.Paths}, {*c.repo, &s.Repo},
+		{*c.evidence, &s.Evidence}, {*c.receipts, &s.Receipts}, {*c.seams, &s.Seams}, {*c.rules, &s.Rules}, {*c.keep, &s.Keep},
+	} {
 		if kv.v != "" {
 			*kv.dst = kv.v
 		}

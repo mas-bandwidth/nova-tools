@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
@@ -65,6 +66,7 @@ func SplitPaths(text string) []string {
 		}
 		tok = strings.TrimPrefix(tok, "./")
 		tok = strings.TrimLeft(tok, "/")
+		tok, _ = cardhdr.SplitPathPointer(tok)
 		var keep []string
 		for _, seg := range strings.Split(tok, "/") {
 			if strings.ContainsAny(seg, "*?[") {

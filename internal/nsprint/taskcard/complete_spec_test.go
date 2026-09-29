@@ -17,7 +17,7 @@ func TestSwarmCardIsRefusedWithoutATest(t *testing.T) {
 
 	sha := strings.Repeat("a", 40)
 	spec := func(text string) taskcard.Spec {
-		s := taskcard.ParseIssue("ROUTE: flash\nBASE: dev\nbase-sha: " + sha + "\nPATHS: internal/x\n" + text)
+		s := taskcard.ParseIssue("ROUTE: flash\nBASE: dev\nbase-sha: " + sha + "\nPATHS: internal/x\nEVIDENCE: issue #4313\nRECEIPTS: pass\n" + text)
 		return s
 	}
 	for _, text := range []string{
@@ -79,5 +79,58 @@ func TestFromDoneWhenReadsFlagsWithValues(t *testing.T) {
 		if got := taskcard.TestFromDoneWhen(dw); got != want {
 			t.Errorf("TestFromDoneWhen(%q) = %q, want %q", dw, got, want)
 		}
+	}
+}
+
+// TestWorkCardPushRefusesMissingSpecHeaders verifies that a work card is refused
+// at push without EVIDENCE, PATHS, RECEIPTS, and DONE-WHEN (#4313).
+func TestWorkCardPushRefusesMissingSpecHeaders(t *testing.T) {
+	t.Parallel()
+
+	sha := strings.Repeat("b", 40)
+	base := "ROUTE: flash\nBASE: dev\nbase-sha: " + sha + "\nTEST: none docs only\n"
+	full := base + "PATHS: internal/x.go:10-20\nEVIDENCE: issue #4313\nRECEIPTS: TestPasses passes\nDONE-WHEN: the work lands.\n"
+
+	s := taskcard.ParseIssue(full)
+	if missing := s.Complete("mas-bandwidth/nova-tools#4313", ""); len(missing) != 0 {
+		t.Fatalf("full spec lacks %v", missing)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		dropKey string
+	}{
+		{"missing EVIDENCE", "EVIDENCE:"},
+		{"missing PATHS", "PATHS:"},
+		{"missing RECEIPTS", "RECEIPTS:"},
+		{"missing DONE-WHEN", "DONE-WHEN:"},
+	} {
+		var lines []string
+		for _, l := range strings.Split(full, "\n") {
+			if strings.HasPrefix(l, tc.dropKey) {
+				continue
+			}
+			lines = append(lines, l)
+		}
+		spec := taskcard.ParseIssue(strings.Join(lines, "\n"))
+		missing := spec.Complete("mas-bandwidth/nova-tools#4313", "")
+		wanted := strings.TrimSuffix(tc.dropKey, ":")
+		found := false
+		for _, m := range missing {
+			if m == wanted {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: expected missing %q, got %v", tc.name, wanted, missing)
+		}
+	}
+
+	// KIND plan is exempt from EVIDENCE, PATHS, RECEIPTS
+	planText := "ROUTE: flash\nBASE: dev\nbase-sha: " + sha + "\nKIND: plan\nTEST: none plan only\nDONE-WHEN: the children land.\n"
+	planSpec := taskcard.ParseIssue(planText)
+	if missing := planSpec.Complete("mas-bandwidth/nova-tools#4313", ""); len(missing) != 0 {
+		t.Errorf("plan lacks %v", missing)
 	}
 }
