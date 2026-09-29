@@ -1925,11 +1925,12 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
 | `cell members <table> <row> <col>` | Lists member IDs and scores in order |
 | `member create <table> <id>` | Allocates an unplaced identity |
-| `member find <table> <id>` | Reports its owned location or `state=missing/unplaced`, with epoch and revision |
-| `batch <manifest>` | Applies an atomic batch manifest (file path or inline JSON) of member mutations and preconditions |
+| `member find <table> <id>` | Reports its owned location or `state=missing/unplaced`, with epoch and `table_revision` |
+| `member read <table> <id>... \| <table> --cell <row:col>` | Reads members' place, score, revision and fields in one exchange; names the missing |
+| `batch (<manifest-file> \| - \| '<json>')` | Applies an atomic batch manifest (file, stdin or inline JSON) of member mutations and preconditions |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
-| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages |
+| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
 | `render <table>` | Prints a text table; an empty table prints nothing |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
@@ -1965,31 +1966,53 @@ the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Batch mutation
 
-`nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]`
-applies an atomic batch manifest (file path, stdin via `-`, or inline JSON string) of member mutations and preconditions
-against one table in a single Redis transaction. It creates, moves, removes, and sets or unsets permitted
-member fields in one call, checking observed table revision, epoch, and member expectations whole against
-the single pre-state snapshot before staging any writes.
+`nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]`
+applies an atomic batch manifest of member mutations and preconditions against one table in a single Redis
+call. The manifest is a file path, `-` for stdin, or inline JSON that starts with `{`; a path that cannot be
+read is refused (exit 2) with the path and the operating system's error. It creates, moves, removes, and sets
+or unsets permitted member fields in one call, checking the observed table revision, the epoch and every
+member expectation against one pre-state before any write.
 
-The manifest file is a JSON object containing `operation_id`, optional `actor`, and `entries` (or `members`,
-an array of member mutation and guard objects). Each member entry specifies `id`, an optional `expect` guard
-(checking `absent`, `revision`, `place`, or application `fields`), and zero or more mutations (`create`, `move`,
-`remove`, `set`, `unset`). Every guard evaluates against the single pre-state snapshot before any mutation commits.
+The manifest is a JSON object with `schema` (the integer 1), `table`, `epoch` and `expected_table_revision`
+(decimal strings), `operation_id`, an optional `actor`, and `members`: an array with one entry per member.
+Each entry has an `id`, an `expect` guard (`absent`, or any of `revision`, `place` and `fields`), and zero or
+more mutations (`create`, `move`, `remove`, `set`, `unset`); `create` needs a `score`. The manifest states its
+epoch: `--epoch <n>` given on the command must equal it, and a difference is refused, naming both, before the
+store is asked. `--actor <name>` given on the command must equal the manifest's actor when it names one, and
+fills it when it names none. The bounds are in [SPEC-NOVA-TABLE.md](SPEC-NOVA-TABLE.md); a manifest over one
+is refused by name with the bound and the count found.
 
-On success, `batch` prints a summary line with operation ID, table revisions, counts and trips, the commit
-receipt, and one receipt line per member reporting before and after place, score, revision, and fields:
+From an empty store, the commands and what the last one prints:
 
-```text
-TABLE BATCH table=demo operation=op-4590 epoch=0 before=2 after=3 outcome=changed trips=1
-TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=3 outcome=changed
-MEMBER m1 place=build:ready->build:working rev=1->2
+```sh
+nova-table create demo --columns ready,working,done
+nova-table row add demo build
+cat > seed.json <<'EOF'
+{
+  "schema": 1,
+  "table": "demo",
+  "epoch": "0",
+  "expected_table_revision": "2",
+  "operation_id": "seed",
+  "actor": "coordinator",
+  "members": [
+    {
+      "id": "m1",
+      "expect": {"absent": true},
+      "create": {"row": "build", "col": "ready", "score": 1},
+      "set": {"role": "builder"}
+    }
+  ]
+}
+EOF
+nova-table batch seed.json
 ```
 
-Exit codes: 0 on success (including idempotent replays of identical requests), 1 on refusal (prints the refusal
-reason, observed state, and next action, leaving the store completely unchanged), and 2 on usage, syntax, or
-connection errors. `nova-table batch -h` prints the full usage banner to stdout at exit 0 with empty stderr.
-
-Runnable example:
+```text
+TABLE BATCH table=demo operation=seed epoch=0 table_revision=2->3 outcome=changed selected=1 guards=0 changed=1 replay=no trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=3 outcome=changed
+MEMBER m1 place=-->build:ready score=-->1 member_revision=0->1 fields={"role":[null,"builder"]}
+```
 
 ```sh
 cat > manifest.json <<'EOF'
@@ -1997,8 +2020,8 @@ cat > manifest.json <<'EOF'
   "schema": 1,
   "table": "demo",
   "epoch": "0",
-  "expected_table_revision": "2",
-  "operation_id": "op-4590",
+  "expected_table_revision": "3",
+  "operation_id": "op-42",
   "actor": "coordinator",
   "members": [
     {
@@ -2011,6 +2034,68 @@ cat > manifest.json <<'EOF'
 EOF
 nova-table batch manifest.json
 ```
+
+```text
+TABLE BATCH table=demo operation=op-42 epoch=0 table_revision=3->4 outcome=changed selected=1 guards=0 changed=1 replay=no trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=3 after=4 outcome=changed
+MEMBER m1 place=build:ready->build:working score=1->1 member_revision=1->2 fields={}
+```
+
+The summary line carries the table revision before and after (`table_revision=<before>-><after>`), the outcome,
+the selected, guard-only and changed entry counts, `replay=yes` when the receipt is the one recorded for an
+operation already applied, and the trips; then the commit receipt; then one `MEMBER` line per member with its
+place, score and `member_revision` before and after and its changed application fields as one JSON object of
+`[before, after]` pairs (`null` is absent; `-` is an unplaced member or an absent score). A value of more than
+64 bytes is not printed: it is `{"bytes":<length>,"sha1":"<digest>"}`, in a before-value as in an after-value,
+and a field whose two sides are both such values is always listed, its two digests side by side, because a
+digest identifies a value and does not prove two values equal. A score is the exact decimal string the store
+holds. A batch whose receipt would exceed 1 MiB (`receipt bytes`, the manifest bound) is refused with
+`code=LIMIT` and `changed=no`, naming the bound and the computed size; change fewer members or fields in one
+manifest. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes
+nothing prints `outcome=noop` and, like any accepted batch, advances the table revision by one. Running the same
+manifest again applies nothing and prints the original receipt with `replay=yes`. The command checks a manifest against the
+current rules before it sends it, so it replays only a request the current rules accept; a refusal made before
+sending says that, says this call changed nothing and says nothing about an earlier call with the same operation id.
+
+`--json` prints the receipt as one line of JSON for a program: `table`, `operation_id`, `epoch`,
+`table_revision` (`{"before", "after"}`), `outcome`, `selected`, `guards`, `changed`, `event`, `replay` (a
+boolean), `trips`, and `members` (`id`, `place`, `score`, `member_revision` as `{"before", "after"}` pairs,
+`null` for none, and `fields`, name to `[before, after]`). Revisions and scores are decimal strings.
+
+Exit codes: 0 on success (including the replay of an identical request, which returns the original receipt
+and writes nothing); 1 on refusal, which prints the operation, the member at fault, the state expected
+against the state found, `code=<CODE>`, `changed=no` and a next command, and leaves the store unchanged: it
+covers a manifest that reads as one and breaks a rule (a bound, a repeated member id, a field both set and
+unset, a reserved field, a create with a move, an absent with a revision, an empty `members` array) as well as
+the store's own refusals; 2 on usage or connection: a manifest that cannot be parsed or read (named by its
+place, `score must be a JSON number, found a string at members[0].create.score`), an `--epoch` or `--actor`
+that differs from the manifest, and a store that could not be reached or did not answer. When the store did not
+confirm a batch the message says `changed=unknown`: run the same manifest again with the same operation id; it
+returns the original receipt if the batch was applied and applies it if it was not. `nova-table batch -h` prints the usage banner, including the stdin form
+`nova-table batch - < manifest.json`, to stdout at exit 0 with empty stderr.
+
+An epoch behind the active one is refused as stale and one ahead of it as `EPOCHAHEAD`, naming the requested and the active epoch; `nova-table show <table>` prints the active epoch. A table that does not exist is refused as missing whatever the epoch.
+
+### Reading members
+
+`nova-table member read <table> <id>... | <table> --cell <row:col>... [--at-epoch <n>] [--json]` reads members
+in one exchange from one consistent snapshot: their place, score, revision and fields, the members that do not
+exist, and the table's revision and epoch. It is what a manifest's guards are prepared from.
+
+```sh
+nova-table member read demo m1 m2
+```
+
+```text
+TABLE READ table=demo epoch=0 table_revision=4 members=1 missing=1 trips=1
+MEMBER m1 place=build:working score=1 member_revision=2 fields={"role":"builder"}
+MISSING m2
+```
+
+`place=-` and `score=-` are an unplaced member. `--cell <row:col>` (repeatable) reads every member of a cell
+instead of naming ids. `--json` prints one object: `table`, `epoch`, `table_revision`, `members` (`id`,
+`place`, `score`, `member_revision`, `fields`), `missing` and `trips`. `member find <table> <id>` reports only
+where a member is; its `table_revision` is the table's counter, not the member's.
 
 
 ### Resident shell

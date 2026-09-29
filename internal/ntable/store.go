@@ -42,7 +42,8 @@ var (
 	ErrExists            = errors.New("exists with another definition")
 	ErrOccupied          = errors.New("shape would delete or hide placed members")
 	ErrOwnedAlias        = errors.New("binding target is table-owned storage")
-	ErrStale             = errors.New("observed epoch is stale")
+	ErrStale             = errors.New("requested epoch is stale, not the active epoch")
+	ErrEpochAhead        = errors.New("requested epoch is ahead of the active epoch")
 	ErrMemberEpoch       = errors.New("member belongs to another epoch")
 	ErrPlaced            = errors.New("member already has a place in this table")
 	ErrDrift             = errors.New("member record and owned set disagree")
@@ -50,6 +51,7 @@ var (
 	ErrRevisionMismatch  = errors.New("table revision mismatch")
 	ErrMemberRevision    = errors.New("member revision mismatch")
 	ErrFieldGuard        = errors.New("failed field guard")
+	ErrPlaceGuard        = errors.New("failed place guard")
 	ErrOpConflict        = errors.New("operation ID conflict")
 	ErrLimit             = errors.New("limit exceeded")
 	ErrReservedField     = errors.New("reserved field write")
@@ -59,7 +61,54 @@ var (
 	ErrMutation          = errors.New("incompatible mutation")
 	ErrWrongType         = errors.New("WRONGTYPE")
 	ErrMalformedManifest = errors.New("malformed manifest")
+	// ErrUnknownOutcome is a transport failure: the store did not answer, so the
+	// batch may or may not have been applied (changed=unknown). Send the same
+	// manifest again with the same operation id.
+	ErrUnknownOutcome = errors.New("the store did not confirm the batch")
 )
+
+// Refusal is the store's no, or a rule's, with its code and its sentence: the
+// operation, what was expected against what was found, whether anything changed,
+// and the next command. A refusal is not a transport failure (ErrUnknownOutcome)
+// and not a manifest that cannot be read (ErrMalformedManifest); a caller tells
+// them apart with errors.Is, or IsRefusal.
+type Refusal struct {
+	Code     string // the store's refusal code: NOTMEMBER, LIMIT, MEMBERREVISION, ...
+	Location string // the operation: table "demo" batch "op-1" member "a"
+	Sentence string // what was expected against what was found
+	Next     string // a command that runs when pasted
+	Guarded  bool   // a batch or a read set: it wrote nothing, and says so
+	cause    error
+}
+
+func (r *Refusal) Error() string {
+	s := r.Location + ": " + r.Sentence
+	if r.Guarded {
+		s += "; code=" + r.Code + "; changed=no"
+	}
+	return s + "; run: " + r.Next
+}
+
+func (r *Refusal) Unwrap() error { return r.cause }
+
+// IsRefusal says err is a refusal: the store or a rule said no and nothing changed.
+func IsRefusal(err error) bool {
+	var r *Refusal
+	return errors.As(err, &r)
+}
+
+// prose is an error with a sentence of its own that still answers errors.Is for
+// its sentinel: the store's code is a field of the refusal, not part of a sentence.
+type prose struct {
+	text string
+	is   error
+}
+
+func (p *prose) Error() string { return p.text }
+func (p *prose) Unwrap() error { return p.is }
+func say(is error, format string, a ...any) error {
+	return &prose{fmt.Sprintf(format, a...), is}
+}
 
 // BoundError names the other writer. The table may read the binding but
 // cannot acquire write ownership merely by displaying it.
@@ -93,6 +142,9 @@ type Receipt struct {
 	Epoch, Before, After uint64
 	Outcome              string
 	BatchDelta           *BatchDelta
+	// Replay is true when ApplyBatch returned the receipt recorded for an
+	// operation it had already applied, and wrote nothing.
+	Replay bool
 }
 
 type operation struct {
@@ -100,7 +152,12 @@ type operation struct {
 	opID                    string
 	view                    bool
 	batch                   bool
+	readSet                 bool
 }
+
+// guarded reports an operation whose refusal writes nothing by contract: a
+// batch, and the read that prepares one.
+func (o operation) guarded() bool { return o.batch || o.readSet }
 
 func (o operation) location() string {
 	kind := "table"
@@ -117,6 +174,9 @@ func (o operation) location() string {
 		} else {
 			s += " batch"
 		}
+	}
+	if o.readSet {
+		s += " read set"
 	}
 	if o.row != "" {
 		s += fmt.Sprintf(" row %q", o.row)
@@ -159,6 +219,30 @@ func runUnlessNamed(err error, remedy string) string {
 	return "; run: " + remedy
 }
 
+// memberReadCommand names the verb that shows a member's place, score,
+// revision and fields now.
+func memberReadCommand(table, member string, flags ...string) string {
+	args := []string{table, member}
+	endFlags := false
+	for i, arg := range args {
+		endFlags = endFlags || strings.HasPrefix(arg, "-")
+		args[i] = shellWord(arg)
+	}
+	if endFlags {
+		args = append([]string{"--"}, args...)
+	}
+	return "nova-table member read " + strings.Join(append(flags, args...), " ")
+}
+
+// words joins the detail elements of a refusal reply.
+func words(detail []any) string {
+	parts := make([]string, len(detail))
+	for i, v := range detail {
+		parts[i] = fmt.Sprint(v)
+	}
+	return strings.Join(parts, " ")
+}
+
 func (o operation) remedy() string {
 	if o.view {
 		if o.table == "" {
@@ -184,31 +268,73 @@ func (o operation) refused(reply []any) error {
 	refusal := typedrec.ParseTableRefusal(reason)
 	switch refusal {
 	case typedrec.TableRefusalStale:
-		cause = fmt.Errorf("%w: observed %v, active %v", ErrStale, reply[2], reply[3])
+		cause = fmt.Errorf("%w: requested %v, active %v", ErrStale, reply[2], reply[3])
+	case typedrec.TableRefusalEpochAhead:
+		cause = fmt.Errorf("%w: requested epoch %v, active epoch %v (show prints the active epoch)", ErrEpochAhead, reply[2], reply[3])
 	case typedrec.TableRefusalMemberEpoch:
-		cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
+		if o.guarded() && len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: the member is of epoch %v, the active epoch is %v", ErrMemberEpoch, reply[3], reply[4])
+			// A read at the active epoch repeats this refusal; the member is read at its own.
+			if theirs, err1 := strconv.ParseUint(fmt.Sprint(reply[3]), 10, 64); err1 == nil {
+				if active, err2 := strconv.ParseUint(fmt.Sprint(reply[4]), 10, 64); err2 == nil && theirs < active {
+					remedy = memberReadCommand(o.table, o.member, "--at-epoch", fmt.Sprint(reply[3]))
+				}
+			}
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
+		}
 	case typedrec.TableRefusalMemberExists:
-		cause = ErrMemberExists
+		if o.guarded() && len(reply) >= 4 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: expected absent, observed %v", ErrMemberExists, reply[3])
+			remedy = memberReadCommand(o.table, o.member)
+		} else {
+			cause = ErrMemberExists
+		}
 	case typedrec.TableRefusalPlaced:
 		cause = fmt.Errorf("%w: %v", ErrPlaced, reply[2:])
 	case typedrec.TableRefusalDrift:
-		cause = fmt.Errorf("%w: %v", ErrDrift, reply[2:])
+		switch {
+		case o.guarded() && len(reply) == 6 && fmt.Sprint(reply[5]) == "set-only":
+			o.member = fmt.Sprint(reply[4])
+			cause = say(ErrDrift, "record and owned set disagree: the owned set at row %q column %q holds member %q, and no record places it there; list the cell, and run check for every such disagreement, then remove the stray entry or restore the member's record (nova-table has no repair verb)", reply[2], reply[3], reply[4])
+			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[2])) + " " + shellWord(fmt.Sprint(reply[3]))
+		case o.guarded() && len(reply) == 5:
+			o.member = fmt.Sprint(reply[4])
+			cause = say(ErrDrift, "record and owned set disagree: the record places member %q at row %q column %q, and the owned set there does not hold it; list the cell, and run check for every such disagreement", reply[4], reply[2], reply[3])
+			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[2])) + " " + shellWord(fmt.Sprint(reply[3]))
+		case o.guarded() && len(reply) == 4:
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: the record says place %q, which is not a usable owned cell", ErrDrift, reply[3])
+			remedy = "nova-table check " + shellWord(o.table)
+		default:
+			cause = fmt.Errorf("%w: %v", ErrDrift, reply[2:])
+		}
 	case typedrec.TableRefusalNoTable:
 		cause = ErrNoTable
 		remedy = "nova-table create " + shellWord(o.table) + " --columns <columns>"
+		if o.guarded() {
+			remedy = "nova-table list"
+		}
 	case typedrec.TableRefusalExists:
 		cause = ErrExists
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
 	case typedrec.TableRefusalNoRow:
 		cause = errors.New("no such row")
-		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
 	case typedrec.TableRefusalNoCol:
 		cause = errors.New("no such column")
 	case typedrec.TableRefusalText:
 		cause = errors.New("text column holds no ordered set; choose a body column")
 	case typedrec.TableRefusalNotMember:
-		cause = ErrNotMember
-		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+		if o.guarded() && len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = say(ErrNotMember, "not a member: expected %v, observed %v", reply[4], reply[3])
+			remedy = memberReadCommand(o.table, o.member)
+		} else {
+			cause = ErrNotMember
+			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+		}
 	case typedrec.TableRefusalOccupiedValue:
 		o.row, o.col = fmt.Sprint(reply[2]), fmt.Sprint(reply[3])
 		cause = fmt.Errorf("%w: text cell is nonempty; clear it with row set first", ErrOccupied)
@@ -305,20 +431,26 @@ func (o operation) refused(reply []any) error {
 			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
 		}
 		boundErr := &BoundError{Table: o.table, Row: fmt.Sprint(reply[2]), Col: fmt.Sprint(reply[3]), Key: fmt.Sprint(reply[4]), Owner: fmt.Sprint(reply[5])}
-		if o.batch {
-			return fmt.Errorf("%s: %w; changed=no", o.location(), boundErr)
+		if o.guarded() {
+			if len(reply) >= 7 {
+				o.member = fmt.Sprint(reply[6])
+			}
+			// The owner is store data; it is named, never offered as a command.
+			return &Refusal{Code: reason, Location: o.location(), Guarded: true, Next: o.remedy(), cause: boundErr,
+				Sentence: fmt.Sprintf("%s.%s.%s is bound to %s, owned by %q", boundErr.Table, boundErr.Row, boundErr.Col, boundErr.Key, boundErr.Owner)}
 		}
 		return fmt.Errorf("%s: %w", o.location(), boundErr)
 	case typedrec.TableRefusalRevision:
 		if len(reply) >= 4 {
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrRevisionMismatch, reply[2], reply[3])
 		} else {
-			cause = fmt.Errorf("%w: %v", ErrRevisionMismatch, reply[2:])
+			cause = fmt.Errorf("%w: the table revision %v is at its maximum and cannot advance", ErrCounterOverflow, reply[2])
 		}
 	case typedrec.TableRefusalMemberRevision:
 		if len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrMemberRevision, reply[3], reply[4])
+			remedy = memberReadCommand(o.table, o.member)
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberRevision, reply[2:])
 		}
@@ -333,12 +465,43 @@ func (o operation) refused(reply []any) error {
 		} else if len(reply) >= 7 && fmt.Sprint(reply[4]) == "one_of" {
 			cause = fmt.Errorf("%w: member %q field %q: expected one_of %s, observed %q", ErrFieldGuard, reply[2], reply[3], reply[5], reply[6])
 		} else {
-			cause = fmt.Errorf("%w: %v", ErrFieldGuard, reply[2:])
+			cause = fmt.Errorf("%w: %s", ErrFieldGuard, words(reply[2:]))
+		}
+		if o.member != "" {
+			remedy = memberReadCommand(o.table, o.member)
+		}
+	case typedrec.TableRefusalPlaceGuard:
+		if len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: member %q: expected place %v, observed %v", ErrPlaceGuard, reply[2], reply[3], reply[4])
+			remedy = memberReadCommand(o.table, o.member)
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrPlaceGuard, words(reply[2:]))
+		}
+	case typedrec.TableRefusalArgs:
+		if o.guarded() {
+			if len(reply) >= 4 {
+				o.member = fmt.Sprint(reply[3])
+			}
+			cause = fmt.Errorf("invalid argument: %v", reply[2])
+		} else {
+			cause = fmt.Errorf("%s %v", reason, reply[2:])
 		}
 	case typedrec.TableRefusalOpConflict:
-		cause = fmt.Errorf("%w: %v", ErrOpConflict, reply[2:])
+		cause = say(ErrOpConflict, "operation %q already holds a different request; use a new operation id for this request, or send the original manifest byte for byte to replay it", words(reply[2:]))
 	case typedrec.TableRefusalLimit:
-		cause = fmt.Errorf("%w: %v", ErrLimit, reply[2:])
+		if len(reply) >= 5 {
+			limit := &LimitError{Name: fmt.Sprint(reply[2])}
+			limit.Bound, _ = strconv.Atoi(fmt.Sprint(reply[3]))
+			limit.Observed, _ = strconv.Atoi(fmt.Sprint(reply[4]))
+			if len(reply) >= 6 {
+				limit.Member = fmt.Sprint(reply[5])
+				o.member = limit.Member
+			}
+			cause = say(limit, "%s; %s", limit.Error(), limit.Advice())
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrLimit, words(reply[2:]))
+		}
 	case typedrec.TableRefusalReservedField:
 		if len(reply) >= 4 {
 			o.member = fmt.Sprint(reply[2])
@@ -350,39 +513,50 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w (TWICE): %v", ErrDuplicateMember, reply[2:])
+		if o.guarded() {
+			cause = say(ErrDuplicateMember, "duplicate manifest member: member %q appears more than once", words(reply[2:]))
+		} else {
+			cause = fmt.Errorf("%w (TWICE): member %s appears more than once", ErrDuplicateMember, words(reply[2:]))
+		}
 	case typedrec.TableRefusalScore:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w: %v", ErrInvalidScore, reply[2:])
+		if len(reply) >= 4 {
+			cause = fmt.Errorf("%w: expected a finite JSON number, observed %v", ErrInvalidScore, reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrInvalidScore, words(reply[2:]))
+		}
 	case typedrec.TableRefusalOverflow:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w: %v", ErrCounterOverflow, reply[2:])
+		cause = fmt.Errorf("%w: a revision is at its maximum, 18446744073709551615, and cannot advance", ErrCounterOverflow)
 	case typedrec.TableRefusalMutation:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w: %v", ErrMutation, reply[2:])
+		cause = fmt.Errorf("%w: %s", ErrMutation, words(reply[3:]))
 	case typedrec.TableRefusalManifest:
-		cause = fmt.Errorf("%w: %v", ErrMalformedManifest, reply[2:])
+		cause = fmt.Errorf("%w: %s", ErrMalformedManifest, words(reply[2:]))
 	case typedrec.TableRefusalStreamFull:
 		cause = fmt.Errorf("%w: stream %v is full", ErrCounterOverflow, reply[2:])
 	case typedrec.TableRefusalSchema:
-		cause = fmt.Errorf("schema: %v", reply[2:])
+		cause = fmt.Errorf("unsupported schema %s, expected 1", words(reply[2:]))
 	case typedrec.TableRefusalOperation:
-		cause = fmt.Errorf("operation: %v", reply[2:])
+		cause = fmt.Errorf("operation: %s", words(reply[2:]))
 	case typedrec.TableRefusalMember:
-		if len(reply) >= 3 {
-			o.member = fmt.Sprint(reply[2])
-		}
-		cause = fmt.Errorf("member: %v", reply[2:])
+		cause = fmt.Errorf("member: %s", words(reply[2:]))
 	case typedrec.TableRefusalWrongType:
-		if len(reply) >= 5 {
+		if len(reply) >= 6 {
+			o.member = fmt.Sprint(reply[5])
+		}
+		switch {
+		case len(reply) >= 5 && o.guarded():
+			cause = say(ErrWrongType, "wrong type: key %v is %v, expected %v", reply[2], reply[3], reply[4])
+		case len(reply) >= 5:
 			cause = fmt.Errorf("%w: key %v is %v, expected %v", ErrWrongType, reply[2], reply[3], reply[4])
-		} else {
+		default:
 			cause = fmt.Errorf("%w: %v", ErrWrongType, reply[2:])
 		}
 	case typedrec.TableRefusalStreamType:
@@ -395,14 +569,53 @@ func (o operation) refused(reply []any) error {
 		o.row = fmt.Sprint(reply[2])
 		o.col = fmt.Sprint(reply[3])
 	}
+	// A batch entry's refusal about its destination carries the entry's id last.
+	if o.guarded() {
+		switch {
+		case refusal == typedrec.TableRefusalNoRow && len(reply) >= 4:
+			o.member = fmt.Sprint(reply[3])
+		case (refusal == typedrec.TableRefusalNoCol || refusal == typedrec.TableRefusalText) && len(reply) >= 5:
+			o.member = fmt.Sprint(reply[4])
+		}
+	}
 	if refusal == typedrec.TableRefusalNoRow && len(reply) >= 3 {
 		o.row = fmt.Sprint(reply[2])
-		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+		if !o.guarded() {
+			// a batch or a read set never prepares a write: it shows the table, whose rows it lists
+			remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+		}
 	}
-	if o.batch {
-		return fmt.Errorf("%s: %w; changed=no; run: %s", o.location(), cause, remedy)
+	if o.readSet && refusal == typedrec.TableRefusalNoRow {
+		remedy = o.remedy() // a read prepares nothing to write; show the table
 	}
-	return fmt.Errorf("%s: %w; run: %s", o.location(), cause, remedy)
+	return &Refusal{Code: reason, Location: o.location(), Sentence: cause.Error(), Next: remedy, Guarded: o.guarded(), cause: cause}
+}
+
+// checkedBeforeSending is what a refusal made before anything is sent says of
+// itself. The store looks an operation up before it judges the request, so a
+// manifest that the current rules refuse can still have been applied earlier, under
+// looser rules: this refusal is about this call only.
+const checkedBeforeSending = "checked before sending, so this call changed nothing; it says nothing about an earlier call with the same operation id"
+
+// beforeSending turns what the validator found into the refusal the store would
+// have made, or the manifest error a reader is told.
+func (o operation) beforeSending(err error) error {
+	var (
+		me *ManifestError
+		re *RuleError
+		le *LimitError
+	)
+	switch {
+	case errors.As(err, &re):
+		o.member = re.Member
+		return &Refusal{Code: re.Code, Location: o.location(), Sentence: re.Detail + "; " + checkedBeforeSending, Next: o.remedy(), Guarded: true, cause: re}
+	case errors.As(err, &le):
+		o.member = le.Member
+		return &Refusal{Code: "LIMIT", Location: o.location(), Sentence: le.Error() + "; " + le.Advice() + "; " + checkedBeforeSending, Next: o.remedy(), Guarded: true, cause: le}
+	case errors.As(err, &me):
+		return fmt.Errorf("%s: invalid batch manifest: %w; %s; changed=no; run: %s", o.location(), me, checkedBeforeSending, o.remedy())
+	}
+	return err
 }
 func (o operation) call(ctx context.Context, c redis.Cmdable, fn string, ro bool, args ...any) ([]any, error) {
 	all := append([]any{o.table}, args...)
@@ -840,6 +1053,10 @@ func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...
 	if err != nil {
 		return err
 	}
+	// a bind leaves the table with exactly these rows, so the bound is on their number
+	if err := over(limitNameRows, LimitRows, len(t.Rows), ""); err != nil {
+		return fmt.Errorf("table %q: %w; %s", t.Name, err, err.(*LimitError).Advice())
+	}
 	type boundRow struct {
 		Key string `json:"key"`
 		RowSpec
@@ -1099,25 +1316,49 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func parseScoreText(t *string) (*float64, error) {
+	if t == nil {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(*t, 64)
+	if err != nil {
+		return nil, fmt.Errorf("score %q is not a number: %w", *t, err)
+	}
+	return &v, nil
+}
+
 // FieldChange records before and after values for an application field.
 // Absence is represented by nil, distinguished from a present empty string.
+//
+// A value longer than ReceiptValueBytes is not recorded: its side is nil and
+// carries the value's length and SHA-1 (BeforeBytes, BeforeSHA1), so a nil side
+// with no length is an absent field and a nil side with a length is a long one.
 type FieldChange struct {
-	Before *string `json:"before"`
-	After  *string `json:"after"`
+	Before      *string `json:"before"`
+	After       *string `json:"after"`
+	BeforeBytes int     `json:"before_bytes,omitempty"`
+	BeforeSHA1  string  `json:"before_sha1,omitempty"`
+	AfterBytes  int     `json:"after_bytes,omitempty"`
+	AfterSHA1   string  `json:"after_sha1,omitempty"`
 }
 
 // BatchMemberDelta records before and after state for a member affected by a batch.
 type BatchMemberDelta struct {
-	ID          string                 `json:"id"`
-	BeforePlace string                 `json:"before_place"`
-	AfterPlace  string                 `json:"after_place"`
-	BeforeScore *float64               `json:"before_score"`
-	AfterScore  *float64               `json:"after_score"`
-	BeforeRev   string                 `json:"before_rev"`
-	AfterRev    string                 `json:"after_rev"`
-	FieldsSet   map[string]string      `json:"fields_set"`
-	FieldsUnset []string               `json:"fields_unset"`
-	Fields      map[string]FieldChange `json:"fields"`
+	ID          string `json:"id"`
+	BeforePlace string `json:"before_place"`
+	AfterPlace  string `json:"after_place"`
+	// BeforeScore and AfterScore are the scores parsed; BeforeScoreText and
+	// AfterScoreText are the exact decimal strings the store holds, which two
+	// different scores never share. Nil is no score (unplaced).
+	BeforeScore     *float64               `json:"-"`
+	AfterScore      *float64               `json:"-"`
+	BeforeScoreText *string                `json:"before_score"`
+	AfterScoreText  *string                `json:"after_score"`
+	BeforeRev       string                 `json:"before_rev"`
+	AfterRev        string                 `json:"after_rev"`
+	FieldsSet       map[string]string      `json:"fields_set"`
+	FieldsUnset     []string               `json:"fields_unset"`
+	Fields          map[string]FieldChange `json:"fields"`
 }
 
 func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
@@ -1125,8 +1366,8 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 		ID          string          `json:"id"`
 		BeforePlace string          `json:"before_place"`
 		AfterPlace  string          `json:"after_place"`
-		BeforeScore *float64        `json:"before_score"`
-		AfterScore  *float64        `json:"after_score"`
+		BeforeScore *string         `json:"before_score"`
+		AfterScore  *string         `json:"after_score"`
 		BeforeRev   string          `json:"before_rev"`
 		AfterRev    string          `json:"after_rev"`
 		FieldsSet   json.RawMessage `json:"fields_set"`
@@ -1140,8 +1381,14 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 	b.ID = raw.ID
 	b.BeforePlace = raw.BeforePlace
 	b.AfterPlace = raw.AfterPlace
-	b.BeforeScore = raw.BeforeScore
-	b.AfterScore = raw.AfterScore
+	b.BeforeScoreText, b.AfterScoreText = raw.BeforeScore, raw.AfterScore
+	var err error
+	if b.BeforeScore, err = parseScoreText(raw.BeforeScore); err != nil {
+		return err
+	}
+	if b.AfterScore, err = parseScoreText(raw.AfterScore); err != nil {
+		return err
+	}
 	b.BeforeRev = raw.BeforeRev
 	b.AfterRev = raw.AfterRev
 
@@ -1177,38 +1424,56 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ApplyBatch validates and commits an atomic batch of member mutations and preconditions.
+// ApplyBatch commits an atomic batch of member mutations and preconditions
+// against one table in one round trip (ns_table_apply): every guard is read
+// against one pre-state, and either every change is written with one receipt or
+// nothing is.
+//
+// It runs the manifest through the Go validator (ValidateBatchManifestRaw)
+// before it sends anything, so a manifest that a rule refuses never reaches the
+// store. Its errors are of three kinds, told apart with errors.Is and errors.As:
+//
+//   - a refusal (IsRefusal): the store or a rule said no, nothing changed, and
+//     the error says the code, the operation, the member, what was expected
+//     against what was found, changed=no and a next command. It wraps the
+//     sentinel of its code (ErrNotMember, ErrMemberRevision, ErrLimit, ErrStale,
+//     ErrEpochAhead, ErrOpConflict, ...).
+//   - a manifest that cannot be read as one (ErrMalformedManifest, a
+//     *ManifestError): not JSON, an unknown key, a value of the wrong type. It
+//     names the place in the manifest.
+//   - a transport failure (ErrUnknownOutcome): the store did not answer, so the
+//     batch may or may not have been applied. Send the same manifest again with
+//     the same operation id: it returns the original receipt if the batch was
+//     applied and applies it if it was not.
+//
+// Operation identity is the table, the epoch and the operation id. Sending
+// the same request again returns the receipt recorded for it (Receipt.Replay is
+// true) and writes nothing, even after the table has moved on; a different
+// request under the same id is refused (ErrOpConflict). manifest.Epoch is the
+// epoch the caller observed: an epoch behind the active one is ErrStale, one
+// ahead of it ErrEpochAhead. Operation records do not expire, but a drop of the
+// table ends them.
 func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (Receipt, error) {
-	if manifest.Schema == 0 {
-		manifest.Schema = 1
-	}
 	if !ValidName(manifest.Table) {
-		return Receipt{}, fmt.Errorf("table %q: invalid name; run: nova-table help", manifest.Table)
-	}
-	if manifest.Epoch == "" {
-		manifest.Epoch = "0"
-	}
-	if manifest.ExpectedTableRevision == "" {
-		manifest.ExpectedTableRevision = "0"
+		return Receipt{}, &ManifestError{Msg: fmt.Sprintf("table %q: invalid name: a table name wants letters, digits, _ . and -; run: nova-table help", manifest.Table)}
 	}
 	if manifest.Members == nil {
 		manifest.Members = []BatchMemberEntry{}
 	}
 	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
-	for _, m := range manifest.Members {
-		if m.Expect == nil {
-			return Receipt{}, fmt.Errorf("%s: member %q: %w: missing expect; changed=no; run: %s", o.location(), m.ID, ErrMalformedManifest, o.remedy())
-		}
-	}
 	body, err := payload(manifest)
 	if err != nil {
 		return Receipt{}, err
+	}
+	if _, verr := ValidateBatchManifestRaw([]byte(body)); verr != nil {
+		return Receipt{}, o.beforeSending(verr)
 	}
 	key := DefKey(manifest.Table)
 	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)
 	reply, err := cmd.Slice()
 	if err != nil {
-		return Receipt{}, fmt.Errorf("%s: %s: %w (changed=unknown); reconcile operation %q; run: %s", o.location(), FnApply, err, manifest.OperationID, o.remedy())
+		return Receipt{}, fmt.Errorf("%s: %w: %w (changed=unknown); send the same manifest again with the same operation id %q: it returns the original receipt if the batch was applied and applies it if it was not; run: %s",
+			o.location(), ErrUnknownOutcome, err, manifest.OperationID, o.remedy())
 	}
 	if err := o.refused(reply); err != nil {
 		return Receipt{}, err
@@ -1221,6 +1486,7 @@ func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (R
 		return Receipt{}, fmt.Errorf("%s: malformed committed receipt", o.location())
 	}
 	var r Receipt
+	r.Replay = len(reply) >= 3 && fmt.Sprint(reply[2]) == "REPLAY"
 	r.ID = fmt.Sprint(wire[1])
 	r.Outcome = fmt.Sprint(wire[5])
 	for i, target := range []*uint64{&r.Epoch, &r.Before, &r.After} {
@@ -1268,9 +1534,13 @@ type ReadSetMember struct {
 	Row      string
 	Col      string
 	Score    float64
-	Fields   map[string]string
+	// ScoreText is the score exactly as the store holds it.
+	ScoreText string
+	Fields    map[string]string
 }
 
+// Member returns the member with the id from the members that were found; ok is
+// false for an id that is missing (see IsMissing) or was not asked for.
 func (r ReadSetResult) Member(id string) (ReadSetMember, bool) {
 	for _, m := range r.Members {
 		if m.ID == id {
@@ -1280,6 +1550,8 @@ func (r ReadSetResult) Member(id string) (ReadSetMember, bool) {
 	return ReadSetMember{}, false
 }
 
+// IsMissing says the id was asked for and does not exist as a member of the
+// table. A missing member is an answer, not an error: it is listed in Missing.
 func (r ReadSetResult) IsMissing(id string) bool {
 	for _, m := range r.Missing {
 		if m == id {
@@ -1289,7 +1561,18 @@ func (r ReadSetResult) IsMissing(id string) bool {
 	return false
 }
 
-// ReadSet returns an atomic snapshot of members and table revision for a scope.
+// ReadSet reads members in one round trip from one consistent snapshot of one
+// table (ns_table_read_set, a read-only function): each member's place, score,
+// revision and fields, the members that are missing, and the table's epoch and
+// revision, which a manifest's expected_table_revision is prepared from.
+//
+// The scope is one of two shapes, each nonempty: Members (ids) or Selection
+// (row and column pairs, every member of each cell). An empty scope, both lists
+// together, or more than LimitReadSetMembers members is refused. epoch is
+// optional (at most one value): it reads a materialised epoch of the table
+// instead of the active one, and an epoch ahead of the active one is refused
+// (ErrEpochAhead). Errors are refusals (IsRefusal) that wrote nothing, or a
+// transport error from the client.
 func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetScope, epoch ...uint64) (ReadSetResult, error) {
 	if !ValidName(table) {
 		return ReadSetResult{}, fmt.Errorf("table %q: invalid name; run: nova-table help", table)
@@ -1302,7 +1585,7 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 	if len(epoch) > 0 {
 		args = append(args, strconv.FormatUint(epoch[0], 10))
 	}
-	o := operation{table: table}
+	o := operation{table: table, readSet: true}
 	key := DefKey(table)
 	cmd := c.FCallRO(ctx, FnReadSet, []string{key}, args...)
 	reply, err := cmd.Slice()
@@ -1350,13 +1633,14 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 				fields[fmt.Sprint(fieldsRaw[i])] = fmt.Sprint(fieldsRaw[i+1])
 			}
 			res.Members = append(res.Members, ReadSetMember{
-				ID:       fmt.Sprint(item[0]),
-				Revision: mRev,
-				Placed:   fmt.Sprint(item[2]) == "1",
-				Row:      fmt.Sprint(item[3]),
-				Col:      fmt.Sprint(item[4]),
-				Score:    mScore,
-				Fields:   fields,
+				ID:        fmt.Sprint(item[0]),
+				Revision:  mRev,
+				Placed:    fmt.Sprint(item[2]) == "1",
+				Row:       fmt.Sprint(item[3]),
+				Col:       fmt.Sprint(item[4]),
+				Score:     mScore,
+				ScoreText: fmt.Sprint(item[5]),
+				Fields:    fields,
 			})
 		}
 	}
@@ -1369,7 +1653,8 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 	return res, nil
 }
 
-// ReadSetMembers reads the specified member IDs in one atomic snapshot.
+// ReadSetMembers is ReadSet for member ids: one round trip, one snapshot. The
+// optional epoch is the epoch to read, as in ReadSet.
 func ReadSetMembers(ctx context.Context, c redis.Cmdable, table string, members []string, epoch ...uint64) (ReadSetResult, error) {
 	return ReadSet(ctx, c, table, ReadSetScope{Members: members}, epoch...)
 }

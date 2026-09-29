@@ -53,6 +53,8 @@ func TestParseTableRefusal(t *testing.T) {
 		{"OPCONFLICT", typedrec.TableRefusalOpConflict},
 		{"WRONGTYPE", typedrec.TableRefusalWrongType},
 		{"STREAMTYPE", typedrec.TableRefusalStreamType},
+		{"EPOCHAHEAD", typedrec.TableRefusalEpochAhead},
+		{"PLACEGUARD", typedrec.TableRefusalPlaceGuard},
 		{"UNRECOGNIZED", typedrec.TableRefusalUnknown},
 	}
 	for _, tc := range cases {

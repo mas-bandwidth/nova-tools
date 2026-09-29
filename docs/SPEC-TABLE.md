@@ -1,1 +1,0 @@
-SPEC-NOVA-TABLE.md

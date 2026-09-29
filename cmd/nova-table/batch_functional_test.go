@@ -23,7 +23,7 @@ func TestBatchCLIHelp(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("expected empty stderr, got %q", stderr)
 	}
-	if !strings.Contains(stdout, "batch <manifest>") {
+	if !strings.Contains(stdout, "batch (<manifest-file> | - | '<json>')") {
 		t.Fatalf("expected stdout to mention batch syntax, got:\n%s", stdout)
 	}
 }
@@ -58,7 +58,7 @@ func TestBatchCLIExecution(t *testing.T) {
 	if !strings.Contains(stdout, "TABLE RECEIPT event=") {
 		t.Errorf("expected TABLE RECEIPT in stdout, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "MEMBER m1 place=-->build:ready rev=0->1") && !strings.Contains(stdout, "MEMBER m1 place=--->build:ready rev=0->1") && !strings.Contains(stdout, "MEMBER m1 place=-->build:ready rev=0->1") {
+	if !strings.Contains(stdout, `MEMBER m1 place=-->build:ready score=-->10 member_revision=0->1 fields={"role":[null,"builder"]}`) {
 		t.Errorf("expected MEMBER before/after line in stdout, got:\n%s", stdout)
 	}
 
@@ -77,7 +77,7 @@ func TestBatchCLIExecution(t *testing.T) {
 	if !strings.Contains(stdout2, "TABLE BATCH table=demo operation=op-cli-2") {
 		t.Errorf("expected TABLE BATCH header in stdout2, got:\n%s", stdout2)
 	}
-	if !strings.Contains(stdout2, "MEMBER m1 place=build:ready->build:working rev=1->2") {
+	if !strings.Contains(stdout2, "MEMBER m1 place=build:ready->build:working score=10->10 member_revision=1->2 fields={}") {
 		t.Errorf("expected MEMBER move line in stdout2, got:\n%s", stdout2)
 	}
 }
@@ -100,7 +100,7 @@ func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
 	}
 
 	// Initial state assertions: table revision is 2.
-	snap, err := ntable.ReadSetMembers(ctx, c, "demo", nil)
+	snap, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"none"})
 	if err != nil {
 		t.Fatalf("table snapshot read: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
 
 			// Verify 0 store mutations:
 			// 1. Table revision must still be 2.
-			curSnap, err := ntable.ReadSetMembers(ctx, c, "demo", nil)
+			curSnap, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"none"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -275,5 +275,23 @@ func TestBatchCLIReceiptFlagSuppression(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "TABLE BATCH table=demo operation=op-rcpt-off") {
 		t.Errorf("expected TABLE BATCH in stdout, got:\n%s", stdout)
+	}
+}
+
+// The CLI prints a score as the exact decimal string the store holds.
+func TestBatchCLIPrintsScoresWithoutLosingPrecision(t *testing.T) {
+	t.Parallel()
+	addr, rev := batchFixture(t)
+	manifest := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev + `","operation_id":"exact","members":[` +
+		`{"id":"x1","expect":{"absent":true},"create":{"row":"build","col":"done","score":0.30000000000000004}},` +
+		`{"id":"x2","expect":{"absent":true},"create":{"row":"build","col":"done","score":0.3}}]}`
+	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for _, w := range []string{"MEMBER x1 place=-->build:done score=-->0.30000000000000004 ", "MEMBER x2 place=-->build:done score=-->0.3 "} {
+		if !strings.Contains(stdout, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, stdout)
+		}
 	}
 }

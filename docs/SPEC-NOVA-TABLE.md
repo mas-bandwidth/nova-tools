@@ -119,6 +119,7 @@ nova-table cell move     <table> <row> <from-col> <to-col> <member>...
 nova-table cell members  <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
+nova-table member read   <table> <id>... | <table> --cell <row:col>
 nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]
 nova-table check  <table>
 nova-table clear  <table>
@@ -253,9 +254,9 @@ When `watch --check` detects an invariant violation on any snapshotted table:
 The data-oriented rule is **batch always**: members are plain data in arrays,
 and the manager transforms the selected array in one store call.
 
-This section accompanies the implementation of the table batch API. The card
-manager waits for this table extension's gate; it does not implement private
-placement or emulate a batch using repeated client calls.
+A caller reads the members it depends on, then writes against what it read. It
+does not place members privately or emulate a batch with repeated client calls; the
+batch is the call.
 
 ### Scope and calls
 
@@ -265,6 +266,11 @@ selection. It returns table identity, epoch/revision, every selected member's
 record revision, fields, verified owned placement and score, and explicit missing
 members. A selection beyond the declared bound refuses; it cannot return a prefix
 marked complete. Bound/external cells are not writable through this interface.
+The request is `{"members": [<id>, ...]}`, `{"selection": [{"row": <row>, "col":
+<col>}, ...]}` or a bare array of ids; its list is nonempty, an id is a nonempty
+string, and an unknown key, a key named twice in one object (as in a manifest),
+both lists together or any other shape refuses as `ARGS`. A malformed request is never answered as an empty set; an empty cell in a
+valid selection is a complete, empty answer.
 
 `ns_table_apply` is one application call with one conditional mutation manifest.
 It creates placed members, moves existing members across owned cells (including
@@ -282,10 +288,17 @@ list or separate implementation of the transaction is permitted.
 
 A version-1 manifest contains table, epoch, expected_table_revision, operation_id,
 actor and a members array. Epoch/revision counters are decimal strings bounded as
-uint64; they never traverse floating-point numbers. Members have unique IDs across
+uint64; they never traverse floating-point numbers. A manifest names at least one member: an empty `members` array refuses, so a request
+that does nothing cannot advance the table revision. Members have unique IDs across
 the entire array. Each entry has an `expect` record and zero or more compatible
 changes. Read-only guard entries have no changes. All referenced rows/columns must
-be declared and owned. Unknown schema fields and duplicate JSON keys refuse.
+be declared and owned. Unknown schema fields and duplicate JSON keys refuse. Every value has one JSON
+type and nothing is coerced: ids, rows, columns, field names and values,
+`operation_id` and `actor` are strings; `epoch`, `expected_table_revision` and a
+member `revision` guard are canonical decimal strings; `schema` is the integer
+1; `absent` and `remove` are the boolean `true` only; a `score` is a finite JSON
+number, and a string never is, whatever a parser would read from it (`"0x10"`,
+`" 7 "`, `"1e3"`). A JSON string is well-formed UTF-8 and holds no lone surrogate escape; a name repeated in `unset` or an option repeated in `one_of` refuses. The server and the Go validator accept the same manifests.
 
 ```json
 {
@@ -327,7 +340,8 @@ A member appears exactly once: its expected revision, position, extra field guar
 move and field updates are grouped in that entry. A move plus set/unset is one
 member mutation; duplicate entries are never merged. Create requires absence of
 both record and any owned placement; create plus move, remove, or an existing
-member expectation refuses. Remove is expressed only as `"remove": true`; any
+member expectation refuses. `absent` stands alone in an `expect`: with `revision`,
+`place` or `fields` it refuses. Remove is expressed only as `"remove": true`; any
 other value refuses. A field cannot occur in both `set` and `unset` in one entry.
 An existing member may omit its revision guard; omission means no member-revision
 comparison, not a comparison against zero. Its other explicit guards and the
@@ -361,13 +375,46 @@ its verified immutable identity must be represented in a member field, or a late
 explicit table extension must provide its guard. A prior unguarded client read is
 not an atomic prerequisite proof.
 
-Initial proposed bounds: 128 entries with mutation instructions, 1,024 guard-only
-entries and 1 MiB canonical encoded request. IDs/field counts and value byte limits must also
-be explicitly bounded by the implementation's reviewed manifest schema. Candidate
-limits are measured on supported benches before acceptance. Exceeding a limit
-refuses the whole request with the limit and remedy; no automatic chunking turns
-one requested transaction into several. A caller can explicitly narrow its next
-request, accepting the separately identified transaction scope.
+The bounds are one set. The server (`ns_table_apply`, `ns_table_read_set`), the
+Go manifest validator and `ApplyBatch` enforce the same numbers, and a test
+compares them with this table:
+
+| Bound | Value |
+| --- | --- |
+| entries with changes | 128 |
+| guard-only entries | 1024 |
+| manifest bytes | 1048576 |
+| member id bytes | 256 |
+| field value bytes | 65536 |
+| set fields per member | 128 |
+| unset fields per member | 1000 |
+| guards per member | 1000 |
+| one_of options | 1000 |
+| read set members | 1024 |
+| columns per table | 1000 |
+| rows per table | 100000 |
+| receipt bytes | 1048576 |
+
+`columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
+`set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
+past the bound as `LIMIT`, naming the bound and the count, before any write. A bind
+leaves the table with the rows it names, so it is bound by their number. A table
+already over a bound (one written by hand, or under an older rule) can shrink or stay
+and never grows: `col del`, `row del` and a batch work on it, `col add` and `row add`
+past the bound refuse. The column bound is chosen from what one call writes: a definition is written by one
+`HSET` of 2 x (columns + 8) arguments and a script's stack refuses past about 8000,
+which is about 3,990 columns measured, so 1,000 leaves a margin of four. The row bound
+is chosen from cost: rows are written in chunks of 256, and a table of 100,000 rows
+took about a second to write and 1.6 seconds to read whole on the bench, the longest a
+single call should hold the store.
+
+An entry has changes when it holds a create, a move, a remove, a nonempty set or
+a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;
+one over it refuses the whole request as `LIMIT`, before any read of the store
+or write, naming the bound, its value and the count found (and the member at
+fault for a per-member bound), and never echoing the input. No automatic
+chunking turns one requested transaction into several. A caller can explicitly
+narrow its next request, accepting the separately identified transaction scope.
 
 ### Validation, atomicity and replay
 
@@ -379,31 +426,53 @@ permissions. It validates record/set agreement, including no duplicate hidden ow
 placement, before creating or relocating a member. Every guard is evaluated against
 the same pre-state; an update made in this batch cannot satisfy another guard.
 
-Use the existing table validation and staged-write machinery inside this one server
-invocation. After all validation, stage cells, reverse indexes, member fields and
-revisions, the operation record, table revision and receipt together. An accepted
+The batch commits through the staged-write path every ordinary verb uses
+(`T.finish`), inside this one server invocation. After all validation, it stages
+cells, reverse indexes, member fields and revisions, the operation record, the table
+revision and the receipt together. An accepted
 batch increments the table revision once; every changed member increments its own
-revision once. An accepted no-op batch has a recorded result and one noop receipt;
-a refused batch changes no key, revision, operation record or receipt. Tests must
-pin no-op and refused results separately.
+revision once. An accepted no-op batch has a recorded result and one noop receipt, and it
+advances the table revision once like any accepted batch, so every other prepared
+manifest that expects the earlier revision is stale; a refused batch changes no key,
+revision, operation record or receipt.
 
-Redis scripts do not provide rollback of writes after a runtime command error.
-The design must therefore show that every staged command's type, bounds, permissions
-and other preventable failure conditions were checked before writes. Inject failure
-at those conditions in tests and compare the complete store image. Redis process
-loss/durability guarantees remain those of the configured store; a transport error
-is uncertain, not evidence of rollback. No stronger crash guarantee is asserted
-merely because the function is one FCALL.
+Redis scripts do not provide rollback of writes after a runtime command error, so
+every staged command's type, bounds, permissions and other preventable failure
+conditions are checked before the first write; tests inject failure at each and
+compare the complete store image. Redis process loss and durability guarantees are
+those of the configured store; a transport error is uncertain, not evidence of
+rollback. No stronger crash guarantee is asserted because the function is one FCALL.
 
-Operation identity is table plus epoch plus operation_id. Persist the canonical
-request bytes and result, with its digest for evidence. Caller-provided digest
-equality is insufficient to establish identical requests. An identical recorded
-request returns the original receipt/result without writes, even when its old
+Operation identity is table plus epoch plus operation_id. The record holds the
+canonical request bytes and the result, with the request's digest as evidence. A
+caller-provided digest is not enough to establish identical requests: the bytes are
+compared. An identical recorded request returns the original receipt/result without writes, even when its old
 expected revisions no longer match; operation lookup precedes those checks. A
 changed request with an existing operation ID refuses. An unrecorded operation at
 a stale epoch refuses. Original result epoch/revisions remain visible, so retry
 cannot masquerade as a new current-epoch action. No retry loop in transport may
 silently invent a new operation ID.
+
+The library and the command judge a request before they send it, so a request that the
+current rules refuse never reaches the store, and they guarantee a replay only for a
+request the current rules accept. A request that was applied under looser rules and is
+sent again is refused by the library and the command with a refusal that says it was
+checked before sending, that this call changed nothing and that it says nothing about an
+earlier call with the same operation id; the store, asked directly, returns the recorded
+receipt.
+
+Operation records do not expire. A table's operation records, of every epoch, are
+one hash, `table:<t>:ops`, whose fields are `<epoch>:<operation id>` and whose values
+are the records (the request bytes, at most 1 MiB, and the receipt). One key keeps the
+work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
+them alike: each removes the whole hash in the same atomic call as the drop, so a table
+created again under the name is a new table and no operation of the old one replays
+against it; the two verbs differ only in what they always differed in, the saved
+column definition. `clear <table>` removes no record: an operation
+recorded in an earlier epoch replays with its original receipt, epoch and revisions.
+Epoch snapshots that a drop keeps readable are not operation records and stay. A
+replay is guaranteed for as long as the table exists; nothing else removes a record.
+The layout is new with the batch, so there is no earlier layout to migrate or to sweep.
 
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.
@@ -411,45 +480,126 @@ The batch entry point's dedicated operation record supplies its replay contract.
 
 ### Receipt and refusals
 
-Extend the existing receipt through an explicit batch delta, preserving ordinary
-verb receipt compatibility. One receipt identifies operation/request digest, table,
+The receipt extends an ordinary verb's receipt with a batch delta; an ordinary
+verb's receipt is unchanged. One receipt identifies operation/request digest, table,
 epoch, before/after table revision, actor, changed/noop result and all affected
 members' before/after placements, scores, revisions and application-field changes.
-For each affected application field, include its before and after values with
-absence distinguished from a present empty string. An absent placement has no
-score. Set/unset instructions alone do not supply the before values. Include
-explicit guard/selection counts; a missing member is not silently omitted. The
-guard count counts entries with no mutation instructions. The changed count
+For each affected application field it holds the before and after values, absence
+distinguished from a present empty string. An absent placement has no score.
+Set/unset instructions alone do not supply the before values. The receipt carries
+explicit guard and selection counts; a missing member is not silently omitted.
+The guard count counts entries with no mutation instructions; the changed count
 counts effective member changes. A mutation instruction with no effect counts
 toward selection and the mutation-entry limit, but neither guard nor changed
-count; those two counts need not sum to selection. One batch receipt maps to one
-model action. Returning the original result on retry must return the same receipt
-identity.
+count, so those two counts need not sum to selection.
+A receipt is bounded by two rules that hold for every batch, whatever the store holds.
+A field value of at most 64 bytes (`ReceiptValueBytes`; `T.receipt_value_bytes` in the
+server) is recorded in full; a longer one, whether it is a before-value read from the
+store or a value the manifest sets, is recorded as its length and its SHA-1
+(`before_bytes`, `before_sha1`, `after_bytes`, `after_sha1`, with the value's own side
+null; a null side with no length is an absent field), in the receipt, in the change
+event's `batch_delta` and in the operation record alike, never in full. And the
+receipt's size, the byte length of its encoded batch delta, is at most `receipt bytes`,
+which is the manifest bound, 1 MiB. The size is computed before the first write, with
+each score the call reads back after its writes counted at its longest form (24 bytes),
+so it is never less than the size the receipt has. A batch whose receipt would exceed the
+bound is refused as `LIMIT` before anything changes: the refusal names `receipt bytes`,
+the bound and the computed size, and says `changed=no`; the caller changes fewer members
+or fewer fields in one manifest and sends the rest as another transaction with its own
+operation id. Because every changed field is in the receipt, a manifest under 1 MiB can
+still be refused for its receipt. The digest is SHA-1 because it is the only digest a
+script has natively (`sha1hex`; a SHA-256 in script code would cost seconds on a few
+megabytes); it identifies a value for evidence, it is not a security boundary, and no
+program decides that two values are equal from it: the server compares bytes, and the CLI
+lists two long values with their digests instead of judging them equal.
+`fields_set` lists only the set instructions whose values are recorded in full;
+every changed field is in `fields`. A batch that unsets 128 fields of 64 KiB leaves
+a receipt of tens of kilobytes, and a replay returns it unchanged.
+A score in a receipt, a change event, a read set or the CLI is the exact decimal
+string the store holds, as the ordinary verbs write it (`0.30000000000000004`,
+not `0.3`); two different scores never render alike. A batch's change event has
+the fields an ordinary verb's has for the same change, plus `batch_delta`. One
+batch receipt maps to one model action. Returning the original result on retry
+must return the same receipt identity.
 
 Required refusals include stale epoch, table/member revision mismatch, failed field
 guard, existing/placed member on create, duplicate manifest member, invalid/missing
 record, reverse-index or set drift, unknown row/column, bound cell, reserved-field
 write, invalid score/counter, operation-ID conflict and over-limit input. Each names
 operation, member or batch, expected/observed state, changed=no and the next usable
-command. A transport failure reports changed=unknown and operation reconciliation,
-never changed=no without evidence.
+command. A refusal is a code and a sentence: `...: <sentence>; code=NOTMEMBER; changed=no;
+run: <command>`. The sentence says what was expected against what was found, in
+words (never the code, never a Go type), and a field value in it over 64 bytes is
+its first 32 and its length. The next command is one that runs when pasted; for a
+member it is `nova-table member read <table> <id>`, for a limit the sentence says
+which part of the request to narrow, and for a conflicting operation id it says to
+use a new one. A drift says whether a record exists: an owned set that holds a member
+no record places there is not described as a record's claim; the next command lists that cell
+(`nova-table cell members <table> <row> <col>`), and `nova-table check` finds every
+such disagreement (nova-table has no repair verb).
+A request for an epoch behind the active one refuses `STALE`; one for an epoch
+ahead of it refuses `EPOCHAHEAD`, naming the requested and the active epoch and
+suggesting `nova-table show <table>`, which prints the active epoch. Existence
+comes first: a table that does not exist refuses as missing whatever epoch is
+asked for. A transport failure reports changed=unknown and operation reconciliation,
+never changed=no without evidence: the message says to send the same manifest
+again with the same operation id, which returns the original receipt if the batch
+was applied and applies it if it was not. The caller's epoch is always the
+"requested" epoch and the store's the "active" one.
 
 ### CLI batch verb (`nova-table batch`)
 
-`nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]`
+`nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]`
 executes an atomic conditional mutation manifest against one table in a single Redis call (`ns_table_apply`).
+The manifest is a file path, `-` for stdin, or inline JSON that starts with `{`. A path that cannot be
+read is refused with the path and the operating system's error, never as a JSON error.
 
 #### Manifest structure
 
-The manifest file is a JSON document containing `operation_id`, optional `actor`, and `entries` (or `members`, an array of member mutation and guard objects):
+The manifest is a JSON document containing `schema`, `table`, `epoch`, `expected_table_revision`, `operation_id`, optional `actor`, and `members` (an array of member mutation and guard objects). The manifest states its epoch. `--epoch <n>` given on the command must equal it, and a difference is refused, naming both, before the store is asked; `--actor <name>` given on the command must equal the manifest's actor when the manifest names one, and fills it when the manifest names none. `create` needs a `score`.
 
-```json
+#### Worked example
+
+From an empty store: a table with one row, a member created by a first batch, then a batch that guards that member and moves it and creates another. The lines after each command are what the last command of the block prints.
+
+```sh
+nova-table create demo --columns ready,working,done
+nova-table row add demo build
+cat > seed.json <<'EOF'
 {
   "schema": 1,
   "table": "demo",
   "epoch": "0",
   "expected_table_revision": "2",
-  "operation_id": "op-4590",
+  "operation_id": "seed",
+  "actor": "coordinator",
+  "members": [
+    {
+      "id": "m1",
+      "expect": {"absent": true},
+      "create": {"row": "build", "col": "ready", "score": 1},
+      "set": {"role": "builder"}
+    }
+  ]
+}
+EOF
+nova-table batch seed.json
+```
+
+```text
+TABLE BATCH table=demo operation=seed epoch=0 table_revision=2->3 outcome=changed selected=1 guards=0 changed=1 replay=no trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=3 outcome=changed
+MEMBER m1 place=-->build:ready score=-->1 member_revision=0->1 fields={"role":[null,"builder"]}
+```
+
+```sh
+cat > manifest.json <<'EOF'
+{
+  "schema": 1,
+  "table": "demo",
+  "epoch": "0",
+  "expected_table_revision": "3",
+  "operation_id": "op-42",
   "actor": "coordinator",
   "members": [
     {
@@ -470,95 +620,96 @@ The manifest file is a JSON document containing `operation_id`, optional `actor`
     }
   ]
 }
+EOF
+nova-table batch manifest.json
+```
+
+```text
+TABLE BATCH table=demo operation=op-42 epoch=0 table_revision=3->4 outcome=changed selected=2 guards=0 changed=2 replay=no trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=3 after=4 outcome=changed
+MEMBER m1 place=build:ready->build:working score=1->1 member_revision=1->2 fields={"status":[null,"in_progress"]}
+MEMBER m2 place=-->build:ready score=-->10 member_revision=0->1 fields={"role":[null,"tester"]}
+```
+
+Running the same manifest again applies nothing and returns the original receipt, marked as a replay:
+
+```sh
+nova-table batch manifest.json
+```
+
+```text
+TABLE BATCH table=demo operation=op-42 epoch=0 table_revision=3->4 outcome=changed selected=2 guards=0 changed=2 replay=yes trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=3 after=4 outcome=changed
+MEMBER m1 place=build:ready->build:working score=1->1 member_revision=1->2 fields={"status":[null,"in_progress"]}
+MEMBER m2 place=-->build:ready score=-->10 member_revision=0->1 fields={"role":[null,"tester"]}
+```
+
+`member read` shows the members as they are now, and a member that does not exist:
+
+```sh
+nova-table member read demo m1 m2 zz
+```
+
+```text
+TABLE READ table=demo epoch=0 table_revision=4 members=2 missing=1 trips=1
+MEMBER m1 place=build:working score=1 member_revision=2 fields={"role":"builder","status":"in_progress"}
+MEMBER m2 place=build:ready score=10 member_revision=1 fields={"role":"tester"}
+MISSING zz
 ```
 
 #### Output format
 
-Upon successful execution, `batch` prints a summary line with operation ID, table revision, guard and changed counts, and trip count, the commit receipt, and one receipt line per affected member reporting before and after place, score, revision, and fields:
+On success `batch` prints a summary line with the table, operation, epoch, the table revision before and after (`table_revision=<before>-><after>`), outcome, the selected, guard-only and changed entry counts, `replay=yes` when the receipt is the one recorded for an operation already applied (`replay=no` otherwise) and the trip count; the commit receipt (`TABLE RECEIPT`, whose `before` and `after` are table revisions, as on every write verb); and one `MEMBER` line per member in the manifest with its place, score and `member_revision` before and after, and its changed application fields as one JSON object of `[before, after]` pairs (`null` is absent). `-` is an unplaced member or an absent score. A score is the exact decimal string the store holds.
 
-```text
-TABLE BATCH table=demo operation=op-4590 epoch=0 before=2 after=4 outcome=changed trips=1
-TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=4 outcome=changed
-MEMBER m1 place=build:ready->build:working rev=1->2
-MEMBER m2 place=-->build:ready rev=0->1
-```
+A revision is always labelled for what it counts: `table_revision` is the table's counter, `member_revision` a member's. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes nothing (`changed=0`) is a no-op batch: it prints `outcome=noop` and, like any accepted batch, advances the table revision by one.
 
-Specifying `--receipt=false` suppresses the `TABLE RECEIPT` line.
+`--json` prints the same receipt as one line of JSON for a program: `table`, `operation_id`, `epoch`, `table_revision` (`{"before", "after"}`), `outcome`, `selected`, `guards`, `changed`, `event`, `replay` (a boolean), `trips`, and `members`, each with `id`, `place`, `score`, `member_revision` (each a `{"before", "after"}` pair; `null` is none) and `fields` (name to `[before, after]`). Revisions and scores are decimal strings.
+
+#### Reading members
+
+`nova-table member read <table> <id>... | <table> --cell <row:col>... [--at-epoch <n>] [--json]` is the read set as a verb: one exchange, one consistent snapshot. It prints a summary line (`TABLE READ` with the table, epoch, `table_revision`, and the counts of members found and missing), one `MEMBER` line per member found with its place, score, `member_revision` and fields, and one `MISSING` line per id that does not exist; `place=-` and `score=-` are an unplaced member. `--cell` reads every member of a cell (repeatable). `--json` prints one object with `table`, `epoch`, `table_revision`, `members` (`id`, `place`, `score`, `member_revision`, `fields`), `missing` and `trips`. The next command a refusal suggests for a member's state is this verb. `nova-table member find <table> <id>` reports only where a member is, with the table's revision as `table_revision`.
+
+`nova-table show` prints a cell that did not come back as `?`, never as a false 0, and says which: a warning line on stderr names the row, the column, the key and the type found, and `show` exits 1 (`render` and `watch` keep drawing the `?` and exit 0).
 
 #### Error handling and exit codes
 
 - `0` (`done`): The batch commits successfully, or an identical request replays without additional side effects.
-- `1` (`refused`): A precondition, epoch check, revision check, or field guard fails. `batch` outputs the refusal reason, observed state, and remediation command on stderr. The entire table store remains unchanged (`changed=no`).
-- `2` (`usage`): Invalid syntax, missing manifest argument, unreadable file, or malformed JSON.
+- `1` (`refused`): A manifest that reads as one and is refused by any rule (a bound, a repeated member id, a field both set and unset, a reserved field, a create with a move, an absent with a revision, an empty `members` array), and any refusal by the store (a precondition, epoch check, revision check, field guard). `batch` prints the operation, the member at fault, the state expected against the state found, `code=<CODE>`, `changed=no` and a next command on stderr. The table store is unchanged.
+- `2` (`usage` or `connection`): A manifest that cannot be parsed or read (a missing or unreadable file, not JSON, an unknown key, a value of the wrong type, named by its place in the manifest: `score must be a JSON number, found a string at members[0].create.score`), `--epoch` or `--actor` differing from the manifest, and a store that cannot be reached or did not answer. When the store did not confirm a batch the message says `changed=unknown` and to run the same manifest again with the same operation id.
 
 `-h` prints the complete usage banner to stdout at exit 0 with empty stderr:
 
 ```text
-usage: nova-table batch <manifest>
+usage: nova-table batch (<manifest-file> | - | '<json>')
 
 example:
   nova-table batch manifest.json
   nova-table batch - < manifest.json
+
+flags:
+  --json  print the receipt as one JSON object instead of the lines
 
 connection:
   --redis <string>  the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)
   --seat <name>  dial as this seat: its seats.tsv row, else the nova-secrets seat of that name
 
 write epoch and receipt:
-  --actor <string>  actor recorded with the change
-  --epoch <uint>  the epoch this write observed (default 0)
+  --actor <string>  actor recorded with the change; it must equal the manifest's actor when the manifest names one
+  --epoch <uint>  the epoch this write observed; it must equal the manifest's epoch
   --receipt  print the committed event ID, epoch and revision
 
 exit codes: 0 done, 1 refused, 2 usage
 ```
 
-#### Runnable example
+### Model
 
-```sh
-cat > manifest.json <<'EOF'
-{
-  "schema": 1,
-  "table": "demo",
-  "epoch": "0",
-  "expected_table_revision": "2",
-  "operation_id": "op-4590",
-  "actor": "coordinator",
-  "members": [
-    {
-      "id": "m1",
-      "expect": {"revision": "1", "place": {"row": "build", "col": "ready"}},
-      "move": {"row": "build", "col": "working"}
-    }
-  ]
-}
-EOF
-nova-table batch manifest.json
-```
+No model of the batch action is in this tree. `tla/EpochMemberTable.tla` models the
+per-verb member/epoch table over the one-place and epoch definitions; it has no batch
+action, member revisions, field guards, operation records or receipts. What checks the
+batch here is the tests.
 
-### Model and table-layer gate
-
-Extend the member/epoch table model with an atomic batch action, member revisions,
-field guards, operation records and one receipt per accepted batch. Reuse the
-one-place/epoch definitions; preserve the current per-verb model cases separately.
-A named batch wrapper/config uses 3 members, 2 rows, 2 columns, 2 epochs and batch
-sizes 1..3. Include a guard-only dependency and a cross-row move. Retain exact model,
-config, executable and input hashes; larger configurations are not silently replaced
-by smaller ones when they exceed a budget. TLC runs on a bench.
-
-The reversed witnesses must catch: a second member validation failure after a first
-member writes; guard evaluation against partially updated state; duplicate placement;
-stale epoch, table or member revision; missing revision advancement by an ordinary
-writer; wrong-type/permission refusal after partial writes; lost reply causing a
-second effect; request-hash collision without byte comparison; receipt emitted before
-its complete delta; and stale retry reported as a new operation.
-
-Gate items are the full table-layer bar: model plus reversed witnesses; trip/commit
-and complete unchanged-store refusal tests; bounded randomized batches on owned
-Redis (16 fixed seeds, 128 steps each) plus runtime checks; Go receipt replay with
-one batch receipt per action; real-use rehearsal on an owned store; two independent
-exact-revision reads of at least 9/10 with accepting dispositions; then the maintainer's
-interactive mini-quack with every verb/refusal, watched table, findings repaired and
-repeated until clean. Test N=1 and maximum configured N separately, including a late
-invalid entry, interacting moves and a replay. Ordinary table callers retain their
-regression suite. The card layer resumes only after this extension has passed the
-table gate; no green card test can substitute for proving the lower layer.
+The tests: trip and commit tests with complete unchanged-store refusal tests; bounded
+randomized batches on owned Redis (16 fixed seeds, 128 steps each) with runtime checks;
+Go receipt replay with one batch receipt per action; N=1 and the maximum configured N
+separately, including a late invalid entry, interacting moves and a replay; and the
+ordinary callers' regression suite.

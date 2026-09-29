@@ -483,12 +483,8 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 		t.Fatalf("unexpected delta in rcpt1: %+v", rcpt1.BatchDelta)
 	}
 
-	// 4. Verify stored table:demo:op:<operation_id> hash fields
-	opKey1 := ntable.DefKey("demo") + ":op:op-create-m1-m2"
-	opRecord1, err := c.HGetAll(ctx, opKey1).Result()
-	if err != nil {
-		t.Fatalf("HGetAll %s: %v", opKey1, err)
-	}
+	// 4. Verify the stored operation record fields
+	opRecord1 := operationRecord(t, c, "demo", "0", "op-create-m1-m2")
 	if opRecord1["operation_id"] != "op-create-m1-m2" {
 		t.Errorf("opRecord1 operation_id = %q, want %q", opRecord1["operation_id"], "op-create-m1-m2")
 	}
@@ -584,11 +580,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	}
 
 	// Verify no-op op record outcome
-	opKeyNoop := ntable.DefKey("demo") + ":op:op-noop-guards"
-	opRecordNoop, err := c.HGetAll(ctx, opKeyNoop).Result()
-	if err != nil {
-		t.Fatalf("HGetAll %s: %v", opKeyNoop, err)
-	}
+	opRecordNoop := operationRecord(t, c, "demo", "0", "op-noop-guards")
 	if opRecordNoop["outcome"] != "noop" {
 		t.Errorf("opRecordNoop outcome = %q, want noop", opRecordNoop["outcome"])
 	}
@@ -872,10 +864,7 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 		opID := args[1]
 
 		// Fetch the durable request payload from store 1's operation record:
-		reqJSON, err := c1.HGet(ctx, ntable.DefKey(tableName)+":op:"+opID, "request").Result()
-		if err != nil {
-			t.Fatalf("HGet request for op %s from c1: %v", opID, err)
-		}
+		reqJSON := operationRecord(t, c1, tableName, "0", opID)["request"]
 
 		var replayManifest ntable.BatchManifest
 		if err := json.Unmarshal([]byte(reqJSON), &replayManifest); err != nil {
@@ -2644,14 +2633,7 @@ func TestBatchNoopGuardCountAndCardinalityWitness(t *testing.T) {
 	}
 
 	// Assert operation-record cardinality is exactly 1 record
-	opKey := ntable.DefKey("demo") + ":op:op-move-noop-witness"
-	opRecord, err := c.HGetAll(ctx, opKey).Result()
-	if err != nil {
-		t.Fatalf("HGetAll opRecord: %v", err)
-	}
-	if len(opRecord) == 0 {
-		t.Fatalf("expected operation record at %s, got none", opKey)
-	}
+	opRecord := operationRecord(t, c, "demo", "0", "op-move-noop-witness")
 	if opRecord["outcome"] != "noop" {
 		t.Fatalf("expected opRecord outcome noop, got %q", opRecord["outcome"])
 	}
