@@ -2,11 +2,13 @@
 
 package ntable_test
 
-// Cold-reader probes for #4610 at 50aa377c87. Each probe logs observed
-// behaviour; t.Errorf marks a contract deviation.
+// The batch contract on a live store: a refusal writes nothing, whichever entry
+// fails and however late; replay, stale writes and operation conflicts behave as
+// specified; and the fixtures the batch tests share.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -42,7 +44,7 @@ func rawApply(ctx context.Context, c *redis.Client, raw string) ([]any, error) {
 
 func seedTwo(t *testing.T, ctx context.Context, c *redis.Client) {
 	t.Helper()
-	m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "seed", Actor: "probe",
+	m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "seed", Actor: "seed-actor",
 		Members: []ntable.BatchMemberEntry{
 			{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 1}, Set: map[string]string{"role": "x"}},
 			{ID: "b", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "test", Col: "ready", Score: 2}},
@@ -52,8 +54,8 @@ func seedTwo(t *testing.T, ctx context.Context, c *redis.Client) {
 	}
 }
 
-// Raw FCALL refusals: every one must refuse and leave the store bit-identical.
-func TestReaderProbeRawRefusalsWriteNothing(t *testing.T) {
+// Raw FCALL refusals: every one refuses and leaves the store bit-identical.
+func TestBatchRawRefusalsWriteNothing(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
@@ -102,7 +104,6 @@ func TestReaderProbeRawRefusalsWriteNothing(t *testing.T) {
 		after := storeImage(t, c)
 		refused := err == nil && len(ans) >= 2 && ans[0] == "REFUSED"
 		changed := !reflect.DeepEqual(before, after)
-		t.Logf("%-28s refused=%v changed=%v reply=%v err=%v", name, refused, changed, trunc(ans), err)
 		if changed {
 			t.Errorf("%s: STORE CHANGED (partial or full write)", name)
 		}
@@ -133,18 +134,17 @@ func trunc(v any) string {
 	return s
 }
 
-// expect.absent given a non-boolean truthy value through raw FCALL on a
+// expect.absent given anything but true through raw FCALL on a
 // missing member used as a create guard, and on a guard-only entry.
-func TestReaderProbeAbsentNonBooleanServerSide(t *testing.T) {
+func TestBatchAbsentMustBeTrueOnTheServer(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	rev := probeRev(ctx, c)
 	for i, v := range []string{`0`, `"false"`, `null`, `{}`} {
 		raw := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"%s","operation_id":"abs-%d","actor":"p","members":[{"id":"n%d","expect":{"absent":%s},"create":{"row":"build","col":"ready","score":1}}]}`, rev, i, i, v)
 		ans, err := rawApply(ctx, c, raw)
-		t.Logf("absent=%s -> %v %v", v, trunc(ans), err)
-		if err == nil && len(ans) > 0 && ans[0] == "OK" {
-			t.Errorf("absent=%s accepted by the server as a create guard", v)
+		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
+			t.Errorf("absent=%s: %v %v; want the server to refuse a create guard that is not true", v, trunc(ans), err)
 			rev = probeRev(ctx, c)
 		}
 	}
@@ -154,7 +154,7 @@ func TestReaderProbeAbsentNonBooleanServerSide(t *testing.T) {
 }
 
 // Temporal sequences.
-func TestReaderProbeSequences(t *testing.T) {
+func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
@@ -179,7 +179,6 @@ func TestReaderProbeSequences(t *testing.T) {
 	}
 	ra, _ := ntable.ReadSetMembers(ctx, c, "demo", []string{"a"})
 	am, _ := ra.Member("a")
-	t.Logf("after ordinary cell move: member a rev=%d place=%s:%s", am.Revision, am.Row, am.Col)
 	if am.Revision != 3 {
 		t.Errorf("ordinary writer did not advance member revision: %d, want 3", am.Revision)
 	}
@@ -188,14 +187,12 @@ func TestReaderProbeSequences(t *testing.T) {
 	stale.Members = []ntable.BatchMemberEntry{{ID: "a", Expect: &ntable.MemberExpect{Revision: "2"}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}
 	img = storeImage(t, c)
 	_, err = ntable.ApplyBatch(ctx, c, stale)
-	t.Logf("stale table revision: %v", err)
 	if err == nil || !reflect.DeepEqual(storeImage(t, c), img) {
 		t.Errorf("stale batch accepted or wrote")
 	}
 	stale.ExpectedTableRevision = probeRev(ctx, c)
 	stale.OperationID = "op-seq-stale2"
 	_, err = ntable.ApplyBatch(ctx, c, stale)
-	t.Logf("stale member revision: %v", err)
 	if err == nil || !reflect.DeepEqual(storeImage(t, c), img) {
 		t.Errorf("stale member batch accepted or wrote")
 	}
@@ -208,7 +205,6 @@ func TestReaderProbeSequences(t *testing.T) {
 	changed := m
 	changed.Actor = "other"
 	_, err = ntable.ApplyBatch(ctx, c, changed)
-	t.Logf("op conflict: %v", err)
 	if err == nil {
 		t.Errorf("changed request with same op id accepted")
 	}
@@ -220,11 +216,9 @@ func TestReaderProbeSequences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("remove receipt: %+v delta=%+v", rr, *rr.BatchDelta)
 	cr := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: strconv.FormatUint(rr.After, 10), OperationID: "op-cr", Actor: "p",
 		Members: []ntable.BatchMemberEntry{{ID: "b", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 3}}}}
 	_, err = ntable.ApplyBatch(ctx, c, cr)
-	t.Logf("create after remove: %v", err)
 	if err == nil {
 		t.Errorf("create after remove accepted though the record is retained")
 	}
@@ -233,13 +227,17 @@ func TestReaderProbeSequences(t *testing.T) {
 	mv.OperationID = "op-mv-unplaced"
 	mv.Members = []ntable.BatchMemberEntry{{ID: "b", Expect: &ntable.MemberExpect{}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}
 	_, err = ntable.ApplyBatch(ctx, c, mv)
-	t.Logf("move of removed member: %v", err)
+	if !errors.Is(err, ntable.ErrNotMember) || !strings.Contains(err.Error(), "changed=no") {
+		t.Errorf("a move of a removed (unplaced) member: %v; want NOTMEMBER and changed=no", err)
+	}
 	// 6. no-op batch: does the table revision advance?
 	rev = probeRev(ctx, c)
 	noop := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "op-noop", Actor: "p",
 		Members: []ntable.BatchMemberEntry{{ID: "a", Expect: &ntable.MemberExpect{}}}}
 	rn, err := ntable.ApplyBatch(ctx, c, noop)
-	t.Logf("noop batch: outcome=%s before=%d after=%d err=%v", rn.Outcome, rn.Before, rn.After, err)
+	if err != nil || rn.Outcome != "noop" || rn.After != rn.Before+1 || rn.BatchDelta.ChangedCount != 0 {
+		t.Errorf("a no-op batch: %+v %v; want outcome noop, one table revision step, changed 0", rn, err)
+	}
 	// 7. ONE PLACE: hidden duplicate placement then create refuses
 	if err := c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err(); err != nil {
 		t.Fatal(err)
@@ -249,7 +247,6 @@ func TestReaderProbeSequences(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 3}}}}
 	img = storeImage(t, c)
 	_, err = ntable.ApplyBatch(ctx, c, gh)
-	t.Logf("create over hidden placement: %v", err)
 	if err == nil || !reflect.DeepEqual(storeImage(t, c), img) {
 		t.Errorf("create over a hidden placement accepted: ONE PLACE broken")
 	}
@@ -262,47 +259,46 @@ func TestReaderProbeSequences(t *testing.T) {
 		t.Errorf("read set wrote")
 	}
 	rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", `{"members":["a",7,{"x":1}]}`).Slice()
-	t.Logf("read set with non-string ids: %v %v", trunc(rs), err)
+	if err != nil || len(rs) < 2 || rs[0] != "REFUSED" || rs[1] != "ARGS" {
+		t.Errorf("a read set with non-string ids: %v %v; want REFUSED ARGS", trunc(rs), err)
+	}
 }
 
-// First write of a new epoch through apply, then the epoch advances: can the
-// old epoch still be read historically (as for an ordinary first write)?
-func TestReaderProbeEpochFirstWriteByApply(t *testing.T) {
+// The first write of an epoch, by a batch or by an ordinary verb, leaves that
+// epoch's history readable after the epoch advances.
+func TestBatchFirstWriteOfAnEpochKeepsItsHistory(t *testing.T) {
 	t.Parallel()
-	for _, viaApply := range []bool{false, true} {
+	for _, viaBatch := range []bool{false, true} {
 		c, tb := epochFixture(t)
 		ctx := context.Background()
 		if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil {
 			t.Fatal(err)
 		}
-		if viaApply {
-			// rows are per epoch: the new epoch needs a row first, but a row add is an
-			// ordinary write that would snapshot the definition. Use member-only apply.
+		if viaBatch {
 			rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 			raw := `{"schema":1,"table":"epoch-test","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"e1","actor":"p","members":[{"id":"f","expect":{"absent":true}}]}`
 			ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
-			t.Logf("apply at epoch 1: %v %v", trunc(ans), err)
-		} else {
-			if err := ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}); err != nil {
-				t.Logf("member create at epoch 1: %v", err)
+			if err != nil || len(ans) == 0 || ans[0] != "OK" {
+				t.Fatalf("apply at epoch 1: %v %v", trunc(ans), err)
 			}
+		} else if err := ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}); err != nil {
+			t.Fatalf("member create at epoch 1: %v", err)
 		}
-		def := c.HGetAll(ctx, "table:epoch-test:1:definition").Val()
-		t.Logf("viaApply=%v epoch-1 definition snapshot keys=%d order=%q", viaApply, len(def), def["order"])
+		if def := c.HGetAll(ctx, "table:epoch-test:1:definition").Val(); def["order"] == "" {
+			t.Errorf("viaBatch=%v: the epoch-1 definition snapshot has no order: %v", viaBatch, def)
+		}
 		if err := c.HSet(ctx, tb.EpochKey, "n", 2).Err(); err != nil {
 			t.Fatal(err)
 		}
-		_, err := ntable.ReadAt(ctx, c, tb.Name, 1)
-		t.Logf("viaApply=%v ReadAt(1) after advancing to 2: %v", viaApply, err)
-		if err != nil && viaApply {
-			t.Errorf("history of an epoch whose first write was an apply is unreadable: %v", err)
+		if _, err := ntable.ReadAt(ctx, c, tb.Name, 1); err != nil {
+			t.Errorf("viaBatch=%v: the history of epoch 1 is unreadable: %v", viaBatch, err)
 		}
 	}
 }
 
 // A field-guard or one_of count over the bound refuses by name; it never
 // runs the guards and never echoes the options.
-func TestReaderProbeUnboundedGuards(t *testing.T) {
+func TestBatchOverBoundGuardsRefuseByName(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
@@ -327,36 +323,23 @@ func TestReaderProbeUnboundedGuards(t *testing.T) {
 	}
 }
 
-// A move score that is not a number, raw FCALL: refused, or silently ignored?
-func TestReaderProbeMoveScoreNotANumber(t *testing.T) {
+// A move score that is not a number is refused by name, never silently replaced
+// by the current score.
+func TestBatchMoveScoreMustBeANumber(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
 	for i, v := range []string{`"abc"`, `null`, `true`} {
 		raw := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"%s","operation_id":"ms-%d","actor":"p","members":[{"id":"a","expect":{},"move":{"row":"test","col":"done","score":%s}}]}`, probeRev(ctx, c), i, v)
 		ans, err := rawApply(ctx, c, raw)
-		t.Logf("move score=%s -> %v %v", v, trunc(ans), err)
-		if err == nil && len(ans) > 0 && ans[0] == "OK" {
-			t.Errorf("move with score %s accepted (score silently kept)", v)
+		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "SCORE" {
+			t.Errorf("move with score %s: %v %v; want REFUSED SCORE", v, trunc(ans), err)
 		}
 	}
 }
 
-// read set: selection over a bound cell, and an empty/odd scope.
-func TestReaderProbeReadSetScopes(t *testing.T) {
-	t.Parallel()
-	c, ctx := probeTable(t)
-	seedTwo(t, ctx, c)
-	for _, scope := range []string{`{}`, `[]`, `{"selection":[{"row":"build"}]}`, `{"selection":[{"row":"build","col":"ready"}]}`, `{"members":[]}`} {
-		rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", scope).Slice()
-		t.Logf("scope %s -> %v %v", scope, trunc(rs), err)
-	}
-	_, err := c.FCall(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", `{"members":["a"]}`).Slice()
-	t.Logf("read set via FCALL (not RO): %v", err)
-}
-
-// Prior hold (minor): a move to the member's current cell at its current score.
-func TestReaderProbeMoveToSameCell(t *testing.T) {
+// A move to the member's current cell at its current score changes nothing.
+func TestBatchMoveToTheCurrentCellIsANoop(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
@@ -367,33 +350,25 @@ func TestReaderProbeMoveToSameCell(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := r.BatchDelta.Members[0]
-	t.Logf("same-cell move: outcome=%s changed=%d rev %s->%s table %d->%d", r.Outcome, r.BatchDelta.ChangedCount, d.BeforeRev, d.AfterRev, r.Before, r.After)
 	if d.AfterRev != "1" || r.Outcome != "noop" || r.BatchDelta.ChangedCount != 0 {
 		t.Errorf("same-cell move is not a member no-op")
 	}
 }
 
-// Through the Go/CLI path, a create with no score: the server alone refuses
-// SCORE; does the Go path silently place it at score 0?
-func TestReaderProbeGoCreateWithoutScore(t *testing.T) {
+// A create with no score is refused before the store is asked, and so is a
+// manifest without its header.
+func TestBatchCreateWithoutScoreIsRefusedBeforeTheStore(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
+	before := storeImage(t, c)
 	raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"ns","members":[{"id":"n","expect":{"absent":true},"create":{"row":"build","col":"ready"}}]}`
-	m, err := ntable.ValidateBatchManifestRaw([]byte(raw))
-	if err != nil {
-		t.Logf("validator refused: %v", err)
-		return
+	if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err == nil || !strings.Contains(err.Error(), "create requires score") {
+		t.Errorf("a create without a score: %v; want the validator to refuse it", err)
 	}
-	r, err := ntable.ApplyBatch(ctx, c, *m)
-	score, _ := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "n").Result()
-	t.Logf("apply: outcome=%s err=%v score=%v", r.Outcome, err, score)
-	if err == nil {
-		t.Errorf("create without score accepted through the Go path at score %v", score)
+	if _, err := ntable.ValidateBatchManifestRaw([]byte(`{"table":"demo","operation_id":"ns2","members":[]}`)); err == nil {
+		t.Errorf("a manifest without schema, epoch and expected_table_revision was accepted")
 	}
-	noSchema := `{"table":"demo","operation_id":"ns2","members":[]}`
-	m2, err := ntable.ValidateBatchManifestRaw([]byte(noSchema))
-	if err == nil {
-		_, err = ntable.ApplyBatch(ctx, c, *m2)
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("the store changed")
 	}
-	t.Logf("manifest without schema/epoch/expected_table_revision: %v", err)
 }

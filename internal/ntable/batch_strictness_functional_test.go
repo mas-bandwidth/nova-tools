@@ -7,7 +7,6 @@ package ntable_test
 // both refuse, the server without a raw error reply and without a write.
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -350,5 +349,4 @@ func TestReadSetRefusesRequestsOutsideItsShapes(t *testing.T) {
 			t.Errorf("scope %q: %d members, want %d", scope, got, want)
 		}
 	}
-	_ = context.Background
 }

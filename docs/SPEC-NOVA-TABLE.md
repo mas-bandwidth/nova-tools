@@ -478,7 +478,7 @@ The manifest is a JSON document containing `schema`, `table`, `epoch`, `expected
   "table": "demo",
   "epoch": "0",
   "expected_table_revision": "5",
-  "operation_id": "op-4590",
+  "operation_id": "op-42",
   "actor": "coordinator",
   "members": [
     {
@@ -506,7 +506,7 @@ The manifest is a JSON document containing `schema`, `table`, `epoch`, `expected
 On success `batch` prints a summary line with the table, operation, epoch, table revision before and after, outcome, the selected, guard-only and changed entry counts and the trip count; the commit receipt; and one line per member in the manifest reporting its place, score and revision before and after, and its changed application fields as one JSON object of `[before, after]` pairs (`null` is absent). `-` is an unplaced member or an absent score.
 
 ```text
-TABLE BATCH table=demo operation=op-4590 epoch=0 before=5 after=6 outcome=changed selected=2 guards=0 changed=2 trips=1
+TABLE BATCH table=demo operation=op-42 epoch=0 before=5 after=6 outcome=changed selected=2 guards=0 changed=2 trips=1
 TABLE RECEIPT event=1727570000000-0 epoch=0 before=5 after=6 outcome=changed
 MEMBER m1 place=build:ready->build:working score=1->1 rev=1->2 fields={"status":[null,"in_progress"]}
 MEMBER m2 place=-->build:ready score=-->10 rev=0->1 fields={"role":[null,"tester"]}
@@ -550,7 +550,7 @@ cat > manifest.json <<'EOF'
   "table": "demo",
   "epoch": "0",
   "expected_table_revision": "5",
-  "operation_id": "op-4590",
+  "operation_id": "op-42",
   "actor": "coordinator",
   "members": [
     {
