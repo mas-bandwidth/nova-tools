@@ -13,23 +13,23 @@ func TestExtractTailnetName(t *testing.T) {
 	t.Parallel()
 
 	// 1. Valid DNSName with domain suffix and trailing dot
-	data := []byte(`{"Self": {"HostName": "Studio-1", "DNSName": "studio-1.tailnet-xyz.ts.net."}}`)
+	data := []byte(`{"Self": {"HostName": "bench-one", "DNSName": "bench-one.tailnet-xyz.ts.net."}}`)
 	name, err := ExtractTailnetName(data)
 	if err != nil {
 		t.Fatalf("expected valid name, got error: %v", err)
 	}
-	if name != "studio-1" {
-		t.Fatalf("expected studio-1, got %q", name)
+	if name != "bench-one" {
+		t.Fatalf("expected bench-one, got %q", name)
 	}
 
 	// 2. Valid HostName when DNSName is empty
-	data2 := []byte(`{"Self": {"HostName": "Hulk", "DNSName": ""}}`)
+	data2 := []byte(`{"Self": {"HostName": "bench-two", "DNSName": ""}}`)
 	name2, err := ExtractTailnetName(data2)
 	if err != nil {
 		t.Fatalf("expected valid name, got error: %v", err)
 	}
-	if name2 != "hulk" {
-		t.Fatalf("expected hulk, got %q", name2)
+	if name2 != "bench-two" {
+		t.Fatalf("expected bench-two, got %q", name2)
 	}
 
 	// 3. Invalid JSON
@@ -54,11 +54,11 @@ func TestMachineSyncWithTailscale(t *testing.T) {
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
-	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["NOVA_FRIEND"] = "friend-alpha"
 
 	// Mock tailscale status runner
 	h.tailscale = func(_ context.Context) ([]byte, error) {
-		return []byte(`{"Self": {"HostName": "Studio", "DNSName": "studio.tailnet-1234.ts.net."}}`), nil
+		return []byte(`{"Self": {"HostName": "worker-bench", "DNSName": "worker-bench.tailnet-1234.ts.net."}}`), nil
 	}
 
 	// Add machine to Postgres store
@@ -70,17 +70,17 @@ func TestMachineSyncWithTailscale(t *testing.T) {
 		return out, errs
 	}
 
-	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
+	step(0, "machine", "add", "worker-bench", "--user", "runner", "--seat", "worker-bench", "--slots", "64", "--runners", "1")
 
 	// Machine sync with --tailscale (identity defaulted from tailscale status)
 	out, errs := step(0, "machine", "sync", "--tailscale")
 	if errs != "" {
 		t.Fatalf("expected no stderr, got %q", errs)
 	}
-	if !strings.Contains(out, "APPLY ADD kind=machine name=studio\n") {
+	if !strings.Contains(out, "APPLY ADD kind=machine name=worker-bench\n") {
 		t.Errorf("stdout missing APPLY ADD: %q", out)
 	}
-	if !strings.Contains(out, "CONFIG SYNC kind=machine name=studio rev=1\n") {
+	if !strings.Contains(out, "CONFIG SYNC kind=machine name=worker-bench rev=1\n") {
 		t.Errorf("stdout missing CONFIG SYNC: %q", out)
 	}
 
@@ -89,8 +89,8 @@ func TestMachineSyncWithTailscale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if views["studio"] == nil || views["studio"]["slots"] != "64" {
-		t.Fatalf("redis missing synced machine studio: %v", views["studio"])
+	if views["worker-bench"] == nil || views["worker-bench"]["slots"] != "64" {
+		t.Fatalf("redis missing synced machine worker-bench: %v", views["worker-bench"])
 	}
 }
 
@@ -100,22 +100,22 @@ func TestMachineSyncWithExplicitName(t *testing.T) {
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
-	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["NOVA_FRIEND"] = "friend-alpha"
 
-	code, out, errs := h.run(t, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40")
+	code, out, errs := h.run(t, "machine", "add", "bench-two", "--user", "runner", "--seat", "seat-two", "--slots", "40")
 	if code != 0 {
 		t.Fatalf("machine add failed: %s %s", out, errs)
 	}
 
 	// Sync with explicit name positional argument
-	code, out, errs = h.run(t, "machine", "sync", "hulk")
+	code, out, errs = h.run(t, "machine", "sync", "bench-two")
 	if code != 0 {
 		t.Fatalf("machine sync failed: %s %s", out, errs)
 	}
-	if !strings.Contains(out, "APPLY ADD kind=machine name=hulk\n") {
+	if !strings.Contains(out, "APPLY ADD kind=machine name=bench-two\n") {
 		t.Errorf("stdout missing APPLY ADD: %q", out)
 	}
-	if !strings.Contains(out, "CONFIG SYNC kind=machine name=hulk rev=1\n") {
+	if !strings.Contains(out, "CONFIG SYNC kind=machine name=bench-two rev=1\n") {
 		t.Errorf("stdout missing CONFIG SYNC: %q", out)
 	}
 }
@@ -126,39 +126,39 @@ func TestMachineSyncIdempotentSameAndFieldUpdate(t *testing.T) {
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
-	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["NOVA_FRIEND"] = "friend-alpha"
 
-	h.run(t, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
-	h.run(t, "machine", "sync", "studio")
+	h.run(t, "machine", "add", "worker-bench", "--user", "runner", "--seat", "worker-bench", "--slots", "64")
+	h.run(t, "machine", "sync", "worker-bench")
 
 	// Running sync again when Redis matches Postgres prints APPLY SAME
-	code, out, errs := h.run(t, "machine", "sync", "studio")
+	code, out, errs := h.run(t, "machine", "sync", "worker-bench")
 	if code != 0 {
 		t.Fatalf("second sync failed: %s %s", out, errs)
 	}
-	if !strings.Contains(out, "APPLY SAME kind=machine name=studio\n") {
+	if !strings.Contains(out, "APPLY SAME kind=machine name=worker-bench\n") {
 		t.Errorf("expected APPLY SAME in output: %q", out)
 	}
 
 	// Update field in Postgres: slots=128
-	h.run(t, "machine", "set", "studio", "--slots", "128")
+	h.run(t, "machine", "set", "worker-bench", "--slots", "128")
 
 	// Next sync updates Redis: prints APPLY SET
-	code, out, errs = h.run(t, "machine", "sync", "studio")
+	code, out, errs = h.run(t, "machine", "sync", "worker-bench")
 	if code != 0 {
 		t.Fatalf("sync after update failed: %s %s", out, errs)
 	}
-	if !strings.Contains(out, "APPLY SET kind=machine name=studio changed=slots\n") {
+	if !strings.Contains(out, "APPLY SET kind=machine name=worker-bench changed=slots\n") {
 		t.Errorf("expected APPLY SET in output: %q", out)
 	}
-	if !strings.Contains(out, "CONFIG SYNC kind=machine name=studio rev=2\n") {
+	if !strings.Contains(out, "CONFIG SYNC kind=machine name=worker-bench rev=2\n") {
 		t.Errorf("expected CONFIG SYNC in output: %q", out)
 	}
 
 	// Redis now holds slots=128
 	views, _, _ := h.redis.Read(context.Background(), config.KindMachine)
-	if views["studio"]["slots"] != "128" {
-		t.Fatalf("expected redis slots 128, got %q", views["studio"]["slots"])
+	if views["worker-bench"]["slots"] != "128" {
+		t.Fatalf("expected redis slots 128, got %q", views["worker-bench"]["slots"])
 	}
 }
 
@@ -168,25 +168,25 @@ func TestMachineSyncCheckMode(t *testing.T) {
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
-	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["NOVA_FRIEND"] = "friend-alpha"
 
-	h.run(t, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
+	h.run(t, "machine", "add", "worker-bench", "--user", "runner", "--seat", "worker-bench", "--slots", "64")
 
-	code, out, errs := h.run(t, "machine", "sync", "studio", "--check")
+	code, out, errs := h.run(t, "machine", "sync", "worker-bench", "--check")
 	if code != 0 {
 		t.Fatalf("check failed: %s %s", out, errs)
 	}
-	if !strings.Contains(out, "CHECK ADD kind=machine name=studio\n") {
+	if !strings.Contains(out, "CHECK ADD kind=machine name=worker-bench\n") {
 		t.Errorf("stdout missing CHECK ADD: %q", out)
 	}
-	if !strings.Contains(out, "CONFIG SYNC kind=machine name=studio rev=1\n") {
+	if !strings.Contains(out, "CONFIG SYNC kind=machine name=worker-bench rev=1\n") {
 		t.Errorf("stdout missing CONFIG SYNC: %q", out)
 	}
 
 	// Redis was not written
 	views, _, _ := h.redis.Read(context.Background(), config.KindMachine)
-	if views["studio"] != nil {
-		t.Fatalf("check mode wrote to redis: %v", views["studio"])
+	if views["worker-bench"] != nil {
+		t.Fatalf("check mode wrote to redis: %v", views["worker-bench"])
 	}
 }
 
