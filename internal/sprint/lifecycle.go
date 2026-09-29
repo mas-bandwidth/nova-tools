@@ -237,3 +237,17 @@ func unlawful(u Unit, p *Plan) string {
 	}
 	return ""
 }
+
+// Rejudge holds entries a repair is about to apply one by one to the
+// lifecycle, together, against a fresh read (pre): each entry is its own
+// unit, and an entry left out (one that will be skipped) counts as not
+// happening, so a landing that is skipped satisfies no need. verb is the
+// operation's verb: release may land a sentinel, add may move a primary
+// ready -> waiting. It returns the entries refused, by card id, with why.
+func Rejudge(pre *Snapshot, verb string, changes []Change) []Refusal {
+	p := Plan{pre: pre, releasing: verb == "release", inserting: verb == "add"}
+	for _, c := range changes {
+		p.Units = append(p.Units, Unit{Key: c.Entry.ID, Changes: []Change{c}})
+	}
+	return Lawful(p).Refused
+}

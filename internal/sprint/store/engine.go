@@ -876,7 +876,11 @@ func (k Skip) String() string {
 // outside the fence changed a member) is applied entry by entry: every entry
 // whose expectation holds applies, every other is skipped, never overwriting
 // newer state, and the release writes one judgment listing the skips (the
-// model's Repair: a move applies only where its expectation holds). One the
+// model's Repair: a move applies only where its expectation holds). Before
+// the first manifest goes entry by entry, the entries left are judged
+// together by the lifecycle (sprint.Lawful) against a fresh read, the skipped
+// ones counted as not happening: an entry it refuses (a waiter whose landing
+// is skipped) is skipped too, and the one judgment lists it with why. One the
 // store does not answer stays pending, and says why.
 func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r, err := st.finishOp(ctx, op)
@@ -889,7 +893,32 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
 	var skips []Skip
+	// barred is the work-table entries the lifecycle refuses, judged once,
+	// when the first manifest goes entry by entry: a later manifest holding
+	// one goes entry by entry too, so it is skipped, never applied.
+	var barred map[string]string
+	byEntry := func(i int, man ntable.BatchManifest) *RepairResult {
+		if barred == nil {
+			b, err := st.rejudge(ctx, op, i)
+			if err != nil {
+				return &RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot be judged: %v", man.Table, err)}
+			}
+			barred = b
+		}
+		sk, err := st.applyEntries(ctx, man, barred)
+		if err != nil {
+			return &RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, err)}
+		}
+		skips = append(skips, sk...)
+		return nil
+	}
 	for i, man := range op.Manifests {
+		if st.bars(man, barred) {
+			if open := byEntry(i, man); open != nil {
+				return *open, nil
+			}
+			continue
+		}
 		_, err := st.send(ctx, man)
 		if err == nil || refusalCode(err) == "OPCONFLICT" {
 			continue
@@ -907,11 +936,9 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 			}
 		}
 		if i > 0 {
-			sk, err := st.applyEntries(ctx, man)
-			if err != nil {
-				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, err)}, nil
+			if open := byEntry(i, man); open != nil {
+				return *open, nil
 			}
-			skips = append(skips, sk...)
 			continue
 		}
 		if i == 0 {
@@ -946,8 +973,9 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 // another table revision) and counts as applied. An entry the table layer
 // refuses on its own expectations is skipped, with what it expected and what
 // the store holds; so is one refused on a bound or a rule, with the store's
-// own text.
-func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]Skip, error) {
+// own text; so is one the lifecycle refuses (barred, by stored id), with why,
+// and it is never sent.
+func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, barred map[string]string) ([]Skip, error) {
 	var skips []Skip
 	for j, e := range man.Members {
 		one := man
@@ -958,6 +986,13 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]
 			rs, err := st.B.ReadSet(ctx, man.Table, []string{e.ID})
 			if err != nil {
 				return nil, err
+			}
+			if why, ok := barred[e.ID]; ok && man.Table == st.Names.Table(sprint.Work) {
+				k := skipOf(man.Table, e, rs)
+				k.Refused = "the lifecycle, judged against a fresh read with the skipped entries not happening: " + why
+				skips = append(skips, k)
+				outcome = "skipped"
+				break
 			}
 			one.ExpectedTableRevision = strconv.FormatUint(rs.Revision, 10)
 			_, err = st.send(ctx, one)
@@ -981,6 +1016,76 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]
 		}
 	}
 	return skips, nil
+}
+
+// rejudge holds the entries of the operation's manifests from the from-th on
+// to the lifecycle, together (sprint.Rejudge), against a fresh read of the
+// work table: an entry whose expectation no longer holds there is skipped by
+// the table layer, so it counts as not happening, as do the entries already
+// skipped. It returns each work-table entry the lifecycle refuses, by stored
+// id, with why.
+func (st *Store) rejudge(ctx context.Context, op OpRecord, from int) (map[string]string, error) {
+	pre, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return nil, err
+	}
+	work := st.Names.Table(sprint.Work)
+	stored := map[string]string{}
+	var changes []sprint.Change
+	for _, man := range op.Manifests[from:] {
+		if man.Table != work {
+			continue
+		}
+		for _, e := range man.Members {
+			if !holds(e, pre.Work) {
+				continue
+			}
+			id := sprint.CardID(e.ID)
+			stored[id] = e.ID
+			e.ID = id
+			changes = append(changes, sprint.Change{Table: sprint.Work, Entry: e})
+		}
+	}
+	out := map[string]string{}
+	for _, r := range sprint.Rejudge(pre, op.Verb, changes) {
+		out[stored[r.Key]] = r.Why
+	}
+	return out, nil
+}
+
+// holds says an entry's expectation holds in the table as read: its card
+// absent when it expects absent, else present at the revision and place it
+// expects.
+func holds(e ntable.BatchMemberEntry, t *sprint.Table) bool {
+	c := t.Placed(sprint.CardID(e.ID))
+	x := e.Expect
+	switch {
+	case x == nil:
+		return true
+	case x.Absent:
+		return t.Card(sprint.CardID(e.ID)) == nil
+	case c == nil:
+		return false
+	case x.Revision != "" && x.Revision != strconv.FormatUint(c.Rev, 10):
+		return false
+	case x.Place != nil && (c.Row != x.Place.Row || c.Col != x.Place.Col):
+		return false
+	}
+	return true
+}
+
+// bars says the manifest is the work table's and holds an entry the
+// lifecycle refused.
+func (st *Store) bars(man ntable.BatchManifest, barred map[string]string) bool {
+	if man.Table != st.Names.Table(sprint.Work) {
+		return false
+	}
+	for _, e := range man.Members {
+		if _, ok := barred[e.ID]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // skipOf describes a skipped entry: what it expected and what the store holds.
