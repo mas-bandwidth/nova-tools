@@ -31,13 +31,13 @@ func helpQuestion() map[string]Question {
 // at exit 0. An answer the criteria never offered is a PROVIDER ERROR, and the
 // refusal names the answer and the offered set so a reader can see the gap.
 func TestChoiceAnswerOutsideTheCriteriaIsAProviderError(t *testing.T) {
-	t.Setenv("CARD8331_JEV_KEY", "sekret")
+	t.Parallel()
 	srv := fakeServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"answers":{"help":{"type":"choice","choice":"deepseek-flash","confidence":0.94}}}`))
 	})
 	defer srv.Close()
-	c, err := New(srv.URL, "CARD8331_JEV_KEY")
+	c, err := newWithLookup(srv.URL, "CARD8331_JEV_KEY", func(string) string { return "sekret" })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -56,13 +56,13 @@ func TestChoiceAnswerOutsideTheCriteriaIsAProviderError(t *testing.T) {
 // ROUTE rung= conf=0.99 at exit 0 -- an empty answer ABOVE the floor. An answer
 // that names nothing is the same provider error, and the floor never sees it.
 func TestEmptyChoiceAboveTheFloorIsAProviderError(t *testing.T) {
-	t.Setenv("CARD8331_JEV_KEY", "sekret")
+	t.Parallel()
 	srv := fakeServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"answers":{"help":{"type":"choice","confidence":0.99}}}`))
 	})
 	defer srv.Close()
-	c, err := New(srv.URL, "CARD8331_JEV_KEY")
+	c, err := newWithLookup(srv.URL, "CARD8331_JEV_KEY", func(string) string { return "sekret" })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

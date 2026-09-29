@@ -31,9 +31,9 @@ func (m *memoryDriver) Close() error { return nil }
 // carrying the question hash, the kind, the answer, the confidence and the
 // floor.
 func TestDecideRecordsOneRowPerAnswer(t *testing.T) {
+	t.Parallel()
 	fake := &memoryDriver{}
-	t.Setenv("CARD9330_JEV_KEY", "sekret")
-	c, err := New("http://example.invalid", "CARD9330_JEV_KEY")
+	c, err := newWithLookup("http://example.invalid", "CARD9330_JEV_KEY", func(string) string { return "sekret" })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

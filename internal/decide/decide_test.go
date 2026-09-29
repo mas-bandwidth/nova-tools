@@ -32,21 +32,36 @@ func fakeServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 
 // New refuses when the env var is unset, naming it.
 func TestNewRefusesWhenEnvUnset(t *testing.T) {
-	t.Setenv("CARD8331_JEV_KEY", "")
-	t.Setenv("TYPESAFE_API_KEY", "")
-	_, err := New("http://example.invalid", "CARD8331_JEV_KEY")
+	t.Parallel()
+
+	emptyLookup := func(string) string { return "" }
+	_, err := newWithLookup("http://example.invalid", "CARD8331_JEV_KEY", emptyLookup)
 	if err == nil {
 		t.Fatal("expected error when key env var is unset")
 	}
 	if !strings.Contains(err.Error(), "CARD8331_JEV_KEY") {
 		t.Fatalf("error must name the variable, got: %v", err)
 	}
+
+	fallbackLookup := func(name string) string {
+		if name == FallbackKeyEnv {
+			return "fallback-sekret"
+		}
+		return ""
+	}
+	c, err := newWithLookup("http://example.invalid", "CARD8331_JEV_KEY", fallbackLookup)
+	if err != nil {
+		t.Fatalf("expected fallback key resolution to succeed, got: %v", err)
+	}
+	if c.key != "fallback-sekret" {
+		t.Fatalf("key = %q, want fallback-sekret", c.key)
+	}
 }
 
 // The request carries the documented body and the key on the header.
 func TestRequestSendsDocumentedBody(t *testing.T) {
-	t.Setenv("CARD8331_JEV_KEY", "sekret")
-	c, err := New("http://example.invalid", "CARD8331_JEV_KEY")
+	t.Parallel()
+	c, err := newWithLookup("http://example.invalid", "CARD8331_JEV_KEY", func(string) string { return "sekret" })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -224,6 +239,7 @@ func TestDecideRefusesOn500(t *testing.T) {
 // Decide sends the documented body and parses choice/score/noul answers,
 // against an httptest fake returning the documented response shape.
 func TestDecideSendsBodyAndParses(t *testing.T) {
+	t.Parallel()
 	var gotBody map[string]any
 	var gotAuth string
 	srv := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -240,8 +256,7 @@ func TestDecideSendsBodyAndParses(t *testing.T) {
 	})
 	defer srv.Close()
 
-	t.Setenv("CARD8331_JEV_KEY", "sekret")
-	c, err := New(srv.URL, "CARD8331_JEV_KEY")
+	c, err := newWithLookup(srv.URL, "CARD8331_JEV_KEY", func(string) string { return "sekret" })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

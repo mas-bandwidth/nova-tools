@@ -120,15 +120,22 @@ func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)
 // the variable when it is unset. baseURL empty means DefaultBaseURL. The key
 // is never printed.
 func New(baseURL, keyEnv string) (*Client, error) {
+	return newWithLookup(baseURL, keyEnv, os.Getenv)
+}
+
+func newWithLookup(baseURL, keyEnv string, getenv func(string) string) (*Client, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
 	if keyEnv == "" {
 		keyEnv = DefaultKeyEnv
 	}
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	key := os.Getenv(keyEnv)
+	key := getenv(keyEnv)
 	if key == "" && keyEnv != FallbackKeyEnv {
-		key = os.Getenv(FallbackKeyEnv)
+		key = getenv(FallbackKeyEnv)
 	}
 	if key == "" {
 		return nil, fmt.Errorf("decide: %s is not set; refusing to guess", keyEnv)
