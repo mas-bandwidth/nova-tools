@@ -823,3 +823,33 @@ build |     1 |       1 |    0
 ------+-------+---------+-----
       |     1 |       1 |    0
 ```
+
+## nova-privacy
+
+Fixture: `cmd/nova-privacy/testdata/example`, a small corpus with two
+sources, two background roots and two drafts. The lines below type
+`./example`, a copy of it; `cmd/nova-privacy/firstrun_test.go` runs each `$`
+line against the fixture itself. A line opening `! ` is one the tool writes to
+standard error: a flag and its remedy go there, and the verdict for a cleared
+payload goes to standard output. The first two lines exit 0 and the third
+exits 1.
+
+### First run
+
+```text
+$ nova-privacy corpus --root ./example
+CORPUS SOURCE path=private/ideas.md entries=3 private=1
+CORPUS SOURCE path=private/later.md entries=3 private=1
+CORPUS BACKGROUND root=notes mode=recursive pattern=*.md found=6 read=6
+CORPUS BACKGROUND root=journal mode=flat pattern=*.md found=6 read=6
+CORPUS OK sources=2 entries=6 private=2 checkable=2 background=12 config=./example/.nova-privacy
+
+$ nova-privacy screen --root ./example ./example/drafts/letter.md
+SCREEN UNPROVEN-CLEAN chars=183 terms=17 private=2 checkable=2 entries=6 background=12 config=./example/.nova-privacy
+SCREEN NOTE nothing was proven: the screen measures shared rare vocabulary and cannot see derivation that shares none
+
+$ nova-privacy screen --root ./example ./example/drafts/leak.md   # Stderr: whole
+! SCREEN FLAG source=private/ideas.md entry=1 shared=5 terms=across,bellrope,ferry,saltmarsh,tidewater title=The lantern ferry plan (private)
+! SCREEN FLAGGED flags=1 structure=0 chars=134 terms=12 private=2 checkable=2 entries=6 background=12 config=./example/.nova-privacy
+! SCREEN REMEDY a mind reads this before it goes out; it is a reading assignment, not a verdict. If it derives from the private entry, it does not ship; after an edit, run: nova-privacy screen --root ./example ./example/drafts/leak.md
+```

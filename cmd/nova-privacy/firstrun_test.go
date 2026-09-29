@@ -39,6 +39,16 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if len(steps) != 3 {
 		t.Fatalf("the `### First run` block runs %d commands, want 3: corpus, a clean screen, a flagged screen", len(steps))
 	}
+	// The sitting is both verbs: the corpus seen, then a payload screened.
+	for _, verb := range []string{"nova-privacy corpus", "nova-privacy screen"} {
+		found := false
+		for _, s := range steps {
+			found = found || strings.HasPrefix(strings.Join(append([]string{"nova-privacy"}, s.Args...), " "), verb+" ")
+		}
+		if !found {
+			t.Errorf("the `### First run` block never runs `%s`", verb)
+		}
+	}
 	abs, err := filepath.Abs(exampleDir)
 	if err != nil {
 		t.Fatal(err)

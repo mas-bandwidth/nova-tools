@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
+Seventeen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -28,7 +28,7 @@ sums those day files into a month; it reads sources, and never estimates.
 `nova-secrets`: one binary at the **credential layer** — credentials for seats,
 pools and services, sealed in a git store. `nova-update` and `nova-version`:
 the shared tool inventory, optional updates and the build report. The other
-seven — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
+eight — `nova-privacy` (outgoing writing screened against private material), `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
 local Redis instance and its scratch verbs), `nova-config` (the permanent
 configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs
 on its own test output), `nova-sandbox` (one command, contained by the OS),
@@ -38,7 +38,8 @@ batches) — and the four above each have their own normative text under `docs/`
 [SPEC-VERSION.md](SPEC-VERSION.md), [nova-table/README.md](nova-table/README.md),
 [SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-CONFIG.md](SPEC-CONFIG.md),
 [SPEC-CI.md](SPEC-CI.md), [SPEC-SANDBOX.md](SPEC-SANDBOX.md),
-[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-SWARM.md](SPEC-SWARM.md)); this file states
+[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-SWARM.md](SPEC-SWARM.md),
+[SPEC-PRIVACY.md](SPEC-PRIVACY.md)); this file states
 the count, the layer and the Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a

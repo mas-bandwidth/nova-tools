@@ -1,0 +1,92 @@
+package privacy_test
+
+import (
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/privacy"
+)
+
+func TestOptionsNamingNothingAreRefused(t *testing.T) {
+	t.Parallel()
+	if _, err := (privacy.Options{}).Spec(); !errors.Is(err, privacy.ErrNoCorpus) {
+		t.Errorf("err %v, want ErrNoCorpus", err)
+	}
+}
+
+func TestOptionsResolveTheRootConfiguration(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	s, err := privacy.Options{Root: f.root}.Spec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Config != f.root+string(filepath.Separator)+privacy.ConfigName || len(s.Sources) != 2 || len(s.Roots) != 2 {
+		t.Errorf("spec %+v", s)
+	}
+	if s.Sources[0].Path != f.path("private/later.md") || s.Sources[0].FromFlag {
+		t.Errorf("source %+v", s.Sources[0])
+	}
+}
+
+func TestOptionsRefuseEachBrokenConfiguration(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	empty := t.TempDir()
+	f.write(t, "nosource.conf", "background flat *.md journal\n")
+	f.write(t, "bad.conf", "source a.md\nnonsense here\n")
+	f.write(t, "big.conf", strings.Repeat("#", privacy.MaxConfigBytes+1))
+	for name, c := range map[string]struct {
+		o    privacy.Options
+		want string
+	}{
+		"root and config":      {privacy.Options{Root: f.root, Config: f.path(privacy.ConfigName)}, "give one"},
+		"no file under root":   {privacy.Options{Root: empty}, "no configuration at"},
+		"named file missing":   {privacy.Options{Config: filepath.Join(empty, "x.conf")}, "no configuration at"},
+		"no source":            {privacy.Options{Config: f.path("nosource.conf")}, "declares no source"},
+		"malformed":            {privacy.Options{Config: f.path("bad.conf")}, "line 2:"},
+		"over its bound":       {privacy.Options{Config: f.path("big.conf")}, "MaxConfigBytes"},
+		"bad pattern":          {privacy.Options{Root: f.root, Pattern: "["}, "--pattern"},
+		"negative max-docs":    {privacy.Options{Root: f.root, MaxDocs: -1}, "--max-docs"},
+		"a directory for file": {privacy.Options{Config: empty}, "is a directory"},
+	} {
+		if _, err := c.o.Spec(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err %v, want it to contain %q", name, err, c.want)
+		}
+	}
+}
+
+func TestOptionFlagsReplaceTheConfiguration(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	s, err := privacy.Options{
+		Root:    f.root,
+		Sources: []string{"elsewhere.md"},
+		Flat:    []string{"j"},
+		Marker:  "[hush]",
+		MaxDocs: 7,
+	}.Spec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Sources) != 1 || s.Sources[0].Path != "elsewhere.md" || !s.Sources[0].FromFlag {
+		t.Errorf("sources %+v", s.Sources)
+	}
+	if len(s.Roots) != 1 || s.Roots[0].Dir != "j" || s.Roots[0].Recursive || s.Roots[0].Pattern != privacy.DefaultPattern {
+		t.Errorf("roots %+v", s.Roots)
+	}
+	if s.Rules.Marker != "[hush]" || s.MaxDocs != 7 {
+		t.Errorf("marker %q max-docs %d", s.Rules.Marker, s.MaxDocs)
+	}
+}
+
+// With --source named, a root holding no configuration is not an error.
+func TestSourcesByOptionNeedNoConfiguration(t *testing.T) {
+	t.Parallel()
+	s, err := privacy.Options{Root: t.TempDir(), Sources: []string{"a.md"}}.Spec()
+	if err != nil || s.Config != "" || len(s.Sources) != 1 {
+		t.Errorf("spec %+v err %v", s, err)
+	}
+}

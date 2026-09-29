@@ -2220,3 +2220,62 @@ for an isolated store and the function-library loading command.
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
 connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
 the last good frame and one stale-age line until recovery; Ctrl-C exits 0.
+
+## nova-privacy
+
+Screens a piece of outgoing writing against your private material before it
+goes out. A payload that shares three or more rare words with an entry marked
+`(private)` is flagged, naming the source, the entry's title and the words: a
+reading assignment, not a verdict. Rarity is weighed against a background of
+your ordinary writing, so ordinary English stays quiet. The best answer is
+`UNPROVEN-CLEAN`, never clean. See [SPEC-PRIVACY.md](SPEC-PRIVACY.md).
+
+### First run
+
+From the root of this checkout, copy the example corpus and run the three
+lines of the usage banner's example block:
+
+```sh
+cp -R cmd/nova-privacy/testdata/example ./example
+nova-privacy corpus --root ./example
+nova-privacy screen --root ./example ./example/drafts/letter.md
+nova-privacy screen --root ./example ./example/drafts/leak.md
+```
+
+`corpus` lists each source with its entries and private entries, each
+background root with the documents it read, and `CORPUS OK` with `checkable=`,
+the number of private entries able to raise a flag at all. The letter prints
+`SCREEN UNPROVEN-CLEAN` and exits 0. The leak prints a `SCREEN FLAG` line on
+standard error naming `private/ideas.md`, the entry `The lantern ferry plan
+(private)` and the shared words, then `SCREEN FLAGGED`, and exits 1.
+[TESTS.md](TESTS.md#nova-privacy) holds the exact transcript.
+
+What a first run gets wrong:
+
+- **No corpus named.** `screen` and `corpus` want `--root <dir>` (reads
+  `<dir>/.nova-privacy`), `--config <file>`, or `--source <file>`; nothing is
+  guessed.
+- **No configuration under the root.** Write `.nova-privacy` with at least one
+  `source` line, or name sources with `--source`.
+- **Exit 3.** The screen ran and verified nothing: a declared source is missing
+  (`remove it from <config> or restore the file`), no entry is marked private,
+  or no private entry has enough rare words to ever fire. The remedy line says
+  which, and names the `nova-privacy corpus` command to run next.
+
+### Your own corpus
+
+```
+# .nova-privacy
+source private/ideas.md
+background recursive *.md notes
+background flat *.md journal
+```
+
+Paths are relative to the file. `marker`, `entry`, `stop`, `refuse`, `warn`,
+`allow` and `max-docs` are optional; `nova-privacy help` lists them and
+SPEC-PRIVACY.md defines them. Pipe a draft in with `nova-privacy screen --root
+<dir> -`. `--json` prints one JSON object instead of lines.
+
+Exit codes: 0 `UNPROVEN-CLEAN`, 1 `FLAGGED`, 2 could not run, 3 could not
+verify (`CORPUS-UNREADABLE`, `NO-PRIVATE-CORPUS`, `NOTHING-CAN-EVER-FIRE`).
+Only 0 permits sending.

@@ -34,6 +34,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 **(d) Exits.** 0 passed or done. 1 ran and said NO. 2 could not run. A wrapper may pass through its program's code; no tool invents another. The protocol exceptions:
 - nova-fuse's write verbs (SPEC.md's table).
 - nova-bus wait `--idle-exit <n>`, a caller-selected code for an idle timeout.
+- nova-privacy screen and corpus exit 3 for could not verify: a screen that ran and verified nothing is neither a pass nor a finding (SPEC-PRIVACY.md).
 
 **(e) Output: events and payloads.**
 - EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
