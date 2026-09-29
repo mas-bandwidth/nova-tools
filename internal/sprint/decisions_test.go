@@ -144,8 +144,8 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: m}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
 	for id, g := range before {
-		if c := w.s.Fleet.Card(id); c.Placed() || c.Int("gen") <= g {
-			t.Fatalf("withdrawn %s: placed %v gen %d (was %d)", id, c.Placed(), c.Int("gen"), g)
+		if c := w.s.Fleet.Card(id); c.Col != Withdrawn || c.Int("gen") <= g {
+			t.Fatalf("withdrawn %s: at %s gen %d (was %d)", id, placeWord(c), c.Int("gen"), g)
 		}
 	}
 	w.clean("withdrawn")

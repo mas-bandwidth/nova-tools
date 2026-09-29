@@ -205,9 +205,10 @@ type StartReq struct {
 	Who string
 }
 
-// Start moves ready -> working: for each primary, in work order, the next
-// attempt's work card is cut and dealt to the up member with the shortest
-// ready queue.
+// Start moves ready -> working: for each primary, in work order, its work
+// card is dealt to the up member with the shortest ready queue. A card
+// withdrawn because no member was up is the same card dealt again at a new
+// generation, its attempt unchanged; otherwise the next attempt's card is cut.
 func Start(s *Snapshot, r StartReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
@@ -220,6 +221,10 @@ func Start(s *Snapshot, r StartReq) Plan {
 	}
 	q := readyQueues(s, up)
 	for _, c := range chosen {
+		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+			p.Units = append(p.Units, redeal(s, c, wc, up, q))
+			continue
+		}
 		u, why := deal(s, c, c.F("fix"), up, q, nil)
 		if why != "" {
 			p.refuse(c.ID, why)
@@ -262,6 +267,19 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
 	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s", c.ID, c.Col, card, m)}, ""
+}
+
+// redeal deals a withdrawn work card again, into the ready queue of the up
+// member with the shortest queue, at a new generation bound to that member,
+// and moves its primary to working on it. The attempt, the fix and the score
+// are the card's own, unchanged.
+func redeal(s *Snapshot, c, wc *Card, up []string, q map[string]int) Unit {
+	m := shortest(up, q)
+	q[m]++
+	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
+		change(Fleet, moveEntry(wc, m, Ready, nextGen(wc, m), "withdrawn")),
+		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
+	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
 }
 
 // shortest is the name with the smallest count, the first in order on a tie.
@@ -533,8 +551,8 @@ func FleetStep(s *Snapshot, r FleetReq) Plan {
 			}
 			set := nextGen(c, "")
 			set["withdrawn"] = stamp(s.Now)
-			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, removeEntry(c, set))},
-				Moved: c.ID + " withdrawn"}
+			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken"))},
+				Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
 				u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
 				u.Moved += "; " + pr.ID + " working -> ready"

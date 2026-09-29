@@ -196,11 +196,11 @@ func TestFleetDownDealsAndWithdrawsWhenNoneIsUp(t *testing.T) {
 	if len(p.Units) != 0 || len(p.Refused) != 1 {
 		t.Fatalf("start with nobody up: %+v", p)
 	}
-	// Up again: the next attempt's card is cut.
+	// Up again: the same card is dealt again.
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if w.s.Work.Card("s1-1").F("work") != "s1-1.w2" {
-		t.Fatalf("after withdrawal the next card is %s", w.s.Work.Card("s1-1").F("work"))
+	if w.s.Work.Card("s1-1").F("work") != "s1-1.w1" {
+		t.Fatalf("after withdrawal the card is %s", w.s.Work.Card("s1-1").F("work"))
 	}
 	w.clean("up again")
 }
