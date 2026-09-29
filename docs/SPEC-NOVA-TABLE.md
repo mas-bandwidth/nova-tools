@@ -337,17 +337,17 @@ explicit.
 The member `revision` is a table-owned counter. A legacy existing member with no
 record revision reads as zero. A newly created member starts at one; any accepted
 change to its placement, score or application fields increments it once,
-irrespective of how many fields changed. A move with no score preserves the current score; an
-explicit finite score replaces it. An entry whose placement, score and application
-fields remain unchanged does not increment the member revision or changed count.
+irrespective of how many fields changed. A move with no score preserves the
+current score; an explicit finite score replaces it. An entry whose placement,
+score and application fields remain unchanged does not increment the member revision or changed count.
 In particular, moving to the current cell at the current score is a member no-op
 unless its application fields change. A score-only change increments the member
 revision once. Removal requires existing owned placement; an already-unplaced
 member refuses with `NOTMEMBER` before writes. Removal clears that placement and
 retains the member record, application fields and advanced member revision.
-Ordinary table member writers use the same revision helper so they cannot bypass a prepared batch's guard. Epoch, placement/index fields
-and revision cannot be set/unset through application metadata. Counter overflow
-refuses before any write. Table revision remains the existing table-wide counter;
+Ordinary table member writers use the same revision helper so they cannot bypass
+a prepared batch's guard. Epoch, placement/index fields and revision cannot be
+set/unset through application metadata. Counter overflow refuses before any write. Table revision remains the existing table-wide counter;
 its expected value rejects changes to the complete observed scope between read and
 write, including insertion/deletion not named by the caller.
 
@@ -360,8 +360,8 @@ its verified immutable identity must be represented in a member field, or a late
 explicit table extension must provide its guard. A prior unguarded client read is
 not an atomic prerequisite proof.
 
-Initial proposed bounds: 128 entries with changes, 1,024 guard-only entries and
-1 MiB canonical encoded request. IDs/field counts and value byte limits must also
+Initial proposed bounds: 128 entries with mutation instructions, 1,024 guard-only
+entries and 1 MiB canonical encoded request. IDs/field counts and value byte limits must also
 be explicitly bounded by the implementation's reviewed manifest schema. Candidate
 limits are measured on supported benches before acceptance. Exceeding a limit
 refuses the whole request with the limit and remedy; no automatic chunking turns
@@ -417,9 +417,13 @@ members' before/after placements, scores, revisions and application-field change
 For each affected application field, include its before and after values with
 absence distinguished from a present empty string. An absent placement has no
 score. Set/unset instructions alone do not supply the before values. Include
-explicit guard/selection counts; a missing member is not silently omitted. One
-batch receipt maps to one model action. Returning the original result on retry
-must return the same receipt identity.
+explicit guard/selection counts; a missing member is not silently omitted. The
+guard count counts entries with no mutation instructions. The changed count
+counts effective member changes. A mutation instruction with no effect counts
+toward selection and the mutation-entry limit, but neither guard nor changed
+count; those two counts need not sum to selection. One batch receipt maps to one
+model action. Returning the original result on retry must return the same receipt
+identity.
 
 Required refusals include stale epoch, table/member revision mismatch, failed field
 guard, existing/placed member on create, duplicate manifest member, invalid/missing

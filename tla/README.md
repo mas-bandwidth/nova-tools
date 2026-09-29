@@ -397,30 +397,60 @@ answer from `probeAnswer` and never touches the store while answering.
 ## Atomic member batches
 
 `BatchMemberTable` extends `EpochMemberTable`; existing per-verb configurations
-remain separate. The required `batchmembertable` group contains two positive
-configurations and fifteen deliberately faulty variants. Both positive instances
+remain separate. The required `batchmembertable` group contains seven positive
+configurations and twenty-three deliberately faulty variants. All positive instances
 retain three members, two rows, two columns and two epochs. The primary instance
 explores request lengths one through three, a guard-only request, and interacting
 cross-row changes for up to three actions. The second instance retains an old-epoch
 member while advancing, refreshing, binding and accepting a new-epoch create in
 four actions. Separate immutable member-epoch assignments make both paths explicit.
+Two further three-action traces advance a member revision with an ordinary writer,
+then accept a cross-row score change with its member revision guard omitted. One
+trace removes its placement while retaining the member record; the other accepts
+a same-cell, same-score no-op without a member revision increment. Both still
+record one receipt and table revision for each accepted batch.
+An additional three-action trace removes a placed member and then changes an
+application field on the retained unplaced record. Another three-action trace
+shows that removing an already-unplaced member refuses. A two-action trace proves
+that explicit `remove:false` and set/unset of the same field both refuse.
+Absent member records carry no application fields, and create starts from that
+empty field image before applying its explicit set; every positive configuration
+checks the absent-record invariant and the create receipt's empty before image.
 
 The model represents field equality, absence and membership guards, including the
-difference between an absent field and an empty string. Ordinary field/add/remove/
-move actions share member and table revision increments. Request bytes are abstract
-identities; byte equality, rather than digest equality, controls replay. Accepted
-batches produce one complete receipt and one table revision; refusals and replay
-leave the modeled store unchanged.
+difference between an absent field and an empty string. An existing member may
+omit its revision guard while retaining its table revision, source placement and
+field checks. An explicit move score replaces the old score; an omitted one
+preserves it. A removal clears placement but keeps the member record. Effective
+placement, score or application-field changes increment the member revision once;
+a same-cell move with unchanged score and fields is an accepted no-op. Receipt
+deltas carry before/after placement, score, revision and application fields.
+The `guardCount` counts entries with no requested mutation, while `changedCount`
+counts effective changes; their sum can be below `selectedCount` when a requested
+move proves to be a no-op.
+Ordinary field/add/remove/move actions share member and table revision increments.
+Request bytes are abstract identities; byte equality, rather than digest equality,
+controls replay. Accepted batches produce one complete receipt and one table
+revision; refusals and replay leave the modeled store unchanged.
 
 The negative configurations cover late guard/type/permission failure after an
 initial write, post-write guard evaluation, duplicate placement, stale epoch/table/
 member expectations, stale member expectations after an ordinary move, omitted
 ordinary field/move revision increments, lost-reply double effects, digest collision,
-incomplete receipt effects and stale replay reported as a new acceptance. `CASES.tsv`
-names each exact expected property. `BATCH-SOURCES.tsv` records the batch model,
+incomplete receipt effects and stale replay reported as a new acceptance. The
+added reversed cases reject a valid omitted-revision request after an ordinary
+revision advance, preserve a score that was explicitly replaced, leave a removed
+member in its old cell, delete its record on removal, or spuriously increment its
+revision on a same-cell no-op. Two further reversed cases force acceptance of
+the malformed remove and set/unset forms; a third forces removal of an already
+unplaced member. `CASES.tsv` names each exact expected property.
+`BATCH-SOURCES.tsv` records the batch model,
 configuration, inherited model and runner hashes. `RUNS.tsv` records measured results,
 combined input hashes and the TLC executable hash;
-timeouts and unexpected diagnostics are failures.
+timeouts and unexpected diagnostics are failures. Published records use the
+portable bench label `linux-amd64` in the host column. Raw records and logs retain
+the original machine identity in the private evidence archive; only the public
+host label is generalized, not hashes, outcomes, counts or timings.
 
 This is a finite request-template model, not a JSON parser, Redis rollback proof or
 implementation refinement proof. Its three-action main bound is explicit; the
