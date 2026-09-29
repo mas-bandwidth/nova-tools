@@ -397,8 +397,11 @@ compares them with this table:
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
-past the bound as `LIMIT`, naming the bound and the count, before any write. The
-column bound is chosen from what one call writes: a definition is written by one
+past the bound as `LIMIT`, naming the bound and the count, before any write. A bind
+leaves the table with the rows it names, so it is bound by their number. A table
+already over a bound (one written by hand, or under an older rule) can shrink or stay
+and never grows: `col del`, `row del` and a batch work on it, `col add` and `row add`
+past the bound refuse. The column bound is chosen from what one call writes: a definition is written by one
 `HSET` of 2 x (columns + 8) arguments and a script's stack refuses past about 8000,
 which is about 3,990 columns measured, so 1,000 leaves a margin of four. The row bound
 is chosen from cost: rows are written in chunks of 256, and a table of 100,000 rows
