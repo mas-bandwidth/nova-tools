@@ -336,3 +336,130 @@ func TestNoBenchLiteralsInReconcile(t *testing.T) {
 		}
 	}
 }
+
+// TestSummarySkippedNoneDoesNotMaskMissingAnswer verifies summary lines stating "none"
+// or zero skips (like "SKIPPED none" or "None skipped.") do not count as named gaps
+// and cannot mask an under-answered run.
+func TestSummarySkippedNoneDoesNotMaskMissingAnswer(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	qPath := filepath.Join(dir, "self-check.md")
+	qContent := "# Self Check\n\n## The questions\n- **Q1?** A1\n- **Q2?** A2\n- **Q3?** A3\n- **Q4?** A4\n- **Q5?** A5\n"
+	if err := os.WriteFile(qPath, []byte(qContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaryLines := []string{
+		"SKIPPED none",
+		"SKIPPED: none",
+		"Skipped: none",
+		"None skipped.",
+		"0 skipped",
+		"Skipped: 0",
+		"No skips.",
+		"None spoiled.",
+		"Skipped: none. Spoiled: none",
+	}
+
+	for idx, line := range summaryLines {
+		ansFile := filepath.Join(dir, fmt.Sprintf("ans-%d.md", idx))
+		ansContent := fmt.Sprintf("1. **Q1?** ans\n2. **Q2?** ans\n3. **Q3?** ans\n- **Q4?** ans\n\n%s\n", line)
+		if err := os.WriteFile(ansFile, []byte(ansContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		tally, err := CountAnswers(ansFile)
+		if err != nil {
+			t.Fatalf("CountAnswers failed for %q: %v", line, err)
+		}
+		if tally.Answered() != 4 {
+			t.Errorf("for line %q: expected 4 answers, got %d", line, tally.Answered())
+		}
+		if tally.Spoiled != 0 {
+			t.Errorf("for line %q: summary line counted as %d spoiled gap(s), want 0; gaps: %v", line, tally.Spoiled, tally.Gaps)
+		}
+
+		res := Reconcile(5, tally)
+		if res.OK {
+			t.Errorf("for line %q: Reconcile passed unexpectedly when 4 answered of 5 asked", line)
+		}
+		if res.Missing != 1 {
+			t.Errorf("for line %q: expected missing=1, got %d", line, res.Missing)
+		}
+
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"reconcile", "--questions", qPath, ansFile}, &stdout, &stderr)
+		if code != 1 {
+			t.Errorf("for line %q: expected exit code 1, got %d; stdout: %s, stderr: %s", line, code, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "RECONCILE FAIL") {
+			t.Errorf("for line %q: stderr missing RECONCILE FAIL: %s", line, stderr.String())
+		}
+	}
+}
+
+// TestValidSkippedQuestionsAreCounted verifies genuine named gaps (such as "Q3: SKIPPED")
+// are properly tallied as gaps and cover shortfalls when reconciliation is performed.
+func TestValidSkippedQuestionsAreCounted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	qPath := filepath.Join(dir, "self-check.md")
+	qContent := "# Self Check\n\n## The questions\n- **Q1?** A1\n- **Q2?** A2\n- **Q3?** A3\n- **Q4?** A4\n- **Q5?** A5\n"
+	if err := os.WriteFile(qPath, []byte(qContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	validGaps := []struct {
+		line string
+	}{
+		{"Q3: SKIPPED"},
+		{"**Q3:** SKIPPED"},
+		{"SPOILED: missed Q3 in cold pass"},
+		{"3. SKIPPED"},
+		{"3. **Q3?** SKIPPED"},
+		{"- **Q3?** SKIPPED"},
+		{"**S1. Do I still authorize rollback?**"},
+	}
+
+	for idx, vg := range validGaps {
+		ansFile := filepath.Join(dir, fmt.Sprintf("valid-%d.md", idx))
+		ansContent := fmt.Sprintf("1. **Q1?** ans\n2. **Q2?** ans\n%s\n- **Q4?** ans\n- **Q5?** ans\n", vg.line)
+		if err := os.WriteFile(ansFile, []byte(ansContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		tally, err := CountAnswers(ansFile)
+		if err != nil {
+			t.Fatalf("CountAnswers failed for %q: %v", vg.line, err)
+		}
+		if tally.Answered() != 4 {
+			t.Errorf("for line %q: expected 4 answers, got %d", vg.line, tally.Answered())
+		}
+		if tally.Spoiled != 1 {
+			t.Errorf("for line %q: expected 1 spoiled gap, got %d (%v)", vg.line, tally.Spoiled, tally.Gaps)
+		}
+
+		res := Reconcile(5, tally)
+		if !res.OK {
+			t.Errorf("for line %q: Reconcile failed: %s", vg.line, res.Message)
+		}
+		if res.Gaps != 1 {
+			t.Errorf("for line %q: expected gaps=1, got %d", vg.line, res.Gaps)
+		}
+
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"reconcile", "--questions", qPath, ansFile}, &stdout, &stderr)
+		if code != 0 {
+			t.Errorf("for line %q: expected exit code 0, got %d; stderr: %s", vg.line, code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "RECONCILE OK") {
+			t.Errorf("for line %q: stdout missing RECONCILE OK: %s", vg.line, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "named gap:") {
+			t.Errorf("for line %q: stdout missing 'named gap:': %s", vg.line, stdout.String())
+		}
+	}
+}
+

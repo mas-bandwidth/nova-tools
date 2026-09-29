@@ -36,11 +36,43 @@ var (
 	stemRegexp   = regexp.MustCompile(`^- \*\*([^*]*)\*\*`)
 	authoredTop  = "## The questions I authored"
 	authoredEnd  = "## Baseline log"
-	numberedAns  = regexp.MustCompile(`^\d+\.\s+\*\*`)
-	bulletedAns  = regexp.MustCompile(`^-\s+\*\*`)
-	spoiledRegex = regexp.MustCompile(`(?i)\b(SPOILED|SKIPPED|NO ANSWER)\b`)
-	gapLineRegex = regexp.MustCompile(`(?i)(?:^|\s|\*\*)(?:S\d+\.|\b(?:SPOILED|SKIPPED|NO ANSWER)\b)`)
+	numberedAns           = regexp.MustCompile(`^\d+\.\s+\*\*`)
+	bulletedAns           = regexp.MustCompile(`^-\s+\*\*`)
+	summaryNoneRegex      = regexp.MustCompile(`(?i)\b(?:none\s+(?:skipped|spoiled)|(?:skipped|spoiled|no\s+answer)\s*[:\-]?\s*(?:none|nil|0|zero)\b|(?:0|zero)\s+(?:skipped|spoiled)|no\s+skips?\b|nothing\s+skipped\b)`)
+	spoiledIndexRegex     = regexp.MustCompile(`(?i)(?:^|[\s*` + "`" + `_])S\d+[\.:]`)
+	gapKeywordRegex       = regexp.MustCompile(`(?i)\b(SPOILED|SKIPPED|NO ANSWER)\b`)
+	questionRefRegex      = regexp.MustCompile(`(?i)(?:\bQ\d+\b|\bquestion\s+#?\d+\b|#\d+\b|^\d+\.\s+|^-\s+\*\*)`)
+	answeredLongStemRegex = regexp.MustCompile(`^(\d+\.\s+\*\*[^*]+\*\*:?\s*)(.*)`)
+	gapPrefixRegex        = regexp.MustCompile(`(?i)^\[?(?:SPOILED|SKIPPED|NO ANSWER)\]?\b`)
 )
+
+// isNamedGap returns true if trimmed line represents a named question gap
+// (spoiled, skipped, or no answer) identifying a specific question or index.
+// Summary lines such as "SKIPPED none" or lines with no question named are ignored.
+func isNamedGap(trimmed string) bool {
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	if summaryNoneRegex.MatchString(trimmed) {
+		return false
+	}
+	if spoiledIndexRegex.MatchString(trimmed) {
+		return true
+	}
+	if !gapKeywordRegex.MatchString(trimmed) {
+		return false
+	}
+	if !questionRefRegex.MatchString(trimmed) {
+		return false
+	}
+	if m := answeredLongStemRegex.FindStringSubmatch(trimmed); m != nil {
+		ansPart := strings.TrimSpace(m[2])
+		if len(ansPart) > 60 && !gapPrefixRegex.MatchString(ansPart) {
+			return false
+		}
+	}
+	return true
+}
 
 // BaselineStats is the size of the question set from identity/self-check.md.
 type BaselineStats struct {
@@ -128,7 +160,7 @@ func CountAnswers(answerPath string) (AnswerTally, error) {
 		if fenced {
 			continue
 		}
-		if spoiledRegex.MatchString(l) {
+		if isNamedGap(trimmed) {
 			t.Spoiled++
 			clean := strings.TrimSpace(strings.Trim(trimmed, "*_#`"))
 			if len(clean) > 80 {
@@ -137,12 +169,13 @@ func CountAnswers(answerPath string) (AnswerTally, error) {
 			if clean != "" {
 				t.Gaps = append(t.Gaps, clean)
 			}
-		}
-		switch {
-		case numberedAns.MatchString(l):
-			t.Numbered++
-		case bulletedAns.MatchString(l):
-			t.Bulleted++
+		} else {
+			switch {
+			case numberedAns.MatchString(l):
+				t.Numbered++
+			case bulletedAns.MatchString(l):
+				t.Bulleted++
+			}
 		}
 	}
 	return t, nil
