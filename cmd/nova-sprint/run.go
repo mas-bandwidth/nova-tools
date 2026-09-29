@@ -236,5 +236,7 @@ The machine: nova-sprint start sets it RUNNING, nova-sprint stop sets it
 STOPPED; nova-sprint run ticks once a second while it is RUNNING, and
 nova-sprint tick is one tick by hand. Each tick deals ready primaries, asks
 readers, resolves waiting primaries whose needs landed, and writes the
-judgments that need the coordinator. Every verb works in both states.`) + "\n"
+judgments that need the coordinator; a judgment open past its due time is
+marked overdue, once. A stop halts the tick before its next part. Every verb
+works in both states.`) + "\n"
 }

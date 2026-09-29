@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -41,6 +42,10 @@ const (
 	DeadlineUnbegun    = 30 * time.Minute // a read card asked and not begun
 	DeadlineUnreported = 2 * time.Hour    // a read card begun and not reported
 	DeadlineMergeIdle  = 30 * time.Minute // a stream with cards to merge and no merge step
+	// DeadlineJudgment is how long a judgment stays open, in running time,
+	// before the tick marks it overdue; a review time the coordinator set
+	// (wait) is the judgment's own due time instead.
+	DeadlineJudgment = 10 * time.Minute
 )
 
 // The tick's own notification types.
@@ -52,6 +57,8 @@ const (
 	NWorkLate  = "a work card is past its deadline"
 	NReadLate  = "a read card is past its deadline"
 	NMergeLate = "a stream has had no merge step past its deadline"
+	// NOverdue (notes.go) is the overdue line: a happened note, once per
+	// judgment, when the judgment passes its due time.
 
 	NMachineStarted = "the machine started"
 	NMachineStopped = "the machine stopped"
@@ -126,6 +133,7 @@ var TickParts = []struct {
 	{"ask", TickAsk},
 	{"check", TickCheck},
 	{"deadlines", TickDeadlines},
+	{"overdue", TickOverdue},
 }
 
 // Tick is every part's plan over one observed state. Each part is computed
@@ -372,6 +380,96 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	due := notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r.who())
+	return p, due
+}
+
+// TickOverdue marks each open judgment overdue once, when it passes its due
+// time in running time (DeadlineJudgment after it was written, or the review
+// time the coordinator set with wait): one overdue line (a happened note of
+// NOverdue naming the judgment), and a hold on the judgment's open subjects
+// (an acknowledged-kind record of NOverdue, never a judgment and shown in no
+// inbox) that stops the tick marking it again. The tick closes the hold when
+// the judgment closes or is no longer overdue (a wait moved its review time
+// on), so a judgment overdue again is marked again. A coordinator who is
+// silent is visible: every judgment waiting on them is named, once, as
+// overdue.
+func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	type judg struct {
+		note     Note
+		subjects []string
+	}
+	var order []string
+	byID := map[string]*judg{}
+	for _, o := range s.Open {
+		if o.Note.Kind != Judgment {
+			continue
+		}
+		j := byID[o.Note.ID]
+		if j == nil {
+			j = &judg{note: o.Note}
+			byID[o.Note.ID] = j
+			order = append(order, o.Note.ID)
+		}
+		j.subjects = append(j.subjects, o.Subject())
+	}
+	overdue := func(n Note) bool {
+		if !n.Review.IsZero() {
+			return s.Now.After(n.Review)
+		}
+		d, ok := r.running(s.Now, stamp(n.At))
+		return ok && d > DeadlineJudgment
+	}
+	marked := map[string]bool{} // judgment id + subject, held as overdue
+	for _, o := range s.Acked {
+		if o.Note.Type != NOverdue {
+			continue
+		}
+		j := byID[o.Note.What]
+		if j == nil || !contains(j.subjects, o.Subject()) || !overdue(j.note) {
+			p.Closes = append(p.Closes, o)
+			continue
+		}
+		marked[OpenKey(o.Note.What, o.Subject())] = true
+	}
+	written, due := 0, 0
+	for _, id := range order {
+		j := byID[id]
+		if !overdue(j.note) {
+			continue
+		}
+		var fresh []string
+		for _, sub := range j.subjects {
+			if !marked[OpenKey(id, sub)] {
+				fresh = append(fresh, sub)
+			}
+		}
+		if len(fresh) == 0 {
+			continue
+		}
+		if written >= TickMaxNotes {
+			due++
+			continue
+		}
+		written++
+		sort.Strings(fresh)
+		n := j.note
+		past := fmt.Sprintf("%s of running time", DeadlineJudgment)
+		if !n.Review.IsZero() {
+			past = "its review time " + stamp(n.Review)
+		}
+		line := Note{Kind: Happened, Type: NOverdue, Stream: n.Stream, Who: r.who(), At: s.Now,
+			What: fmt.Sprintf("%s (%s) open since %s, past %s; run: nova-sprint inbox", id, n.Type, stamp(n.At), past)}
+		hold := Note{Kind: Acknowledged, Type: NOverdue, Stream: n.Stream, What: id, Who: r.who(), At: s.Now,
+			StreamLevel: n.StreamLevel, SprintLevel: n.SprintLevel}
+		if !n.StreamLevel && !n.SprintLevel {
+			line.Primaries, line.Count = fresh, len(fresh)
+			hold.Primaries, hold.Count = fresh, len(fresh)
+		} else {
+			line.Primaries, line.Count = n.Primaries, n.Count
+		}
+		p.Notes = append(p.Notes, line, hold)
+	}
 	return p, due
 }
 
