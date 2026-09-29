@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // Input is one thing a TLC run of a case reads: a file under tla/, the case's
@@ -110,7 +112,7 @@ func (s Source) Inputs(config string) ([]Input, error) {
 			}
 			return nil, fmt.Errorf("case %s: module %s, named by %s, cannot be read: %v", config, next.file, next.by, err)
 		}
-		for _, name := range ModuleReferences(files["tla/"+next.file]) {
+		for _, name := range cachedModuleReferences(files["tla/"+next.file]) {
 			file := name + ".tla"
 			if _, err := os.Stat(filepath.Join(s.TLADir, file)); err != nil {
 				if standardModules[name] {
@@ -211,6 +213,41 @@ var (
 	moduleOpen = regexp.MustCompile(`^\s*-{4,}\s*MODULE\s+([A-Za-z0-9_]+)`)
 	moduleEnd  = regexp.MustCompile(`^\s*={4,}`)
 )
+
+// referencesCache holds the module references of module texts by the SHA-256 of
+// the text, so that a module shared by many cases (and every fingerprint taken of
+// the same case) is parsed once, even when cases are fingerprinted at the same
+// time. The key is the content, so an edited module is parsed again and no
+// answer is ever stale.
+var referencesCache sync.Map // [sha256.Size]byte -> *referencesEntry
+
+type referencesEntry struct {
+	once   sync.Once
+	refs   []string
+	parsed atomic.Int64 // how many times the text was parsed: one; a test reads it
+}
+
+// cachedModuleReferences is ModuleReferences with the result kept by the
+// content of text. The slice it returns is shared and is not to be changed.
+func cachedModuleReferences(text []byte) []string {
+	key := sha256.Sum256(text)
+	hit, _ := referencesCache.LoadOrStore(key, &referencesEntry{})
+	e := hit.(*referencesEntry)
+	e.once.Do(func() {
+		e.parsed.Add(1)
+		e.refs = ModuleReferences(text)
+	})
+	return e.refs
+}
+
+// referencesParsedCount is how many times the text has been parsed by
+// cachedModuleReferences: 0 when it never was.
+func referencesParsedCount(text []byte) int64 {
+	if hit, ok := referencesCache.Load(sha256.Sum256(text)); ok {
+		return hit.(*referencesEntry).parsed.Load()
+	}
+	return 0
+}
 
 // ModuleReferences returns the names of the modules a module's text extends or
 // instantiates (`EXTENDS A, B`, `INSTANCE M`, `LOCAL INSTANCE M`,

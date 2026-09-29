@@ -347,3 +347,65 @@ func TestInputsFollowAModuleNamedAfterANestedModule(t *testing.T) {
 		t.Fatalf("inputs %v, %v", paths(got), err)
 	}
 }
+
+// A module's references are parsed once per distinct text, however many cases
+// read it and however many times a case is fingerprinted, and an edited module
+// is parsed again. The counts are per text, so the test holds with the others
+// running beside it.
+func TestAModulesReferencesAreParsedOncePerText(t *testing.T) {
+	t.Parallel()
+	root := inputsTree(t)
+	// Texts no other test has parsed, so the cache holds none of them yet.
+	mark := "\\* " + t.Name() + " " + root + "\n"
+	texts := map[string][]byte{}
+	for _, name := range []string{"MCTop", "Mid", "Leaf", "Shared", "Cyc", "MCLone"} {
+		path := filepath.Join(root, "tla", name+".tla")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts[name] = append([]byte(mark+name+"\n"), raw...)
+		if err := os.WriteFile(path, texts[name], 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := testSource(t, root)
+	var first []string
+	for round := 0; round < 3; round++ {
+		for _, config := range []string{"MCTop.cfg", "MCTopBroken.cfg", "MCLone.cfg"} {
+			in, err := src.Inputs(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config == "MCTop.cfg" && round == 0 {
+				first = paths(in)
+			}
+		}
+	}
+	for name, text := range texts {
+		if got := referencesParsedCount(text); got != 1 {
+			t.Errorf("%s was parsed %d times by nine fingerprints, want once", name, got)
+		}
+	}
+	// An edit that adds a reference is seen at once, and the edited text is
+	// parsed once, as is the module it newly names.
+	edited := []byte(mark + "EXTENDS Shared, Unread\n====\n")
+	if err := os.WriteFile(filepath.Join(root, "tla", "Leaf.tla"), edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		in, err := src.Inputs("MCTop.cfg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slicesContains(paths(in), "tla/Unread.tla") || slicesContains(first, "tla/Unread.tla") {
+			t.Fatalf("the edited module's new reference: before %v, after %v", first, paths(in))
+		}
+	}
+	if got := referencesParsedCount(edited); got != 1 {
+		t.Errorf("the edited text was parsed %d times, want once", got)
+	}
+	if got := referencesParsedCount(texts["Leaf"]); got != 1 {
+		t.Errorf("the text before the edit was parsed %d times, want the once it was", got)
+	}
+}
