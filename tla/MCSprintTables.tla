@@ -8,8 +8,11 @@ EXTENDS SprintTables, TLC
 MCStreams == {"s1", "s2"}
 MCPrimaries == {"p1", "p2", "p3"}
 MCPrimaries2 == {"p1", "p3"}
+MCPrimaries1 == {"p3"}
 MCStreamOf == [p \in Primaries |-> IF p = "p3" THEN "s2" ELSE "s1"]
 MCNeeds == [p \in Primaries |-> IF p = "p2" THEN {"p1"} ELSE {}]
+\* No needs: p1 and p2 can be queued in s1 together.
+MCNoNeeds == [p \in Primaries |-> {}]
 MCScore0 == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p2" -> 2 [] p = "p3" -> 3]
 \* Admission: every primary before the first step, or p2 admitted by add.
 MCAllAdmitted == Primaries
