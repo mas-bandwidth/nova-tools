@@ -89,7 +89,7 @@ func TestTheCorpusIsJudgedWithoutAPayload(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, true)
 	r := privacy.JudgeCorpus(privacy.Load(f.spec))
-	if r.Outcome != privacy.UnprovenClean || r.Checkable != 2 {
+	if r.Outcome != privacy.UnprovenClean || r.Checkable != 3 {
 		t.Errorf("outcome %s checkable %d", r.Outcome, r.Checkable)
 	}
 }

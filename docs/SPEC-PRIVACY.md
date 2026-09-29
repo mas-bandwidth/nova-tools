@@ -21,13 +21,25 @@ none.
 
 What makes an entry **private**, each rule on its own:
 
-- the marker (`(private)` by default) appears in its title, or in the first
-  200 runes of its body; further down, the marker is prose about privacy;
+- the marker (`(private)` by default) appears anywhere in its title or its
+  body. There is no window: a marked line far down an entry makes the whole
+  entry private, title included, since the lines before it are part of the
+  same idea;
+- a line of the preamble that carries the marker opens a private entry of its
+  own, running to the next entry. A preamble that explains the marker by
+  writing it therefore becomes a private entry; name the marker without
+  writing it to keep the preamble out of the corpus;
 - it is under a private heading: an entry opened by a heading token (`##`, or
   any token of `#` characters) that is private owns every entry after it until
   the next heading of the same or a higher level (`## ` or `# ` after a `## `
-  section), whether or not that heading opens an entry. Bullets and
-  sub-entries in that section are private, each still its own entry.
+  section), whether or not that heading opens an entry. A heading line inside
+  a body that carries the marker (`### A plan (private)` inside a `## ` entry
+  or a bullet) makes its entry private and owns what follows it from its own
+  level. Bullets and sub-entries in such a section are private, each still its
+  own entry.
+
+Together these leave no line that carries the marker outside a private entry;
+a property test checks that over thousands of arrangements of lines.
 
 The marker is matched case-insensitively with whitespace normalised on both
 sides: any Unicode space (a no-break space, a tab, an ideographic space) reads

@@ -32,12 +32,6 @@ const DefaultMarker = "(private)"
 // "---" rule open nothing.
 var DefaultEntryTokens = []string{"##", "-"}
 
-// MarkerScanRunes is how far into an entry's body the marker is looked for.
-// A marker in the opening declares the entry private; one further down is
-// prose about privacy. Counted in runes so non-ASCII text cannot move the
-// window.
-const MarkerScanRunes = 200
-
 // FlagThreshold is how many shared distinctive terms raise a flag. Two is
 // where unrelated prose brushes a private entry by accident.
 const FlagThreshold = 3
@@ -196,76 +190,99 @@ func (b Block) Measured() string {
 }
 
 // IsPrivate reports whether an entry is private: it is under a private
-// heading, or the marker is anywhere in its title, or within the first
-// MarkerScanRunes of its body.
+// heading, or the marker is anywhere in its title or its body. There is no
+// window: a marked line is never outside a private entry.
 func (r Rules) IsPrivate(b Block) bool {
-	return b.Heading != "" || r.HasMarker(b.Title) || r.HasMarker(headRunes(b.Body, MarkerScanRunes))
-}
-
-func headRunes(s string, n int) string {
-	i := 0
-	for idx := range s {
-		if i == n {
-			return s[:idx]
-		}
-		i++
-	}
-	return s
+	return b.Heading != "" || r.HasMarker(b.Title) || r.HasMarker(b.Body)
 }
 
 // ParseBlocks splits a source into its entries, in file order. Lines before
 // the first entry are a preamble and belong to no entry, since a preamble
-// commonly explains the marker and would otherwise declare itself private.
+// commonly explains the marker; but a preamble line that carries the marker
+// opens a private entry of its own, so no marked line is outside a private
+// entry.
 //
 // A private entry opened by a heading (a token of # characters) owns the
 // entries that follow it until the next heading of the same or a higher
 // level: each of them is private, and the heading's entry is measured with
-// their words.
+// their words. A heading line inside a body that carries the marker makes
+// its entry private and owns what follows it in the same way, from its own
+// level.
 func (r Rules) ParseBlocks(source, text string) []Block {
-	var out []Block
-	var body []string
-	title, open, level, heading := "", false, 0, ""
-	// owners are the private headings whose sections are open, outermost
-	// first, as indexes into out.
-	var owners []int
+	type owner struct {
+		idx, level int
+		title      string
+	}
+	var (
+		out    []Block
+		owners []owner // open private sections, outermost first
+		cur    Block
+		open   bool
+		// under are the owners the current entry was opened under; its words
+		// join their sections when it closes.
+		under []owner
+		// ownLevel and ownTitle make the current entry an owner when it
+		// closes: its own heading level, or a marked heading inside it.
+		ownLevel int
+		ownTitle string
+	)
 	flush := func() {
 		if !open {
 			return
 		}
-		b := Block{Source: source, Index: len(out), Title: title, Body: strings.Join(body, "\n"), Heading: heading, level: level}
-		for _, o := range owners {
-			out[o].Section += b.Text() + "\n"
+		cur.Index = len(out)
+		for _, o := range under {
+			out[o.idx].Section += cur.Text() + "\n"
 		}
-		out = append(out, b)
-		if level > 0 && r.IsPrivate(b) {
-			owners = append(owners, b.Index)
+		out = append(out, cur)
+		if ownLevel > 0 && r.IsPrivate(cur) {
+			owners = append(owners, owner{idx: cur.Index, level: ownLevel, title: ownTitle})
 		}
+		open = false
 	}
 	closeTo := func(lv int) {
-		for len(owners) > 0 && out[owners[len(owners)-1]].level >= lv {
+		for len(owners) > 0 && owners[len(owners)-1].level >= lv {
 			owners = owners[:len(owners)-1]
 		}
 	}
-	for _, ln := range strings.Split(text, "\n") {
+	start := func(ln string, lv int) {
+		title := strings.TrimSpace(strings.TrimLeft(ln, r.trimSet))
+		cur = Block{Source: source, Title: title, level: lv}
+		under = append([]owner(nil), owners...)
+		if len(owners) > 0 {
+			cur.Heading = owners[0].title
+		}
+		ownLevel, ownTitle, open = lv, title, true
+	}
+	var body []string
+	for _, raw := range strings.Split(text, "\n") {
+		ln := strings.TrimRight(raw, "\r")
 		lv := headingLevel(ln)
-		if r.opensEntry(ln) {
+		if r.opensEntry(ln) || (!open && r.HasMarker(ln)) {
+			if open {
+				cur.Body = strings.Join(body, "\n")
+			}
 			flush()
 			if lv > 0 {
 				closeTo(lv)
 			}
-			title = strings.TrimSpace(strings.TrimLeft(ln, r.trimSet))
-			body, open, level, heading = nil, true, lv, ""
-			if len(owners) > 0 {
-				heading = out[owners[0]].Title
-			}
+			start(ln, lv)
+			body = nil
 			continue
 		}
 		if lv > 0 {
 			closeTo(lv)
 		}
-		if open {
-			body = append(body, strings.TrimRight(ln, "\r"))
+		if !open {
+			continue
 		}
+		body = append(body, ln)
+		if lv > 0 && r.HasMarker(ln) && (ownLevel == 0 || lv < ownLevel) {
+			ownLevel, ownTitle = lv, strings.TrimSpace(strings.TrimLeft(ln, "# \t"))
+		}
+	}
+	if open {
+		cur.Body = strings.Join(body, "\n")
 	}
 	flush()
 	return out

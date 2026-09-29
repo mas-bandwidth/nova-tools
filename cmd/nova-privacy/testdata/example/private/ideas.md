@@ -1,4 +1,5 @@
-Entries marked (private) in the title are never quoted or paraphrased.
+Entries marked private in the title are never quoted or paraphrased. A line
+that writes the marker itself opens a private entry, so this one names it.
 
 ## A reading list for the winter
 the long novels, one a month, in the morning with coffee

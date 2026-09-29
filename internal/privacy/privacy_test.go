@@ -1,6 +1,8 @@
 package privacy_test
 
 import (
+	"fmt"
+	"math/rand/v2"
 	"reflect"
 	"strings"
 	"testing"
@@ -97,12 +99,13 @@ func TestSubHeadingsAndRulesDoNotOpenAnEntry(t *testing.T) {
 	}
 }
 
-// The preamble before the first entry belongs to no entry.
+// The preamble before the first entry belongs to no entry, unless a line of
+// it carries the marker.
 func TestThePreambleIsNotAnEntry(t *testing.T) {
 	t.Parallel()
 	r := privacy.DefaultRules()
 	blocks := r.ParseBlocks("ideas.md", strings.Join([]string{
-		"An entry whose title ends in `(private)` is never quoted.",
+		"Entries marked private in the title are never quoted.",
 		"",
 		"## An ordinary idea",
 		"nothing marked here",
@@ -112,29 +115,98 @@ func TestThePreambleIsNotAnEntry(t *testing.T) {
 	}
 }
 
-func TestTheMarkerIsReadFromTheOpeningOfABodyOnly(t *testing.T) {
+// A line that carries the marker is never outside a private entry. In the
+// preamble it opens a private entry of its own.
+func TestAMarkedPreambleLineOpensAPrivateEntry(t *testing.T) {
+	t.Parallel()
+	r := privacy.DefaultRules()
+	blocks := r.ParseBlocks("ideas.md", strings.Join([]string{
+		"A heading comes later.",
+		"The zarquon engine (private) is here before any heading,",
+		"flibberty wumpus quillback",
+		"## An ordinary idea",
+		"nothing marked here",
+	}, "\n"))
+	if len(blocks) != 2 || !r.IsPrivate(blocks[0]) || r.IsPrivate(blocks[1]) {
+		t.Fatalf("got %+v", blocks)
+	}
+	if !strings.Contains(blocks[0].Body, "flibberty") || strings.Contains(blocks[0].Text(), "comes later") {
+		t.Errorf("the entry runs from the marked line to the next entry: %+v", blocks[0])
+	}
+}
+
+// The marker anywhere in an entry makes the whole entry private: there is no
+// window past which a marked line is prose. The title and the lines before
+// the marked one are part of the same idea.
+func TestTheMarkerAnywhereInAnEntryMakesItPrivate(t *testing.T) {
 	t.Parallel()
 	r := privacy.DefaultRules()
 	near := r.ParseBlocks("ideas.md", "## An idea\nthis one is (private) and says so early")
 	if len(near) != 1 || !r.IsPrivate(near[0]) {
 		t.Errorf("a marker in the opening declares the entry private: %+v", near)
 	}
-	far := r.ParseBlocks("ideas.md", "## An idea\n"+strings.Repeat("x", privacy.MarkerScanRunes)+" and only now (private)")
-	if len(far) != 1 || r.IsPrivate(far[0]) {
-		t.Errorf("a marker past the opening is prose about privacy: %+v", far)
+	far := r.ParseBlocks("ideas.md", "## An idea\n"+strings.Repeat("一", 5000)+"\nand only now (private)")
+	if len(far) != 1 || !r.IsPrivate(far[0]) {
+		t.Errorf("a marker far down still declares the entry private: %+v", far)
 	}
 }
 
-func TestTheMarkerWindowIsCountedInRunes(t *testing.T) {
+// A private sub-heading deep inside a plain entry: the entry is private, and
+// the entries after the sub-heading are under it until a heading of its level
+// or higher.
+func TestAPrivateSubHeadingDeepInAnEntryIsPrivate(t *testing.T) {
 	t.Parallel()
 	r := privacy.DefaultRules()
-	body := strings.Repeat("一", privacy.MarkerScanRunes-len(privacy.DefaultMarker)) + privacy.DefaultMarker
-	if len(body) <= privacy.MarkerScanRunes {
-		t.Fatal("the fixture must exceed a byte window")
+	blocks := r.ParseBlocks("ideas.md", strings.Join([]string{
+		"- a plain bullet about the week",
+		strings.Repeat("ordinary words about the week. ", 10),
+		"### The zarquon engine (private)",
+		"flibberty wumpus zarquon quillback",
+		"- a bullet under the sub-heading",
+		"### A plain sub-heading",
+		"- a bullet after it",
+	}, "\n"))
+	if len(blocks) != 3 || !r.IsPrivate(blocks[0]) || !r.IsPrivate(blocks[1]) || r.IsPrivate(blocks[2]) {
+		t.Fatalf("got %+v", blocks)
 	}
-	blocks := r.ParseBlocks("ideas.md", "## An idea\n"+body)
-	if len(blocks) != 1 || !r.IsPrivate(blocks[0]) {
-		t.Error("a marker ending on rune 200 is inside the window")
+	if !strings.Contains(blocks[0].Measured(), "a bullet under the sub-heading") {
+		t.Errorf("the marked sub-heading's section is measured with the entry: %q", blocks[0].Measured())
+	}
+}
+
+// No arrangement of lines leaves a marked line outside a private entry.
+func TestNoMarkedLineIsEverOutsideAPrivateEntry(t *testing.T) {
+	t.Parallel()
+	shapes := []string{
+		"## a heading", "## a heading (private)", "### a sub-heading", "### a sub (private)",
+		"# a top heading", "# a top (private)", "- a bullet", "- a bullet (private)",
+		"  - an indented bullet (private)", "plain prose", "prose with the (private) marker",
+		"", "---", "* a star bullet (private)",
+	}
+	r := privacy.DefaultRules()
+	rng := rand.New(rand.NewPCG(1, 2))
+	for doc := 0; doc < 3000; doc++ {
+		n := 1 + rng.IntN(12)
+		lines := make([]string, n)
+		for i := range lines {
+			lines[i] = fmt.Sprintf("%s w%d", shapes[rng.IntN(len(shapes))], i)
+		}
+		blocks := r.ParseBlocks("x.md", strings.Join(lines, "\n"))
+		for i, ln := range lines {
+			if !r.HasMarker(ln) {
+				continue
+			}
+			tag := fmt.Sprintf(" w%d", i)
+			covered := false
+			for _, b := range blocks {
+				if r.IsPrivate(b) && (strings.HasSuffix(b.Title, tag) || strings.Contains(b.Body+"\n", tag+"\n")) {
+					covered = true
+				}
+			}
+			if !covered {
+				t.Fatalf("line %d %q is outside every private entry:\n%s\n%+v", i, ln, strings.Join(lines, "\n"), blocks)
+			}
+		}
 	}
 }
 
@@ -159,7 +231,7 @@ func TestBulletsAreEntriesToo(t *testing.T) {
 	t.Parallel()
 	r := privacy.DefaultRules()
 	blocks := r.ParseBlocks("later.md", strings.Join([]string{
-		"`(private)` entries are never quoted.",
+		"Entries marked private are never quoted.",
 		"",
 		"- [2026-01-05] **(private)** the lantern project",
 		"- [2026-01-05] an ordinary parked idea",

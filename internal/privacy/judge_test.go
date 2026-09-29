@@ -110,7 +110,7 @@ func TestASourceWithNoEntriesIsUnreadableByName(t *testing.T) {
 	for name, body := range map[string]string{
 		"empty":                  "",
 		"prose with no opener":   "a paragraph of notes with no heading at all\n",
-		"top headings only":      "# The zarquon engine (private)\nflibberty wumpus zarquon\n",
+		"top headings only":      "# The zarquon engine\nflibberty wumpus zarquon\n",
 		"every source empty too": "",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestAByteOrderMarkDoesNotHideTheFirstEntry(t *testing.T) {
 	f := newFixture(t, true)
 	body := "## The zarquon engine (private)\nflibberty wumpus zarquon\n## Plain\nordinary\n"
 	f.write(t, "private/upkeep.md", "\ufeff"+body)
-	if r := privacy.Screen(f.spec, harmless); r.Private != 3 || r.Sources[1].Private != 1 {
+	if r := privacy.Screen(f.spec, harmless); r.Sources[1].Blocks != 2 || r.Sources[1].Private != 1 {
 		t.Errorf("private %d source row %+v, want the first entry private", r.Private, r.Sources[1])
 	}
 	f.write(t, "private/upkeep.md", string(utf16Bytes(body, false, true)))
@@ -255,8 +255,10 @@ func TestAnInnocuousPayloadIsUnprovenCleanAndReportsItsCoverage(t *testing.T) {
 	if r.Outcome != privacy.UnprovenClean || !r.Outcome.Cleared() || len(r.Flags) != 0 {
 		t.Fatalf("outcome %s flags %+v", r.Outcome, r.Flags)
 	}
-	if r.Private != 2 || r.Checkable != 2 {
-		t.Errorf("private %d checkable %d, want 2 and 2", r.Private, r.Checkable)
+	// The third private entry is the preamble line of later.md that writes
+	// the marker: a marked line is never outside a private entry.
+	if r.Private != 3 || r.Checkable != 3 {
+		t.Errorf("private %d checkable %d, want 3 and 3", r.Private, r.Checkable)
 	}
 	if !strings.Contains(r.Summary(), "able to raise a flag") {
 		t.Errorf("the summary names its coverage: %q", r.Summary())
@@ -328,5 +330,17 @@ func TestALeakOfAPrivateHeadingsBulletsIsFlagged(t *testing.T) {
 	}
 	if r.Sources[1].Private != 5 {
 		t.Errorf("source row %+v, want all five entries private", r.Sources[1])
+	}
+}
+
+// The cold read's shape: a private sub-heading far into a plain entry.
+func TestAPrivateSubHeadingPastTheOpeningIsFlagged(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	f.write(t, "private/upkeep.md", "## Notes on the week\n"+strings.Repeat("ordinary words about the week. ", 10)+
+		"\n### The quillback engine (private)\nflibberty wumpus quillback snorkelwick\n\n## The last plan (private)\nbramblethorn thistledown\n")
+	r := privacy.Screen(f.spec, "thinking about the quillback flibberty wumpus again")
+	if r.Outcome != privacy.Flagged || r.Flags[0].Title != "Notes on the week" {
+		t.Errorf("outcome %s flags %+v", r.Outcome, r.Flags)
 	}
 }
