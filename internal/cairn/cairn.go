@@ -338,27 +338,14 @@ func entryPath(store, session, id string) string {
 	return filepath.Join(store, "entries", session, id+".json")
 }
 
-// appendLine adds one line to a file, creating it, and fsyncs before return.
-func appendLine(d *dirs, name, line string) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return err
+// openLog opens the store's append-only log for appending, creating it. It is
+// opened before anything is stored, and the event is written through the
+// handle after, so a log that cannot be used refuses the verb with nothing stored.
+func (d *dirs) openLog(store string) (*os.File, error) {
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		return nil, err
 	}
-	f, err := d.openFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return fsyncDir(filepath.Dir(name))
+	return d.openFile(filepath.Join(store, "log.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 }
 
 func fsyncDir(dir string) error {
@@ -371,8 +358,9 @@ func fsyncDir(dir string) error {
 	return nil
 }
 
-// appendLog records one event on the store's append-only log.
-func appendLog(d *dirs, store, event, session, id, stamp, policy, source string) error {
+// appendLog records one event on the store's append-only log, through the open
+// handle f, and fsyncs before return.
+func appendLog(f *os.File, event, session, id, stamp, policy, source string) error {
 	rec, _ := json.Marshal(map[string]string{
 		"event":   event,
 		"session": session,
@@ -381,7 +369,13 @@ func appendLog(d *dirs, store, event, session, id, stamp, policy, source string)
 		"publish": policy,
 		"source":  source,
 	})
-	return appendLine(d, filepath.Join(store, "log.jsonl"), string(rec))
+	if _, err := f.WriteString(string(rec) + "\n"); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return fsyncDir(filepath.Dir(f.Name()))
 }
 
 // SessionSource reads back the --source the session was opened with. In the
@@ -494,6 +488,11 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
+	logf, err := d.openLog(store)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return err
 	}
@@ -503,7 +502,7 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
 		return err
 	}
-	return appendLog(d, store, "open", session, "", stamp, publish, source)
+	return appendLog(logf, "open", session, "", stamp, publish, source)
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -627,6 +626,13 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		Publish: publish,
 		Text:    text,
 	})
+	// Everything that can refuse is opened before the entry is stored: the
+	// record is held, and the log is opened here.
+	logf, err := d.openLog(store)
+	if err != nil {
+		return res, err
+	}
+	defer logf.Close()
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return res, err
 	}
@@ -639,7 +645,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err := ensurePointer(rec, raw, id, stamp); err != nil {
 		return res, err
 	}
-	if err := appendLog(d, store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
+	if err := appendLog(logf, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
