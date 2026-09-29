@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -748,7 +749,7 @@ func TestInventoryHostNamingNoMachineIsRefused(t *testing.T) {
 	if code != 1 || out != "" {
 		t.Fatalf("exit %d stdout %q, want 1 and nothing", code, out)
 	}
-	want := "nova-config inventory: --host nosuch names no machine row; known machines: bench-01, bench-02, bench-03; run: nova-config machine list\n"
+	want := "nova-config inventory: --host \"nosuch\" names no machine row; known machines: bench-01, bench-02, bench-03; run: nova-config machine list\n"
 	if errs != want {
 		t.Fatalf("refusal:\n got %q\nwant %q", errs, want)
 	}
@@ -1045,7 +1046,7 @@ func TestInventoryUnknownNovaMachineIsRefused(t *testing.T) {
 			h.env["NOVA_MACHINE"] = self
 			args := append([]string{"inventory"}, extra...)
 			code, out, errs := h.run(t, args...)
-			want := "nova-config inventory: NOVA_MACHINE=" + self + " names no machine row (the name is matched exactly); known machines: bench-01, bench-02; run: nova-config machine list\n"
+			want := "nova-config inventory: NOVA_MACHINE=" + strconv.Quote(self) + " names no machine row (the name is matched exactly); known machines: bench-01, bench-02; run: nova-config machine list\n"
 			if code != 1 || out != "" || errs != want {
 				t.Fatalf("NOVA_MACHINE=%q %v: exit %d stdout %q stderr %q\nwant %q", self, extra, code, out, errs, want)
 			}
@@ -1152,5 +1153,20 @@ func TestInventoryRefusedConnectionKeepsTheGenericRefusal(t *testing.T) {
 	code, out, errs := h.run(t, "inventory", "--pg", "postgres://nova_config@127.0.0.1:5432/closed")
 	if code != 2 || out != "" || !strings.Contains(errs, "connection refused") || strings.Contains(errs, "timed out") || !strings.HasSuffix(errs, "; run: nova-config help\n") {
 		t.Fatalf("exit %d stdout %q stderr %q", code, out, errs)
+	}
+}
+
+func TestInventoryRefusalsQuoteTheValueSoAStraySpaceShows(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 1)
+	_, _, errs := h.run(t, "inventory", "--host", "bench-01 ")
+	if !strings.Contains(errs, `--host "bench-01 " names no machine row`) {
+		t.Fatalf("--host: %q", errs)
+	}
+	h.env["NOVA_MACHINE"] = " bench-01"
+	_, _, errs = h.run(t, "inventory")
+	if !strings.Contains(errs, `NOVA_MACHINE=" bench-01" names no machine row`) {
+		t.Fatalf("NOVA_MACHINE: %q", errs)
 	}
 }

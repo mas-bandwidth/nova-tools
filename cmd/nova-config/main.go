@@ -1005,7 +1005,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		if *pg != "" {
 			next += " --pg " + shq(*pg)
 		}
-		return refused(stderr, verb, fmt.Sprintf("%s=%s names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), next)
+		return refused(stderr, verb, fmt.Sprintf("%s=%q names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), next)
 	}
 	if hostGiven {
 		data, err := inv.HostJSON(*host)
@@ -1015,7 +1015,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			if *pg != "" {
 				next += " --pg " + shq(*pg)
 			}
-			return refused(stderr, verb, fmt.Sprintf("--host %s names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), next)
+			return refused(stderr, verb, fmt.Sprintf("--host %q names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), next)
 		}
 		if err != nil {
 			return refuse(stderr, verb, err.Error())
