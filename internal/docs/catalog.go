@@ -24,6 +24,8 @@ var DefaultCatalog = []Entry{
 	E("scripts", "maintenance and operational scripts", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
+	E("playbooks", "Ansible playbooks for fleet bench runners and hosts", "none", "none"),
+	E("roles", "Ansible roles for fleet bench runners and hosts", "none", "none"),
 
 	// cmd/
 	E("cmd/nova-bus", "coordination bus inbox, send, and wait CLI", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),

@@ -1,0 +1,53 @@
+---
+# tasks/redis.yml for wsl2_bench_runner role
+# ==============================================================================
+# Configures and manages redis-server on the WSL2 bench runner.
+# ==============================================================================
+
+- name: ensure redis-server package is installed
+  ansible.builtin.apt:
+    name:
+      - redis-server
+      - redis-tools
+    state: present
+  when: ansible_pkg_mgr == 'apt' and not ansible_check_mode
+
+- name: configure redis-server bind and protected-mode
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^bind '
+    line: "bind {{ bench_wsl2_redis_bind }}"
+    owner: redis
+    group: redis
+    mode: "0640"
+  notify: restart redis
+  when: not ansible_check_mode
+
+- name: configure redis-server port
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^port '
+    line: "port {{ bench_wsl2_redis_port }}"
+    owner: redis
+    group: redis
+    mode: "0640"
+  notify: restart redis
+  when: not ansible_check_mode
+
+- name: configure redis-server protected mode
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^protected-mode '
+    line: "protected-mode {{ bench_wsl2_redis_protected_mode }}"
+    owner: redis
+    group: redis
+    mode: "0640"
+  notify: restart redis
+  when: not ansible_check_mode
+
+- name: ensure redis service is enabled and started
+  ansible.builtin.service:
+    name: "{{ bench_wsl2_redis_service }}"
+    enabled: true
+    state: started
+  when: not ansible_check_mode

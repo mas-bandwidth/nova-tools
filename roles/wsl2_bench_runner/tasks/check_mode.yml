@@ -1,5 +1,5 @@
 ---
-# tasks/check_mode.yml for bench-wsl2 role
+# tasks/check_mode.yml for wsl2_bench_runner role
 # ==============================================================================
 # Validates check mode and provides status receipt matching fleet standards.
 # ==============================================================================

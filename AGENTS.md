@@ -20,7 +20,9 @@ make map            # regenerate AGENTS.md and per-directory maps
 | `fleet/` | fleet loop units and bench templates | none | none |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
+| `playbooks/` | Ansible playbooks for fleet bench runners and hosts | none | none |
 | `profiles/` | the darwin sandbox profile template internal/sandbox embeds, and its check script | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
+| `roles/` | Ansible roles for fleet bench runners and hosts | none | none |
 | `scripts/` | maintenance and operational scripts | none | none |
 | `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
 | `tla/` | the TLA+ models of the state machines and their runners | `tla/check_table.py, tla/check_member.py (each under a 120 s budget)` | none |

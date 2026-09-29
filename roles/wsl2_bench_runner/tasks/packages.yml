@@ -1,0 +1,20 @@
+---
+# tasks/packages.yml for wsl2_bench_runner role
+# ==============================================================================
+# Installs foundational bench packages on Ubuntu/Debian.
+# ==============================================================================
+
+- name: install required system packages
+  ansible.builtin.apt:
+    name: "{{ bench_wsl2_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_pkg_mgr == 'apt' and not ansible_check_mode
+
+- name: ensure ssh service is enabled and running
+  ansible.builtin.service:
+    name: ssh
+    enabled: true
+    state: started
+  when: not ansible_check_mode

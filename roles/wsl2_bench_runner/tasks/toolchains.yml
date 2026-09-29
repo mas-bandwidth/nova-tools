@@ -1,5 +1,5 @@
 ---
-# tasks/toolchains.yml for bench-wsl2 role
+# tasks/toolchains.yml for wsl2_bench_runner role
 # ==============================================================================
 # Configures Go, Rust, Nova tools, and .NET toolchains for the runner user.
 # Fully supports check mode, idempotency, and dynamic user homes.

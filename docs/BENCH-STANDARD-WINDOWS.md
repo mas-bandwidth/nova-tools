@@ -76,21 +76,25 @@ machine row goes in with `nova-config machine add`, its tools arrive with
 `nova-update release adopt --platform linux-amd64`, and `tools/bench-standard.sh`
 is its standard.
 
-## Ansible provisioning: `fleet/roles/bench-wsl2`
+## Ansible provisioning: `roles/wsl2_bench_runner`
 
 Once the host bootstrap completes and sshd is answering on the tailnet, the bench
-is managed through the Ansible role `bench-wsl2` (`fleet/bench-wsl2.yml`).
+is managed through the Ansible role `wsl2_bench_runner` (`playbooks/wsl2_bench_runner.yml`
+and `fleet/bench-wsl2.yml`; see [FLEET.md](FLEET.md)).
 The role provisions:
-- the runner user (`nova`), sudoers privileges, `/etc/wsl.conf`, and git identity;
-- toolchains: Go SDK under `~/sdk` and .NET SDK (`dotnet`);
+- preflight platform checks: validates Windows host mount (`/mnt/c`), System32 tools, and WSL distro registration;
+- the runner user, sudoers privileges, `/etc/wsl.conf` (systemd boot), and git identity without hardcoded homes;
+- toolchains: Go SDK under `~/sdk`, Rust (`rustc`/`cargo`), Nova tools (`~/.local/bin`), and .NET SDK (`dotnet`);
 - `redis-server` and `redis-tools` under systemd;
 - machine identity resolution via Tailscale, creating `~/nova-bench/identity.tsv`
   and `/etc/nova-bench/identity.env`.
 
 Check mode validates configuration without applying changes:
 ```
+ansible-playbook --syntax-check playbooks/wsl2_bench_runner.yml
 ansible-playbook --syntax-check fleet/bench-wsl2.yml
-ansible-playbook -i inventory.py fleet/bench-wsl2.yml --check --diff
+ansible-playbook -i inventory.py playbooks/wsl2_bench_runner.yml --check --diff
 ```
+Automated verification is run via `scripts/verify-wsl2-bench-role.sh`.
 The role is converged on a Windows WSL2 machine when Glenn names it.
 

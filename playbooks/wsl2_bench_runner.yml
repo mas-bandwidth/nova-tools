@@ -1,0 +1,9 @@
+---
+# playbooks/wsl2_bench_runner.yml: configure Windows WSL2 machine as a Linux bench runner.
+# Aligns with docs/FLEET.md, docs/BENCH-STANDARD-WINDOWS.md, and tools/bench-wsl2.ps1.
+- name: configure WSL2 Linux bench runner
+  hosts: "{{ target | default('wsl2_benches:benches') }}"
+  gather_facts: true
+  become: true
+  roles:
+    - role: wsl2_bench_runner

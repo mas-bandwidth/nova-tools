@@ -1,5 +1,5 @@
 ---
-# tasks/tailnet.yml for bench-wsl2 role
+# tasks/tailnet.yml for wsl2_bench_runner role
 # ==============================================================================
 # Resolves tailnet name and IPv4 as machine identity, establishing durable
 # swarm pool identity and machine environment files.

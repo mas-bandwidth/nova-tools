@@ -1,7 +1,7 @@
 ---
-# vars/main.yml for bench-wsl2 role
+# vars/main.yml for wsl2_bench_runner role
 # ==============================================================================
-# Internal variables and path configurations for bench-wsl2 role.
+# Internal variables and path configurations for wsl2_bench_runner role.
 # ==============================================================================
 
 bench_wsl2_standard_dirs:

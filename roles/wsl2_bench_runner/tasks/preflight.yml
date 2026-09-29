@@ -1,5 +1,5 @@
 ---
-# tasks/preflight.yml for bench-wsl2 role
+# tasks/preflight.yml for wsl2_bench_runner role
 # ==============================================================================
 # Validates platform, Windows filesystem mounts, and WSL distro registration.
 # ==============================================================================

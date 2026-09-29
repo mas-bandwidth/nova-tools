@@ -1,5 +1,5 @@
 ---
-# tasks/runner.yml for bench-wsl2 role
+# tasks/runner.yml for wsl2_bench_runner role
 # ==============================================================================
 # Provisions runner user, passwordless sudo, wsl.conf, system environment,
 # bench directories, and git commit identity without hardcoded user homes.

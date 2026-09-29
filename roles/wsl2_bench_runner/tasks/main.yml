@@ -1,7 +1,7 @@
 ---
-# tasks/main.yml for bench-wsl2 role
+# tasks/main.yml for wsl2_bench_runner role
 # ==============================================================================
-# bench-wsl2: Configures Windows machine running WSL2 as a Linux bench.
+# wsl2_bench_runner: Configures Windows machine running WSL2 as a Linux bench runner.
 # Order: preflight -> runner -> packages -> toolchains -> redis -> tailnet -> check
 # ==============================================================================
 

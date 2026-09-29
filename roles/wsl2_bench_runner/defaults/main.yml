@@ -1,7 +1,7 @@
 ---
-# defaults/main.yml for bench-wsl2 role
+# defaults/main.yml for wsl2_bench_runner role
 # ==============================================================================
-# bench-wsl2: Ansible role configuring Windows WSL2 machines as Linux benches.
+# wsl2_bench_runner: Ansible role configuring Windows WSL2 machines as Linux benches.
 # Aligns with docs/FLEET.md, docs/BENCH-STANDARD-WINDOWS.md, and tools/bench-wsl2.ps1.
 # ==============================================================================
 
