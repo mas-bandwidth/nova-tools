@@ -38,9 +38,9 @@ func newInjectStore(t *testing.T, td, sopsPath string) injectStore {
 		t.Fatal(err)
 	}
 	initGitStore(t, s.storeDir)
-	s.recovery = genKey(t, td, "recovery")
-	s.rowan = genKey(t, td, "rowan")
-	s.air = genKey(t, td, "air")
+	s.recovery = genRealKey(t, td, "recovery")
+	s.rowan = genRealKey(t, td, "rowan")
+	s.air = genRealKey(t, td, "air")
 	if err := os.WriteFile(filepath.Join(s.storeDir, "recovery.pub"), []byte(s.recovery.pubKey+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -49,10 +49,10 @@ func newInjectStore(t *testing.T, td, sopsPath string) injectStore {
 	if err := os.WriteFile(filepath.Join(s.storeDir, ".sops.yaml"), []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
-	sealFileWithSops(t, sopsPath, filepath.Join(s.storeDir, "rowan.yaml"),
+	sealFileWithRealSops(t, sopsPath, filepath.Join(s.storeDir, "rowan.yaml"),
 		[]string{s.rowan.pubKey, s.recovery.pubKey},
 		"GH_TOKEN: carried-token\nNOVA_REDIS_BENCH_PASSWORD: redis-new\nLEFT_BEHIND: stays-home\n")
-	sealFileWithSops(t, sopsPath, filepath.Join(s.storeDir, "air.yaml"),
+	sealFileWithRealSops(t, sopsPath, filepath.Join(s.storeDir, "air.yaml"),
 		[]string{s.air.pubKey, s.recovery.pubKey},
 		"GH_TOKEN: carried-token\nNOVA_REDIS_BENCH_PASSWORD: redis-old\n")
 	commitAndPush(t, s.storeDir)
@@ -65,7 +65,7 @@ var injectValues = []string{"carried-token", "redis-new", "redis-old", "stays-ho
 func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 	t.Parallel()
 
-	sopsPath := findSops(t)
+	sopsPath := findRealSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
 	s := newInjectStore(t, td, sopsPath)
@@ -135,7 +135,7 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 func TestSeatInjectRefusesASeatWithNoFile(t *testing.T) {
 	t.Parallel()
 
-	sopsPath := findSops(t)
+	sopsPath := findRealSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
 	s := newInjectStore(t, td, sopsPath)
@@ -173,7 +173,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 		"SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
 	}
 
-	sopsPath := findSops(t)
+	sopsPath := findRealSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
 	home := filepath.Join(td, "home")
