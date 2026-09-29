@@ -13,6 +13,11 @@ MCStreamOf == [p \in Primaries |-> IF p = "p3" THEN "s2" ELSE "s1"]
 MCNeeds == [p \in Primaries |-> IF p = "p2" THEN {"p1"} ELSE {}]
 \* No needs: p1 and p2 can be queued in s1 together.
 MCNoNeeds == [p \in Primaries |-> {}]
+\* Needs across streams: p3 (s2) needs p1 (s1) too.
+MCNeedsCross == [p \in Primaries |-> IF p \in {"p2", "p3"} THEN {"p1"} ELSE {}]
+\* A cycle across streams, which add must refuse.
+MCNeedsCycle == [p \in Primaries |-> CASE p = "p1" -> {"p3"} [] p = "p3" -> {"p1"} [] OTHER -> {}]
+MCNone == {}
 MCScore0 == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p2" -> 2 [] p = "p3" -> 3]
 \* Admission: every primary before the first step, or p2 admitted by add.
 MCAllAdmitted == Primaries
