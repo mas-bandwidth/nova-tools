@@ -28,6 +28,11 @@ import (
 var server *pg.Server
 
 func TestMain(m *testing.M) {
+	// The wrapper test's helper process (TestInventoryHelperProcess) is this
+	// binary serving an in-memory store: it starts no Postgres.
+	if os.Getenv("NOVA_CONFIG_TEST_HELPER") == "1" {
+		os.Exit(m.Run())
+	}
 	dir, err := os.MkdirTemp("", "nova-config-pg-")
 	if err != nil {
 		panic(err)
