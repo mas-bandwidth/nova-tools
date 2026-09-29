@@ -36,3 +36,62 @@ a shared bench: CPU is for real work, and CI runs the whole tree on every push t
 dev. No doc and no card spells it (`internal/ci`: `TestNoWholeTreeGoTestInDocs`).
 Outside a nova-tools checkout, test only the packages you touched:
 `nice -n 15 go test -p 2 -count=1 <packages>`.
+
+## The functional tier runs inside a container
+
+Unit tests run as they are. The functional tier (the tests behind
+`//go:build functional`, which start `redis-server`, `postgres`, built binaries
+and child processes) runs inside ONE container per run, and never bare on a
+shared machine: every dependency a test starts lives and dies with its
+container. The fixtures are unchanged; they start their dependencies as child
+processes, and those are inside the container.
+
+```sh
+make test-functional-container PKGS=./internal/ntable/...
+```
+
+Name the packages. The run needs rootless `podman` (on macOS, a running
+`podman machine`) and the image's build context, `infra/functional-image`
+(`FUNCTIONAL_CONTEXT=<dir>` names another). The target calls
+`tools/functionalrun`, which, in order:
+
+1. **reaps**: removes every container carrying its run label whose deadline
+   label, plus a grace, has passed, in any state. It selects by label, never by
+   name, and touches nothing else: no other container, no volume, no process;
+2. **builds or reuses the image**, tagged by the hash of the build context, so an
+   unchanged context is never built twice;
+3. **uses this user's own cache volumes**, `nova-functional-gocache-uid<uid>` and
+   `nova-functional-gomod-uid<uid>`, labelled with their owner; a volume of
+   another owner is refused. The caches persist between runs and carry no run
+   label, so they are never reaped and never counted as leftovers;
+4. **fills the module cache** in one networked step (`go mod download`, skipped
+   when the cache was filled for the same `go.mod` and `go.sum`);
+5. **runs `make test-functional PKGS=...` in one container**: the tree mounted
+   read-only at `/src`, `/tmp` and the home directory as tmpfs scratch, the build
+   cache read-write, the module cache read-only, `--network none`, a private IPC
+   namespace, limits on CPUs, memory (no swap) and pids, and the deadline
+   (`FUNCTIONAL_DEADLINE`, default `10m`) enforced from outside the container by
+   the runtime's own `--timeout`, which holds even when the client is killed.
+   Inside, `timeout` ends the run 10 s before the deadline and `go test
+   -timeout` 20 s before it, so a hang prints its stack first;
+6. **removes the container** at the end whatever happened: a pass, a failure,
+   the deadline, or an interrupt (Ctrl-C reaches the tool, which removes the
+   container, never the runtime's client alone). It then counts the run's
+   containers by label and prints one line:
+
+```
+FUNCTIONAL RUN run=<id> ended=finished exit=0 wall=19.8s build=0.0s modcache=1.1s total=21.5s containers_left=0
+```
+
+The test output comes through unchanged on stdout and stderr, and the exit code
+is `make test-functional`'s (0 green, 2 a red test or build), except where the
+tool ended the run: 124 the deadline, 130 an interrupt, 125 the run could not
+start or a container of the run was still present at the end.
+
+The tool by hand, for its flags (`--cpus`, `--memory`, `--pids`, `--scratch`,
+`--grace`, `--image`, the volume names):
+
+```sh
+go run ./tools/functionalrun help
+go run ./tools/functionalrun reap --dry-run    # what the reaper would remove
+```

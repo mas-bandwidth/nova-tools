@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -94,6 +94,7 @@ help:
 	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
 	@echo "make test-functional the functional tier: only the tests behind //go:build functional in PKGS, -p GOTEST_P"
+	@echo "make test-functional-container the functional tier of PKGS inside one container (tools/functionalrun; TESTING.md)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout SHORT_TIMEOUT PKGS"
 	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
@@ -292,6 +293,19 @@ FUNCTIONAL_TIMEOUT ?= 100s
 test-functional: PKGS = $(CL_PKGS)
 test-functional:
 	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; case "$$sel" in "CI FUNCTIONAL OK "*) echo "functional: $$sel"; exit 0;; "") echo "functional: nova-ci functional printed nothing; refusing to run nothing in silence" >&2; exit 2;; esac; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
+
+# THE FUNCTIONAL TIER IN A CONTAINER. test-functional-container runs the target
+# above inside one container per run (tools/functionalrun, TESTING.md): the
+# image built from FUNCTIONAL_CONTEXT or reused, the tree mounted read-only,
+# tmpfs scratch, this user's own Go cache volumes, no network, and
+# FUNCTIONAL_DEADLINE enforced from outside the container by the runtime. The
+# container is removed whatever happens, and every container of an earlier run
+# past its deadline is reaped first. Output and exit code are the target's.
+FUNCTIONAL_DEADLINE ?= 10m
+FUNCTIONAL_CONTEXT ?= infra/functional-image
+test-functional-container: PKGS = $(CL_PKGS)
+test-functional-container:
+	$(GO) run ./tools/functionalrun run --deadline $(FUNCTIONAL_DEADLINE) --context $(FUNCTIONAL_CONTEXT) $(PKGS)
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
