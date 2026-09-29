@@ -338,10 +338,16 @@ func TestFunctionalImageBuildLeavesNothingBehind(t *testing.T) {
 			runsApt[stage] = true
 		}
 		if strings.HasPrefix(in, "RUN ") && strings.Contains(in, "Verify-Peer=false") {
+			first := in[:strings.Index(in, "Verify-Peer=false")]
 			after := in[strings.LastIndex(in, "Verify-Peer=false"):]
 			after = after[strings.Index(after, " "):]
-			if !strings.Contains(after, "apt-get update") || !strings.Contains(after, "--reinstall") {
-				t.Errorf("%s: the RUN that reads the snapshot without TLS checks does not then update and --reinstall with them on; the snapshot instant is not enforced for what the first call installed", functionalImageFile)
+			if !strings.Contains(first, "dpkg-query -W") {
+				t.Errorf("%s: the RUN that reads the snapshot without TLS checks does not record the installed versions before it", functionalImageFile)
+			}
+			for _, want := range []string{"apt-get update", "comm -13", "apt-cache policy", "Candidate:", "exit 1"} {
+				if !strings.Contains(after, want) {
+					t.Errorf("%s: after the call without TLS checks the RUN lacks %q; it must refresh the index with TLS on and fail when any package that call installed differs from the verified candidate", functionalImageFile, want)
+				}
 			}
 		}
 		if strings.HasPrefix(in, "RUN ") && strings.Contains(in, "postgresql-16") && !strings.Contains(in, "ssl-cert-snakeoil.key") {

@@ -34,9 +34,13 @@ ARG DEBIAN_FRONTEND=noninteractive
 # verifying the peer. The archive's own signature (Signed-By) vouches for every
 # package, but Ubuntu's release files carry no Valid-Until, so on that one call
 # an attacker in the path could replay an older, genuinely signed release, and
-# the snapshot instant would not hold. The second call, with TLS verified,
-# reinstalls the same two packages from the snapshot the URL names: from then on
-# every package is the snapshot's.
+# the snapshot instant would not hold for what it installed. The step records
+# the installed versions before that call, refreshes the index with TLS
+# verified once ca-certificates is there, and fails the build when any package
+# the first call installed or changed differs from the verified index's
+# candidate. It detects a replay; it does not stop the replayed packages' own
+# install scripts from having run in this build stage. The base image's other
+# packages are the base image's, pinned by its digest, and are not compared.
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
  && printf '%s\n' \
       'Types: deb' \
@@ -45,11 +49,16 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
       'Components: main universe' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/snapshot.sources \
+ && dpkg-query -W -f='${binary:Package} ${Version}\n' | sort > /tmp/before \
  && apt-get -o Acquire::https::Verify-Peer=false update \
  && apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates \
  && apt-get update \
- && apt-get install -y --no-install-recommends --reinstall ca-certificates openssl \
- && rm -rf /var/lib/apt/lists/*
+ && dpkg-query -W -f='${binary:Package} ${Version}\n' | sort > /tmp/after \
+ && comm -13 /tmp/before /tmp/after | while read -r pkg ver; do \
+      cand="$(apt-cache policy "${pkg}" | sed -n 's/^  Candidate: //p')"; \
+      test "${ver}" = "${cand}" || { echo "${pkg} ${ver} was installed without TLS checks; the snapshot has ${cand}" >&2; exit 1; }; \
+    done \
+ && rm -rf /var/lib/apt/lists/* /tmp/before /tmp/after
 
 # ---- fetch: the vendor binaries, each checked against its sha256 ----
 # Kept in its own stage so curl is not in the image.
