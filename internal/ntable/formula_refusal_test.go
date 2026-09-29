@@ -7,9 +7,9 @@ import "testing"
 func TestFormulaRefusalRemedies(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name  string
-		wire  []any
-		want  string
+		name string
+		wire []any
+		want string
 	}{
 		{"missing source", []any{"REFUSED", "FORMULA", "okpct", "nope", "missing"}, "nova-table col add 'fleet' 'nope'"},
 		{"retyped source", []any{"REFUSED", "FORMULA", "okpct", "note", "text"}, "nova-table show 'fleet'"},
