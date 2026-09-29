@@ -6,7 +6,7 @@ LEGS: go, make
 MODE: explore
 TURNS: 40
 DEADLINE: finish within 45 minutes
-SOURCE: mas-bandwidth/nova-tools#1282 (the coordinator's hostile-input run on hulk: 36 of 40 cases pass, the four HOME cases fail)
+SOURCE: mas-bandwidth/nova-tools#1282 (the coordinator's hostile-input run on the bench: 36 of 40 cases pass, the four HOME cases fail)
 BASE: dev@1af36d0eb0393557664aca861a50686d22193837 (every anchor below re-read at this head)
 SPEC: docs/SPEC-TOOLWORK.md §5 kind `fix-red`
 ROUTE: jev=opus conf=0.90 floor=0.65 why=kind-fix-with-red-test-starts-at-opus eligible=rules ask=child
@@ -53,7 +53,7 @@ ANCHORS, verified at `1af36d0e`:
 
 | what | where |
 |---|---|
-| **the unguarded head, where the guard goes** | `scripts/bench-hygiene.sh:30` `set -u; set -o pipefail` -- then `:31` `LOG=$HOME/hygiene.log; ...` and `:32` `ROOT1=$HOME/rowan-swarm-root; ROOT2=$HOME/rowan-working/tmp`. Every path the script may remove is built from `$HOME` at `:31-32`, and nothing between `:30` and `:32` checks it. |
+| **the unguarded head, where the guard goes** | `scripts/bench-hygiene.sh:30` `set -u; set -o pipefail` -- then `:31` `LOG=$HOME/hygiene.log; ...` and `:32` `ROOT1=$HOME/swarm-root; ROOT2=$HOME/working/tmp`. Every path the script may remove is built from `$HOME` at `:31-32`, and nothing between `:30` and `:32` checks it. |
 | the refusal helper already in the file | `scripts/bench-hygiene.sh:35` `refuse() { log "REFUSE $1 ($2)"; printf 'REFUSED %s (%s)\n' "$1" "$2" >&2; return 2; }` -- it writes to `$LOG`, so it is NOT usable for this guard, which must fire BEFORE `$LOG` is built. Print and exit directly. |
 | the verb dispatch, and the two safe verbs | `scripts/bench-hygiene.sh:138-146` -- `run`, `reap`, `delete-job`, `delete-slot`, `drop-cache`, `log`. `log` is read-only (`v_log` tails `$LOG`); `run --dry-run` is set at `:31` and deletes nothing. |
 | **the class-test pattern to copy, exactly** | `internal/ci/benchstandard_disk_test.go` -- package `ci`, runs `tools/bench-standard.sh` under `exec.Command` with a `HOME` of its own and a fake tool first on PATH, skips on `runtime.GOOS == "windows"`, and reads only the line it is about |
@@ -177,8 +177,8 @@ scripts/bench-hygiene.sh
 STEP 7. THE COMMIT. The card ends here; publication is not yours.
 
 ```
-git -c user.name=Rowan -c user.email=rowan@mas-bandwidth.com add scripts/bench-hygiene.sh internal/ci/benchhygienehome_class_test.go
-git -c user.name=Rowan -c user.email=rowan@mas-bandwidth.com commit -q -m "bench-hygiene: refuse a HOME that is not absolute with two components (#1282)"
+git -c user.name=Worker -c user.email=worker@example.com add scripts/bench-hygiene.sh internal/ci/benchhygienehome_class_test.go
+git -c user.name=Worker -c user.email=worker@example.com commit -q -m "bench-hygiene: refuse a HOME that is not absolute with two components (#1282)"
 git rev-parse HEAD
 ```
 

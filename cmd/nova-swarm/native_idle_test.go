@@ -27,7 +27,7 @@ import (
 // run had managed to print by the time that arrangement worked out. That is a wall-clock
 // assertion in an event's clothing, and it held only while the machine was quiet.
 // `TestNativeIdleEndsAStillCardLongBeforeItsDeadline` went red in landing batch 16an on
-// hulk, under the gate's whole-suite load (GOMAXPROCS=8 -p 2 -parallel 4 across the repo),
+// the bench, under the gate's whole-suite load (GOMAXPROCS=8 -p 2 -parallel 4 across the repo),
 // and took #1831 out of the batch. Its own ci-ok had been green because ci.yml:302's CL
 // tier shards run only the touched packages, lightly loaded -- the one condition the
 // assumption survives.
@@ -251,7 +251,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 }
 
 // TestNativeIdleReapsTheCardInsteadOfShootingIt keeps the REAL signal, because the point of
-// the HOLD (johnny-b9716b436e56: "Idle kill is `KillGroup` ... not `swarm.Reap`
+// the HOLD ("Idle kill is `KillGroup` ... not `swarm.Reap`
 // (TERM-wait-KILL)") is what the operating system delivers, and a recorder cannot show
 // that. Only the WATCH is seamed here; nativeReap and nativeKillGroup stay real.
 //

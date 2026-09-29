@@ -5,11 +5,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
@@ -21,6 +28,11 @@ import (
 var server *pg.Server
 
 func TestMain(m *testing.M) {
+	// The wrapper test's helper process (TestInventoryHelperProcess) is this
+	// binary serving an in-memory store: it starts no Postgres.
+	if os.Getenv("NOVA_CONFIG_TEST_HELPER") == "1" {
+		os.Exit(m.Run())
+	}
 	dir, err := os.MkdirTemp("", "nova-config-pg-")
 	if err != nil {
 		panic(err)
@@ -337,5 +349,204 @@ func TestApplyEndToEnd(t *testing.T) {
 	}
 	if r.client.Exists(ctx, "machine:hulk:ceiling", "machine:hulk", config.FleetKey("store")).Val() != 0 || r.client.Get(ctx, config.FleetKey("coordinator")).Val() != "studio" {
 		t.Fatal("hulk's keys or fleet:store survived, or the coordinator went with them")
+	}
+}
+
+// A lock held on the machines table blocks the inventory read; the verb gives
+// up at its --timeout with a refusal instead of waiting for ever.
+func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+
+	ctx := context.Background()
+	db, err := sql.Open("pgx", r.env["NOVA_PG_DSN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE config.machines IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	out, errs := r.run(t, 2, "inventory", "--timeout", "300ms")
+	_ = tx.Rollback()
+	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --timeout 900ms") {
+		t.Fatalf("stdout %q stderr %q", out, errs)
+	}
+	// Released, the same verb answers.
+	out, _ = r.run(t, 0, "inventory", "--timeout", "5s")
+	if !strings.Contains(out, "bench-alpha") {
+		t.Fatalf("after the lock: %q", out)
+	}
+}
+
+// The wrapper the help prints, run with the built binary against the
+// throwaway Postgres, is a working inventory script.
+func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+
+	help, _ := r.run(t, 0, "inventory", "-h")
+	printf, chmod := helpCommands(t, help)
+
+	dir := t.TempDir()
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "nova-config"), ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	run := func(script string) string {
+		t.Helper()
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_PG_DSN="+r.env["NOVA_PG_DSN"])
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", script, err, out)
+		}
+		return string(out)
+	}
+	run(printf + "\n" + chmod)
+	for _, args := range []string{"--list", "--host bench-alpha"} {
+		out := run("./nova-inventory " + args)
+		var v map[string]any
+		if err := json.Unmarshal([]byte(out), &v); err != nil || !strings.Contains(out, `"ansible_host": "bench-alpha"`) || !strings.Contains(out, `"nova_seat": "seat-alpha"`) {
+			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// A database nothing has migrated has no config schema: inventory names the
+// migrate command instead of the raw SQL error.
+func TestInventoryOnAnUnmigratedDatabaseRefusesWithMigrate(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	out, errs := r.run(t, 1, "inventory")
+	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: schema config is at version 0 and this binary carries ") || !strings.HasSuffix(errs, "; run: nova-config migrate\n") {
+		t.Fatalf("stdout %q stderr %q", out, errs)
+	}
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "inventory")
+}
+
+// stallingListener accepts TCP connections and never writes, like a store
+// that is up on its port and never answers.
+func stallingListener(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return l.Addr().String()
+}
+
+// The flag governs the wait for the connection: the verb waits for its own
+// deadline, and when it expires it prints the timed-out refusal naming the
+// stage, whether the flag is shorter or longer than other verbs' bound. (That
+// no fixed bound caps a longer wait is the package's own test,
+// TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline.)
+func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
+	t.Parallel()
+
+	addr := stallingListener(t)
+	r := newReal(t, false)
+	r.env["NOVA_PG_DSN"] = "postgres://nova_config@" + addr + "/nova"
+	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
+		var out, errb bytes.Buffer
+		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
+		want := "nova-config inventory: timed out after " + flag + " waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout " + again + "\n"
+		if code != 2 || out.String() != "" || errb.String() != want {
+			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
+		}
+	}
+}
+
+// ansible hides a failing inventory script unless told not to: the same
+// wrapper whose nova-config refuses exits 0 with an empty inventory, and
+// exits non-zero with the variable the help prints. The run reads only the
+// wrapper: it contacts no machine.
+func TestAnsibleInventoryFailsLoudlyWithTheVariableTheHelpPrints(t *testing.T) {
+	t.Parallel()
+
+	ansible, err := exec.LookPath("ansible-inventory")
+	if err != nil {
+		t.Skip("ansible-inventory is not installed on this machine")
+	}
+	r := newReal(t, false)
+	help, _ := r.run(t, 0, "inventory", "-h")
+	printf, chmod := helpCommands(t, help)
+	var ansibleLine string
+	for _, l := range strings.Split(help, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory ") {
+			ansibleLine = l
+		}
+	}
+	if ansibleLine == "" {
+		t.Fatalf("the help prints no ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory command:\n%s", help)
+	}
+
+	dir := t.TempDir()
+	// A nova-config that refuses, as a missing or older one would.
+	if err := os.WriteFile(filepath.Join(dir, "nova-config"), []byte("#!/bin/sh\necho 'nova-config inventory: refused' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sh := func(script string) (int, string) {
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = []string{
+			"PATH=" + dir + ":" + filepath.Dir(ansible) + ":/usr/bin:/bin",
+			"HOME=" + dir, "ANSIBLE_HOME=" + filepath.Join(dir, "ansible"),
+		}
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("%s: %v", script, err)
+		}
+		return code, out.String()
+	}
+	if code, out := sh(printf + "\n" + chmod); code != 0 {
+		t.Fatalf("the printed commands failed: %s", out)
+	}
+	plain := strings.TrimPrefix(ansibleLine, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ")
+	if code, out := sh(plain); code != 0 {
+		t.Fatalf("without the variable ansible exits %d, want 0 (it hides the failure): %s", code, out)
+	}
+	if code, out := sh(ansibleLine); code == 0 {
+		t.Fatalf("with the variable ansible exits 0 on a failing inventory script: %s", out)
 	}
 }
