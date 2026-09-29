@@ -139,7 +139,7 @@ do
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
     columns = 1000, rows = 100000,
-    receipt_bytes = 1048576, multi_tables = 16,
+    receipt_bytes = 1048576, multi_tables = 16, batch_value_bytes = 16777216,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
@@ -147,7 +147,7 @@ do
     set_fields = 'set fields per member', unset_fields = 'unset fields per member',
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
     columns = 'columns per table', rows = 'rows per table',
-    receipt_bytes = 'receipt bytes', multi_tables = 'tables per multi batch',
+    receipt_bytes = 'receipt bytes', multi_tables = 'tables per multi batch', batch_value_bytes = 'value bytes per batch',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -161,7 +161,7 @@ do
     if type(s) ~= 'string' or #s <= 64 then return s end
     return string.sub(s, 1, 32) .. '...(' .. #s .. ' bytes)'
   end
-  -- A receipt, the change event and the operation record hold a field value in
+  -- A receipt, the change event and the operation record's result hold a field value in
   -- full when it is at most this many bytes; a longer one is its length and its
   -- SHA-1 (sha1hex is the digest the script API has). internal/ntable/limits.go
   -- holds the same number (ReceiptValueBytes); a test compares them.
@@ -553,6 +553,32 @@ do
     local epoch = h.epoch or '0'
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
     return h, exists
+  end
+  -- T.member_head(d, id): a batch's view of a member: whether the record exists
+  -- and its epoch, revision and place, read by name. Any other field is read on
+  -- first use, by name (member_field in T.apply), so what a batch reads is what
+  -- its entries name and not what the record holds; T.limits.batch_value_bytes
+  -- bounds those reads.
+  function T.member_head(d, id)
+    if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
+    local mkey = T.memberkey(d, id)
+    if not redis.acl_check_cmd('HLEN', mkey) then return nil, nil, T.refuse('NOPERM', 'HLEN', mkey) end
+    local n = redis.pcall('HLEN', mkey)
+    if type(n) == 'table' and n.err then
+      if string.find(n.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
+      T.rethrow(n)
+    end
+    local h = {}
+    if n == 0 then return h, false end
+    if not redis.acl_check_cmd('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name) then
+      return nil, nil, T.refuse('NOPERM', 'HMGET', mkey)
+    end
+    local named = redis.call('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name)
+    if named[1] then h.epoch = named[1] end
+    if named[2] then h.revision = named[2] end
+    if named[3] then h['place:' .. d.name] = named[3] end
+    if (named[1] or '0') ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, named[1] or '0', d.epoch) end
+    return h, true
   end
   function T.advance_member_rev(record, exists)
     if not exists then return '1' end
@@ -2211,15 +2237,69 @@ do
 
     -- Pre-state evaluation & expectation checking:
     local member_records = {}
+    local member_exists = {} -- the member has a record
+    local member_cache = {} -- fields read by name: id -> field -> value, false for absent
+    local function member_field(id, f)
+      local cache = member_cache[id]
+      if not cache then cache = {}; member_cache[id] = cache end
+      local v = cache[f]
+      if v == nil then
+        v = redis.call('HGET', T.memberkey(d, id), f)
+        cache[f] = v
+      end
+      if v == false then return nil end
+      return v
+    end
     local member_places = {}
     local member_scores = {}
     local member_score_text = {} -- the score exactly as the store holds it
 
+    -- What the batch touches is counted from lengths before anything is read or
+    -- hashed: the bytes of every before-value and after-value of the fields its
+    -- entries name (set, unset and guarded), and the size the receipt must have at
+    -- least. Either bound refuses the batch at once, before any read of a value.
+    local touched, receipt_least = 0, 2
     for _, entry in ipairs(members_list) do
       local id = entry.id
-      local record, exists, why = T.member(d, id)
+      if type(id) == 'string' and T.word(id) then
+        local mkey = T.memberkey(d, id)
+        local counted = {}
+        local function before_length(f)
+          if counted[f] == nil then
+            local n = redis.pcall('HSTRLEN', mkey, f)
+            if type(n) == 'table' then n = 0 end -- a wrong-type record is refused below
+            if n == 0 and redis.pcall('HEXISTS', mkey, f) ~= 1 then n = false end
+            counted[f] = n
+            touched = touched + (n or 0)
+          end
+          return counted[f]
+        end
+        local function side(key, n)
+          if n == false then return #key + 7 end
+          if n <= T.receipt_value_bytes then return #key + 5 + n end
+          return #key + 7 + (#key + 9 + #tostring(n)) + (#key + 51)
+        end
+        for f, val in pairs(entry.set or {}) do
+          local n = before_length(f)
+          touched = touched + #val
+          receipt_least = receipt_least + #f + 6 + side('before', n) + side('after', #val)
+        end
+        for _, f in ipairs(entry.unset or {}) do
+          local n = before_length(f)
+          receipt_least = receipt_least + #f + 9 + side('before', n) + side('after', false)
+        end
+        for f in pairs((entry.expect and entry.expect.fields) or {}) do before_length(f) end
+        local over = T.over('batch_value_bytes', touched, id) or T.over('receipt_bytes', receipt_least, id)
+        if over then return over end
+      end
+    end
+
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      local record, exists, why = T.member_head(d, id)
       if why then return why end
       member_records[id] = record or {}
+      member_exists[id] = exists
 
       local current_place = record and record['place:' .. d.name]
       if current_place then
@@ -2263,7 +2343,7 @@ do
         end
         if exp.fields then
           for f, guard in pairs(exp.fields) do
-            local actual = record[f]
+            local actual = member_field(id, f)
             if guard.equals ~= nil then
               if actual == nil or actual ~= guard.equals then
                 return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals', T.excerpt(guard.equals), T.excerpt(actual) or '<absent>')
@@ -2300,7 +2380,7 @@ do
       local fields_changed = false
       if entry.set then
         for f, val in pairs(entry.set) do
-          local bval = record[f]
+          local bval = member_field(id, f)
           if bval ~= val then
             fields_changed = true
           end
@@ -2309,7 +2389,7 @@ do
       end
       if entry.unset then
         for _, f in ipairs(entry.unset) do
-          local bval = record[f]
+          local bval = member_field(id, f)
           if bval ~= nil then
             fields_changed = true
           end
@@ -2319,7 +2399,7 @@ do
       item.fields = member_fields
 
       if entry.create then
-        if next(record) or current_place then
+        if member_exists[id] or current_place then
           return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
         end
         local crow, ccol = entry.create.row, entry.create.col
@@ -2340,7 +2420,7 @@ do
         item.before_rev = '0'
         item.after_rev = '1'
       elseif entry.move then
-        if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to move') end
+        if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to move') end
         local mrow, mcol = entry.move.row, entry.move.col
         local dst_cell, err = T.cell(d, mrow, mcol, true)
         if not dst_cell then return at_member(err, id) end
@@ -2384,7 +2464,7 @@ do
           item.after_rev = item.before_rev
         end
       elseif entry.remove then
-        if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to remove') end
+        if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to remove') end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err = T.cell(d, src_row, src_col, true)
         if not src_cell then return at_member(err, id) end
@@ -2410,7 +2490,7 @@ do
         local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
                            (entry.unset ~= nil and #entry.unset > 0)
         if has_fields then
-          if not next(record) then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member to change fields of') end
+          if not member_exists[id] then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member to change fields of') end
           if fields_changed then
             item.action = 'fields'
             item.effective_change = true
@@ -2758,13 +2838,72 @@ do
       local key = T.memberkey(ds[entry.record_table], entry.id)
       if physical_seen[key] then return T.refuse('TWICE', entry.id, entry.record_table) end
       physical_seen[key] = true
+      local kind = T.kind(key)
+      if kind ~= 'none' and kind ~= 'hash' then return T.refuse('WRONGTYPE', key, kind, 'hash', entry.id) end
+    end
+    -- Bound every named field across all physical records before reading any
+    -- field value. A guard and a mutation of one field count its before-value
+    -- once; a set also counts its after-value. Unnamed fields are never read.
+    local touched, receipt_least = 0, 2
+    local function field_side(key, n)
+      if n == false then return #key + 7 end
+      if n <= T.receipt_value_bytes then return #key + 5 + n end
+      return #key + 7 + (#key + 9 + #tostring(n)) + (#key + 51)
+    end
+    for _, entry in ipairs(m.members) do
+      local id = entry.id
+      local mkey = T.memberkey(ds[entry.record_table], id)
+      local counted = {}
+      local function before_length(f)
+        if counted[f] == nil then
+          if not redis.acl_check_cmd('HSTRLEN', mkey, f) then return nil, T.refuse('NOPERM', 'HSTRLEN', mkey) end
+          local n = redis.call('HSTRLEN', mkey, f)
+          if n == 0 then
+            if not redis.acl_check_cmd('HEXISTS', mkey, f) then return nil, T.refuse('NOPERM', 'HEXISTS', mkey) end
+            if redis.call('HEXISTS', mkey, f) ~= 1 then n = false end
+          end
+          if not redis.acl_check_cmd('HGET', mkey, f) then return nil, T.refuse('NOPERM', 'HGET', mkey) end
+          counted[f] = n
+          touched = touched + (n or 0)
+        end
+        return counted[f]
+      end
+      for f, val in pairs(entry.set or {}) do
+        local n, why = before_length(f)
+        if why then return why end
+        touched = touched + #val
+        receipt_least = receipt_least + #f + 6 + field_side('before', n) + field_side('after', #val)
+      end
+      for _, f in ipairs(entry.unset or {}) do
+        local n, why = before_length(f)
+        if why then return why end
+        receipt_least = receipt_least + #f + 9 + field_side('before', n) + field_side('after', false)
+      end
+      for f in pairs(entry.expect.fields or {}) do
+        local _, why = before_length(f)
+        if why then return why end
+      end
+      local over = T.over('batch_value_bytes', touched, id) or T.over('receipt_bytes', receipt_least, id)
+      if over then return over end
+    end
+    local member_cache = {} -- physical key -> field -> value, false for absent
+    local function member_field(mkey, f)
+      local cache = member_cache[mkey]
+      if not cache then cache = {}; member_cache[mkey] = cache end
+      local v = cache[f]
+      if v == nil then
+        v = redis.call('HGET', mkey, f)
+        cache[f] = v
+      end
+      if v == false then return nil end
+      return v
     end
     local function at_member(err, id) err[#err + 1] = id; return err end
     for _, entry in ipairs(m.members) do
       local home = ds[entry.record_table]
       local id, exp = entry.id, entry.expect
       local mkey = T.memberkey(home, id)
-      local record, exists, why = T.member(home, id)
+      local record, exists, why = T.member_head(home, id)
       if why then return why end
       if exists and record.revision ~= nil and not T.uint(record.revision) then
         return T.refuse('MEMBERREVISION', id, 'valid uint64', T.excerpt(record.revision))
@@ -2782,6 +2921,11 @@ do
         if d.cfg.member_prefix ~= home.cfg.member_prefix then return T.refuse('CONFIG', id, name, 'member_prefix') end
         if d.epoch ~= home.epoch then return T.refuse('MEMBEREPOCH', id, home.epoch, d.epoch) end
         local current = record['place:' .. name]
+        if name ~= home.name and exists then
+          if not redis.acl_check_cmd('HGET', mkey, 'place:' .. name) then return T.refuse('NOPERM', 'HGET', mkey) end
+          current = redis.call('HGET', mkey, 'place:' .. name)
+          if current == false then current = nil end
+        end
         local score, cell
         if current then
           local row, col = string.match(current, '^(.*):([^:]+)$')
@@ -2818,7 +2962,7 @@ do
         local observed_rev = record.revision or '0'
         if exp.revision and exp.revision ~= observed_rev then return T.refuse('MEMBERREVISION', id, exp.revision, observed_rev) end
         for f, guard in pairs(exp.fields or {}) do
-          local actual = record[f]
+          local actual = member_field(mkey, f)
           if guard.equals ~= nil and actual ~= guard.equals then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals', T.excerpt(actual) or '<absent>') end
           if guard.absent and actual ~= nil then return T.refuse('FIELDGUARD', id, T.excerpt(f), 'absent', T.excerpt(actual)) end
           if guard.one_of then
@@ -2831,12 +2975,14 @@ do
 
       local fields, effective, placement_delta = {}, false, {}
       for f, value in pairs(entry.set or {}) do
-        fields[f] = T.fieldchange(record[f], value)
-        if record[f] ~= value then effective = true end
+        local before_value = member_field(mkey, f)
+        fields[f] = T.fieldchange(before_value, value)
+        if before_value ~= value then effective = true end
       end
       for _, f in ipairs(entry.unset or {}) do
-        fields[f] = T.fieldchange(record[f], nil)
-        if record[f] ~= nil then effective = true end
+        local before_value = member_field(mkey, f)
+        fields[f] = T.fieldchange(before_value, nil)
+        if before_value ~= nil then effective = true end
       end
       local planned = {}
       for _, action in ipairs(entry.placements or {}) do
