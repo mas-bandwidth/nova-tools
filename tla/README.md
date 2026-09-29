@@ -452,14 +452,14 @@ answer from `probeAnswer` and never touches the store while answering.
 ## Atomic member batches
 
 `BatchMemberTable` extends `EpochMemberTable`; existing per-verb configurations
-remain separate. The required `batchmembertable` group contains seven positive
-configurations and twenty-three deliberately faulty variants. All positive instances
+remain separate. The required `batchmembertable` group contains eleven positive
+configurations and twenty-six deliberately faulty variants. All positive instances
 retain three members, two rows, two columns and two epochs. The primary instance
 explores request lengths one through three, a guard-only request, and interacting
 cross-row changes for up to three actions. The second instance retains an old-epoch
 member while advancing, refreshing, binding and accepting a new-epoch create in
 four actions. Separate immutable member-epoch assignments make both paths explicit.
-Two further three-action traces advance a member revision with an ordinary writer,
+Two further three-action traces advance a member revision with a synthetic field writer,
 then accept a cross-row score change with its member revision guard omitted. One
 trace removes its placement while retaining the member record; the other accepts
 a same-cell, same-score no-op without a member revision increment. Both still
@@ -468,6 +468,16 @@ An additional three-action trace removes a placed member and then changes an
 application field on the retained unplaced record. Another three-action trace
 shows that removing an already-unplaced member refuses. A two-action trace proves
 that explicit `remove:false` and set/unset of the same field both refuse.
+A four-action trace removes a member and tries moving the retained unplaced record
+back into a cell, first without a score and then with one; both requests refuse.
+The original revision bound remains three. An additional full nondeterministic
+instance uses a revision limit of two with three actions. Two directed traces
+reach that limit before attempting another batch: one uses two effective moves,
+and the other uses two guard-only no-ops, leaving every member revision at zero.
+Both must reach refusal, and refusal/replay read-only checks preserve the store.
+A reversed overflow case forces the third move and violates `RevisionWithinBounds`;
+separate reversed cases name `UnplacedMoveRequiresPlacement` and
+`OnePlacePerDimension`.
 Absent member records carry no application fields, and create starts from that
 empty field image before applying its explicit set; every positive configuration
 checks the absent-record invariant and the create receipt's empty before image.
@@ -483,10 +493,22 @@ deltas carry before/after placement, score, revision and application fields.
 The `guardCount` counts entries with no requested mutation, while `changedCount`
 counts effective changes; their sum can be below `selectedCount` when a requested
 move proves to be a no-op.
-Ordinary field/add/remove/move actions share member and table revision increments.
+Ordinary add/remove/move actions share member and table revision increments.
 Request bytes are abstract identities; byte equality, rather than digest equality,
 controls replay. Accepted batches produce one complete receipt and one table
 revision; refusals and replay leave the modeled store unchanged.
+
+**Field-writer scope decision.** `OrdinaryFieldWrite` and `OrdinarySetEmpty` are
+synthetic cooperating writers that advance both revisions. `table.lua` has no such
+field-write verb; a direct application `HSET` does not advance these revisions.
+We retain these actions as protocol interference hypotheses, not implementations
+of `HSET`. The main exploration's field branches and empty-field guard scenario,
+`ExtendedNoop`, `ExtendedRemove`, `BrokenStaleMember`, `BrokenOrdinaryRevision`,
+`BrokenMissingRevision`, `BrokenScorePreserved`, `BrokenRemoveLeavesCell`,
+`BrokenRemoveDeletesRecord` and `BrokenSameCellRevision` depend on this assumption.
+They do not establish that a revision guard detects direct application field edits.
+Modeling unversioned `HSET` interference and its guard consequences remains a
+follow-up. The new overflow and unplaced-move traces use only batch actions.
 
 The negative configurations cover late guard/type/permission failure after an
 initial write, post-write guard evaluation, duplicate placement, stale epoch/table/
@@ -503,14 +525,19 @@ unplaced member. `CASES.tsv` names each exact expected property.
 configuration, inherited model and runner hashes. `RUNS.tsv` records measured results,
 combined input hashes and the TLC executable hash;
 timeouts and unexpected diagnostics are failures. Published records use the
-portable bench label `linux-amd64` in the host column. Raw records and logs retain
-the original machine identity in the private evidence archive; only the public
-host label is generalized, not hashes, outcomes, counts or timings.
+portable bench label `linux-amd64` in the host column. The current command emits a
+machine hostname, so publishing still requires explicit platform relabeling.
+Making the runner emit that portable label directly remains a follow-up; hashes,
+outcomes, counts and timings must not change during relabeling.
 
 This is a finite request-template model, not a JSON parser, Redis rollback proof or
 implementation refinement proof. Its three-action main bound is explicit; the
 second positive trace separately exercises successful new-epoch mutation and old
-image preservation. The remaining runtime, replay, real-use and interactive gates
+image preservation. Additional named follow-ups are reversed witnesses for the remaining invariants,
+a model property that detects omitted field unsets, automatic verification of
+`BATCH-SOURCES.tsv` and `BATCH-REPLAY-RUNS.tsv`, and a structured first-bad-step
+diagnostic (currently present only in the TLC log).
+The remaining runtime, replay, real-use and interactive gates
 in `docs/SPEC-NOVA-TABLE.md` still apply after the model checks pass.
 
 When TLC reports an invariant violation in the initial state without aggregate
@@ -555,11 +582,9 @@ exit codes. These bounded histories complement the exhaustive finite model cases
 they do not replace the runtime property corpus, maximum-size checks, CLI review
 or real-use acceptance required by `docs/SPEC-NOVA-TABLE.md`.
 
-`BATCH-REPLAY-RUNS.tsv` records the six expected results from the Linux run on
-2026-09-29: five passing histories and the named corrupted-observation rejection,
-completed in 5.98 seconds. Each row pins the Lua, generated trace, configuration
-and captured evidence hashes. The executed Linux binary SHA256 was
-`b86c7070ff59988e20fe571393e0436d1cb19a006d34a0facd947cca06b001d0`;
-the TLC JAR SHA256 was
-`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
-Raw capture packets and logs remain in the private evidence archive.
+`BATCH-REPLAY-RUNS.tsv` records measured results for five passing histories and
+the named corrupted-observation rejection. Each row pins the Lua, generated trace,
+configuration and captured evidence hashes. The run directory retains capture
+packets, logs and `suite.json`. Preserve the executed binary and TLC JAR hashes
+alongside those outputs. A record applies only to its captured inputs and finite
+histories.

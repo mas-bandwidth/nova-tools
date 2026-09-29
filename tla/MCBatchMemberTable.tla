@@ -8,6 +8,7 @@ MCColumns == {"c1","c2"}
 MCMembers == {"m1","m2","m3"}
 MCWriters == {"w1"}
 MCScores == {1,2}
+MCMaxRevision2 == 2
 MCMemberEpoch == [m \in MCMembers |-> 1]
 MCExternal == <<<<"external",0>>,"external","external">>
 MCNoPlace == <<<<"none",0>>,"none","none">>

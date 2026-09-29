@@ -126,6 +126,28 @@ AlreadyUnplacedRemoveRequest ==
          !.members[1].guardValues={"done"},
          !.members[1].setField=NoField, !.members[1].setValue=NoValue,
          !.members[1].remove=TRUE, !.members[1].removeSupplied=TRUE]
+\* Existing unplaced records support field edits, but cannot be moved into a
+\* cell. Check both omitted score (formerly an undefined ScoreAt) and explicit.
+UnplacedMoveRequest ==
+ [UnplacedFieldRequest EXCEPT !.id="op-unplaced-move",
+    !.bytes="canonical-unplaced-move", !.members[1].target=FromCell]
+UnplacedMoveWithScore ==
+ [UnplacedMoveRequest EXCEPT !.id="op-unplaced-move-score",
+    !.bytes="canonical-unplaced-move-score", !.members[1].scoreChange=TRUE]
+\* Two accepted moves reach the configured revision limit of two; the next
+\* otherwise-valid request must refuse. These are real batch actions, without
+\* the synthetic field writers used by some older interference scenarios.
+ReturnMoveRequest ==
+ [Normal(1) EXCEPT !.id="op-return", !.bytes="canonical-return",
+    !.revision=1, !.members[1].revision=1,
+    !.members[1].source=MoveCell, !.members[1].target=FromCell,
+    !.members[1].guardValues={"done"}, !.members[1].setValue="ready"]
+OverflowRequest ==
+ [Normal(1) EXCEPT !.id="op-overflow", !.bytes="canonical-overflow",
+    !.revision=2, !.members[1].revision=2]
+RevisionNoop(n) ==
+ [NoopRequest EXCEPT !.id= <<"noop-one","noop-two","noop-overflow">>[n],
+    !.bytes= <<"bytes-one","bytes-two","bytes-overflow">>[n], !.revision=n-1]
 RemoveFalseRequest ==
  [Normal(1) EXCEPT !.id="op-remove-false", !.bytes="canonical-remove-false",
                    !.members[1].removeSupplied=TRUE]
@@ -178,6 +200,8 @@ EntryOK(q,e) ==
  /\ (~e.remove \/ (~e.absent /\ e.change /\ e.target=NoPlace))
  /\ (~e.absent \/ (~e.remove /\ e.change /\ e.target#NoPlace))
  /\ (~e.remove \/ e.source#NoPlace)
+ /\ (e.change /\ ~e.absent /\ ~e.remove /\ e.target#NoPlace =>
+      e.source#NoPlace)
  /\ (~e.scoreChange \/ (e.change /\ ~e.remove /\
                          (e.absent \/ e.source#NoPlace) /\ e.score \in Scores))
  /\ (e.absent => e.score \in Scores)
@@ -302,8 +326,10 @@ Conflict(q) ==
 Apply(q) ==
  IF Recorded(q)#{} THEN Replay(q) \/ Conflict(q)
  ELSE IF FreshOK(q) THEN Accept(q) ELSE RefuseBatch(q,"stale-or-invalid")
-\* An ordinary writer uses the same revision helper, even though the original
-\* per-verb model remains separately checkable without these new variables.
+\* Synthetic interference: table.lua has no revision-bumping field-write verb.
+\* Direct application HSET does not bump these revisions. These two field
+\* actions test a hypothetical cooperating writer, not current HSET behavior.
+\* See README's explicit scope decision and follow-up.
 OrdinaryFieldWrite(m) ==
  /\ m \in present /\ memberRevision[m]<MaxRevision
  /\ tableRevision[BatchTable]<MaxRevision
@@ -381,6 +407,8 @@ BatchNext ==
      \/ Apply(EarlyRemoveRequest)
      \/ Apply(UnplacedFieldRequest)
      \/ Apply(AlreadyUnplacedRemoveRequest)
+     \/ Apply(UnplacedMoveRequest)
+     \/ Apply(UnplacedMoveWithScore)
      \/ Apply(RemoveFalseRequest)
      \/ Apply(SetUnsetSameRequest)
      \/ OrdinaryFieldWrite(MoveMember)
@@ -426,6 +454,45 @@ AlreadyUnplacedRemoveSpec == BatchInit /\
  WF_bvars(AlreadyUnplacedRemoveNext)
 AlreadyUnplacedRemoveEventuallyRefused ==
  <> (op="batch-refused" /\ attempt.id=AlreadyUnplacedRemoveRequest.id)
+UnplacedMoveNext ==
+ \/ (step=0 /\ Apply(Normal(1)))
+ \/ (step=1 /\ Apply(EarlyRemoveRequest))
+ \/ (step=2 /\ Apply(UnplacedMoveRequest))
+ \/ (step=3 /\ Apply(UnplacedMoveWithScore))
+UnplacedMoveSpec == BatchInit /\
+ [][UnplacedMoveNext \/ (step=MaxSteps /\ UNCHANGED bvars)]_bvars /\
+ WF_bvars(UnplacedMoveNext)
+UnplacedMovesEventuallyRefused ==
+ /\ <> (op="batch-refused" /\ attempt.id=UnplacedMoveRequest.id)
+ /\ <> (op="batch-refused" /\ attempt.id=UnplacedMoveWithScore.id)
+UnplacedMoveRequiresPlacement == [][op'="batch-accepted" =>
+ \A i \in 1..Len(attempt'.members):
+ LET e == attempt'.members[i]
+ IN (e.change /\ ~e.absent /\ ~e.remove /\ e.target#NoPlace) =>
+    e.source#NoPlace]_bvars
+OverflowPrefix ==
+ \/ (step=0 /\ Apply(Normal(1)))
+ \/ (step=1 /\ Apply(ReturnMoveRequest))
+OverflowNext == OverflowPrefix \/ (step=2 /\ Apply(OverflowRequest))
+OverflowSpec == BatchInit /\
+ [][OverflowNext \/ (step=MaxSteps /\ UNCHANGED bvars)]_bvars /\
+ WF_bvars(OverflowNext)
+OverflowEventuallyRefused ==
+ <> (op="batch-refused" /\ attempt.id=OverflowRequest.id /\
+     tableRevision[BatchTable]=MaxRevision /\
+     memberRevision[MoveMember]=MaxRevision /\ Len(receipts)=2)
+TableOverflowNext ==
+ \E n \in 1..3:step=n-1 /\ Apply(RevisionNoop(n))
+TableOverflowSpec == BatchInit /\
+ [][TableOverflowNext \/ (step=MaxSteps /\ UNCHANGED bvars)]_bvars /\
+ WF_bvars(TableOverflowNext)
+TableOverflowEventuallyRefused ==
+ <> (op="batch-refused" /\ attempt.id=RevisionNoop(3).id /\
+     tableRevision[BatchTable]=MaxRevision /\
+     (\A m \in Members:memberRevision[m]=0) /\ Len(receipts)=2)
+RevisionWithinBounds ==
+ /\ \A m \in Members:memberRevision[m]<=MaxRevision
+ /\ \A t \in Tables:tableRevision[t]<=MaxRevision
 ExtendedRemoveEventuallyAccepted ==
  <> (op="batch-accepted" /\ attempt.id=RemoveRequest.id)
 ExtendedNoopEventuallyAccepted ==
@@ -705,6 +772,11 @@ BadAlreadyUnplacedRemoveNext ==
  (step=0 /\ Apply(Normal(1))) \/
  (step=1 /\ Apply(EarlyRemoveRequest)) \/
  (step=2 /\ ForcedAccept(AlreadyUnplacedRemoveRequest))
+BadUnplacedMoveNext ==
+ (step=0 /\ Apply(Normal(1))) \/
+ (step=1 /\ Apply(EarlyRemoveRequest)) \/
+ (step=2 /\ ForcedAccept(UnplacedMoveWithScore))
+BadOverflowNext == OverflowPrefix \/ (step=2 /\ ForcedAccept(OverflowRequest))
 BoundedBad(next) == next \/ (step=MaxSteps /\ UNCHANGED bvars)
 BrokenLateGuardSpec == BatchInit /\ [][BoundedBad(FaultSetup("guard") \/ PartialRefusal(Normal(3)))]_bvars
 BrokenLateTypeSpec == BatchInit /\ [][BoundedBad(FaultSetup("type") \/ PartialRefusal(Normal(2)))]_bvars
@@ -728,5 +800,7 @@ BrokenRemoveDeletesRecordSpec == BatchInit /\ [][BoundedBad(BadRemoveDeletesReco
 BrokenSameCellRevisionSpec == BatchInit /\ [][BoundedBad(BadSameCellRevisionNext)]_bvars
 BrokenRemoveFalseAcceptedSpec == BatchInit /\ [][BoundedBad(BadRemoveFalseAcceptedNext)]_bvars
 BrokenSetUnsetAcceptedSpec == BatchInit /\ [][BoundedBad(BadSetUnsetAcceptedNext)]_bvars
+BrokenOverflowSpec == BatchInit /\ [][BoundedBad(BadOverflowNext)]_bvars
+BrokenUnplacedMoveSpec == BatchInit /\ [][BoundedBad(BadUnplacedMoveNext)]_bvars
 BrokenAlreadyUnplacedRemoveSpec == BatchInit /\ [][BoundedBad(BadAlreadyUnplacedRemoveNext)]_bvars
 =============================================================================
