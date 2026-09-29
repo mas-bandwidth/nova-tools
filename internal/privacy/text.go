@@ -191,6 +191,9 @@ var spelled = map[rune]string{'ß': "ss", 'æ': "ae", 'œ': "oe", 'ø': "o", 'ł
 type word struct {
 	key   string
 	runes int
+	// parts is set only on the joined whole of a hyphenated word: the keys
+	// of its parts of MinWordLen runes or more, as written.
+	parts []string
 }
 
 // words splits normalised text into keys. A word is a run of letters and
@@ -229,7 +232,13 @@ func words(text string, emit func(word)) {
 		parts := strings.Split(tok, "-")
 		if len(parts) > 1 {
 			whole := strings.Join(parts, "")
-			emit(word{key: foldPlural(whole), runes: utf8.RuneCountInString(whole)})
+			long := []string{}
+			for _, p := range parts {
+				if utf8.RuneCountInString(p) >= MinWordLen {
+					long = append(long, foldPlural(p))
+				}
+			}
+			emit(word{key: foldPlural(whole), runes: utf8.RuneCountInString(whole), parts: long})
 		}
 		for _, p := range parts {
 			if p != "" {

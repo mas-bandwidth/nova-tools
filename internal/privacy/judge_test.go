@@ -367,3 +367,46 @@ func TestTheEntriesThatCanNeverFireAreNamed(t *testing.T) {
 		}
 	}
 }
+
+// A hyphenated word is its parts and its joined whole. When every part of
+// four letters or more is a shared term the whole is the same evidence twice,
+// and one compound named once must not reach the threshold by itself.
+func TestAHyphenatedWordIsNotCountedTwiceOverItsParts(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, private, payload string
+		outcome                privacy.Outcome
+		shared                 string
+	}{
+		{"one compound alone stays silent",
+			"the quillfeather-mosswort scheme", "at the quillfeather-mosswort meeting",
+			privacy.UnprovenClean, ""},
+		{"the parts still count beside another term",
+			"the quillfeather-mosswort and thistledown", "at the quillfeather-mosswort meeting about thistledown",
+			privacy.Flagged, "mosswort,quillfeather,thistledown"},
+		{"a whole whose parts are not all shared still counts",
+			"quillfeathermosswort quillfeather thistledown", "the quillfeather-mosswort meeting about thistledown",
+			privacy.Flagged, "quillfeather,quillfeathermosswort,thistledown"},
+		{"a whole the text also writes plain still counts",
+			"the quillfeather-mosswort and thistledown", "quillfeathermosswort, quillfeather-mosswort",
+			privacy.Flagged, "mosswort,quillfeather,quillfeathermosswort"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, true)
+			f.write(t, "private/later.md", laterFixture+"- [2026-01-06] **(private)** "+c.private+"\n\n"+headingsFixture)
+			r := privacy.Screen(f.spec, c.payload)
+			if r.Outcome != c.outcome {
+				t.Fatalf("outcome %s, want %s; flags %+v", r.Outcome, c.outcome, r.Flags)
+			}
+			got := ""
+			if len(r.Flags) > 0 {
+				got = strings.Join(r.Flags[0].Shared, ",")
+			}
+			if got != c.shared {
+				t.Errorf("shared %q, want %q", got, c.shared)
+			}
+		})
+	}
+}

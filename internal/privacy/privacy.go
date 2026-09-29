@@ -406,6 +406,57 @@ func SharedRareTerms(payloadTerms, privateDistinctive map[string]bool) []string 
 	return out
 }
 
+// Compounds maps the joined whole of each hyphenated word in text that is a
+// term to the keys of its parts of MinWordLen runes or more. A whole that the
+// text also holds as a word of its own is left out: that is evidence in its
+// own right.
+func (r Rules) Compounds(text string) map[string][]string {
+	out := map[string][]string{}
+	plain := map[string]bool{}
+	words(normalise(text), func(w word) {
+		if w.parts == nil {
+			plain[w.key] = true
+			return
+		}
+		if w.runes >= MinWordLen && !r.stop[w.key] && len(w.parts) > 0 {
+			out[w.key] = w.parts
+		}
+	})
+	for k := range plain {
+		delete(out, k)
+	}
+	return out
+}
+
+// WithoutRepeatedWholes drops from shared every joined whole of a hyphenated
+// word whose parts of MinWordLen runes or more are all shared as well: the
+// parts already count, and the whole is the same evidence twice, which would
+// let one compound reach FlagThreshold alone. A whole whose parts are not all
+// shared stays. shared is not changed.
+func WithoutRepeatedWholes(shared []string, compounds map[string][]string) []string {
+	have := make(map[string]bool, len(shared))
+	for _, w := range shared {
+		have[w] = true
+	}
+	out := make([]string, 0, len(shared))
+	for _, w := range shared {
+		if parts, ok := compounds[w]; ok && allShared(parts, have) {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+func allShared(parts []string, have map[string]bool) bool {
+	for _, p := range parts {
+		if !have[p] {
+			return false
+		}
+	}
+	return true
+}
+
 // MayStaySilent reports whether a payload may pass one private entry with no
 // flag: fewer than FlagThreshold shared terms.
 func MayStaySilent(shared []string) bool { return len(shared) < FlagThreshold }

@@ -260,9 +260,10 @@ func measure(t *testing.T) (map[string]int, map[string]int, []string) {
 
 // The measurement pins the alarm. Before words were normalised: quoted 20,
 // paraphrased 0, innocent 0 flagged. After: quoted 20, paraphrased 20,
-// innocent 3, and the three are the payloads that name a private hyphenated
+// innocent 3, and the three were the payloads that name a private hyphenated
 // compound whole: one compound is three keys (the whole and its two parts),
-// which reaches the threshold alone.
+// which reached the threshold alone. A joined whole whose parts are all
+// shared is no longer counted beside them: innocent 0.
 func TestTheNormalisationMeasurement(t *testing.T) {
 	t.Parallel()
 	flags, byForm, _ := measure(t)
@@ -276,7 +277,7 @@ func TestTheNormalisationMeasurement(t *testing.T) {
 	if flags["paraphrased"] != 20 {
 		t.Errorf("paraphrased leaks flagged %d of 20", flags["paraphrased"])
 	}
-	if flags["innocent"] > 3 || byForm["innocent/one private hyphenated compound"] != flags["innocent"] {
+	if flags["innocent"] != 0 {
 		t.Errorf("innocent payloads flagged %d of 20, %d of them by a private compound", flags["innocent"], byForm["innocent/one private hyphenated compound"])
 	}
 }

@@ -179,6 +179,7 @@ func judge(c Corpus, payload string, withPayload bool) Result {
 	df := rules.DocFrequency(c.Blocks)
 	payloadTerms := rules.Terms(payload)
 	r.PayloadTerms = len(payloadTerms)
+	compounds := rules.Compounds(payload)
 	for _, p := range c.Private {
 		fingerprint := rules.Distinctive(p.Measured(), df, c.BackgroundFreq, r.Bounds)
 		if CanEverFire(fingerprint) {
@@ -186,7 +187,7 @@ func judge(c Corpus, payload string, withPayload bool) Result {
 		} else {
 			r.Silent = append(r.Silent, SilentEntry{Source: p.Source, Index: p.Index, Title: p.Title, Distinctive: len(fingerprint)})
 		}
-		shared := SharedRareTerms(payloadTerms, fingerprint)
+		shared := WithoutRepeatedWholes(SharedRareTerms(payloadTerms, fingerprint), compounds)
 		if MayStaySilent(shared) {
 			continue
 		}
