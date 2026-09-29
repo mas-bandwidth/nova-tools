@@ -37,7 +37,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -287,6 +289,7 @@ func DerivePrepushPackages(ctx context.Context, repoDir, cardPaths string) ([]st
 				targets...)
 			cmd := exec.CommandContext(ctx, "go", args...)
 			cmd.Dir = repoDir
+			cmd.Env = goenv.Clean(os.Environ())
 			var out bytes.Buffer
 			cmd.Stdout = &out
 			if err := cmd.Run(); err != nil {
@@ -381,7 +384,7 @@ func RunPrepushTest(ctx context.Context, repoDir string, pkgs []string) (Prepush
 	if err != nil {
 		return PrepushTestResult{}, fmt.Errorf("create RUNNER_TEMP: %w", err)
 	}
-	defer os.RemoveAll(runnerTemp)
+	defer func() { _ = safepath.RemoveUnder(filepath.Dir(runnerTemp), runnerTemp) }()
 
 	pkgsArg := strings.Join(pkgs, " ")
 	cmd := exec.CommandContext(tctx, "make", "test", "PKGS="+pkgsArg, "GOTEST_COUNT_FLAG=")
