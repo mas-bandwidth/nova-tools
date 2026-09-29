@@ -270,13 +270,18 @@ func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 }
 
 // shareCounts is a pct cell's numerator and denominator over one row; ok is
-// false when a count it reads did not come back.
+// false when a named source is no longer a count or a count it reads did not
+// come back.
 func shareCounts(cols []Column, c Column, r Row) (part, total int64, ok bool) {
 	f, err := ParseFormula(c.Projection)
 	if err != nil {
 		return 0, 0, false
 	}
 	if f.Over == nil {
+		part, ok = namedCount(cols, r, f.Part)
+		if !ok {
+			return 0, 0, false
+		}
 		for k, o := range cols {
 			if o.Projection != Count {
 				continue
@@ -285,9 +290,6 @@ func shareCounts(cols []Column, c Column, r Row) (part, total int64, ok bool) {
 				return 0, 0, false
 			}
 			total += r.Cells[k].Count
-			if o.Name == f.Part {
-				part = r.Cells[k].Count
-			}
 		}
 		return part, total, true
 	}

@@ -87,6 +87,84 @@ func TestPctOfOneColumnKeepsItsMeaning(t *testing.T) {
 	}
 }
 
+// TestBarePctDeadSourceIsUnknown: a bare pct keeps its all-count denominator,
+// but its numerator must still be a count column of this shape. A stale
+// formula after a source is deleted, renamed or retyped cannot turn into 0%.
+func TestBarePctDeadSourceIsUnknown(t *testing.T) {
+	t.Parallel()
+	newTable := func(t *testing.T) ntable.Table {
+		t.Helper()
+		cols, err := ntable.ParseColumns("ok,other,extra,bare:pct(ok):pooled,named:pct(ok/ok+other):pooled,total:sum(ok+other)")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tb := ntable.Table{Name: "fleet", Columns: cols, FooterLabel: "total"}
+		for _, key := range []string{"m1", "m2"} {
+			tb.Rows = append(tb.Rows, ntable.NewRow(tb, key))
+		}
+		tb.Rows[0].Cells[0].Count = 2
+		tb.Rows[0].Cells[1].Count = 3
+		tb.Rows[0].Cells[2].Count = 5 // an unrelated count is in bare pct's denominator
+		return tb
+	}
+	cell := func(t *testing.T, rendered, row string, column int) string {
+		t.Helper()
+		for _, line := range strings.Split(rendered, "\n") {
+			parts := strings.Split(line, "|")
+			if len(parts) > column && strings.TrimSpace(parts[0]) == row {
+				return strings.TrimSpace(parts[column])
+			}
+		}
+		t.Fatalf("row %q missing from render:\n%s", row, rendered)
+		return ""
+	}
+	tb := newTable(t)
+	valid := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
+	for row, want := range map[string][]string{
+		"m1":    {"20.0%", "40.0%", "5"},
+		"m2":    {"0.0%", "0.0%", "0"},
+		"total": {"20.0%", "40.0%", "5"},
+	} {
+		for i, v := range want {
+			if got := cell(t, valid, row, len(tb.Columns)-2+i); got != v {
+				t.Errorf("valid %s formula %d = %q, want %q", row, i, got, v)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		damage func(*ntable.Table)
+	}{
+		{"deleted", func(tb *ntable.Table) {
+			tb.Columns = tb.Columns[1:]
+			for i := range tb.Rows {
+				tb.Rows[i].Cells = tb.Rows[i].Cells[1:]
+			}
+		}},
+		{"renamed", func(tb *ntable.Table) { tb.Columns[0].Name = "renamed" }},
+		{"text", func(tb *ntable.Table) {
+			tb.Columns[0].Projection, tb.Columns[0].Fold = ntable.Text, ntable.None
+		}},
+		{"members", func(tb *ntable.Table) {
+			tb.Columns[0].Projection, tb.Columns[0].Fold = ntable.Members, ntable.None
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tb := newTable(t)
+			tc.damage(&tb)
+			got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
+			for _, row := range []string{"m1", "m2", "total"} {
+				for i := range 3 {
+					if v := cell(t, got, row, len(tb.Columns)-2+i); v != "?" {
+						t.Errorf("%s %s formula %d = %q, want ?\n%s", tc.name, row, i, v, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestNamedShareUnread: a cell a formula reads that did not come back prints
 // ?, in the body and in the fold; a count the formula does not name (ready)
 // leaves it alone.
