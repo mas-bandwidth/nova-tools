@@ -579,6 +579,22 @@ func (r *Redis) NotesSince(ctx context.Context, after string, max int) ([]sprint
 	return notes, ids, nil
 }
 
+func (r *Redis) Tails(ctx context.Context) (string, string, error) {
+	p := r.C.Pipeline()
+	lg := p.XRevRangeN(ctx, r.key(keyLog), "+", "-", 1)
+	in := p.XRevRangeN(ctx, r.key(keyInbox), "+", "-", 1)
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return "", "", err
+	}
+	last := func(c *redis.XMessageSliceCmd) string {
+		if ms, err := c.Result(); err == nil && len(ms) > 0 {
+			return ms[0].ID
+		}
+		return ""
+	}
+	return last(lg), last(in), nil
+}
+
 func (r *Redis) LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error) {
 	start := "-"
 	if after != "" {

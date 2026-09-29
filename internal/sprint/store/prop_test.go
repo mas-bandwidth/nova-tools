@@ -246,7 +246,8 @@ type propRun struct {
 	errs      []error
 	tickRes   *TickResult
 	cutUsed   bool
-	logSeen   int // the log's lines the check has read
+	logAfter  string                 // the last log line the check has read
+	raised    map[string]sprint.Note // the judgments the log raised, by id
 }
 
 var errCut = errors.New("cut by the test")
@@ -810,28 +811,32 @@ func (r *propRun) check(i int, a pAct) *propFail {
 	// No judgment is closed by a move that does not resolve its cause: a
 	// lateness the machine closed while its cause stands is a finding.
 	if !pending {
-		lines, err := r.st.Log(r.ctx)
-		if err != nil {
-			return fail("error", "log: %v", err)
+		if r.raised == nil {
+			r.raised = map[string]sprint.Note{}
 		}
-		raised := map[string]sprint.Note{}
-		for _, l := range lines[:r.logSeen] {
-			if l.Note != nil && l.Note.Kind == sprint.Judgment {
-				raised[l.Note.ID] = *l.Note
+		for {
+			lines, ids, err := r.st.B.LogSince(r.ctx, r.logAfter, logPage)
+			if err != nil {
+				return fail("error", "log: %v", err)
+			}
+			for _, l := range lines {
+				if l.Note != nil && l.Note.Kind == sprint.Judgment {
+					r.raised[l.Note.ID] = *l.Note
+				}
+				if l.Note == nil || l.Note.Kind != sprint.Decided || l.Note.Who != sprint.MachineActor {
+					continue
+				}
+				if n, ok := r.raised[l.Note.Answers]; ok && sprint.LateStands(s, n) {
+					return fail("closed", "%s (%s) closed by the machine while its cause stands: %s", n.ID, n.Type, n.What)
+				}
+			}
+			if len(ids) > 0 {
+				r.logAfter = ids[len(ids)-1]
+			}
+			if len(ids) < logPage {
+				break
 			}
 		}
-		for _, l := range lines[r.logSeen:] {
-			if l.Note != nil && l.Note.Kind == sprint.Judgment {
-				raised[l.Note.ID] = *l.Note
-			}
-			if l.Note == nil || l.Note.Kind != sprint.Decided || l.Note.Who != sprint.MachineActor {
-				continue
-			}
-			if n, ok := raised[l.Note.Answers]; ok && sprint.LateStands(s, n) {
-				return fail("closed", "%s (%s) closed by the machine while its cause stands: %s", n.ID, n.Type, n.What)
-			}
-		}
-		r.logSeen = len(lines)
 	}
 	// Scores change only by rank.
 	for _, c := range s.Work.Column(sprint.States...) {

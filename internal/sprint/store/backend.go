@@ -85,6 +85,9 @@ type Backend interface {
 	// LogSince is the log's lines after the stream id (all when empty), at
 	// most max, with their stream ids: the epoch's append-only record.
 	LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error)
+	// Tails is the last stream id of the log and of the inbox's stream ("" when
+	// empty), read in one round trip: what a read up to now covers.
+	Tails(ctx context.Context) (log, inbox string, err error)
 	Cursor(ctx context.Context) (string, error)
 	SetCursor(ctx context.Context, id string) error
 	// Coordinator is the sprint's coordinator, set by init ("" when none

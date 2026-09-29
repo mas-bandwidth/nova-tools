@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -73,13 +75,9 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		if err != nil {
 			return rep, nil, err
 		}
-		// the log and the inbox's stream, read between the two fence reads:
-		// of the same state
-		lines, err := st.Log(ctx)
-		if err != nil {
-			return rep, nil, err
-		}
-		inbox, err := st.inboxAll(ctx)
+		// where the log and the inbox's stream end, read between the two
+		// fence reads: of the same state; each is read up to there after
+		logTail, inboxTail, err := st.B.Tails(ctx)
 		if err != nil {
 			return rep, nil, err
 		}
@@ -106,6 +104,14 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		}
 		rep.Violations = sprint.Check(s, ops)
 		if pending == nil {
+			lines, err := st.logUpTo(ctx, logTail)
+			if err != nil {
+				return rep, nil, err
+			}
+			inbox, err := st.inboxUpTo(ctx, inboxTail)
+			if err != nil {
+				return rep, nil, err
+			}
 			rep.Violations = append(rep.Violations, sprint.LogViolations(s, lines)...)
 			rep.Violations = append(rep.Violations, sprint.StreamViolations(lines, inbox)...)
 		}
@@ -343,7 +349,11 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 const logPage = 5000
 
 // Log is the epoch's log, every line, in order.
-func (st *Store) Log(ctx context.Context) ([]sprint.Line, error) {
+func (st *Store) Log(ctx context.Context) ([]sprint.Line, error) { return st.logUpTo(ctx, "") }
+
+// logUpTo is the log's lines up to and including the stream id upto (all
+// when "").
+func (st *Store) logUpTo(ctx context.Context, upto string) ([]sprint.Line, error) {
 	var all []sprint.Line
 	after := ""
 	for {
@@ -351,7 +361,12 @@ func (st *Store) Log(ctx context.Context) ([]sprint.Line, error) {
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, lines...)
+		for i := range lines {
+			if upto != "" && streamIDAfter(ids[i], upto) {
+				return all, nil
+			}
+			all = append(all, lines[i])
+		}
 		if len(ids) < logPage {
 			return all, nil
 		}
@@ -359,16 +374,38 @@ func (st *Store) Log(ctx context.Context) ([]sprint.Line, error) {
 	}
 }
 
-// inboxAll is every notification of the epoch's inbox stream, in order.
-func (st *Store) inboxAll(ctx context.Context) ([]sprint.Note, error) {
+// streamIDAfter says the stream id a comes after b (ms-seq, numerically).
+func streamIDAfter(a, b string) bool {
+	part := func(id string) (int64, int64) {
+		ms, seq, _ := strings.Cut(id, "-")
+		x, _ := strconv.ParseInt(ms, 10, 64)
+		y, _ := strconv.ParseInt(seq, 10, 64)
+		return x, y
+	}
+	am, as := part(a)
+	bm, bs := part(b)
+	return am > bm || am == bm && as > bs
+}
+
+// inboxUpTo is the notifications of the epoch's inbox stream up to and
+// including the stream id upto, in order.
+func (st *Store) inboxUpTo(ctx context.Context, upto string) ([]sprint.Note, error) {
 	var all []sprint.Note
+	if upto == "" {
+		return nil, nil
+	}
 	after := ""
 	for {
 		notes, ids, err := st.B.NotesSince(ctx, after, logPage)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, notes...)
+		for i := range notes {
+			if streamIDAfter(ids[i], upto) {
+				return all, nil
+			}
+			all = append(all, notes[i])
+		}
 		if len(ids) < logPage {
 			return all, nil
 		}

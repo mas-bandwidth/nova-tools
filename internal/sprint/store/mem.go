@@ -849,6 +849,20 @@ func (m *Mem) NotesSince(_ context.Context, after string, max int) ([]sprint.Not
 	return notes, ids, nil
 }
 
+func (m *Mem) Tails(context.Context) (string, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.log()
+	var lg, in string
+	if n := len(l.lines); n > 0 {
+		lg = l.lines[n-1].id
+	}
+	if n := len(l.inbox); n > 0 {
+		in = l.inbox[n-1].id
+	}
+	return lg, in, nil
+}
+
 func (m *Mem) LogSince(_ context.Context, after string, max int) ([]sprint.Line, []string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

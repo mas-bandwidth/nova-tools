@@ -883,7 +883,9 @@ func headOf(p *Plan, member string, head []Change, n *Note, line string) {
 	if n != nil {
 		p.Units[0].Notes = append(p.Units[0].Notes, *n)
 	}
-	p.Units[0].Moved = strings.TrimPrefix(p.Units[0].Moved+"; "+line, "; ")
+	if !strings.HasSuffix(p.Units[0].Moved, "; "+line) {
+		p.Units[0].Moved = strings.TrimPrefix(p.Units[0].Moved+"; "+line, "; ")
+	}
 }
 
 // statusNote is the happened notification of a member's change of status.
