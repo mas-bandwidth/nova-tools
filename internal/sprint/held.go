@@ -542,6 +542,8 @@ func (c *held) decisions(pr *Card) []string {
 		out = []string{"accept", "rework", "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":
 		out = []string{"rework", "drop"}
+	case pr.Col == Review && len(readsAt(c.s, pr, pr.Int("attempt"))) > 0:
+		out = []string{"ask --another", "rework", "drop"} // ask alone is refused: asked already
 	case pr.Col == Review:
 		out = []string{"ask", "rework", "drop"}
 	case pr.Col == Merging:

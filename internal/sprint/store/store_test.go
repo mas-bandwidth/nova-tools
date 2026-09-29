@@ -539,6 +539,7 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	}
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-2.w1"}}, Gens: map[string]int{"s1-2.w1": 1}}))
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // asked: no move is due while STOPPED
 	v, err := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	if err != nil {
 		t.Fatal(err)

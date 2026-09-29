@@ -321,7 +321,7 @@ the tick would make, no other open judgment on it).
 | an invariant is broken | card (look at the card), repair, wait | no |
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
 | a stream has made no progress past its deadline (stale) | where, queue (look) | no |
-| stalled: nothing holds a card (rule 12) | the decisions its place allows, card (look at the card), wait | no, while the stall stands |
+| stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 
 A condition the tick keeps (cannot ask, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -762,7 +762,8 @@ ticking (RUNNING and no tick for 15 s: its run loop is not running; the
 commands start the loop or stop the machine), the tick keeps failing (three
 failed ticks in a row, with the last error), and the machine is STOPPED and
 moves are due (primaries ready, work cards withdrawn, waiters whose needs have
-landed; the command is `start`). `init` writes the machine STOPPED from the
+landed, primaries in review never asked at their attempt; the command is
+`start`). `init` writes the machine STOPPED from the
 start, so the time before the first `start` is a STOPPED span and counts
 toward no deadline. `clear` writes, at the new epoch, the happened line that
 the machine is STOPPED by the clear.

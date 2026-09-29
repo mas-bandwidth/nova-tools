@@ -604,10 +604,16 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 }
 
 // MovesDue is how many moves the tick would make on the snapshot's work and
-// fleet: primaries ready to deal, work cards withdrawn, and waiting primaries
-// whose needs have all landed (a sentinel is the coordinator's release).
+// fleet: primaries ready to deal, work cards withdrawn, waiting primaries
+// whose needs have all landed (a sentinel is the coordinator's release), and
+// primaries in review to ask (as TickAsk picks them).
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
+	for _, c := range s.Work.Column(Review) {
+		if s.Readers != nil && c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+			n++
+		}
+	}
 	for _, c := range s.Work.Column(Ready) {
 		if !IsSentinel(c) {
 			n++

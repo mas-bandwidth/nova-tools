@@ -309,7 +309,7 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 		}
 		return out, nil
 	}
-	s, err := st.Load(ctx, tables(sprint.Work, sprint.Fleet), nil)
+	s, err := st.Load(ctx, tables(sprint.Work, sprint.Fleet, sprint.Readers), nil)
 	if err != nil {
 		return out, err
 	}
