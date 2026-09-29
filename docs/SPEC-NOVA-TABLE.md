@@ -437,7 +437,7 @@ executes an atomic conditional mutation manifest against one table in a single R
 
 #### Manifest structure
 
-The manifest file is a JSON document containing `operation_id`, optional `actor`, and `entries` (or `members`, an array of member mutation and guard objects):
+The manifest file is a JSON document containing `schema`, `table`, `epoch`, `expected_table_revision`, `operation_id`, optional `actor`, and `members` (an array of member mutation and guard objects):
 
 ```json
 {

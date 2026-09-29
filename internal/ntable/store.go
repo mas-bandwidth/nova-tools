@@ -1179,17 +1179,8 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 
 // ApplyBatch validates and commits an atomic batch of member mutations and preconditions.
 func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (Receipt, error) {
-	if manifest.Schema == 0 {
-		manifest.Schema = 1
-	}
 	if !ValidName(manifest.Table) {
 		return Receipt{}, fmt.Errorf("table %q: invalid name; run: nova-table help", manifest.Table)
-	}
-	if manifest.Epoch == "" {
-		manifest.Epoch = "0"
-	}
-	if manifest.ExpectedTableRevision == "" {
-		manifest.ExpectedTableRevision = "0"
 	}
 	if manifest.Members == nil {
 		manifest.Members = []BatchMemberEntry{}

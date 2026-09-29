@@ -137,32 +137,32 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 			errSubstr: "invalid member id",
 		},
 		{
-			name:      "stella case 1: uppercase REMOVE false rejected",
+			name:      "case 1: uppercase REMOVE false rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","REMOVE":false,"set":{"status":"done"}}]}`,
 			errSubstr: `unknown field "REMOVE" in member object`,
 		},
 		{
-			name:      "stella case 2: null value in set rejected",
+			name:      "case 2: null value in set rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","set":{"status":null}}]}`,
 			errSubstr: `null value not allowed in set for field "status"`,
 		},
 		{
-			name:      "stella case 3: case variant duplicate actor and Actor rejected",
+			name:      "case 3: case variant duplicate actor and Actor rejected",
 			raw:       `{"schema":1,"table":"demo","actor":"a","Actor":"b","members":[{"id":"m"}]}`,
 			errSubstr: `duplicate key "Actor" in manifest`,
 		},
 		{
-			name:      "stella case A: null revision rejected",
+			name:      "case A: null revision rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"revision":null}}]}`,
 			errSubstr: `null value not allowed for revision`,
 		},
 		{
-			name:      "stella case B: null create score rejected",
+			name:      "case B: null create score rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","create":{"row":"r","col":"c","score":null}}]}`,
 			errSubstr: `null value not allowed for score`,
 		},
 		{
-			name:      "stella case C: null equals guard rejected",
+			name:      "case C: null equals guard rejected",
 			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"fields":{"status":{"equals":null,"one_of":["ready"]}}}}]}`,
 			errSubstr: `null value not allowed for equals`,
 		},
@@ -267,8 +267,8 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		})
 	}
 
-	// stella case 4: application field named "remove" inside set is accepted
-	t.Run("stella case 4: application field remove in set accepted", func(t *testing.T) {
+	// case 4: application field named "remove" inside set is accepted
+	t.Run("case 4: application field remove in set accepted", func(t *testing.T) {
 		t.Parallel()
 		raw := `{"schema":1,"table":"demo","members":[{"id":"m","set":{"remove":"done"}}]}`
 		m, err := ntable.ValidateBatchManifestRaw([]byte(raw))

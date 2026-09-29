@@ -147,6 +147,14 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 
 		if top.kind == containerObject {
 			if delim, ok := tok.(json.Delim); ok && delim == '}' {
+				if top.path == "create" {
+					if !top.seenKeys["score"] {
+						return nil, errors.New("create requires score")
+					}
+					if !top.seenKeys["row"] || !top.seenKeys["col"] {
+						return nil, errors.New("create requires row and col")
+					}
+				}
 				stack = stack[:len(stack)-1]
 				if len(stack) > 0 {
 					parent := &stack[len(stack)-1]
@@ -243,8 +251,12 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 				}
 			} else if (top.path == "expect" && top.lastKey == "absent") ||
 				(top.path == "field_guard" && top.lastKey == "absent") {
-				if _, ok := tok.(bool); !ok {
+				b, ok := tok.(bool)
+				if !ok {
 					return nil, fmt.Errorf("expected boolean for %s", top.lastKey)
+				}
+				if !b {
+					return nil, fmt.Errorf("expected boolean true for %s", top.lastKey)
 				}
 			}
 
@@ -443,8 +455,17 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 			return nil, fmt.Errorf("duplicate member id %q in manifest", id)
 		}
 		seenMemberIDs[id] = true
+		if len(m.Set) > 1000 {
+			return nil, errors.New("set fields exceed 1000")
+		}
+		if len(m.Unset) > 1000 {
+			return nil, errors.New("unset fields exceed 1000")
+		}
 
 		if m.Expect != nil && m.Expect.Fields != nil {
+			if len(m.Expect.Fields) > 1000 {
+				return nil, errors.New("field guards exceed 1000")
+			}
 			for fName, fg := range m.Expect.Fields {
 				conds := 0
 				if fg.Equals != nil {
@@ -457,6 +478,9 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 					conds++
 					if len(fg.OneOf) == 0 {
 						return nil, fmt.Errorf("one_of for %q must be nonempty array", fName)
+					}
+					if len(fg.OneOf) > 1000 {
+						return nil, fmt.Errorf("one_of options for %q exceed 1000", fName)
 					}
 				}
 				if conds != 1 {

@@ -1289,31 +1289,40 @@ do
     if not scope or type(scope) ~= 'table' then return T.refuse('ARGS', 'read_set scope') end
     local target_ids = {}
     local seen_ids = {}
-    if scope.members and type(scope.members) == 'table' then
+    if scope.members ~= nil then
+      if type(scope.members) ~= 'table' then return T.refuse('ARGS', 'read_set members must be array') end
       for _, id in ipairs(scope.members) do
-        if type(id) == 'string' and not seen_ids[id] then
+        if type(id) ~= 'string' or id == '' then
+          return T.refuse('ARGS', 'read_set member ID must be string')
+        end
+        if not seen_ids[id] then
           seen_ids[id] = true
           target_ids[#target_ids + 1] = id
         end
       end
-    elseif scope.selection and type(scope.selection) == 'table' then
+    elseif scope.selection ~= nil then
+      if type(scope.selection) ~= 'table' then return T.refuse('ARGS', 'read_set selection must be array') end
       for _, sel in ipairs(scope.selection) do
-        if type(sel) == 'table' and sel.row and sel.col then
-          local cell, why = T.cell(d, sel.row, sel.col, false)
-          if not cell then return why end
-          local ms = T.members(cell.key, cell.exclude or '')
-          for i = 1, #ms, 2 do
-            local id = ms[i]
-            if not seen_ids[id] then
-              seen_ids[id] = true
-              target_ids[#target_ids + 1] = id
-            end
+        if type(sel) ~= 'table' or not sel.row or not sel.col or type(sel.row) ~= 'string' or type(sel.col) ~= 'string' or sel.row == '' or sel.col == '' then
+          return T.refuse('ARGS', 'read_set selection requires row and col')
+        end
+        local cell, why = T.cell(d, sel.row, sel.col, false)
+        if not cell then return why end
+        local ms = T.members(cell.key, cell.exclude or '')
+        for i = 1, #ms, 2 do
+          local id = ms[i]
+          if not seen_ids[id] then
+            seen_ids[id] = true
+            target_ids[#target_ids + 1] = id
           end
         end
       end
-    else
+    elseif #scope > 0 then
       for _, id in ipairs(scope) do
-        if type(id) == 'string' and not seen_ids[id] then
+        if type(id) ~= 'string' or id == '' then
+          return T.refuse('ARGS', 'read_set member ID must be string')
+        end
+        if not seen_ids[id] then
           seen_ids[id] = true
           target_ids[#target_ids + 1] = id
         end
@@ -1791,63 +1800,70 @@ do
         return T.refuse('MANIFEST', 'member ' .. id .. ' missing expect record')
       end
       local exp = entry.expect
-      if exp.absent then
-          if exists or current_place then return T.refuse('MEMBEREXISTS', id) end
-        else
-          if not exists then return T.refuse('NOTMEMBER', id) end
-          local obs_rev = record.revision or '0'
-          if exp.revision and exp.revision ~= obs_rev then
-            return T.refuse('MEMBERREVISION', id, exp.revision, obs_rev)
+      if exp.absent ~= nil then
+        if exp.absent ~= true then return T.refuse('ARGS', 'expect absent must be true') end
+        if exists or current_place then return T.refuse('MEMBEREXISTS', id) end
+      else
+        if not exists then return T.refuse('NOTMEMBER', id) end
+        local obs_rev = record.revision or '0'
+        if exp.revision and exp.revision ~= obs_rev then
+          return T.refuse('MEMBERREVISION', id, exp.revision, obs_rev)
+        end
+        if exp.place then
+          if not exp.place.row or not exp.place.col then
+            return T.refuse('ARGS', 'expect place wants row and col')
           end
-          if exp.place then
-            if not exp.place.row or not exp.place.col then
-              return T.refuse('ARGS', 'expect place wants row and col')
-            end
-            local exp_place = T.place(exp.place.row, exp.place.col)
-            if current_place ~= exp_place then
-              return T.refuse('DRIFT', id, exp_place, current_place or 'unplaced')
-            end
+          local exp_place = T.place(exp.place.row, exp.place.col)
+          if current_place ~= exp_place then
+            return T.refuse('DRIFT', id, exp_place, current_place or 'unplaced')
           end
-          if exp.fields and type(exp.fields) == 'table' then
-            for f, guard in pairs(exp.fields) do
-              if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
-              local num_conds = 0
-              if guard.equals ~= nil then num_conds = num_conds + 1 end
-              if guard.absent ~= nil then num_conds = num_conds + 1 end
-              if guard.one_of ~= nil then num_conds = num_conds + 1 end
-              if num_conds ~= 1 then return T.refuse('FIELDGUARD', id, f, 'exact one condition required') end
-              local actual = record[f]
-              if guard.equals ~= nil then
-                if type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'equals must be string') end
-                if actual == nil or actual ~= guard.equals then
-                  return T.refuse('FIELDGUARD', id, f, 'equals', guard.equals, actual or '<absent>')
-                end
-              elseif guard.absent ~= nil then
-                if guard.absent ~= true then return T.refuse('FIELDGUARD', id, f, 'absent must be true') end
-                if actual ~= nil then
-                  return T.refuse('FIELDGUARD', id, f, 'absent', actual)
-                end
-              elseif guard.one_of ~= nil then
-                if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
-                  return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
-                end
+        end
+        if exp.fields and type(exp.fields) == 'table' then
+          local fg_count = 0
+          for _ in pairs(exp.fields) do fg_count = fg_count + 1 end
+          if fg_count > 1000 then return T.refuse('LIMIT', 'field guards exceed 1000') end
+          for f, guard in pairs(exp.fields) do
+            if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
+            local num_conds = 0
+            if guard.equals ~= nil then num_conds = num_conds + 1 end
+            if guard.absent ~= nil then num_conds = num_conds + 1 end
+            if guard.one_of ~= nil then num_conds = num_conds + 1 end
+            if num_conds ~= 1 then return T.refuse('FIELDGUARD', id, f, 'exact one condition required') end
+            local actual = record[f]
+            if guard.equals ~= nil then
+              if type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'equals must be string') end
+              if actual == nil or actual ~= guard.equals then
+                return T.refuse('FIELDGUARD', id, f, 'equals', guard.equals, actual or '<absent>')
+              end
+            elseif guard.absent ~= nil then
+              if guard.absent ~= true then return T.refuse('FIELDGUARD', id, f, 'absent must be true') end
+              if actual ~= nil then
+                return T.refuse('FIELDGUARD', id, f, 'absent', actual)
+              end
+            elseif guard.one_of ~= nil then
+              if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
+                return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
+              end
+              if #guard.one_of > 1000 then
+                return T.refuse('LIMIT', 'one_of options exceed 1000')
+              end
+              for _, opt in ipairs(guard.one_of) do
+                if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
+              end
+              local matched = false
+              if actual ~= nil then
                 for _, opt in ipairs(guard.one_of) do
-                  if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
+                  if actual == opt then matched = true; break end
                 end
-                local matched = false
-                if actual ~= nil then
-                  for _, opt in ipairs(guard.one_of) do
-                    if actual == opt then matched = true; break end
-                  end
-                end
-                if not matched then
-                  return T.refuse('FIELDGUARD', id, f, 'one_of', cjson.encode(guard.one_of), actual or '<absent>')
-                end
+              end
+              if not matched then
+                return T.refuse('FIELDGUARD', id, f, 'one_of', cjson.encode(guard.one_of), actual or '<absent>')
               end
             end
           end
         end
       end
+    end
 
     -- Validate mutation constraints before staging:
     local plan = {}
@@ -1860,6 +1876,9 @@ do
       local member_fields = {}
       local fields_changed = false
       if entry.set then
+        local set_count = 0
+        for _ in pairs(entry.set) do set_count = set_count + 1 end
+        if set_count > 1000 then return T.refuse('LIMIT', 'set fields exceed 1000') end
         for f, val in pairs(entry.set) do
           local bval = record[f]
           if bval ~= val then
@@ -1872,6 +1891,7 @@ do
         end
       end
       if entry.unset then
+        if #entry.unset > 1000 then return T.refuse('LIMIT', 'unset fields exceed 1000') end
         for _, f in ipairs(entry.unset) do
           local bval = record[f]
           if bval ~= nil then
@@ -1892,7 +1912,7 @@ do
         if entry.expect and (entry.expect.revision or entry.expect.place or entry.expect.fields) then
           return T.refuse('MUTATION', id, 'create cannot expect existing record')
         end
-        if not entry.expect or not entry.expect.absent then
+        if not entry.expect or entry.expect.absent ~= true then
           return T.refuse('MUTATION', id, 'create requires expect absent')
         end
         if next(record) or current_place then
@@ -1901,6 +1921,9 @@ do
         local crow, ccol = entry.create.row, entry.create.col
         local dst_cell, err = T.cell(d, crow, ccol, true)
         if not dst_cell then return err end
+        if entry.create.score == nil or (type(entry.create.score) ~= 'number' and type(entry.create.score) ~= 'string') then
+          return T.refuse('SCORE', id)
+        end
         local score = tonumber(entry.create.score)
         if not score or score ~= score or score == math.huge or score == -math.huge then
           return T.refuse('SCORE', id)
@@ -1924,9 +1947,17 @@ do
         local mrow, mcol = entry.move.row, entry.move.col
         local dst_cell, err = T.cell(d, mrow, mcol, true)
         if not dst_cell then return err end
-        local score = entry.move.score ~= nil and tonumber(entry.move.score) or member_scores[id]
-        if not score or score ~= score or score == math.huge or score == -math.huge then
-          return T.refuse('SCORE', id)
+        local score
+        if entry.move.score ~= nil then
+          if type(entry.move.score) ~= 'number' and type(entry.move.score) ~= 'string' then
+            return T.refuse('SCORE', id)
+          end
+          score = tonumber(entry.move.score)
+          if not score or score ~= score or score == math.huge or score == -math.huge then
+            return T.refuse('SCORE', id)
+          end
+        else
+          score = member_scores[id]
         end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err2 = T.cell(d, src_row, src_col, true)
@@ -2019,6 +2050,7 @@ do
     for _, item in ipairs(plan) do
       local id = item.id
       local entry = item.entry
+      local record = item.record or {}
       local mkey = T.memberkey(d, id)
       local delta_item = {
         id = id,
@@ -2043,6 +2075,9 @@ do
         T.stage(d, 'HSET', mkey, 'epoch', d.epoch, 'place:' .. d.name, item.dst_place, 'revision', '1')
         T.change(d, id, nil, item.dst_place, item.score)
       elseif item.action == 'move' then
+        if not record.epoch then
+          T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
+        end
         if item.src_cell.key ~= item.dst_cell.key then
           T.stage(d, 'ZREM', item.src_cell.key, id)
           T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
@@ -2054,11 +2089,17 @@ do
           T.change(d, id, item.src_place, item.dst_place, item.score)
         end
       elseif item.action == 'remove' then
+        if not record.epoch then
+          T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
+        end
         T.stage(d, 'ZREM', item.src_cell.key, id)
         T.stage(d, 'HDEL', mkey, 'place:' .. d.name)
         T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
         T.change(d, id, item.src_place, nil, member_scores[id])
       elseif item.action == 'fields' then
+        if not record.epoch then
+          T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
+        end
         T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
       end
 
@@ -2071,11 +2112,14 @@ do
         T.stage(d, unpack(hcmd))
       end
       if entry.unset and #entry.unset > 0 then
-        local dcmd = {'HDEL', mkey}
-        for _, f in ipairs(entry.unset) do
-          dcmd[#dcmd + 1] = f
+        for i = 1, #entry.unset, 500 do
+          local dcmd = {'HDEL', mkey}
+          local last = math.min(i + 499, #entry.unset)
+          for j = i, last do
+            dcmd[#dcmd + 1] = entry.unset[j]
+          end
+          T.stage(d, unpack(dcmd))
         end
-        T.stage(d, unpack(dcmd))
       end
     end
 
@@ -2083,6 +2127,7 @@ do
 
     -- Stage table revision increment:
     T.stage(d, 'HSET', d.key .. ':revision', 'n', after_table_rev)
+    if not d.snap.order then T.hset(d.commands, d.prefix .. ':definition', d.h) end
     T.stage(d, 'HSET', d.prefix .. ':definition', '_present', '1', '_revision', after_table_rev)
 
     -- Stage change stream entry (XADD):
