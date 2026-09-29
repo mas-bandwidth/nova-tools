@@ -56,6 +56,7 @@ var (
 	ErrInvalidScore     = errors.New("invalid score")
 	ErrCounterOverflow  = errors.New("counter overflow")
 	ErrMutation         = errors.New("incompatible mutation")
+	ErrWrongType        = errors.New("WRONGTYPE")
 )
 
 // BoundError names the other writer. The table may read the binding but
@@ -373,6 +374,14 @@ func (o operation) refused(reply []any) error {
 			o.member = fmt.Sprint(reply[2])
 		}
 		cause = fmt.Errorf("member: %v", reply[2:])
+	case "WRONGTYPE":
+		if len(reply) >= 5 {
+			cause = fmt.Errorf("%w: key %v is %v, expected %v", ErrWrongType, reply[2], reply[3], reply[4])
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrWrongType, reply[2:])
+		}
+	case "STREAMTYPE":
+		cause = fmt.Errorf("%w: stream %v is not a stream", ErrWrongType, reply[2:])
 	default:
 		cause = fmt.Errorf("%s %v", reason, reply[2:])
 	}

@@ -257,10 +257,51 @@ do
   end
   function T.stage(d, ...) d.commands[#d.commands + 1] = {...} end
   function T.place(row, col) return row .. ':' .. col end
+  local command_expected_type = {
+    ZADD = 'zset',
+    ZREM = 'zset',
+    HSET = 'hash',
+    HDEL = 'hash',
+    SADD = 'set',
+    SREM = 'set',
+    XADD = 'stream',
+  }
+  function T.check_types(commands)
+    local key_kinds = {}
+    for _, cmd in ipairs(commands) do
+      local op = cmd[1]
+      local key = cmd[2]
+      if op == 'DEL' or op == 'UNLINK' then
+        key_kinds[key] = 'none'
+      else
+        local want = command_expected_type[op]
+        if want then
+          local kind = key_kinds[key]
+          if not kind then
+            local t = redis.call('TYPE', key)
+            kind = (type(t) == 'table' and t.ok) and t.ok or t
+            key_kinds[key] = kind
+          end
+          if kind ~= 'none' and kind ~= want then
+            return T.refuse('WRONGTYPE', key, kind, want)
+          end
+          if kind == 'none' then
+            key_kinds[key] = want
+          end
+        end
+      end
+    end
+    return nil
+  end
   function T.memberkey(d, id) return d.cfg.member_prefix .. id end
   function T.member(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER') end
-    local h = T.hash(T.memberkey(d, id))
+    local mkey = T.memberkey(d, id)
+    local h, _, err = T.hash(mkey)
+    if err then
+      if string.find(err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, 'wrong type', 'hash') end
+      return nil, nil, { 'ERR', err }
+    end
     local exists = next(h) ~= nil
     local epoch = h.epoch or '0'
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
@@ -510,6 +551,8 @@ do
     for _, cmd in ipairs(d.commands) do
       if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end
     end
+    local type_err = T.check_types(d.commands)
+    if type_err then return type_err end
     local id
     for _, cmd in ipairs(d.commands) do id = redis.call(unpack(cmd)) end
     local before = d.revision
@@ -911,7 +954,12 @@ do
     local row, col = args[2], args[3]
     local src, err = T.cell(d, row, col, true)
     if not src then return nil, err end
-    local count, first, dst = redis.call('ZCARD', src.key), 5, nil
+    local count = redis.pcall('ZCARD', src.key)
+    if type(count) == 'table' and count.err then
+      if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', src.key, 'wrong type', 'zset') end
+      return nil, { 'ERR', count.err }
+    end
+    local first, dst = 5, nil
     if op == 'add' then
       local score = tonumber(args[4])
       if not score or score ~= score or score == math.huge or score == -math.huge then return nil, T.refuse('SCORE') end
@@ -919,7 +967,11 @@ do
     else
       dst, err = T.cell(d, row, args[4], true)
       if not dst then return nil, err end
-      count = redis.call('ZCARD', dst.key)
+      count = redis.pcall('ZCARD', dst.key)
+      if type(count) == 'table' and count.err then
+        if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', dst.key, 'wrong type', 'zset') end
+        return nil, { 'ERR', count.err }
+      end
     end
     local seen, here = {}, T.place(row, col)
     for i = first, #args - 1 do
@@ -1293,7 +1345,13 @@ do
 
     -- Check operation replay first:
     local op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
-    local op_record = T.hash(op_key)
+    local op_record, _, op_err = T.hash(op_key)
+    if op_err then
+      if string.find(op_err, 'WRONGTYPE') then
+        return T.refuse('WRONGTYPE', op_key, 'wrong type', 'hash')
+      end
+      return {'ERR', op_err}
+    end
     if next(op_record) then
       if op_record.request ~= raw_json then
         return T.refuse('OPCONFLICT', manifest.operation_id)
@@ -1364,7 +1422,11 @@ do
         if not r or not c then return T.refuse('DRIFT', id, current_place) end
         local cell, cell_err = T.cell(d, r, c, true)
         if not cell then return cell_err end
-        local score = redis.call('ZSCORE', cell.key, id)
+        local score = redis.pcall('ZSCORE', cell.key, id)
+        if type(score) == 'table' and score.err then
+          if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, 'wrong type', 'zset') end
+          return {'ERR', score.err}
+        end
         if not score then return T.refuse('DRIFT', r, c, id) end
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
@@ -1670,6 +1732,16 @@ do
 
     if not redis.acl_check_cmd('HSET', op_key, 'operation_id', manifest.operation_id) then
       return T.refuse('NOPERM', 'HSET', op_key)
+    end
+
+    -- Pre-flight type check on all staged commands and op_key:
+    local type_err = T.check_types(d.commands)
+    if type_err then return type_err end
+
+    local op_kind = redis.call('TYPE', op_key)
+    op_kind = (type(op_kind) == 'table' and op_kind.ok) and op_kind.ok or op_kind
+    if op_kind ~= 'none' and op_kind ~= 'hash' then
+      return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
     end
 
     -- Execute all staged commands:
