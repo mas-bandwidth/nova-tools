@@ -96,8 +96,12 @@ func TestControl43OneWriter(t *testing.T) {
 		call := regexp.MustCompile(`\.(HSet|HSetNX|HDel|Del|Unlink|Set|Expire|PExpire|XAdd)\(`)
 		marker := regexp.MustCompile(`(^|\W)(friend\.)?(StateKey|EventsKey|WakeModeKey)\(|:(state|events|wakemode)"`)
 		scanned := 0
-		for _, dir := range []string{"internal/nsprint", "cmd/nova-sprint"} {
-			err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+		for _, dir := range []string{"internal/nsprint", "cmd/nova-sprint", "deprecated/cmd/nova-sprint"} {
+			dirPath := filepath.Join(root, dir)
+			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+				continue
+			}
+			err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
 				if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 					return err
 				}
