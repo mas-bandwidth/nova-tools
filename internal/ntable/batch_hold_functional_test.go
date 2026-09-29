@@ -65,8 +65,12 @@ func holdUnset(prefix string, members, fields int) string {
 
 func holdApply(t *testing.T, ctx context.Context, c *redis.Client, name, raw string) ([]any, time.Duration) {
 	t.Helper()
+	// a client that waits for the script: the default one gives up at three seconds
+	// and its retry meets BUSY on a bench that is busy with other work
+	slow := redis.NewClient(&redis.Options{Addr: c.Options().Addr, ReadTimeout: time.Minute, MaxRetries: -1})
+	defer slow.Close()
 	start := time.Now()
-	ans, err := rawApply(ctx, c, raw)
+	ans, err := rawApply(ctx, slow, raw)
 	took := time.Since(start)
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)

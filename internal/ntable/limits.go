@@ -51,9 +51,15 @@ type LimitError struct {
 	Name            string
 	Bound, Observed int
 	Member          string
+	// AtLeast says the call stopped counting when it passed the bound: the true
+	// size is at least Observed.
+	AtLeast bool
 }
 
 func (e *LimitError) Error() string {
+	if e.AtLeast {
+		return fmt.Sprintf("%s: %s: bound %d, observed at least %d", ErrLimit, e.Name, e.Bound, e.Observed)
+	}
 	return fmt.Sprintf("%s: %s: bound %d, observed %d", ErrLimit, e.Name, e.Bound, e.Observed)
 }
 
