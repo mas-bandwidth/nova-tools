@@ -52,7 +52,7 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 			t.Logf("TLC DEBT config=%s reason=%s; failed or missing evidence is not a pass", row[0], row[7])
 		}
 	}
-	for _, module := range []string{"MCMemberTable.tla", "MCEpochMemberTable.tla", "MCTableEdit.tla", "MCTableOrder.tla", "MCTableSession.tla", "MCTableFirstContact.tla", "MCRedisFn.tla", "MCFirstConn.tla"} {
+	for _, module := range []string{"MCMemberTable.tla", "MCEpochMemberTable.tla", "MCTableEdit.tla", "MCTableOrder.tla", "MCTableSession.tla", "MCTableFirstContact.tla", "MCRedisFn.tla", "MCFirstConn.tla", "MCFunctionalRun.tla"} {
 		if !required[module] {
 			t.Errorf("TLC required model %s disappeared from the gate", module)
 		}

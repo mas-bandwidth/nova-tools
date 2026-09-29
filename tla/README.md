@@ -14,6 +14,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `FirstConn.tla` | `MCFirstConn*` | `internal/redisconn`'s first connection: the probe Open sends, taken and answered in the store's place only after HELLO was accepted, with seven reversed witnesses |
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
+| `FunctionalRun.tla` | `MCFunctionalRun*` | a functional-test run inside one container, from the intent to the receipt, whatever happens to its client: the runtime's bound and `--rm`, a reaper by label and age, one receipt; eleven reversed witnesses, each with its control |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
@@ -444,3 +445,73 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+## The functional run (FunctionalRun)
+
+`FunctionalRun.tla`: the life of one functional-test run inside a container,
+the design in `future/SPEC-FUNCTIONAL-RUN.md` (the runner verb is not built).
+Per run it owns the phase (requested, created, running, finished, timed out,
+killed, removed), how the container ended, whether the container exists, the
+run's own resources (`vol`: processes, namespaces, shared memory, tmpfs,
+which die with the container's processes; `disk`: the writable layer and any
+anonymous volume, which live until removal), anything of the run outside its
+container, the client, the run's age against its deadline and the reaper's
+grace, the runtime's monitor, and the receipt; the cache volumes are shared
+and are not a run's. The outside: the client dies anywhere, a person kills
+the container, the monitor dies, the machine reboots or the session ends
+without lingering, podman's refresh after it may or may not run, time
+passes. A bounded design model with reversed witnesses, not a refinement
+proof; its header lists what it leaves out.
+
+What it holds the design to: a removed run holds nothing
+(`RemovedHoldsNothing`); nothing of a run lives outside its container
+(`NothingOutside`, kept in code by the fixture guard); a receipt says clean
+only when nothing was left and the container was gone (`CleanIsTrue`);
+nothing takes a run's container before it is overdue (`NoTrespass`); caches
+are never removed nor counted (`CachesKept`); one receipt per run
+(`OneReceipt`); no container runs past its deadline plus the grace while its
+monitor lives (`BoundHolds`); every created run is removed
+(`RemovedEventually`) and every run gets a receipt or a report to a person
+(`ReceiptOrReport`), under weak fairness of time, the runtime's deadline, the
+monitor's `--rm` and the reaper only: nothing is assumed of the client, the
+tests, a person, the monitor's survival, a reboot or podman's refresh.
+
+Each witness `MCFunctionalRunBroken<X>` turns on one misimplementation and
+checks only the property that names it; its `MCFunctionalRunControl<X>`
+checks every other property of the positive config with the same
+misimplementation and passes, so each witness is rejected by that property
+alone. The instance: two runs, two resource tokens per run, one cache, one
+reboot. Run with `tlacheck run --group functionalrun` (and the three
+`functionalrun-controls-*` groups), or by hand as the others are:
+
+    for cfg in MCFunctionalRun*.cfg; do c=${cfg%.cfg}
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -deadlock -lncheck final -metadir /tmp/tlc-$c/meta -config $cfg MCFunctionalRun.tla > $c.log 2>&1
+    done
+
+The records in `RUNS.tsv` are the measurement (TLC 2.19, two workers).
+
+| config | result |
+|---|---|
+| `MCFunctionalRun` | no error, 40,069 distinct states, depth 19, 9 s: TypeOK, Consistent, the seven safety properties, RemovedEventually and ReceiptOrReport |
+| `MCFunctionalRunBrokenClientOwned` | RemovedEventually violated: no `--rm`, the reaper reports and never removes; run 1 finishes and its client never removes it (it stalls, then the machine reboots), and the exited container stays for ever |
+| `MCFunctionalRunBrokenNoReaper` | RemovedEventually violated: `--rm` and `--timeout`, no reaper removal; run 1 is created, the reboot kills its client before the start, and a created container is never started, never timed and never removed (refresh keeps a configured container) |
+| `MCFunctionalRunBrokenSilent` | ReceiptOrReport violated: the reaper writes no receipt; two runs requested, the reboot kills both clients, nothing ever reports them |
+| `MCFunctionalRunBrokenNoDeadline` | BoundHolds violated in 6 states: `--rm` without `--timeout`; the run starts, and time passes the deadline plus the grace with it still running under a live monitor |
+| `MCFunctionalRunBrokenName` | NoTrespass violated in 5 states: a reaper by name pattern removes a container the verb has just created, well inside its deadline |
+| `MCFunctionalRunBrokenCaches` | CachesKept violated in 6 states: the reaper removes an overdue container and prunes volumes, the module cache with them |
+| `MCFunctionalRunBrokenCountCaches` | CachesKept violated in 5 states: a run whose client stalled before create is reported by the reaper with one leftover, the cache |
+| `MCFunctionalRunBrokenEarly` | CleanIsTrue violated in 6 states: the tests pass and the receipt says clean before the container is removed |
+| `MCFunctionalRunBrokenOutside` | NothingOutside violated in 5 states: the run starts and a fixture daemonises its dependency outside the container |
+| `MCFunctionalRunBrokenKeepVol` | RemovedHoldsNothing violated in 6 states: a created container past the grace is reaped without `--volumes`, and its anonymous volume stays |
+| `MCFunctionalRunBrokenTwice` | OneReceipt violated in 8 states: the reaper removes an overdue container, the stalled client writes its receipt, and the reaper, not creating exclusively, writes a second |
+| `MCFunctionalRunControl*` | no error for each of the eleven, 32,276 to 151,642 distinct states, 5 to 29 s |
+
+Every counterexample was read by hand against the design and podman's
+behaviour: the NoReaper and ClientOwned traces against libpod's refresh at
+v5.7.0 (`resetContainerState` makes a created container configured and an
+exited one exited; `refresh` removes only an exited auto-remove container);
+NoDeadline against a measured kill of the client, where the container ran on
+until a time bound ended it.
+
