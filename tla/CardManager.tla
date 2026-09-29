@@ -59,9 +59,13 @@ Outcomes == {"completed", "cancelled", "depfailed", "replaced"}
 Cells    == Streams \X States
 NoPlace  == <<"-", "-">>
 None     == "-"
-Issuers  == Reviewers \cup {"ci"}
-Digests  == {Def[c] : c \in Cards}
-Evidence == Issuers \X {"accept", "ok"} \X (0..MaxHead) \X Digests
+Issuers              == Reviewers \cup {"ci"}
+Digests              == {Def[c] : c \in Cards}
+Dispositions         == {"accept", "hold", "ok", "fail"}
+ReviewerDispositions == {"accept", "hold"}
+CIDispositions       == {"ok", "fail"}
+DispositionChoices(i) == IF i = "ci" THEN CIDispositions ELSE ReviewerDispositions
+Evidence             == Issuers \X Dispositions \X (0..MaxHead) \X Digests
 
 VARIABLES
   cells,     \* [Cells -> SUBSET Cards]      the table's owned cells
@@ -123,10 +127,11 @@ DepsMetIn(S, c)   == \A d \in deps[c] : MetIn(S, d)
 DepFailedIn(S, c) == \E d \in deps[c] : S.st[d] = "done" /\ S.oc[d] \in {"cancelled", "depfailed", "replaced"}
 DepsMet(c) == DepsMetIn(Pre, c)
 
-PRKind(c) == kind[c] \notin NonPR
-Accepts(c) == {r \in Reviewers : <<r, "accept", head[c], digest[c]>> \in evidence[c]}
-Accepted(c) == Cardinality(Accepts(c)) >= Quorum
-CIOk(c) == <<"ci", "ok", head[c], digest[c]>> \in evidence[c]
+PRKind(c)   == kind[c] \notin NonPR
+Accepts(c)  == {r \in Reviewers : <<r, "accept", head[c], digest[c]>> \in evidence[c]}
+Holds(c)    == {r \in Reviewers : <<r, "hold", head[c], digest[c]>> \in evidence[c]}
+Accepted(c) == Cardinality(Accepts(c)) >= Quorum /\ Holds(c) = {}
+CIOk(c)     == <<"ci", "ok", head[c], digest[c]>> \in evidence[c] /\ <<"ci", "fail", head[c], digest[c]>> \notin evidence[c]
 
 \* at most BatchMax entries drawn from S (a batch is a set, never a loop)
 Small(S) == {{p} : p \in S}
@@ -195,16 +200,17 @@ ReturnSet(E) ==
 (* transaction. Every guard reads the one pre-state; events chain across   *)
 (* batches, never inside one. Two events for one card refuse (OnePerCard). *)
 
-Events == {"start", "result", "head", "merge", "rework", "land",
+Events == {"start", "result", "head", "merge", "queue_reject", "rework", "land",
            "complete", "cancel", "depfail"}
 
 To(c, e) ==
-  CASE e = "start"    -> "working"
-    [] e = "result"   -> "review"
-    [] e = "head"     -> "review"
-    [] e = "merge"    -> "merging"
-    [] e = "rework"   -> "ready"
-    [] e = "land"     -> "landed"
+  CASE e = "start"        -> "working"
+    [] e = "result"       -> "review"
+    [] e = "head"         -> "review"
+    [] e = "merge"        -> "merging"
+    [] e = "queue_reject" -> "review"
+    [] e = "rework"       -> "ready"
+    [] e = "land"         -> "landed"
     [] e \in {"complete", "cancel", "depfail"} -> "done"
 NewOutcome(c, e) ==
   CASE e = "complete" -> "completed"
@@ -214,14 +220,15 @@ NewOutcome(c, e) ==
 
 \* the card's own guards (its own pre-state fields)
 OwnOK(c, e) ==
-  CASE e = "start"    -> St(c) = "ready"
-    [] e = "result"   -> St(c) = "working" /\ head[c] < MaxHead
-    [] e = "head"     -> St(c) \in {"review", "merging"} /\ PRKind(c) /\ head[c] < MaxHead
-    [] e = "merge"    -> St(c) = "review" /\ PRKind(c) /\ Accepted(c) /\ CIOk(c)
-    [] e = "rework"   -> St(c) = "review" /\ head[c] < MaxHead
-    [] e = "land"     -> \/ St(c) = "merging"
-                         \/ St(c) \in {"waiting", "ready", "working"} /\ PRKind(c)
-                         \/ Broken = "resurrect" /\ St(c) = "done" /\ PRKind(c)
+  CASE e = "start"        -> St(c) = "ready"
+    [] e = "result"       -> St(c) = "working" /\ head[c] < MaxHead
+    [] e = "head"         -> St(c) \in {"review", "merging"} /\ PRKind(c) /\ head[c] < MaxHead
+    [] e = "merge"        -> St(c) = "review" /\ PRKind(c) /\ Accepted(c) /\ CIOk(c)
+    [] e = "queue_reject" -> St(c) = "merging"
+    [] e = "rework"       -> St(c) = "review" /\ head[c] < MaxHead
+    [] e = "land"         -> \/ St(c) = "merging"
+                             \/ St(c) \in {"waiting", "ready", "working"} /\ PRKind(c)
+                             \/ Broken = "resurrect" /\ St(c) = "done" /\ PRKind(c)
     [] e = "complete" -> St(c) = "review" /\ ~PRKind(c) /\ Accepted(c)
     [] e = "cancel"   -> St(c) \in Open
     [] e = "depfail"  -> St(c) = "waiting"
@@ -250,9 +257,14 @@ ApplyEvents(B) ==
         /\ outcome' = [c \in Cards |-> IF c \in D THEN NewOutcome(c, Of(B, c)) ELSE outcome[c]]
         /\ head' = [c \in Cards |-> IF c \in D /\ Of(B, c) \in {"result", "head"}
                                       THEN head[c] + 1 ELSE head[c]]
-        \* a new head or a rework invalidates the evidence taken before it
-        /\ evidence' = [c \in Cards |-> IF c \in D /\ Of(B, c) \in {"result", "head", "rework"}
-                                          THEN {} ELSE evidence[c]]
+        \* a new head or a rework invalidates the evidence taken before it;
+        \* queue rejection returns to review at unchanged head, clearing merge authorization
+        /\ evidence' = [c \in Cards |->
+             IF c \in D /\ Of(B, c) \in {"result", "head", "rework"}
+               THEN {}
+             ELSE IF c \in D /\ Of(B, c) = "queue_reject"
+               THEN {ev \in evidence[c] : ~(ev[1] = "ci" /\ ev[2] = "ok")}
+             ELSE evidence[c]]
         /\ Commit(D)
   /\ UNCHANGED <<digest, kind, deps, succ, epoch>>
 
@@ -267,22 +279,27 @@ ApplyAny == \E B \in Small({p \in EventChoices : OwnOK(p[1], p[2])}) : ApplyEven
 (* authorize a transition in that batch: a batch is one operation.        *)
 
 Issue(c) == IF PRKind(c) THEN Issuers ELSE Reviewers
-Disposition(i) == IF i = "ci" THEN "ok" ELSE "accept"
 \* candidates at every head: the guard, not the enumeration, does the refusing
-Offered == UNION {{<<c, <<i, Disposition(i), h, digest[c]>>>> : i \in Issue(c), h \in 1..MaxHead} :
+Offered == UNION {{<<c, <<i, disp, h, digest[c]>>>> :
+                    i \in Issue(c), disp \in Dispositions, h \in 1..MaxHead} :
                    c \in {x \in AdmittedIds : St(x) = "review"}}
 
 EvidenceOK(c, ev) ==
   /\ St(c) = "review"
+  /\ ev[2] \in DispositionChoices(ev[1])
   /\ ev[4] = digest[c]
   /\ (Broken = "stale" \/ ev[3] = head[c])
-  /\ ~\E old \in evidence[c] : old[1] = ev[1] /\ old[3] = ev[3]
+  /\ ev \notin evidence[c]
 
 RecordEvidence(B) ==
   /\ \A p, q \in B : p[1] = q[1] /\ p[2][1] = q[2][1] => p = q
   /\ \A p \in B : EvidenceOK(p[1], p[2])
   /\ LET D == Ids(B) IN
-     /\ evidence' = [c \in Cards |-> evidence[c] \cup {p[2] : p \in {q \in B : q[1] = c}}]
+     /\ evidence' = [c \in Cards |->
+          IF c \in D
+          THEN LET NewEv == {p[2] : p \in {q \in B : q[1] = c}} IN
+               {e \in evidence[c] : ~\E ne \in NewEv : e[1] = ne[1] /\ e[3] = ne[3]} \cup NewEv
+          ELSE evidence[c]]
      /\ Commit(D)
   /\ UNCHANGED <<cells, place, digest, kind, deps, outcome, succ, head, epoch, onePre>>
 
