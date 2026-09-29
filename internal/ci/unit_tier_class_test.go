@@ -237,6 +237,12 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	if !strings.Contains(ci, "ready_for_review") {
 		t.Error("ci.yml pull_request trigger does not include ready_for_review")
 	}
+	if !strings.Contains(ci, "labeled") {
+		t.Error("ci.yml pull_request trigger does not include labeled")
+	}
+	if !strings.Contains(job.If, "functional") {
+		t.Errorf("functional's if must check for functional label on pull requests: %s", job.If)
+	}
 	if job.TimeoutMinutes != 2 {
 		t.Errorf("functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
 	}

@@ -296,7 +296,7 @@ jobs:
 
       - name: vet-functional
         # nova-tools #4328: the redis-backed tests are behind `//go:build
-        # functional` and a pull request does not run them, but every change
+        # functional` and a draft pull request skips running them, but every change
         # still COMPILES them here, once for the whole tree, so a PR that
         # breaks one is red now rather than at the stream's landing.
         run: make vet-functional
