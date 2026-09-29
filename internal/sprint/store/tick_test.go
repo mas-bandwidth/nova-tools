@@ -583,3 +583,74 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 		t.Fatalf("three laps after a take, past 2 hours from the first take: %d not-finished judgments", late)
 	}
 }
+
+// A card taken, its member silent, redealt to a member that is up and never
+// taken again: the clock follows the card's state. It is late not taken, 15
+// minutes from the redeal (the first deal since its last take), on the full
+// tick, and no stalled judgment speaks for it instead; the holder and the
+// deadline part end at the same moment.
+func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1", "m2"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	wc := h.snap().Fleet.Column(sprint.Ready)
+	if len(wc) != 1 {
+		t.Fatalf("one ready work card, got %d", len(wc))
+	}
+	card, first := wc[0].ID, wc[0].Row
+	other := "m2"
+	if first == "m2" {
+		other = "m1"
+	}
+	h.must(TakeStep(sprint.TakeReq{As: first, Sel: sprint.Sel{Limit: 1}, Who: first}))
+	for i := 0; i < 30; i++ { // half an hour of work, the machine ticking
+		h.tick(time.Minute)
+		h.machine()
+	}
+	h.live = []string{other} // the taker goes silent
+	for i := 0; i < 3; i++ {
+		h.tick(10 * time.Second)
+		h.machine()
+	}
+	c := h.snap().Fleet.Card(card)
+	if c == nil || c.Col != sprint.Ready || c.Row != other {
+		t.Fatalf("redealt to %s: %+v", other, c)
+	}
+	judged := func(typ, word string) int {
+		n := 0
+		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+		for _, x := range notes {
+			if x.Type == typ && x.Kind == sprint.Judgment && strings.Contains(x.What, card) && strings.Contains(x.What, word) {
+				n++
+			}
+		}
+		return n
+	}
+	h.tick(time.Minute) // a full tick just after the redeal: the new member has its 15 minutes
+	h.machine()
+	if n := judged(sprint.NWorkLate, ""); n != 0 {
+		t.Fatalf("late at once after the redeal, though its first deal was over 15 minutes ago: %d", n)
+	}
+	for i := 0; i < 16; i++ {
+		h.tick(time.Minute)
+		h.machine() // a full tick
+		h.machine() // an idle tick
+	}
+	if n := judged(sprint.NWorkLate, "not taken"); n != 1 {
+		t.Fatalf("16 minutes after the redeal after a take: %d not-taken judgments, want 1", n)
+	}
+	if n := judged(sprint.NWorkLate, "not finished"); n != 0 {
+		t.Fatalf("a ready card is never late not finished: %d", n)
+	}
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+	for _, x := range notes {
+		if x.Type == sprint.NStalled && x.Kind == sprint.Judgment {
+			t.Fatalf("a stalled judgment speaks for the late card: %s", x.What)
+		}
+	}
+}

@@ -355,15 +355,16 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		d, ok := r.running(s.Now, c.F(stampField))
 		return c.F(stampField), ok && d > limit
 	}
-	// N4: work cards dealt and not taken, taken and not finished. Each is
-	// measured from the attempt's first deal and first take, which no redeal
-	// or withdrawal rewrites: a member whose beat lapses again and again
+	// N4: work cards dealt and not taken, taken and not finished, by the
+	// card's state (WorkDeadline): not taken from the first deal since its
+	// last take, not finished from the attempt's first take. No redeal or
+	// withdrawal rewrites either: a member whose beat lapses again and again
 	// cannot reset them, and the time a card spends withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
 		field, limit, word := WorkDeadline(c)
 		if at, ok := late(field, c, limit); ok {
 			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
-				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(field, "first_"), at, word),
+				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word),
 				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
 		}
 	}
@@ -619,19 +620,30 @@ func MovesDue(s *Snapshot) int {
 	return n
 }
 
-// WorkDeadline is the deadline a work card is held to: 15 minutes from the
-// attempt's first deal while it was never taken, 2 hours from its first take
-// once it was; no redeal or withdrawal rewrites either stamp. field is the
-// stamp it counts from.
+// WorkDeadline is the deadline a work card is held to, by its state: a card
+// not taken since its last deal (ready, or withdrawn again before a take) is
+// late not taken 15 minutes from untaken_since, the first deal since its last
+// take, which no later redeal or withdrawal rewrites; a card working, or
+// withdrawn from a take, is late not finished 2 hours from first_taken, the
+// attempt's first take. The tick's deadline part and the no-stall rule both
+// call it, so they speak at the same moment. field is the stamp it counts
+// from.
 func WorkDeadline(c *Card) (field string, limit time.Duration, word string) {
-	first := func(firstField, field string) string {
-		if c.F(firstField) != "" {
-			return firstField
+	first := func(fields ...string) string {
+		for _, f := range fields[:len(fields)-1] {
+			if c.F(f) != "" {
+				return f
+			}
 		}
-		return field
+		return fields[len(fields)-1]
 	}
-	if c.F("first_taken") != "" || c.Col == Working {
+	switch {
+	case c.Col == Working:
 		return first("first_taken", "taken"), DeadlineUnfinished, "not finished"
+	case c.F("untaken_since") != "":
+		return "untaken_since", DeadlineUntaken, "not taken"
+	case c.F("first_taken") != "":
+		return "first_taken", DeadlineUnfinished, "not finished"
 	}
 	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken"
 }

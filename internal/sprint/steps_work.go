@@ -594,7 +594,7 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 	m := shortest(up, q)
 	q[m]++
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m,
-		"dealt": stamp(s.Now), "first_dealt": stamp(s.Now)}
+		"dealt": stamp(s.Now), "first_dealt": stamp(s.Now), "untaken_since": stamp(s.Now)}
 	if fix != "" {
 		fields["fix"] = fix
 	}
@@ -692,7 +692,7 @@ func Take(s *Snapshot, r TakeReq) Plan {
 		return ""
 	}, s.Fleet.Card)
 	for _, c := range chosen {
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now)))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now), "untaken_since"))},
 			Moved: fmt.Sprintf("%s ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p
@@ -1022,11 +1022,15 @@ func level(s *Snapshot, p *Plan, up []string) {
 
 // nextGen is the fields of a work card dealt again: a new generation, bound
 // to the member it is dealt to, with dealt stamped now ("" when it is
-// withdrawn: no member, and dealt is unset by the caller).
+// withdrawn: no member, and dealt is unset by the caller), and untaken_since
+// stamped when this is the first deal since its last take.
 func nextGen(c *Card, member string, now time.Time) map[string]string {
 	set := map[string]string{"gen": itoa(c.Int("gen") + 1)}
 	if member != "" {
 		set["member"], set["dealt"] = member, stamp(now)
+		if c.F("untaken_since") == "" {
+			set["untaken_since"] = stamp(now)
+		}
 	}
 	return set
 }
