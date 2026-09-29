@@ -52,8 +52,12 @@ func (r InboxReq) running(from time.Time) time.Duration {
 // due is when a judgment raised at a clock reading is overdue, the time the
 // machine was STOPPED since then added: a sprint stopped for hours shows
 // nothing overdue because of those hours. A review time the coordinator set
-// (wait) is its own.
+// (wait) is its own. The sprint is done has no due time and is never overdue:
+// nothing is late when all the work is.
 func (r InboxReq) due(n Note) (time.Time, bool) {
+	if n.Type == NSprintDone {
+		return time.Time{}, false
+	}
 	if !n.Review.IsZero() {
 		return n.Review, r.Now.After(n.Review)
 	}
@@ -133,7 +137,7 @@ func Inbox(r InboxReq) []Group {
 			first[i] = n
 		}
 		g := &judg[i]
-		if due.Before(g.Due) {
+		if !due.IsZero() && (g.Due.IsZero() || due.Before(g.Due)) {
 			g.Due = due
 		}
 		g.Marked = g.Marked || n.Marked || overdue

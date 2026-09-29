@@ -295,9 +295,6 @@ func sprintDone(s *Snapshot, landing, leaving map[string]bool, who string) (Note
 		}
 	}
 	landed := len(s.Work.Column(Landed)) + len(landing)
-	if landed == 0 {
-		return Note{}, false
-	}
 	dropped := len(leaving)
 	for _, st := range s.Work.Rows {
 		dropped += s.StreamCtl(st).Int("dropped")
@@ -364,6 +361,6 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil, "need_card", "need_stream")))
 	}
 	p.Units = append(p.Units, u)
-	answered(&p, s.Open, r.Answers)
+	answered(&p, s, r.Answers)
 	return p
 }

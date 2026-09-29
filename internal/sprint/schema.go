@@ -121,6 +121,48 @@ func StoredID(id string, epoch uint64) string {
 	return id + "~" + strconv.FormatUint(epoch, 10)
 }
 
+// OpFamily is an operation's family of ids at an epoch: the family at epoch
+// 0, the family and the epoch after it (as StoredID) at a later one. Every
+// operation id, notification id and judgment id is built on it, so none is
+// the same in two epochs; a caller's operation id holds no '~'.
+func OpFamily(family string, epoch uint64) string { return StoredID(family, epoch) }
+
+// IDEpoch is the epoch an operation, notification or judgment id belongs to:
+// the number after its last '~', 0 when it has none.
+func IDEpoch(id string) uint64 {
+	i := strings.LastIndexByte(id, '~')
+	if i < 0 {
+		return 0
+	}
+	j := i + 1
+	for j < len(id) && id[j] >= '0' && id[j] <= '9' {
+		j++
+	}
+	n, err := strconv.ParseUint(id[i+1:j], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// OtherEpoch is the refusal of a judgment id of another epoch than the
+// sprint's: it names the epoch the id belongs to.
+func OtherEpoch(id string, epoch, now uint64) string {
+	if epoch > now {
+		return fmt.Sprintf("judgment %s belongs to epoch %d, which is unknown to this sprint (its epoch is %d); nothing was changed; run: nova-sprint inbox", id, epoch, now)
+	}
+	return fmt.Sprintf("judgment %s belongs to epoch %d, and the sprint's epoch is %d: a clear closed it with its epoch, and it is never acted on at another; nothing was changed; run: nova-sprint inbox", id, epoch, now)
+}
+
+// noJudgment is the refusal of a judgment id no open judgment has: one of
+// another epoch than the snapshot's names its epoch.
+func noJudgment(s *Snapshot, id string) string {
+	if e := IDEpoch(id); e != s.Epoch {
+		return OtherEpoch(id, e, s.Epoch)
+	}
+	return "no open judgment " + id + "; run: nova-sprint inbox"
+}
+
 // CardID is the card's id of a stored id.
 func CardID(stored string) string {
 	if i := strings.LastIndexByte(stored, '~'); i > 0 {

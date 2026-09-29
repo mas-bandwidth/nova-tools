@@ -194,11 +194,13 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", fmt.Sprint("takes no words ", err))
 	}
-	st, err := a.storeAt(*c, *atEpoch)
-	if err != nil {
-		return refuse(stderr, "where", err.Error())
-	}
 	for {
+		// every frame reads the sprint's epoch again: a clear while it
+		// watches shows the new epoch
+		st, err := a.storeAt(*c, *atEpoch)
+		if err != nil {
+			return refuse(stderr, "where", err.Error())
+		}
 		v, frame, err := a.where(context.Background(), st, *stale)
 		if err != nil {
 			return a.readFailed("where", err, stderr)
@@ -260,11 +262,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	}
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
-	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + strings.TrimSpace(v.Summary+"  "+v.Machine) + "\n")
-	if coordinator != "" {
-		b.WriteString("coordinator: " + coordinator + "\n")
-	}
-	b.WriteString("\n")
+	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -295,6 +293,18 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	return v, b.String(), nil
 }
 
+// whereHeader is the one line under the title of the where view: STOPPED when
+// the machine is stopped (with its silence, when a RUNNING machine has not
+// ticked), and the progress line, with no machine text, when it is running. A
+// failed last tick stays on the line.
+func whereHeader(summary, machine string) string {
+	state := strings.TrimPrefix(machine, "machine: ")
+	if strings.HasPrefix(state, "STOPPED") {
+		return state
+	}
+	return strings.TrimSpace(summary + strings.TrimPrefix(state, "running"))
+}
+
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("inbox")
 	open := fs.String("open", "", "list every member and notification of the group of this id")
@@ -305,6 +315,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", fmt.Sprint("takes no words ", err))
+	}
+	if *read && *atEpoch >= 0 {
+		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
@@ -492,6 +505,12 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		waived := ""
 		if n.Waived {
 			waived = " waived"
+			if n.WaivedBy != "" {
+				waived += " by " + oneline.Escape(n.WaivedBy)
+			}
+			if n.WaivedAt != "" {
+				waived += " at " + oneline.Escape(n.WaivedAt)
+			}
 		}
 		fmt.Fprintf(stdout, "NEEDS %s %s%s\n", oneline.Escape(n.ID), oneline.Escape(n.State), waived)
 	}

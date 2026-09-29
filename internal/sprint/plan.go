@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -179,10 +180,22 @@ func closesFor(open []Open, types []string, subject string) []Open {
 // resolves some obligation of (it closes, or records a decided answer to it);
 // one it does not is refused by its id. Naming a notification closes nothing
 // by itself.
-func answered(p *Plan, open []Open, ids []string) {
+func answered(p *Plan, s *Snapshot, ids []string) {
+	// An answer of another epoch refuses the whole step: nothing moves, and
+	// the refusal names the id's epoch and when the sprint was cleared.
+	var other []Refusal
+	for _, id := range ids {
+		if e := IDEpoch(id); e != s.Epoch {
+			other = append(other, Refusal{Key: id, Why: otherEpochAnswer(s, id, e)})
+		}
+	}
+	if len(other) > 0 {
+		*p = Plan{Refused: other}
+		return
+	}
 	for _, id := range ids {
 		known, resolved := false, false
-		for _, o := range open {
+		for _, o := range s.Open {
 			known = known || o.Note.ID == id
 		}
 		for _, u := range p.Units {
@@ -203,7 +216,7 @@ func answered(p *Plan, open []Open, ids []string) {
 		}
 		switch {
 		case !known:
-			p.refuse(id, "no open judgment "+id+"; run: nova-sprint inbox")
+			p.refuse(id, noJudgment(s, id))
 		case !resolved:
 			p.refuse(id, "this step resolves no obligation of "+id)
 		}
@@ -286,4 +299,17 @@ func answerListed(u *Unit, open []Open, answers []string, verb, stream, what, wh
 			u.Notes = append(u.Notes, decided(o, what, who, now, primary))
 		}
 	}
+}
+
+// otherEpochAnswer is the refusal of a step that answers a judgment of
+// another epoch.
+func otherEpochAnswer(s *Snapshot, id string, e uint64) string {
+	if e > s.Epoch {
+		return OtherEpoch(id, e, s.Epoch)
+	}
+	when := "an earlier clear"
+	if !s.Cleared.IsZero() {
+		when = s.Cleared.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("--answers %s names a judgment of epoch %d; the sprint was cleared at %s and its epoch is now %d; the whole step is refused and nothing was changed; run: nova-sprint inbox", id, e, when, s.Epoch)
 }

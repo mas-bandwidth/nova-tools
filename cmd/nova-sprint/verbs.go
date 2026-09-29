@@ -290,6 +290,9 @@ func groupIDs(ctx context.Context, st *store.Store, id string) (store.InboxView,
 		return v, sprint.Group{}, fmt.Errorf("group numbers are not accepted: a group is named by its id, which does not move; %s", groupList(v.Groups))
 	}
 	g, ok := sprint.FindGroup(v.Groups, id)
+	if !ok && sprint.IDEpoch(id) != st.PinnedEpoch() {
+		return v, g, errors.New(sprint.OtherEpoch(id, sprint.IDEpoch(id), st.PinnedEpoch()))
+	}
 	if !ok {
 		return v, g, fmt.Errorf("no inbox group %s now (answered, or its oldest notification closed); %s", id, groupList(v.Groups))
 	}
@@ -428,11 +431,12 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	}
 	var pe *store.PendingError
 	var cut *store.CutError
+	var cleared *store.ClearedError
 	switch {
 	case err == nil:
 	case errors.Is(err, store.ErrUnknown):
 		code = 2
-	case errors.As(err, &pe), errors.As(err, &cut):
+	case errors.As(err, &pe), errors.As(err, &cut), errors.As(err, &cleared):
 		code = 1
 	default:
 		code = 2
@@ -1075,7 +1079,7 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
-	if err := st.B.SetReview(context.Background(), pos[0], at); err != nil {
+	if err := st.SetReview(context.Background(), pos[0], at); err != nil {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}

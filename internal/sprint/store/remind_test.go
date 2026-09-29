@@ -200,8 +200,9 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 	// It keeps failing, tick after tick and attempt after attempt: still one.
 	for i := 0; i < 3; i++ {
 		h.tick(sprint.RemindEvery)
-		if res := h.machine(); res.Notes() != 0 {
-			t.Fatalf("a second judgment: %+v", res)
+		h.machine()
+		if n := h.written(sprint.NRemindFailed); n != 1 {
+			t.Fatalf("a second judgment: written %d", n)
 		}
 	}
 	if open := h.openOf(sprint.NRemindFailed); len(open) != 1 {

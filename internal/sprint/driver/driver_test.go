@@ -275,3 +275,72 @@ func TestLandedIgnoresAStreamWithNoPrimaries(t *testing.T) {
 		t.Fatal("landed with a primary to go, or with none")
 	}
 }
+
+// writes is every verb the driver ran that writes, as typed.
+func writes(ran [][]string) []string {
+	var out []string
+	for _, a := range ran {
+		if a[0] == "where" || a[0] == "queue" || a[0] == "inbox" {
+			continue
+		}
+		out = append(out, strings.Join(a, " "))
+	}
+	return out
+}
+
+// C4: every verb the driver writes with holds the epoch it read at its start;
+// when the sprint's epoch differs from it, the driver stops without writing
+// and brings up no member it took down.
+func TestTheDriverStopsAtAClearWithoutWriting(t *testing.T) {
+	t.Parallel()
+	cleared := strings.Replace(busy, `{"landed"`, `{"epoch":1,"landed"`, 1)
+	w := &world{where: []string{busy, busy, busy, cleared}, queue: map[string]string{
+		"m1": `{"cards":[{"id":"s1-4.w1","col":"ready","gen":2}]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[{"id":"s1-3","col":"queued"}]}`,
+	}, inbox: `{"groups":[]}`}
+	var out bytes.Buffer
+	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: &out, Config: Config{Every: time.Second}}
+	why, err := d.Loop()
+	if err != nil || why != "cleared" || !strings.Contains(out.String(), "holds epoch 0, which the sprint has left") {
+		t.Fatalf("%s %v\n%s", why, err, out.String())
+	}
+	ws := writes(w.ran)
+	if len(ws) == 0 {
+		t.Fatalf("the first tick wrote nothing: %v", w.ran)
+	}
+	for _, l := range ws {
+		if !strings.Contains(l, "--epoch 0") {
+			t.Errorf("a write without the driver's epoch: %s", l)
+		}
+		if strings.HasPrefix(l, "fleet up") {
+			t.Errorf("the driver brought up a member after the clear: %s", l)
+		}
+	}
+	if w.wheres != 4 || strings.Join(w.ran[len(w.ran)-1], " ") != "where --json" {
+		t.Fatalf("the driver ran on after it saw the clear: %v", w.ran)
+	}
+}
+
+// C4: a verb refused because the sprint was cleared stops the driver's pass
+// there: nothing more is run, and no member is brought up.
+func TestAVerbRefusedAsClearedStopsThePass(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{busy}, queue: map[string]string{
+		"m1": `{"cards":[{"id":"s1-4.w1","col":"ready","gen":2}]}`, "reader-a": `{"cards":[{"id":"s1-2.r1.reader-a","col":"asked"}]}`, "s1": `{"cards":[]}`,
+	}, inbox: `{"groups":[]}`}
+	run := func(args []string, stdout, stderr io.Writer) int {
+		if args[0] == "take" {
+			w.ran = append(w.ran, args)
+			fmt.Fprintln(stderr, "REFUSED epoch 0: the sprint was cleared at 2030-01-02T03:04:05Z: its epoch is now 1")
+			return 1
+		}
+		return w.run(args, stdout, stderr)
+	}
+	d := &Driver{Run: run, Facts: &scripted{down: map[string]bool{"m1": false}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second}}
+	why, err := d.Loop()
+	if err != nil || why != "cleared" {
+		t.Fatalf("%s %v", why, err)
+	}
+	if last := strings.Join(w.ran[len(w.ran)-1], " "); !strings.HasPrefix(last, "take --as m1 --epoch 0") {
+		t.Fatalf("the driver ran on after the refusal: %v", w.ran)
+	}
+}

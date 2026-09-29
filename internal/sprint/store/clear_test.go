@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -261,4 +262,36 @@ func TestATickInFlightAtAClearIsRefusedAsStale(t *testing.T) {
 		t.Fatalf("nothing dealt at epoch %d", s.Epoch)
 	}
 	h.clean("after the stale tick")
+}
+
+// A step that answers a judgment of another epoch is refused whole: nothing
+// moves, and the refusal names the id's epoch and when the sprint was
+// cleared.
+func TestAnAnswerOfAnotherEpochRefusesTheWholeStep(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	c := h.snap().Fleet.Card("s1-1.w1")
+	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
+	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}, Failed: true}))
+	open, err := h.m.OpenNotes(h.ctx)
+	if err != nil || len(open) == 0 {
+		t.Fatalf("no judgment at epoch 0: %v", err)
+	}
+	old := open[0].Note.ID
+	h.tick(time.Minute)
+	res, err := h.st.Clear(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	got := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete", Answers: []string{old}}))
+	if len(got.Moved) != 0 || len(got.Refused) != 1 || got.Refused[0].Key != old ||
+		!strings.Contains(got.Refused[0].Why, "epoch 0") || !strings.Contains(got.Refused[0].Why, res.At.UTC().Format(time.RFC3339)) {
+		t.Fatalf("the drop answering %s: %+v", old, got)
+	}
+	if h.state("s1-1") != sprint.Ready || h.state("s1-2") != sprint.Ready {
+		t.Fatalf("the refused step moved: %s %s", h.state("s1-1"), h.state("s1-2"))
+	}
 }

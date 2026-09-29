@@ -14,8 +14,12 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
-	if out := ta.ok("where"); !strings.Contains(out, "coordinator: lead\n") {
-		t.Fatalf("where: %s", out)
+	var w whereView
+	if ta.json("where", &w); w.Coordinator != "lead" {
+		t.Fatalf("where --json: %+v", w)
+	}
+	if out := ta.ok("where"); strings.Contains(out, "coordinator:") {
+		t.Fatalf("where shows the coordinator line: %s", out)
 	}
 	ta.ok("add --stream s1 --count 1")
 	out := ta.ok("add --stream s1 --sentinel stop")

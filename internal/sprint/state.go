@@ -158,7 +158,8 @@ func SortCards(cs []*Card) {
 // notifications. A table the step did not load is nil.
 type Snapshot struct {
 	Now                         time.Time
-	Epoch                       uint64 // the sprint's epoch the tables were read at
+	Epoch                       uint64    // the sprint's epoch the tables were read at
+	Cleared                     time.Time // when that epoch began (the last clear); zero for the first
 	Work, Readers, Merge, Fleet *Table
 	Open                        []Open
 	// Acked is the tick's conditions the coordinator acknowledged, held
