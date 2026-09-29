@@ -1700,11 +1700,14 @@ red, `functional` 33 s green in its second attempt, `docs` skipped, `test-hosted
 
 ### queue
 
-`nova-ci queue --repo owner/name [--branch dev] [--json] [--table]` prints each
+`nova-ci queue --repo owner/name [--branch dev] [--pr <number>] [--run <id>] [--format receipt|table|json] [--json] [--table] [--fail-lines <n>]` prints each
 entry in the merge queue of the target branch, its state, and for a failed
 merge-group run the job name and the first FAIL lines, one receipt line per
-entry. Exit 0 with the entries or `QUEUE OK ... entries=0` if empty; exit 2 on
-unusable flags or forge error.
+entry. Pass `--pr` to inspect a specific or dequeued PR, or `--run` to inspect a
+specific merge_group run. Pass at most one output selector among `--format`,
+`--json`, and `--table`. When the queue is empty, prints `QUEUE OK ... entries=0`
+or an empty list `[]` under `--json`. Exit 0 on success; exit 2 on unusable flags,
+unknown repository, no forge credentials, or forge error.
 
 ```
 $ nova-ci queue --repo mas-bandwidth/nova-tools --branch dev

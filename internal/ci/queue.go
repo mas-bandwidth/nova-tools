@@ -3,6 +3,7 @@ package ci
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -103,9 +104,28 @@ func (r QueueReport) Table() string {
 	return b.String()
 }
 
-// JSON formats the report as indented JSON.
+// JSON formats the report as indented JSON. When the queue is empty, it returns an empty list [].
 func (r QueueReport) JSON() ([]byte, error) {
+	if len(r.Entries) == 0 {
+		return []byte("[]"), nil
+	}
 	return json.MarshalIndent(r, "", "  ")
+}
+
+// UnmarshalJSON unmarshals either a full QueueReport object or an empty list [].
+func (r *QueueReport) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "[]" {
+		r.Entries = nil
+		return nil
+	}
+	type alias QueueReport
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = QueueReport(a)
+	return nil
 }
 
 // ExtractFailLines extracts the first failing test lines or error lines from
@@ -135,11 +155,55 @@ func ExtractFailLines(jobName, logText string, maxLines int) []string {
 		}
 	}
 
-	// 1. Look for go test failure header: --- FAIL: ...
+	// 1. Look for go test failure header: read through subtest headers to the first _test.go: line and lines after it.
 	for i, line := range cleaned {
 		if strings.HasPrefix(line, "--- FAIL:") {
-			lines := []string{line}
-			for j := i + 1; j < len(cleaned) && len(lines) < maxLines; j++ {
+			testName := ""
+			fields := strings.Fields(strings.TrimPrefix(line, "--- FAIL:"))
+			if len(fields) > 0 {
+				testName = fields[0]
+			}
+			lastFailHeader := line
+			lastFailIdx := i
+			foundTestGo := false
+			var testGoLines []string
+			for j := i + 1; j < len(cleaned); j++ {
+				nxt := cleaned[j]
+				if strings.HasPrefix(nxt, "--- FAIL:") {
+					subFields := strings.Fields(strings.TrimPrefix(nxt, "--- FAIL:"))
+					if len(subFields) > 0 && testName != "" && strings.HasPrefix(subFields[0], testName+"/") {
+						lastFailHeader = nxt
+						lastFailIdx = j
+						continue
+					}
+					break
+				}
+				if strings.HasPrefix(nxt, "=== ") || nxt == "FAIL" {
+					break
+				}
+				if strings.Contains(nxt, "_test.go:") {
+					foundTestGo = true
+					testGoLines = append(testGoLines, nxt)
+					for k := j + 1; k < len(cleaned) && len(testGoLines)+1 < maxLines; k++ {
+						after := cleaned[k]
+						if strings.HasPrefix(after, "--- ") || strings.HasPrefix(after, "=== ") || after == "FAIL" {
+							break
+						}
+						testGoLines = append(testGoLines, after)
+					}
+					break
+				}
+			}
+			if foundTestGo {
+				lines := append([]string{lastFailHeader}, testGoLines...)
+				if len(lines) > maxLines {
+					lines = lines[:maxLines]
+				}
+				return lines
+			}
+			// Fall back to collecting lines under lastFailHeader if no _test.go: was found
+			lines := []string{lastFailHeader}
+			for j := lastFailIdx + 1; j < len(cleaned) && len(lines) < maxLines; j++ {
 				nxt := cleaned[j]
 				if strings.HasPrefix(nxt, "--- ") || strings.HasPrefix(nxt, "=== ") || nxt == "FAIL" {
 					break
@@ -212,16 +276,214 @@ type QueueForge interface {
 	JobLog(ctx context.Context, repo string, jobID int64) (string, error)
 }
 
-// InspectQueue reads the merge queue for repo and branch and resolves failed
-// merge_group runs for any queued PRs.
-func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLinesCap int) (QueueReport, error) {
-	nodes, err := f.QueueEntries(ctx, repo, branch)
-	if err != nil {
-		return QueueReport{}, fmt.Errorf("query merge queue for branch %s of %s: %w; merge queue entries were not read: check forge access or branch name and retry", branch, repo, err)
+// QueueFilter selects a specific PR or run ID to inspect.
+type QueueFilter struct {
+	PR    int
+	RunID int64
+}
+
+func isFailedConclusion(c string) bool {
+	switch strings.ToLower(strings.TrimSpace(c)) {
+	case "failure", "timed_out", "cancelled", "canceled":
+		return true
+	default:
+		return false
 	}
+}
+
+func extractPRFromBranch(branch string) int {
+	const marker = "/pr-"
+	idx := strings.Index(branch, marker)
+	if idx == -1 {
+		return 0
+	}
+	rest := branch[idx+len(marker):]
+	dash := strings.IndexByte(rest, '-')
+	if dash != -1 {
+		rest = rest[:dash]
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+func populateFailedJob(ctx context.Context, f QueueForge, repo string, runID int64, failLinesCap int, entry *QueueEntry) error {
+	jobs, err := f.Jobs(ctx, repo, runID)
+	if err != nil {
+		return fmt.Errorf("list jobs for run %d of %s: %w; failed job details were not read: check forge access and retry", runID, repo, err)
+	}
+	for _, j := range jobs {
+		if j.Failed() {
+			entry.Job = j.Name
+			logText, err := f.JobLog(ctx, repo, j.ID)
+			if err != nil {
+				return fmt.Errorf("read log for job %d (%s) of %s: %w; job failure log was not read: check forge access and retry", j.ID, j.Name, repo, err)
+			}
+			entry.FailLines = ExtractFailLines(j.Name, logText, failLinesCap)
+			break
+		}
+	}
+	return nil
+}
+
+// InspectQueue reads the merge queue for repo and branch and resolves failed
+// merge_group runs for queued PRs, or inspects a specific PR or run if filtered.
+func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLinesCap int, filters ...QueueFilter) (QueueReport, error) {
+	var filter QueueFilter
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+
 	report := QueueReport{
 		Repo:   repo,
 		Branch: branch,
+	}
+
+	if filter.RunID > 0 {
+		runs, err := f.MergeGroupRuns(ctx, repo)
+		if err != nil {
+			return QueueReport{}, fmt.Errorf("list merge_group runs of %s: %w; merge-group runs were not read: check forge access and retry", repo, err)
+		}
+		var targetRun *MergeGroupRun
+		for i := range runs {
+			if runs[i].ID == filter.RunID {
+				targetRun = &runs[i]
+				break
+			}
+		}
+		if targetRun == nil {
+			return QueueReport{}, fmt.Errorf("merge_group run %d not found in %s", filter.RunID, repo)
+		}
+
+		prNum := extractPRFromBranch(targetRun.HeadBranch)
+		nodes, err := f.QueueEntries(ctx, repo, branch)
+		if err != nil {
+			return QueueReport{}, fmt.Errorf("query merge queue for branch %s of %s: %w; merge queue entries were not read: check forge access or branch name and retry", branch, repo, err)
+		}
+
+		var queueNode *QueueNode
+		if prNum > 0 {
+			for i := range nodes {
+				if nodes[i].PR == prNum {
+					queueNode = &nodes[i]
+					break
+				}
+			}
+		}
+
+		entry := QueueEntry{
+			PR:         prNum,
+			Position:   -1,
+			State:      "DEQUEUED",
+			HeadSHA:    targetRun.HeadSHA,
+			RunID:      targetRun.ID,
+			Conclusion: strings.ToLower(strings.TrimSpace(targetRun.Conclusion)),
+		}
+		if entry.Conclusion == "" {
+			entry.Conclusion = strings.ToLower(strings.TrimSpace(targetRun.Status))
+		}
+		if queueNode != nil {
+			entry.Position = queueNode.Position
+			entry.State = queueNode.State
+			entry.EnqueuedAt = queueNode.EnqueuedAt
+			if entry.HeadSHA == "" {
+				entry.HeadSHA = queueNode.HeadSHA
+			}
+		}
+
+		if isFailedConclusion(entry.Conclusion) {
+			if err := populateFailedJob(ctx, f, repo, targetRun.ID, failLinesCap, &entry); err != nil {
+				return QueueReport{}, err
+			}
+		}
+
+		report.Entries = []QueueEntry{entry}
+		return report, nil
+	}
+
+	if filter.PR > 0 {
+		nodes, err := f.QueueEntries(ctx, repo, branch)
+		if err != nil {
+			return QueueReport{}, fmt.Errorf("query merge queue for branch %s of %s: %w; merge queue entries were not read: check forge access or branch name and retry", branch, repo, err)
+		}
+		var queueNode *QueueNode
+		for i := range nodes {
+			if nodes[i].PR == filter.PR {
+				queueNode = &nodes[i]
+				break
+			}
+		}
+
+		runs, err := f.MergeGroupRuns(ctx, repo)
+		if err != nil {
+			return QueueReport{}, fmt.Errorf("list merge_group runs of %s: %w; merge-group runs were not read: check forge access and retry", repo, err)
+		}
+
+		marker := fmt.Sprintf("/pr-%d-", filter.PR)
+		var latestFailedRun *MergeGroupRun
+		var latestRun *MergeGroupRun
+		for i := range runs {
+			r := &runs[i]
+			if strings.Contains(r.HeadBranch, marker) {
+				if latestRun == nil || r.ID > latestRun.ID {
+					latestRun = r
+				}
+				if isFailedConclusion(r.Conclusion) {
+					if latestFailedRun == nil || r.ID > latestFailedRun.ID {
+						latestFailedRun = r
+					}
+				}
+			}
+		}
+
+		var bestRun *MergeGroupRun
+		if latestFailedRun != nil {
+			bestRun = latestFailedRun
+		} else {
+			bestRun = latestRun
+		}
+
+		if queueNode == nil && bestRun == nil {
+			return QueueReport{}, fmt.Errorf("PR %d not found in merge queue or merge_group runs of %s", filter.PR, repo)
+		}
+
+		entry := QueueEntry{
+			PR:       filter.PR,
+			Position: -1,
+			State:    "DEQUEUED",
+		}
+		if queueNode != nil {
+			entry.Position = queueNode.Position
+			entry.State = queueNode.State
+			entry.HeadSHA = queueNode.HeadSHA
+			entry.EnqueuedAt = queueNode.EnqueuedAt
+		}
+		if bestRun != nil {
+			entry.RunID = bestRun.ID
+			if entry.HeadSHA == "" {
+				entry.HeadSHA = bestRun.HeadSHA
+			}
+			entry.Conclusion = strings.ToLower(strings.TrimSpace(bestRun.Conclusion))
+			if entry.Conclusion == "" {
+				entry.Conclusion = strings.ToLower(strings.TrimSpace(bestRun.Status))
+			}
+
+			if isFailedConclusion(entry.Conclusion) {
+				if err := populateFailedJob(ctx, f, repo, bestRun.ID, failLinesCap, &entry); err != nil {
+					return QueueReport{}, err
+				}
+			}
+		}
+
+		report.Entries = []QueueEntry{entry}
+		return report, nil
+	}
+
+	nodes, err := f.QueueEntries(ctx, repo, branch)
+	if err != nil {
+		return QueueReport{}, fmt.Errorf("query merge queue for branch %s of %s: %w; merge queue entries were not read: check forge access or branch name and retry", branch, repo, err)
 	}
 	if len(nodes) == 0 {
 		return report, nil
@@ -262,22 +524,9 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 			}
 
 			// If the run failed, find the failed job and extract FAIL lines.
-			switch entry.Conclusion {
-			case "failure", "timed_out", "cancelled", "canceled":
-				jobs, err := f.Jobs(ctx, repo, bestRun.ID)
-				if err != nil {
-					return QueueReport{}, fmt.Errorf("list jobs for run %d of %s: %w; failed job details were not read: check forge access and retry", bestRun.ID, repo, err)
-				}
-				for _, j := range jobs {
-					if j.Failed() {
-						entry.Job = j.Name
-						logText, err := f.JobLog(ctx, repo, j.ID)
-						if err != nil {
-							return QueueReport{}, fmt.Errorf("read log for job %d (%s) of %s: %w; job failure log was not read: check forge access and retry", j.ID, j.Name, repo, err)
-						}
-						entry.FailLines = ExtractFailLines(j.Name, logText, failLinesCap)
-						break // report the first failed job
-					}
+			if isFailedConclusion(entry.Conclusion) {
+				if err := populateFailedJob(ctx, f, repo, bestRun.ID, failLinesCap, &entry); err != nil {
+					return QueueReport{}, err
 				}
 			}
 		}
@@ -286,6 +535,32 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 	}
 
 	return report, nil
+}
+
+// cleanForgeError normalizes forge errors to clean user-facing messages
+// without leaking raw GraphQL query strings or CLI internals.
+func cleanForgeError(err error, rawOut, repo string) error {
+	msg := rawOut
+	if msg == "" && err != nil {
+		msg = err.Error()
+	}
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "could not resolve to a repository") || strings.Contains(low, "not found"):
+		return fmt.Errorf("repository %s not found", repo)
+	case strings.Contains(low, "auth login") || strings.Contains(low, "bad credentials") || strings.Contains(low, "not logged in") || strings.Contains(low, "authentication") || strings.Contains(low, "401"):
+		return fmt.Errorf("not authenticated to forge: run gh auth login")
+	}
+	clean := strings.TrimSpace(msg)
+	if idx := strings.Index(clean, "query($"); idx != -1 {
+		if endIdx := strings.Index(clean[idx:], "}"); endIdx != -1 {
+			clean = strings.TrimSpace(clean[:idx] + clean[idx+endIdx+1:])
+		}
+	}
+	if clean == "" && err != nil {
+		clean = err.Error()
+	}
+	return errors.New(clean)
 }
 
 // GHQueueForge is the production QueueForge that shells out to gh.
@@ -311,7 +586,11 @@ func NewGHQueueForge(repo string, timeout time.Duration, runner func(ctx context
 
 func (g *GHQueueForge) run(ctx context.Context, args ...string) (string, error) {
 	if g.Runner != nil {
-		return g.Runner(ctx, args...)
+		out, err := g.Runner(ctx, args...)
+		if err != nil {
+			return out, cleanForgeError(err, out, g.Repo)
+		}
+		return out, nil
 	}
 	ghBin := g.GH
 	if ghBin == "" {
@@ -322,7 +601,7 @@ func (g *GHQueueForge) run(ctx context.Context, args ...string) (string, error) 
 	cmd := exec.CommandContext(cctx, ghBin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return string(out), cleanForgeError(err, string(out), g.Repo)
 	}
 	return string(out), nil
 }
@@ -371,9 +650,12 @@ func (g *GHQueueForge) QueueEntries(ctx context.Context, repo, branch string) ([
 		return nil, fmt.Errorf("gh did not answer JSON this tool can read for merge queue: %w", err)
 	}
 	if len(resp.Errors) > 0 {
-		return nil, fmt.Errorf("graphql error: %s", resp.Errors[0].Message)
+		return nil, cleanForgeError(nil, resp.Errors[0].Message, repo)
 	}
-	if resp.Data.Repository == nil || resp.Data.Repository.MergeQueue == nil {
+	if resp.Data.Repository == nil {
+		return nil, fmt.Errorf("repository %s not found", repo)
+	}
+	if resp.Data.Repository.MergeQueue == nil {
 		return nil, fmt.Errorf("no merge queue found for branch %s of %s", branch, repo)
 	}
 

@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const queueUsage = "queue --repo <owner/name> [--branch dev] [--json] [--table]"
+const queueUsage = "queue --repo <owner/name> [--branch dev] [--pr <number>] [--run <id>] [--format receipt|table|json] [--json] [--table] [--fail-lines <n>]"
 
 // cmdQueue implements `nova-ci queue --repo <owner/name> [--branch dev]`.
 // It inspects the merge queue of the target branch, prints each entry and its
@@ -27,6 +27,8 @@ func cmdQueue(ctx context.Context, args []string, stdout, stderr io.Writer, newF
 
 	repo := fs.String("repo", "", "repository in owner/name form")
 	branch := fs.String("branch", "dev", "merge queue target branch")
+	pr := fs.Int("pr", 0, "inspect a specific pull request number")
+	runID := fs.Int64("run", 0, "inspect a specific merge_group run ID")
 	asJSON := fs.Bool("json", false, "output as JSON")
 	asTable := fs.Bool("table", false, "output as an aligned table")
 	format := fs.String("format", "", "output format: receipt, table, or json")
@@ -51,20 +53,45 @@ func cmdQueue(ctx context.Context, args []string, stdout, stderr io.Writer, newF
 	if *branch == "" {
 		return refuse(stderr, where, "--branch must not be empty")
 	}
+	if *pr < 0 {
+		return refuse(stderr, where, fmt.Sprintf("--pr must be a positive integer, got %d", *pr))
+	}
+	if *runID < 0 {
+		return refuse(stderr, where, fmt.Sprintf("--run must be a positive integer, got %d", *runID))
+	}
+	if *pr > 0 && *runID > 0 {
+		return refuse(stderr, where, "pass at most one of --pr or --run")
+	}
+	if *failLines <= 0 {
+		return refuse(stderr, where, fmt.Sprintf("--fail-lines must be greater than zero, got %d", *failLines))
+	}
+
+	selectors := 0
+	if *asJSON {
+		selectors++
+	}
+	if *asTable {
+		selectors++
+	}
+	if *format != "" {
+		selectors++
+	}
+	if selectors > 1 {
+		return refuse(stderr, where, "at most one output selector: pass --format, --json, or --table")
+	}
 
 	fmtChoice := "receipt"
-	if *format != "" {
+	if *asJSON {
+		fmtChoice = "json"
+	} else if *asTable {
+		fmtChoice = "table"
+	} else if *format != "" {
 		switch *format {
 		case "receipt", "table", "json":
 			fmtChoice = *format
 		default:
 			return refuse(stderr, where, fmt.Sprintf("--format wants receipt, table, or json, got %q", *format))
 		}
-	}
-	if *asJSON {
-		fmtChoice = "json"
-	} else if *asTable {
-		fmtChoice = "table"
 	}
 
 	var forge ci.QueueForge
@@ -74,7 +101,10 @@ func cmdQueue(ctx context.Context, args []string, stdout, stderr io.Writer, newF
 		forge = ci.NewGHQueueForge(*repo, 120*time.Second, nil)
 	}
 
-	report, err := ci.InspectQueue(ctx, forge, *repo, *branch, *failLines)
+	report, err := ci.InspectQueue(ctx, forge, *repo, *branch, *failLines, ci.QueueFilter{
+		PR:    *pr,
+		RunID: *runID,
+	})
 	if err != nil {
 		return refuse(stderr, where, oneline.Err(err))
 	}

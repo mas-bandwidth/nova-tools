@@ -382,3 +382,169 @@ func (e *errQueueForge) JobLog(context.Context, string, int64) (string, error) {
 	return "", e.err
 }
 
+func TestExtractFailLinesSubtests(t *testing.T) {
+	t.Parallel()
+
+	log := `
+=== RUN   TestEveryCommandMeetsTheOnboardingStandard
+=== RUN   TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue
+    standard_test.go:123: queue does not have -h
+    standard_test.go:124: command failed
+--- FAIL: TestEveryCommandMeetsTheOnboardingStandard (0.00s)
+    --- FAIL: TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue (0.00s)
+        standard_test.go:123: queue does not have -h
+        standard_test.go:124: command failed
+FAIL
+`
+	lines := ExtractFailLines("test", log, 3)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue") {
+		t.Errorf("lines[0] = %q, want subtest header", lines[0])
+	}
+	if !strings.Contains(lines[1], "standard_test.go:123") {
+		t.Errorf("lines[1] = %q, want standard_test.go:123", lines[1])
+	}
+	if !strings.Contains(lines[2], "standard_test.go:124") {
+		t.Errorf("lines[2] = %q, want standard_test.go:124", lines[2])
+	}
+}
+
+func TestInspectQueueFilterPR(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeQueueForge{
+		// PR 4605 is not in queue (dequeued)
+		nodes: []QueueNode{
+			{PR: 4582, Position: 0, State: "AWAITING_CHECKS", HeadSHA: "e29673fe4"},
+		},
+		runs: []MergeGroupRun{
+			{
+				ID:         1001,
+				HeadBranch: "gh-readonly-queue/dev/pr-4605-failsha",
+				HeadSHA:    "failsha123",
+				Status:     "completed",
+				Conclusion: "failure",
+			},
+			{
+				ID:         1002, // newer green run
+				HeadBranch: "gh-readonly-queue/dev/pr-4605-greensha",
+				HeadSHA:    "greensha456",
+				Status:     "completed",
+				Conclusion: "success",
+			},
+		},
+		jobs: map[int64][]FailedJob{
+			1001: {{ID: 99, Name: "test (darwin)", Conclusion: "failure"}},
+		},
+		logs: map[int64]string{
+			99: "--- FAIL: TestSub (0.01s)\n    sub_test.go:10: bad\nFAIL\n",
+		},
+	}
+
+	report, err := InspectQueue(context.Background(), fake, "mas-bandwidth/nova-tools", "dev", 3, QueueFilter{PR: 4605})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(report.Entries))
+	}
+	e := report.Entries[0]
+	if e.PR != 4605 || e.Position != -1 || e.State != "DEQUEUED" {
+		t.Errorf("entry = %+v, want PR 4605, pos -1, DEQUEUED", e)
+	}
+	// Prefer latest failed run
+	if e.RunID != 1001 || e.Conclusion != "failure" || e.Job != "test (darwin)" {
+		t.Errorf("entry = %+v, want RunID 1001 and failure conclusion", e)
+	}
+	if len(e.FailLines) != 2 || !strings.Contains(e.FailLines[1], "sub_test.go:10") {
+		t.Errorf("fail lines = %v", e.FailLines)
+	}
+}
+
+func TestInspectQueueFilterRun(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeQueueForge{
+		nodes: []QueueNode{}, // empty queue
+		runs: []MergeGroupRun{
+			{
+				ID:         2002,
+				HeadBranch: "gh-readonly-queue/dev/pr-4605-abc",
+				HeadSHA:    "abc1234",
+				Status:     "completed",
+				Conclusion: "failure",
+			},
+		},
+		jobs: map[int64][]FailedJob{
+			2002: {{ID: 77, Name: "lint", Conclusion: "failure"}},
+		},
+		logs: map[int64]string{
+			77: "--- FAIL: TestLint (0.00s)\n    lint_test.go:5: lint error\nFAIL\n",
+		},
+	}
+
+	report, err := InspectQueue(context.Background(), fake, "mas-bandwidth/nova-tools", "dev", 3, QueueFilter{RunID: 2002})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(report.Entries))
+	}
+	e := report.Entries[0]
+	if e.PR != 4605 || e.Position != -1 || e.State != "DEQUEUED" || e.RunID != 2002 {
+		t.Errorf("entry = %+v", e)
+	}
+	if e.Job != "lint" || len(e.FailLines) != 2 {
+		t.Errorf("job=%q, failLines=%v", e.Job, e.FailLines)
+	}
+}
+
+func TestInspectQueueEmptyJSON(t *testing.T) {
+	t.Parallel()
+
+	report := QueueReport{
+		Repo:   "mas-bandwidth/nova-tools",
+		Branch: "dev",
+	}
+	data, err := report.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "[]" {
+		t.Errorf("got %q, want '[]'", string(data))
+	}
+
+	var back QueueReport
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal [] failed: %v", err)
+	}
+	if len(back.Entries) != 0 {
+		t.Errorf("got %d entries, want 0", len(back.Entries))
+	}
+}
+
+func TestCleanForgeError(t *testing.T) {
+	t.Parallel()
+
+	// 1. Unknown repo
+	err1 := cleanForgeError(nil, "GraphQL: Could not resolve to a Repository with the name 'foo/bar'", "foo/bar")
+	if err1.Error() != "repository foo/bar not found" {
+		t.Errorf("got %q, want 'repository foo/bar not found'", err1.Error())
+	}
+
+	// 2. No credentials
+	err2 := cleanForgeError(nil, "To get started with GitHub CLI, please run:  gh auth login", "foo/bar")
+	if err2.Error() != "not authenticated to forge: run gh auth login" {
+		t.Errorf("got %q, want 'not authenticated to forge: run gh auth login'", err2.Error())
+	}
+
+	// 3. Query string stripped
+	raw := "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}} error: rate limit"
+	err3 := cleanForgeError(nil, raw, "foo/bar")
+	if strings.Contains(err3.Error(), "query($") {
+		t.Errorf("query string was not stripped: %q", err3.Error())
+	}
+}
+

@@ -73,6 +73,14 @@ func TestQueueFlagsAndRefusals(t *testing.T) {
 		{"empty branch", []string{"--repo", "mas-bandwidth/nova-tools", "--branch", ""}, "--branch must not be empty"},
 		{"positional arg", []string{"--repo", "mas-bandwidth/nova-tools", "bogus"}, "nothing positional"},
 		{"invalid format", []string{"--repo", "mas-bandwidth/nova-tools", "--format", "xml"}, "--format wants receipt, table, or json"},
+		{"negative pr", []string{"--repo", "mas-bandwidth/nova-tools", "--pr", "-1"}, "--pr must be a positive integer"},
+		{"negative run", []string{"--repo", "mas-bandwidth/nova-tools", "--run", "-1"}, "--run must be a positive integer"},
+		{"pr and run together", []string{"--repo", "mas-bandwidth/nova-tools", "--pr", "1", "--run", "2"}, "pass at most one of --pr or --run"},
+		{"invalid fail-lines zero", []string{"--repo", "mas-bandwidth/nova-tools", "--fail-lines", "0"}, "--fail-lines must be greater than zero"},
+		{"invalid fail-lines negative", []string{"--repo", "mas-bandwidth/nova-tools", "--fail-lines", "-5"}, "--fail-lines must be greater than zero"},
+		{"multiple output selectors json and table", []string{"--repo", "mas-bandwidth/nova-tools", "--json", "--table"}, "at most one output selector"},
+		{"multiple output selectors format and json", []string{"--repo", "mas-bandwidth/nova-tools", "--format", "json", "--json"}, "at most one output selector"},
+		{"multiple output selectors format and table", []string{"--repo", "mas-bandwidth/nova-tools", "--format", "table", "--table"}, "at most one output selector"},
 	}
 
 	for _, tt := range tests {
@@ -201,6 +209,55 @@ func TestQueueEmpty(t *testing.T) {
 	want := "QUEUE OK repo=mas-bandwidth/nova-tools branch=dev entries=0\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+
+	// Under --json, empty queue must print []
+	code, stdout, stderr = runQueue([]string{"--repo", "mas-bandwidth/nova-tools", "--branch", "dev", "--json"}, fake)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if stdout != "[]\n" {
+		t.Errorf("stdout = %q, want '[]\\n'", stdout)
+	}
+}
+
+func TestQueueWithPRAndRunFlags(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeQueueForge{
+		runs: []ci.MergeGroupRun{
+			{
+				ID:         999,
+				HeadBranch: "gh-readonly-queue/dev/pr-4605-fail",
+				HeadSHA:    "abc999",
+				Status:     "completed",
+				Conclusion: "failure",
+			},
+		},
+		jobs: map[int64][]ci.FailedJob{
+			999: {{ID: 55, Name: "test (darwin)", Conclusion: "failure"}},
+		},
+		logs: map[int64]string{
+			55: "--- FAIL: TestFoo (0.01s)\n    foo_test.go:10: bad\nFAIL\n",
+		},
+	}
+
+	// Test --pr on dequeued PR
+	code, stdout, stderr := runQueue([]string{"--repo", "mas-bandwidth/nova-tools", "--pr", "4605"}, fake)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "pr=4605") || !strings.Contains(stdout, "state=DEQUEUED") || !strings.Contains(stdout, "run=999") {
+		t.Errorf("stdout = %q", stdout)
+	}
+
+	// Test --run on specific run
+	code, stdout, stderr = runQueue([]string{"--repo", "mas-bandwidth/nova-tools", "--run", "999"}, fake)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "pr=4605") || !strings.Contains(stdout, "state=DEQUEUED") || !strings.Contains(stdout, "run=999") {
+		t.Errorf("stdout = %q", stdout)
 	}
 }
 

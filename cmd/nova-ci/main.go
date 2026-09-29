@@ -107,10 +107,12 @@ usage:
                       any dial (a flag the receipt refuses, a partial or
                       count-mismatched listing, a listing that is not the
                       forge's).
-  nova-ci queue --repo owner/name [--branch dev] [--json] [--table]
+  nova-ci queue --repo owner/name [--branch dev] [--pr <number>] [--run <id>]
+                [--format receipt|table|json] [--json] [--table] [--fail-lines <n>]
                       print each merge-queue entry on the branch, its state, and
                       for a failed merge-group run the job name and the first
-                      FAIL lines, one receipt line per entry.
+                      FAIL lines, one receipt line per entry. Pass --pr to inspect
+                      a specific or dequeued PR, or --run to inspect a run.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
