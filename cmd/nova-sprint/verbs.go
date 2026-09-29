@@ -151,6 +151,7 @@ one answer to each judgment (every one prints its own, filled in):
   a repeat: stop and look     card <primary>
   overdue: act                a decision above, or wait <note> --for 30m
   a stream not moving: look   where, then queue --stream <s>
+  the sprint is done          clear --confirm <prefix>, or add --stream <s> for more work
 `
 
 func versionLine() string { return buildinfo.Line(prog, version) }

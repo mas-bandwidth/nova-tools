@@ -209,7 +209,7 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	if err != nil {
 		return v, err
 	}
-	v.Groups = sprint.Inbox(sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale})
+	v.Groups = sprint.Inbox(sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix})
 	return v, nil
 }
 

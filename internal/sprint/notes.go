@@ -39,6 +39,7 @@ const (
 	NRepairSkipped  = "repair skipped changes the store refused as recorded"
 	NOverdue        = "a judgment notification has waited past its deadline"
 	NStreamStale    = "a stream has not changed state or count past its deadline"
+	NSprintDone     = "the sprint is done"
 	NRepeatSuffix   = "; a second time for the same cause"
 )
 
@@ -57,6 +58,7 @@ var Decisions = map[string][]string{
 	NRepairSkipped:  {"look at the card", "return", "drop", "rework", "ack"},
 	NOverdue:        {"act"},
 	NStreamStale:    {"look"},
+	NSprintDone:     {"clear", "add"},
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second
@@ -86,6 +88,9 @@ type Note struct {
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.
 	StreamLevel bool `json:"stream_level,omitempty"`
+	// SprintLevel says the judgment is about the whole sprint (it is done):
+	// its one subject is SprintSubject.
+	SprintLevel bool `json:"sprint_level,omitempty"`
 	// Review is the next review time the coordinator set with wait; the
 	// judgment stays open and shown, and is due then.
 	Review time.Time `json:"review,omitempty"`
@@ -112,6 +117,10 @@ func OpenKey(noteID, subject string) string { return noteID + "|" + subject }
 
 // StreamSubject is the subject of a stream-level judgment.
 func StreamSubject(stream string) string { return "stream:" + stream }
+
+// SprintSubject is the subject of a judgment about the whole sprint; no
+// primary or stream id has a colon.
+const SprintSubject = "sprint:done"
 
 // Subject is the subject half of an open key.
 func (o Open) Subject() string {
@@ -140,6 +149,9 @@ func judgment(typ, stream string, now time.Time, before int, primaries ...string
 func (n Note) Subjects() []string {
 	if n.StreamLevel {
 		return []string{StreamSubject(n.Stream)}
+	}
+	if n.SprintLevel {
+		return []string{SprintSubject}
 	}
 	return n.Primaries
 }

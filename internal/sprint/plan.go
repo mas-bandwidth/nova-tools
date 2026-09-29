@@ -216,18 +216,39 @@ func decided(o Open, what, who string, now time.Time, primaries ...string) Note 
 }
 
 // setStream is the stream's control card changed by a step, carried by the
-// step's first unit of that stream: the card is changed once per step.
+// step's first unit of that stream: the card is changed once per step, so a
+// second change of it in the plan is merged into the first.
 func setStream(p *Plan, s *Snapshot, stream string, set map[string]string, notes ...Note) {
 	ctl := s.StreamCtl(stream)
 	if ctl == nil || len(set) == 0 {
 		return
 	}
+	first := -1
 	for i := range p.Units {
-		if p.Units[i].Stream == stream {
-			p.Units[i].Changes = append(p.Units[i].Changes, change(Merge, setEntry(ctl, set)))
-			p.Units[i].Notes = append(p.Units[i].Notes, notes...)
-			return
+		if p.Units[i].Stream != stream {
+			continue
 		}
+		if first < 0 {
+			first = i
+		}
+		for j, c := range p.Units[i].Changes {
+			if c.Table == Merge && c.Entry.ID == ctl.ID {
+				merged := map[string]string{}
+				for k, v := range c.Entry.Set {
+					merged[k] = v
+				}
+				for k, v := range set {
+					merged[k] = v
+				}
+				p.Units[i].Changes[j].Entry.Set = merged
+				p.Units[first].Notes = append(p.Units[first].Notes, notes...)
+				return
+			}
+		}
+	}
+	if first >= 0 {
+		p.Units[first].Changes = append(p.Units[first].Changes, change(Merge, setEntry(ctl, set)))
+		p.Units[first].Notes = append(p.Units[first].Notes, notes...)
 	}
 }
 

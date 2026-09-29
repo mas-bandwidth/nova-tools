@@ -144,6 +144,14 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if head != nil && len(p.Units) == 0 && len(p.Refused) == 0 {
 		p.Units = append(p.Units, Unit{Key: CtlID(r.Stream), Changes: head, Moved: "stream " + r.Stream + " open"})
 	}
+	// More work: the sprint is not done.
+	if len(p.Units) > 0 {
+		for _, o := range s.Open {
+			if o.Note.Type == NSprintDone {
+				p.Units[0].Closes = append(p.Units[0].Closes, o)
+			}
+		}
+	}
 	return p
 }
 

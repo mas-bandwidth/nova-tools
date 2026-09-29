@@ -32,6 +32,7 @@ type InboxReq struct {
 	Streams  []StreamClock
 	Deadline time.Duration // a judgment open longer is overdue
 	Stale    time.Duration // a moving stream unchanged longer needs a look
+	Prefix   string        // the deployment's prefix, for the commands that name it
 }
 
 // Group is notifications of one kind, type and stream, as one line. Its ID is
@@ -79,7 +80,7 @@ func Inbox(r InboxReq) []Group {
 	first := map[int]Note{} // each group's oldest note: its id
 	members := map[int]map[string]bool{}
 	member := func(i int, s string) {
-		if strings.HasPrefix(s, "stream:") {
+		if strings.HasPrefix(s, "stream:") || s == SprintSubject {
 			return
 		}
 		if members[i] == nil {
@@ -122,8 +123,8 @@ func Inbox(r InboxReq) []Group {
 			seen[k+o.Subject()] = true
 			g.Count++
 			shown := []string{o.Subject()}
-			if n.StreamLevel {
-				shown = n.Primaries // the cards the stream stopped on
+			if n.StreamLevel || n.SprintLevel {
+				shown = n.Primaries // the cards the stream stopped on; none for the sprint
 			}
 			for _, p := range shown {
 				member(i, p)
@@ -151,7 +152,7 @@ func Inbox(r InboxReq) []Group {
 		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
 		sort.Strings(judg[i].Notes)
-		judg[i].Commands = commands(judg[i], first[i])
+		judg[i].Commands = commands(judg[i], first[i], r.Prefix)
 	}
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
@@ -167,7 +168,7 @@ func Inbox(r InboxReq) []Group {
 		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
 			Oldest: st.Progress, Due: st.Progress.Add(r.Stale), Waited: r.Now.Sub(st.Progress), Decisions: Decisions[NStreamStale],
 			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)}
-		g.Commands = commands(g, Note{})
+		g.Commands = commands(g, Note{}, r.Prefix)
 		out = append(out, g)
 	}
 	var rest []Group
@@ -248,7 +249,7 @@ const (
 // stopped stream's card and the card it needs). A decision about cards takes
 // the group with its size and the notifications it answers; a decision about
 // a stopped stream names the cards and resumes the stream.
-func commands(g Group, first Note) []Command {
+func commands(g Group, first Note, prefix string) []Command {
 	const cmd = "nova-sprint "
 	grp := " --group " + g.ID + " --expect " + itoa(g.Size)
 	ans := " --answers " + strings.Join(g.Notes, ",")
@@ -285,6 +286,17 @@ func commands(g Group, first Note) []Command {
 			add(d, cmd+"wait "+first.ID+" --for 30m")
 		case d == "act":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+g.ID+" --for 30m")
+		case g.Type == NSprintDone:
+			switch d {
+			case "clear":
+				confirm := prefix
+				if confirm == "" {
+					confirm = "none"
+				}
+				add(d, cmd+"clear --confirm "+confirm)
+			case "add":
+				add(d, cmd+"add --stream '<stream>' --count '<n>' --brief '<brief>'")
+			}
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
 		case g.Type == NConflict:

@@ -113,3 +113,48 @@ func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
 	}
 	w.clean("read")
 }
+
+// H6: the step that lands or drops the last open primary of the whole sprint
+// writes one judgment, the sprint is done, with the counts; add closes it.
+func TestTheSprintIsDoneOnce(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
+	accepted(w, "s1-1", "s1-2")
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s2-1"}}, Reason: "obsolete"}))
+	if len(w.notesOf(NSprintDone)) != 0 || w.s.StreamCtl("s2").F("dropped") != "1" {
+		t.Fatalf("done too early, or the drop not counted: %v %q", w.notesOf(NSprintDone), w.s.StreamCtl("s2").F("dropped"))
+	}
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	if len(w.notesOf(NSprintDone)) != 0 {
+		t.Fatalf("done with s1-2 merging")
+	}
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	done := w.notesOf(NSprintDone)
+	if len(done) != 1 || done[0].Kind != Judgment || done[0].What != "2 landed, 1 dropped" || len(w.openOn(SprintSubject)) != 1 {
+		t.Fatalf("the sprint is done: %+v", done)
+	}
+	if p := MergeStep(w.s, MergeReq{Stream: "s1"}); len(p.Units) != 0 || len(w.notesOf(NSprintDone)) != 1 {
+		t.Fatalf("written twice: %+v", p)
+	}
+	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open, Prefix: "dev-"})
+	if len(g) != 1 || g[0].Type != NSprintDone || g[0].Commands[0].Lines[0] != "nova-sprint clear --confirm dev-" ||
+		g[0].Commands[1].Decision != "add" || g[0].Size != 0 {
+		t.Fatalf("the inbox: %+v", g)
+	}
+	w.must(Add(w.s, AddReq{Stream: "s3", Count: 1}))
+	if len(w.openOn(SprintSubject)) != 0 {
+		t.Fatalf("add left the sprint done")
+	}
+	w.clean("more work")
+
+	// The last open primary dropped: done, by the drop.
+	w2 := setup(t, 2)
+	accepted(w2, "s1-1")
+	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1"}))
+	w2.must(Drop(w2.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
+	if done := w2.notesOf(NSprintDone); len(done) != 1 || done[0].What != "1 landed, 1 dropped" {
+		t.Fatalf("done by a drop: %+v", done)
+	}
+	w2.clean("done")
+}

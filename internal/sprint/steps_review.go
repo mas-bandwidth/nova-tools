@@ -674,6 +674,19 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, dropping, dropping)
+	// Each stream counts its dropped primaries on its control card.
+	for _, st := range unitStreams(p) {
+		k := 0
+		for _, u := range p.Units {
+			if u.Stream == st && dropping[u.Key] {
+				k++
+			}
+		}
+		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
+	}
+	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
+		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
+	}
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
 }
