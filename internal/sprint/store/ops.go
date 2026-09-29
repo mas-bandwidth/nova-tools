@@ -220,7 +220,16 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	if err != nil {
 		return v, err
 	}
-	v.Groups = sprint.Inbox(sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale})
+	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale}
+	if _, ok := st.B.(KV); ok {
+		// One clock for overdue: running time, as the tick's deadlines.
+		m, _, err := st.Machine(ctx)
+		if err != nil {
+			return v, err
+		}
+		req.Stopped = m.StoppedBetween
+	}
+	v.Groups = sprint.Inbox(req)
 	return v, nil
 }
 

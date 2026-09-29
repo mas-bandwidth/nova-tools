@@ -243,3 +243,37 @@ func TestTheDealingKeepsEveryReadyQueueShortInScoreOrder(t *testing.T) {
 	}
 	h.clean("dealt")
 }
+
+// One clock for overdue: the inbox counts running time, as the tick's
+// deadlines do. A judgment open for four hours of which the machine was
+// STOPPED for three is not overdue at a two-hour deadline; a stream
+// unchanged for as long is not stale.
+func TestTheInboxCountsRunningTimeOnly(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
+	c := h.snap().Fleet.Card("s1-1.w1")
+	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
+	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}, Failed: true}))
+	h.tick(30 * time.Minute)
+	h.stopMachine()
+	h.tick(3 * time.Hour)
+	h.startMachine()
+	h.tick(30 * time.Minute)
+	v, err := h.st.Inbox(h.ctx, 2*time.Hour, 2*time.Hour, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range v.Groups {
+		if g.Kind == sprint.Judgment && (g.Overdue || g.Waited != time.Hour || !g.Due.Equal(t0.Add(5*time.Hour))) {
+			t.Fatalf("stopped hours counted: %+v", g)
+		}
+	}
+	h.tick(90 * time.Minute)
+	v, _ = h.st.Inbox(h.ctx, 2*time.Hour, 0, 1000)
+	if len(v.Groups) == 0 || !v.Groups[0].Overdue {
+		t.Fatalf("past the deadline in running time: %+v", v.Groups)
+	}
+}

@@ -30,8 +30,37 @@ type InboxReq struct {
 	Open     []Open
 	Recent   []Note // since the cursor, oldest first
 	Streams  []StreamClock
-	Deadline time.Duration // a judgment open longer is overdue
-	Stale    time.Duration // a moving stream unchanged longer needs a look
+	Deadline time.Duration // a judgment open longer, in running time, is overdue
+	Stale    time.Duration // a moving stream unchanged longer, in running time, needs a look
+	// Stopped is the time the machine was STOPPED between two clock
+	// readings: the deadlines count running time only, as the tick's do. nil
+	// is none.
+	Stopped func(from, to time.Time) time.Duration
+}
+
+// running is the running time from a clock reading to the read's: the time
+// on the clock less the time the machine was STOPPED.
+func (r InboxReq) running(from time.Time) time.Duration {
+	d := r.Now.Sub(from)
+	if r.Stopped != nil {
+		d -= r.Stopped(from, r.Now)
+	}
+	return d
+}
+
+// due is when a judgment raised at a clock reading is overdue, the time the
+// machine was STOPPED since then added: a sprint stopped for hours shows
+// nothing overdue because of those hours. A review time the coordinator set
+// (wait) is its own.
+func (r InboxReq) due(n Note) (time.Time, bool) {
+	if !n.Review.IsZero() {
+		return n.Review, r.Now.After(n.Review)
+	}
+	due := n.At.Add(r.Deadline)
+	if r.Stopped != nil {
+		due = due.Add(r.Stopped(n.At, r.Now))
+	}
+	return due, r.Deadline > 0 && r.running(n.At) > r.Deadline
 }
 
 // Group is notifications of one kind, type and stream, as one line. Its ID is
@@ -89,8 +118,7 @@ func Inbox(r InboxReq) []Group {
 	}
 	for _, o := range r.Open {
 		n := o.Note
-		due := n.Due(r.Deadline)
-		overdue := (r.Deadline > 0 || !n.Review.IsZero()) && r.Now.After(due)
+		due, overdue := r.due(n)
 		// Overdue marks a group; it does not split one, so the grouping (and
 		// every group's members) is the same whatever deadline is read with.
 		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked)
@@ -146,7 +174,7 @@ func Inbox(r InboxReq) []Group {
 	}
 	for i := range judg {
 		judg[i].ID = first[i].ID
-		judg[i].Waited = r.Now.Sub(judg[i].Oldest)
+		judg[i].Waited = r.running(judg[i].Oldest)
 		judg[i].Members = sortedSet(members[i])
 		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
@@ -161,11 +189,11 @@ func Inbox(r InboxReq) []Group {
 	})
 	out := judg
 	for _, st := range r.Streams {
-		if !st.Stalled(r.Now, r.Stale) {
+		if st.State == StreamLanded || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
 			continue
 		}
 		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
-			Oldest: st.Progress, Due: st.Progress.Add(r.Stale), Waited: r.Now.Sub(st.Progress), Decisions: Decisions[NStreamStale],
+			Oldest: st.Progress, Due: st.Progress.Add(r.Stale + r.Now.Sub(st.Progress) - r.running(st.Progress)), Waited: r.running(st.Progress), Decisions: Decisions[NStreamStale],
 			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)}
 		g.Commands = commands(g, Note{})
 		out = append(out, g)
