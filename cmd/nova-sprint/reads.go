@@ -142,6 +142,7 @@ type whereView struct {
 	Stalled []string                                `json:"stalled,omitempty"`
 	Pending string                                  `json:"pending,omitempty"`
 	Machine string                                  `json:"machine,omitempty"`
+	Goals   []goalView                              `json:"goals,omitempty"`
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -222,6 +223,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	b.WriteString(strings.Join(parts, "\n"))
+	b.WriteString(a.goalsFrame(ctx, st, &v))
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
 			v.Stalled = append(v.Stalled, c.Stream)
