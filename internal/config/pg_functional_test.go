@@ -120,7 +120,7 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 // deadline governs and the fallback is not applied. Both are read from the
 // context, not the clock: after the fallback fires the caller's context is
 // still open, and after the caller's deadline fires it is done.
-func TestOpenPGWithinBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
+func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	t.Parallel()
 
 	// stall is a store that accepts connections and never answers; accepted
@@ -148,7 +148,7 @@ func TestOpenPGWithinBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	// No deadline: the 100ms fallback ends the wait, the context stays open.
 	dsn, _ := stall()
 	ctx := context.Background()
-	_, err := OpenPGWithin(ctx, dsn, 100*time.Millisecond)
+	_, err := openPGWithin(ctx, dsn, 100*time.Millisecond)
 	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 		t.Fatalf("no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
 	}
@@ -164,7 +164,7 @@ func TestOpenPGWithinBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 		<-accepted
 		cancel()
 	}()
-	_, err = OpenPGWithin(dctx, dsn, time.Nanosecond)
+	_, err = openPGWithin(dctx, dsn, time.Nanosecond)
 	if err == nil || dctx.Err() == nil {
 		t.Fatalf("a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
 	}

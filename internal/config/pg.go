@@ -82,12 +82,13 @@ const ConnectTimeout = 10 * time.Second
 // refused here rather than on the first verb. The ping is bounded by the
 // context's deadline when it has one and by ConnectTimeout when it has none.
 func OpenPG(ctx context.Context, dsn string) (*PG, error) {
-	return OpenPGWithin(ctx, dsn, ConnectTimeout)
+	return openPGWithin(ctx, dsn, ConnectTimeout)
 }
 
-// OpenPGWithin is OpenPG with the bound for a context that carries no
-// deadline given: a caller's deadline, longer or shorter, always governs.
-func OpenPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
+// openPGWithin is OpenPG with the bound for a context that carries no
+// deadline given, so the package's tests can shorten it: a caller's deadline,
+// longer or shorter, always governs.
+func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres dsn: %w", err)

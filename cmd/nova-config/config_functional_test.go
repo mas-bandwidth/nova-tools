@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
@@ -467,26 +466,21 @@ func stallingListener(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// The flag governs the wait for the connection, whatever bound a caller
-// without a deadline would get. The connection bound here is 1ns: if it
-// capped the wait, the ping would fail at once with the store's own error
-// while the verb's deadline is still open, and the verb would refuse
-// generically; because the deadline governs, the verb waits for it and
-// prints the timed-out refusal.
-func TestInventoryTimeoutFlagGovernsTheConnectionNotAFixedBound(t *testing.T) {
+// The flag governs the wait for the connection: the verb waits for its own
+// deadline, and when it expires it prints the timed-out refusal naming the
+// stage, whether the flag is shorter or longer than other verbs' bound. (That
+// no fixed bound caps a longer wait is the package's own test,
+// TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline.)
+func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	t.Parallel()
 
 	addr := stallingListener(t)
 	r := newReal(t, false)
 	r.env["NOVA_PG_DSN"] = "postgres://nova_config@" + addr + "/nova"
-	d := r.deps()
-	d.openStore = func(ctx context.Context, dsn string) (pgStore, error) {
-		return config.OpenPGWithin(ctx, dsn, time.Nanosecond)
-	}
-	for _, flag := range []string{"100ms", "250ms"} {
+	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
 		var out, errb bytes.Buffer
-		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, d)
-		want := "nova-config inventory: timed out after " + flag + " waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout " + map[string]string{"100ms": "300ms", "250ms": "750ms"}[flag] + "\n"
+		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
+		want := "nova-config inventory: timed out after " + flag + " waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout " + again + "\n"
 		if code != 2 || out.String() != "" || errb.String() != want {
 			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
 		}
