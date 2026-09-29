@@ -960,3 +960,42 @@ func TestEventsEscapeWhatCouldSplitTheLine(t *testing.T) {
 		t.Fatalf("event = %q", got)
 	}
 }
+
+// The README names the runner's files as the code classifies them, and tells the
+// author of a model change where the jar comes from and how to check it.
+func TestReadmeNamesTheRunnerFilesAndWhereTheJarComesFrom(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "tla", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bullet string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "- the runner's result files") {
+			bullet = line
+		}
+	}
+	if bullet == "" {
+		t.Fatal("the README has no bullet for the runner's result files")
+	}
+	resultPart, bookkeepingPart, ok := strings.Cut(bullet, "The package's other non-test files")
+	if !ok {
+		t.Fatal("the README's bullet does not list the bookkeeping files")
+	}
+	bookkeepingPart, _, _ = strings.Cut(bookkeepingPart, ";")
+	for _, name := range tlc.ResultFiles {
+		if !strings.Contains(resultPart, "`"+name+"`") || strings.Contains(bookkeepingPart, "`"+name+"`") {
+			t.Errorf("the README does not name the result file %s as one", name)
+		}
+	}
+	for _, name := range tlc.BookkeepingFiles {
+		if !strings.Contains(bookkeepingPart, "`"+name+"`") {
+			t.Errorf("the README does not name the bookkeeping file %s as one", name)
+		}
+	}
+	for _, want := range []string{"downloads nothing", "so the jar comes from you", "sha256sum /path/to/tla2tools.jar", "has to print the hash the records name", "merge without `--keep`"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("the README does not say %q about the jar", want)
+		}
+	}
+}

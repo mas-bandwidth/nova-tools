@@ -2312,8 +2312,8 @@ names for it and, transitively, every module that one `EXTENDS` or `INSTANCE`s (
 with no file under `tla/` must be one of the ten modules the TLC jar bundles, the `standardModules` list in
 `internal/tlc/inputs.go`, which read nothing from the tree; any other name refuses the case);
 the case's own row of `CASES.tsv` under the file's header; and the runner's result files
-(`outcome.go`, `run.go` and `suite.go` of `internal/tlc`: the command line, flags, workers
-and timeouts of a run and the reading of TLC's output). The package's other non-test files
+(`outcome.go`, `plan.go`, `run.go` and `suite.go` of `internal/tlc`: the command line, flags, workers
+and timeouts of a run, the reading of TLC's output and the reading of a plan row into the case a run is judged by). The package's other non-test files
 are bookkeeping and in no fingerprint, and `TestEveryRunnerFileIsClassified` holds each file
 to exactly one of the two lists (`ResultFiles`, `BookkeepingFiles`). It is the SHA-256 over those inputs in path
 order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline: no timestamp,
@@ -2321,7 +2321,7 @@ no host and no absolute path. The jar is not an input; the record names it in it
 column, beside the java version and the worker count. `tlacheck inputs --case <config>` prints each input and its hash, the fingerprint
 and the count. `tlacheck merge` joins the records of the group runs into the committed
 file, refuses a record that is not the fingerprint its case has at that checkout (another
-runner, or a model edited since the run), and with `--keep` carries the current records of
+runner, or a model edited since the run) or whose module, expected outcome or property cell is not the plan's for the case, and with `--keep` carries the current records of
 the cases no run measured again; `tlacheck groups --stale` names the groups to run again.
 Unknown state counts on a failed timeout stay unknown, never zero-state success.
 Editing a model, a configuration or a case's row requires refreshing the records of the
