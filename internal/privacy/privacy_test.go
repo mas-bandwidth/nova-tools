@@ -57,7 +57,7 @@ func TestOnlyUnprovenCleanClears(t *testing.T) {
 	}
 	for _, o := range []privacy.Outcome{
 		privacy.Flagged, privacy.CorpusUnreadable, privacy.NoPrivateCorpus,
-		privacy.NothingCanEverFire, privacy.Outcome("an outcome added later"), privacy.Outcome(""),
+		privacy.NothingCanEverFire, privacy.PayloadHasNoWords, privacy.Outcome("an outcome added later"), privacy.Outcome(""),
 	} {
 		if o.Cleared() {
 			t.Errorf("%q must never clear an outbound action", o)
@@ -65,10 +65,10 @@ func TestOnlyUnprovenCleanClears(t *testing.T) {
 	}
 }
 
-func TestCouldNotVerifyIsExactlyTheThreeUnverifiedOutcomes(t *testing.T) {
+func TestCouldNotVerifyIsExactlyTheFourUnverifiedOutcomes(t *testing.T) {
 	t.Parallel()
 	want := map[privacy.Outcome]bool{
-		privacy.CorpusUnreadable: true, privacy.NoPrivateCorpus: true, privacy.NothingCanEverFire: true,
+		privacy.CorpusUnreadable: true, privacy.NoPrivateCorpus: true, privacy.NothingCanEverFire: true, privacy.PayloadHasNoWords: true,
 		privacy.UnprovenClean: false, privacy.Flagged: false,
 	}
 	for o, w := range want {

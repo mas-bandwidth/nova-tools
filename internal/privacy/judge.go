@@ -24,6 +24,10 @@ const (
 	// NothingCanEverFire means private entries exist but none has enough
 	// distinctive terms to raise a flag against any payload.
 	NothingCanEverFire Outcome = "NOTHING-CAN-EVER-FIRE"
+	// PayloadHasNoWords means the payload was read and holds no word, so
+	// there was nothing to compare: invisible characters, punctuation or
+	// digits alone.
+	PayloadHasNoWords Outcome = "PAYLOAD-HAS-NO-WORDS"
 )
 
 // Cleared reports whether this outcome permits an outbound action. It is an
@@ -33,7 +37,7 @@ func (o Outcome) Cleared() bool { return o == UnprovenClean }
 
 // CouldNotVerify reports whether the screen ran and verified nothing.
 func (o Outcome) CouldNotVerify() bool {
-	return o == CorpusUnreadable || o == NoPrivateCorpus || o == NothingCanEverFire
+	return o == CorpusUnreadable || o == NoPrivateCorpus || o == NothingCanEverFire || o == PayloadHasNoWords
 }
 
 // Flag is one reading assignment: the private entry and the shared terms.
@@ -81,8 +85,17 @@ const (
 // The order is fixed. A refusing structure hit is a positive finding about
 // the payload and outranks every could-not-verify outcome, which is still
 // spoken beside it. Then an unreadable source, then an empty private corpus,
-// then vocabulary flags, then the corpus that can never fire.
-func Judge(c Corpus, payload string) Result {
+// then a payload with no words, then vocabulary flags, then the corpus that
+// can never fire.
+func Judge(c Corpus, payload string) Result { return judge(c, payload, true) }
+
+// JudgeCorpus judges the corpus alone, as the corpus verb reports it: no
+// payload is measured and no structure shape is matched, so its outcome is
+// UnprovenClean when a screen could reach a verdict and a could-not-verify
+// outcome when every screen would come back unverified.
+func JudgeCorpus(c Corpus) Result { return judge(c, "", false) }
+
+func judge(c Corpus, payload string, withPayload bool) Result {
 	rules := c.Rules
 	if rules.stop == nil {
 		rules = DefaultRules()
@@ -96,7 +109,9 @@ func Judge(c Corpus, payload string) Result {
 		Warnings:     append([]string(nil), c.Warnings...),
 	}
 
-	r.Structure = rules.Structure(payload)
+	if withPayload {
+		r.Structure = rules.Structure(payload)
+	}
 	refusals := r.StructureRefusals()
 	for _, h := range r.Structure {
 		if !h.Refuse {
@@ -130,6 +145,13 @@ func Judge(c Corpus, payload string) Result {
 		r.Outcome = NoPrivateCorpus
 		r.Reason = fmt.Sprintf("no %s entries in %d entries across %d sources; this screen verified nothing", rules.Marker, len(c.Blocks), len(c.Sources))
 		r.Remedy = fmt.Sprintf("mark private entries with %s in the title or the opening of the entry in %s", rules.Marker, sourceList(c.Sources))
+		return r
+	}
+
+	if withPayload && CountWords(payload) == 0 {
+		r.Outcome = PayloadHasNoWords
+		r.Reason = fmt.Sprintf("the payload holds %d bytes and no word (invisible characters, punctuation or digits alone); there was nothing to compare", len(payload))
+		r.Remedy = "check that the file is the text meant to go out; a payload of words is screened"
 		return r
 	}
 

@@ -278,27 +278,32 @@ func TestExitContract(t *testing.T) {
 	}
 }
 
-// Three different facts share exit 3 and never share a sentence.
-func TestTheThreeCouldNotVerifyOutcomesAreSpelledApart(t *testing.T) {
+// Four different facts share exit 3 and never share a sentence.
+func TestTheCouldNotVerifyOutcomesAreSpelledApart(t *testing.T) {
 	t.Parallel()
 	seen := map[string]bool{}
-	for _, mutate := range []func(t *testing.T, tr tree){
+	for i, mutate := range []func(t *testing.T, tr tree){
 		func(t *testing.T, tr tree) { tr.write(t, ".nova-privacy", configFixture+"source private/gone.md\n") },
 		func(t *testing.T, tr tree) { tr.write(t, "private/ideas.md", "## Ordinary\nnothing marked\n") },
 		func(t *testing.T, tr tree) {
 			tr.write(t, "private/ideas.md", "## Generic (private)\n"+commonWords+"\n")
 		},
+		func(t *testing.T, tr tree) {},
 	} {
 		tr := newTree(t)
 		mutate(t, tr)
-		code, _, errOut := screenStdin(tr, "harmless outgoing text")
+		payload := "harmless outgoing text"
+		if i == 3 {
+			payload = "... --- ..."
+		}
+		code, _, errOut := screenStdin(tr, payload)
 		if code != exitUnverified {
 			t.Fatalf("exit %d: %s", code, errOut)
 		}
 		seen[strings.ReplaceAll(errOut, tr.root, "")] = true
 	}
-	if len(seen) != 3 {
-		t.Errorf("three facts printed %d distinct outputs", len(seen))
+	if len(seen) != 4 {
+		t.Errorf("four facts printed %d distinct outputs", len(seen))
 	}
 }
 
@@ -498,5 +503,42 @@ func TestHelpIsNotARefusal(t *testing.T) {
 	code, out, errOut := runTool("", "help")
 	if code != exitClean || errOut != "" || !strings.Contains(out, "exit codes:") || !strings.Contains(out, "\nexample:\n") {
 		t.Errorf("exit %d stderr %q", code, errOut)
+	}
+}
+
+func utf16LE(s string, bom bool) string {
+	var b []byte
+	if bom {
+		b = append(b, 0xFF, 0xFE)
+	}
+	for _, r := range s {
+		b = append(b, byte(r), byte(r>>8))
+	}
+	return string(b)
+}
+
+// A payload the tool cannot read as text never clears: UTF-16 with a mark is
+// decoded and screened, and bytes that are not text are refused.
+func TestAPayloadThatIsNotTextNeverClears(t *testing.T) {
+	t.Parallel()
+	leak := "thinking about the " + rareWords + " again"
+	for name, c := range map[string]struct {
+		payload string
+		code    int
+		token   string
+	}{
+		"utf-16 with a mark is screened": {utf16LE(leak, true), exitFlagged, "SCREEN FLAGGED"},
+		"utf-16 without a mark":          {utf16LE(leak, false), exitCouldNotRun, "NUL"},
+		"invalid utf-8":                  {leak + " \xff\xfe", exitCouldNotRun, "not valid UTF-8"},
+		"zero-width spaces only":         {"\u200b\u200b\u200b\u200b", exitUnverified, "SCREEN PAYLOAD-HAS-NO-WORDS"},
+		"punctuation only":               {"!!! ... --- ???\n", exitUnverified, "SCREEN PAYLOAD-HAS-NO-WORDS"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			code, out, errOut := screenStdin(newTree(t), c.payload)
+			if code != c.code || !strings.Contains(errOut, c.token) || strings.Contains(out, "UNPROVEN-CLEAN") {
+				t.Errorf("exit %d, want %d with %q\nstdout %q\nstderr %q", code, c.code, c.token, out, errOut)
+			}
+		})
 	}
 }

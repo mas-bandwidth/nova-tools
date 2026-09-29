@@ -2259,8 +2259,12 @@ What a first run gets wrong:
   `source` line, or name sources with `--source`.
 - **Exit 3.** The screen ran and verified nothing: a declared source is missing
   (`remove it from <config> or restore the file`), no entry is marked private,
-  or no private entry has enough rare words to ever fire. The remedy line says
-  which, and names the `nova-privacy corpus` command to run next.
+  the payload holds no word, or no private entry has enough rare words to ever
+  fire. The remedy line says which, and names the `nova-privacy corpus` command
+  to run next.
+- **Exit 2 on a payload.** The payload must be text: UTF-8, or UTF-16 that
+  opens with a byte-order mark. A NUL byte or invalid UTF-8 is refused with its
+  offset.
 
 ### Your own corpus
 
@@ -2277,5 +2281,5 @@ SPEC-PRIVACY.md defines them. Pipe a draft in with `nova-privacy screen --root
 <dir> -`. `--json` prints one JSON object instead of lines.
 
 Exit codes: 0 `UNPROVEN-CLEAN`, 1 `FLAGGED`, 2 could not run, 3 could not
-verify (`CORPUS-UNREADABLE`, `NO-PRIVATE-CORPUS`, `NOTHING-CAN-EVER-FIRE`).
-Only 0 permits sending.
+verify (`CORPUS-UNREADABLE`, `NO-PRIVATE-CORPUS`, `PAYLOAD-HAS-NO-WORDS`,
+`NOTHING-CAN-EVER-FIRE`). Only 0 permits sending.

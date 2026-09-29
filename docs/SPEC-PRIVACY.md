@@ -52,20 +52,21 @@ built in.
 |------|---------|-------|
 | 0 | `UNPROVEN-CLEAN` | screened, nothing proven; the only outcome that permits sending |
 | 1 | `FLAGGED` | shared vocabulary with a private entry, or a refused shape; a mind reads it first |
-| 2 | could not run | a bad invocation, an unreadable or empty payload, a missing or malformed configuration, a configuration with no source |
+| 2 | could not run | a bad invocation, a payload that is unreadable, empty or not text, a missing or malformed configuration, a configuration with no source |
 | 3 | `CORPUS-UNREADABLE` | a declared source could not be read, so the corpus is not the configured one |
 | 3 | `NO-PRIVATE-CORPUS` | every source loaded and no entry is marked private |
+| 3 | `PAYLOAD-HAS-NO-WORDS` | the payload was read and holds no word: invisible characters, punctuation or digits alone |
 | 3 | `NOTHING-CAN-EVER-FIRE` | private entries exist and none has three distinctive terms |
 
 Exit 3 is this tool's own code: "I could not verify" is neither a pass nor a
-finding. The three exit-3 outcomes are spelled apart because their remedies
+finding. The four exit-3 outcomes are spelled apart because their remedies
 differ. `Outcome.Cleared` is an equality against `UNPROVEN-CLEAN`, so an outcome
 added later cannot clear by default.
 
 The order of judgment is fixed. A refused structure shape outranks every
 exit-3 outcome, and the corpus problem is still reported beside it. Then an
-unreadable source, then no private entries, then vocabulary flags, then the
-corpus that can never fire.
+unreadable source, then no private entries, then a payload with no words, then
+vocabulary flags, then the corpus that can never fire.
 
 With no background document read, the screen runs and warns: rarity is measured
 against the private sources alone, which flags more readily, never less. A
@@ -142,8 +143,16 @@ is no flag that takes the payload as an argument: an argument is visible to
 every process that can list processes. An empty payload is refused, since it
 cannot be told from content that never arrived.
 
+A payload must be text. UTF-16 that opens with a byte-order mark is decoded; a
+leading UTF-8 byte-order mark is dropped; anything else must be valid UTF-8
+with no NUL byte, or it is refused (exit 2) with the offset of the first bad
+byte. Measured as bytes, such a payload would yield no words and clear. A
+payload that is text and holds no word (a word is a run of letters and digits
+with at least one letter, in any script) is `PAYLOAD-HAS-NO-WORDS`, exit 3.
+
 `corpus` loads what a screen would load and prints it, so a corpus can be seen
-before a screen is trusted. Its exit follows the same table: 0 when a screen
+before a screen is trusted. It measures no payload and matches no structure
+shape (`privacy.JudgeCorpus`). Its exit follows the same table: 0 when a screen
 could reach a verdict, 3 when every screen would come back unverified.
 
 The tool reads no environment variable. Nothing it reads is interpreted: the
@@ -162,7 +171,7 @@ SCREEN STRUCTURE class=<class> specimen=<text>
 SCREEN MORE kind=flag shown=<n> total=<n> <remedy>
 SCREEN FLAGGED flags=<n> structure=<n> chars=<n> ...
 SCREEN REMEDY <remedy>; after an edit, run: nova-privacy screen <the same inputs>
-SCREEN <CORPUS-UNREADABLE|NO-PRIVATE-CORPUS|NOTHING-CAN-EVER-FIRE> <reason>
+SCREEN <CORPUS-UNREADABLE|NO-PRIVATE-CORPUS|PAYLOAD-HAS-NO-WORDS|NOTHING-CAN-EVER-FIRE> <reason>
 SCREEN REMEDY <remedy>; then run: nova-privacy corpus <the same inputs>
 SCREEN WARN <warning>
 CORPUS SOURCE path=<path> entries=<n> private=<n>

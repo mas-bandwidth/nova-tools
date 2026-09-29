@@ -4,8 +4,8 @@
 // contract.
 //
 // Exit 0 UNPROVEN-CLEAN, 1 FLAGGED, 2 could not run, 3 could not verify
-// (CORPUS-UNREADABLE, NO-PRIVATE-CORPUS, NOTHING-CAN-EVER-FIRE). Only 0
-// permits an outbound action.
+// (CORPUS-UNREADABLE, NO-PRIVATE-CORPUS, NOTHING-CAN-EVER-FIRE,
+// PAYLOAD-HAS-NO-WORDS). Only 0 permits an outbound action.
 package main
 
 import (
@@ -84,8 +84,11 @@ the file's directory:
 
 exit codes: 0 UNPROVEN-CLEAN, the only outcome that permits sending
   1 FLAGGED, a mind reads it before it goes out
-  2 could not run: a bad invocation, an unreadable payload or configuration
-  3 could not verify: CORPUS-UNREADABLE, NO-PRIVATE-CORPUS or NOTHING-CAN-EVER-FIRE
+  2 could not run: a bad invocation, a payload that is empty or not text
+    (a NUL byte, invalid UTF-8; UTF-16 is read when it opens with a
+    byte-order mark), an unreadable configuration
+  3 could not verify: CORPUS-UNREADABLE, NO-PRIVATE-CORPUS,
+    NOTHING-CAN-EVER-FIRE, or PAYLOAD-HAS-NO-WORDS (the payload holds no word)
 
 First run, from the root of this checkout: copy the example corpus the lines
 below read, then paste them as they are.
@@ -362,16 +365,30 @@ func describe(target string) string {
 	return target
 }
 
+// readPayload reads the payload and decodes it as text. Bytes that are not
+// text are refused: measured as bytes they would yield no words and clear.
 func readPayload(target string, stdin io.Reader) (string, error) {
+	var b []byte
+	var err error
 	if target == "-" {
-		b, err := privacy.ReadPayload(stdin, "standard input")
-		return string(b), err
+		b, err = privacy.ReadPayload(stdin, "standard input")
+	} else {
+		b, err = privacy.ReadBounded(target, privacy.MaxPayloadBytes)
+		if errors.Is(err, privacy.ErrTooLarge) {
+			err = fmt.Errorf("%w (MaxPayloadBytes)", err)
+		}
 	}
-	b, err := privacy.ReadBounded(target, privacy.MaxPayloadBytes)
-	if errors.Is(err, privacy.ErrTooLarge) {
-		err = fmt.Errorf("%w (MaxPayloadBytes)", err)
+	if err != nil {
+		return "", err
 	}
-	return string(b), err
+	return privacy.DecodeText(b, describePayload(target))
+}
+
+func describePayload(target string) string {
+	if target == "-" {
+		return "standard input"
+	}
+	return target
 }
 
 func cmdCorpus(args []string, stdout, stderr io.Writer) int {
@@ -386,7 +403,7 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return exitCouldNotRun
 	}
-	res := privacy.Judge(corpus, "")
+	res := privacy.JudgeCorpus(corpus)
 	code := exitFor(res.Outcome)
 	if c.json {
 		return writeJSON(stdout, stderr, "corpus", code, corpus, res)
