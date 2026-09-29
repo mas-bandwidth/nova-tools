@@ -632,16 +632,6 @@ func TestInventoryVerb(t *testing.T) {
 	if hostMap["ansible_host"] != "bench-alpha" || hostMap["ansible_user"] != "user-a" || hostMap["ansible_connection"] != "local" {
 		t.Fatalf("hostMap: %v", hostMap)
 	}
-
-	// 4. nova-config inventory --host unknown
-	unkOut, _ := step(0, "inventory", "--host", "unknown")
-	var unkMap map[string]any
-	if err := json.Unmarshal([]byte(unkOut), &unkMap); err != nil {
-		t.Fatalf("unmarshal --host unknown: %v", err)
-	}
-	if len(unkMap) != 0 {
-		t.Fatalf("unknown host vars should be empty: %v", unkMap)
-	}
 }
 
 func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
@@ -716,5 +706,115 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	// Redis revs should still be 2 and 3
 	if h.redis.revs["machine"] != 2 || h.redis.revs["fleet"] != 3 {
 		t.Fatalf("apply --check wrote to redis: %v", h.redis.revs)
+	}
+}
+
+// inventoryHarness is a harness with n machine rows named bench-01 ...
+// bench-nn, added to the store directly.
+func inventoryHarness(t *testing.T, n int) *harness {
+	t.Helper()
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	machine, _ := config.Lookup(config.KindMachine)
+	for i := 1; i <= n; i++ {
+		row, err := machine.NewRow(fmt.Sprintf("bench-%02d", i), map[string]string{"user": "user-a", "seat": "seat-a", "slots": "8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.store.Insert(context.Background(), config.KindMachine, row, "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return h
+}
+
+func TestInventoryHostNamingNoMachineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 3)
+	code, out, errs := h.run(t, "inventory", "--host", "nosuch")
+	if code != 1 || out != "" {
+		t.Fatalf("exit %d stdout %q, want 1 and nothing", code, out)
+	}
+	want := "nova-config inventory: --host nosuch names no machine row; known machines: bench-01, bench-02, bench-03; run: nova-config machine list\n"
+	if errs != want {
+		t.Fatalf("refusal:\n got %q\nwant %q", errs, want)
+	}
+
+	// The remedy keeps the effective --pg.
+	_, _, errs = h.run(t, "inventory", "--pg", dsn, "--host", "nosuch")
+	if !strings.HasSuffix(errs, "run: nova-config machine list --pg "+dsn+"\n") {
+		t.Fatalf("remedy does not keep --pg: %q", errs)
+	}
+
+	// An empty store lists none.
+	_, _, errs = inventoryHarness(t, 0).run(t, "inventory", "--host", "nosuch")
+	if !strings.Contains(errs, "known machines: none;") {
+		t.Fatalf("empty store: %q", errs)
+	}
+}
+
+func TestInventoryHostRefusalListsAtMostTwentyNames(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 25)
+	code, _, errs := h.run(t, "inventory", "--host", "nosuch")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errs, "bench-20 and 5 more;") || strings.Contains(errs, "bench-21") {
+		t.Fatalf("the list is not bounded at 20: %q", errs)
+	}
+}
+
+func TestInventoryHostAndListForRealMachinesStillAnswer(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	code, out, errs := h.run(t, "inventory", "--host", "bench-02")
+	if code != 0 || errs != "" {
+		t.Fatalf("--host bench-02: exit %d stderr %q", code, errs)
+	}
+	var hv map[string]any
+	if err := json.Unmarshal([]byte(out), &hv); err != nil || hv["ansible_host"] != "bench-02" {
+		t.Fatalf("--host bench-02: %v %q", err, out)
+	}
+	_, def, _ := h.run(t, "inventory")
+	code, listed, _ := h.run(t, "inventory", "--list")
+	if code != 0 || listed != def || !strings.Contains(listed, "_meta") {
+		t.Fatalf("--list differs from the default or lacks _meta:\n%s", listed)
+	}
+}
+
+func TestInventoryBadFlagsAreRefusedBeforeTheStoreIsOpened(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"inventory", "--list", "--host", "bench-01"}, []string{"--list", "--host", "exclusive"}},
+		{[]string{"inventory", "--host", "bench-01", "--list"}, []string{"--list", "--host", "exclusive"}},
+		{[]string{"inventory", "--host="}, []string{"--host", "empty"}},
+		{[]string{"inventory", "--host", ""}, []string{"--host", "empty"}},
+		{[]string{"inventory", "--host"}, []string{"host"}},
+		{[]string{"inventory", "bench-01"}, []string{"no arguments"}},
+	} {
+		h := inventoryHarness(t, 1)
+		code, out, errs := h.run(t, tc.args...)
+		if code != 2 || out != "" {
+			t.Fatalf("%v: exit %d stdout %q, want 2 and nothing (stderr %q)", tc.args, code, out, errs)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(errs, w) {
+				t.Fatalf("%v: refusal %q lacks %q", tc.args, errs, w)
+			}
+		}
+		if strings.Count(errs, "\n") != 1 {
+			t.Fatalf("%v: refusal is not one line: %q", tc.args, errs)
+		}
+		if h.opens != 0 {
+			t.Fatalf("%v: opened the store %d times before refusing", tc.args, h.opens)
+		}
 	}
 }

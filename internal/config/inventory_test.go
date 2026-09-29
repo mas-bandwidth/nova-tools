@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -127,17 +128,15 @@ func TestBuildInventoryStructure(t *testing.T) {
 		t.Errorf("HostJSON ansible_host: got %v", parsedHost["ansible_host"])
 	}
 
-	// Verify HostJSON for unknown host
+	// HostJSON for a name the inventory does not hold is a typed refusal
+	// that carries the known names, never an empty object.
 	unknownRaw, err := inv.HostJSON("unknown")
-	if err != nil {
-		t.Fatalf("HostJSON unknown: %v", err)
+	var unknown *UnknownHostError
+	if !errors.As(err, &unknown) || unknownRaw != nil {
+		t.Fatalf("HostJSON unknown: got %q, %v; want *UnknownHostError", unknownRaw, err)
 	}
-	var parsedUnknown map[string]any
-	if err := json.Unmarshal(unknownRaw, &parsedUnknown); err != nil {
-		t.Fatalf("Unmarshal HostJSON unknown: %v", err)
-	}
-	if len(parsedUnknown) != 0 {
-		t.Errorf("HostJSON unknown: got %v, want empty map", parsedUnknown)
+	if unknown.Name != "unknown" || len(unknown.Known) != 2 || unknown.Known[0] != "bench-alpha" || unknown.Known[1] != "bench-beta" {
+		t.Errorf("HostJSON unknown: %+v", unknown)
 	}
 }
 

@@ -115,11 +115,26 @@ func (inv *AnsibleInventory) JSON() ([]byte, error) {
 	return json.MarshalIndent(inv, "", "  ")
 }
 
-// HostJSON serializes variables for one host into indented JSON format.
+// UnknownHostError is HostJSON's refusal: no machine row has the name. Known
+// is every machine name the inventory holds, sorted.
+type UnknownHostError struct {
+	Name  string
+	Known []string
+}
+
+func (e *UnknownHostError) Error() string {
+	return fmt.Sprintf("no machine row named %s", e.Name)
+}
+
+// HostJSON serializes the variables of one host into indented JSON format. A
+// name the inventory does not hold is an *UnknownHostError, never an empty
+// object.
 func (inv *AnsibleInventory) HostJSON(name string) ([]byte, error) {
 	hv, ok := inv.Meta.Hostvars[name]
 	if !ok {
-		hv = map[string]any{}
+		known := make([]string, 0, len(inv.All.Hosts))
+		known = append(known, inv.All.Hosts...)
+		return nil, &UnknownHostError{Name: name, Known: known}
 	}
 	return json.MarshalIndent(hv, "", "  ")
 }

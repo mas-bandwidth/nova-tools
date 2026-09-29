@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	stdflag "flag"
 	"fmt"
 	"io"
@@ -904,13 +905,25 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	const verb = "inventory"
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
-	_ = fs.Bool("list", false, "output all hosts (Ansible dynamic inventory default)")
-	host := fs.String("host", "", "output hostvars for one host (Ansible dynamic inventory)")
+	list := fs.Bool("list", false, "print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host")
+	host := fs.String("host", "", "print the variables of one machine as a JSON object; exits 1 when no machine row has that name")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "inventory takes no arguments; flags only")
+	}
+	hostGiven := false
+	fs.Visit(func(f *stdflag.Flag) {
+		if f.Name == "host" {
+			hostGiven = true
+		}
+	})
+	if hostGiven && *host == "" {
+		return refuse(stderr, verb, "--host wants a machine name and got an empty value")
+	}
+	if *list && hostGiven {
+		return refuse(stderr, verb, "--list and --host are exclusive: --list prints every host, --host prints one")
 	}
 	dsn, err := pgDSN(*pg, d.getenv)
 	if err != nil {
@@ -925,8 +938,16 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if *host != "" {
+	if hostGiven {
 		data, err := inv.HostJSON(*host)
+		var unknown *config.UnknownHostError
+		if errors.As(err, &unknown) {
+			next := tool + " machine list"
+			if *pg != "" {
+				next += " --pg " + shq(*pg)
+			}
+			return refused(stderr, verb, fmt.Sprintf("--host %s names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), next)
+		}
 		if err != nil {
 			return refuse(stderr, verb, err.Error())
 		}
@@ -939,4 +960,27 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	fmt.Fprintln(stdout, string(data))
 	return 0
+}
+
+// maxKnownNames bounds the machine names a refusal lists.
+const maxKnownNames = 20
+
+// boundedNames lists at most max names, then how many more there are, and
+// "none" for an empty list.
+func boundedNames(names []string, max int) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:max], ", "), len(names)-max)
+}
+
+// shq single-quotes a word so a printed remedy pastes.
+func shq(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./-_") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
