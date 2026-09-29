@@ -71,7 +71,11 @@ first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
 no redeal or withdrawal rewrites it, so a member handed the card after
 someone else's take gets its own 15 minutes and a flapping member cannot
-reset the clock), ok (set
+reset the clock), redeals (how many times this attempt's card was dealt
+again after its member went down or away; a take never resets it; at
+MaxRedeals, 3, the card stays withdrawn, its primary ready and dealt no more,
+and the judgment "a card reached its bound" names it until a rework with a fix
+or a drop; each redeal's line in the log says "redeal n of 3"), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -315,6 +319,7 @@ the tick would make, no other open judgment on it).
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask | reader add, rework, drop, wait | no |
 | no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
+| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
@@ -608,7 +613,7 @@ command that loads it.
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
-| rework | delegates the next attempt at once with a fix; ready when no member is up; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
+| rework | delegates the next attempt at once with a fix; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |

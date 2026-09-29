@@ -139,11 +139,11 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 	case toCol == DoneFailed:
 		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
 	case toCol == string(Ready) && fromCol == Withdrawn:
-		return fmt.Sprintf("attempt %s redealt to %s (generation %d)", a, toRow, l.Gen)
+		return fmt.Sprintf("attempt %s redealt to %s (generation %d%s)", a, toRow, l.Gen, redealOf(l))
 	case toCol == string(Ready) && fromRow != toRow && strings.Contains(l.Verb, "level"):
 		return fmt.Sprintf("attempt %s moved from %s's queue to %s's to even the queues %s (generation %d)", a, fromRow, toRow, by, l.Gen)
 	case toCol == string(Ready) && fromRow != toRow:
-		return fmt.Sprintf("attempt %s redealt from %s to %s %s (generation %d)", a, fromRow, toRow, whyOf(l), l.Gen)
+		return fmt.Sprintf("attempt %s redealt from %s to %s %s (generation %d%s)", a, fromRow, toRow, whyOf(l), l.Gen, redealOf(l))
 	}
 	return renderPlain(l, by)
 }
@@ -207,6 +207,14 @@ func renderPlain(l Line, by string) string {
 		to = "off the table"
 	}
 	return fmt.Sprintf("%s %s -> %s %s (%s)", l.Card, from, to, by, l.Verb)
+}
+
+// redealOf is a redeal's count against its bound, as a line says it.
+func redealOf(l Line) string {
+	if n := l.Set["redeals"]; n != "" {
+		return fmt.Sprintf("; redeal %s of %d", n, MaxRedeals)
+	}
+	return ""
 }
 
 func whyOf(l Line) string {

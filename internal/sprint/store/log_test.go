@@ -219,3 +219,71 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 		t.Fatalf("the open lateness does not say where the card is: %q", w)
 	}
 }
+
+// Johnny's loop: a card taken and abandoned over and over is redealt at most
+// MaxRedeals times in its attempt (the take does not reset the count, and each
+// redeal's line says "redeal n of 3"); the next abandonment leaves it
+// withdrawn, its primary ready and dealt no more, and one bound judgment
+// names it until the coordinator reworks it with a fix (a new attempt, its
+// count at zero) or drops it.
+func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1", "m2"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	for lap := 0; lap < 10; lap++ {
+		c := h.snap().Fleet.Card("s1-1.w1")
+		if c.Col != sprint.Ready {
+			break
+		}
+		holder := c.Row
+		h.run(TakeStep(sprint.TakeReq{As: holder, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: holder}))
+		other := map[string]string{"m1": "m2", "m2": "m1"}[holder]
+		h.live = []string{other} // the taker abandons it
+		for i := 0; i < 3; i++ {
+			h.tick(10 * time.Second)
+			h.machine()
+		}
+		h.live = []string{"m1", "m2"}
+		h.tick(time.Second)
+		h.machine()
+	}
+	c := h.snap().Fleet.Card("s1-1.w1")
+	if c.Int("redeals") != sprint.MaxRedeals || c.Col != sprint.Withdrawn || c.Int("gen") > sprint.MaxRedeals+2 {
+		t.Fatalf("after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
+	}
+	if st := h.state("s1-1"); st != sprint.Ready {
+		t.Fatalf("s1-1 is %s at its bound", st)
+	}
+	bound := h.openOf(sprint.NBound)
+	if len(bound) != 1 || bound[0].Note.Card != "s1-1.w1" || !strings.Contains(bound[0].Note.What, "redealt 3 times") {
+		t.Fatalf("the bound judgment: %+v", bound)
+	}
+	var redeals []string
+	for _, l := range h.lines() {
+		if l.Card == "s1-1.w1" && strings.Contains(sprint.Render(l), "redeal ") {
+			redeals = append(redeals, sprint.Render(l))
+		}
+	}
+	if len(redeals) != 3 || !strings.Contains(redeals[2], "redeal 3 of 3") {
+		t.Fatalf("the redeal lines: %q", redeals)
+	}
+	h.tick(time.Minute)
+	h.machine()
+	if c2 := h.snap().Fleet.Card("s1-1.w1"); c2.Int("gen") != c.Int("gen") || c2.Col != sprint.Withdrawn {
+		t.Fatalf("dealt again past its bound: %s:%s gen %d", c2.Row, c2.Col, c2.Int("gen"))
+	}
+	if res := h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Answers: []string{bound[0].Note.ID}})); len(res.Refused) == 0 {
+		t.Fatalf("rework at the bound with no fix: %+v", res)
+	}
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "run it on a quieter machine", Answers: []string{bound[0].Note.ID}}))
+	w2 := h.snap().Fleet.Card("s1-1.w2")
+	if w2 == nil || w2.Col != sprint.Ready || w2.Int("redeals") != 0 || h.state("s1-1") != sprint.Working || len(h.openOf(sprint.NBound)) != 0 {
+		t.Fatalf("reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
+	}
+	h.clean("reworked at the bound")
+}

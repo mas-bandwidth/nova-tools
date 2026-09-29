@@ -560,6 +560,10 @@ func dealPlan(s *Snapshot, r DealReq) Plan {
 	q := readyQueues(s, up)
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+			if wc.Int("redeals") >= MaxRedeals {
+				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
+				continue
+			}
 			p.Units = append(p.Units, redeal(s, c, wc, up, q))
 			continue
 		}
@@ -615,8 +619,10 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 func redeal(s *Snapshot, c, wc *Card, up []string, q map[string]int) Unit {
 	m := shortest(up, q)
 	q[m]++
+	set := nextGen(wc, m, s.Now)
+	set["redeals"] = itoa(wc.Int("redeals") + 1)
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, moveEntry(wc, m, Ready, nextGen(wc, m, s.Now), "withdrawn")),
+		change(Fleet, moveEntry(wc, m, Ready, set, "withdrawn")),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
 }
@@ -958,11 +964,13 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			q[m] = s.Fleet.Count(m, Ready)
 		}
 		for _, c := range cards {
-			if len(up) > 0 {
+			if len(up) > 0 && c.Int("redeals") < MaxRedeals {
 				m := shortest(up, q)
 				q[m]++
-				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nextGen(c, m, s.Now), "taken"))},
-					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d", c.ID, c.Row, c.Col, m, c.Int("gen")+1)})
+				set := nextGen(c, m, s.Now)
+				set["redeals"] = itoa(c.Int("redeals") + 1)
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
+					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
 				continue
 			}
 			set := nextGen(c, "", s.Now)

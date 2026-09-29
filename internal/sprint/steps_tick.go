@@ -48,6 +48,11 @@ const (
 	DeadlineJudgment = 10 * time.Minute
 )
 
+// MaxRedeals is how many times one attempt's work card is dealt again after
+// its member went down or away (its redeals counter, which no take resets):
+// past it the card stays withdrawn, and the bound's judgment names it.
+const MaxRedeals = 3
+
 // The tick's own notification types.
 const (
 	NResumed   = "stream resumed: the card it needed landed"
@@ -57,6 +62,7 @@ const (
 	NWorkLate  = "a work card is past its deadline"
 	NReadLate  = "a read card is past its deadline"
 	NMergeLate = "a stream has had no merge step past its deadline"
+	NBound     = "a card reached its bound"
 	// NOverdue (notes.go) is the overdue line: a happened note, once per
 	// judgment, when the judgment passes its due time.
 
@@ -70,6 +76,7 @@ const Sentinel = "sentinel"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
+	NBound:     {"rework with a fix", "drop", "wait"},
 	NCannotAsk: {"reader add", "rework", "drop", "wait"},
 	NNoMember:  {"fleet beat", "fleet up", "wait"},
 	NInvariant: {"look at the card", "repair", "wait"},
@@ -240,13 +247,18 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	due := 0
 	var ready []*Card
+	var conds []cond
 	for _, c := range s.Work.Column(Ready) {
+		if wc := AtRedealBound(s, c); wc != nil {
+			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
+				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
+			continue
+		}
 		if !IsSentinel(c) {
 			ready = append(ready, c)
 		}
 	}
 	up := s.UpMembers()
-	var conds []cond
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
@@ -266,8 +278,21 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	due += notify(&p, s, conds, []string{NNoMember}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound}, r)
 	return p, due
+}
+
+// AtRedealBound is the primary's withdrawn work card when it is at its
+// redeal bound: the tick deals it no more. nil when it is not.
+func AtRedealBound(s *Snapshot, pr *Card) *Card {
+	if pr == nil || pr.Col != Ready {
+		return nil
+	}
+	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
+	if wc != nil && wc.Col == Withdrawn && wc.Int("redeals") >= MaxRedeals {
+		return wc
+	}
+	return nil
 }
 
 // T4. TickLevel evens the up members' ready queues when two differ by more
@@ -709,7 +734,7 @@ func MovesDue(s *Snapshot) int {
 		}
 	}
 	for _, c := range s.Work.Column(Ready) {
-		if !IsSentinel(c) {
+		if !IsSentinel(c) && AtRedealBound(s, c) == nil {
 			n++
 		}
 	}
