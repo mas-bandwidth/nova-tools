@@ -35,6 +35,9 @@ func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, st
 
 	// 3. The two cache volumes, this user's own.
 	for _, v := range []struct{ name, kind string }{{c.gocache, "gocache"}, {c.gomod, "gomod"}} {
+		if v.kind == "gocache" && c.freshGocache {
+			continue
+		}
 		if err := ensureVolume(ctx, eng, v.name, v.kind, c.ownerID); err != nil {
 			logf("%v", err)
 			return setupExit(ctx)

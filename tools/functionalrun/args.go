@@ -83,6 +83,12 @@ func testArgs(c runConfig, image, runID string, start time.Time) []string {
 		"--name", containerName(runID),
 	}
 	args = append(args, runLabels(runID, start, deadline, c.ownerID)...)
+	gocacheMount := c.gocache + ":/gocache"
+	if c.freshGocache {
+		// An anonymous volume: --rm and every removal here take it with the
+		// container, so nothing this run writes to its build cache outlives it.
+		gocacheMount = "/gocache"
+	}
 	args = append(args,
 		"--timeout", strconv.Itoa(timeoutSeconds(c.deadline)),
 		"--network", "none",
@@ -96,7 +102,7 @@ func testArgs(c runConfig, image, runID string, start time.Time) []string {
 		"--tmpfs", benchHome+":rw,size=1g,mode=1777",
 		"-v", c.src+":/src:ro",
 		"-v", c.gomod+":/gomodcache:ro",
-		"-v", c.gocache+":/gocache",
+		"-v", gocacheMount,
 		"-w", "/src",
 		image,
 		"timeout", "-k", strconv.Itoa(timeoutSeconds(killAfter)),

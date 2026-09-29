@@ -94,6 +94,17 @@ runtime client was lost, or a container of the run was still present at the
 end. The target execs the built tool, so a signal to make reaches the tool,
 which removes the container.
 
+**The build cache crosses runs.** A run can change what the next run of the
+same user reads from the shared build cache: tests run with `/gocache`
+writable, and Go does not verify the cache entries it reads. So a branch you
+test can change what your next run, of any tree, builds from. For code you do
+not trust (another person's branch before your own), use a throwaway build
+cache for that run, an anonymous volume removed with the container:
+
+```sh
+make test-functional-container PKGS=./internal/ntable/... FUNCTIONAL_FLAGS=--fresh-gocache
+```
+
 The tool by hand, for its flags (`--cpus`, `--memory`, `--pids`, `--scratch`,
 `--grace`, `--image`, the volume names):
 

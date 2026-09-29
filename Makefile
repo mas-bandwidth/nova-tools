@@ -305,9 +305,11 @@ test-functional:
 # the tool's exit code is make's to report (make reports any failure as 2).
 FUNCTIONAL_DEADLINE ?= 10m
 FUNCTIONAL_CONTEXT ?= infra/functional-image
+# FUNCTIONAL_FLAGS: more flags for the tool, such as --fresh-gocache.
+FUNCTIONAL_FLAGS ?=
 test-functional-container: PKGS = $(CL_PKGS)
 test-functional-container:
-	$(GO) build -o bin/functionalrun ./tools/functionalrun && exec ./bin/functionalrun run --deadline $(FUNCTIONAL_DEADLINE) --context $(FUNCTIONAL_CONTEXT) $(PKGS)
+	$(GO) build -o bin/functionalrun ./tools/functionalrun && exec ./bin/functionalrun run --deadline $(FUNCTIONAL_DEADLINE) --context $(FUNCTIONAL_CONTEXT) $(FUNCTIONAL_FLAGS) $(PKGS)
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)

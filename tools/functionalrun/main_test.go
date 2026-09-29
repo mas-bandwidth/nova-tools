@@ -488,6 +488,7 @@ func TestParseRun(t *testing.T) {
 		{[]string{"--src", ctxDir, "./a"}, "no go.mod"},
 		{[]string{"--src", dir, "--context", ctxDir, "--gocache-volume", "same", "--gomod-volume", "same", "./a"}, "two volumes"},
 		{[]string{"--src", dir, "--context", ctxDir, "--gocache-volume", "../x", "./a"}, "not a podman volume name"},
+		{[]string{"--src", dir, "--context", ctxDir, "--fresh-gocache", "--gocache-volume", "mine", "./a"}, "two different build caches"},
 	} {
 		_, err := parseRun(tc.args)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -875,5 +876,27 @@ func TestRunContainerRemovesBeforeItLogs(t *testing.T) {
 		w := orderWriter{t: t, eng: eng}
 		runContainer(ctx, eng, realClock{}, []string{"run", "x"}, "nova-functional-r", deadline, w, w)
 		cancel()
+	}
+}
+
+func TestFreshGocacheIsAnAnonymousVolume(t *testing.T) {
+	t.Parallel()
+	c := testConfig()
+	c.freshGocache = true
+	vols := flagValues(testArgs(c, "sha256:abc", "run1", time.Unix(1_800_000_000, 0)), "-v")
+	want := []string{"/work/src:/src:ro", "nova-functional-gomod-uid501:/gomodcache:ro", "/gocache"}
+	if strings.Join(vols, ",") != strings.Join(want, ",") {
+		t.Errorf("mounts %q, want %q", vols, want)
+	}
+	eng, tc := tierFixture(t, "501", 0)
+	tc.freshGocache = true
+	var stdout, stderr bytes.Buffer
+	if got := runTier(context.Background(), eng, tc, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit %d\n%s", got, stderr.String())
+	}
+	for _, call := range eng.argvs() {
+		if strings.Contains(call, tc.gocache) {
+			t.Errorf("a fresh-cache run touched the shared build cache: %q", call)
+		}
 	}
 }

@@ -57,6 +57,11 @@ usage:
       --scratch <size>        the size of the /tmp tmpfs (default 2g)
       --gocache-volume <name> the Go build cache volume (default: this user's)
       --gomod-volume <name>   the Go module cache volume (default: this user's)
+      --fresh-gocache         a throwaway build cache for this run only: an
+                              anonymous volume removed with the container.
+                              Use it for code you do not trust: a run can
+                              change what the next run of the same user reads
+                              from the shared build cache
       --podman <path>         the podman binary (default: podman on PATH)
 
   functionalrun reap [--grace <duration>] [--dry-run] [--podman <path>]

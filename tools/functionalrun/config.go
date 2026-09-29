@@ -38,10 +38,13 @@ type runConfig struct {
 	pids     int
 	scratch  string
 	gocache  string
-	gomod    string
-	podman   string
-	packages []string
-	ownerID  string
+	// freshGocache: a throwaway build cache, an anonymous volume that goes
+	// with the container, instead of this user's shared one.
+	freshGocache bool
+	gomod        string
+	podman       string
+	packages     []string
+	ownerID      string
 }
 
 type reapConfig struct {
@@ -70,6 +73,7 @@ func parseRun(args []string) (runConfig, error) {
 	fs.StringVar(&c.scratch, "scratch", "2g", "")
 	fs.StringVar(&c.gocache, "gocache-volume", "", "")
 	fs.StringVar(&c.gomod, "gomod-volume", "", "")
+	fs.BoolVar(&c.freshGocache, "fresh-gocache", false, "")
 	fs.StringVar(&c.podman, "podman", "podman", "")
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -139,6 +143,9 @@ func parseRun(args []string) (runConfig, error) {
 		if !volumeNameRE.MatchString(v) {
 			return c, fmt.Errorf("volume name %q is not a podman volume name", v)
 		}
+	}
+	if c.freshGocache && c.gocache != cacheVolumeName("gocache", c.ownerID) {
+		return c, errors.New("--fresh-gocache and --gocache-volume name two different build caches; give one")
 	}
 	if c.gocache == c.gomod {
 		return c, errors.New("the build cache and the module cache must be two volumes")
