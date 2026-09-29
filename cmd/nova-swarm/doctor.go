@@ -132,6 +132,21 @@ func readVersionLine(path string) (string, error) {
 	return readVersionLineWithin(path, doctorVersionDeadline, doctorVersionGrace, doctorVersionLineMax)
 }
 
+// runVersion runs `<path> version` under the deadline with its stdout going to a first-line
+// writer, and returns the writer (what was kept, and whether the line overflowed), whether the
+// deadline or the overflow ended the run, and the run's own error.
+func runVersion(path string, deadline, grace time.Duration, limit int) (out *firstLineWriter, ended bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "version")
+	out = &firstLineWriter{limit: limit, onOverflow: cancel}
+	cmd.Stdout = out
+	cmd.Stderr = io.Discard
+	cmd.WaitDelay = grace
+	err = cmd.Run()
+	return out, ctx.Err() != nil, err
+}
+
 // readVersionLineWithin is readVersionLine with the deadline, the pipe grace and the line
 // limit named. The first line printed is returned even when the run then fails, so a stamp
 // read before a hang or a non-zero exit is still compared; the error names the cause in the
@@ -141,19 +156,12 @@ func readVersionLine(path string) (string, error) {
 // still holding the output pipe is given up on after the grace. Output after the first line
 // is discarded as it arrives, so memory is bounded by the limit whatever the binary prints.
 func readVersionLineWithin(path string, deadline, grace time.Duration, limit int) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "version")
-	out := &firstLineWriter{limit: limit, onOverflow: cancel}
-	cmd.Stdout = out
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = grace
-	err := cmd.Run()
+	out, timedOut, err := runVersion(path, deadline, grace, limit)
 	line, overflowed := out.result()
 	switch {
 	case overflowed:
 		return "", fmt.Errorf("printed a line longer than %d bytes", limit)
-	case ctx.Err() != nil:
+	case timedOut:
 		return line, fmt.Errorf("timed out after %s", deadline)
 	case err == nil || errors.Is(err, exec.ErrWaitDelay):
 		// A binary that exited 0 and left a child holding the pipe has answered.

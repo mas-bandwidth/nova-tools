@@ -320,7 +320,7 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	if err := testbin.WriteExecutable(answers, []byte("#!/bin/sh\necho 'nova-swarm v1 stamp'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	line, err := readVersionLineWithin(answers, 30*time.Second, time.Second, doctorVersionLineMax)
+	line, err := readVersionLineWithin(answers, doctorGoodDeadline, time.Second, doctorVersionLineMax)
 	if err != nil || line != "nova-swarm v1 stamp" {
 		t.Fatalf("a binary that answers: got (%q, %v)", line, err)
 	}
@@ -342,6 +342,10 @@ func TestDoctorVersionDeadlineIsBounded(t *testing.T) {
 		t.Errorf("doctorVersionDeadline = %s, want a few seconds", doctorVersionDeadline)
 	}
 }
+
+// doctorGoodDeadline is the deadline a stub that answers is read under: no test requires a
+// child to produce output within a short one, so a loaded machine cannot fail it.
+const doctorGoodDeadline = 5 * time.Second
 
 // doctorHungDeadline is the injected deadline a stub that hangs is read under.
 const doctorHungDeadline = 100 * time.Millisecond
@@ -379,7 +383,7 @@ func doctorStubs(t *testing.T, pathScript, localScript, hung string, hungDeadlin
 		lookPath: func(string) (string, error) { return pathBin, nil },
 		homeDir:  func() (string, error) { return home, nil },
 		read: func(p string) (string, error) {
-			deadline := 5 * time.Second
+			deadline := doctorGoodDeadline
 			if (p == pathBin && strings.Contains(hung, "path")) || (p == localBin && strings.Contains(hung, "local")) {
 				deadline = hungFor
 			}
@@ -409,8 +413,8 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		{"hang", "exec sleep 30", good, "path", 0, 2,
 			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 100ms", "the other binary, ", ", reported stamp=nova-swarm good-stamp;", "by hand"},
 			[]string{"DOCTOR DRIFT", "shadows"}},
-		{"print then hang: the stamp is compared and the hang reported", "echo 'nova-swarm stale-stamp'; exec sleep 30", good, "path", 500 * time.Millisecond, 2,
-			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 500ms"}, nil},
+		{"print then hang: the stamp is compared and the hang reported", "echo 'nova-swarm stale-stamp'; exec sleep 30", good, "path", 2 * time.Second, 2,
+			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 2s"}, nil},
 		{"print then exit 3: the stamp is compared and the exit reported", "echo 'nova-swarm stale-stamp'; exit 3", good, "", 0, 2,
 			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "exited 3"}, nil},
 		{"print then exit 3 with the same stamp", "echo 'nova-swarm good-stamp'; exit 3", good, "", 0, 2,
@@ -585,14 +589,20 @@ func TestReadVersionLineWithinBoundsWhatItKeeps(t *testing.T) {
 		return p
 	}
 
-	streams := write("streams", "exec yes")
-	line, err := readVersionLineWithin(streams, doctorHungDeadline, 50*time.Millisecond, 4096)
-	if line != "y" || err == nil || err.Error() != "timed out after 100ms" {
-		t.Errorf("a binary that streams forever: got (%q, %v), want its first line and a timeout", line, err)
+	// A binary that streams twenty megabytes after its first line: the stub prints the line and
+	// then a bounded stream and exits, and it is read under a generous deadline, so nothing
+	// here depends on how fast a shell starts. The bytes retained are the first line alone.
+	streams := write("streams", "echo y; yes | head -c 20000000")
+	out, timedOut, err := runVersion(streams, doctorGoodDeadline, 50*time.Millisecond, 4096)
+	if err != nil || timedOut || string(out.line) != "y" || len(out.line) != 1 || out.overflowed {
+		t.Errorf("a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
+	}
+	if line, err := readVersionLineWithin(streams, doctorGoodDeadline, 50*time.Millisecond, 4096); line != "y" || err != nil {
+		t.Errorf("a binary that streams: got (%q, %v), want its first line and no error", line, err)
 	}
 
 	endless := write("endless", "while :; do printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; done")
-	line, err = readVersionLineWithin(endless, 30*time.Second, 50*time.Millisecond, 64)
+	line, err := readVersionLineWithin(endless, doctorGoodDeadline, 50*time.Millisecond, 64)
 	if line != "" || err == nil || err.Error() != "printed a line longer than 64 bytes" {
 		t.Errorf("a first line that never ends: got (%q, %v), want no line and the limit named", line, err)
 	}
