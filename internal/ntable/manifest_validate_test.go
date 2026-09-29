@@ -226,6 +226,31 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 			raw:       `{"schema":1,"table":"demo","actor":null,"members":[]}`,
 			errSubstr: `null value not allowed for actor`,
 		},
+		{
+			name:      "strict schema: version rejected",
+			raw:       `{"schema":1,"version":"1","table":"demo","members":[]}`,
+			errSubstr: `unknown field "version" in root manifest`,
+		},
+		{
+			name:      "strict schema: expect_revision rejected",
+			raw:       `{"schema":1,"expect_revision":"1","table":"demo","members":[]}`,
+			errSubstr: `unknown field "expect_revision" in root manifest`,
+		},
+		{
+			name:      "strict schema: receipt rejected",
+			raw:       `{"schema":1,"receipt":true,"table":"demo","members":[]}`,
+			errSubstr: `unknown field "receipt" in root manifest`,
+		},
+		{
+			name:      "strict schema: score in expect rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"score":10}}]}`,
+			errSubstr: `unknown field "score" in expect`,
+		},
+		{
+			name:      "strict schema: exists in field guard rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","expect":{"fields":{"col":{"exists":true}}}}]}`,
+			errSubstr: `unknown field "exists" in field guard`,
+		},
 	}
 
 	for _, tc := range tests {
