@@ -28,10 +28,15 @@ FROM ${BASE} AS apt-base
 # The archive as it stood at this instant (snapshot.ubuntu.com). Changing it is
 # the one way the package versions move; the manifest shows what moved.
 ARG APT_SNAPSHOT=20260928T000000Z
-ENV DEBIAN_FRONTEND=noninteractive
+# A build argument, not an ENV, so it is not in the image's environment.
+ARG DEBIAN_FRONTEND=noninteractive
 # The base has no TLS roots, so the first install reads the snapshot without
-# verifying the peer. The archive's own signature (Signed-By) is what vouches
-# for every package, this one included; every later apt call verifies TLS too.
+# verifying the peer. The archive's own signature (Signed-By) vouches for every
+# package, but Ubuntu's release files carry no Valid-Until, so on that one call
+# an attacker in the path could replay an older, genuinely signed release, and
+# the snapshot instant would not hold. The second call, with TLS verified,
+# reinstalls the same two packages from the snapshot the URL names: from then on
+# every package is the snapshot's.
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
  && printf '%s\n' \
       'Types: deb' \
@@ -42,11 +47,14 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
       > /etc/apt/sources.list.d/snapshot.sources \
  && apt-get -o Acquire::https::Verify-Peer=false update \
  && apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends --reinstall ca-certificates openssl \
  && rm -rf /var/lib/apt/lists/*
 
 # ---- fetch: the vendor binaries, each checked against its sha256 ----
 # Kept in its own stage so curl is not in the image.
 FROM apt-base AS fetch
+ARG DEBIAN_FRONTEND=noninteractive
 # The exact toolchain go.mod pins, per architecture. GO_VERSION equals go.mod's
 # `go` line (a class test holds it).
 ARG GO_VERSION=1.26.6
@@ -54,8 +62,8 @@ ARG GO_SHA256_AMD64=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4fe
 ARG GO_SHA256_ARM64=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
 # sops and age-keygen at the minimums docs/SPEC-SECRETS.md pins ("Dependencies,
 # pinned"): the nova-secrets functional tests seal and open real files with
-# them. sops publishes a checksums file; age publishes none, so its sums are
-# those of the release archives.
+# them. sops publishes a checksums file; age's sums are the release archives'
+# sha256, which are the digests GitHub shows for each asset.
 ARG SOPS_VERSION=3.13.3
 ARG SOPS_SHA256_AMD64=e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
 ARG SOPS_SHA256_ARM64=53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
@@ -82,10 +90,12 @@ RUN arch="$(dpkg --print-architecture)" \
  && install -m 0755 /tmp/age/age /tmp/age/age-keygen /usr/local/bin/
 
 # ---- redis-build: redis-server and redis-cli from the pinned source release ----
-# Redis 8, the major the fleet stores run and the wording the tests expect
-# (internal/nsprint/deal reads Redis 8's ACL errors); 8.0.5 is also the release
-# .github/scripts/install-redis-server.sh builds where the distribution has none.
+# Redis 8, the wording the tests expect (internal/nsprint/deal reads Redis 8's
+# ACL errors, internal/redisfn's test texts are Redis 8's); 8.0.5 is also the
+# release .github/scripts/install-redis-server.sh builds where the distribution
+# has none.
 FROM apt-base AS redis-build
+ARG DEBIAN_FRONTEND=noninteractive
 ARG REDIS_VERSION=8.0.5
 ARG REDIS_SHA256=012bca956fc7151abc2281950e69768ee9c53ce4b36588772041675bc95fd313
 RUN apt-get update \
@@ -101,6 +111,7 @@ RUN apt-get update \
 
 # ---- the image ----
 FROM apt-base
+ARG DEBIAN_FRONTEND=noninteractive
 ARG BENCH_UID=10001
 
 # Every external program the functional tier runs is here; binaries.txt names
@@ -111,7 +122,9 @@ RUN apt-get update \
       ca-certificates git lsof make postgresql-16 procps python3 sqlite3 \
  && rm -rf /var/lib/apt/lists/* \
  # the package makes a cluster and a service; the fixtures make their own
- && rm -rf /var/lib/postgresql/16/main /etc/postgresql/16/main
+ && rm -rf /var/lib/postgresql/16/main /etc/postgresql/16/main \
+ # and the ssl-cert package's generated TLS private key, which nothing here uses
+ && rm -f /etc/ssl/private/ssl-cert-snakeoil.key
 
 COPY --from=redis-build /usr/local/bin/redis-server /usr/local/bin/redis-cli /usr/local/bin/
 COPY --from=fetch /usr/local/go /usr/local/go

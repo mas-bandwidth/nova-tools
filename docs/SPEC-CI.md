@@ -1510,6 +1510,7 @@ file is tagged, so an untagged caller does not build, and the lint job's
 lands (`make check`, ci.yml's `functional` job on merge_group and schedule) and nightly
 (nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
 compiles it on every change.
+
 ### `functional-image` — the functional-tier image is pinned and carries every program the tier runs
 
 **The rule.** `infra/functional-image/Containerfile` names its base image by
