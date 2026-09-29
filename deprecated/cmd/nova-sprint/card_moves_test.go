@@ -25,6 +25,11 @@ func TestCardMoveDispatch(t *testing.T) {
 		{[]string{"fsck", "--sprint", "s"}, false},
 		{[]string{"push", "--sprint", "s"}, false},
 		{[]string{"land", "--stream", "s", "--sha", "x"}, true},
+		{[]string{"tell", "--id", "c~1", "--text", "msg"}, true},
+		{[]string{"report", "--id", "c~1"}, true},
+		{[]string{"ls", "--as", "friend:f"}, true},
+		{[]string{"ls", "--as", "friend:f", "--live"}, true},
+		{[]string{"ls", "--unplaced", "--sprint", "s"}, false},
 	} {
 		if got := isCardMove(tc.args[0], tc.args[1:]); got != tc.want {
 			t.Errorf("isCardMove(%v) = %v, want %v", tc.args, got, tc.want)
