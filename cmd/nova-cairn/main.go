@@ -83,13 +83,15 @@ flags:
                     a shared store upgrades together. A top-level
                     README.md, in any case, is documentation and never a
                     session file in either shape; README is refused as a
-                    session id. A symlink named <id>.md counts as a record only
-                    if it resolves to a regular file inside the store. A defect
+                    session id. nova-cairn does not follow a symbolic link: at
+                    the store directory's own name, sessions/, entries/, an
+                    entry directory, log.jsonl or a record it refuses, naming
+                    the path and a command that shows where it leads. A defect
                     in one session's record is that session's: a record path
                     holding no record refuses the verbs addressed to it; a
-                    damaged file is refused by receipt and still opened and
-                    appended. On a bench store index flags either as one row
-                    and lists the others.
+                    damaged file is refused by receipt and by append, which
+                    names the damage. index flags either as one row and lists
+                    the others.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:

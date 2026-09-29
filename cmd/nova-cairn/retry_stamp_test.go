@@ -69,7 +69,11 @@ func TestAppendRetryReportsTheStoredStamp(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, out, errOut := runCode("", append(append([]string{}, args...), "2026-09-30T04:05:06Z")...)
-			if code != 2 || out != "" || !strings.Contains(errOut, "invalid stamp") {
+			damage := "invalid stamp"
+			if bench {
+				damage = "invalid entry heading" // the damaged record is refused before its entry is looked up
+			}
+			if code != 2 || out != "" || !strings.Contains(errOut, damage) {
 				t.Fatalf("corrupt stored stamp: code=%d out=%q err=%q", code, out, errOut)
 			}
 			kept, err := os.ReadFile(path)

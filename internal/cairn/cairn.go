@@ -41,6 +41,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -228,7 +229,7 @@ func locateRecord(d *dirs, op, store, session string, sh shape) (path string, be
 	if sh == shapeBench {
 		name, bench = benchFile(store, session), true
 	}
-	ok, err = recordState(d, op, store, name)
+	ok, err = recordState(d, op, name)
 	return name, bench, ok, err
 }
 
@@ -281,15 +282,15 @@ func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 
 // appendBench files one entry into a bench record: a dated section at the end
 // of the file, in the file's own shape (one blank line between sections), the
-// friend's words under it. A retry with the same id and the same words adds
-// nothing; the same id with different words is a conflict, as it is in the
-// nested store. No index is written and no directory appears beside the file:
-// this store is read, not converted.
-func appendBench(d *dirs, store, path, id, text string, now time.Time, publish string) (AppendResult, error) {
+// friend's words under it. f is the record, open for reading and appending, and
+// raw is what it holds. A record with a damaged heading refuses the append: a
+// section added to it could never be read back. A retry with the same id and the
+// same words adds nothing; the same id with different words is a conflict. No
+// index is written and no directory appears beside the file.
+func appendBench(f *os.File, raw []byte, path, session, id, text string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
-	raw, err := readRecord(d, "append", store, path)
-	if err != nil {
-		return res, err
+	if _, err := parseBench(raw, session); err != nil {
+		return res, damagedRecord("append", path, err)
 	}
 	if prev, storedStamp, found := benchSection(raw, id); found {
 		if prev != strings.TrimSpace(text) {
@@ -310,7 +311,7 @@ func appendBench(d *dirs, store, path, id, text string, now time.Time, publish s
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimRight(text, "\n"))
 	b.WriteString("\n")
-	if err := appendRecord(d, "append", store, path, b.String()); err != nil {
+	if err := appendTo(f, b.String()); err != nil {
 		return res, err
 	}
 	// A bench section stores no pointer of its own, so what is reported is the
@@ -318,16 +319,31 @@ func appendBench(d *dirs, store, path, id, text string, now time.Time, publish s
 	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw)}, nil
 }
 
+// damagedRecord is the refusal for a record whose headings cannot be read.
+func damagedRecord(op, path string, cause error) error {
+	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is damaged (%v); "+
+		"list its headings with: %s; repair it by hand, then run the same command again",
+		opPhrase(op), path, cause, shellLine("grep -n '^## ' -- %s", shellWord{"path", path}))}
+}
+
+// appendTo adds content to the end of the open record f and fsyncs before return.
+func appendTo(f *os.File, content string) error {
+	if _, err := f.WriteString(content); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
 func entryPath(store, session, id string) string {
 	return filepath.Join(store, "entries", session, id+".json")
 }
 
 // appendLine adds one line to a file, creating it, and fsyncs before return.
-func appendLine(name, line string) error {
+func appendLine(d *dirs, name, line string) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := d.openFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
@@ -356,7 +372,7 @@ func fsyncDir(dir string) error {
 }
 
 // appendLog records one event on the store's append-only log.
-func appendLog(store, event, session, id, stamp, policy, source string) error {
+func appendLog(d *dirs, store, event, session, id, stamp, policy, source string) error {
 	rec, _ := json.Marshal(map[string]string{
 		"event":   event,
 		"session": session,
@@ -365,7 +381,7 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 		"publish": policy,
 		"source":  source,
 	})
-	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
+	return appendLine(d, filepath.Join(store, "log.jsonl"), string(rec))
 }
 
 // SessionSource reads back the --source the session was opened with. In the
@@ -382,16 +398,20 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 // fields are not strings. Answering "" for either would let an append file
 // source=- over a pointer that open recorded.
 func SessionSource(store, session string) (string, error) {
-	sh, err := storeShape("open", store)
+	d := newDirs()
+	sh, err := storeShapeIn(d, "open", store)
 	if err != nil {
 		return "", err
 	}
+	return sessionSource(d, sh, store, session)
+}
+
+func sessionSource(d *dirs, sh shape, store, session string) (string, error) {
 	if sh == shapeBench {
-		// A bench record keeps its pointer in the header open wrote, read
-		// through the same check as every other read of a record. Only a
+		// A bench record keeps its pointer in the header open wrote. Only a
 		// record that is not there means "no source"; one that is there and
 		// cannot be read is an error naming it, never a source of none.
-		raw, err := readRecord(newDirs(), "open", store, benchFile(store, session))
+		raw, err := d.readFile(benchFile(store, session))
 		if os.IsNotExist(err) {
 			return "", nil
 		}
@@ -405,9 +425,13 @@ func SessionSource(store, session string) (string, error) {
 		return benchHeaderSource(raw), nil
 	}
 	name := filepath.Join(store, "log.jsonl")
-	raw, err := os.ReadFile(name)
+	raw, err := d.readFile(name)
 	if os.IsNotExist(err) {
 		return "", nil
+	}
+	var refused *RecordPathError
+	if errors.As(err, &refused) {
+		return "", err
 	}
 	if err != nil {
 		var pe *os.PathError
@@ -455,7 +479,7 @@ func Open(store, session, source string, now time.Time, publish string) error {
 		return err
 	}
 	if sh == shapeBench {
-		return openBench(store, session, source, now.UTC().Format(time.RFC3339))
+		return openBench(d, store, session, source, now.UTC().Format(time.RFC3339))
 	}
 	// A session that is already open, and a refusal, need no lock and leave
 	// nothing behind. Only a write takes it: the own shape's check-then-write is
@@ -470,18 +494,23 @@ func Open(store, session, source string, now time.Time, publish string) error {
 		return err
 	}
 	return withStoreLock("open", store, func() error {
-		return openOwn(store, session, source, now, publish, sh)
+		return openOwn(store, session, source, now, publish)
 	})
 }
 
-func openOwn(store, session, source string, now time.Time, publish string, sh shape) error {
+func openOwn(store, session, source string, now time.Time, publish string) error {
+	d := newDirs()
+	sh, err := storeShapeIn(d, "open", store)
+	if err != nil {
+		return err
+	}
 	// The source a session was opened with must be readable before anything
 	// is written or reported: open prints it, and append inherits it.
-	if _, err := SessionSource(store, session); err != nil {
+	if _, err := sessionSource(d, sh, store, session); err != nil {
 		return err
 	}
 	// Re-open is a no-op: the record already stands.
-	if _, _, ok, err := locateRecord(newDirs(), "open", store, session, sh); err != nil || ok {
+	if _, _, ok, err := locateRecord(d, "open", store, session, sh); err != nil || ok {
 		return err
 	}
 	name := sessionFile(store, session)
@@ -497,7 +526,7 @@ func openOwn(store, session, source string, now time.Time, publish string, sh sh
 	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
 		return err
 	}
-	return appendLog(store, "open", session, "", stamp, publish, source)
+	return appendLog(d, store, "open", session, "", stamp, publish, source)
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -509,25 +538,16 @@ func pointerLine(id string, stamp time.Time) string {
 
 // ensurePointer heals an interrupted append: the entry file is already
 // durable but its pointer line never landed, so land it now without
-// duplicating a line that is already there.
-func ensurePointer(store, session, id string, stamp time.Time) error {
-	name := sessionFile(store, session)
-	d := newDirs()
-	raw, err := readRecord(d, "append", store, name)
-	var changed *RecordPathError
-	if errors.As(err, &changed) {
-		return err
-	}
-	if err != nil {
-		return &NotFoundError{Msg: fmt.Sprintf("no such session %q; open first", session)}
-	}
+// duplicating a line that is already there. rec is the session's record, open
+// for appending, and raw is what it held.
+func ensurePointer(rec *os.File, raw []byte, id string, stamp time.Time) error {
 	want := pointerLine(id, stamp)
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "ENTRY "+id+" ") || line == want {
 			return nil
 		}
 	}
-	return appendRecord(d, "append", store, name, want+"\n")
+	return appendTo(rec, want+"\n")
 }
 
 // Append stores the friend's exact prose under a stable entry id with a real
@@ -536,6 +556,10 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 // conflict, never an overwrite. Offline use succeeds: the result carries
 // persisted=true with published=false, because local durability never waited
 // for the remote.
+//
+// The session's record is opened and read FIRST and stays open until its
+// pointer line is written through the same handle, so a record that cannot be
+// used refuses the append before anything is stored.
 func Append(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
 	return appendOn(realClock, lockWait, store, session, id, text, source, now, publish)
 }
@@ -603,9 +627,21 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 	if err != nil {
 		return res, err
 	}
+	rec, err := d.openFile(path, os.O_RDWR|os.O_APPEND, 0)
+	if os.IsNotExist(err) {
+		return res, noRecord(store, session, publish)
+	}
+	if err != nil {
+		return res, err
+	}
+	defer rec.Close()
+	raw, err := io.ReadAll(rec)
+	if err != nil {
+		return res, err
+	}
 	stamp := now.UTC()
 	if bench {
-		return appendBench(d, store, path, id, text, stamp, publish)
+		return appendBench(rec, raw, path, session, id, text, stamp, publish)
 	}
 	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
 	// where the record points back to; an append that names nothing else came
@@ -615,16 +651,19 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 	// The read comes BEFORE any entry or pointer write, so a log that cannot
 	// be read refuses with nothing written.
 	if source == "" {
-		inherited, err := SessionSource(store, session)
+		inherited, err := sessionSource(d, shapeOwn, store, session)
 		if err != nil {
 			return res, err
 		}
 		source = inherited
 	}
 	final := entryPath(store, session, id)
-	if raw, err := os.ReadFile(final); err == nil {
+	if err := d.checkEntryDirs(store, session); err != nil {
+		return res, err
+	}
+	if prevRaw, err := d.readFile(final); err == nil {
 		var prev entryFile
-		if err := json.Unmarshal(raw, &prev); err != nil {
+		if err := json.Unmarshal(prevRaw, &prev); err != nil {
 			return res, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
 		}
 		if prev.Text != text {
@@ -634,12 +673,14 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		if err := ensurePointer(store, session, id, prevStamp); err != nil {
+		if err := ensurePointer(rec, raw, id, prevStamp); err != nil {
 			return res, err
 		}
 		return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
+	} else if !os.IsNotExist(err) {
+		return res, err
 	}
-	rec, _ := json.Marshal(entryFile{
+	entry, _ := json.Marshal(entryFile{
 		Session: session,
 		ID:      id,
 		Stamp:   stamp.Format(time.RFC3339Nano),
@@ -653,25 +694,44 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 	// Atomic write per internal/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// atomic rename over target path.
-	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
+	if err := atomicfile.WriteFile(final, entry, 0o644); err != nil {
 		return res, err
 	}
-	if err := ensurePointer(store, session, id, stamp); err != nil {
+	if err := ensurePointer(rec, raw, id, stamp); err != nil {
 		return res, err
 	}
-	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
+	if err := appendLog(d, store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
-// readEntry loads one stored entry or explains its absence.
-func readEntry(store, session, id string) (entryFile, error) {
+// checkEntryDirs refuses a link at entries/ or at the session's entry
+// directory. A directory that is not there yet is made by the write.
+func (d *dirs) checkEntryDirs(store, session string) error {
+	for _, dir := range []string{filepath.Join(store, "entries"), filepath.Join(store, "entries", session)} {
+		if err := d.checkDir(dir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// readEntry loads one stored entry or explains its absence. A link at the
+// entry's path, or above it, is refused, not read.
+func readEntry(d *dirs, store, session, id string) (entryFile, error) {
 	var ef entryFile
 	if store == "" {
 		return ef, errors.New("no store given; refusing to guess")
 	}
-	raw, err := os.ReadFile(entryPath(store, session, id))
+	if err := d.checkEntryDirs(store, session); err != nil {
+		return ef, err
+	}
+	raw, err := d.readFile(entryPath(store, session, id))
+	var refused *RecordPathError
+	if errors.As(err, &refused) {
+		return ef, err
+	}
 	if err != nil {
 		return ef, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
 	}
@@ -684,7 +744,7 @@ func readEntry(store, session, id string) (entryFile, error) {
 // EntryText returns the friend's words byte-for-byte: the store never
 // rewrites, grades or consolidates what was appended.
 func EntryText(store, session, id string) (string, error) {
-	ef, err := readEntry(store, session, id)
+	ef, err := readEntry(newDirs(), store, session, id)
 	if err != nil {
 		return "", err
 	}
@@ -696,7 +756,7 @@ func EntryText(store, session, id string) (string, error) {
 // infer the remote from the local.
 func Receipt(store, session, id string) (ReceiptInfo, error) {
 	var rc ReceiptInfo
-	if err := existingStore(store); err != nil {
+	if err := existingStore("receipt", store); err != nil {
 		return rc, err
 	}
 	if !validID(id) {
@@ -712,7 +772,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		return rc, err
 	}
 	if bench {
-		rows, err := benchReceipts(d, "receipt", store, path, session)
+		rows, err := benchReceipts(d, path, session)
 		if err != nil {
 			return rc, err
 		}
@@ -723,7 +783,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		}
 		return rc, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
 	}
-	ef, err := readEntry(store, session, id)
+	ef, err := readEntry(d, store, session, id)
 	if err != nil {
 		return rc, err
 	}
@@ -799,7 +859,7 @@ func IndexAll(store, session string, max int) (IndexResult, error) {
 
 func indexAll(d *dirs, store, session string, max int) (IndexResult, error) {
 	var res IndexResult
-	if err := existingStore(store); err != nil {
+	if err := existingStore("index", store); err != nil {
 		return res, err
 	}
 	sh, err := storeShapeIn(d, "index", store)
@@ -817,8 +877,18 @@ func indexAll(d *dirs, store, session string, max int) (IndexResult, error) {
 		if rows, flat, res.Flagged, res.Sessions, err = flatIndexRows(d, store, session); err != nil {
 			return res, err
 		}
-	} else {
-		res.Sessions = ownSessionCount(d, store)
+	} else if res.Sessions, res.Flagged, err = ownSessions(d, store, session); err != nil {
+		return res, err
+	}
+	flagged := map[string]bool{}
+	for _, f := range res.Flagged {
+		flagged[f.Session] = true
+	}
+	flag := func(id string, err error) {
+		if !flagged[id] {
+			flagged[id] = true
+			res.Flagged = append(res.Flagged, flaggedSession(id, err))
+		}
 	}
 	root := filepath.Join(store, "entries")
 	entries, err := d.list(root)
@@ -826,19 +896,32 @@ func indexAll(d *dirs, store, session string, max int) (IndexResult, error) {
 		return res, err
 	}
 	for _, sess := range entries {
-		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
+		name := sess.Name()
+		if flat[name] || flagged[name] || (session != "" && name != session) {
+			continue // a flagged session lists nothing, in either shape
+		}
+		if sess.Type()&os.ModeSymlink != 0 {
+			flag(name, linkRefusal("index", filepath.Join(root, name)))
 			continue
 		}
-		files, err := d.list(filepath.Join(root, sess.Name()))
+		if !sess.IsDir() {
+			continue
+		}
+		files, err := d.list(filepath.Join(root, name))
 		if err != nil {
 			return res, err
 		}
 		for _, f := range files {
-			name := f.Name()
-			if f.IsDir() || !strings.HasSuffix(name, ".json") {
+			file := f.Name()
+			if f.IsDir() || !strings.HasSuffix(file, ".json") {
 				continue // partials (*.tmp) and anything else are not rows
 			}
-			ef, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
+			ef, err := readEntry(d, store, name, strings.TrimSuffix(file, ".json"))
+			var refused *RecordPathError
+			if errors.As(err, &refused) {
+				flag(name, err) // a link: this session's defect, the others are listed
+				break
+			}
 			if err != nil {
 				return res, err
 			}
@@ -869,49 +952,44 @@ func indexAll(d *dirs, store, session string, max int) (IndexResult, error) {
 	return res, nil
 }
 
-// ownSessionCount counts the session files under sessions/.
-func ownSessionCount(d *dirs, store string) int {
-	n := 0
-	if files, err := d.list(filepath.Join(store, "sessions")); err == nil {
-		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") && sessionFileID(strings.TrimSuffix(f.Name(), ".md")) {
-				n++
-			}
+// flaggedSession is the row for a session whose record could not be read. The
+// cause is the session's; "cannot index the store" is not.
+func flaggedSession(session string, err error) FlaggedSession {
+	return FlaggedSession{Session: session, Cause: strings.TrimPrefix(err.Error(), "cannot "+opPhrase("index")+": ")}
+}
+
+// ownSessions counts the session files under sessions/ and flags each whose
+// path holds no record (a directory, a link, a device). A sessions/ that is a
+// link refuses the whole call.
+func ownSessions(d *dirs, store, session string) (n int, flagged []FlaggedSession, err error) {
+	files, err := d.list(filepath.Join(store, "sessions"))
+	if os.IsNotExist(err) {
+		return 0, nil, nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	for _, f := range files {
+		id := strings.TrimSuffix(f.Name(), ".md")
+		if id == f.Name() || !sessionFileID(id) || (session != "" && id != session) {
+			continue
+		}
+		n++
+		if _, err := recordState(d, "index", filepath.Join(store, "sessions", f.Name())); err != nil {
+			flagged = append(flagged, flaggedSession(id, err))
 		}
 	}
-	return n
+	return n, flagged, nil
 }
 
 // Coverage derives the ledger from the store: session records and stored
 // entries counted, never remembered, so the number cannot drift from the
-// tree it reports on.
+// tree it reports on. A store that reads as mixed, or cannot be indexed, is
+// refused by every verb and has no ledger.
 func Coverage(store string) Ledger {
-	var led Ledger
-	names := map[string]bool{}
-	// Only the shape's own location is counted. A store that reads as mixed
-	// is refused by every verb, so its count is never one a caller acts on.
-	sh, _ := storeShape("index", store)
-	dirs := []string{filepath.Join(store, "sessions")}
-	if sh == shapeBench {
-		dirs = []string{store}
-	} else if sh == shapeMixed {
-		dirs = append(dirs, store)
+	r, err := IndexAll(store, "", 0)
+	if err != nil {
+		return Ledger{}
 	}
-	for _, dir := range dirs {
-		if files, err := os.ReadDir(dir); err == nil {
-			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-					id := strings.TrimSuffix(f.Name(), ".md")
-					if sessionFileID(id) {
-						names[id] = true
-					}
-				}
-			}
-		}
-	}
-	led.Sessions = len(names)
-	if r, err := IndexAll(store, "", 0); err == nil {
-		led.Entries = r.Total
-	}
-	return led
+	return Ledger{Sessions: r.Sessions, Entries: r.Total}
 }

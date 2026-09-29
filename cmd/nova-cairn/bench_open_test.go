@@ -154,7 +154,7 @@ func TestOpenOverADanglingSymlinkRefusesAtExitTwo(t *testing.T) {
 	} {
 		code, out, errOut := runCode("", args...)
 		if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 ||
-			!strings.Contains(errOut, "a dangling symlink") || !strings.Contains(errOut, "s1.md") || strings.Contains(errOut, "open first") {
+			!strings.Contains(errOut, "is a symbolic link") || !strings.Contains(errOut, "s1.md") || strings.Contains(errOut, "open first") || strings.Contains(errOut, "run: nova-cairn help") {
 			t.Errorf("%v: exit=%d out=%q err=%q", args, code, out, errOut)
 		}
 	}
@@ -229,7 +229,7 @@ func TestIndexAtTheCLIFlagsOneBadSessionAmongFive(t *testing.T) {
 	if code != 1 || errOut != "" {
 		t.Fatalf("exit=%d err=%q out=%q", code, errOut, out)
 	}
-	for _, want := range []string{"session=s1 entry=e1", "session=s4 entry=e1", "INDEX FLAGGED session=bad cause=", "a dangling symlink", "INDEX COVERAGE sessions=5 entries=4"} {
+	for _, want := range []string{"session=s1 entry=e1", "session=s4 entry=e1", "INDEX FLAGGED session=bad cause=", "is a symbolic link", "INDEX COVERAGE sessions=5 entries=4"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("index lacks %q: %s", want, out)
 		}
@@ -239,5 +239,48 @@ func TestIndexAtTheCLIFlagsOneBadSessionAmongFive(t *testing.T) {
 	}
 	if code, _, _ := runCode("", "index", "--store", store, "--session", "bad"); code != 2 {
 		t.Fatalf("index --session bad exited %d, want 2", code)
+	}
+}
+
+// A damaged bench record refuses the append at exit 2 in one line that names the
+// damage and a command that lists the headings, and does not end by pointing at
+// the help, which says nothing about repairing a heading.
+func TestADamagedBenchRecordRefusesAppendWithoutThePointerToHelp(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	body := "# s\n\n## 2026-09-29T08:00:00Z — e1\n\nw\n\n## 2026-09-29T08:00:00Z — e1\n\nw2\n"
+	if err := os.WriteFile(filepath.Join(store, "s1.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e2", "--text", "x", "--publish", "manual")
+	if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 {
+		t.Fatalf("exit=%d out=%q err=%q", code, out, errOut)
+	}
+	for _, want := range []string{"is damaged", `duplicate entry "e1"`, "grep -n '^## ' -- "} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("%q lacks %q", errOut, want)
+		}
+	}
+	if strings.Contains(errOut, "run: nova-cairn help") {
+		t.Errorf("the refusal points at the help: %q", errOut)
+	}
+}
+
+// In the tool's own shape a session that is a directory is one flagged row and
+// index exits 1 after listing the others.
+func TestIndexFlagsAnOwnShapeSessionThatIsADirectory(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	for _, id := range []string{"s1", "s2"} {
+		runOK(t, "", "open", "--store", store, "--session", id, "--publish", "manual")
+		runOK(t, "", "append", "--store", store, "--session", id, "--entry", "e1", "--text", "w", "--publish", "manual")
+	}
+	os.Remove(filepath.Join(store, "sessions", "s2.md"))
+	if err := os.Mkdir(filepath.Join(store, "sessions", "s2.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCode("", "index", "--store", store)
+	if code != 1 || errOut != "" || strings.Count(out, "INDEX FLAGGED session=s2 cause=") != 1 || !strings.Contains(out, "session=s1 entry=e1") || strings.Contains(out, "session=s2 entry") {
+		t.Fatalf("exit=%d err=%q out=%s", code, errOut, out)
 	}
 }

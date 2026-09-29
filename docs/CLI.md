@@ -1871,15 +1871,21 @@ new entry while only one text survives, or write two sections for one id. A top-
 and never a session file in either shape: it counts for no shape and is not
 indexed, and `README` is refused as a session id.
 
+nova-cairn does not follow a symbolic link. A link at the store directory's own
+name, at `sessions/`, `entries/`, an entry directory, `log.jsonl` or a record is
+refused at exit 2 by every verb that reaches it, with one line that names the
+path, says it is a symbolic link, and gives a command that shows where it leads
+and writes nothing (`ls -ld -- <path>`). Nothing is created or written through
+it, and the answer is the same however `--store` is spelled.
+
 A defect in one session's record is that session's. A record path that holds no
-record (a directory, a dangling or outside link) refuses the verbs addressed to
-that session at exit 2. A damaged file (an invalid heading, a duplicate entry)
-is refused by `receipt`, and `open` and `append` still work on it, because they
-read it only to find their own entry. On a bench store `index` reports either as
-one `INDEX FLAGGED session=<id> cause=<why>` row, lists every other session,
-and exits 1 after printing everything. The record is checked on the open file,
-so a link re-pointed after the check is refused before anything is written
-through it. The lifecycle is modelled in `tla/CairnStore.tla`.
+record (a directory, a link) refuses the verbs addressed to that session at exit
+2. A damaged file (an invalid heading, a repeated entry) is refused by `receipt`
+and by `append`; the `append` refusal names the damage and a command that lists
+the file's headings, `grep -n '^## ' -- <path>`, and stores nothing. On either
+shape `index` reports a defective session as one `INDEX FLAGGED session=<id>
+cause=<why>` row, lists every other session, and exits 1 after printing
+everything. The lifecycle is modelled in `tla/CairnStore.tla`.
 
 
 ## nova-table

@@ -32,8 +32,8 @@ func nonRecords(t *testing.T) (store string, want map[string]string) {
 	}
 	return store, map[string]string{
 		"dir":      "a directory",
-		"tolink":   "a symlink to a directory",
-		"dangling": "a dangling symlink",
+		"tolink":   "is a symbolic link",
+		"dangling": "is a symbolic link",
 	}
 }
 
@@ -64,7 +64,11 @@ func TestNonRegularRecordPathIsRefusedByEveryVerb(t *testing.T) {
 				t.Errorf("%s %s: want a refusal naming what is there, got %v", verb, id, err)
 				continue
 			}
-			for _, w := range []string{path, found, "move or remove it, or choose another session id", "cannot " + opPhrase(verb)} {
+			next := "move or remove it, or choose another session id"
+			if strings.HasPrefix(found, "is a symbolic link") {
+				next = "does not follow links"
+			}
+			for _, w := range []string{path, found, next, "cannot " + opPhrase(verb)} {
 				if !strings.Contains(err.Error(), w) {
 					t.Errorf("%s %s: %q lacks %q", verb, id, err, w)
 				}
@@ -82,77 +86,8 @@ func TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt(t *testing.T) {
 	t.Parallel()
 	store, _ := nonRecords(t)
 	_, _, err := Index(store, "", 0)
-	if err == nil || !strings.Contains(err.Error(), "the session record") {
+	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
 		t.Fatalf("index over a store with an unreadable record path: %v", err)
-	}
-}
-
-func TestSymlinkToARegularFileInsideTheStoreIsARecord(t *testing.T) {
-	t.Parallel()
-	store := t.TempDir()
-	real := filepath.Join(store, "notes", "real.md")
-	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(real, []byte("# real\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(real, benchFile(store, "s1")); err != nil {
-		t.Skipf("no symlinks here: %v", err)
-	}
-	if got, err := storeShape("open", store); got != shapeBench || err != nil {
-		t.Fatalf("a symlink named <id>.md is a session file: shape %v %v", got, err)
-	}
-	if err := Open(store, "s1", "", benchNow, PublishManual); err != nil {
-		t.Fatalf("open on a symlinked record: %v", err)
-	}
-	if _, err := Append(store, "s1", "e1", "words", "", benchNow, PublishManual); err != nil {
-		t.Fatalf("append through a symlinked record: %v", err)
-	}
-	raw, _ := os.ReadFile(real)
-	if !strings.Contains(string(raw), "— e1") {
-		t.Fatalf("the append did not land in the linked file: %q", raw)
-	}
-	if fi, _ := os.Lstat(benchFile(store, "s1")); fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatal("the link was replaced by a file")
-	}
-}
-
-// A link that resolves outside the store is refused: the tool never reads or
-// appends outside the directory it was given. The refusal names the link and
-// its target, and is about that session only.
-func TestSymlinkResolvingOutsideTheStoreIsRefused(t *testing.T) {
-	t.Parallel()
-	store := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "elsewhere.md")
-	if err := os.WriteFile(outside, []byte("# secret\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(benchFile(store, "ok"), []byte("# ok\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, benchFile(store, "leak")); err != nil {
-		t.Skipf("no symlinks here: %v", err)
-	}
-	link := benchFile(store, "leak")
-	checks := map[string]error{
-		"open":    Open(store, "leak", "", benchNow, PublishManual),
-		"append":  func() error { _, err := Append(store, "leak", "e", "w", "", benchNow, PublishManual); return err }(),
-		"index":   func() error { _, _, err := Index(store, "leak", 0); return err }(),
-		"receipt": func() error { _, err := Receipt(store, "leak", "e"); return err }(),
-	}
-	for verb, err := range checks {
-		var rp *RecordPathError
-		if !errors.As(err, &rp) || !strings.Contains(err.Error(), link) || !strings.Contains(err.Error(), outside) || !strings.Contains(err.Error(), "resolves outside the store") {
-			t.Errorf("%s: want a refusal naming the link and its target, got %v", verb, err)
-		}
-	}
-	if raw, _ := os.ReadFile(outside); string(raw) != "# secret\n" {
-		t.Fatalf("a verb wrote through the link: %q", raw)
-	}
-	// The other session is untouched by it.
-	if _, err := Append(store, "ok", "e1", "words", "", benchNow, PublishManual); err != nil {
-		t.Fatalf("append to the other session: %v", err)
 	}
 }
 
@@ -322,7 +257,7 @@ func TestIndexFlagsOneBadSessionAndListsTheOthers(t *testing.T) {
 	if res.Total != 4 || len(res.Rows) != 4 || res.Sessions != 5 {
 		t.Fatalf("rows %d total %d sessions %d; want the four good sessions listed of five", len(res.Rows), res.Total, res.Sessions)
 	}
-	if len(res.Flagged) != 1 || res.Flagged[0].Session != "bad" || !strings.Contains(res.Flagged[0].Cause, "a dangling symlink") {
+	if len(res.Flagged) != 1 || res.Flagged[0].Session != "bad" || !strings.Contains(res.Flagged[0].Cause, "is a symbolic link") {
 		t.Fatalf("flagged %+v", res.Flagged)
 	}
 	if _, _, err := Index(store, "", 0); err == nil {
