@@ -119,7 +119,7 @@ nova-table cell move     <table> <row> <from-col> <to-col> <member>...
 nova-table cell members  <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
-nova-table batch  <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]
+nova-table batch  <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
@@ -432,7 +432,7 @@ never changed=no without evidence.
 
 ### CLI batch verb (`nova-table batch`)
 
-`nova-table batch <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]`
+`nova-table batch <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]`
 executes an atomic conditional mutation manifest against one table in a single Redis call (`ns_table_apply`).
 
 #### Manifest structure

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +16,14 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	const verb = "batch"
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
-	write, _ := app.writeFlags(fs)
+	epoch := fs.Uint64("epoch", app.defaults.Epoch, "the epoch this write observed (default 0)")
+	actor := fs.String("actor", app.defaults.Actor, "actor recorded with the change")
+	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
+	_ = fs.Set("receipt", "true")
+	if app.shared != nil && !app.receipts {
+		_ = fs.Set("receipt", "false")
+	}
+
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -24,22 +31,50 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one manifest file or JSON string: batch <manifest>")
 	}
-	raw := []byte(pos[0])
-	if !strings.HasPrefix(strings.TrimSpace(pos[0]), "{") {
-		content, err := os.ReadFile(pos[0])
-		if err == nil {
-			raw = content
+
+	var raw []byte
+	if pos[0] == "-" {
+		in := app.in
+		if in == nil {
+			in = os.Stdin
 		}
+		var readErr error
+		raw, readErr = io.ReadAll(in)
+		if readErr != nil {
+			return refuse(stderr, verb, fmt.Sprintf("read stdin: %v", readErr))
+		}
+	} else if !strings.HasPrefix(strings.TrimSpace(pos[0]), "{") {
+		content, readErr := os.ReadFile(pos[0])
+		if readErr == nil {
+			raw = content
+		} else {
+			raw = []byte(pos[0])
+		}
+	} else {
+		raw = []byte(pos[0])
 	}
-	var manifest ntable.BatchManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+
+	manifest, err := ntable.ValidateBatchManifestRaw(raw)
+	if err != nil {
 		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v", err))
 	}
-	if write.Actor != "" && manifest.Actor == "" {
-		manifest.Actor = write.Actor
+
+	actorSet := false
+	epochSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "actor" {
+			actorSet = true
+		}
+		if f.Name == "epoch" {
+			epochSet = true
+		}
+	})
+
+	if (actorSet || *actor != "") && manifest.Actor == "" {
+		manifest.Actor = *actor
 	}
-	if f := fs.Lookup("epoch"); f != nil && f.Value.String() != "0" && manifest.Epoch == "" {
-		manifest.Epoch = fmt.Sprint(write.Epoch)
+	if (epochSet || app.defaults.Epoch != 0) && manifest.Epoch == "" {
+		manifest.Epoch = fmt.Sprint(*epoch)
 	}
 
 	ctx := context.Background()
@@ -50,7 +85,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 
-	rcpt, err := ntable.ApplyBatch(ctx, c, manifest)
+	rcpt, err := ntable.ApplyBatch(ctx, c, *manifest)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -61,14 +96,8 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "TABLE BATCH table=%s operation=%s epoch=%d before=%d after=%d outcome=%s trips=%d\n",
 		manifest.Table, operationID, rcpt.Epoch, rcpt.Before, rcpt.After, rcpt.Outcome, trips.N())
-	printReceipt := true
-	for _, a := range args {
-		if a == "--receipt=false" || a == "-receipt=false" {
-			printReceipt = false
-			break
-		}
-	}
-	if printReceipt {
+
+	if *receipt {
 		fmt.Fprintf(stdout, "TABLE RECEIPT event=%s epoch=%d before=%d after=%d outcome=%s\n",
 			rcpt.ID, rcpt.Epoch, rcpt.Before, rcpt.After, rcpt.Outcome)
 	}

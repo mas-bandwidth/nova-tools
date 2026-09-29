@@ -81,3 +81,199 @@ func TestBatchCLIExecution(t *testing.T) {
 		t.Errorf("expected MEMBER move line in stdout2, got:\n%s", stdout2)
 	}
 }
+
+func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx := context.Background()
+	cols, err := ntable.ParseColumns("ready,working,done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initial state assertions: table revision is 2.
+	snap, err := ntable.ReadSetMembers(ctx, c, "demo", nil)
+	if err != nil {
+		t.Fatalf("table snapshot read: %v", err)
+	}
+	if snap.Revision != 2 {
+		t.Fatalf("expected initial revision 2, got %d", snap.Revision)
+	}
+
+	cases := []struct {
+		name      string
+		rawJSON   string
+		errSubstr string
+	}{
+		{
+			name: "duplicate key in raw JSON",
+			rawJSON: `{
+				"schema": 1,
+				"table": "demo",
+				"actor": "user1",
+				"actor": "user2",
+				"epoch": "0",
+				"expected_table_revision": "2",
+				"operation_id": "op-dup",
+				"members": [{"id":"bad1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}]
+			}`,
+			errSubstr: `duplicate key "actor" in manifest`,
+		},
+		{
+			name: "unknown field in raw JSON",
+			rawJSON: `{
+				"schema": 1,
+				"table": "demo",
+				"unknown_field": "disallowed",
+				"epoch": "0",
+				"expected_table_revision": "2",
+				"operation_id": "op-unk",
+				"members": [{"id":"bad2","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}]
+			}`,
+			errSubstr: `unknown field "unknown_field"`,
+		},
+		{
+			name: "remove false in raw JSON",
+			rawJSON: `{
+				"schema": 1,
+				"table": "demo",
+				"epoch": "0",
+				"expected_table_revision": "2",
+				"operation_id": "op-rem",
+				"members": [{"id":"bad3","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1},"remove":false}]
+			}`,
+			errSubstr: `remove must be true`,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := runTable("batch", "--redis", addr, tc.rawJSON)
+			if code != 2 {
+				t.Fatalf("expected exit code 2, got %d (stdout: %q, stderr: %q)", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, "nova-table batch:") || !strings.Contains(stderr, tc.errSubstr) {
+				t.Errorf("expected stderr to contain refusal with %q, got: %s", tc.errSubstr, stderr)
+			}
+			if stdout != "" {
+				t.Errorf("expected empty stdout on refusal, got: %s", stdout)
+			}
+
+			// Verify 0 store mutations:
+			// 1. Table revision must still be 2.
+			curSnap, err := ntable.ReadSetMembers(ctx, c, "demo", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if curSnap.Revision != 2 {
+				t.Fatalf("store mutation detected: table revision moved from 2 to %d", curSnap.Revision)
+			}
+			// 2. Members must not exist.
+			keys, err := c.Keys(ctx, "table::member:*").Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(keys) != 0 {
+				t.Fatalf("store mutation detected: member keys exist: %v", keys)
+			}
+		})
+	}
+}
+
+func TestBatchCLIStdinReading(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx := context.Background()
+	cols, err := ntable.ParseColumns("ready,working,done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestJSON := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"op-stdin-1","actor":"cli-stdin","members":[{"id":"stdin-m1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":50}}]}`
+
+	var out, errs strings.Builder
+	app := &application{in: strings.NewReader(manifestJSON)}
+	code := app.run([]string{"batch", "--redis", addr, "-"}, &out, &errs)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 from stdin manifest, got %d (stderr: %s)", code, errs.String())
+	}
+	if !strings.Contains(out.String(), "TABLE BATCH table=demo operation=op-stdin-1") {
+		t.Errorf("expected TABLE BATCH header in stdout, got:\n%s", out.String())
+	}
+
+	// Verify member was physically created in store
+	memKey := "table::member:stdin-m1"
+	exists, err := c.Exists(ctx, memKey).Result()
+	if err != nil || exists != 1 {
+		t.Fatalf("expected member %s in store, exists=%d, err=%v", memKey, exists, err)
+	}
+}
+
+func TestBatchCLIRejectsUnsupportedFlags(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	validJSON := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"op-flags","members":[]}`
+
+	for _, flag := range []string{"--fence=f123", "--fence", "--idem=i123", "--idem"} {
+		args := []string{"batch", "--redis", addr, flag, validJSON}
+		if flag == "--fence" || flag == "--idem" {
+			args = []string{"batch", "--redis", addr, flag, "token", validJSON}
+		}
+		code, _, stderr := runTable(args...)
+		if code != 2 {
+			t.Fatalf("expected exit code 2 for unsupported flag %s, got %d", flag, code)
+		}
+		if !strings.Contains(stderr, "unknown flag") && !strings.Contains(stderr, "flag provided but not defined") {
+			t.Errorf("expected unknown flag in stderr, got: %s", stderr)
+		}
+	}
+}
+
+func TestBatchCLIReceiptFlagSuppression(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx := context.Background()
+	cols, err := ntable.ParseColumns("ready,working,done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestJSON := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"op-rcpt-off","members":[{"id":"m-rcpt","expect":{"absent":true},"create":{"row":"build","col":"ready","score":10}}]}`
+
+	// Run with --receipt=false
+	code, stdout, stderr := runTable("batch", "--redis", addr, "--receipt=false", manifestJSON)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr: %s)", code, stderr)
+	}
+	if strings.Contains(stdout, "TABLE RECEIPT") {
+		t.Errorf("expected TABLE RECEIPT to be suppressed when --receipt=false, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "TABLE BATCH table=demo operation=op-rcpt-off") {
+		t.Errorf("expected TABLE BATCH in stdout, got:\n%s", stdout)
+	}
+}
