@@ -30,6 +30,7 @@ import (
 // forceTransientIO seam over a slot file that is a directory, so every read fails and every
 // failure is called transient.
 func TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, err := OpenPool(dir)
 	if err != nil {
@@ -38,8 +39,7 @@ func TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides(t *testing.T
 	if err := os.MkdirAll(p.Path(Slots, "1.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	forceTransientIO = func(err error) bool { return err != nil }
-	t.Cleanup(func() { forceTransientIO = nil })
+	t.Cleanup(armTransient(dir, func(err error) bool { return err != nil }))
 
 	// One read on its own still gets no more than the budget its caller has left: this is
 	// the min(window, remaining) that makes the loop below add up.

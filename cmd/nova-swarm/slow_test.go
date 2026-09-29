@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -282,6 +281,7 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 // the thing under test, so a sampler that could hold the ending open would show here as a
 // run that outlived its own deadline.
 func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	needsSQLite(t)
 	bin := nativeHarness(t)
@@ -303,7 +303,6 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 	if err := testbin.WriteExecutable(stall, []byte("#!/bin/sh\nsleep 600\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	card := filepath.Join(root, "card.md")
 	if err := os.WriteFile(card, []byte("a card\nFAKE-IGNORE-TERM\nFAKE-SLEEP 60\n"), 0o644); err != nil {
@@ -322,7 +321,7 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 	// assertion at all -- the go test timeout is this repo's bound on a hang, and it is a
 	// better one than a number written here, which is why the repo refuses the number.
 	var stdout, stderr bytes.Buffer
-	run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{sqliteCmd: stall})
 	line := nativeOKLine(t, stdout.String())
 	if got := fieldOf(line, "rc"); got != "-1" {
 		t.Fatalf("the DEADLINE ended this card, so the line prints rc=-1; got %q:\n%s", got, line)
@@ -340,6 +339,7 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 // enforced and is not; the second leaves the budget unable to fire and the deadline to end
 // the job.
 func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	needsSQLite(t)
 	bin := nativeHarness(t)
@@ -353,7 +353,9 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 		{"three_in_a_row_ends_it", 1000, 1, "unverifiable", swarm.EndUnverifiable},
 		{"twice_then_an_answer_ends_nothing", 2, 0, "", swarm.EndDone},
 	} {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root, slot := aSlot(t)
 			// A DATABASE MUST EXIST for a read to be attempted at all: an absent one is an
 			// absence, and rule 13d keeps the two apart.
@@ -373,10 +375,10 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 				"n=$((n+1)); echo $n > " + counter + "\n" +
 				"if [ \"$n\" -le " + strconv.Itoa(tc.failures) + " ]; then echo 'Error: file is not a database' >&2; exit 1; fi\n" +
 				"exit 0\n"
-			if err := testbin.WriteExecutable(filepath.Join(dir, swarm.SQLiteBinary), []byte(script), 0o755); err != nil {
+			fakeSQLite := filepath.Join(dir, swarm.SQLiteBinary)
+			if err := testbin.WriteExecutable(fakeSQLite, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 			card := filepath.Join(root, "card.md")
 			if err := os.WriteFile(card, []byte("a card\nFAKE-SLEEP 8\nFAKE-FINDINGS 1\n"), 0o644); err != nil {
@@ -389,7 +391,7 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 				}
 			}
 			var stdout, stderr strings.Builder
-			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+			rc := runWith(args, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{sqliteCmd: fakeSQLite})
 			if rc != tc.wantRC {
 				t.Fatalf("this card exits %d, got %d\nstdout:\n%s\nstderr:\n%s", tc.wantRC, rc, stdout.String(), stderr.String())
 			}

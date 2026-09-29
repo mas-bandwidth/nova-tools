@@ -16,6 +16,7 @@ import (
 // made by a worker carry pool identity rather than any bench gitconfig.
 
 func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("this one runs a native execution")
 	}
@@ -36,22 +37,14 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 	benchConfig := filepath.Join(benchHome, ".gitconfig")
 	write(t, benchConfig, "[user]\n\tname = Hostile Ghost\n\temail = ghost@example.com\n")
 
-	origHome := os.Getenv("HOME")
-	origGitConfig := os.Getenv("GIT_CONFIG_GLOBAL")
-	defer func() {
-		os.Setenv("HOME", origHome)
-		if origGitConfig != "" {
-			os.Setenv("GIT_CONFIG_GLOBAL", origGitConfig)
-		} else {
-			os.Unsetenv("GIT_CONFIG_GLOBAL")
-		}
-	}()
-	os.Setenv("HOME", benchHome)
-	os.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
+	benchEnv := append(os.Environ(),
+		"HOME="+benchHome,
+		"GIT_CONFIG_GLOBAL="+benchConfig,
+	)
 
 	label := "drain-task-1"
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{
+	rc := runWith([]string{
 		"native",
 		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
@@ -64,7 +57,7 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 		"--root", root,
 		"--deadline", "30s",
 		"--no-wall",
-	}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	}, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{environ: benchEnv})
 
 	if rc != 0 {
 		t.Fatalf("native run exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
@@ -161,15 +154,8 @@ func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing
 	}
 }
 
-func restoreEnv(key, val string) {
-	if val != "" {
-		os.Setenv(key, val)
-	} else {
-		os.Unsetenv(key)
-	}
-}
-
 func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("this one runs a native execution")
 	}
@@ -192,30 +178,18 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 	benchConfig := filepath.Join(benchHome, ".gitconfig")
 	write(t, benchConfig, "[user]\n\tname = Hostile Ghost\n\temail = ghost@example.com\n")
 
-	origHome := os.Getenv("HOME")
-	origGitConfig := os.Getenv("GIT_CONFIG_GLOBAL")
-	origAuthorName := os.Getenv("GIT_AUTHOR_NAME")
-	origAuthorEmail := os.Getenv("GIT_AUTHOR_EMAIL")
-	origCommitterName := os.Getenv("GIT_COMMITTER_NAME")
-	origCommitterEmail := os.Getenv("GIT_COMMITTER_EMAIL")
-	defer func() {
-		os.Setenv("HOME", origHome)
-		restoreEnv("GIT_CONFIG_GLOBAL", origGitConfig)
-		restoreEnv("GIT_AUTHOR_NAME", origAuthorName)
-		restoreEnv("GIT_AUTHOR_EMAIL", origAuthorEmail)
-		restoreEnv("GIT_COMMITTER_NAME", origCommitterName)
-		restoreEnv("GIT_COMMITTER_EMAIL", origCommitterEmail)
-	}()
-	os.Setenv("HOME", benchHome)
-	os.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
-	os.Setenv("GIT_AUTHOR_NAME", "Hostile Ghost")
-	os.Setenv("GIT_AUTHOR_EMAIL", "ghost@example.com")
-	os.Setenv("GIT_COMMITTER_NAME", "Hostile Ghost")
-	os.Setenv("GIT_COMMITTER_EMAIL", "ghost@example.com")
+	benchEnv := append(os.Environ(),
+		"HOME="+benchHome,
+		"GIT_CONFIG_GLOBAL="+benchConfig,
+		"GIT_AUTHOR_NAME=Hostile Ghost",
+		"GIT_AUTHOR_EMAIL=ghost@example.com",
+		"GIT_COMMITTER_NAME=Hostile Ghost",
+		"GIT_COMMITTER_EMAIL=ghost@example.com",
+	)
 
 	label := "missing-id-task-1"
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{
+	rc := runWith([]string{
 		"native",
 		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
@@ -228,7 +202,7 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 		"--root", root,
 		"--deadline", "30s",
 		"--no-wall",
-	}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	}, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{environ: benchEnv})
 
 	if rc != 2 {
 		t.Fatalf("native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
@@ -261,6 +235,7 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 }
 
 func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("this one runs a native execution")
 	}
@@ -281,30 +256,18 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 	benchConfig := filepath.Join(benchHome, ".gitconfig")
 	write(t, benchConfig, "[user]\n\tname = Hostile Ghost\n\temail = ghost@example.com\n")
 
-	origHome := os.Getenv("HOME")
-	origGitConfig := os.Getenv("GIT_CONFIG_GLOBAL")
-	origAuthorName := os.Getenv("GIT_AUTHOR_NAME")
-	origAuthorEmail := os.Getenv("GIT_AUTHOR_EMAIL")
-	origCommitterName := os.Getenv("GIT_COMMITTER_NAME")
-	origCommitterEmail := os.Getenv("GIT_COMMITTER_EMAIL")
-	defer func() {
-		os.Setenv("HOME", origHome)
-		restoreEnv("GIT_CONFIG_GLOBAL", origGitConfig)
-		restoreEnv("GIT_AUTHOR_NAME", origAuthorName)
-		restoreEnv("GIT_AUTHOR_EMAIL", origAuthorEmail)
-		restoreEnv("GIT_COMMITTER_NAME", origCommitterName)
-		restoreEnv("GIT_COMMITTER_EMAIL", origCommitterEmail)
-	}()
-	os.Setenv("HOME", benchHome)
-	os.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
-	os.Setenv("GIT_AUTHOR_NAME", "Hostile Ghost")
-	os.Setenv("GIT_AUTHOR_EMAIL", "ghost@example.com")
-	os.Setenv("GIT_COMMITTER_NAME", "Hostile Ghost")
-	os.Setenv("GIT_COMMITTER_EMAIL", "ghost@example.com")
+	benchEnv := append(os.Environ(),
+		"HOME="+benchHome,
+		"GIT_CONFIG_GLOBAL="+benchConfig,
+		"GIT_AUTHOR_NAME=Hostile Ghost",
+		"GIT_AUTHOR_EMAIL=ghost@example.com",
+		"GIT_COMMITTER_NAME=Hostile Ghost",
+		"GIT_COMMITTER_EMAIL=ghost@example.com",
+	)
 
 	label := "malformed-id-task-1"
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{
+	rc := runWith([]string{
 		"native",
 		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
@@ -317,7 +280,7 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 		"--root", root,
 		"--deadline", "30s",
 		"--no-wall",
-	}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	}, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{environ: benchEnv})
 
 	if rc != 2 {
 		t.Fatalf("native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())

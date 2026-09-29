@@ -20,13 +20,13 @@ import (
 // the card linter (the one card push runs) accepts, and that names the one
 // way it ends.
 func TestReadCopyDealtToBenchRendersALintedCard(t *testing.T) {
+	t.Parallel()
 	mirror := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(mirror, "nova-tools.git", "objects"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOVA_MIRROR_ROOT", mirror) // the repository check reads the mirror, never the network
+	ctx := card.WithMirrorRoot(context.Background(), mirror)
 	_, c := wstest.Start(t)
-	ctx := context.Background()
 	author, _ := taskcard.ParseConsumer("friend:f")
 	bench, _ := taskcard.ParseConsumer("bench:b")
 	c.HSet(ctx, author.DesiredKey(), "slots", "1")

@@ -135,6 +135,11 @@ func OpenSingle(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 1, seatcred.Process())
 }
 
+// OpenSingleSeat is OpenSingle as sel's seat instead of this process's.
+func OpenSingleSeat(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
+	return open(ctx, addr, 1, sel)
+}
+
 // OpenProbe is OpenSeat for a one-shot health read (`nova-sprint doctor`):
 // one connection, one dial attempt bounded by a second, and no command
 // retries, so a store that is down or refuses the login answers on the first

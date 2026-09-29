@@ -1,12 +1,29 @@
 package card
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+type mirrorRootKey struct{}
+
+// WithMirrorRoot returns a context carrying the mirror root directory.
+func WithMirrorRoot(ctx context.Context, root string) context.Context {
+	return context.WithValue(ctx, mirrorRootKey{}, root)
+}
+
+func mirrorRootFrom(ctx context.Context) string {
+	if ctx != nil {
+		if root, ok := ctx.Value(mirrorRootKey{}).(string); ok && root != "" {
+			return root
+		}
+	}
+	return mirrorRoot()
+}
 
 // mirrorRoot is where this host keeps its bare repository mirrors:
 // $NOVA_MIRROR_ROOT when set, else ~/nova-bench/mirror (the harness default).
@@ -21,13 +38,23 @@ func mirrorRoot() string {
 	return filepath.Join(home, "nova-bench", "mirror")
 }
 
-// mirrorPath is the local mirror for owner/name: <root>/<name>.git.
-func mirrorPath(fullName string) string {
-	root := mirrorRoot()
+func mirrorPathWithRoot(root, fullName string) string {
+	if root == "" {
+		root = mirrorRoot()
+	}
 	if root == "" {
 		return ""
 	}
 	return filepath.Join(root, filepath.Base(fullName)+".git")
+}
+
+// mirrorPath is the local mirror for owner/name: <root>/<name>.git.
+func mirrorPath(fullName string) string {
+	return mirrorPathWithRoot("", fullName)
+}
+
+func mirrorPathFrom(ctx context.Context, fullName string) string {
+	return mirrorPathWithRoot(mirrorRootFrom(ctx), fullName)
 }
 
 // MirrorPath is this host's bare mirror of owner/name (or name):
@@ -35,11 +62,8 @@ func mirrorPath(fullName string) string {
 // there is no root. The reconciler's done-already leg (#3919) reads it.
 func MirrorPath(fullName string) string { return mirrorPath(fullName) }
 
-// hasMirror reports whether this host holds a bare mirror of owner/name. A
-// directory with objects/ counts: the repository exists even when an
-// anonymous request cannot see it (a private repo answers 404).
-func hasMirror(fullName string) bool {
-	dir := mirrorPath(fullName)
+func hasMirrorWithRoot(root, fullName string) bool {
+	dir := mirrorPathWithRoot(root, fullName)
 	if dir == "" {
 		return false
 	}
@@ -47,12 +71,28 @@ func hasMirror(fullName string) bool {
 	return err == nil && fi.IsDir()
 }
 
+func hasMirrorFrom(ctx context.Context, fullName string) bool {
+	return hasMirrorWithRoot(mirrorRootFrom(ctx), fullName)
+}
+
+// hasMirror reports whether this host holds a bare mirror of owner/name. A
+// directory with objects/ counts: the repository exists even when an
+// anonymous request cannot see it (a private repo answers 404).
+func hasMirror(fullName string) bool {
+	return hasMirrorWithRoot("", fullName)
+}
+
 // MirrorBranchSHA is the tip of branch in this host's mirror of owner/name,
 // read with git (no forge call): the base-sha a card cut on this host names.
-func MirrorBranchSHA(fullName, branch string) (string, error) {
-	dir := mirrorPath(fullName)
-	if dir == "" || !hasMirror(fullName) {
-		return "", &privateRepoError{Name: fullName}
+// When mirrorRoot is provided, it overrides $NOVA_MIRROR_ROOT and ~/nova-bench/mirror.
+func MirrorBranchSHA(fullName, branch string, mirrorRoot ...string) (string, error) {
+	var root string
+	if len(mirrorRoot) > 0 && mirrorRoot[0] != "" {
+		root = mirrorRoot[0]
+	}
+	dir := mirrorPathWithRoot(root, fullName)
+	if dir == "" || !hasMirrorWithRoot(root, fullName) {
+		return "", &privateRepoError{Name: fullName, mirrorPath: dir}
 	}
 	out, err := exec.Command("git", "--git-dir", dir, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}").Output()
 	if err != nil {

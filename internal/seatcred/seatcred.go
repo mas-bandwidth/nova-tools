@@ -149,6 +149,15 @@ var process Selection
 // Process is this process's seat selection.
 func Process() *Selection { return &process }
 
+// Anonymous is an explicitly unauthenticated Selection (empty user and password).
+func Anonymous() *Selection {
+	var s Selection
+	s.SelectWith("anonymous", "", func(seat string) (Cred, error) {
+		return Cred{}, nil
+	})
+	return &s
+}
+
 func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv) }
 
 // Select makes seat this process's seat ("" is none) and forgets any earlier

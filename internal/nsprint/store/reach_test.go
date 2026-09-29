@@ -12,8 +12,9 @@ import (
 // #3277: the first batch against a closed port is Unreachable, so a verb keeps
 // its unreachable exit code; a command's own refusal is not.
 func TestUnreachable3277(t *testing.T) {
-	t.Setenv(store.UserEnv, "")
-	st, err := store.Open(context.Background(), "127.0.0.1:1")
+	t.Parallel()
+	anon := seatcred.Anonymous()
+	st, err := store.OpenSeat(context.Background(), "127.0.0.1:1", anon)
 	if err != nil {
 		t.Fatalf("Open sends nothing and must not fail on a closed port: %v", err)
 	}
@@ -22,7 +23,7 @@ func TestUnreachable3277(t *testing.T) {
 	// dials and three retries on Open's pool are 3.4 s of backoff against a
 	// closed port (the unit tier's 1 s budget, #4328), and the error they end
 	// in is the same refused dial this classifies.
-	probe, err := store.OpenProbe(context.Background(), "127.0.0.1:1", seatcred.Process())
+	probe, err := store.OpenProbe(context.Background(), "127.0.0.1:1", anon)
 	if err != nil {
 		t.Fatalf("OpenProbe sends nothing and must not fail on a closed port: %v", err)
 	}

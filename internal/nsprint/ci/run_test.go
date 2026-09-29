@@ -84,11 +84,15 @@ func newRunFixture(t *testing.T) *runFixture {
 	return &runFixture{ctx: ctx, st: store.New(client), client: client, url: remote.URL, sha: sha, root: t.TempDir()}
 }
 
-func (f *runFixture) run(t *testing.T, bench string) (ci.RunResult, string, error) {
+func (f *runFixture) run(t *testing.T, bench string, opts ...func(*ci.RunOptions)) (ci.RunResult, string, error) {
 	t.Helper()
 	var out bytes.Buffer
-	res, err := ci.Run(f.ctx, f.st, ci.RunOptions{Bench: bench, Scratch: filepath.Join(f.root, "scratch"),
-		ResultsRoot: filepath.Join(f.root, "results"), Lease: time.Minute, Timeout: 30 * time.Second, Out: &out})
+	ro := ci.RunOptions{Bench: bench, Scratch: filepath.Join(f.root, "scratch"),
+		ResultsRoot: filepath.Join(f.root, "results"), Lease: time.Minute, Timeout: 30 * time.Second, Out: &out}
+	for _, fn := range opts {
+		fn(&ro)
+	}
+	res, err := ci.Run(f.ctx, f.st, ro)
 	return res, out.String(), err
 }
 
