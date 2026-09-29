@@ -407,6 +407,7 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalDepends:
 		o.col = fmt.Sprint(reply[2])
 		cause = fmt.Errorf("column %q is a formula that reads it; remove that column first", reply[3])
+		remedy = "nova-table col del " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[3]))
 	case typedrec.TableRefusalFormula:
 		if len(reply) != 5 {
 			return fmt.Errorf("%s: malformed formula refusal", o.location())
@@ -420,7 +421,6 @@ func (o operation) refused(reply []any) error {
 			cause = fmt.Errorf("it reads column %q, a %s column; a formula reads count columns only: name a count column", arg, found)
 			remedy = "nova-table show " + shellWord(o.table)
 		}
-		remedy = "nova-table col del " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[3]))
 	case typedrec.TableRefusalLastCol:
 		o.col = fmt.Sprint(reply[2])
 		cause = errors.New("a table keeps at least one column")
