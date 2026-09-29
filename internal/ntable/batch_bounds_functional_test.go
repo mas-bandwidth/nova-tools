@@ -180,14 +180,16 @@ func TestBatchManifestBytesBound(t *testing.T) {
 			return `{"id":"a","expect":{"fields":{"role":{"one_of":["x"` + pad + `]}}}}`
 		}
 		need := size - len(boundsManifest(rev, op, entry(""), ""))
+		// k distinct options, sharing what is left of the size between them
+		k := (need + 59999) / 60000
+		total := need - 3*k // each option is , " n bytes "
 		pad := ""
-		for need > 0 {
-			n := min(need-3, 60000) // each option is , " n bytes "
-			if left := need - (n + 3); left > 0 && left < 4 {
-				n -= 4
+		for i := 0; i < k; i++ {
+			n := total / k
+			if i < total%k {
+				n++
 			}
-			pad += `,"` + strings.Repeat("p", n) + `"`
-			need -= n + 3
+			pad += `,"` + fmt.Sprintf("%04d", i) + strings.Repeat("p", n-4) + `"`
 		}
 		return boundsManifest(rev, op, entry(pad), "")
 	}
