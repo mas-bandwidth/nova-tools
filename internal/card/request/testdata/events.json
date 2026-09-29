@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "operation": "apply_events",
+  "table": "work",
+  "epoch": "3",
+  "expected_table_revision": "12",
+  "operation_id": "op-apply_events",
+  "actor": "coordinator",
+  "events": [
+    {
+      "id": "card-01",
+      "type": "start",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "ready"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/1"
+    },
+    {
+      "id": "card-02",
+      "type": "result",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "working"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/2",
+      "result": "success",
+      "head": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "card-03",
+      "type": "result",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "working"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/3",
+      "result": "failure"
+    },
+    {
+      "id": "card-04",
+      "type": "verdict-accept",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "review"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/4",
+      "head": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "card-05",
+      "type": "verdict-retry",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "review"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/5",
+      "reason": "needs a second pass"
+    },
+    {
+      "id": "card-06",
+      "type": "verdict-rework",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "review"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/6",
+      "reason": "tests missing",
+      "head": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "card-07",
+      "type": "head",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "merging"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/7",
+      "head": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "id": "card-08",
+      "type": "ci-red",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "merging"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/8",
+      "head": "cccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "card-09",
+      "type": "cancel",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "waiting"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/9",
+      "reason": "no longer wanted"
+    },
+    {
+      "id": "card-10",
+      "type": "landing",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "merging"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/10",
+      "head": "cccccccccccccccccccccccccccccccccccccccc",
+      "landing": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "id": "card-11",
+      "type": "external-landing",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "ready"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/11",
+      "head": "cccccccccccccccccccccccccccccccccccccccc",
+      "landing": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "id": "card-12",
+      "type": "dependency-failed",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "waiting"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/12",
+      "dependency": "card-99"
+    },
+    {
+      "id": "card-13",
+      "type": "completed",
+      "expect": {
+        "revision": "2",
+        "place": {
+          "row": "build",
+          "col": "review"
+        }
+      },
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer": "reader-1",
+      "source": "artifact/13"
+    }
+  ]
+}

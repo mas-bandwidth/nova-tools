@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "operation": "replace",
+  "table": "work",
+  "epoch": "3",
+  "expected_table_revision": "12",
+  "operation_id": "op-replace",
+  "actor": "coordinator",
+  "replacements": [
+    {
+      "old": {
+        "id": "card-old",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expect": {
+          "revision": "2",
+          "place": {
+            "row": "build",
+            "col": "ready"
+          }
+        }
+      },
+      "new": {
+        "id": "card-new",
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "object_id": "cccccccccccccccccccccccccccccccccccccccc",
+        "commit": "cccccccccccccccccccccccccccccccccccccccc",
+        "repository": "example.org/team/repo",
+        "path": "cards/card-new.md",
+        "row": "build"
+      }
+    }
+  ]
+}

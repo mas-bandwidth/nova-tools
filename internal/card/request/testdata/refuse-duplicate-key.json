@@ -1,0 +1,2 @@
+{"schema": 1, "operation": "admit", "table": "work", "table": "other", "epoch": "3", "expected_table_revision": "12", "operation_id": "op-1", "actor": "coordinator",
+ "admissions": [{"id": "a", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "object_id": "cccccccccccccccccccccccccccccccccccccccc", "commit": "cccccccccccccccccccccccccccccccccccccccc", "repository": "r", "path": "p.md", "row": "build"}]}

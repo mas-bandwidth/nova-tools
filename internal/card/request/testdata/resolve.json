@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "operation": "resolve",
+  "table": "work",
+  "epoch": "3",
+  "expected_table_revision": "12",
+  "operation_id": "op-resolve",
+  "actor": "coordinator",
+  "scope": {
+    "row": "build",
+    "col": "waiting",
+    "bound": 100
+  }
+}

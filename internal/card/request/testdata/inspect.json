@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "operation": "inspect",
+  "table": "work",
+  "scope": {
+    "ids": [
+      "card-01",
+      "card-02"
+    ]
+  }
+}
