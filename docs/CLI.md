@@ -736,9 +736,10 @@ absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
 default number of workers, no default deadline, and no default token budget.
-batch takes --cards; native, lint, route, and verify take --card (because the
-card they inspect or run would be a guess about somebody else's task); the
-remaining verbs take neither. --tokens is required on batch and native because a
+batch takes --cards; native and route require --card; lint takes --card, or
+--fleet or --rules instead; verify takes --card as an option and reads it only
+when given (because a card this tool chose would be a guess about somebody
+else's task); the remaining verbs take no card flag. --tokens is required on batch and native because a
 budget this tool supplied would be a guess about somebody else's task, and
 --tokens unmetered is a caller's statement that this provider has no live
 accounting and the deadline is the only stop. Zero is refused for tokens.
