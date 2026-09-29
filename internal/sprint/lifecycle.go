@@ -1,6 +1,10 @@
 package sprint
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+)
 
 // The lifecycle of a primary: six states and the legal moves between them,
 // in one table (docs/SPEC-SPRINT.md section 3). The TLA+ model
@@ -96,9 +100,24 @@ func IsState(s string) bool {
 // primary into ready. A unit that does not is refused, naming the move; it is
 // never applied. The store holds every plan to it before applying it,
 // whatever step built it.
+//
+// It judges in two passes: first the lifecycle on every unit, then the needs
+// rule, against the landings of the units the lifecycle kept only: a landing
+// the lifecycle refuses satisfies nothing. A move in the work table whose
+// expectation names no place is judged from the place the pre-state holds the
+// card at, and is refused when the pre-state does not hold it: no entry skips
+// the lifecycle or the needs rule by leaving its place out.
 func Lawful(p Plan) Plan {
-	landing := map[string]bool{}
+	var lawful []Unit
 	for _, u := range p.Units {
+		if why := unlawful(u, &p); why != "" {
+			p.refuse(u.Key, why)
+			continue
+		}
+		lawful = append(lawful, u)
+	}
+	landing := map[string]bool{}
+	for _, u := range lawful {
 		for _, c := range u.Changes {
 			if c.Table == Work && c.Entry.Move != nil && c.Entry.Move.Col == Landed {
 				landing[c.Entry.ID] = true
@@ -106,12 +125,8 @@ func Lawful(p Plan) Plan {
 		}
 	}
 	var kept []Unit
-	for _, u := range p.Units {
-		why := unlawful(u, &p)
-		if why == "" {
-			why = unmet(u, p.pre, landing)
-		}
-		if why != "" {
+	for _, u := range lawful {
+		if why := unmet(u, p.pre, landing); why != "" {
 			p.refuse(u.Key, why)
 			continue
 		}
@@ -119,6 +134,23 @@ func Lawful(p Plan) Plan {
 	}
 	p.Units = kept
 	return p
+}
+
+// fromCol is the column a work-table entry moves its card from: the place its
+// expectation names, else the place the pre-state holds the card at; false
+// when neither says.
+func fromCol(e ntable.BatchMemberEntry, pre *Snapshot) (string, bool) {
+	if e.Expect != nil && e.Expect.Place != nil {
+		return e.Expect.Place.Col, true
+	}
+	if pre == nil {
+		return "", false
+	}
+	c := pre.Work.Placed(e.ID)
+	if c == nil {
+		return "", false
+	}
+	return c.Col, true
 }
 
 // unmet is why a unit admits a primary ready, or moves one waiting -> ready,
@@ -133,7 +165,7 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 		switch {
 		case e.Create != nil && e.Create.Col == Ready:
 			needs, waived = Split(e.Set["needs"]), Split(e.Set["waived"])
-		case e.Move != nil && e.Move.Col == Ready && e.Expect != nil && e.Expect.Place != nil && e.Expect.Place.Col == Waiting:
+		case e.Move != nil && e.Move.Col == Ready && waitingFrom(e, pre):
 			if pre == nil {
 				return "a move waiting -> ready is judged against the step's pre-state, and this plan carries none"
 			}
@@ -156,6 +188,14 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 	return ""
 }
 
+// waitingFrom says a work-table entry moves its card from waiting, by its
+// expectation or, when that names no place, by the pre-state; a move from a
+// place nothing names is taken as from waiting, so the needs rule judges it.
+func waitingFrom(e ntable.BatchMemberEntry, pre *Snapshot) bool {
+	from, ok := fromCol(e, pre)
+	return !ok || from == Waiting
+}
+
 func unlawful(u Unit, p *Plan) string {
 	for _, c := range u.Changes {
 		e := c.Entry
@@ -165,10 +205,16 @@ func unlawful(u Unit, p *Plan) string {
 		if c.Table == Work && e.Create != nil && e.Set["kind"] == "sentinel" && e.Create.Col != Waiting {
 			return "the lifecycle admits a sentinel waiting"
 		}
-		if c.Table != Work || e.Expect == nil || e.Expect.Place == nil {
+		if c.Table != Work || e.Create != nil {
 			continue
 		}
-		from := e.Expect.Place.Col
+		from, known := fromCol(e, p.pre)
+		if !known {
+			if e.Remove || e.Move != nil && (e.Expect == nil || e.Expect.Place == nil) {
+				return "a move of " + e.ID + " in the work table names no place it moves from, and the step's pre-state does not hold it"
+			}
+			continue
+		}
 		sentinel := p.pre != nil && IsSentinel(p.pre.Work.Card(e.ID))
 		to := ""
 		if e.Move != nil && e.Move.Col != from {
