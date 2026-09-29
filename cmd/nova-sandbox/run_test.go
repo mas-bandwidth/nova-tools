@@ -543,14 +543,13 @@ func TestRunAnswersHelpWithItsUsage(t *testing.T) {
 // toolchain root and the module cache, and naming them by hand in every argv is a step
 // that will be forgotten.
 func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
+	t.Parallel()
 	root, mod := t.TempDir(), t.TempDir()
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil }
+	goEnv := func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil }
 
 	f := runFlags{useGo: true, reads: []string{"/usr"}}
 	var errb bytes.Buffer
-	if r := applyGoReads(&f, &errb); r != nil {
+	if r := applyGoReadsWith(&f, &errb, goEnv); r != nil {
 		t.Fatalf("--go refused with a real toolchain: %s", r.Text)
 	}
 	if !contains(f.reads, root) || !contains(f.reads, mod) {
@@ -568,15 +567,14 @@ func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
 // derived, not one the caller named, and rule 5's refusal-for-absence is about the
 // caller's own paths.
 func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) {
+	goEnv := func() (goDirs, error) {
 		return goDirs{Root: root, ModCache: filepath.Join(root, "not", "there")}, nil
 	}
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
-	if r := applyGoReads(&f, &errb); r != nil {
+	if r := applyGoReadsWith(&f, &errb, goEnv); r != nil {
 		t.Fatalf("--go refused because a derived path was absent: %s", r.Text)
 	}
 	if len(f.reads) != 1 || f.reads[0] != root {
@@ -590,14 +588,13 @@ func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
 // No go on the PATH is a refusal naming the flag, not a run that fails later inside the
 // wall for a reason nothing explains.
 func TestGoRefusesWhenThereIsNoGoToAsk(t *testing.T) {
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) {
+	t.Parallel()
+	goEnv := func() (goDirs, error) {
 		return goDirs{}, errors.New("exec: \"go\": executable file not found in $PATH")
 	}
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
-	r := applyGoReads(&f, &errb)
+	r := applyGoReadsWith(&f, &errb, goEnv)
 	if r == nil {
 		t.Fatalf("--go with no go on the PATH did not refuse")
 	}

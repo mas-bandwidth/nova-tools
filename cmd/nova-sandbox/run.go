@@ -434,10 +434,17 @@ func readGoEnv() (goDirs, error) {
 // refusal-for-absence is about the paths the CALLER named, and an empty module cache on a
 // machine that has never downloaded a module is not a misconfiguration.
 func applyGoReads(f *runFlags, stderr io.Writer) *sandbox.Refusal {
+	return applyGoReadsWith(f, stderr, runGoEnv)
+}
+
+func applyGoReadsWith(f *runFlags, stderr io.Writer, goEnv func() (goDirs, error)) *sandbox.Refusal {
 	if !f.useGo {
 		return nil
 	}
-	dirs, err := runGoEnv()
+	if goEnv == nil {
+		goEnv = runGoEnv
+	}
+	dirs, err := goEnv()
 	if err != nil {
 		return &sandbox.Refusal{Reason: "bad_read",
 			Text: "--go asks the go on this PATH where its roots are, and there is no go to ask: " + oneline.Err(err) + ". Install go, or name the roots yourself with --read"}

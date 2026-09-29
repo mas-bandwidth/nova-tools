@@ -87,20 +87,20 @@ func shippedModelHost(t *testing.T) string {
 	return ""
 }
 
-// egressBench puts the three seams in place for one test and puts the production bodies
-// back afterwards, so a test that forgets cannot leave the next one talking to the machine.
-func egressBench(t *testing.T, goos string, priv *fakePriv) {
+// egressBench builds the isolated egressEnv for one test, so no package vars are mutated.
+func egressBench(t *testing.T, goos string, priv *fakePriv) egressEnv {
 	t.Helper()
-	oldPriv, oldGOOS, oldLookup := egressPriv, egressGOOS, egressLookup
-	t.Cleanup(func() { egressPriv, egressGOOS, egressLookup = oldPriv, oldGOOS, oldLookup })
-	egressPriv, egressGOOS = priv, goos
 	table := map[string][]netip.Addr{
 		sandbox.EgressBaseNames[0]: {netip.MustParseAddr(testBaseAddr)},
 		sandbox.EgressBaseNames[1]: {netip.MustParseAddr("198.51.100.11"), netip.MustParseAddr(testBaseAddr6)},
 		sandbox.EgressBaseNames[2]: {netip.MustParseAddr("198.51.100.12")},
 		shippedModelHost(t):        {netip.MustParseAddr(testModelAddr)},
 	}
-	egressLookup = func(netip.Addr) sandboxResolver { return fakeLookup{table: table} }
+	return egressEnv{
+		priv:   priv,
+		goos:   goos,
+		lookup: func(netip.Addr) sandboxResolver { return fakeLookup{table: table} },
+	}
 }
 
 // planArgs is one good plan invocation against the SHIPPED policy file, which is the
@@ -118,8 +118,10 @@ func planArgs(t *testing.T, out string, extra ...string) []string {
 }
 
 func TestEgressPlanWritesARulesetAndPrintsItsReceipt(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
+	t.Parallel()
+
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", &fakePriv{})
 	out := filepath.Join(j.write, "plan.nft")
 	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
 	if code != 0 {
@@ -154,8 +156,10 @@ func TestEgressPlanWritesARulesetAndPrintsItsReceipt(t *testing.T) {
 }
 
 func TestEgressPlanRefusesTheInputsThatWouldWidenTheWall(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
+	t.Parallel()
+
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", &fakePriv{})
 	out := filepath.Join(j.write, "plan.nft")
 	cases := []struct {
 		name, reason string
@@ -189,8 +193,10 @@ func TestEgressPlanRefusesTheInputsThatWouldWidenTheWall(t *testing.T) {
 }
 
 func TestEgressPlanNeedsASelector(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
+	t.Parallel()
+
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", &fakePriv{})
 	args := planArgs(t, filepath.Join(j.write, "plan.nft"))
 	args = replaceFlag(args, "--uid", "")
 	code, _, errOut := j.tool(t, j.env(), args...)
@@ -200,9 +206,11 @@ func TestEgressPlanNeedsASelector(t *testing.T) {
 }
 
 func TestEgressApplyHandsTheAuditedPlanToNft(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", priv)
 	out := filepath.Join(j.write, "plan.nft")
 	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
@@ -220,9 +228,11 @@ func TestEgressApplyHandsTheAuditedPlanToNft(t *testing.T) {
 }
 
 func TestEgressApplyRefusesAPlanItCannotAudit(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", priv)
 	out := filepath.Join(j.write, "plan.nft")
 	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
@@ -253,9 +263,11 @@ func TestEgressApplyRefusesAPlanItCannotAudit(t *testing.T) {
 }
 
 func TestEgressApplyRefusesAPlanFromAnotherRun(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", priv)
 	out := filepath.Join(j.write, "plan.nft")
 	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
@@ -270,9 +282,11 @@ func TestEgressApplyRefusesAPlanFromAnotherRun(t *testing.T) {
 }
 
 func TestEgressRefusesWhenNftIsNotOnTheBench(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{missing: true}
-	egressBench(t, "linux", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", priv)
 	out := filepath.Join(j.write, "plan.nft")
 	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)
@@ -290,9 +304,11 @@ func TestEgressRefusesWhenNftIsNotOnTheBench(t *testing.T) {
 }
 
 func TestEgressDropDeletesExactlyTheRunsTable(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", priv)
 	code, _, errOut := j.tool(t, j.env(), "egress", "drop", "--run", "j1")
 	if code != 0 {
 		t.Fatalf("drop exited %d: %s", code, errOut)
@@ -306,9 +322,11 @@ func TestEgressDropDeletesExactlyTheRunsTable(t *testing.T) {
 }
 
 func TestEgressDropRefusesARunIdThatIsNotATableName(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", priv)
 	for _, run := range []string{"", "j1; flush ruleset", "../j1"} {
 		code, _, errOut := j.tool(t, j.env(), "egress", "drop", "--run", run)
 		if code != 2 || !strings.Contains(errOut, "reason=no_name") {
@@ -324,9 +342,11 @@ func TestEgressDropRefusesARunIdThatIsNotATableName(t *testing.T) {
 // seatbelt profile this binary already applies, and the refusal says so rather than
 // pretending a plan was enforced.
 func TestEgressApplyAndDropRefuseOffLinux(t *testing.T) {
+	t.Parallel()
+
 	priv := &fakePriv{}
-	egressBench(t, "darwin", priv)
 	j := newJob(t)
+	j.egress = egressBench(t, "darwin", priv)
 	for _, args := range [][]string{
 		{"egress", "apply", "--plan", filepath.Join(j.write, "plan.nft"), "--run", "j1"},
 		{"egress", "drop", "--run", "j1"},
@@ -347,8 +367,10 @@ func TestEgressApplyAndDropRefuseOffLinux(t *testing.T) {
 // plan and check run ANYWHERE: a plan is text and an audit is a read, and a reviewer on a
 // Mac has to be able to build and check the ruleset a bench will apply.
 func TestEgressPlanAndCheckRunOffLinux(t *testing.T) {
-	egressBench(t, "darwin", &fakePriv{})
+	t.Parallel()
+
 	j := newJob(t)
+	j.egress = egressBench(t, "darwin", &fakePriv{})
 	out := filepath.Join(j.write, "plan.nft")
 	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("plan on darwin exited %d: %s", code, errOut)
@@ -359,8 +381,10 @@ func TestEgressPlanAndCheckRunOffLinux(t *testing.T) {
 }
 
 func TestEgressCheckGoesRedOnABrokenPlan(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
+	t.Parallel()
+
 	j := newJob(t)
+	j.egress = egressBench(t, "linux", &fakePriv{})
 	out := filepath.Join(j.write, "plan.nft")
 	if code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...); code != 0 {
 		t.Fatalf("the plan could not be built: %s", errOut)

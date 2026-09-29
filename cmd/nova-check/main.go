@@ -212,6 +212,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) (code int) {
+	return runWith(args, stdout, stderr, stagedEnv{})
+}
+
+func runWith(args []string, stdout, stderr io.Writer, env stagedEnv) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, "nova-check", usage, &code)
@@ -228,7 +232,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "kernel":
 		return cmdKernel(args[1:], stdout, stderr)
 	case "nocode":
-		return cmdNoCode(args[1:], stdout, stderr)
+		return cmdNoCodeWith(args[1:], stdout, stderr, env)
 	case "floors":
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
@@ -552,6 +556,10 @@ func excludeFlags(exclude repeatable) []string {
 }
 
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
+	return cmdNoCodeWith(args, stdout, stderr, stagedEnv{})
+}
+
+func cmdNoCodeWith(args []string, stdout, stderr io.Writer, env stagedEnv) int {
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
 	dir := fs.String("dir", "", "self-repo directory to scan (required)")
 	staged := fs.Bool("staged", false, "advisory over the index: classify what is about to be committed, not the working tree (--dir is the repository root)")
@@ -620,7 +628,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// refusal the audit already makes, and it never sees a --dir it was
 	// willing to guess. The verb's own wiring is staged.go.
 	if *staged {
-		return stagedRun(*dir, allow, deny, source, *failMax, stdout, stderr)
+		return stagedRunWith(*dir, allow, deny, source, *failMax, stdout, stderr, env)
 	}
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}

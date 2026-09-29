@@ -22,8 +22,13 @@ const exampleSelf = "testdata/example-self"
 
 func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	t.Helper()
+	return runCheckWith(t, stagedEnv{}, args...)
+}
+
+func runCheckWith(t *testing.T, env stagedEnv, args ...string) (exit int, stdout, stderr string) {
+	t.Helper()
 	var out, errb bytes.Buffer
-	exit = run(args, &out, &errb)
+	exit = runWith(args, &out, &errb, env)
 	return exit, out.String(), errb.String()
 }
 
