@@ -409,6 +409,24 @@ is chosen from cost: rows are written in chunks of 256, and a table of 100,000 r
 took about a second to write and 1.6 seconds to read whole on the bench, the longest a
 single call should hold the store.
 
+A batch holds the store for a time its manifest bounds, not the store's content. It
+reads the head of each member (epoch, revision, place) and the fields its entries name
+(set, unset and guarded), never a whole record. Before any value is read or hashed it
+counts, from lengths (`HSTRLEN`), the bytes of every before-value and after-value of
+those fields, and the least size its receipt can have, and refuses at once as `LIMIT`
+over either: `value bytes per batch` (16 MiB) or `receipt bytes`. What the store holds
+in the fields a batch does not name costs the batch nothing. Measured on the bench, on
+four cores, a table of two rows, three runs each: unsetting 16 MiB of before-values
+(the most a batch may touch) held the store 0.045 s; a manifest of 873,735 bytes of
+guards, every one satisfied (the largest accepted batch measured), 0.46 s; a receipt
+near its bound (128 members, 48 fields each), 0.05 to 0.07 s; refused for its receipt
+(a manifest of 886,533 bytes), 0.40 s, which is the time to decode and check the
+manifest; refused for its value bytes over a store holding 256 MiB in the named
+fields, 0.013 s. Decoding and checking a manifest of about 1 MiB is most of the time of
+the larger figures. A create or move of an unplaced member also checks the table's
+cells for a stray placement, so the time of such a batch grows with the table's size;
+these figures do not include a large table.
+
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
 a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;
 one over it refuses the whole request as `LIMIT`, before any read of the store
