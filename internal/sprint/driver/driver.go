@@ -90,7 +90,7 @@ func (d *Driver) run(quiet bool, args ...string) (int, string) {
 }
 
 // commandLine is the verb as it is typed: nova-sprint and its words, a word
-// with a space or a quote in single quotes.
+// holding a blank, a quote or a shell character in single quotes.
 func commandLine(args []string) string {
 	words := []string{"nova-sprint"}
 	for _, a := range args {
