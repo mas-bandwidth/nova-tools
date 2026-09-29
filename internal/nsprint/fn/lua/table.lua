@@ -556,8 +556,9 @@ do
   end
   -- T.member_head(d, id): a batch's view of a member: whether the record exists
   -- and its epoch, revision and place, read by name. Any other field is read on
-  -- first use, by name (record[f]), so what a batch reads is what its entries
-  -- name and not what the record holds; T.batch_value_bytes bounds those reads.
+  -- first use, by name (member_field in T.apply), so what a batch reads is what
+  -- its entries name and not what the record holds; T.limits.batch_value_bytes
+  -- bounds those reads.
   function T.member_head(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
     local mkey = T.memberkey(d, id)
@@ -566,16 +567,12 @@ do
       if string.find(n.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
       T.rethrow(n)
     end
-    local h = setmetatable({}, {__index = function(t, f)
-      local v = redis.call('HGET', mkey, f)
-      if v then rawset(t, f, v); return v end
-      return nil
-    end})
+    local h = {}
     if n == 0 then return h, false end
     local named = redis.call('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name)
-    if named[1] then rawset(h, 'epoch', named[1]) end
-    if named[2] then rawset(h, 'revision', named[2]) end
-    if named[3] then rawset(h, 'place:' .. d.name, named[3]) end
+    if named[1] then h.epoch = named[1] end
+    if named[2] then h.revision = named[2] end
+    if named[3] then h['place:' .. d.name] = named[3] end
     if (named[1] or '0') ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, named[1] or '0', d.epoch) end
     return h, true
   end
@@ -2199,6 +2196,18 @@ do
     -- Pre-state evaluation & expectation checking:
     local member_records = {}
     local member_exists = {} -- the member has a record
+    local member_cache = {} -- fields read by name: id -> field -> value, false for absent
+    local function member_field(id, f)
+      local cache = member_cache[id]
+      if not cache then cache = {}; member_cache[id] = cache end
+      local v = cache[f]
+      if v == nil then
+        v = redis.call('HGET', T.memberkey(d, id), f)
+        cache[f] = v
+      end
+      if v == false then return nil end
+      return v
+    end
     local member_places = {}
     local member_scores = {}
     local member_score_text = {} -- the score exactly as the store holds it
@@ -2292,7 +2301,7 @@ do
         end
         if exp.fields then
           for f, guard in pairs(exp.fields) do
-            local actual = record[f]
+            local actual = member_field(id, f)
             if guard.equals ~= nil then
               if actual == nil or actual ~= guard.equals then
                 return T.refuse('FIELDGUARD', id, T.excerpt(f), 'equals', T.excerpt(guard.equals), T.excerpt(actual) or '<absent>')
@@ -2329,7 +2338,7 @@ do
       local fields_changed = false
       if entry.set then
         for f, val in pairs(entry.set) do
-          local bval = record[f]
+          local bval = member_field(id, f)
           if bval ~= val then
             fields_changed = true
           end
@@ -2338,7 +2347,7 @@ do
       end
       if entry.unset then
         for _, f in ipairs(entry.unset) do
-          local bval = record[f]
+          local bval = member_field(id, f)
           if bval ~= nil then
             fields_changed = true
           end
