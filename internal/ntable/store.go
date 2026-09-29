@@ -431,7 +431,18 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalOpConflict:
 		cause = fmt.Errorf("%w: operation %s already holds a different request", ErrOpConflict, words(reply[2:]))
 	case typedrec.TableRefusalLimit:
-		cause = fmt.Errorf("%w: %v", ErrLimit, reply[2:])
+		if len(reply) >= 5 {
+			limit := &LimitError{Name: fmt.Sprint(reply[2])}
+			limit.Bound, _ = strconv.Atoi(fmt.Sprint(reply[3]))
+			limit.Observed, _ = strconv.Atoi(fmt.Sprint(reply[4]))
+			if len(reply) >= 6 {
+				limit.Member = fmt.Sprint(reply[5])
+				o.member = limit.Member
+			}
+			cause = limit
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrLimit, words(reply[2:]))
+		}
 	case typedrec.TableRefusalReservedField:
 		if len(reply) >= 4 {
 			o.member = fmt.Sprint(reply[2])
@@ -1296,6 +1307,19 @@ func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (R
 	body, err := payload(manifest)
 	if err != nil {
 		return Receipt{}, err
+	}
+	// The bounds are the server's; a manifest over one is refused here, with
+	// the same words, before it is sent.
+	limit := CheckBatchBounds(&manifest)
+	if limit == nil {
+		limit = over(limitNameManifest, LimitManifestBytes, len(body), "")
+	}
+	if limit != nil {
+		var le *LimitError
+		if errors.As(limit, &le) {
+			o.member = le.Member
+		}
+		return Receipt{}, fmt.Errorf("%s: %w; changed=no; run: %s", o.location(), limit, o.remedy())
 	}
 	key := DefKey(manifest.Table)
 	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)

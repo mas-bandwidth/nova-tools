@@ -106,7 +106,9 @@ func TestReaderProbeRawRefusalsWriteNothing(t *testing.T) {
 		if changed {
 			t.Errorf("%s: STORE CHANGED (partial or full write)", name)
 		}
-		if !refused && err == nil {
+		if err != nil {
+			t.Errorf("%s: a raw error reply leaves the script: %v", name, err)
+		} else if !refused {
 			t.Errorf("%s: accepted: %v", name, trunc(ans))
 		}
 	}
@@ -298,17 +300,31 @@ func TestReaderProbeEpochFirstWriteByApply(t *testing.T) {
 	}
 }
 
-// Field-guard count is not bounded: 3000 passing guards are accepted.
+// A field-guard or one_of count over the bound refuses by name; it never
+// runs the guards and never echoes the options.
 func TestReaderProbeUnboundedGuards(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
-	raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"g","actor":"p","members":[{"id":"b","expect":{"fields":{` + manyGuards(3000) + `}}}]}`
-	ans, err := rawApply(ctx, c, raw)
-	t.Logf("3000 field guards on one entry: %v %v", trunc(ans), err)
-	raw = `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"g2","actor":"p","members":[{"id":"b","expect":{"fields":{"role":{"one_of":[` + strings.TrimSuffix(strings.Repeat(`"z",`, 20000), ",") + `]}}}}]}`
-	ans, err = rawApply(ctx, c, raw)
-	t.Logf("20000 one_of options: %v %v", trunc(ans), err)
+	before := storeImage(t, c)
+	cases := map[string]string{
+		"3000 field guards":    `{"id":"b","expect":{"fields":{` + manyGuards(3000) + `}}}`,
+		"20000 one_of options": `{"id":"b","expect":{"fields":{"role":{"one_of":[` + strings.TrimSuffix(strings.Repeat(`"z",`, 20000), ",") + `]}}}}`,
+	}
+	for name, member := range cases {
+		raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"g-` + name[:4] + `","actor":"p","members":[` + member + `]}`
+		ans, err := rawApply(ctx, c, raw)
+		if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" {
+			t.Errorf("%s: %v %v; want a LIMIT refusal", name, trunc(ans), err)
+			continue
+		}
+		if len(fmt.Sprint(ans)) > 200 {
+			t.Errorf("%s: the refusal is %d bytes; it echoes the input", name, len(fmt.Sprint(ans)))
+		}
+	}
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("a refused over-bound manifest changed the store")
+	}
 }
 
 // A move score that is not a number, raw FCALL: refused, or silently ignored?

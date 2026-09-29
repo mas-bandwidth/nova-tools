@@ -176,3 +176,28 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 		runsWhenPasted(t, addr, tc.name, err.Error())
 	}
 }
+
+// A manifest over a bound is a refusal: exit 1, named, bound and count found,
+// changed=no, and a next command that runs; the input is not echoed.
+func TestBatchCLIOverBoundIsARefusal(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	fields := make([]string, ntable.LimitSetFields+1)
+	for i := range fields {
+		fields[i] = `"zzq` + strings.Repeat("f", i%7) + string(rune('a'+i%26)) + string(rune('a'+i/26)) + `":"v"`
+	}
+	manifest := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"0","operation_id":"over","members":[{"id":"m","expect":{},"set":{` + strings.Join(fields, ",") + `}}]}`
+	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit %d stdout %q stderr %q; want a refusal, exit 1", code, stdout, stderr)
+	}
+	for _, w := range []string{"limit exceeded: set fields per member: bound 128, observed 129", `member "m"`, "changed=no"} {
+		if !strings.Contains(stderr, w) {
+			t.Errorf("refusal lacks %q: %s", w, stderr)
+		}
+	}
+	if strings.Contains(stderr, "zzq") {
+		t.Errorf("refusal echoes the input: %s", stderr)
+	}
+	runsWhenPasted(t, addr, "over bound", stderr)
+}

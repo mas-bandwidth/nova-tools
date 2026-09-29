@@ -105,6 +105,9 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, errors.New("empty manifest")
 	}
+	if err := over(limitNameManifest, LimitManifestBytes, len(raw), ""); err != nil {
+		return nil, err
+	}
 
 	// 1. Strict exact-case, path-aware tokenization pass: duplicate keys, null checks, and type checks.
 	decToken := json.NewDecoder(bytes.NewReader(raw))
@@ -445,9 +448,6 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 		if id == "" {
 			return nil, errors.New("member id cannot be empty")
 		}
-		if len(id) > 256 {
-			return nil, fmt.Errorf("member id %q exceeds 256 bytes", id)
-		}
 		if strings.ContainsAny(id, "\x00\r\n\t") {
 			return nil, fmt.Errorf("invalid member id %q", id)
 		}
@@ -455,17 +455,7 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 			return nil, fmt.Errorf("duplicate member id %q in manifest", id)
 		}
 		seenMemberIDs[id] = true
-		if len(m.Set) > 1000 {
-			return nil, errors.New("set fields exceed 1000")
-		}
-		if len(m.Unset) > 1000 {
-			return nil, errors.New("unset fields exceed 1000")
-		}
-
 		if m.Expect != nil && m.Expect.Fields != nil {
-			if len(m.Expect.Fields) > 1000 {
-				return nil, errors.New("field guards exceed 1000")
-			}
 			for fName, fg := range m.Expect.Fields {
 				conds := 0
 				if fg.Equals != nil {
@@ -479,9 +469,6 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 					if len(fg.OneOf) == 0 {
 						return nil, fmt.Errorf("one_of for %q must be nonempty array", fName)
 					}
-					if len(fg.OneOf) > 1000 {
-						return nil, fmt.Errorf("one_of options for %q exceed 1000", fName)
-					}
 				}
 				if conds != 1 {
 					return nil, fmt.Errorf("field guard for %q must specify exactly one condition, got %d", fName, conds)
@@ -490,5 +477,8 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 		}
 	}
 
+	if err := CheckBatchBounds(&manifest); err != nil {
+		return nil, err
+	}
 	return &manifest, nil
 }

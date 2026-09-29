@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -56,6 +57,14 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 
 	manifest, err := ntable.ValidateBatchManifestRaw(raw)
 	if err != nil {
+		var limit *ntable.LimitError
+		if errors.As(err, &limit) {
+			what := limit.Error()
+			if limit.Member != "" {
+				what += fmt.Sprintf(" (member %q)", limit.Member)
+			}
+			return refused(stderr, verb, what+"; changed=no; run: nova-table batch -h")
+		}
 		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v", err))
 	}
 

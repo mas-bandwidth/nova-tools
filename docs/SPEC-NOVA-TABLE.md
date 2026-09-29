@@ -361,13 +361,30 @@ its verified immutable identity must be represented in a member field, or a late
 explicit table extension must provide its guard. A prior unguarded client read is
 not an atomic prerequisite proof.
 
-Initial proposed bounds: 128 entries with changes, 1,024 guard-only entries and
-1 MiB canonical encoded request. IDs/field counts and value byte limits must also
-be explicitly bounded by the implementation's reviewed manifest schema. Candidate
-limits are measured on supported benches before acceptance. Exceeding a limit
-refuses the whole request with the limit and remedy; no automatic chunking turns
-one requested transaction into several. A caller can explicitly narrow its next
-request, accepting the separately identified transaction scope.
+The bounds are one set. The server (`ns_table_apply`, `ns_table_read_set`), the
+Go manifest validator and `ApplyBatch` enforce the same numbers, and a test
+compares them with this table:
+
+| Bound | Value |
+| --- | --- |
+| entries with changes | 128 |
+| guard-only entries | 1024 |
+| manifest bytes | 1048576 |
+| member id bytes | 256 |
+| field value bytes | 65536 |
+| set fields per member | 128 |
+| unset fields per member | 1000 |
+| guards per member | 1000 |
+| one_of options | 1000 |
+| read set members | 1024 |
+
+An entry has changes when it holds a create, a move, a remove, a nonempty set or
+a nonempty unset; otherwise it is guard-only. A manifest at a bound is accepted;
+one over it refuses the whole request as `LIMIT`, before any read of the store
+or write, naming the bound, its value and the count found (and the member at
+fault for a per-member bound), and never echoing the input. No automatic
+chunking turns one requested transaction into several. A caller can explicitly
+narrow its next request, accepting the separately identified transaction scope.
 
 ### Validation, atomicity and replay
 

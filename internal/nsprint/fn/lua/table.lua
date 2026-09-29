@@ -66,6 +66,27 @@ do
     if #a ~= #b then return #a > #b end
     return a > b
   end
+  -- The bounds of a batch and of a read set. internal/ntable/limits.go holds
+  -- the same numbers and docs/SPEC-NOVA-TABLE.md states them; a test compares
+  -- the three. A refusal names the bound and the count found, never the input.
+  T.limits = {
+    manifest_bytes = 1048576, changed_entries = 128, guard_entries = 1024,
+    member_id_bytes = 256, field_value_bytes = 65536,
+    set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
+    read_set_members = 1024,
+  }
+  T.limit_names = {
+    manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
+    member_id_bytes = 'member id bytes', field_value_bytes = 'field value bytes',
+    set_fields = 'set fields per member', unset_fields = 'unset fields per member',
+    field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
+  }
+  -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
+  function T.over(key, observed, member)
+    local bound = T.limits[key]
+    if observed <= bound then return nil end
+    return T.refuse('LIMIT', T.limit_names[key], bound, observed, member)
+  end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
@@ -1351,9 +1372,8 @@ do
         end
       end
     end
-    if #target_ids > 1024 then
-      return T.refuse('LIMIT', 'read set scope exceeds 1024 members')
-    end
+    local over = T.over('read_set_members', #target_ids)
+    if over then return over end
     local members_out = {}
     local missing = {}
     for _, id in ipairs(target_ids) do
@@ -1657,7 +1677,8 @@ do
     local table_name = args[1]
     local raw_json = args[2]
     if type(raw_json) ~= 'string' then return T.refuse('ARGS', 'apply payload') end
-    if #raw_json > 1048576 then return T.refuse('LIMIT', 'manifest exceeds 1 MiB') end
+    local over = T.over('manifest_bytes', #raw_json)
+    if over then return over end
     local manifest_err = T.validate_manifest_json(raw_json)
     if manifest_err then return manifest_err end
     local digest = redis.sha1hex(raw_json)
@@ -1722,7 +1743,8 @@ do
       if type(entry) ~= 'table' or not T.word(entry.id) then
         return T.refuse('MEMBER', 'entry ' .. idx .. ' is not an object with a nonempty id without control characters')
       end
-      if #entry.id > 256 then return T.refuse('LIMIT', 'member id exceeds 256 bytes') end
+      local over = T.over('member_id_bytes', #entry.id)
+      if over then return over end
       if seen_ids[entry.id] then return T.refuse('TWICE', entry.id) end
       seen_ids[entry.id] = true
 
@@ -1733,26 +1755,42 @@ do
       if entry.set ~= nil then
         if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object', entry.id) end
         local count = 0
+        for _ in pairs(entry.set) do count = count + 1 end
+        local over = T.over('set_fields', count, entry.id)
+        if over then return over end
         for f, val in pairs(entry.set) do
-          count = count + 1
-          if count > 128 then return T.refuse('LIMIT', 'fields count exceeds 128') end
           if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
             return T.refuse('RESERVEDFIELD', entry.id, f)
           end
           if not T.word(f) or type(val) ~= 'string' then
             return T.refuse('ARGS', 'field name and value must be valid strings', entry.id)
           end
-          if #val > 65536 then return T.refuse('LIMIT', 'field value exceeds 64 KiB') end
+          over = T.over('field_value_bytes', #val, entry.id)
+          if over then return over end
         end
       end
       if entry.unset ~= nil then
         if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array', entry.id) end
+        local over = T.over('unset_fields', #entry.unset, entry.id)
+        if over then return over end
         for _, f in ipairs(entry.unset) do
           if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
             return T.refuse('RESERVEDFIELD', entry.id, f)
           end
           if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', entry.id) end
         end
+      end
+      if type(entry.expect) == 'table' and type(entry.expect.fields) == 'table' then
+        local guards = 0
+        for _, guard in pairs(entry.expect.fields) do
+          guards = guards + 1
+          if type(guard) == 'table' and type(guard.one_of) == 'table' then
+            local over = T.over('one_of_options', #guard.one_of, entry.id)
+            if over then return over end
+          end
+        end
+        local over = T.over('field_guards', guards, entry.id)
+        if over then return over end
       end
       if entry.set ~= nil and entry.unset ~= nil then
         for _, f in ipairs(entry.unset) do
@@ -1772,12 +1810,10 @@ do
       end
     end
 
-    if #changed_entries > 128 then
-      return T.refuse('LIMIT', 'changed entries exceed 128')
-    end
-    if #guard_entries > 1024 then
-      return T.refuse('LIMIT', 'guard-only entries exceed 1024')
-    end
+    local over = T.over('changed_entries', #changed_entries)
+    if over then return over end
+    over = T.over('guard_entries', #guard_entries)
+    if over then return over end
 
     -- Pre-state evaluation & expectation checking:
     local member_records = {}
@@ -1837,9 +1873,6 @@ do
           end
         end
         if exp.fields and type(exp.fields) == 'table' then
-          local fg_count = 0
-          for _ in pairs(exp.fields) do fg_count = fg_count + 1 end
-          if fg_count > 1000 then return T.refuse('LIMIT', 'field guards exceed 1000') end
           for f, guard in pairs(exp.fields) do
             if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
             local num_conds = 0
@@ -1861,9 +1894,6 @@ do
             elseif guard.one_of ~= nil then
               if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
                 return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
-              end
-              if #guard.one_of > 1000 then
-                return T.refuse('LIMIT', 'one_of options exceed 1000')
               end
               for _, opt in ipairs(guard.one_of) do
                 if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
@@ -1894,9 +1924,6 @@ do
       local member_fields = {}
       local fields_changed = false
       if entry.set then
-        local set_count = 0
-        for _ in pairs(entry.set) do set_count = set_count + 1 end
-        if set_count > 1000 then return T.refuse('LIMIT', 'set fields exceed 1000') end
         for f, val in pairs(entry.set) do
           local bval = record[f]
           if bval ~= val then
@@ -1909,7 +1936,6 @@ do
         end
       end
       if entry.unset then
-        if #entry.unset > 1000 then return T.refuse('LIMIT', 'unset fields exceed 1000') end
         for _, f in ipairs(entry.unset) do
           local bval = record[f]
           if bval ~= nil then
