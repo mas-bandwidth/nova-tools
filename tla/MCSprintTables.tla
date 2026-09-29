@@ -22,6 +22,13 @@ MCNone == {}
 MCPrimariesG == {"p1", "g", "p3"}
 MCNeedsG == [p \in Primaries |-> CASE p = "g" -> {"p1"} [] p = "p3" -> {"g"} [] OTHER -> {}]
 MCSentinels == {"g"}
+\* The positional instance, all in s1: p1, p2 admitted; the sentinel g is
+\* inserted between them, and p0 may be added in front of g.
+MCPrimariesPos == {"p1", "p0", "g", "p2"}
+MCScorePos == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p0" -> 2 [] p = "g" -> 3 [] OTHER -> 4]
+MCPosAdmitted == {"p1", "p2"}
+\* The smaller positional instance, without p0.
+MCPrimariesPos3 == {"p1", "g", "p2"}
 MCScore0 == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p2" -> 2 [] p = "p3" -> 3 [] p = "g" -> 4]
 \* Admission: every primary before the first step, or p2 admitted by add.
 MCAllAdmitted == Primaries
