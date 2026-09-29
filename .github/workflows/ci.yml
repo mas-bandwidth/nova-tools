@@ -42,7 +42,7 @@
 # package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
 # names it. The FUNCTIONAL tier is the `functional` job: the tests behind
 # `//go:build functional`, over the same packages, on merge_group (a stream's
-# merge into dev), push to dev, pull requests marked ready for review (or labeled),
+# merge into dev), pull requests marked ready for review (or labeled),
 # the nightly schedule and a manual run. See docs/TESTING.md.
 #
 # NO NATIVE WINDOWS LEG, since 2026-09-18. Glenn's ruling: "drop the native
@@ -128,8 +128,10 @@ concurrency:
   # and 04:53Z on main; 16:35Z on dev, whose rerun was cancelled by the next
   # merge and read as red, freezing the bench — row 8 of #828, and the reason
   # the branch names are not written twice any more). A PR keys on its number so
-  # its newest head supersedes older runs; every other branch keys on its ref.
-  group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
+  # its newest head supersedes older runs, with ready_for_review and labeled
+  # events segregated to a functional subgroup so review actions never cancel
+  # in-flight unit test runs; every other branch keys on its ref.
+  group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ (contains(fromJSON('["ready_for_review", "labeled"]'), github.event.action) && 'functional') || 'unit' }}-${{ inputs.bench }}
   # A CONSTANT, not the second copy of the branch list it used to be. The
   # sha-keyed group above is what protects an integration branch's verdict: its
   # group holds that one run and nothing else, so there is never a sibling for
@@ -158,7 +160,7 @@ jobs:
     # windows-latest minute. What it cannot catch is RUNTIME behaviour, and that
     # is the deliberate trade: the certification tier still runs the real
     # Windows suite, and nothing on the CL path waits for it.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
@@ -329,7 +331,7 @@ jobs:
     # importers; the push to dev and the nightly run keep the whole tree.
     # It runs on the nightly schedule too, for the `functional` job's list and
     # for the unit `test` job's nightly space shards (#4413).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action) || (github.event.action == 'labeled' && (github.event.label.name == 'functional' || github.event.label.name == 'ci-functional'))))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     outputs:
@@ -556,7 +558,7 @@ jobs:
           # THE FUNCTIONAL TIER'S LIST: the same selected packages, dealt into
           # FOUR space shards like a pull request's unit legs (the darwin-only
           # packages have no Linux leg). The `functional` job reads it on
-          # merge_group, schedule, workflow_dispatch, push to dev, and ready_for_review
+          # merge_group, schedule, workflow_dispatch, and ready_for_review / labeled
           # pull requests; each leg's `make test-functional` runs just the tests
           # behind the functional tag.
           FUNCTIONAL_SHARDS=4
@@ -695,7 +697,7 @@ jobs:
     # evidence, and its raw times are what an allowlist row is measured from.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action))
     strategy:
       fail-fast: false
       matrix:
@@ -1024,13 +1026,13 @@ jobs:
     # A functional test is one behind `//go:build functional`: a real
     # redis-server, a real binary, a real process. It runs on merge_group (the
     # queue's run of a stream PR into dev), on the nightly schedule and by hand,
-    # on push to dev, and on pull requests marked ready for review (or with a
-    # functional label). Same selected packages as the unit legs, four space
-    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
-    # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
+    # and on pull requests marked ready for review (or with a functional label).
+    # Same selected packages as the unit legs, four space shards, two cores a leg,
+    # the two-minute cap. ci-ok requires it when it ran.
+    # internal/ci: TestFunctionalTierRunsOnMergeQueueAndReadyPRs.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'dev') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (!github.event.pull_request.draft || github.event.action == 'ready_for_review' || contains(github.event.pull_request.labels.*.name, 'functional') || contains(github.event.pull_request.labels.*.name, 'ci-functional')))
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && ((!github.event.pull_request.draft && github.event.action != 'labeled') || (github.event.action == 'labeled' && (github.event.label.name == 'functional' || github.event.label.name == 'ci-functional')) || (github.event.action != 'labeled' && (contains(github.event.pull_request.labels.*.name, 'functional') || contains(github.event.pull_request.labels.*.name, 'ci-functional')))))
     strategy:
       fail-fast: false
       matrix:
@@ -1163,7 +1165,7 @@ jobs:
     # landing on dev green. One package, one runner, inside the two-minute
     # budget (measured 2026-09-22: `make test-race PKGS=./internal/redisq`
     # passes in seconds warm and 54 s cold, cap 2 min).
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
@@ -1450,7 +1452,7 @@ jobs:
     # self-hosted runners cannot see", and the next such platform is an entry
     # rather than a rewrite.
     name: test-hosted-pr (${{ matrix.leg.name }})
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
     strategy:
       fail-fast: false
       matrix:
@@ -1534,7 +1536,7 @@ jobs:
     # that a change to a verb names the sequence a friend runs through it and adds
     # the test. On a pull_request this is a self-hosted Linux job
     # using the machine's own Go, guarded as every self-hosted job is.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
@@ -1649,7 +1651,7 @@ jobs:
     # This job answers "did a lisp/ path move?" and the lisp job reads the answer
     # and skips otherwise; no tree holds a lisp/ path today. On a change that
     # touches none, the lisp job is skipped and ci-ok counts that as a pass. It runs on one Linux runner; it is a gate, not a check.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     outputs:
@@ -2036,10 +2038,15 @@ jobs:
             [ "$result" = "success" ] && continue
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
-            # functional runs on merge_group, workflow_dispatch, push to dev,
+            # functional runs on merge_group, workflow_dispatch,
             # and ready_for_review / labeled pull requests. On a draft pull
             # request without a functional label it is skipped by design. When it ran, it must pass.
             [ "$job" = "functional" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" = "pull_request" ] && continue
+            # On ready_for_review or labeled events, the unit tier jobs (lint, test, test-race-queue, e2e)
+            # are skipped by design so only the functional matrix runs at the unchanged commit SHA.
+            if [ "${{ github.event_name }}" = "pull_request" ] && ([ "${{ github.event.action }}" = "ready_for_review" ] || [ "${{ github.event.action }}" = "labeled" ]) && [ "$result" = "skipped" ]; then
+              continue
+            fi
             # test-windows-pr was aggregated here until 2026-09-18, when the
             # native windows runners were dropped. The Windows guard is now the
             # lint job's `make vet-windows` step, so a GOOS=windows compile break
@@ -2056,7 +2063,6 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
-            "functional:${{ needs.functional.result }}" \
             "test-race-queue:${{ needs.test-race-queue.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "lisp:${{ needs.lisp.result }}" \
@@ -2068,7 +2074,6 @@ jobs:
             # path moved; a skipped lisp is a pass. A red
             # lisp still blocks the merge.
             if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
-            if [ "$job" = "functional" ] && [ "$result" = "skipped" ]; then continue; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

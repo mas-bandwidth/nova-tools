@@ -203,12 +203,13 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 	}
 }
 
-// TestFunctionalTierRunsOnlyAsStreamsMerge: the functional job runs on
-// merge_group, schedule, workflow_dispatch, push to dev, and ready_for_review
-// (or labeled) pull requests, on the space pool under the two-minute cap, over
+// TestFunctionalTierRunsOnMergeQueueAndReadyPRs: the functional job runs on
+// merge_group, schedule, workflow_dispatch, and ready_for_review (or labeled)
+// pull requests, on the space pool under the two-minute cap, over
 // test-packages' functional list, through `make test-functional`; ci-ok requires
-// it when it ran.
-func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
+// it when it ran. It never runs on push to dev, and a draft pull request skips it
+// unless carrying a functional label.
+func TestFunctionalTierRunsOnMergeQueueAndReadyPRs(t *testing.T) {
 	t.Parallel()
 
 	jobs := ciJobs(t)
@@ -221,17 +222,23 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 			t.Errorf("functional's if does not run on %s: %s", ev, job.If)
 		}
 	}
+	if strings.Contains(job.If, "event_name == 'push'") || strings.Contains(job.If, "ref_name == 'dev'") {
+		t.Errorf("functional's if must not run on push to dev: %s", job.If)
+	}
 	if !strings.Contains(job.If, "pull_request") {
 		t.Errorf("functional's if must run on pull_request: %s", job.If)
 	}
-	if !strings.Contains(job.If, "ready_for_review") {
-		t.Errorf("functional's if must check ready_for_review on pull requests: %s", job.If)
+	if !strings.Contains(job.If, "!github.event.pull_request.draft") {
+		t.Errorf("functional's if must guard against draft PRs (!github.event.pull_request.draft): %s", job.If)
 	}
 	if !strings.Contains(job.If, "head.repo.full_name == github.repository") {
 		t.Errorf("functional's if must carry the head-repo check on pull requests: %s", job.If)
 	}
-	if !strings.Contains(job.If, "dev") {
-		t.Errorf("functional's if must run on push to dev: %s", job.If)
+	if !strings.Contains(job.If, "github.event.action == 'labeled'") {
+		t.Errorf("functional's if must check labeled action on pull requests: %s", job.If)
+	}
+	if !strings.Contains(job.If, "github.event.label.name == 'functional'") || !strings.Contains(job.If, "ci-functional") {
+		t.Errorf("functional's if must filter for functional labels on labeled events: %s", job.If)
 	}
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	if !strings.Contains(ci, "ready_for_review") {
@@ -240,9 +247,19 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	if !strings.Contains(ci, "labeled") {
 		t.Error("ci.yml pull_request trigger does not include labeled")
 	}
-	if !strings.Contains(job.If, "functional") {
-		t.Errorf("functional's if must check for functional label on pull requests: %s", job.If)
+
+	// Verify unit jobs do not run on ready_for_review or labeled PR actions
+	for _, unitJobName := range []string{"lint", "test", "test-race-queue", "e2e", "test-hosted-pr"} {
+		uj, ok := jobs[unitJobName]
+		if !ok {
+			t.Errorf("ci.yml missing unit job %s", unitJobName)
+			continue
+		}
+		if !strings.Contains(uj.If, "opened") || !strings.Contains(uj.If, "synchronize") || !strings.Contains(uj.If, "reopened") {
+			t.Errorf("%s must gate on opened, synchronize, reopened to avoid running on ready_for_review or labeled: %s", unitJobName, uj.If)
+		}
 	}
+
 	if job.TimeoutMinutes != 2 {
 		t.Errorf("functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
 	}
