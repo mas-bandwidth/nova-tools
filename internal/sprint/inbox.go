@@ -89,8 +89,14 @@ func Inbox(r InboxReq) []Group {
 		if !seen[k+o.Subject()] {
 			seen[k+o.Subject()] = true
 			g.Count++
-			if len(g.Primaries) < MaxListed {
-				g.Primaries = append(g.Primaries, o.Subject())
+			shown := []string{o.Subject()}
+			if n.StreamLevel {
+				shown = n.Primaries // the cards the stream stopped on
+			}
+			for _, p := range shown {
+				if len(g.Primaries) < MaxListed && !contains(g.Primaries, p) {
+					g.Primaries = append(g.Primaries, p)
+				}
 			}
 		}
 		if !contains(g.Notes, n.ID) {
@@ -139,7 +145,7 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Count += c
 		for _, p := range n.Primaries {
-			if len(g.Primaries) < MaxListed {
+			if len(g.Primaries) < MaxListed && !contains(g.Primaries, p) {
 				g.Primaries = append(g.Primaries, p)
 			}
 		}

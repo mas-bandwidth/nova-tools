@@ -192,8 +192,13 @@ func TestD1APendingOperationIsFinishedFirst(t *testing.T) {
 	}
 	h.m.Fail = nil
 	rep, _, err := h.st.Check(h.ctx, 1)
-	if err != nil || rep.Pending == "" || len(rep.Violations) != 1 || rep.Violations[0].Rule != 10 {
-		t.Fatalf("check with the start pending: %+v %v", rep, err)
+	if err != nil || rep.Pending == "" || !rep.InFlight || len(rep.Violations) != 0 {
+		t.Fatalf("check with the start in flight: %+v %v", rep, err)
+	}
+	h.tick(2 * time.Minute)
+	rep, _, err = h.st.Check(h.ctx, 3)
+	if err != nil || rep.Pending == "" || rep.InFlight || len(rep.Violations) != 1 || rep.Violations[0].Rule != 10 {
+		t.Fatalf("check with the start cut: %+v %v", rep, err)
 	}
 	// the next verb, whatever it is, finishes it first
 	res := h.must(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}}))
@@ -510,5 +515,29 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	v, _ = h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	if len(v.Groups) != 1 || v.Groups[0].Overdue {
 		t.Fatalf("a waited judgment: %+v", v.Groups)
+	}
+}
+
+// unreadable answers every batch with a receipt this build cannot read, after
+// committing it, as a store with another build's function library does.
+type unreadable struct{ Backend }
+
+func (u unreadable) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Receipt, error) {
+	if _, err := u.Backend.Apply(ctx, m); err != nil {
+		return ntable.Receipt{}, err
+	}
+	return ntable.Receipt{}, errors.New(`table "t-fleet" batch "x": unmarshal batch delta: json: cannot unmarshal number into Go struct field rawMemberDelta.after_score of type string`)
+}
+
+func TestAReceiptThisBuildCannotReadIsACommit(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	st := *h.st
+	st.B = unreadable{h.m}
+	if _, err := st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m1"})); err != nil {
+		t.Fatal(err)
+	}
+	if h.m.Pending() != nil || h.snap().MemberCtl("m1").F("status") != sprint.Up {
+		t.Fatalf("not committed")
 	}
 }

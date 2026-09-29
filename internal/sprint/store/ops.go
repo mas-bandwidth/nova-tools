@@ -41,12 +41,17 @@ type CheckReport struct {
 	Violations []sprint.Violation `json:"violations"`
 	Reads      int                `json:"reads"`
 	Pending    string             `json:"pending,omitempty"` // the operation the fence holds
+	// InFlight says the pending operation is younger than the grace: its
+	// writer is at it, and only the rules that always hold are judged.
+	InFlight bool `json:"in_flight,omitempty"`
 }
 
 // Check reads the four tables between two reads of the fence and holds them to
-// section 9. With an operation pending, only the rules that always hold are
-// judged, and the operation is reported. A read that saw the fence move is
-// taken again, up to reads times.
+// section 9. A read that saw the fence move, or an operation pending, is taken
+// again, up to reads times, for a quiet moment. With an operation still
+// pending, only the rules that always hold are judged and the operation is
+// reported: in flight when it is younger than the grace, cut (a violation)
+// when it is older.
 func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Snapshot, error) {
 	var rep CheckReport
 	for i := 0; i < max(reads, 1); i++ {
@@ -63,17 +68,33 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		if err != nil {
 			return rep, nil, err
 		}
-		var pending []string
+		pending := f.Pending
+		if pending == nil {
+			pending = f2.Pending
+		}
+		last := i == max(reads, 1)-1
 		switch {
-		case f.Pending != nil:
-			rep.Pending, pending = f.Pending.ID, []string{f.Pending.ID}
-		case f2.Pending != nil:
-			rep.Pending, pending = f2.Pending.ID, []string{f2.Pending.ID}
-		case f.Gen != f2.Gen:
-			st.backoff(i + 2)
+		case pending == nil && f.Gen != f2.Gen, pending != nil && !last:
+			st.backoff(i + 2) // another writer is at it: look again for a quiet moment
 			continue
 		}
-		rep.Violations = sprint.Check(s, pending)
+		var ops []string
+		rep.Pending, rep.InFlight = "", false
+		if pending != nil {
+			rep.Pending = pending.ID
+			rep.InFlight = s.Now.Sub(pending.At) < st.grace()
+			ops = []string{pending.ID}
+		}
+		rep.Violations = sprint.Check(s, ops)
+		if rep.InFlight {
+			var kept []sprint.Violation
+			for _, v := range rep.Violations {
+				if v.Rule != 10 {
+					kept = append(kept, v)
+				}
+			}
+			rep.Violations = kept
+		}
 		for _, t := range All {
 			if err := st.B.CheckTable(ctx, st.Names.Table(t)); err != nil {
 				rep.Violations = append(rep.Violations, sprint.Violation{Rule: 1, Detail: err.Error()})

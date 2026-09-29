@@ -449,6 +449,10 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		out = stderr
 	}
-	fmt.Fprintf(out, "CHECK %s violations=%d pending=%s\n", status, len(rep.Violations), dashed(rep.Pending))
+	inFlight := ""
+	if rep.InFlight {
+		inFlight = " in_flight=yes"
+	}
+	fmt.Fprintf(out, "CHECK %s violations=%d pending=%s%s\n", status, len(rep.Violations), dashed(rep.Pending), inFlight)
 	return code
 }

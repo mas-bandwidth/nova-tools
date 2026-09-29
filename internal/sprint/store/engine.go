@@ -480,6 +480,14 @@ func (st *Store) apply(ctx context.Context, op OpRecord) (bool, error) {
 	return true, nil
 }
 
+// unreadableReceipt says the store answered with its RECEIPT and this build
+// could not read the receipt's delta (a store whose function library is of
+// another build): the batch committed. ntable.ApplyBatch parses the delta
+// only after it has seen the RECEIPT reply.
+func unreadableReceipt(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unmarshal batch delta")
+}
+
 // send applies a manifest, sending the same bytes again after a lost reply:
 // the table layer returns the original receipt when it had applied it.
 func (st *Store) send(ctx context.Context, man ntable.BatchManifest) (ntable.Receipt, error) {
@@ -488,6 +496,9 @@ func (st *Store) send(ctx context.Context, man ntable.BatchManifest) (ntable.Rec
 		rc, err := st.B.Apply(ctx, man)
 		if err == nil {
 			return rc, nil
+		}
+		if unreadableReceipt(err) {
+			return ntable.Receipt{Outcome: "committed; its delta unreadable by this build"}, nil
 		}
 		if ntable.IsRefusal(err) || errors.Is(err, ntable.ErrMalformedManifest) {
 			return rc, err

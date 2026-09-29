@@ -117,3 +117,33 @@ func (l *lostOnce) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Re
 	}
 	return l.Backend.Apply(ctx, m)
 }
+
+// The owner of an operation and a writer finishing it for the owner release
+// it at the same time: one commit, no error to either, the notifications once.
+func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
+	t.Parallel()
+	st, _ := liveStore(t)
+	ctx := context.Background()
+	f, err := st.B.ReadFence(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := OpRecord{ID: "op-1", Verb: "test", At: time.Now(), Notes: []sprint.Note{{ID: "op-1.1", Kind: sprint.Judgment, Type: sprint.NWorkFailed,
+		Stream: "s1", Primaries: []string{"p1"}, Count: 1, At: time.Now()}}}
+	if ok, err := st.B.Acquire(ctx, f.Gen, op); !ok || err != nil {
+		t.Fatalf("acquire: %v %v", ok, err)
+	}
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { errs <- st.B.Release(ctx, op, true) }()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("release: %v", err)
+		}
+	}
+	notes, _, err := st.B.NotesSince(ctx, "", 100)
+	if err != nil || len(notes) != 1 {
+		t.Fatalf("notifications: %d %v", len(notes), err)
+	}
+}

@@ -207,29 +207,38 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 // the streams' progress, the caller's result, and the fence emptied.
 func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 	fence := r.key(keyFence)
-	err := r.C.Watch(ctx, func(tx *redis.Tx) error {
-		cur, err := tx.Get(ctx, fence).Result()
-		if errors.Is(err, redis.Nil) {
-			return nil
-		}
-		if err != nil {
+	var err error
+	for i := 0; i < 8; i++ {
+		err = r.C.Watch(ctx, func(tx *redis.Tx) error {
+			cur, err := tx.Get(ctx, fence).Result()
+			if errors.Is(err, redis.Nil) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			var held OpRecord
+			if json.Unmarshal([]byte(cur), &held) != nil || held.ID != op.ID {
+				return nil
+			}
+			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+				if commit {
+					if err := r.commit(ctx, p, op); err != nil {
+						return err
+					}
+				}
+				p.Del(ctx, fence)
+				return nil
+			})
+			return err
+		}, fence)
+		// The fence moved while this release was prepared: another writer
+		// finishing the same operation released it, or took the fence after;
+		// read it again, and release only if it still holds this operation.
+		if !errors.Is(err, redis.TxFailedErr) {
 			return err
 		}
-		var held OpRecord
-		if json.Unmarshal([]byte(cur), &held) != nil || held.ID != op.ID {
-			return nil
-		}
-		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
-			if commit {
-				if err := r.commit(ctx, p, op); err != nil {
-					return err
-				}
-			}
-			p.Del(ctx, fence)
-			return nil
-		})
-		return err
-	}, fence)
+	}
 	return err
 }
 
