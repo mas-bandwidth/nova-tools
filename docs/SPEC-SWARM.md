@@ -123,15 +123,16 @@ The harness configuration written by the machinery carries the variable's NAME, 
 A bench is bigger than its owners: one bench,
 many owners, and the slots on it are one shared pool, not one pool per owner.
 A bench carries ONE slot store shared by every owner, at <bench store>/slots,
-and every launcher takes a lease per card before it runs and releases it after.
+and a lease on it is held through the broker verbs below.
 The seven rules:
 
 1. A bench carries ONE slot store shared by every owner, at <bench store>/slots,
    a directory of atomic mkdir leases each holding owner, pid, card label, until=.
-2. Batch runners and hand launchers take a capacity lease per card before they
-   run and release it afterward; a launch without that lease is refused by the
-   launcher. Native takes only job and slot directory leases (.lease, .slot-lease);
-   it reads and writes no bench capacity store.
+2. `batch` without `--runner` requires `--slots-store` and `--owner` and refuses
+   without them; it forwards both to each card's `native`, which accepts them and
+   reads neither. Neither verb takes a bench capacity lease: `native` takes only job
+   and slot directory leases (.lease, .slot-lease) and reads and writes no bench
+   capacity store, and a lease on the store is held only through the broker verbs (rule 3).
 3. The broker verbs are the only way to hold a slot:
 
    ```
@@ -161,7 +162,7 @@ Red tests (each seen red before it is trusted):
 - two owners at their shares cannot exceed capacity;
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
-- a launch without a lease is refused by the launcher;
+- `batch` without `--runner` refuses a launch that names no `--slots-store` and `--owner`;
 - a schema card is refused at take when the remaining share fits only a read;
 - a live-until lease whose pid is gone is stranded with its label.
 
