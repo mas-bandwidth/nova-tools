@@ -332,8 +332,9 @@ dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
 whom and when. An add counts only valid candidate IDs as proposed dependencies;
-a dependent whose prerequisite is neither stored nor admitted is refused too.
-Other valid cards retain per-card partial acceptance. A stored waiting primary
+a missing prerequisite refuses the dependent too. Needs are shared across an
+add, so this refusal applies to every requested card. Without a missing need,
+other valid cards retain per-card partial acceptance. A stored waiting primary
 or sentinel whose need has no record gets one missing-need judgment from
 resolve or the tick, naming those needs. Acknowledging it waives only its
 named needs that are still missing; it never waives a live prerequisite or a

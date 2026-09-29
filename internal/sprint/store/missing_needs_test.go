@@ -132,6 +132,7 @@ func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
 	if len(notes) != 1 || strings.Join(notes[0].Note.Needs, ",") != "later.bad" {
 		t.Fatalf("new missing need not raised: %+v", notes)
 	}
+	h.clean("later missing need remains judged")
 }
 
 func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
