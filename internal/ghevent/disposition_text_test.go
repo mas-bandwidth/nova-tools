@@ -2,11 +2,32 @@ package ghevent
 
 import (
 	"encoding/json"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/textbody"
 )
+
+func TestGheventDoesNotImportMerge(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range pkgs {
+		for filename, file := range pkg.Files {
+			for _, imp := range file.Imports {
+				path := strings.Trim(imp.Path.Value, `"`)
+				if strings.Contains(path, "internal/merge") {
+					t.Fatalf("file %s imports %s; ghevent must not depend on internal/merge", filename, path)
+				}
+			}
+		}
+	}
+}
 
 func TestCommentHeadComesFromVisibleDisposition(t *testing.T) {
 	t.Parallel()

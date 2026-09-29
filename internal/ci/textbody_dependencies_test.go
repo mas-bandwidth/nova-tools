@@ -49,7 +49,7 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 			imports[pkg] = append(imports[pkg], dep)
 		}
 	}
-	for _, root := range []string{"internal/ghevent", "internal/textbody"} {
+	for _, root := range []string{"internal/ghevent", "internal/textbody", "internal/nsprint/disposition"} {
 		if _, ok := imports[module+root]; !ok {
 			t.Fatalf("missing root %s", root)
 		}
