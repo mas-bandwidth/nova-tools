@@ -28,6 +28,7 @@ import (
 type Mem struct {
 	mu       sync.Mutex
 	tables   map[string]*memTable
+	dropped  map[string]*memResidue // what a drop keeps of a table, as the table layer's does
 	views    map[string]ntable.View
 	fence    *OpRecord
 	gen      uint64
@@ -72,7 +73,7 @@ type memOp struct {
 
 // NewMem is an empty store.
 func NewMem() *Mem {
-	return &Mem{tables: map[string]*memTable{}, views: map[string]ntable.View{}, done: map[string]string{}, progress: map[string]time.Time{},
+	return &Mem{tables: map[string]*memTable{}, dropped: map[string]*memResidue{}, views: map[string]ntable.View{}, done: map[string]string{}, progress: map[string]time.Time{},
 		notes: map[string]sprint.Note{}, open: map[string]string{}, Calls: map[string]int{}}
 }
 
@@ -396,6 +397,7 @@ func (m *Mem) Create(_ context.Context, t ntable.Table) error {
 	def := t
 	def.Rows = nil
 	m.tables[t.Name] = &memTable{def: def, texts: map[string]map[string]string{}, members: map[string]*memMember{}, ops: map[string]memOp{}}
+	m.takeResidue(m.tables[t.Name])
 	return nil
 }
 
@@ -459,6 +461,7 @@ func (m *Mem) ViewDelete(_ context.Context, name string) error {
 func (m *Mem) DropTable(_ context.Context, table string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.keepResidue(table)
 	delete(m.tables, table)
 	return nil
 }
@@ -640,15 +643,6 @@ func (m *Mem) SetCursor(_ context.Context, id string) error {
 	defer m.mu.Unlock()
 	m.cursor = id
 	return nil
-}
-
-func (m *Mem) DropKeys(context.Context) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n := len(m.inbox) + len(m.notes) + len(m.open) + len(m.done)
-	m.fence, m.inbox, m.notes, m.open, m.cursor = nil, nil, map[string]sprint.Note{}, map[string]string{}, ""
-	m.done, m.progress = map[string]string{}, map[string]time.Time{}
-	return n, nil
 }
 
 // Record is a member's record as the store holds it, for tests.

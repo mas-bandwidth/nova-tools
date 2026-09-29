@@ -25,17 +25,6 @@ func (st *Store) Init(ctx context.Context) error {
 	return st.B.ViewSet(ctx, st.Names.ViewDef())
 }
 
-// Teardown drops the four tables, the view and every key of the deployment.
-func (st *Store) Teardown(ctx context.Context) (int, error) {
-	_ = st.B.ViewDelete(ctx, st.Names.View())
-	for _, t := range All {
-		if err := st.B.DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
-			return 0, err
-		}
-	}
-	return st.B.DropKeys(ctx)
-}
-
 // CheckReport is check's answer.
 type CheckReport struct {
 	Violations []sprint.Violation `json:"violations"`
