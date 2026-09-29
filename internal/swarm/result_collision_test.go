@@ -24,14 +24,16 @@ import (
 // MarkerNoResult written into reports/ that outlives the run.
 //
 // Asserted here with no Windows and no race. The collision is produced through the
-// forceTransientIO seam over a RESULT.md that is a DIRECTORY -- this package's portable
+// FileRetry seam over a RESULT.md that is a DIRECTORY -- this package's portable
 // stand-in for a pending replace -- and it lasts a few polls, far LESS than SteadyWindow.
 // The rule is that the job is still classified from the report's CONTENT.
 func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
+	t.Parallel()
 	const body = "# a published report\n\n## Head\nfindings: 1\nrepo: o/n\nrev: abc\nit published before its dispatcher read it.\n\n" +
 		"## Findings\n- one thing, x.go:1\n\n## Per item\n| item | state | evidence |\n| --- | --- | --- |\n| an item | red | x.go:1 |\n"
 
 	t.Run("finish classifies the job from the report", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "pool"), 0o755); err != nil {
 			t.Fatal(err)
@@ -68,7 +70,8 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		hits := collideUntilRead(t, ResultPath(jobDir), body)
+		hits, retry := collideUntilRead(t, ResultPath(jobDir), body)
+		p.Retry = retry
 		in := RunInput{Pool: p, Stdout: io.Discard, Stderr: io.Discard, Now: func() time.Time { return now }}
 		r := &running{sc: sc, slot: 1, nonce: "abc123", exitAttest: ExitAttestHash(fixtureAttest), jobDir: jobDir, started: now, deadline: 30 * time.Second}
 		line, end, dest := in.finish(r, map[int]bool{}, now)
@@ -90,6 +93,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 	})
 
 	t.Run("finalize retains the report rather than a marker", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "pool"), 0o755); err != nil {
 			t.Fatal(err)
@@ -104,7 +108,8 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 		if err := os.MkdirAll(jobDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		hits := collideUntilRead(t, ResultPath(jobDir), body)
+		hits, retry := collideUntilRead(t, ResultPath(jobDir), body)
+		p.Retry = retry
 		fin, err := p.Finalize(Ending{Sidecar: sc, JobDir: jobDir, Provider: "fake", Model: "fake-model",
 			End: EndDone, RC: 0, Started: now, Ended: now, Usage: ProviderUsage{Values: map[string]string{}}})
 		if err != nil {
@@ -157,7 +162,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 // caller ends with names the read it means rather than any failure that happened to land
 // while the seam was armed (#132). The narrowing stops at the count: what is transient stays
 // the seam's unnarrowed answer, for the bd6f3d7 reason above.
-func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
+func collideUntilRead(t *testing.T, path string, body string) (*atomic.Int64, FileRetry) {
 	t.Helper()
 	// A path that is already a record is REPLACED by the stand-in, so a collision can be
 	// armed over a file a reader has read once already -- which is what a rehash meets.
@@ -167,37 +172,38 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	}
 	var hits atomic.Int64
 	var restored atomic.Bool
-	forceTransientIO = func(err error) bool {
-		if err == nil || restored.Load() || errors.Is(err, fs.ErrNotExist) {
-			return transientIO(err)
-		}
-		// THE COUNT IS NARROWED TO THIS PATH, THE ANSWER IS NOT (#132). `hits` is what every
-		// caller asserts on last -- a zero means no read ever went through the collision
-		// wait -- so it must count reads of THIS record and not any failed read that happens
-		// while the seam is armed. The match is on the count (and on the lift, which belongs
-		// to the read that paid for it) and never on the transient ANSWER above: a
-		// PathError.Path match in that position is what broke on the Windows runner at
-		// bd6f3d7, where a pending replace does not always hand its error back at the path
-		// the reader named. A failure at somebody else's path is still waited out, and is
-		// nobody's collision here.
-		var pe *fs.PathError
-		if !errors.As(err, &pe) || filepath.Clean(pe.Path) != filepath.Clean(path) {
-			return true
-		}
-		// A few polls of collision -- enough that a reader which does not wait one out is
-		// caught, and orders of magnitude less than SteadyWindow -- and then the record is
-		// put back. The replace is retried on the next turn if it does not land, because a
-		// directory with a reader in it does not come away on the first ask on Windows.
-		if hits.Add(1) >= 3 {
-			_ = os.RemoveAll(path)
-			if err := os.WriteFile(path, []byte(body), 0o644); err == nil {
-				restored.Store(true)
+	retry := FileRetry{
+		Transient: func(err error) bool {
+			if err == nil || restored.Load() || errors.Is(err, fs.ErrNotExist) {
+				return transientIO(err)
 			}
-		}
-		return true
+			// THE COUNT IS NARROWED TO THIS PATH, THE ANSWER IS NOT (#132). `hits` is what every
+			// caller asserts on last -- a zero means no read ever went through the collision
+			// wait -- so it must count reads of THIS record and not any failed read that happens
+			// while the seam is armed. The match is on the count (and on the lift, which belongs
+			// to the read that paid for it) and never on the transient ANSWER above: a
+			// PathError.Path match in that position is what broke on the Windows runner at
+			// bd6f3d7, where a pending replace does not always hand its error back at the path
+			// the reader named. A failure at somebody else's path is still waited out, and is
+			// nobody's collision here.
+			var pe *fs.PathError
+			if !errors.As(err, &pe) || filepath.Clean(pe.Path) != filepath.Clean(path) {
+				return true
+			}
+			// A few polls of collision -- enough that a reader which does not wait one out is
+			// caught, and orders of magnitude less than SteadyWindow -- and then the record is
+			// put back. The replace is retried on the next turn if it does not land, because a
+			// directory with a reader in it does not come away on the first ask on Windows.
+			if hits.Add(1) >= 3 {
+				_ = os.RemoveAll(path)
+				if err := os.WriteFile(path, []byte(body), 0o644); err == nil {
+					restored.Store(true)
+				}
+			}
+			return true
+		},
 	}
-	t.Cleanup(func() { forceTransientIO = nil })
-	return &hits
+	return &hits, retry
 }
 
 // THE FIXTURE'S OWN GUARD IS ONLY AS GOOD AS WHAT IT COUNTS (#132, a LOW of the #126 read).
@@ -214,6 +220,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 // the path the reader named. This test holds both halves at once -- a wrong-path read is
 // still waited out, and is not counted.
 func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
+	t.Parallel()
 	const body = "# a published report\n\n## Head\nfindings: 1\n"
 	dir := t.TempDir()
 	armed := filepath.Join(dir, CopiedResult)
@@ -224,13 +231,13 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hits := collideUntilRead(t, armed, body)
+	hits, retry := collideUntilRead(t, armed, body)
 
 	// Half one: the transient ANSWER is not narrowed. A failed read of another path through
 	// the armed seam is still waited out, to its caller's own bound and not this package's,
 	// so the test costs a tenth of a second rather than SteadyWindow.
 	started := time.Now()
-	if _, err := readFileSteadyBy(other, time.Now().Add(20*steadyPoll)); err == nil {
+	if _, err := retry.ReadFileBy(other, time.Now().Add(20*steadyPoll)); err == nil {
 		t.Fatal("reading a directory answered no error at all; this fixture has nothing to arm on")
 	}
 	if waited := time.Since(started); waited < steadyPoll {
@@ -249,7 +256,7 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 
 	// And the seam still does its own job: a read of the armed path is counted, waited out,
 	// and answered with the record.
-	raw, err := readFileSteady(armed)
+	raw, err := retry.ReadFile(armed)
 	if err != nil {
 		t.Fatalf("the armed path never came back: %v", err)
 	}
@@ -274,10 +281,13 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 //   - a rehash that collided printed `TRIAGE SKIPPED id=… changed while read` over a report
 //     that had not changed by one byte.
 func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
+	t.Parallel()
 	t.Run("the retained copy collides", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		p, id := revisionPool(t, dir)
-		hits := collideUntilRead(t, filepath.Join(p.ReportsDir(id), CopiedResult), report())
+		hits, retry := collideUntilRead(t, filepath.Join(p.ReportsDir(id), CopiedResult), report())
+		p.Retry = retry
 
 		out := mustTriage(t, TriageInput{Pool: p})
 		if !strings.Contains(out, "TRIAGE REPORT id="+id) {
@@ -292,6 +302,7 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 	})
 
 	t.Run("the live report of a running job collides", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		p := emptyPool(t, dir)
 		jobDir := filepath.Join(dir, "job")
@@ -307,7 +318,8 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 		}
 		// A RUNNING job has no retained copy: that read answers ErrNotExist at once, which
 		// is an answer and not a collision, and the LIVE path is the one under the collision.
-		hits := collideUntilRead(t, ResultPath(jobDir), report())
+		hits, retry := collideUntilRead(t, ResultPath(jobDir), report())
+		p.Retry = retry
 
 		out := mustTriage(t, TriageInput{Pool: p})
 		if !strings.Contains(out, "TRIAGE REPORT id="+sc.ID) {
@@ -322,6 +334,7 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 	})
 
 	t.Run("the rehash collides", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		p, id := revisionPool(t, dir)
 		copyPath := filepath.Join(p.ReportsDir(id), CopiedResult)
@@ -332,7 +345,9 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 		// skipped, and the fixture is the same injected pause demanded test 16 uses.
 		var hits *atomic.Int64
 		out := mustTriage(t, TriageInput{Pool: p, pauseAfterFirstHash: func() {
-			hits = collideUntilRead(t, copyPath, report())
+			var retry FileRetry
+			hits, retry = collideUntilRead(t, copyPath, report())
+			p.Retry = retry
 		}})
 		if strings.Contains(out, "TRIAGE SKIPPED id="+id) {
 			t.Errorf("a rehash that COLLIDED was reported as a report that changed while it was read:\n%s", out)

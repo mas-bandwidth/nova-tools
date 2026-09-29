@@ -187,17 +187,18 @@ func TestStealPicksTheFullestBenchOnTheMirrorTimer(t *testing.T) {
 // MoveFileEx replace: while another worker's rename of the same source is delete-pending,
 // this rename fails ERROR_ACCESS_DENIED (5), and a bare os.Rename read that transient as a
 // fact and returned it, so the whole take failed instead of losing the race. The collision
-// is waited out here through the package's forceTransientIO seam over a destination that is
+// is waited out here through the FileRetry seam over a destination that is
 // a DIRECTORY -- this package's portable stand-in for a pending replace -- and it ends a
 // few polls later, far inside SteadyWindow.
 func TestTakeCardWaitsOutAReplaceCollision(t *testing.T) {
+	t.Parallel()
 	bench := t.TempDir()
 	plantCard(t, bench, "only")
 
 	dst := filepath.Join(TakenDir(bench), "w0-only"+CardExt)
-	hits := collideUntilRename(t, dst)
+	hits, retry := collideUntilRename(t, dst)
 
-	name, ok, err := TakeCard(bench, "w0")
+	name, ok, err := TakeCardWith(bench, "w0", retry)
 	if err != nil {
 		t.Fatalf("a rename collision while taking a card was read as a fact: %v", err)
 	}
@@ -219,13 +220,14 @@ func TestTakeCardWaitsOutAReplaceCollision(t *testing.T) {
 // THE STEAL'S RENAME MEETS THE SAME WINDOWS COLLISION, and the victim's line is only
 // respected once the rename LANDS: a transient refusal must not end the steal.
 func TestStealWaitsOutAReplaceCollision(t *testing.T) {
+	t.Parallel()
 	victim := t.TempDir()
 	plantCard(t, victim, "only")
 
 	dst := filepath.Join(TakenDir(victim), "thief-only"+CardExt)
-	hits := collideUntilRename(t, dst)
+	hits, retry := collideUntilRename(t, dst)
 
-	stolen, err := Steal(victim, "thief", 0)
+	stolen, err := StealWith(victim, "thief", 0, retry)
 	if err != nil {
 		t.Fatalf("a rename collision while stealing was read as a fact: %v", err)
 	}
@@ -245,25 +247,26 @@ func TestStealWaitsOutAReplaceCollision(t *testing.T) {
 // stand-in is lifted from INSIDE the seam on the third failure, so the rename that paid for
 // the wait is by construction the one whose retry lands; the counter is narrowed to this
 // path so the guard names the rename it means.
-func collideUntilRename(t *testing.T, dst string) *atomic.Int64 {
+func collideUntilRename(t *testing.T, dst string) (*atomic.Int64, FileRetry) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dst, "child"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var hits atomic.Int64
-	forceTransientIO = func(err error) bool {
-		if err == nil {
-			return false
-		}
-		var le *os.LinkError
-		if !errors.As(err, &le) || filepath.Clean(le.New) != filepath.Clean(dst) {
-			return transientIO(err)
-		}
-		if hits.Add(1) >= 3 {
-			_ = os.RemoveAll(dst)
-		}
-		return true
+	retry := FileRetry{
+		Transient: func(err error) bool {
+			if err == nil {
+				return false
+			}
+			var le *os.LinkError
+			if !errors.As(err, &le) || filepath.Clean(le.New) != filepath.Clean(dst) {
+				return transientIO(err)
+			}
+			if hits.Add(1) >= 3 {
+				_ = os.RemoveAll(dst)
+			}
+			return true
+		},
 	}
-	t.Cleanup(func() { forceTransientIO = nil })
-	return &hits
+	return &hits, retry
 }

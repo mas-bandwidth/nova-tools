@@ -101,7 +101,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// the worker had already published thrown away. Exactly the class this pass closed for
 	// exit.json, one file over. The collision is waited out; a file that is NOT THERE
 	// still answers at once, so a genuinely unpublished report is ClassNoResult as before.
-	raw, readErr := readFileSteady(ResultPath(r.jobDir))
+	raw, readErr := p.Retry.ReadFile(ResultPath(r.jobDir))
 	report := Report{Class: ClassNoResult}
 	if readErr == nil {
 		report = ParseReport(raw)

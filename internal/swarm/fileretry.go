@@ -64,57 +64,56 @@ func steadyDeadline(budget time.Time) time.Time {
 	return budget
 }
 
-// forceTransientIO is the SEAM for the one thing a unix test cannot produce: a read that
-// collides. It is nil in every build but a test's, and when it is set it decides transience
-// in place of the platform's rule, so that the bound above can be proved on the machine
-// that runs the tests rather than only on Windows.
-var forceTransientIO func(error) bool
+// FileRetry encapsulates the collision wait: an atomic replace collision (transient
+// ERROR_SHARING_VIOLATION or ERROR_ACCESS_DENIED on Windows) is waited out until its
+// deadline. In tests, Transient may be set to simulate transient errors without a global seam.
+type FileRetry struct {
+	Transient func(error) bool
+}
 
-func steadyTransient(err error) bool {
-	if forceTransientIO != nil {
-		return forceTransientIO(err)
+func (r FileRetry) transient(err error) bool {
+	if r.Transient != nil {
+		return r.Transient(err)
 	}
 	return transientIO(err)
 }
 
-// readFileSteady reads a whole file, waiting out a transient collision with a concurrent
-// atomic replace of the same path. A file that is NOT THERE is an answer, not a collision:
-// it returns immediately, so `os.IsNotExist` callers keep the meaning they had.
-//
-// It reads through readRegular (regular.go), so a path that is a SYMLINK or a FIFO is an
-// answer too -- refused at once, never followed and never waited on. That is every
-// dispatcher read of a worker-writable record: this function, and ReadJSON through it.
-func readFileSteady(path string) ([]byte, error) { return readFileSteadyBy(path, time.Time{}) }
+func (r FileRetry) ReadFile(path string) ([]byte, error) { return r.ReadFileBy(path, time.Time{}) }
 
-// readFileSteadyBy is readFileSteady under a caller's deadline: the collision wait gets the
-// smaller of this package's window and what the caller has left.
-func readFileSteadyBy(path string, budget time.Time) ([]byte, error) {
+func (r FileRetry) ReadFileBy(path string, budget time.Time) ([]byte, error) {
 	deadline := steadyDeadline(budget)
 	for {
 		raw, err := readRegular(path)
-		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
+		if err == nil || !r.transient(err) || !time.Now().Before(deadline) {
 			return raw, err
 		}
 		time.Sleep(steadyPoll)
 	}
 }
 
-// renameSteady renames, waiting out a reader that has the destination open. The caller's
-// error is the LAST one, so a path that is genuinely wrong still reports what is wrong
-// with it.
-func renameSteady(from, to string) error { return renameSteadyBy(from, to, time.Time{}) }
+func (r FileRetry) Rename(from, to string) error { return r.RenameBy(from, to, time.Time{}) }
 
-// renameSteadyBy is renameSteady under a caller's deadline, on the same terms as
-// readFileSteadyBy.
-func renameSteadyBy(from, to string, budget time.Time) error {
+func (r FileRetry) RenameBy(from, to string, budget time.Time) error {
 	deadline := steadyDeadline(budget)
 	for {
 		err := os.Rename(from, to)
-		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
+		if err == nil || !r.transient(err) || !time.Now().Before(deadline) {
 			return err
 		}
 		time.Sleep(steadyPoll)
 	}
+}
+
+func readFileSteady(path string) ([]byte, error) { return (FileRetry{}).ReadFile(path) }
+
+func readFileSteadyBy(path string, budget time.Time) ([]byte, error) {
+	return (FileRetry{}).ReadFileBy(path, budget)
+}
+
+func renameSteady(from, to string) error { return (FileRetry{}).Rename(from, to) }
+
+func renameSteadyBy(from, to string, budget time.Time) error {
+	return (FileRetry{}).RenameBy(from, to, budget)
 }
 
 // missing is the one question `state` and its kin actually mean to ask of a failed read:

@@ -432,14 +432,14 @@ func (p *Pool) Jobs() ([]Sidecar, error) {
 // meaning.
 func (p *Pool) ReportBytes(sc Sidecar) ([]byte, string, error) {
 	retained := filepath.Join(p.ReportsDir(sc.ID), CopiedResult)
-	if raw, err := readFileSteady(retained); err == nil {
+	if raw, err := p.Retry.ReadFile(retained); err == nil {
 		return raw, retained, nil
 	}
 	if sc.Job == "" {
 		return nil, "", os.ErrNotExist
 	}
 	live := ResultPath(sc.Job)
-	raw, err := readFileSteady(live)
+	raw, err := p.Retry.ReadFile(live)
 	return raw, live, err
 }
 
@@ -448,7 +448,7 @@ func (p *Pool) ReportBytes(sc Sidecar) ([]byte, string, error) {
 // from the one thing the rule exists to catch, a writer appending in place, and a report that
 // had not changed by one byte printed `TRIAGE SKIPPED … changed while read`.
 func (p *Pool) rehash(path string) (string, error) {
-	raw, err := readFileSteady(path)
+	raw, err := p.Retry.ReadFile(path)
 	if err != nil {
 		return "", err
 	}

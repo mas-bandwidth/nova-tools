@@ -27,9 +27,10 @@ import (
 // help -- with every read of the slot colliding. It fails against the loop this repair
 // replaced (there, roughly ceil(timeout/20ms) x SteadyWindow) and passes here at the
 // configured bound, with no Windows and no race: the collision is produced by the
-// forceTransientIO seam over a slot file that is a directory, so every read fails and every
+// FileRetry seam over a slot file that is a directory, so every read fails and every
 // failure is called transient.
 func TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, err := OpenPool(dir)
 	if err != nil {
@@ -38,8 +39,7 @@ func TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides(t *testing.T
 	if err := os.MkdirAll(p.Path(Slots, "1.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	forceTransientIO = func(err error) bool { return err != nil }
-	t.Cleanup(func() { forceTransientIO = nil })
+	p.Retry = FileRetry{Transient: func(err error) bool { return err != nil }}
 
 	// One read on its own still gets no more than the budget its caller has left: this is
 	// the min(window, remaining) that makes the loop below add up.

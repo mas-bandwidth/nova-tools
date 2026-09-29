@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 407
+# ceiling: 401
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -290,7 +290,6 @@ internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial:
 internal/swarm/hostguard_test.go:TestSCPFilePanicsUnderTheGuard serial: t.Setenv
 internal/swarm/hostguard_test.go:TestSSHOutputPanicsUnderTheGuard serial: t.Setenv
 internal/swarm/hostguard_test.go:TestSSHRunPanicsUnderTheGuard serial: t.Setenv
-internal/swarm/launch_bound_functional_test.go:TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides serial: swaps package var swarm.forceTransientIO
 internal/swarm/launchfail_test.go:TestProviderRetryDelayBands serial: os.Unsetenv
 internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
 internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeNumericBoundsPreserveZeroAndAbsence serial: t.Setenv
@@ -305,11 +304,6 @@ internal/swarm/prewarm_functional_test.go:TestPrewarmGitChildrenDropSecrets seri
 internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlistedRefused serial: swaps package var swarm.probeClient
 internal/swarm/pullworker_test.go:TestExecuteContainerRefusesSeatWithoutNovaSecrets serial: t.Setenv
 internal/swarm/pullworker_functional_test.go:TestExecuteContainerRunsThroughNovaSecrets serial: t.Setenv
-internal/swarm/queue_test.go:TestStealWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
-internal/swarm/queue_test.go:TestTakeCardWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
-internal/swarm/result_collision_test.go:TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent serial: swaps package var swarm.forceTransientIO
-internal/swarm/result_collision_test.go:TestATriageWhoseReportReadsCollideStillFoldsTheReport serial: swaps package var swarm.forceTransientIO
-internal/swarm/result_collision_test.go:TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed serial: swaps package var swarm.forceTransientIO
 internal/swarm/routeladder_test.go:TestRouteCardBelowTheFloorKeepsTodaysModel serial: t.Setenv
 internal/swarm/routeladder_test.go:TestRouteCardFollowsTheAnswer serial: t.Setenv
 internal/swarm/routeladder_test.go:TestRouteCardKeepsTodaysModelWhenTheProviderRefuses serial: t.Setenv
