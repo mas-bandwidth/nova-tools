@@ -970,6 +970,9 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 					st = append(st, x)
 				}
 			}
+			if len(st) == 0 || rng.IntN(10) == 0 {
+				st = s.StreamNames()
+			}
 			if len(st) == 0 {
 				continue
 			}

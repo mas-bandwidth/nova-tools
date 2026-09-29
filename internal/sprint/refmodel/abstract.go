@@ -75,15 +75,16 @@ func Abstract(o Observed) State {
 		}
 		a.Primaries[id] = p
 	}
-	// A primary ready or waiting whose card at its attempt field is not
-	// withdrawn has that attempt behind it: its next card is the next
-	// attempt (the engine's attempt field names the last card cut).
+	// A primary ready or waiting whose card at its attempt field is done
+	// has that attempt behind it (a rework with no member up): its next
+	// card is the next attempt (the engine's attempt field names the last
+	// card cut).
 	for id, p := range a.Primaries {
 		if p.State != Ready && p.State != Waiting {
 			continue
 		}
 		c := s.Fleet.Card(WC(id, p.Attempt))
-		if c != nil && !(c.Placed() && c.Col == sprint.Withdrawn) {
+		if c != nil && c.Placed() && c.Col == sprint.Done {
 			p.Attempt++
 			a.Primaries[id] = p
 		}
