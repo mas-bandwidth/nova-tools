@@ -1698,6 +1698,19 @@ red, `functional` 33 s green in its second attempt, `docs` skipped, `test-hosted
 60 s green; so `total=150` and `spin=75`, the red job's 42 s and the rerun's
 33 s. A job name is one token: the space in `test (linux)` prints as `\x20`.
 
+### queue
+
+`nova-ci queue --repo owner/name [--branch dev] [--json] [--table]` prints each
+entry in the merge queue of the target branch, its state, and for a failed
+merge-group run the job name and the first FAIL lines, one receipt line per
+entry. Exit 0 with the entries or `QUEUE OK ... entries=0` if empty; exit 2 on
+unusable flags or forge error.
+
+```
+$ nova-ci queue --repo mas-bandwidth/nova-tools --branch dev
+QUEUE repo=mas-bandwidth/nova-tools branch=dev pr=4582 pos=0 state=AWAITING_CHECKS run=35375346271 conclusion=failure job=test\x20(linux) fail=---\x20FAIL:\x20TestFoo\x20(0.01s)\x20;\x20foo_test.go:42:\x20expected\x201\x20got\x202
+```
+
 ## nova-config
 
 ```
