@@ -73,7 +73,7 @@ type Backend interface {
 	// result of the caller's operation id, in one exchange.
 	DoneBefore(ctx context.Context, callerOp string, before uint64) (uint64, bool, error)
 	// SetReview sets an open judgment's next review time (wait).
-	SetReview(ctx context.Context, noteID string, at time.Time) error
+	SetReview(ctx context.Context, noteID string, at, set time.Time) error
 	// Progress is each stream's last progress: the time of the last operation
 	// that changed its state or any of its counts.
 	Progress(ctx context.Context) (map[string]time.Time, error)

@@ -316,7 +316,9 @@ invariant broken; a failing reminder too) is answered for a while by
 until that much running time has passed (STOPPED time does not count); when it
 has and the condition still holds, the tick raises it again, and when the
 condition clears first the hold is closed. `wait` on any other judgment sets
-its review time.
+its review time, which counts running time from when it was set, as every
+deadline does. "The sprint is done" has no due time and is never marked
+overdue.
 
 The machine's tick writes its own judgments (section 14): cannot ask, no fleet
 member is up, a work card or a read card past its deadline, a stream with no

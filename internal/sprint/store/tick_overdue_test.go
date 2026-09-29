@@ -153,7 +153,7 @@ func TestAnOverdueMarkFollowsTheDueTime(t *testing.T) {
 	if n := h.overdueLines()[id]; n != 1 {
 		t.Fatalf("overdue lines %d, want 1", n)
 	}
-	if err := h.m.SetReview(h.ctx, id, h.now.Add(time.Hour)); err != nil {
+	if err := h.m.SetReview(h.ctx, id, h.now.Add(time.Hour), h.now); err != nil {
 		t.Fatal(err)
 	}
 	h.tick(time.Minute + time.Second)

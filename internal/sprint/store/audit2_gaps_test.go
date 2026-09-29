@@ -478,7 +478,7 @@ func TestAudit2ClosedSetupTimeCountsAsRunning(t *testing.T) {
 // DEFECT F. wait's review time is a clock time: a judgment put off for 30
 // minutes and a stop of two hours is overdue at the first tick after start,
 // though the deadlines count running time.
-func TestAudit2DefectWaitCountsStoppedTime(t *testing.T) {
+func TestAudit2ClosedWaitCountsStoppedTime(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -493,8 +493,19 @@ func TestAudit2DefectWaitCountsStoppedTime(t *testing.T) {
 	h.tick(2 * time.Hour)
 	h.startMachine()
 	h.machine()
-	if h.written(sprint.NOverdue) != 1 {
-		t.Fatalf("not overdue after 0 minutes of running time: defect fixed")
+	if h.written(sprint.NOverdue) != 0 {
+		t.Fatalf("overdue after 0 minutes of running time: STOPPED time counted")
+	}
+	h.a2Run(31*time.Minute, time.Minute)
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+	lines := 0
+	for _, n := range notes {
+		if n.Type == sprint.NOverdue && n.Kind == sprint.Happened && strings.HasPrefix(n.What, id+" ") {
+			lines++
+		}
+	}
+	if lines != 1 {
+		t.Fatalf("the waited judgment after 31 minutes of running time: %d overdue lines", lines)
 	}
 }
 
@@ -575,7 +586,7 @@ func TestAudit2DefectAskAnotherHitsARetiredCard(t *testing.T) {
 
 // DEFECT J. The tick marks "the sprint is done" overdue, which the inbox and
 // Note.Due say is never overdue.
-func TestAudit2DefectSprintDoneIsMarkedOverdue(t *testing.T) {
+func TestAudit2ClosedSprintDoneIsMarkedOverdue(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -585,8 +596,8 @@ func TestAudit2DefectSprintDoneIsMarkedOverdue(t *testing.T) {
 		t.Fatalf("not done")
 	}
 	h.a2Run(15*time.Minute, 5*time.Minute)
-	if h.written(sprint.NOverdue) != 1 {
-		t.Fatalf("overdue lines %d: defect fixed", h.written(sprint.NOverdue))
+	if h.written(sprint.NOverdue) != 0 {
+		t.Fatalf("the sprint is done marked overdue: %d lines", h.written(sprint.NOverdue))
 	}
 }
 

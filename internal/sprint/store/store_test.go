@@ -547,7 +547,7 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 		t.Fatalf("after the cursor: %+v", v.Groups)
 	}
 	nid := v.Groups[0].Notes[0]
-	if err := h.m.SetReview(h.ctx, nid, t0.Add(3*time.Hour)); err != nil {
+	if err := h.m.SetReview(h.ctx, nid, t0.Add(3*time.Hour), h.now); err != nil {
 		t.Fatal(err)
 	}
 	h.tick(2 * time.Hour)

@@ -131,6 +131,9 @@ type Note struct {
 	// Review is the next review time the coordinator set with wait; the
 	// judgment stays open and shown, and is due then.
 	Review time.Time `json:"review,omitempty"`
+	// ReviewSet is when wait set Review: the review time counts running time
+	// from it, as every deadline does.
+	ReviewSet time.Time `json:"review_set,omitempty"`
 }
 
 // Due is when the judgment is overdue: its review time when one is set, else

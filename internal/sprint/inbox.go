@@ -59,7 +59,15 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	if !n.Review.IsZero() {
-		return n.Review, r.Now.After(n.Review)
+		if n.ReviewSet.IsZero() {
+			return n.Review, r.Now.After(n.Review)
+		}
+		// The review time counts running time from when wait set it.
+		due := n.Review
+		if r.Stopped != nil {
+			due = due.Add(r.Stopped(n.ReviewSet, r.Now))
+		}
+		return due, r.running(n.ReviewSet) >= n.Review.Sub(n.ReviewSet)
 	}
 	due := n.At.Add(r.Deadline)
 	if r.Stopped != nil {

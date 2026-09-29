@@ -407,8 +407,8 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 	var order []string
 	byID := map[string]*judg{}
 	for _, o := range s.Open {
-		if o.Note.Kind != Judgment {
-			continue
+		if o.Note.Kind != Judgment || o.Note.Type == NSprintDone {
+			continue // the sprint is done has no due time
 		}
 		j := byID[o.Note.ID]
 		if j == nil {
@@ -419,8 +419,12 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		j.subjects = append(j.subjects, o.Subject())
 	}
 	overdue := func(n Note) bool {
-		if !n.Review.IsZero() {
+		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
 			return s.Now.After(n.Review)
+		}
+		if !n.Review.IsZero() {
+			d, ok := r.running(s.Now, stamp(n.ReviewSet))
+			return ok && d >= n.Review.Sub(n.ReviewSet)
 		}
 		d, ok := r.running(s.Now, stamp(n.At))
 		return ok && d > DeadlineJudgment
