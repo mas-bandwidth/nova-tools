@@ -319,8 +319,10 @@ func (o Options) ConfigPath() string {
 
 // Spec reads the configuration the options name, if any, applies the
 // options over it, and returns the corpus to load. A configuration named by
-// --config must exist; one found under --root may be absent only when
-// --source names the sources. A corpus with no source is refused.
+// --config or --root must exist, even when --source names the sources: a
+// misspelt root must not drop the configuration's shapes and background
+// unseen. With no root and no configuration, --source alone names the corpus.
+// A corpus with no source is refused.
 func (o Options) Spec() (Spec, error) {
 	if o.Root == "" && o.Config == "" && len(o.Sources) == 0 {
 		return Spec{}, ErrNoCorpus
@@ -348,10 +350,8 @@ func (o Options) Spec() (Spec, error) {
 				return Spec{}, fmt.Errorf("%s: %w", cfg, perr)
 			}
 			file, base = f, filepath.Dir(cfg)
-		case o.Config == "" && len(o.Sources) > 0 && errors.Is(err, fs.ErrNotExist):
-			cfg = ""
 		case errors.Is(err, fs.ErrNotExist):
-			return Spec{}, fmt.Errorf("no configuration at %s; write one (nova-privacy help shows the format) or name sources with --source", cfg)
+			return Spec{}, fmt.Errorf("no configuration at %s; write one (nova-privacy help shows the format), or name sources with --source and no --root", cfg)
 		case errors.Is(err, ErrTooLarge):
 			return Spec{}, fmt.Errorf("%w (MaxConfigBytes)", err)
 		default:

@@ -83,12 +83,24 @@ func TestOptionFlagsReplaceTheConfiguration(t *testing.T) {
 	}
 }
 
-// With --source named, a root holding no configuration is not an error.
+// Sources named by option need no configuration when no root is named.
 func TestSourcesByOptionNeedNoConfiguration(t *testing.T) {
 	t.Parallel()
-	s, err := privacy.Options{Root: t.TempDir(), Sources: []string{"a.md"}}.Spec()
+	s, err := privacy.Options{Sources: []string{"a.md"}}.Spec()
 	if err != nil || s.Config != "" || len(s.Sources) != 1 {
 		t.Errorf("spec %+v err %v", s, err)
+	}
+}
+
+// A root named explicitly must hold its configuration, even beside --source:
+// a misspelt root would otherwise drop the refuse shapes, the marker, the stop
+// words and the background without a word.
+func TestANamedRootWithNoConfigurationIsRefusedEvenWithSources(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "typo")
+	_, err := privacy.Options{Root: missing, Sources: []string{"a.md"}}.Spec()
+	if err == nil || !strings.Contains(err.Error(), "no configuration at") || !strings.Contains(err.Error(), "typo") {
+		t.Errorf("err %v, want a refusal naming the root's configuration", err)
 	}
 }
 

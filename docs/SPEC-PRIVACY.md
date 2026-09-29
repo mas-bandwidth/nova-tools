@@ -117,9 +117,11 @@ that cannot be read is `CORPUS-UNREADABLE`, and the remedy is
 
 Flags override the file: any `--source` replaces its sources; any
 `--background` or `--background-flat` replaces its roots (with `--pattern`,
-`*.md` by default); `--marker` and `--max-docs` replace theirs. With `--source`
-given, a root without a configuration file is not an error. Flag paths are
-relative to the working directory.
+`*.md` by default); `--marker` and `--max-docs` replace theirs. A `--root` or
+`--config` that is named must hold a configuration, even when `--source` is
+given: a misspelt root would otherwise drop the refuse shapes, the marker, the
+stop words and the background unseen. `--source` with neither names the corpus
+alone. Flag paths are relative to the working directory.
 
 ## Bounds
 

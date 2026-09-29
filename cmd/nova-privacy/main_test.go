@@ -154,10 +154,21 @@ func TestAMissingConfigurationIsRefusedWithItsPath(t *testing.T) {
 func TestSourcesByFlagNeedNoConfiguration(t *testing.T) {
 	t.Parallel()
 	tr := newTree(t)
-	bare := t.TempDir()
-	code, out, errOut := runTool("thinking about the "+rareWords+" again", "screen", "--root", bare,
+	code, out, errOut := runTool("thinking about the "+rareWords+" again", "screen",
 		"--source", tr.path("private/ideas.md"), "--background-flat", tr.path("journal"), "-")
 	if code != exitFlagged || !strings.Contains(errOut, "SCREEN FLAGGED") || !strings.Contains(errOut, "config=-") {
+		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
+	}
+}
+
+// A misspelt --root beside --source is refused, never read as "no
+// configuration": the configuration's refuse shape would be lost.
+func TestAMisspeltRootIsRefusedEvenWithSources(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	code, out, errOut := runTool("the evidence is at /home/ada/work/logs", "screen", "--root", tr.path("typo"),
+		"--source", tr.path("private/ideas.md"), "-")
+	if code != exitCouldNotRun || out != "" || !strings.Contains(errOut, "no configuration at") {
 		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
 	}
 }
