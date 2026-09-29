@@ -390,7 +390,10 @@ func diffNamesResult(stdout, stderr *diffCapture, runErr error) ([]string, error
 // found on PATH, because "no cwd dependence, every path a flag" applies to the
 // program as much as to the directories: a bench with two ssh binaries should
 // not be a coin toss.
-type ExecSSH struct{ Path string }
+type ExecSSH struct {
+	Path  string
+	guard *testguard.Guard
+}
 
 // sshArgs are the options every invocation carries. BatchMode so a missing key
 // is a refusal now rather than a password prompt nobody is at the keyboard for,
@@ -426,6 +429,9 @@ var SSHOptions = []string{
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
 	args := append(s.sshArgs(machine), argv...)
 	testguard.RefuseHosts(s.Path, args...)
+	if s.guard != nil {
+		s.guard.RefuseHosts(s.Path, args...)
+	}
 	return runCommand(ctx, s.Path, args...)
 }
 
@@ -455,6 +461,9 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	defer pr.Close()
 	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
 	testguard.RefuseHosts(s.Path, args...)
+	if s.guard != nil {
+		s.guard.RefuseHosts(s.Path, args...)
+	}
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
 
@@ -466,6 +475,9 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
 	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
 	testguard.RefuseHosts(s.Path, args...)
+	if s.guard != nil {
+		s.guard.RefuseHosts(s.Path, args...)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)
