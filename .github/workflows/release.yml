@@ -26,7 +26,7 @@
 # computes SHA256SUMS over the whole of it (.github/scripts/release-sums.sh). So the checksum
 # file is computed on the one machine that holds every artifact, over the bytes it attaches,
 # never assembled from per-platform pieces. One runner cross-building all five platforms does
-# not fit the cap: certification's dry run of it was cancelled inside the build.
+# not fit the cap (#4220): certification's dry run of it was cancelled inside the build.
 #
 # The dry run of this same build is certification.yml's release-build, release-dry-run and
 # release-checks, running the same scripts, so a target that stops compiling is a red

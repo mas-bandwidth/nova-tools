@@ -1214,7 +1214,7 @@ two OSes); the class test does not time a hosted leg, a certification run does. 
 ci.yml's (lint on every event, test-hosted on push); a package's race compile in
 its shard is the macOS and Linux compile of the race build.
 
-### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
+### `release-legs` (issue #4220) — the release and its dry run build one leg per platform and sum the whole set on one machine
 
 **The rule.** release.yml's `build` and certification.yml's `release-build` are a
 matrix of one leg per line of `.github/scripts/release-targets`, the same list in
@@ -1230,7 +1230,7 @@ refuses a directory that is not exactly the shipped set and writes and verifies
 attaches the set to the release. release.yml restores the certification build
 cache and never saves one.
 **The mistake it prevents.** One runner cross-building every platform in one job
-does not fit the two-minute cap: the cap cancels it inside that build, and
+does not fit the two-minute cap (issue #4220): the cap cancels it inside that build, and
 release.yml's build is the same loop. Two copies of
 a target list drift, and a dry run that builds differently from the release proves
 nothing about the release.

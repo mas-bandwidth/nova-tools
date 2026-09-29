@@ -10,7 +10,7 @@ import (
 )
 
 // release_matrix_class_test.go holds the release build and its dry run to one
-// shape under the two-minute cap: one leg per shipped platform, each running
+// shape under the two-minute cap (issue #4220): one leg per shipped platform, each running
 // .github/scripts/release-build.sh, then one job that downloads every leg's
 // artifact and runs release-sums.sh over the whole set. One runner
 // cross-building every platform was cancelled by the cap inside the build
