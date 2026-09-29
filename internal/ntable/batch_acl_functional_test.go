@@ -9,6 +9,7 @@ package ntable_test
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,7 +23,11 @@ var batchReads = []string{"+hlen", "+hmget", "+hstrlen", "+hexists"}
 func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	t.Parallel()
 	base := []string{"resetkeys", "resetchannels", "-@all", "+ping"}
-	base = append(base, tableGrants...)
+	for _, g := range tableGrants { // the table grants, less the reads under test
+		if !slices.Contains(batchReads, g) {
+			base = append(base, g)
+		}
+	}
 	extra := []string{"--user", "default", "on", "nopass", "~*", "&*", "+@all"}
 	extra = append(extra, append([]string{"--user", "ns-all", "on", ">pw"}, append(append([]string{}, base...), batchReads...)...)...)
 	for _, denied := range batchReads {
