@@ -1,0 +1,183 @@
+package sprint
+
+import (
+	"strconv"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+)
+
+// Change is one batch manifest entry for one table.
+type Change struct {
+	Table string // logical name
+	Entry ntable.BatchMemberEntry
+}
+
+// Bump adds Delta to a counter field of a card that several units share (a
+// member's control card counts ok and failed work): the store binding sums the
+// bumps of the units it applies together into one entry.
+type Bump struct {
+	Table, ID, Field string
+	Delta            int
+}
+
+// Unit is one card's part of a step: the changes that must apply together,
+// the notifications the move causes, and the open judgments it answers.
+type Unit struct {
+	Key     string // the primary or card the unit is about
+	Changes []Change
+	Bumps   []Bump
+	Notes   []Note
+	Closes  []Open // open judgments this unit answers: recorded as decided
+	Moved   string // what moved, one line
+}
+
+// Refusal is a card the step did not move, and why.
+type Refusal struct {
+	Key string `json:"id"`
+	Why string `json:"why"`
+}
+
+// RowAdd is a row the step needs before its manifests: rows are declared by
+// the table layer's row verb, not by a batch.
+type RowAdd struct{ Table, Row string }
+
+// Plan is what a step does: its units, in order, and the cards it refused.
+type Plan struct {
+	Rows    []RowAdd
+	Units   []Unit
+	Refused []Refusal
+	// Notes the step writes with no unit (a fleet member going down with no
+	// cards to deal); they are written with the first unit, or alone.
+	Notes []Note
+	// Closes are open judgments the step answers as a whole (--answers).
+	Closes []Open
+}
+
+// Tables is the logical tables the plan writes, in ApplyOrder.
+func (p Plan) Tables() []string {
+	seen := map[string]bool{}
+	for _, u := range p.Units {
+		for _, c := range u.Changes {
+			seen[c.Table] = true
+		}
+		for _, b := range u.Bumps {
+			seen[b.Table] = true
+		}
+	}
+	var out []string
+	for _, t := range ApplyOrder {
+		if seen[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (p *Plan) refuse(key, why string) { p.Refused = append(p.Refused, Refusal{key, why}) }
+
+// Entry builders.
+
+func u64(n uint64) string { return strconv.FormatUint(n, 10) }
+
+// at guards a card at its observed place and member revision.
+func at(c *Card) *ntable.MemberExpect {
+	return &ntable.MemberExpect{Revision: u64(c.Rev), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}}
+}
+
+// moveEntry moves a card to row/col, keeping its score, with fields set.
+func moveEntry(c *Card, row, col string, set map[string]string, unset ...string) ntable.BatchMemberEntry {
+	e := ntable.BatchMemberEntry{ID: c.ID, Expect: at(c)}
+	if row != c.Row || col != c.Col {
+		e.Move = &ntable.MemberMoveOp{Row: row, Col: col}
+	}
+	e.Set = nonEmpty(set)
+	e.Unset = unsetPresent(c, unset)
+	return e
+}
+
+// setEntry changes fields of a card in place.
+func setEntry(c *Card, set map[string]string, unset ...string) ntable.BatchMemberEntry {
+	return ntable.BatchMemberEntry{ID: c.ID, Expect: at(c), Set: nonEmpty(set), Unset: unsetPresent(c, unset)}
+}
+
+// guardEntry checks a card at its place and revision and changes nothing.
+func guardEntry(c *Card) ntable.BatchMemberEntry {
+	return ntable.BatchMemberEntry{ID: c.ID, Expect: at(c)}
+}
+
+// createEntry places a new card.
+func createEntry(id, row, col string, score float64, set map[string]string) ntable.BatchMemberEntry {
+	return ntable.BatchMemberEntry{ID: id, Expect: &ntable.MemberExpect{Absent: true},
+		Create: &ntable.MemberCreateOp{Row: row, Col: col, Score: score}, Set: nonEmpty(set)}
+}
+
+// removeEntry takes a card off the table, keeping its record, with fields set.
+func removeEntry(c *Card, set map[string]string) ntable.BatchMemberEntry {
+	return ntable.BatchMemberEntry{ID: c.ID, Expect: at(c), Remove: true, Set: nonEmpty(set)}
+}
+
+// scoreEntry gives a card a new score where it is.
+func scoreEntry(c *Card, score float64) ntable.BatchMemberEntry {
+	s := score
+	return ntable.BatchMemberEntry{ID: c.ID, Expect: at(c), Move: &ntable.MemberMoveOp{Row: c.Row, Col: c.Col, Score: &s}}
+}
+
+func nonEmpty(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// unsetPresent keeps the unset names the card has: unsetting an absent field
+// is a no-op the manifest need not carry.
+func unsetPresent(c *Card, names []string) []string {
+	var out []string
+	for _, n := range names {
+		if _, ok := c.Fields[n]; ok {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func change(table string, e ntable.BatchMemberEntry) Change { return Change{Table: table, Entry: e} }
+
+// closesFor is every open judgment on the subject.
+func closesFor(open []Open, subjects ...string) []Open {
+	var out []Open
+	for _, o := range open {
+		for _, s := range subjects {
+			if o.Subject() == s {
+				out = append(out, o)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// answering is the open judgments named by --answers (note ids), on every
+// subject. A stream-level judgment is left open: it closes when its stream
+// resumes.
+func answering(open []Open, ids []string) []Open {
+	var out []Open
+	for _, o := range open {
+		for _, id := range ids {
+			if o.Note.ID == id && !o.Note.StreamLevel {
+				out = append(out, o)
+			}
+		}
+	}
+	return out
+}
+
+// hasOpen says an open judgment of the type is open on the subject.
+func hasOpen(open []Open, typ, subject string) bool {
+	for _, o := range open {
+		if o.Note.Type == typ && o.Subject() == subject {
+			return true
+		}
+	}
+	return false
+}
