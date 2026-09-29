@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -158,7 +159,10 @@ func (e Exec) Run(ctx context.Context, dir, name string, args ...string) (string
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := bounded.NewCapture(execOutputCap, cancel)
-	bin := resolveBinary(name, e.Env)
+	bin, lookupErr := resolveBinary(name, e.Env)
+	if lookupErr != nil {
+		return "", lookupErr
+	}
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
 	if e.Env != nil {
@@ -253,7 +257,10 @@ func (e Exec) runUncappedCapture(ctx context.Context, dir, name string, stdoutCe
 	ring := newRingBuffer(ringSize)
 	stdout := newCeilingWriter(stdoutCeiling, cancel)
 
-	bin := resolveBinary(name, e.Env)
+	bin, lookupErr := resolveBinary(name, e.Env)
+	if lookupErr != nil {
+		return "", lookupErr
+	}
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
 	if e.Env != nil {
@@ -666,27 +673,79 @@ func DefaultBranchOf(g *Git, remote string) string {
 	return ""
 }
 
-// resolveBinary finds name in the PATH entry of env, if env provides one and name
-// is a bare filename. Later entries in env take precedence over earlier ones.
-func resolveBinary(name string, env []string) string {
-	if filepath.Base(name) != name {
-		return name
+// resolveBinary preserves Go's ambient command lookup for the production zero-value
+// Exec. An explicit Env is an exact executable scope: a bare name must be found in
+// its final PATH entry, and a miss must never fall through to the process's PATH.
+// Paths supplied by the caller are left to exec.CommandContext as before.
+func resolveBinary(name string, env []string) (string, error) {
+	if env == nil || filepath.Base(name) != name || filepath.VolumeName(name) != "" {
+		return name, nil
 	}
-	for i := len(env) - 1; i >= 0; i-- {
-		kv := env[i]
-		if strings.HasPrefix(kv, "PATH=") || strings.HasPrefix(kv, "path=") {
-			path := strings.TrimPrefix(kv, kv[:5])
-			for _, dir := range filepath.SplitList(path) {
-				if dir == "" {
-					continue
-				}
-				candidate := filepath.Join(dir, name)
-				if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
-					return candidate
-				}
+	path, ok := envValue(env, "PATH")
+	if !ok {
+		return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	}
+	suffixes := []string{""}
+	if runtime.GOOS == "windows" {
+		// Go's Windows findExecutable tests the unsuffixed file only when
+		// the requested name already has an extension, then tries PATHEXT.
+		suffixes = nil
+		if filepath.Ext(name) != "" {
+			suffixes = append(suffixes, "")
+		}
+		ext, ok := envValue(env, "PATHEXT")
+		if !ok || ext == "" {
+			ext = ".COM;.EXE;.BAT;.CMD"
+		}
+		for _, suffix := range strings.Split(ext, ";") {
+			if suffix == "" {
+				continue
 			}
-			break
+			if !strings.HasPrefix(suffix, ".") {
+				suffix = "." + suffix
+			}
+			suffixes = append(suffixes, suffix)
 		}
 	}
-	return name
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			if runtime.GOOS == "windows" {
+				continue // Windows LookPath skips empty PATH components.
+			}
+			dir = "."
+		}
+		for _, suffix := range suffixes {
+			candidate := filepath.Join(dir, name+suffix)
+			fi, err := os.Stat(candidate)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			if runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
+				continue
+			}
+			// Go's LookPath refuses an executable found through a relative PATH
+			// component (ErrDot). CommandContext must never re-resolve this name
+			// against the ambient PATH, nor reinterpret it under cmd.Dir.
+			if !filepath.IsAbs(candidate) {
+				return "", &exec.Error{Name: name, Err: exec.ErrDot}
+			}
+			return candidate, nil
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
+
+// envValue follows exec.Cmd's last-value-wins environment rule. Windows keys are
+// case-insensitive, including Path/PATH and PATHEXT spelling.
+func envValue(env []string, key string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		k, value, ok := strings.Cut(env[i], "=")
+		if !ok {
+			continue
+		}
+		if k == key || runtime.GOOS == "windows" && strings.EqualFold(k, key) {
+			return value, true
+		}
+	}
+	return "", false
 }
