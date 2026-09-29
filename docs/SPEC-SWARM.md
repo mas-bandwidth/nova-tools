@@ -138,10 +138,12 @@ stamp is printed as a bounded, escaped excerpt.
 | `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
 | `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
 
-The cause is `timed out after <deadline>`, `exited <n>`, `printed nothing`, `printed a line
-longer than <n> bytes` or `not found`, and the other binary is described in one sentence:
-it reported a stamp, it could not be read either, it is not installed, or there is no other
-binary. A stamp printed before a failure is still compared, so a stale binary that then
+The cause is one of `timed out after <deadline>`, `exited <n>`, `was killed (<signal>)`
+(a run ended by a signal), `printed nothing`, `printed a line longer than <n> bytes`,
+`not found`, or the system's own words when the binary cannot be started, such as
+`fork/exec <path>: permission denied` for a file that is not executable. The other binary
+is described in one sentence: it reported a stamp, it could not be read either, it is not
+installed, or there is no other binary. A stamp printed before a failure is still compared, so a stale binary that then
 hangs is refused as shadowing and as unreadable.
 
 When the check itself is the problem, the refusal's own next action is the way out: run the

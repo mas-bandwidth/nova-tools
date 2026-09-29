@@ -771,8 +771,9 @@ func TestDoctorSaysWhenThereIsNothingToCompare(t *testing.T) {
 	}
 }
 
-// The spec and the CLI reference list exactly the lines the doctor prints: every line the
-// code prints below starts with one of these, and both documents carry each one.
+// The spec and the CLI reference list exactly the lines the doctor prints, and the causes
+// those lines can carry: every line the code prints below starts with one of these, both
+// documents carry each one, and so does each cause (checkDoctorCausesAgainstDocs).
 func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
 	t.Parallel()
 	prefixes := []string{
@@ -817,6 +818,8 @@ func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
 		}
 	}
 
+	checkDoctorCausesAgainstDocs(t)
+
 	for _, doc := range []string{"SPEC-SWARM.md", "CLI.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "docs", doc))
 		if err != nil {
@@ -825,6 +828,74 @@ func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
 		for _, p := range prefixes {
 			if !strings.Contains(string(raw), p) {
 				t.Errorf("docs/%s does not list %q", doc, p)
+			}
+		}
+	}
+}
+
+// checkDoctorCausesAgainstDocs holds the causes to the documents too: every cause the reader
+// can put in a DOCTOR UNREADABLE line is produced below by a real run, starts with one of the
+// listed forms, and both documents carry every form.
+func checkDoctorCausesAgainstDocs(t *testing.T) {
+	t.Helper()
+	forms := []string{
+		"timed out after ",
+		"exited ",
+		"was killed (",
+		"printed nothing",
+		"printed a line longer than ",
+		"not found",
+		"fork/exec ",
+	}
+	dir := t.TempDir()
+	write := func(name, body string, perm os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := testbin.WriteExecutable(p, []byte(body), perm); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	stubs := map[string]string{
+		"timed out after ":            write("hang", "#!/bin/sh\nexec sleep 30\n", 0o755),
+		"exited ":                     write("exit3", "#!/bin/sh\nexit 3\n", 0o755),
+		"was killed (":                write("killed", "#!/bin/sh\nkill -9 $$\n", 0o755),
+		"printed nothing":             write("silent", "#!/bin/sh\nexit 0\n", 0o755),
+		"printed a line longer than ": write("long", "#!/bin/sh\nwhile :; do printf 'aaaaaaaaaaaaaaaa'; done\n", 0o755),
+		"not found":                   filepath.Join(dir, "absent"),
+		"fork/exec ":                  write("plain-file", "#!/bin/sh\necho x\n", 0o644),
+	}
+	seen := map[string]bool{}
+	for form, stub := range stubs {
+		deadline := doctorGoodDeadline
+		if form == "timed out after " {
+			deadline = doctorHungDeadline
+		}
+		_, err := readVersionLineWithin(stub, deadline, 50*time.Millisecond, 64)
+		if err == nil {
+			t.Errorf("%s: the run gave no cause", form)
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), form) {
+			t.Errorf("a run expected to give %q gave %q", form, err)
+		}
+		seen[form] = true
+	}
+	for _, form := range forms {
+		if !seen[form] {
+			t.Errorf("no run produced a cause starting %q", form)
+		}
+	}
+	for _, doc := range []string{"SPEC-SWARM.md", "CLI.md"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "docs", doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"`timed out after <deadline>`", "`exited <n>`", "`was killed (<signal>)`", "`printed nothing`",
+			"`printed a line longer than <n> bytes`", "`not found`", "`fork/exec <path>: permission denied`",
+		} {
+			if !strings.Contains(string(raw), want) {
+				t.Errorf("docs/%s does not list the cause %s", doc, want)
 			}
 		}
 	}
