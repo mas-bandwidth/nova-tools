@@ -531,7 +531,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", progressLogMax)
-	missesCmd := pipe.XRange(ctx, "ws:order:misses", "-", "+")
+	missesCmd := pipe.XRange(ctx, ws.OrderMissesKeyAt(epoch), "-", "+")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return ProgressRun{}, fmt.Errorf("progress: measure: %w", err)
 	}

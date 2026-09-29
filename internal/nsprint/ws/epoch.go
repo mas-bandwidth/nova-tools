@@ -95,6 +95,17 @@ func SprintListAt(e uint64, sprint, list string) string {
 	return "s:" + sprint + ":" + strconv.FormatUint(e, 10) + ":" + list
 }
 
+// OrderMissesKeyAt is the stream of learned order misses under epoch e.
+func OrderMissesKeyAt(e uint64) string {
+	return KeyAt(e, "order", "misses")
+}
+
+// OrderMissesKey is the stream of learned order misses under the current epoch.
+func OrderMissesKey(ctx context.Context, c redis.Cmdable) string {
+	e, _ := Epoch(ctx, c)
+	return OrderMissesKeyAt(e)
+}
+
 // The read-only cell functions (fn/lua/02_card_move.lua): a reader that
 // must stay at one pipeline counts a cell through FCALL_RO in that
 // pipeline, the epoch read atomically with the count; every other reader

@@ -58,9 +58,9 @@ type OrderMiss struct {
 	Why     string
 }
 
-// ReadOrderMisses reads all rows from ws:order:misses for stream.
+// ReadOrderMisses reads all rows from the order misses stream for stream.
 func ReadOrderMisses(ctx context.Context, c redis.Cmdable, stream string) ([]OrderMiss, error) {
-	msgs, err := c.XRange(ctx, "ws:order:misses", "-", "+").Result()
+	msgs, err := c.XRange(ctx, OrderMissesKey(ctx, c), "-", "+").Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func OrderStream(ctx context.Context, c redis.Cmdable, stream string) error {
 	for rank, id := range ranked {
 		score := float64(rank + 1)
 		pipe.ZAdd(ctx, waitKey, redis.Z{Score: score, Member: id})
-		pipe.HSet(ctx, "task:"+id, "order", strconv.FormatInt(int64(rank+1), 10))
+		pipe.HSet(ctx, fmt.Sprintf("task:%s", id), "order", strconv.FormatInt(int64(rank+1), 10))
 	}
 	// Sentinel is always last.
 	sentinelScore := float64(len(ranked) + 1000)

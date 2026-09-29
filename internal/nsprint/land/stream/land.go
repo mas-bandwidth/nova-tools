@@ -201,7 +201,7 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		_, _ = ws.Move(ctx, c, miss.Member.Task, "review", by, miss.Why)
 		_ = c.RPush(ctx, LinesKey(o.Repo, miss.Member.N), miss.Why).Err()
 		_ = c.XAdd(ctx, &redis.XAddArgs{
-			Stream: "ws:order:misses",
+			Stream: ws.OrderMissesKey(ctx, c),
 			Values: map[string]any{
 				"stream":        miss.Member.Stream,
 				"card":          miss.Member.Task,

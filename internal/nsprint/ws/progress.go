@@ -307,7 +307,7 @@ func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time
 		cells = defaultCells{}
 	}
 	q.cells = cells.Queue(ctx, pipe, r.epoch, r.streams)
-	q.misses = pipe.XLen(ctx, "ws:order:misses")
+	q.misses = pipe.XLen(ctx, OrderMissesKeyAt(r.epoch))
 	q.epochQ = pipe.HGet(ctx, EpochKey, EpochField)
 	return q
 }

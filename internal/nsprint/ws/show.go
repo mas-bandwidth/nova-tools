@@ -205,12 +205,12 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 	pipe = c.Pipeline()
 	recCmds := make([]*redis.SliceCmd, len(members))
 	for i, id := range members {
-		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok", "paths", "stream_paths")
+		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok", "paths", "stream_paths", "order")
 	}
 	if err := showExec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("ws show: records: %w", err)
 	}
-	blockedOn, okOf := map[string]string{}, map[string]string{}
+	blockedOn, okOf, orderOf := map[string]string{}, map[string]string{}, map[string]string{}
 	pathsOf := map[string][]string{}
 	for i, id := range members {
 		v := recCmds[i].Val()
@@ -221,6 +221,7 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 			p = showStr(v, 3)
 		}
 		pathsOf[id] = SplitPaths(p)
+		orderOf[id] = showStr(v, 4)
 	}
 
 	misses, _ := ReadOrderMisses(ctx, c, "")
@@ -241,8 +242,11 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		for j := range out[i].Cards {
 			card := &out[i].Cards[j]
 			for _, raw := range SplitDeps(blockedOn[card.ID]) {
-				dep := ShowDep{Raw: raw, ID: DepID(raw), Reason: "depends-on"}
+				dep := ShowDep{Raw: raw, ID: DepID(raw)}
 				dep.Ref = dep.ID == ""
+				if orderOf[card.ID] != "" && dep.ID != "" && whereOf[dep.ID] != "" {
+					dep.Reason = "depends-on"
+				}
 				if _, known := whereOf[dep.ID]; !dep.Ref && !known && !strayRead[dep.ID] {
 					strayRead[dep.ID] = true
 					strays = append(strays, dep.ID)
