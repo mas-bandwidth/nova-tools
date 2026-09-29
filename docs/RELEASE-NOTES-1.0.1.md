@@ -32,7 +32,7 @@ The secrets first-run guide explains its fixture and uses replaceable paths.
 
 `nova-tokens` writes day and fold-pool files atomically and refuses symlinked or non-regular fold lock files.
 
-`nova-swarm batch --cards` runs card batches with explicit deadline and token-budget inputs. Run `nova-swarm help batch` to see its required inputs.
+`nova-swarm batch --cards` runs card batches with explicit deadline and token-budget inputs. Run `nova-swarm help batch` to see its required inputs. The Swarm specification describes a card as a pipeline of stateless model calls, with the required context passed to each call and no memory between calls.
 
 `nova-memory verify --exclude` applies to the whole verified corpus,
 including coverage and frontmatter selectors. An excluded directory also
@@ -51,14 +51,14 @@ arguments intact.
 
 ## Checks for contributors
 
-`nova-ci cost` prints a COST receipt from a complete job listing and can record it in Redis.
+`nova-ci cost` prints a COST receipt from a complete job listing and can record it in Redis when requested. Automatic CI cost reporting is removed from the workflow.
 
 The CI class check validates hosted package assignments at the shard
 counts the workflow actually runs. Existing time budgets stay in force.
 
 The CI generality check refuses additions to its exception list and enforces the existing row ceiling.
 
-The table epoch test harness checks the store image after every accepted action and verifies receipt replay.
+The table epoch test harness checks the store image after every accepted action and verifies receipt replay. The ordered-table functional checks cover 4,500 and 5,000 rows, including moves, partial orders, sorting, standing sorts and additions. The CI documentation check covers additional verbose test-command spellings.
 
 ## Release publishing
 
