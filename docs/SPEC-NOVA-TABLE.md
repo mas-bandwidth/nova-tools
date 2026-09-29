@@ -252,9 +252,9 @@ When `watch --check` detects an invariant violation on any snapshotted table:
 The data-oriented rule is **batch always**: members are plain data in arrays,
 and the manager transforms the selected array in one store call.
 
-This section accompanies the implementation of the table batch API. The card
-manager waits for this table extension's gate; it does not implement private
-placement or emulate a batch using repeated client calls.
+The table batch API owns atomic member placement and conditional writes. The
+card manager uses this interface; it does not implement private placement or
+emulate a batch using repeated client calls.
 
 ### Scope and calls
 
@@ -278,12 +278,13 @@ list or separate implementation of the transaction is permitted.
 
 ### Manifest, identity and bounds
 
-A version-1 manifest contains table, epoch, expected_table_revision, operation_id,
-actor and a members array. Epoch/revision counters are decimal strings bounded as
-uint64; they never traverse floating-point numbers. Members have unique IDs across
-the entire array. Each entry has an `expect` record and zero or more compatible
-changes. Read-only guard entries have no changes. All referenced rows/columns must
-be declared and owned. Unknown schema fields and duplicate JSON keys refuse.
+A version-1 manifest contains table, epoch, expected_table_revision,
+operation_id, actor and a nonempty members array. Epoch/revision counters are
+decimal strings bounded as uint64; they never traverse floating-point numbers.
+Members have unique IDs across the entire array. Each entry has an `expect`
+record and zero or more compatible changes. Read-only guard entries have no
+changes. All referenced rows/columns must be declared and owned. Unknown schema
+fields and duplicate JSON keys refuse.
 
 ```json
 {
@@ -378,50 +379,70 @@ Manifest size counts the encoded request bytes supplied to the server, including
 whitespace and JSON escaping. ID and field-value sizes count decoded UTF-8 bytes.
 
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
-a nonempty unset; otherwise it is guard-only. An otherwise valid manifest at a
-bound is accepted; one over it refuses the whole request as `LIMIT`, before any
-read of the store or write, naming the bound, its value and the count found (and
-the member at fault for a per-member bound), without echoing field values or the
-whole manifest. No automatic chunking turns one requested transaction into
-several. A caller can explicitly narrow its next request, accepting the
-separately identified transaction scope.
+a nonempty unset; otherwise it is guard-only. For an unrecorded operation, an
+otherwise valid manifest at a bound is accepted; one over it refuses the whole
+request as `LIMIT` after operation lookup and before table/member state
+validation or any write. The refusal names the bound, its value and the count
+found (and the member at fault for a per-member bound), without echoing field
+values or the whole manifest. No automatic chunking turns one requested
+transaction into several. A caller can explicitly narrow its next request,
+accepting the separately identified transaction scope.
 
 ### Validation, atomicity and replay
 
-The server rejects malformed canonical encoding, repeated IDs/keys, incompatible
-changes, nonfinite scores, invalid paths/names and bounds before mutation. Then it
-validates active epoch and expected table revision, every expected member revision
-and source placement, every field condition, all destination types and all required
-permissions. It validates record/set agreement, including no duplicate hidden owned
-placement, before creating or relocating a member. Every guard is evaluated against
-the same pre-state; an update made in this batch cannot satisfy another guard.
+Validation has three ordered stages: recorded-operation lookup, static manifest
+checks, then table/member state checks. Decoding and the identity needed to
+locate the operation record precede lookup. A matching recorded request returns
+its original result before static or state checks; a different request with the
+same operation identity refuses.
 
-Use the existing table validation and staged-write machinery inside this one server
-invocation. After all validation, stage cells, reverse indexes, member fields and
-revisions, the operation record, table revision and receipt together. An accepted
-batch increments the table revision once; every changed member increments its own
-revision once. An accepted no-op batch also advances the table revision once,
-making other prepared manifests stale, and has a recorded result and one noop
-receipt; a refused batch changes no key, revision, operation record or receipt.
-Tests must pin no-op and refused results separately.
+For an unrecorded operation, static checks reject malformed canonical encoding,
+repeated IDs/keys, an empty members array, incompatible changes, nonfinite
+scores, invalid paths/names and bounds before mutation. State checks then
+validate active epoch and expected table revision, every expected member
+revision and source placement, every field condition, all destination types and
+all required permissions. An unrecorded stale epoch refuses as `STALE`; an epoch
+ahead of the active epoch refuses as `EPOCHAHEAD`. Record/set agreement,
+including no duplicate hidden owned placement, is checked before creating or
+relocating a member. Every guard is evaluated against the same pre-state; an
+update made in this batch cannot satisfy another guard.
+
+The existing table validation and staged-write machinery handles this one server
+invocation. After all validation, it stages cells, reverse indexes, member
+fields and revisions, the operation record, table revision and receipt together.
+An accepted batch increments the table revision once; every changed member
+increments its own revision once. An accepted no-op batch also advances the
+table revision once, making other prepared manifests stale, and has a recorded
+result and one noop receipt; a refused batch changes no key, revision, operation
+record or receipt. Separate tests pin no-op and refused results.
 
 Redis scripts do not provide rollback of writes after a runtime command error.
-The design must therefore show that every staged command's type, bounds, permissions
-and other preventable failure conditions were checked before writes. Inject failure
-at those conditions in tests and compare the complete store image. Redis process
-loss/durability guarantees remain those of the configured store; a transport error
-is uncertain, not evidence of rollback. No stronger crash guarantee is asserted
-merely because the function is one FCALL.
+Every staged command's type, bounds, permissions and other preventable failure
+conditions are checked before writes. Failure-injection tests exercise those
+conditions and compare the complete store image. Redis process loss/durability
+guarantees remain those of the configured store; a transport error is uncertain,
+not evidence of rollback. No stronger crash guarantee is asserted merely because
+the function is one FCALL.
 
-Operation identity is table plus epoch plus operation_id. Persist the canonical
-request bytes and result, with its digest for evidence. Caller-provided digest
-equality is insufficient to establish identical requests. An identical recorded
-request returns the original receipt/result without writes, even when its old
-expected revisions no longer match; operation lookup precedes those checks. A
-changed request with an existing operation ID refuses. An unrecorded operation at
-a stale epoch refuses. Original result epoch/revisions remain visible, so retry
-cannot masquerade as a new current-epoch action. No retry loop in transport may
-silently invent a new operation ID.
+Operation identity is table plus epoch plus operation_id. The operation record
+persists the canonical request bytes and result, with its digest for evidence.
+Caller-provided digest equality is insufficient to establish identical requests.
+An identical recorded request returns the original receipt/result without
+writes, even when its old expected revisions no longer match; operation lookup
+precedes static and state checks. A changed request with an existing operation
+identity refuses. An unrecorded operation at a stale or future epoch refuses.
+Original result epoch/revisions remain visible, so retry cannot masquerade as a
+new current-epoch action. No retry loop in transport may silently invent a new
+operation ID.
+
+Operation records do not expire: replay is guaranteed while the table exists.
+`clear` advances the epoch without removing operation records, so a recorded
+old-epoch retry returns its original receipt, epoch and revisions. Both `drop` and
+`drop --definition` remove the table's operation records from every epoch in the
+same atomic call. Historical epoch snapshots retained by `drop` remain readable;
+they are separate from operation records. A table created again under the same
+name has no replay history from the dropped table; deduplication does not cross
+that lifetime boundary.
 
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.
@@ -429,31 +450,33 @@ The batch entry point's dedicated operation record supplies its replay contract.
 
 ### Receipt and refusals
 
-Extend the existing receipt through an explicit batch delta, preserving ordinary
-verb receipt compatibility. One receipt identifies operation/request digest, table,
-epoch, before/after table revision, actor, changed/noop result and all affected
-members' before/after placements, revisions and application-field changes. Include
-explicit guard/selection counts; a missing member is not silently omitted. One
-batch receipt maps to one model action. Returning the original result on retry
-must return the same receipt identity.
+An explicit batch delta extends the existing receipt while preserving ordinary
+verb receipt compatibility. One receipt identifies operation/request digest,
+table, epoch, before/after table revision, actor, changed/noop result and all
+affected members' before/after placements, scores, revisions and
+application-field changes. Guard/selection counts are explicit; a missing member
+is not silently omitted. One batch receipt maps to one model action. Returning
+the original result on retry must return the same receipt identity.
 
-Required refusals include stale epoch, table/member revision mismatch, failed field
-guard, existing/placed member on create, duplicate manifest member, invalid/missing
-record, reverse-index or set drift, unknown row/column, bound cell, reserved-field
-write, invalid score/counter, operation-ID conflict and over-limit input. Each names
-operation, member or batch, expected/observed state, changed=no and the next usable
-command. A transport failure reports changed=unknown and operation reconciliation,
-never changed=no without evidence.
+Required refusals include stale or future epoch, an empty members array,
+table/member revision mismatch, failed field guard, existing/placed member on
+create, duplicate manifest member, invalid/missing record, reverse-index or set
+drift, unknown row/column, bound cell, reserved-field write, invalid
+score/counter, operation-ID conflict and over-limit input. Each names operation,
+member or batch, expected/observed state, changed=no and the next usable
+command. A transport failure reports changed=unknown and operation
+reconciliation, never changed=no without evidence.
 
 ### Model and table-layer gate
 
-Extend the member/epoch table model with an atomic batch action, member revisions,
-field guards, operation records and one receipt per accepted batch. Reuse the
-one-place/epoch definitions; preserve the current per-verb model cases separately.
-A named batch wrapper/config uses 3 members, 2 rows, 2 columns, 2 epochs and batch
-sizes 1..3. Include a guard-only dependency and a cross-row move. Retain exact model,
-config, executable and input hashes; larger configurations are not silently replaced
-by smaller ones when they exceed a budget. TLC runs on a bench.
+The member/epoch table model includes an atomic batch action, member revisions,
+field guards, operation records and one receipt per accepted batch. It reuses
+the one-place/epoch definitions and preserves the per-verb model cases
+separately. A named batch wrapper/config uses 3 members, 2 rows, 2 columns, 2
+epochs and batch sizes 1..3. Its cases include a guard-only dependency and a
+cross-row move. Evidence retains exact model, config, executable and input
+hashes; larger configurations are not silently replaced by smaller ones when
+they exceed a budget. TLC runs on a bench.
 
 The reversed witnesses must catch: a second member validation failure after a first
 member writes; guard evaluation against partially updated state; duplicate placement;
@@ -462,13 +485,14 @@ writer; wrong-type/permission refusal after partial writes; lost reply causing a
 second effect; request-hash collision without byte comparison; receipt emitted before
 its complete delta; and stale retry reported as a new operation.
 
-Gate items are the full table-layer bar: model plus reversed witnesses; trip/commit
-and complete unchanged-store refusal tests; bounded randomized batches on owned
-Redis (16 fixed seeds, 128 steps each) plus runtime checks; Go receipt replay with
-one batch receipt per action; real-use rehearsal on an owned store; two independent
-exact-revision reads of at least 9/10 with accepting dispositions; then the maintainer's
-interactive mini-quack with every verb/refusal, watched table, findings repaired and
-repeated until clean. Test N=1 and maximum configured N separately, including a late
-invalid entry, interacting moves and a replay. Ordinary table callers retain their
-regression suite. The card layer resumes only after this extension has passed the
-table gate; no green card test can substitute for proving the lower layer.
+Gate items are the full table-layer bar: model plus reversed witnesses;
+trip/commit and complete unchanged-store refusal tests; bounded randomized
+batches on owned Redis (16 fixed seeds, 128 steps each) plus runtime checks; Go
+receipt replay with one batch receipt per action; real-use rehearsal on an owned
+store; two independent exact-revision reads of at least 9/10 with accepting
+dispositions; then the maintainer's interactive mini-quack with every
+verb/refusal, watched table, findings repaired and repeated until clean.
+Separate cases test N=1 and maximum configured N, including a late invalid
+entry, interacting moves and a replay. Ordinary table callers retain their
+regression suite. The card layer resumes only after this extension has passed
+the table gate; no green card test can substitute for proving the lower layer.
