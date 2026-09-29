@@ -24,6 +24,23 @@ func Ack(s *Snapshot, r AckReq) Plan {
 	p.on(s)
 	closing := map[string]bool{} // every note id this call closes
 	named := map[string]bool{}
+	// The blocked judgments named on each primary waive together, once: the
+	// union of their needs (nil, every dropped one, when one names none), so
+	// a primary blocked twice is changed once in the step.
+	waives, every, waived := map[string][]string{}, map[string]bool{}, map[string]bool{}
+	for _, o := range s.Open {
+		if o.Note.Type != NBlocked || !contains(r.Notes, o.Note.ID) {
+			continue
+		}
+		if len(o.Note.Needs) == 0 {
+			every[o.Subject()] = true
+		}
+		for _, n := range o.Note.Needs {
+			if !contains(waives[o.Subject()], n) {
+				waives[o.Subject()] = append(waives[o.Subject()], n)
+			}
+		}
+	}
 	for _, id := range r.Notes {
 		if named[id] {
 			p.refuse(id, "named twice")
@@ -56,7 +73,15 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 		if n.Type == NBlocked {
 			for _, o := range entries {
-				if c, notes := waive(s, o.Subject(), r.Who, n.Needs); c.Entry.ID != "" {
+				if waived[o.Subject()] {
+					continue
+				}
+				waived[o.Subject()] = true
+				only := waives[o.Subject()]
+				if every[o.Subject()] {
+					only = nil
+				}
+				if c, notes := waive(s, o.Subject(), r.Who, only); c.Entry.ID != "" {
 					u.Changes = append(u.Changes, c)
 					u.Notes = append(u.Notes, notes...)
 					u.Moved += "; " + o.Subject() + " waives " + c.Entry.Set["waived"]
