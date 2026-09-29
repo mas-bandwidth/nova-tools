@@ -447,3 +447,17 @@ func TestTheLandingStepAndTheTickDoNothingTwice(t *testing.T) {
 	h.quiet("after the landing")
 	h.clean("after the landing")
 }
+
+// A STOPPED machine's tick moves nothing and counts no tick, and says it
+// looked: start can tell a run loop is waiting.
+func TestAStoppedTickSaysItLooked(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.tick(time.Minute)
+	h.machine()
+	_, hb, err := h.st.Machine(h.ctx)
+	if err != nil || hb.Ticks != 0 || !hb.Alive().Equal(h.now) {
+		t.Fatalf("a stopped tick: %+v %v", hb, err)
+	}
+}

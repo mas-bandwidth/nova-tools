@@ -82,6 +82,17 @@ type Heartbeat struct {
 	Landed    int64     `json:"landed"`
 	All       int64     `json:"all"`
 	Full      time.Time `json:"full"`
+	// Looked is when a tick last read the machine's state, RUNNING or
+	// STOPPED: a run loop is alive while it is recent, whatever the state.
+	Looked time.Time `json:"looked,omitempty"`
+}
+
+// Alive is the last clock reading a tick was seen at, ticking or looking.
+func (hb Heartbeat) Alive() time.Time {
+	if hb.Looked.After(hb.At) {
+		return hb.Looked
+	}
+	return hb.At
 }
 
 // Running says the state is RUNNING.
@@ -327,7 +338,10 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	}
 	res := TickResult{State: m.StateWord()}
 	if !m.Running() {
-		return res, nil
+		// A STOPPED machine moves nothing; the tick only says it looked, so
+		// start can tell a run loop is waiting.
+		hb.Looked = st.now()
+		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
 	hb.At, hb.Ticks = st.now(), hb.Ticks+1

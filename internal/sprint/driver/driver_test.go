@@ -2,6 +2,7 @@ package driver
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -256,5 +257,21 @@ func TestRedNamesASuspectOfTheBatch(t *testing.T) {
 	out := s.Merge("s1", []string{"a", "b", "c"}, func() []string { return nil })
 	if !out.Red || len(out.Suspects) != 1 || !strings.Contains("abc", out.Suspects[0]) {
 		t.Fatalf("red: %+v", out)
+	}
+}
+
+// Every primary on the table landed is landed, whatever streams have no
+// primaries (a new epoch keeps every stream, empty).
+func TestLandedIgnoresAStreamWithNoPrimaries(t *testing.T) {
+	t.Parallel()
+	var w where
+	if err := json.Unmarshal([]byte(`{"landed":4,"all":4,"streams":[{"Stream":"s1","State":"landed"},{"Stream":"s3","State":"waiting"}]}`), &w); err != nil {
+		t.Fatal(err)
+	}
+	if !landed(w) {
+		t.Fatal("a sprint whose every primary landed is not landed")
+	}
+	if landed(where{Landed: 3, All: 4}) || landed(where{}) {
+		t.Fatal("landed with a primary to go, or with none")
 	}
 }

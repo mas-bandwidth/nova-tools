@@ -264,16 +264,10 @@ func (d *Driver) restore() {
 	}
 }
 
+// landed says every primary on the table has landed: a stream with no
+// primaries (a new epoch's, say) has nothing to land.
 func landed(w where) bool {
-	if len(w.Streams) == 0 || w.All == 0 {
-		return false
-	}
-	for _, s := range w.Streams {
-		if s.State != "landed" {
-			return false
-		}
-	}
-	return true
+	return w.All > 0 && w.Landed == w.All
 }
 
 func (d *Driver) tick(tick int, c Config, w where) {

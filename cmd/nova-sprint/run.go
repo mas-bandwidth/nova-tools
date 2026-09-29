@@ -79,7 +79,7 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 	}
 	fmt.Fprintf(stdout, "%s OK before=%s after=%s %s\n", token(name), before.StateWord(), after.StateWord(), what)
 	if running {
-		if _, hb, err := st.Machine(ctx); err == nil && a.now().Sub(hb.At) > store.MachineSilence {
+		if _, hb, err := st.Machine(ctx); err == nil && a.now().Sub(hb.Alive()) > store.MachineSilence {
 			fmt.Fprintf(stdout, "nothing is ticking: run: nova-sprint run\n")
 		}
 	}
