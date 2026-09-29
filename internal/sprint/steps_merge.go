@@ -30,6 +30,26 @@ func streamDone(s *Snapshot, stream string, landing int) bool {
 	return landed > 0 && open == landing
 }
 
+// crossRefusal is why a cross fact "<card>=<other>" is refused, "" when it
+// holds: the other card is a primary placed on the table, in another stream
+// than the card's, and not landed.
+func crossRefusal(s *Snapshot, stream, card, other string) string {
+	oc := s.Work.Placed(other)
+	switch {
+	case other == "":
+		return "the cross fact names no other card; it wants <card>=<other>"
+	case other == card:
+		return "the cross fact names the card itself (" + card + "); the other card is in another stream"
+	case oc == nil:
+		return "the other card " + other + " is not on the table; the other card is placed, in another stream, not landed"
+	case oc.Row == stream:
+		return "the other card " + other + " is in the same stream " + stream + "; the other card is in another stream"
+	case oc.Col == Landed:
+		return "the other card " + other + " (stream " + oc.Row + ") has landed already; nothing to wait for"
+	}
+	return ""
+}
+
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
 // coordinator why. A stopped stream moves only after resume.
@@ -120,10 +140,11 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 			p.refuse(card, "the cross fact wants <card>=<other> with the card queued in stream "+r.Stream)
 			return p
 		}
-		otherStream := s.Work.Card(other).F("stream")
-		if c := s.Work.Card(other); c != nil && c.Row != "" {
-			otherStream = c.Row
+		if why := crossRefusal(s, r.Stream, card, other); why != "" {
+			p.refuse(card, why)
+			return p
 		}
+		otherStream := s.Work.Placed(other).Row
 		ctlSet["card"], ctlSet["other"] = card, other
 		u := stop("cross", NCross, []string{card, other}, 0)
 		u.Notes[len(u.Notes)-1].What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))

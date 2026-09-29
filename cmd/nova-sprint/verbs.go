@@ -683,7 +683,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	stream := fs.String("stream", "", "the stream")
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
-	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs a card of another stream first")
+	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
 	rejected := fs.Bool("rejected", false, "fact: the merge queue rejected the batch")
 	note := fs.String("note", "", "what the facts' source said")
