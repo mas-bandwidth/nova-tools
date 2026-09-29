@@ -51,6 +51,7 @@ var (
 	ErrRevisionMismatch  = errors.New("table revision mismatch")
 	ErrMemberRevision    = errors.New("member revision mismatch")
 	ErrFieldGuard        = errors.New("failed field guard")
+	ErrPlaceGuard        = errors.New("failed place guard")
 	ErrOpConflict        = errors.New("operation ID conflict")
 	ErrLimit             = errors.New("limit exceeded")
 	ErrReservedField     = errors.New("reserved field write")
@@ -101,7 +102,12 @@ type operation struct {
 	opID                    string
 	view                    bool
 	batch                   bool
+	readSet                 bool
 }
+
+// guarded reports an operation whose refusal writes nothing by contract: a
+// batch, and the read that prepares one.
+func (o operation) guarded() bool { return o.batch || o.readSet }
 
 func (o operation) location() string {
 	kind := "table"
@@ -118,6 +124,9 @@ func (o operation) location() string {
 		} else {
 			s += " batch"
 		}
+	}
+	if o.readSet {
+		s += " read set"
 	}
 	if o.row != "" {
 		s += fmt.Sprintf(" row %q", o.row)
@@ -160,6 +169,29 @@ func runUnlessNamed(err error, remedy string) string {
 	return "; run: " + remedy
 }
 
+// memberFindCommand names the verb that shows where a member is now.
+func memberFindCommand(table, member string) string {
+	args := []string{table, member}
+	endFlags := false
+	for i, arg := range args {
+		endFlags = endFlags || strings.HasPrefix(arg, "-")
+		args[i] = shellWord(arg)
+	}
+	if endFlags {
+		args = append([]string{"--"}, args...)
+	}
+	return "nova-table member find " + strings.Join(args, " ")
+}
+
+// words joins the detail elements of a refusal reply.
+func words(detail []any) string {
+	parts := make([]string, len(detail))
+	for i, v := range detail {
+		parts[i] = fmt.Sprint(v)
+	}
+	return strings.Join(parts, " ")
+}
+
 func (o operation) remedy() string {
 	if o.view {
 		if o.table == "" {
@@ -187,18 +219,44 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalStale:
 		cause = fmt.Errorf("%w: observed %v, active %v", ErrStale, reply[2], reply[3])
 	case typedrec.TableRefusalEpochAhead:
-		cause = fmt.Errorf("%w: requested %v, active %v", ErrEpochAhead, reply[2], reply[3])
+		cause = fmt.Errorf("%w: requested epoch %v, active epoch %v (show prints the active epoch)", ErrEpochAhead, reply[2], reply[3])
 	case typedrec.TableRefusalMemberEpoch:
-		cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
+		if o.guarded() && len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: expected epoch %v, observed epoch %v", ErrMemberEpoch, reply[4], reply[3])
+			remedy = memberFindCommand(o.table, o.member)
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
+		}
 	case typedrec.TableRefusalMemberExists:
-		cause = ErrMemberExists
+		if o.guarded() && len(reply) >= 4 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: expected absent, observed %v", ErrMemberExists, reply[3])
+			remedy = memberFindCommand(o.table, o.member)
+		} else {
+			cause = ErrMemberExists
+		}
 	case typedrec.TableRefusalPlaced:
 		cause = fmt.Errorf("%w: %v", ErrPlaced, reply[2:])
 	case typedrec.TableRefusalDrift:
-		cause = fmt.Errorf("%w: %v", ErrDrift, reply[2:])
+		switch {
+		case o.guarded() && len(reply) == 5:
+			o.member = fmt.Sprint(reply[4])
+			cause = fmt.Errorf("%w: the record says row %q column %q, the owned set there does not agree", ErrDrift, reply[2], reply[3])
+			remedy = "nova-table check " + shellWord(o.table)
+		case o.guarded() && len(reply) == 4:
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: the record says place %q, which is not a usable owned cell", ErrDrift, reply[3])
+			remedy = "nova-table check " + shellWord(o.table)
+		default:
+			cause = fmt.Errorf("%w: %v", ErrDrift, reply[2:])
+		}
 	case typedrec.TableRefusalNoTable:
 		cause = ErrNoTable
 		remedy = "nova-table create " + shellWord(o.table) + " --columns <columns>"
+		if o.guarded() {
+			remedy = "nova-table list"
+		}
 	case typedrec.TableRefusalExists:
 		cause = ErrExists
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
@@ -210,8 +268,14 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalText:
 		cause = errors.New("text column holds no ordered set; choose a body column")
 	case typedrec.TableRefusalNotMember:
-		cause = ErrNotMember
-		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+		if o.guarded() && len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: expected %v, observed %v", ErrNotMember, reply[4], reply[3])
+			remedy = memberFindCommand(o.table, o.member)
+		} else {
+			cause = ErrNotMember
+			remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+		}
 	case typedrec.TableRefusalOccupiedValue:
 		o.row, o.col = fmt.Sprint(reply[2]), fmt.Sprint(reply[3])
 		cause = fmt.Errorf("%w: text cell is nonempty; clear it with row set first", ErrOccupied)
@@ -308,8 +372,13 @@ func (o operation) refused(reply []any) error {
 			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
 		}
 		boundErr := &BoundError{Table: o.table, Row: fmt.Sprint(reply[2]), Col: fmt.Sprint(reply[3]), Key: fmt.Sprint(reply[4]), Owner: fmt.Sprint(reply[5])}
-		if o.batch {
-			return fmt.Errorf("%s: %w; changed=no", o.location(), boundErr)
+		if o.guarded() {
+			if len(reply) >= 7 {
+				o.member = fmt.Sprint(reply[6])
+			}
+			// The owner is store data; it is named, never offered as a command.
+			return fmt.Errorf("%s: %s.%s.%s is bound to %s, owned by %q; changed=no; run: %s", o.location(),
+				boundErr.Table, boundErr.Row, boundErr.Col, boundErr.Key, boundErr.Owner, o.remedy())
 		}
 		return fmt.Errorf("%s: %w", o.location(), boundErr)
 	case typedrec.TableRefusalRevision:
@@ -322,6 +391,7 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrMemberRevision, reply[3], reply[4])
+			remedy = memberFindCommand(o.table, o.member)
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberRevision, reply[2:])
 		}
@@ -336,10 +406,30 @@ func (o operation) refused(reply []any) error {
 		} else if len(reply) >= 7 && fmt.Sprint(reply[4]) == "one_of" {
 			cause = fmt.Errorf("%w: member %q field %q: expected one_of %s, observed %q", ErrFieldGuard, reply[2], reply[3], reply[5], reply[6])
 		} else {
-			cause = fmt.Errorf("%w: %v", ErrFieldGuard, reply[2:])
+			cause = fmt.Errorf("%w: %s", ErrFieldGuard, words(reply[2:]))
+		}
+		if o.member != "" {
+			remedy = memberFindCommand(o.table, o.member)
+		}
+	case typedrec.TableRefusalPlaceGuard:
+		if len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: member %q: expected place %v, observed %v", ErrPlaceGuard, reply[2], reply[3], reply[4])
+			remedy = memberFindCommand(o.table, o.member)
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrPlaceGuard, words(reply[2:]))
+		}
+	case typedrec.TableRefusalArgs:
+		if o.guarded() {
+			if len(reply) >= 4 {
+				o.member = fmt.Sprint(reply[3])
+			}
+			cause = fmt.Errorf("invalid argument: %v", reply[2])
+		} else {
+			cause = fmt.Errorf("%s %v", reason, reply[2:])
 		}
 	case typedrec.TableRefusalOpConflict:
-		cause = fmt.Errorf("%w: %v", ErrOpConflict, reply[2:])
+		cause = fmt.Errorf("%w: operation %s already holds a different request", ErrOpConflict, words(reply[2:]))
 	case typedrec.TableRefusalLimit:
 		cause = fmt.Errorf("%w: %v", ErrLimit, reply[2:])
 	case typedrec.TableRefusalReservedField:
@@ -353,7 +443,7 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w (TWICE): %v", ErrDuplicateMember, reply[2:])
+		cause = fmt.Errorf("%w (TWICE): member %s appears more than once", ErrDuplicateMember, words(reply[2:]))
 	case typedrec.TableRefusalScore:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
@@ -368,20 +458,17 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w: %v", ErrMutation, reply[2:])
+		cause = fmt.Errorf("%w: %s", ErrMutation, words(reply[3:]))
 	case typedrec.TableRefusalManifest:
-		cause = fmt.Errorf("%w: %v", ErrMalformedManifest, reply[2:])
+		cause = fmt.Errorf("%w: %s", ErrMalformedManifest, words(reply[2:]))
 	case typedrec.TableRefusalStreamFull:
 		cause = fmt.Errorf("%w: stream %v is full", ErrCounterOverflow, reply[2:])
 	case typedrec.TableRefusalSchema:
-		cause = fmt.Errorf("schema: %v", reply[2:])
+		cause = fmt.Errorf("unsupported schema %s, expected 1", words(reply[2:]))
 	case typedrec.TableRefusalOperation:
-		cause = fmt.Errorf("operation: %v", reply[2:])
+		cause = fmt.Errorf("operation: %s", words(reply[2:]))
 	case typedrec.TableRefusalMember:
-		if len(reply) >= 3 {
-			o.member = fmt.Sprint(reply[2])
-		}
-		cause = fmt.Errorf("member: %v", reply[2:])
+		cause = fmt.Errorf("member: %s", words(reply[2:]))
 	case typedrec.TableRefusalWrongType:
 		if len(reply) >= 5 {
 			cause = fmt.Errorf("%w: key %v is %v, expected %v", ErrWrongType, reply[2], reply[3], reply[4])
@@ -398,11 +485,23 @@ func (o operation) refused(reply []any) error {
 		o.row = fmt.Sprint(reply[2])
 		o.col = fmt.Sprint(reply[3])
 	}
+	// A batch entry's refusal about its destination carries the entry's id last.
+	if o.guarded() {
+		switch {
+		case refusal == typedrec.TableRefusalNoRow && len(reply) >= 4:
+			o.member = fmt.Sprint(reply[3])
+		case (refusal == typedrec.TableRefusalNoCol || refusal == typedrec.TableRefusalText) && len(reply) >= 5:
+			o.member = fmt.Sprint(reply[4])
+		}
+	}
 	if refusal == typedrec.TableRefusalNoRow && len(reply) >= 3 {
 		o.row = fmt.Sprint(reply[2])
 		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
 	}
-	if o.batch {
+	if o.readSet && refusal == typedrec.TableRefusalNoRow {
+		remedy = o.remedy() // a read prepares nothing to write; show the table
+	}
+	if o.guarded() {
 		return fmt.Errorf("%s: %w; changed=no; run: %s", o.location(), cause, remedy)
 	}
 	return fmt.Errorf("%s: %w; run: %s", o.location(), cause, remedy)
@@ -1296,7 +1395,7 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 	if len(epoch) > 0 {
 		args = append(args, strconv.FormatUint(epoch[0], 10))
 	}
-	o := operation{table: table}
+	o := operation{table: table, readSet: true}
 	key := DefKey(table)
 	cmd := c.FCallRO(ctx, FnReadSet, []string{key}, args...)
 	reply, err := cmd.Slice()

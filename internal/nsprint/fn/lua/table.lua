@@ -215,6 +215,7 @@ do
       for k, v in pairs(snap) do if string.sub(k, 1, 1) ~= '_' then h[k] = v end end
       cfg = T.config(h)
     elseif historical and epoch ~= active then
+      if T.uintgt(epoch, active) then return nil, T.refuse('EPOCHAHEAD', epoch, active) end
       return nil, T.refuse('NOTABLE')
     end
     if not h then return nil, T.refuse('NOTABLE') end
@@ -300,7 +301,7 @@ do
   end
   function T.memberkey(d, id) return d.cfg.member_prefix .. id end
   function T.member(d, id)
-    if not T.word(id) then return nil, nil, T.refuse('MEMBER') end
+    if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
     local mkey = T.memberkey(d, id)
     local flat = redis.pcall('HGETALL', mkey)
     if type(flat) == 'table' and flat.err then
@@ -1650,6 +1651,8 @@ do
   end
 
   function T.apply(keys, args)
+    -- A refusal raised while one entry is judged carries that entry's id last.
+    local function at_member(err, id) err[#err + 1] = id; return err end
     if #args ~= 2 then return T.refuse('ARGS', 'apply') end
     local table_name = args[1]
     local raw_json = args[2]
@@ -1715,20 +1718,20 @@ do
     local changed_entries = {}
     local guard_entries = {}
 
-    for _, entry in ipairs(members_list) do
+    for idx, entry in ipairs(members_list) do
       if type(entry) ~= 'table' or not T.word(entry.id) then
-        return T.refuse('MEMBER', 'invalid member entry or id')
+        return T.refuse('MEMBER', 'entry ' .. idx .. ' is not an object with a nonempty id without control characters')
       end
       if #entry.id > 256 then return T.refuse('LIMIT', 'member id exceeds 256 bytes') end
       if seen_ids[entry.id] then return T.refuse('TWICE', entry.id) end
       seen_ids[entry.id] = true
 
       if entry.remove ~= nil and entry.remove ~= true then
-        return T.refuse('ARGS', 'remove must be true')
+        return T.refuse('ARGS', 'remove must be true', entry.id)
       end
 
       if entry.set ~= nil then
-        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object') end
+        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object', entry.id) end
         local count = 0
         for f, val in pairs(entry.set) do
           count = count + 1
@@ -1737,18 +1740,18 @@ do
             return T.refuse('RESERVEDFIELD', entry.id, f)
           end
           if not T.word(f) or type(val) ~= 'string' then
-            return T.refuse('ARGS', 'field name and value must be valid strings')
+            return T.refuse('ARGS', 'field name and value must be valid strings', entry.id)
           end
           if #val > 65536 then return T.refuse('LIMIT', 'field value exceeds 64 KiB') end
         end
       end
       if entry.unset ~= nil then
-        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array') end
+        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array', entry.id) end
         for _, f in ipairs(entry.unset) do
           if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
             return T.refuse('RESERVEDFIELD', entry.id, f)
           end
-          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name') end
+          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', entry.id) end
         end
       end
       if entry.set ~= nil and entry.unset ~= nil then
@@ -1792,7 +1795,7 @@ do
         local r, c = string.match(current_place, '^(.*):([^:]+)$')
         if not r or not c then return T.refuse('DRIFT', id, current_place) end
         local cell, cell_err = T.cell(d, r, c, true)
-        if not cell then return cell_err end
+        if not cell then return at_member(cell_err, id) end
         local score = redis.pcall('ZSCORE', cell.key, id)
         if type(score) == 'table' and score.err then
           if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, 'wrong type', 'zset') end
@@ -1814,21 +1817,23 @@ do
       end
       local exp = entry.expect
       if exp.absent ~= nil then
-        if exp.absent ~= true then return T.refuse('ARGS', 'expect absent must be true') end
-        if exists or current_place then return T.refuse('MEMBEREXISTS', id) end
+        if exp.absent ~= true then return T.refuse('ARGS', 'expect absent must be true', id) end
+        if exists or current_place then
+          return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
+        end
       else
-        if not exists then return T.refuse('NOTMEMBER', id) end
+        if not exists then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member') end
         local obs_rev = record.revision or '0'
         if exp.revision and exp.revision ~= obs_rev then
           return T.refuse('MEMBERREVISION', id, exp.revision, obs_rev)
         end
         if exp.place then
           if not exp.place.row or not exp.place.col then
-            return T.refuse('ARGS', 'expect place wants row and col')
+            return T.refuse('ARGS', 'expect place wants row and col', id)
           end
           local exp_place = T.place(exp.place.row, exp.place.col)
           if current_place ~= exp_place then
-            return T.refuse('DRIFT', id, exp_place, current_place or 'unplaced')
+            return T.refuse('PLACEGUARD', id, exp_place, current_place or 'unplaced')
           end
         end
         if exp.fields and type(exp.fields) == 'table' then
@@ -1929,11 +1934,11 @@ do
           return T.refuse('MUTATION', id, 'create requires expect absent')
         end
         if next(record) or current_place then
-          return T.refuse('MEMBEREXISTS', id)
+          return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
         end
         local crow, ccol = entry.create.row, entry.create.col
         local dst_cell, err = T.cell(d, crow, ccol, true)
-        if not dst_cell then return err end
+        if not dst_cell then return at_member(err, id) end
         if entry.create.score == nil or (type(entry.create.score) ~= 'number' and type(entry.create.score) ~= 'string') then
           return T.refuse('SCORE', id)
         end
@@ -1956,10 +1961,10 @@ do
         item.after_rev = '1'
       elseif entry.move then
         if entry.remove then return T.refuse('MUTATION', id, 'move cannot combine with remove') end
-        if not current_place then return T.refuse('NOTMEMBER', id) end
+        if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to move') end
         local mrow, mcol = entry.move.row, entry.move.col
         local dst_cell, err = T.cell(d, mrow, mcol, true)
-        if not dst_cell then return err end
+        if not dst_cell then return at_member(err, id) end
         local score
         if entry.move.score ~= nil then
           if type(entry.move.score) ~= 'number' and type(entry.move.score) ~= 'string' then
@@ -1974,7 +1979,7 @@ do
         end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err2 = T.cell(d, src_row, src_col, true)
-        if not src_cell then return err2 end
+        if not src_cell then return at_member(err2, id) end
         local dst_place = T.place(mrow, mcol)
         local cur_score = member_scores[id]
         local place_changed = (dst_place ~= current_place)
@@ -2006,10 +2011,10 @@ do
           item.after_rev = item.before_rev
         end
       elseif entry.remove then
-        if not current_place then return T.refuse('NOTMEMBER', id) end
+        if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to remove') end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err = T.cell(d, src_row, src_col, true)
-        if not src_cell then return err end
+        if not src_cell then return at_member(err, id) end
         item.action = 'remove'
         item.effective_change = true
         item.src_row = src_row
@@ -2032,7 +2037,7 @@ do
         local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
                            (entry.unset ~= nil and #entry.unset > 0)
         if has_fields then
-          if not next(record) then return T.refuse('NOTMEMBER', id) end
+          if not next(record) then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member to change fields of') end
           if fields_changed then
             item.action = 'fields'
             item.effective_change = true

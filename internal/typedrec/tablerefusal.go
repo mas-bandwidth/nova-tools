@@ -55,6 +55,7 @@ const (
 	TableRefusalWrongType
 	TableRefusalStreamType
 	TableRefusalEpochAhead
+	TableRefusalPlaceGuard
 )
 
 // ParseTableRefusal parses a raw table Lua reply reason token into a typed TableRefusal.
@@ -160,6 +161,8 @@ func ParseTableRefusal(reason string) TableRefusal {
 		return TableRefusalStreamType
 	case "EPOCHAHEAD":
 		return TableRefusalEpochAhead
+	case "PLACEGUARD":
+		return TableRefusalPlaceGuard
 	default:
 		return TableRefusalUnknown
 	}

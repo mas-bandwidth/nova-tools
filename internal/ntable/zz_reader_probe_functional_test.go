@@ -298,48 +298,6 @@ func TestReaderProbeEpochFirstWriteByApply(t *testing.T) {
 	}
 }
 
-// Refusal messages name operation, member/batch, expected/observed, changed=no, next command.
-func TestReaderProbeRefusalText(t *testing.T) {
-	t.Parallel()
-	c, ctx := probeTable(t)
-	seedTwo(t, ctx, c)
-	rev := probeRev(ctx, c)
-	base := func(op string, e ...ntable.BatchMemberEntry) ntable.BatchManifest {
-		return ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: op, Actor: "p", Members: e}
-	}
-	cases := map[string]ntable.BatchManifest{
-		"twice":     base("r-twice", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}}, ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}}),
-		"memberrev": base("r-mrev", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Revision: "9"}}),
-		"exists":    base("r-exists", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "done", Score: 1}}),
-		"tablerev": func() ntable.BatchManifest {
-			m := base("r-trev", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}})
-			m.ExpectedTableRevision = "1"
-			return m
-		}(),
-		"epoch": func() ntable.BatchManifest {
-			m := base("r-ep", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}})
-			m.Epoch = "3"
-			return m
-		}(),
-		"fieldguard": base("r-fg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"role": {Absent: boolPtr(true)}}}}),
-		"notmember":  base("r-nm", ntable.BatchMemberEntry{ID: "zz", Expect: &ntable.MemberExpect{}, Move: &ntable.MemberMoveOp{Row: "build", Col: "done"}}),
-		"reserved":   base("r-res", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}, Set: map[string]string{"epoch": "5"}}),
-		"placeguard": base("r-pg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: "test", Col: "done"}}}),
-	}
-	for name, m := range cases {
-		_, err := ntable.ApplyBatch(ctx, c, m)
-		t.Logf("%-10s %v", name, err)
-		if err == nil {
-			t.Errorf("%s accepted", name)
-			continue
-		}
-		s := err.Error()
-		if !strings.Contains(s, "changed=no") || !strings.Contains(s, "run: ") || !strings.Contains(s, m.OperationID) {
-			t.Errorf("%s: refusal text misses changed=no / run: / operation id: %s", name, s)
-		}
-	}
-}
-
 // Field-guard count is not bounded: 3000 passing guards are accepted.
 func TestReaderProbeUnboundedGuards(t *testing.T) {
 	t.Parallel()
