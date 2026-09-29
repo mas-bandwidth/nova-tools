@@ -1868,7 +1868,8 @@ installed) reports no unreachable function that is not on the platform allowlist
 every function the allowlist names is still reported.
 **The hurt.** Unreachable functions under `cmd/` are compiled, vetted, read and
 merged on every commit for nobody (#4312).
-**The test.** `TestDeadcode` and `TestDeadcodeAllowlistOnlyShrinksAgainstMergeBase`
+**The test.** `TestDeadcode`, `TestDeadcodeAllowlistOnlyShrinksAgainstMergeBase` and
+`TestAllowlistShrinkComparisonNegativeControl`
 (`internal/ci/deadcode_class_test.go`).
 It runs `go tool deadcode ./cmd/...` at the repository root with a
 `goenv.Clean` environment, reads the default one-line-per-function output, and
@@ -1897,7 +1898,8 @@ allowlist names is still reported.
 **The hurt.** Unused identifiers, most of them test helpers, that `deadcode`
 never loads because it starts from the main packages: a fixture nobody builds
 and a const nobody reads are the same debt one package over (#4312).
-**The test.** `TestU1000` and `TestU1000AllowlistOnlyShrinksAgainstMergeBase`
+**The test.** `TestU1000`, `TestU1000AllowlistOnlyShrinksAgainstMergeBase` and
+`TestU1000RefusesUnexpectedCompileDiagnostics`
 (`internal/ci/deadcode_class_test.go`), the same reader as `deadcode` over
 staticcheck's `file:line:col: <kind> <name> is unused (U1000)` lines.
 **Its allowlist.** `internal/ci/testdata/u1000_allowlist_<goos>.txt` (`_darwin.txt`

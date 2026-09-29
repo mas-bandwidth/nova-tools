@@ -50,10 +50,21 @@ const (
 // `cmd/nova-bus/norace_test.go:6:7: const raceEnabled is unused (U1000)`.
 var u1000LineRe = regexp.MustCompile(`^(\S+?):\d+:\d+: (func|field|type|var|const) (.+) is unused \(U1000\)$`)
 
+// seedBaselineCeilings holds the explicit baseline ceiling for each allowlist
+// at initial introduction, guarding against unratcheted growth during the seed PR.
+var seedBaselineCeilings = map[string]int{
+	deadcodeAllowlistDarwinPath: 1609,
+	deadcodeAllowlistLinuxPath:  1602,
+	u1000AllowlistDarwinPath:    128,
+	u1000AllowlistLinuxPath:     130,
+}
+
 // parseU1000Line parses a single line of staticcheck output, strictly excluding
-// the known unbuildable fixture (testprobe) and refusing any unexpected compile diagnostics.
+// the known unbuildable fixture (internal/swarm/testprobe) when excluded by build constraints,
+// and refusing any unexpected compile diagnostics.
 func parseU1000Line(line string) (string, bool, error) {
-	if strings.Contains(line, "testprobe") {
+	if strings.HasPrefix(line, "internal/swarm/testprobe/") &&
+		strings.Contains(line, "build constraints exclude all Go files") {
 		return "", false, nil
 	}
 	if strings.HasSuffix(line, "(compile)") || strings.Contains(line, "build constraints exclude all Go files") {
@@ -119,10 +130,37 @@ func checkAllowlistOnlyShrinksAgainstMergeBase(t *testing.T, root, allowPath str
 		t.Fatal(err)
 	}
 	relPath := "internal/ci/" + allowPath
+	headList, err := allowlist.Load(filepath.Join(root, filepath.FromSlash(relPath)), shrinkOnly)
+	if err != nil {
+		t.Fatalf("%s at HEAD: %v", relPath, err)
+	}
+
 	if _, err := gitOut(root, "cat-file", "-e", parent+":"+relPath); err != nil {
-		t.Logf("%s is not in the merge base %s: this change is the allowlist seed", relPath, parent[:9])
+		baseCeil, ok := seedBaselineCeilings[allowPath]
+		if !ok {
+			t.Fatalf("%s has no declared baseline ceiling", allowPath)
+		}
+		headCeil, hasCeil := headList.Ceiling()
+		if !hasCeil {
+			t.Errorf("%s: seed allowlist must carry a # ceiling: N line", relPath)
+		}
+		parentPrefix := parent
+		if len(parentPrefix) > 9 {
+			parentPrefix = parentPrefix[:9]
+		}
+		if headCeil > baseCeil {
+			t.Errorf("%s raises the seed ceiling to %d, exceeding baseline %d (against merge base %s)", relPath, headCeil, baseCeil, parentPrefix)
+		}
+		if headList.Len() > baseCeil {
+			t.Errorf("%s has %d rows, exceeding baseline ceiling %d (against merge base %s)", relPath, headList.Len(), baseCeil, parentPrefix)
+		}
+		if headList.Len() > headCeil {
+			t.Errorf("%s has %d rows, exceeding its ceiling of %d", relPath, headList.Len(), headCeil)
+		}
+		t.Logf("%s verified against seed baseline ceiling %d (rows=%d, ceil=%d; merge base %s)", relPath, baseCeil, headList.Len(), headCeil, parentPrefix)
 		return
 	}
+
 	baseText, err := gitOut(root, "show", parent+":"+relPath)
 	if err != nil {
 		t.Fatal(err)
@@ -130,10 +168,6 @@ func checkAllowlistOnlyShrinksAgainstMergeBase(t *testing.T, root, allowPath str
 	baseList, err := allowlist.Parse(relPath, baseText, shrinkOnly)
 	if err != nil {
 		t.Fatalf("%s at %s: %v", relPath, parent[:9], err)
-	}
-	headList, err := allowlist.Load(filepath.Join(root, filepath.FromSlash(relPath)), shrinkOnly)
-	if err != nil {
-		t.Fatalf("%s at HEAD: %v", relPath, err)
 	}
 	errs := compareAllowlists(baseList, headList, relPath, parent)
 	for _, e := range errs {
@@ -170,11 +204,18 @@ func TestU1000AllowlistOnlyShrinksAgainstMergeBase(t *testing.T) {
 func TestU1000RefusesUnexpectedCompileDiagnostics(t *testing.T) {
 	t.Parallel()
 
-	// Legitimate testprobe fixture is safely ignored
-	testprobeLine := "cmd/nova-pulse/testprobe/probe.go:1:1: build constraints exclude all Go files (compile)"
+	// Legitimate internal/swarm/testprobe fixture is safely ignored
+	testprobeLine := "internal/swarm/testprobe/main.go:1:1: build constraints exclude all Go files (compile)"
 	_, isFinding, err := parseU1000Line(testprobeLine)
 	if err != nil || isFinding {
-		t.Errorf("expected testprobe to be safely ignored, got isFinding=%v, err=%v", isFinding, err)
+		t.Errorf("expected internal/swarm/testprobe to be safely ignored, got isFinding=%v, err=%v", isFinding, err)
+	}
+
+	// Unrelated compile error mentioning testprobe in another package must be refused
+	stellaNegativeLine := "cmd/nova-bus/bus.go:10:2: dependency testprobe unavailable (compile)"
+	_, _, err = parseU1000Line(stellaNegativeLine)
+	if err == nil || !strings.Contains(err.Error(), "unexpected compile diagnostic") {
+		t.Errorf("expected unexpected compile diagnostic for unrelated testprobe compile failure, got %v", err)
 	}
 
 	// Unexpected compile error in a regular package is refused
@@ -192,7 +233,8 @@ func TestU1000RefusesUnexpectedCompileDiagnostics(t *testing.T) {
 }
 
 // TestAllowlistShrinkComparisonNegativeControl provides negative control coverage
-// asserting that adding an unseeded row or raising an allowlist ceiling fails comparison.
+// asserting that adding an unseeded row, raising an allowlist ceiling, or measuring
+// an unlisted key fails comparison.
 func TestAllowlistShrinkComparisonNegativeControl(t *testing.T) {
 	t.Parallel()
 
@@ -256,4 +298,47 @@ func TestAllowlistShrinkComparisonNegativeControl(t *testing.T) {
 	if !foundCeil {
 		t.Errorf("expected 'raises the ceiling' error, got %v", errsCeil)
 	}
+
+	// Growing row count fails
+	growingText := "# ceiling: 10\npkg.SymA reason 1\npkg.SymB reason 2\npkg.SymC reason 3\n"
+	growingList, err := allowlist.Parse("test.txt", growingText, shrinkOnly)
+	if err != nil {
+		t.Fatalf("parse growing: %v", err)
+	}
+	errsGrowing := compareAllowlists(baseList, growingList, "test.txt", "1234567890")
+	foundGrowing := false
+	for _, e := range errsGrowing {
+		if strings.Contains(e, "more than merge base") {
+			foundGrowing = true
+		}
+	}
+	if !foundGrowing {
+		t.Errorf("expected 'more than merge base' error, got %v", errsGrowing)
+	}
+
+	// CheckMode fails outside update on unlisted findings
+	var rec allowlistRecorder
+	checkRes := allowlist.CheckMode(&rec, baseList, map[string]bool{"pkg.SymA": true, "pkg.Unlisted": true}, false)
+	if len(checkRes.Unlisted) != 1 || checkRes.Unlisted[0] != "pkg.Unlisted" {
+		t.Errorf("expected 1 unlisted finding, got %v", checkRes.Unlisted)
+	}
+	if rec.count("unlisted finding") != 1 {
+		t.Errorf("expected CheckMode to report unlisted finding outside update, got lines: %v", rec.lines)
+	}
+}
+
+type allowlistRecorder struct{ lines []string }
+
+func (r *allowlistRecorder) Helper() {}
+func (r *allowlistRecorder) Errorf(format string, args ...any) {
+	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+}
+func (r *allowlistRecorder) count(sub string) int {
+	n := 0
+	for _, l := range r.lines {
+		if strings.Contains(l, sub) {
+			n++
+		}
+	}
+	return n
 }

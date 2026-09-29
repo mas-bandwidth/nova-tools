@@ -220,6 +220,9 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 		if n, ok := l.Ceiling(); ok && len(l.rows) > n {
 			r.Errorf("%s has %d rows, over its ceiling of %d; the list only shrinks", l.Path, len(l.rows), n)
 		}
+		for _, k := range res.Unlisted {
+			r.Errorf("%s: unlisted finding %s; the list only shrinks", l.Path, k)
+		}
 		return res
 	}
 

@@ -71,8 +71,9 @@ b.go:g  # reason b
 c.go:h  # reason c
 `
 
-// Outside an update Check only reports: the stale rows and the unlisted keys come
-// back, nothing is printed for them, and the file is untouched.
+// Outside an update Check reports unlisted keys and over-ceiling errors without
+// writing: the stale rows and unlisted keys come back, unlisted findings are reported,
+// and the file is untouched.
 func TestCheckReportsWithoutWriting(t *testing.T) {
 	t.Parallel()
 
@@ -86,8 +87,8 @@ func TestCheckReportsWithoutWriting(t *testing.T) {
 	if strings.Join(res.Unlisted, ",") != "d.go:new" {
 		t.Fatalf("unlisted = %v, want [d.go:new]", res.Unlisted)
 	}
-	if res.Updated || len(r.lines) != 0 || readBack(t, path) != three {
-		t.Fatalf("a check outside an update wrote or printed: updated=%v lines=%q", res.Updated, r.lines)
+	if res.Updated || r.count("d.go:new") != 1 || r.count("unlisted finding") != 1 || readBack(t, path) != three {
+		t.Fatalf("a check outside an update wrote or failed to report unlisted finding: updated=%v lines=%q", res.Updated, r.lines)
 	}
 }
 
