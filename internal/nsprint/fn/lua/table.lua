@@ -702,10 +702,15 @@ do
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
       'members', #d.members == 0 and '[]' or cjson.encode(d.members), 'outcome', outcome}
+    local members_at = #event - 2
+    local delta_at
     if d.renamed_keys then event[#event + 1] = 'renamed_keys'; event[#event + 1] = cjson.encode(d.renamed_keys) end
     -- opts.event_extra is a flat list of field, value pairs appended to the event.
     if opts.event_extra then
       for _, v in ipairs(opts.event_extra) do event[#event + 1] = v end
+      for i = #event - #opts.event_extra + 1, #event, 2 do
+        if event[i] == 'batch_delta' then delta_at = i + 1 end
+      end
     end
     T.stage(d, unpack(event))
     for _, cmd in ipairs(d.commands) do
@@ -713,14 +718,22 @@ do
     end
     local type_err = T.check_types(d.commands)
     if type_err then return type_err end
-    local id
-    for _, cmd in ipairs(d.commands) do id = redis.call(unpack(cmd)) end
+    local id, delta
+    for i, cmd in ipairs(d.commands) do
+      if i == #d.commands and opts.resolve then
+        -- the event is the last write: its members and delta are settled now
+        delta = opts.resolve()
+        cmd[members_at] = #d.members == 0 and '[]' or cjson.encode(d.members)
+        if delta_at then cmd[delta_at] = delta end
+      end
+      id = redis.call(unpack(cmd))
+    end
     local before = d.revision
     d.revision = after
     if type(reply) == 'function' then reply = reply() end
     local receipt = {'RECEIPT', id, d.epoch, before, after, outcome}
     -- opts.receipt_extra is a seventh receipt element (a batch's delta).
-    if opts.receipt_extra then receipt[7] = opts.receipt_extra end
+    if delta or opts.receipt_extra then receipt[7] = delta or opts.receipt_extra end
     reply[#reply + 1] = receipt
     -- opts.record runs last, after every staged write, with the finished reply
     -- (a batch keeps its operation record here, which holds the receipt).
@@ -1981,6 +1994,7 @@ do
     local member_records = {}
     local member_places = {}
     local member_scores = {}
+    local member_score_text = {} -- the score exactly as the store holds it
 
     for _, entry in ipairs(members_list) do
       local id = entry.id
@@ -2004,6 +2018,7 @@ do
         if drift then return drift end
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
+        member_score_text[id] = score
       else
         local drift = T.unindexed(d, id)
         if drift then return drift end
@@ -2108,7 +2123,7 @@ do
         item.before_place = ''
         item.after_place = item.dst_place
         item.before_score = cjson.null
-        item.after_score = score
+        item.after_score = nil -- the store's own string, read after the write
         item.before_rev = '0'
         item.after_rev = '1'
       elseif entry.move then
@@ -2142,8 +2157,8 @@ do
         item.score = score
         item.before_place = current_place
         item.after_place = dst_place
-        item.before_score = cur_score
-        item.after_score = score
+        item.before_score = member_score_text[id]
+        item.after_score = (score == cur_score) and member_score_text[id] or nil
         item.before_rev = record.revision or '0'
         item.effective_change = effective
 
@@ -2168,7 +2183,7 @@ do
         item.src_cell = src_cell
         item.before_place = current_place
         item.after_place = ''
-        item.before_score = member_scores[id]
+        item.before_score = member_score_text[id]
         item.after_score = cjson.null
         item.before_rev = record.revision or '0'
         item.after_rev = T.next(item.before_rev)
@@ -2176,8 +2191,8 @@ do
       else
         item.before_place = current_place or ''
         item.after_place = current_place or ''
-        item.before_score = member_scores[id] ~= nil and member_scores[id] or cjson.null
-        item.after_score = member_scores[id] ~= nil and member_scores[id] or cjson.null
+        item.before_score = member_score_text[id] ~= nil and member_score_text[id] or cjson.null
+        item.after_score = member_score_text[id] ~= nil and member_score_text[id] or cjson.null
         item.before_rev = record.revision or '0'
         local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
                            (entry.unset ~= nil and #entry.unset > 0)
@@ -2205,6 +2220,7 @@ do
 
     -- Stage mutations:
     local delta_members = {}
+    local late = {} -- scores read back from the store after the writes
     local real_changes = 0
 
     for _, item in ipairs(plan) do
@@ -2233,7 +2249,8 @@ do
       if item.action == 'create' then
         T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
         T.stage(d, 'HSET', mkey, 'epoch', d.epoch, 'place:' .. d.name, item.dst_place, 'revision', '1')
-        T.change(d, id, nil, item.dst_place, item.score)
+        T.change(d, id, nil, item.dst_place, '')
+        late[#late + 1] = {member = d.members[#d.members], delta = delta_item, key = item.dst_cell.key, id = id}
       elseif item.action == 'move' then
         if not record.epoch then
           T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
@@ -2242,12 +2259,13 @@ do
           T.stage(d, 'ZREM', item.src_cell.key, id)
           T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
           T.stage(d, 'HSET', mkey, 'place:' .. d.name, item.dst_place, 'revision', item.after_rev)
-          T.change(d, id, item.src_place, item.dst_place, item.score)
+          T.change(d, id, item.src_place, item.dst_place, '')
         else
           T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
           T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
-          T.change(d, id, item.src_place, item.dst_place, item.score)
+          T.change(d, id, item.src_place, item.dst_place, '')
         end
+        late[#late + 1] = {member = d.members[#d.members], delta = delta_item, key = item.dst_cell.key, id = id}
       elseif item.action == 'remove' then
         if not record.epoch then
           T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
@@ -2255,7 +2273,7 @@ do
         T.stage(d, 'ZREM', item.src_cell.key, id)
         T.stage(d, 'HDEL', mkey, 'place:' .. d.name)
         T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
-        T.change(d, id, item.src_place, nil, member_scores[id])
+        T.change(d, id, item.src_place, nil, member_score_text[id])
       elseif item.action == 'fields' then
         if not record.epoch then
           T.stage(d, 'HSET', mkey, 'epoch', d.epoch)
@@ -2284,15 +2302,17 @@ do
     end
 
     local outcome = real_changes == 0 and 'noop' or 'changed'
-    local delta = cjson.encode({
-      operation_id = manifest.operation_id,
-      digest = digest,
-      actor = manifest.actor or '',
-      selected_count = #manifest.members,
-      guard_count = guard_count,
-      changed_count = real_changes,
-      members = delta_members,
-    })
+    local function encode_delta()
+      return cjson.encode({
+        operation_id = manifest.operation_id,
+        digest = digest,
+        actor = manifest.actor or '',
+        selected_count = #manifest.members,
+        guard_count = guard_count,
+        changed_count = real_changes,
+        members = delta_members,
+      })
+    end
 
     -- The operation record is the last write, after the commit; its
     -- permission and type are settled before the first write.
@@ -2306,8 +2326,18 @@ do
       actor = manifest.actor or '', fence = '', idem = '',
       outcome = outcome,
       wireargs = {table_name, manifest.operation_id, digest},
-      event_extra = {'batch_delta', delta},
-      receipt_extra = delta,
+      event_extra = {'batch_delta', ''},
+      -- Runs after every write but the event: a member's score is what the
+      -- store holds, read back, so an event and a receipt carry the exact
+      -- decimal string and two different scores never print the same.
+      resolve = function()
+        for _, l in ipairs(late) do
+          local score = redis.call('ZSCORE', l.key, l.id)
+          l.member.score = score
+          l.delta.after_score = score
+        end
+        return encode_delta()
+      end,
       record = function(reply, stream_id, before, after)
         redis.call('HSET', op_key,
           'operation_id', manifest.operation_id,

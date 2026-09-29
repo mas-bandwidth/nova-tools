@@ -277,3 +277,21 @@ func TestBatchCLIReceiptFlagSuppression(t *testing.T) {
 		t.Errorf("expected TABLE BATCH in stdout, got:\n%s", stdout)
 	}
 }
+
+// The CLI prints a score as the exact decimal string the store holds.
+func TestBatchCLIPrintsScoresWithoutLosingPrecision(t *testing.T) {
+	t.Parallel()
+	addr, rev := batchFixture(t)
+	manifest := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev + `","operation_id":"exact","members":[` +
+		`{"id":"x1","expect":{"absent":true},"create":{"row":"build","col":"done","score":0.30000000000000004}},` +
+		`{"id":"x2","expect":{"absent":true},"create":{"row":"build","col":"done","score":0.3}}]}`
+	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for _, w := range []string{"MEMBER x1 place=-->build:done score=-->0.30000000000000004 ", "MEMBER x2 place=-->build:done score=-->0.3 "} {
+		if !strings.Contains(stdout, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, stdout)
+		}
+	}
+}

@@ -449,7 +449,11 @@ members' before/after placements, scores, revisions and application-field change
 For each affected application field, include its before and after values with
 absence distinguished from a present empty string. An absent placement has no
 score. Set/unset instructions alone do not supply the before values. Include
-explicit guard/selection counts; a missing member is not silently omitted. One
+explicit guard/selection counts; a missing member is not silently omitted.
+A score in a receipt, a change event, a read set or the CLI is the exact decimal
+string the store holds, as the ordinary verbs write it (`0.30000000000000004`,
+not `0.3`); two different scores never render alike. A batch's change event has
+the fields an ordinary verb's has for the same change, plus `batch_delta`. One
 batch receipt maps to one model action. Returning the original result on retry
 must return the same receipt identity.
 

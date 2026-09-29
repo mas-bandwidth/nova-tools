@@ -1216,6 +1216,17 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func parseScoreText(t *string) (*float64, error) {
+	if t == nil {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(*t, 64)
+	if err != nil {
+		return nil, fmt.Errorf("score %q is not a number: %w", *t, err)
+	}
+	return &v, nil
+}
+
 // FieldChange records before and after values for an application field.
 // Absence is represented by nil, distinguished from a present empty string.
 type FieldChange struct {
@@ -1225,16 +1236,21 @@ type FieldChange struct {
 
 // BatchMemberDelta records before and after state for a member affected by a batch.
 type BatchMemberDelta struct {
-	ID          string                 `json:"id"`
-	BeforePlace string                 `json:"before_place"`
-	AfterPlace  string                 `json:"after_place"`
-	BeforeScore *float64               `json:"before_score"`
-	AfterScore  *float64               `json:"after_score"`
-	BeforeRev   string                 `json:"before_rev"`
-	AfterRev    string                 `json:"after_rev"`
-	FieldsSet   map[string]string      `json:"fields_set"`
-	FieldsUnset []string               `json:"fields_unset"`
-	Fields      map[string]FieldChange `json:"fields"`
+	ID          string `json:"id"`
+	BeforePlace string `json:"before_place"`
+	AfterPlace  string `json:"after_place"`
+	// BeforeScore and AfterScore are the scores parsed; BeforeScoreText and
+	// AfterScoreText are the exact decimal strings the store holds, which two
+	// different scores never share. Nil is no score (unplaced).
+	BeforeScore     *float64               `json:"-"`
+	AfterScore      *float64               `json:"-"`
+	BeforeScoreText *string                `json:"before_score"`
+	AfterScoreText  *string                `json:"after_score"`
+	BeforeRev       string                 `json:"before_rev"`
+	AfterRev        string                 `json:"after_rev"`
+	FieldsSet       map[string]string      `json:"fields_set"`
+	FieldsUnset     []string               `json:"fields_unset"`
+	Fields          map[string]FieldChange `json:"fields"`
 }
 
 func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
@@ -1242,8 +1258,8 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 		ID          string          `json:"id"`
 		BeforePlace string          `json:"before_place"`
 		AfterPlace  string          `json:"after_place"`
-		BeforeScore *float64        `json:"before_score"`
-		AfterScore  *float64        `json:"after_score"`
+		BeforeScore *string         `json:"before_score"`
+		AfterScore  *string         `json:"after_score"`
 		BeforeRev   string          `json:"before_rev"`
 		AfterRev    string          `json:"after_rev"`
 		FieldsSet   json.RawMessage `json:"fields_set"`
@@ -1257,8 +1273,14 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 	b.ID = raw.ID
 	b.BeforePlace = raw.BeforePlace
 	b.AfterPlace = raw.AfterPlace
-	b.BeforeScore = raw.BeforeScore
-	b.AfterScore = raw.AfterScore
+	b.BeforeScoreText, b.AfterScoreText = raw.BeforeScore, raw.AfterScore
+	var err error
+	if b.BeforeScore, err = parseScoreText(raw.BeforeScore); err != nil {
+		return err
+	}
+	if b.AfterScore, err = parseScoreText(raw.AfterScore); err != nil {
+		return err
+	}
 	b.BeforeRev = raw.BeforeRev
 	b.AfterRev = raw.AfterRev
 
@@ -1389,7 +1411,9 @@ type ReadSetMember struct {
 	Row      string
 	Col      string
 	Score    float64
-	Fields   map[string]string
+	// ScoreText is the score exactly as the store holds it.
+	ScoreText string
+	Fields    map[string]string
 }
 
 func (r ReadSetResult) Member(id string) (ReadSetMember, bool) {
@@ -1471,13 +1495,14 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 				fields[fmt.Sprint(fieldsRaw[i])] = fmt.Sprint(fieldsRaw[i+1])
 			}
 			res.Members = append(res.Members, ReadSetMember{
-				ID:       fmt.Sprint(item[0]),
-				Revision: mRev,
-				Placed:   fmt.Sprint(item[2]) == "1",
-				Row:      fmt.Sprint(item[3]),
-				Col:      fmt.Sprint(item[4]),
-				Score:    mScore,
-				Fields:   fields,
+				ID:        fmt.Sprint(item[0]),
+				Revision:  mRev,
+				Placed:    fmt.Sprint(item[2]) == "1",
+				Row:       fmt.Sprint(item[3]),
+				Col:       fmt.Sprint(item[4]),
+				Score:     mScore,
+				ScoreText: fmt.Sprint(item[5]),
+				Fields:    fields,
 			})
 		}
 	}

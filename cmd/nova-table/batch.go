@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -120,7 +119,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	for _, m := range delta.Members {
 		fmt.Fprintf(stdout, "MEMBER %s place=%s->%s score=%s->%s rev=%s->%s fields=%s\n",
 			field(m.ID), placeOrDash(m.BeforePlace), placeOrDash(m.AfterPlace),
-			scoreOrDash(m.BeforeScore), scoreOrDash(m.AfterScore), m.BeforeRev, m.AfterRev, fieldChanges(m))
+			scoreOrDash(m.BeforeScoreText), scoreOrDash(m.AfterScoreText), m.BeforeRev, m.AfterRev, fieldChanges(m))
 	}
 	return 0
 }
@@ -132,11 +131,12 @@ func placeOrDash(p string) string {
 	return p
 }
 
-func scoreOrDash(v *float64) string {
+// scoreOrDash is the score exactly as the store holds it, or - for none.
+func scoreOrDash(v *string) string {
 	if v == nil {
 		return "-"
 	}
-	return strconv.FormatFloat(*v, 'g', -1, 64)
+	return *v
 }
 
 // fieldChanges is the member's changed application fields as one JSON object,
