@@ -4,6 +4,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"strings"
@@ -116,41 +117,55 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 
 // Without a deadline of its own the connection check is bounded by the
 // fallback it is given (ConnectTimeout in OpenPG); with one, the caller's
-// deadline governs, longer or shorter.
+// deadline governs and the fallback is not applied. Both are read from the
+// context, not the clock: after the fallback fires the caller's context is
+// still open, and after the caller's deadline fires it is done.
 func TestOpenPGWithinBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	t.Parallel()
 
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				return
-			}
-			defer c.Close()
+	// stall is a store that accepts connections and never answers; accepted
+	// gets one value per connection.
+	stall := func() (dsn string, accepted chan struct{}) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
 		}
-	}()
-	dsn := "postgres://nova_config@" + l.Addr().String() + "/nova"
-
-	start := time.Now()
-	if _, err := OpenPGWithin(context.Background(), dsn, 200*time.Millisecond); err == nil {
-		t.Fatal("a store that never answers opened")
+		t.Cleanup(func() { _ = l.Close() })
+		accepted = make(chan struct{}, 8)
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				defer c.Close()
+				accepted <- struct{}{}
+			}
+		}()
+		return "postgres://nova_config@" + l.Addr().String() + "/nova", accepted
 	}
-	if e := time.Since(start); e < 150*time.Millisecond || e > 2*time.Second {
-		t.Fatalf("no deadline: waited %s, want about the 200ms fallback", e)
+
+	// No deadline: the 100ms fallback ends the wait, the context stays open.
+	dsn, _ := stall()
+	ctx := context.Background()
+	_, err := OpenPGWithin(ctx, dsn, 100*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		t.Fatalf("no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	// A deadline (a distant one, so nothing here waits on it): it governs, so
+	// a 1ns fallback is not applied and the call is still waiting when the
+	// store has accepted the connection. The test then cancels the context
+	// and the call returns with it done.
+	dsn, accepted := stall()
+	dctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 	defer cancel()
-	start = time.Now()
-	if _, err := OpenPGWithin(ctx, dsn, 200*time.Millisecond); err == nil {
-		t.Fatal("a store that never answers opened")
-	}
-	if e := time.Since(start); e < 550*time.Millisecond || e > 3*time.Second {
-		t.Fatalf("a 600ms deadline: waited %s, the deadline governs, not the 200ms fallback", e)
+	go func() {
+		<-accepted
+		cancel()
+	}()
+	_, err = OpenPGWithin(dctx, dsn, time.Nanosecond)
+	if err == nil || dctx.Err() == nil {
+		t.Fatalf("a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
 	}
 }

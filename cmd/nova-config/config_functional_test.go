@@ -467,9 +467,12 @@ func stallingListener(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// The flag governs the wait for the connection whether it is longer or
-// shorter than the bound a caller without a deadline gets: the connection
-// bound here is 200ms and --timeout 600ms holds the verb for the 600ms.
+// The flag governs the wait for the connection, whatever bound a caller
+// without a deadline would get. The connection bound here is 1ns: if it
+// capped the wait, the ping would fail at once with the store's own error
+// while the verb's deadline is still open, and the verb would refuse
+// generically; because the deadline governs, the verb waits for it and
+// prints the timed-out refusal.
 func TestInventoryTimeoutFlagGovernsTheConnectionNotAFixedBound(t *testing.T) {
 	t.Parallel()
 
@@ -478,24 +481,14 @@ func TestInventoryTimeoutFlagGovernsTheConnectionNotAFixedBound(t *testing.T) {
 	r.env["NOVA_PG_DSN"] = "postgres://nova_config@" + addr + "/nova"
 	d := r.deps()
 	d.openStore = func(ctx context.Context, dsn string) (pgStore, error) {
-		return config.OpenPGWithin(ctx, dsn, 200*time.Millisecond)
+		return config.OpenPGWithin(ctx, dsn, time.Nanosecond)
 	}
-	var out, errb bytes.Buffer
-	start := time.Now()
-	code := run([]string{"inventory", "--timeout", "600ms"}, &out, &errb, d)
-	elapsed := time.Since(start)
-	want := "nova-config inventory: timed out after 600ms waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout 1.8s\n"
-	if code != 2 || out.String() != "" || errb.String() != want {
-		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out.String(), errb.String(), want)
-	}
-	if elapsed < 550*time.Millisecond || elapsed > 3*time.Second {
-		t.Fatalf("the verb waited %s; --timeout 600ms governs the wait, not the 200ms connection bound", elapsed)
-	}
-	// A shorter flag ends the wait sooner.
-	start = time.Now()
-	errb.Reset()
-	code = run([]string{"inventory", "--timeout", "100ms"}, &out, &errb, d)
-	if code != 2 || !strings.Contains(errb.String(), "timed out after 100ms waiting for the store while connecting") || time.Since(start) > 400*time.Millisecond {
-		t.Fatalf("--timeout 100ms: exit %d stderr %q after %s", code, errb.String(), time.Since(start))
+	for _, flag := range []string{"100ms", "250ms"} {
+		var out, errb bytes.Buffer
+		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, d)
+		want := "nova-config inventory: timed out after " + flag + " waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout " + map[string]string{"100ms": "300ms", "250ms": "750ms"}[flag] + "\n"
+		if code != 2 || out.String() != "" || errb.String() != want {
+			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
+		}
 	}
 }
