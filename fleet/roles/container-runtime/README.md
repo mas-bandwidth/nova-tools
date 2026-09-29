@@ -39,7 +39,7 @@ unsupported, so the container reads its own cgroup back and the play fails when
 
 - `pids.max`, `memory.max` or `cpu.max` is not the value asked for, or `memory.swap.max` is not 0 (swap is not bounded),
 - the network is more than loopback,
-- the root filesystem is writable or `/tmp` is not,
+- the root filesystem is not mounted read-only (read from `/proc/self/mountinfo`) or a write to `/etc` succeeds, or `/tmp` is not writable,
 - `no-new-privileges` is not set or a capability remains in the bounding set, or
 - a container that sleeps past `--timeout` is not gone within
   `container_runtime_probe_grace` seconds, or one of the probe containers is

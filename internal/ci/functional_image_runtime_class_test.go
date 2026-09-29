@@ -372,10 +372,13 @@ func TestContainerRuntimeProbeValuesAreNumbers(t *testing.T) {
 			t.Errorf("%s/tasks/main.yml: the probe's argv lacks %q", containerRuntimeRole, want)
 		}
 	}
-	for _, want := range []string{"pids.max", "memory.max", "memory.swap.max", "cpu.max", "/sys/class/net", "/probe-rootfs", "/tmp/probe-tmp", "NoNewPrivs", "CapBnd"} {
+	for _, want := range []string{"pids.max", "memory.max", "memory.swap.max", "cpu.max", "/sys/class/net", "/proc/self/mountinfo", "touch /etc/probe-rootfs", "/tmp/probe-tmp", "NoNewPrivs", "CapBnd"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("%s/tasks/main.yml: the probe's script never reads %q", containerRuntimeRole, want)
 		}
+	}
+	if strings.Contains(script, "touch /probe-rootfs") {
+		t.Errorf("%s/tasks/main.yml: the probe writes to / to prove the root filesystem read-only; / is refused to root with every capability dropped whatever the mount is, so the check always passes. Read the mount from /proc/self/mountinfo and write to /etc", containerRuntimeRole)
 	}
 	for code := 11; code <= 19; code++ {
 		if !strings.Contains(script, fmt.Sprintf("exit %d", code)) {

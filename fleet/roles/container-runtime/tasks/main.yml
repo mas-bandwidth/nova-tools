@@ -227,7 +227,11 @@
         test "$(cat /sys/fs/cgroup/memory.swap.max)" = 0 || { echo "memory.swap.max is $(cat /sys/fs/cgroup/memory.swap.max 2>&1), want 0: swap is not bounded"; exit 19; }
         test "$(cat /sys/fs/cgroup/cpu.max)" = "$WANT_CPU" || { echo "cpu.max is $(cat /sys/fs/cgroup/cpu.max), want $WANT_CPU"; exit 13; }
         test "$(ls /sys/class/net)" = lo || { echo "network is not loopback only: $(ls /sys/class/net)"; exit 14; }
-        if touch /probe-rootfs 2>/dev/null; then echo "the root filesystem is writable"; exit 15; fi
+        # The mount itself, and a write to a path (/etc) that is writable to this user without --read-only:
+        # a write to / alone proves nothing, it is refused there whatever the mount is.
+        root_opts="$(awk '$5 == "/" { split($6, o, ","); print o[1] }' /proc/self/mountinfo | tail -n 1)"
+        test "$root_opts" = ro || { echo "the root filesystem is mounted '$root_opts', not ro"; exit 15; }
+        if touch /etc/probe-rootfs 2>/dev/null; then echo "the root filesystem is writable"; exit 15; fi
         touch /tmp/probe-tmp || { echo "/tmp is not writable"; exit 16; }
         grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status || { echo "no-new-privileges is not set"; exit 17; }
         test "$(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)" = 0000000000000000 || { echo "capabilities remain: $(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)"; exit 18; }
