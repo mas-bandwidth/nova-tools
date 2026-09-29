@@ -105,3 +105,23 @@ func TestAnOwnShapeDamagedEntryRefusesTheIndex(t *testing.T) {
 		t.Fatalf("want a refusal of the whole index, got %+v %v", res, err)
 	}
 }
+
+// The whitespace-only rule differs by shape and the docs say so: the own shape
+// stores the words exactly, so words of whitespace only are stored and only no
+// words at all is refused.
+func TestWhitespaceOnlyWordsAreStoredInTheOwnShapeAndNoWordsAreRefused(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	if err := Open(store, "s1", "", benchNow, PublishManual); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(store, "s1", "e1", "  \n", "", benchNow, PublishManual); err != nil {
+		t.Fatalf("whitespace-only words: %v", err)
+	}
+	if got, err := EntryText(store, "s1", "e1"); err != nil || got != "  \n" {
+		t.Fatalf("the words were not stored exactly: %q %v", got, err)
+	}
+	if _, err := Append(store, "s1", "e2", "", "", benchNow, PublishManual); err == nil || !strings.Contains(err.Error(), "empty note stores nothing") {
+		t.Fatalf("no words at all: %v", err)
+	}
+}

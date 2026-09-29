@@ -1850,7 +1850,9 @@ at exit 2 naming the holder: no `entries/`, no `log.jsonl`, no
 index. Two machines writing one store through git are outside the lock. The lock
 costs time: an append takes about twice as long as it would with no lock on a
 disk whose sync is slow, and appends to one store take turns whichever sessions
-they name. Words that are empty after trimming are refused as an empty note. Retries and conflicts read that section, so the same ID with the same
+they name. Words that are empty after trimming are refused as an empty note on a
+bench store; in the tool's own shape, which stores the words exactly, words of
+whitespace only are stored. Retries and conflicts read that section, so the same ID with the same
 words adds nothing and the same ID with different words refuses. `index` and
 `receipt` read the dated sections, and the coverage ledger counts the file. An
 append addressing a session with no file refuses with the whole remedy verb:

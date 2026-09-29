@@ -131,7 +131,9 @@ file in the file's own shape, one blank line between sections, the words
 byte-for-byte beneath the heading, less its trailing newlines. A section is
 read back, and compared for duplicate and conflict, whitespace-trimmed: the same
 id with the same words up to leading and trailing whitespace is a duplicate. Words
-that are empty after that trimming are refused as an empty note and file nothing.
+that are empty after that trimming are refused as an empty note and file nothing;
+in the tool's own shape, which stores the words exactly, words of whitespace only
+are stored, and only no words at all is refused.
 An append to a session with no file refuses with the remedy verb, and appends
 only after that `open`. Nothing appears beside the file but the store's lock
 (below): no `entries/`, no `log.jsonl`, no index. The duplicate and conflict
@@ -295,5 +297,5 @@ New regression cases must demonstrate the defect before the repair.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
     `TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable` fixes the two kinds of damage (a path with no record refuses; a damaged file is flagged, refused by `receipt`, and still opened and appended), `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` fixes what index skips, and `TestAnOwnShapeDamagedEntryRefusesTheIndex` fixes the own shape.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.
-53. `TestAppendRefusesNamingTheHolderWhenTheLockStaysHeld`, `TestAppendWaitsForTheHolderAndThenReadsWhatItWrote`, `TestAppendRefusesNamingTheCauseInAReadOnlyStoreDirectory` and `TestTheLockFileIsCreatedByAWriteAndByNothingElse` — with an injected clock, so no real wait: a held lock refuses after the bounded wait naming the holder, and the wait ends when the holder lets go; a read-only store directory refuses naming the cause; the lock file appears only by a write. `TestWordsEmptyAfterTrimmingAreRefusedOnTheBenchShape` — words empty after trimming are refused as an empty note.
+53. `TestAppendRefusesNamingTheHolderWhenTheLockStaysHeld`, `TestAppendWaitsForTheHolderAndThenReadsWhatItWrote`, `TestAppendRefusesNamingTheCauseInAReadOnlyStoreDirectory` and `TestTheLockFileIsCreatedByAWriteAndByNothingElse` — with an injected clock, so no real wait: a held lock refuses after the bounded wait naming the holder, and the wait ends when the holder lets go; a read-only store directory refuses naming the cause; the lock file appears only by a write. `TestWordsEmptyAfterTrimmingAreRefusedOnTheBenchShape` — words empty after trimming are refused as an empty note. `TestWhitespaceOnlyWordsAreStoredInTheOwnShapeAndNoWordsAreRefused` — the own shape stores whitespace-only words exactly and refuses only no words. `TestALockRefusalIsNotSentToTheHelpBanner` — a lock refusal is one line at exit 2 and does not end by pointing at the help.
 54. `TestConcurrentAppendsOfOneIDWithDifferentWordsHaveOneWinner`, `TestConcurrentAppendsOfOneIDWithTheSameWordsWriteOnce` and `TestConcurrentProcessAppendsOfOneIDHaveOneWinner` (functional tier) — of twelve concurrent appends of one id, in goroutines and in real processes for twelve rounds, in each shape, exactly one writes (different words) or one writes and eleven are duplicates (same words).
