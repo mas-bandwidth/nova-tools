@@ -167,36 +167,45 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 		u.Moved = fmt.Sprintf("stream %s stopped: the merge queue rejected a batch of %d", r.Stream, len(ids))
 		p.Units = append(p.Units, u)
 	default:
+		// A card queued in merge but not merging in work is refused; the
+		// stream's control change and its notes ride on the first card that
+		// lands, and the batch note lists only the cards that landed.
+		var landing []*Card
+		var landed []string
+		for _, c := range batch {
+			if pr := s.Work.Placed(c.ID); pr == nil || pr.Col != Merging {
+				p.refuse(c.ID, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, c.ID))+"); run: nova-sprint check")
+				continue
+			}
+			landing = append(landing, c)
+			landed = append(landed, c.ID)
+		}
+		if len(landing) == 0 {
+			return p
+		}
 		ctlSet["ci"], ctlSet["moved"] = "green", now
-		if streamDone(s, r.Stream, len(batch)) {
+		if streamDone(s, r.Stream, len(landing)) {
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
 		}
-		for i, c := range batch {
+		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
 				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
 				u.Notes = notes
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, map[string]string{"merged": now})))
-			if pr := s.Work.Placed(c.ID); pr != nil && pr.Col == Merging {
-				u.Changes = append(u.Changes, change(Work, moveEntry(pr, r.Stream, Landed, map[string]string{"ci": "green", "landed": now})))
-			} else {
-				p.refuse(c.ID, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, c.ID))+"); run: nova-sprint check")
-				continue
-			}
+			u.Changes = append(u.Changes, change(Work, moveEntry(s.Work.Placed(c.ID), r.Stream, Landed, map[string]string{"ci": "green", "landed": now})))
 			u.Moved = c.ID + " merging -> landed"
 			p.Units = append(p.Units, u)
 		}
-		if len(p.Units) > 0 {
-			last := &p.Units[len(p.Units)-1]
-			b := happened(NBatchLanded, r.Stream, s.Now, ids...)
-			b.Who, b.What = r.Who, "ci green"
-			last.Notes = append(last.Notes, b)
-			if ctlSet["state"] == StreamLanded {
-				l := happened(NStreamLanded, r.Stream, s.Now)
-				l.Who = r.Who
-				last.Notes = append(last.Notes, l)
-			}
+		last := &p.Units[len(p.Units)-1]
+		b := happened(NBatchLanded, r.Stream, s.Now, landed...)
+		b.Who, b.What = r.Who, "ci green"
+		last.Notes = append(last.Notes, b)
+		if ctlSet["state"] == StreamLanded {
+			l := happened(NStreamLanded, r.Stream, s.Now)
+			l.Who = r.Who
+			last.Notes = append(last.Notes, l)
 		}
 	}
 	return p
