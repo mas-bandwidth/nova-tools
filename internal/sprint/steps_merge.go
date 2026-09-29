@@ -125,6 +125,18 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m.Who = r.Who
 		notes = append(notes, m)
 	}
+	// A card named by a fact is a card of the batch: the first n queued.
+	notInBatch := func(id string) bool {
+		if contains(ids, id) {
+			return false
+		}
+		listed := strings.Join(ids, ", ")
+		if len(ids) > MaxLook {
+			listed = span(ids) + "; list it: nova-sprint queue --stream " + r.Stream + " --max " + itoa(len(ids))
+		}
+		p.refuse(id, "not a card of the batch; the batch of "+itoa(len(ids))+" is "+listed)
+		return true
+	}
 	stop := func(cause, typ string, primaries []string, before int, unset ...string) Unit {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
@@ -136,6 +148,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m := s.Merge.Placed(r.Conflict)
 		if m == nil || m.Row != r.Stream || m.Col != Queued {
 			p.refuse(r.Conflict, "not queued in stream "+r.Stream)
+			return p
+		}
+		if notInBatch(r.Conflict) {
 			return p
 		}
 		pr := s.Work.Placed(r.Conflict)
@@ -152,6 +167,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m := s.Merge.Placed(card)
 		if !ok || m == nil || m.Row != r.Stream || m.Col != Queued {
 			p.refuse(card, "the cross fact wants <card>=<other> with the card queued in stream "+r.Stream)
+			return p
+		}
+		if notInBatch(card) {
 			return p
 		}
 		if why := crossRefusal(s, r.Stream, card, other); why != "" {

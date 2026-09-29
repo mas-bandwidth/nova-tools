@@ -62,3 +62,29 @@ func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
 	}
 	w.clean("blocked")
 }
+
+// H4: the card a merge fact names is a card of the batch, the first n queued
+// by score; one outside it is refused, listing the batch, and nothing moves.
+func TestAMergeFactNamesACardOfTheBatch(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 3)
+	accepted(w, "s1-1", "s1-2", "s1-3")
+	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
+	for _, r := range []MergeReq{
+		{Stream: "s1", Batch: 1, Conflict: "s1-2"},
+		{Stream: "s1", Batch: 1, Cross: "s1-2=s2-1"},
+	} {
+		p := MergeStep(w.s, r)
+		if len(p.Units) != 0 || len(p.Refused) != 1 || p.Refused[0].Key != "s1-2" || p.Refused[0].Why != "not a card of the batch; the batch of 1 is s1-1" {
+			t.Fatalf("%+v: %+v", r, p)
+		}
+	}
+	if w.s.Merge.Placed("s1-1").Col != Queued || w.s.Merge.Placed("s1-2").Col != Queued || w.s.StreamCtl("s1").F("state") != StreamMerging {
+		t.Fatalf("a refused fact moved a card")
+	}
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
+	if w.s.Merge.Placed("s1-2").Col != Stuck || w.s.Merge.Placed("s1-1").Col != Queued {
+		t.Fatalf("a conflict inside the batch")
+	}
+	w.clean("stuck")
+}
