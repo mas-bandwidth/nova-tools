@@ -879,7 +879,7 @@ var (
 func buildNovaBus(t *testing.T) string {
 	t.Helper()
 	builtNovaBusOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "nova-bus-bin-")
+		dir, err := os.MkdirTemp(busFixtureRoot, "nova-bus-bin-")
 		if err != nil {
 			builtNovaBusErr = err
 			return
@@ -1310,20 +1310,23 @@ func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
 			cmd := exec.Command(bin, "draft", "--bus", tc.bus, "--as", "Ada", "--reply-to", "bo-abcdef012345",
 				"--body-file", body, "--draft-dir", tc.draftDir, "--remote", "origin", "--branch", "main")
 			cmd.Dir = checkout
-			out, err := cmd.CombinedOutput()
+			var stdout, stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
 			var code int
 			if err != nil {
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					code = exitErr.ExitCode()
 				} else {
-					t.Fatalf("run failed: %v\n%s", err, out)
+					t.Fatalf("run failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 				}
 			}
 			if code != 2 {
-				t.Fatalf("exit code %d, want 2\noutput: %s", code, out)
+				t.Fatalf("exit code %d, want 2\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 			}
-			if !strings.Contains(string(out), "drafts go outside the bus, because send needs its tree clean") {
-				t.Fatalf("output does not contain expected refusal:\n%s", out)
+			if !strings.Contains(stderr.String(), "drafts go outside the bus, because send needs its tree clean") {
+				t.Fatalf("stderr does not contain expected refusal:\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
 			}
 		})
 	}
