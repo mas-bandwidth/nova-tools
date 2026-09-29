@@ -2346,6 +2346,15 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `redis-cleanup` — every test redis server registers t.Cleanup and registry cleanup
+
+**The rule.** Every helper that starts a test redis-server (`internal/testredis` and `internal/nsprint/testutil`) must register `t.Cleanup` to stop/kill the server and must unregister from the testredis registry. Furthermore, each helper must run the orphan sweep before starting a new server, and no other test executes redis-server directly without `t.Cleanup`.
+**The mistake it prevents.** When a test binary dies before cleanups run (killed, timeout, shard cancellation), the redis-server outlives its parent, accumulating dozens of orphaned processes on bench machines that consume memory and hold ports.
+**The test.** `TestEveryRedisStartHasCleanup` (`internal/ci/redis_cleanup_class_test.go`), with negative controls verifying that missing `t.Cleanup`, missing registry entry, or missing orphan sweep fails the check.
+**Its allowlist.** None. Every test redis-server must register cleanup; there is no allowlist for leaked server processes.
+**Its remedy lines.** `internal/testredis/testredis.go must register t.Cleanup to stop servers`, `internal/testredis/testredis.go must register started server in registry`, `internal/testredis/testredis.go must run SweepOrphans before starting servers`, and `<file> executes redis-server directly without registering t.Cleanup`.
+**Its narrowings.** It scans Go test files under `cmd/` and `internal/`, skipping `testdata/`, `vendor/`, and `deprecated/` directories. It specifically inspects `internal/testredis/testredis.go` and `internal/nsprint/testutil/redis.go`, and checks that no other test spawns `"redis-server"` through `exec.Command` without `t.Cleanup`.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

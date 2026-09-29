@@ -77,6 +77,41 @@ func TestEveryRedisStartHasCleanup(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("catches_missing_cleanup", func(t *testing.T) {
+		// Negative control 1: missing t.Cleanup
+		srcNoCleanup := `package foo
+func start() {
+	Register(pid, port, ppid)
+	SweepOrphans(os.Stderr)
+}`
+		hasCleanup, hasRegistry, hasSweep := inspectRedisHelper(srcNoCleanup)
+		if hasCleanup || !hasRegistry || !hasSweep {
+			t.Errorf("inspectRedisHelper failed to detect missing t.Cleanup: cleanup=%v registry=%v sweep=%v", hasCleanup, hasRegistry, hasSweep)
+		}
+
+		// Negative control 2: missing Register
+		srcNoReg := `package foo
+func start(t *testing.T) {
+	SweepOrphans(os.Stderr)
+	t.Cleanup(func() {})
+}`
+		hasCleanup, hasRegistry, hasSweep = inspectRedisHelper(srcNoReg)
+		if !hasCleanup || hasRegistry || !hasSweep {
+			t.Errorf("inspectRedisHelper failed to detect missing Register: cleanup=%v registry=%v sweep=%v", hasCleanup, hasRegistry, hasSweep)
+		}
+
+		// Negative control 3: missing SweepOrphans
+		srcNoSweep := `package foo
+func start(t *testing.T) {
+	Register(pid, port, ppid)
+	t.Cleanup(func() {})
+}`
+		hasCleanup, hasRegistry, hasSweep = inspectRedisHelper(srcNoSweep)
+		if !hasCleanup || !hasRegistry || hasSweep {
+			t.Errorf("inspectRedisHelper failed to detect missing SweepOrphans: cleanup=%v registry=%v sweep=%v", hasCleanup, hasRegistry, hasSweep)
+		}
+	})
 }
 
 // inspectRedisHelper checks whether src registers cleanup, registry entry, and sweep.
@@ -85,41 +120,4 @@ func inspectRedisHelper(src string) (hasCleanup, hasRegistry, hasSweep bool) {
 	hasRegistry = strings.Contains(src, "Register(")
 	hasSweep = strings.Contains(src, "SweepOrphans(")
 	return
-}
-
-func TestEveryRedisStartHasCleanupCatchesMissingCleanup(t *testing.T) {
-	t.Parallel()
-
-	// Negative control 1: missing t.Cleanup
-	srcNoCleanup := `package foo
-func start() {
-	Register(pid, port, ppid)
-	SweepOrphans(os.Stderr)
-}`
-	hasCleanup, hasRegistry, hasSweep := inspectRedisHelper(srcNoCleanup)
-	if hasCleanup || !hasRegistry || !hasSweep {
-		t.Errorf("inspectRedisHelper failed to detect missing t.Cleanup: cleanup=%v registry=%v sweep=%v", hasCleanup, hasRegistry, hasSweep)
-	}
-
-	// Negative control 2: missing Register
-	srcNoReg := `package foo
-func start(t *testing.T) {
-	SweepOrphans(os.Stderr)
-	t.Cleanup(func() {})
-}`
-	hasCleanup, hasRegistry, hasSweep = inspectRedisHelper(srcNoReg)
-	if !hasCleanup || hasRegistry || !hasSweep {
-		t.Errorf("inspectRedisHelper failed to detect missing Register: cleanup=%v registry=%v sweep=%v", hasCleanup, hasRegistry, hasSweep)
-	}
-
-	// Negative control 3: missing SweepOrphans
-	srcNoSweep := `package foo
-func start(t *testing.T) {
-	Register(pid, port, ppid)
-	t.Cleanup(func() {})
-}`
-	hasCleanup, hasRegistry, hasSweep = inspectRedisHelper(srcNoSweep)
-	if !hasCleanup || !hasRegistry || hasSweep {
-		t.Errorf("inspectRedisHelper failed to detect missing SweepOrphans: cleanup=%v registry=%v sweep=%v", hasCleanup, hasRegistry, hasSweep)
-	}
 }
