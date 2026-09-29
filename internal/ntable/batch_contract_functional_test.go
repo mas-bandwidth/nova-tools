@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 func boolPtr(b bool) *bool     { return &b }
@@ -158,6 +159,9 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{
 			{
 				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+				},
 				Move: &ntable.MemberMoveOp{
 					Row: "build",
 					Col: "working",
@@ -331,7 +335,8 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 		OperationID:           "op-reserved",
 		Members: []ntable.BatchMemberEntry{
 			{
-				ID: "m1",
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Revision: "2"},
 				Set: map[string]string{
 					"epoch": "99",
 				},
@@ -351,8 +356,8 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 		ExpectedTableRevision: currentTableRev,
 		OperationID:           "op-duplicate",
 		Members: []ntable.BatchMemberEntry{
-			{ID: "m1", Remove: true},
-			{ID: "m1", Remove: true},
+			{ID: "m1", Expect: &ntable.MemberExpect{Revision: "2"}, Remove: true},
+			{ID: "m1", Expect: &ntable.MemberExpect{Revision: "2"}, Remove: true},
 		},
 	}
 	_, err = ntable.ApplyBatch(ctx, c, duplicateManifest)
@@ -369,7 +374,8 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 		OperationID:           "op-incompatible",
 		Members: []ntable.BatchMemberEntry{
 			{
-				ID: "m3",
+				ID:     "m3",
+				Expect: &ntable.MemberExpect{Absent: true},
 				Create: &ntable.MemberCreateOp{
 					Row:   "build",
 					Col:   "ready",
@@ -394,6 +400,7 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{
 			{
 				ID:     "m2",
+				Expect: &ntable.MemberExpect{Revision: "1"},
 				Remove: true,
 			},
 		},
@@ -607,6 +614,10 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{
 			{
 				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
 				Move: &ntable.MemberMoveOp{
 					Row:   "build",
 					Col:   "working",
@@ -730,11 +741,13 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{
 			{
 				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
 				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 100},
 				Set:    map[string]string{"flavor": "vanilla", "priority": "high"},
 			},
 			{
 				ID:     "m2",
+				Expect: &ntable.MemberExpect{Absent: true},
 				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 200},
 				Set:    map[string]string{"flavor": "chocolate"},
 			},
@@ -819,11 +832,16 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{
 			{
 				ID:     "m1",
+				Expect: &ntable.MemberExpect{Revision: "2"},
 				Remove: true,
 			},
 			{
 				ID: "m2",
-				Move: &ntable.MemberMoveOp{Row: "test", Col: "ready", Score: floatPtr(250)},
+				Expect: &ntable.MemberExpect{
+					Revision: "2",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move:  &ntable.MemberMoveOp{Row: "test", Col: "ready", Score: floatPtr(250)},
 				Unset: []string{"extra"},
 			},
 		},
@@ -939,3 +957,254 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 	}
 }
 
+func TestReviewWrongTypeDestinationPartialWrite(t *testing.T) {
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 7); err != nil {
+		t.Fatal(err)
+	}
+	dest := ntable.CellKey("demo", "build", "working")
+	if err := c.Set(ctx, dest, "wrong-type", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	before := storeImage(t, c)
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	manifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "review-wrongtype",
+		Actor:                 "review",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row: "build",
+					Col: "working",
+				},
+			},
+		},
+	}
+	_, err := ntable.ApplyBatch(ctx, c, manifest)
+	after := storeImage(t, c)
+	if err == nil {
+		t.Fatal("expected error on destination WRONGTYPE, got nil")
+	}
+	if !errors.Is(err, ntable.ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("expected store unchanged on destination WRONGTYPE refusal")
+	}
+	if score := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Val(); score != 7 {
+		t.Fatalf("expected m1 score 7 in source, got %v", score)
+	}
+}
+
+func TestReviewBatchStreamWrongTypePartialWrite(t *testing.T) {
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set(ctx, ntable.DefKey("demo")+":changes", "wrong-type", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	before := storeImage(t, c)
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	manifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "review-stream",
+		Actor:                 "review",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: 3,
+				},
+			},
+		},
+	}
+	_, err := ntable.ApplyBatch(ctx, c, manifest)
+	after := storeImage(t, c)
+	if err == nil {
+		t.Fatal("expected error on changes stream WRONGTYPE, got nil")
+	}
+	if !errors.Is(err, ntable.ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("expected store unchanged on stream WRONGTYPE refusal")
+	}
+	if placed := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Val(); placed != 0 {
+		t.Fatalf("expected m1 not placed, got %v", placed)
+	}
+	if revAfter := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val(); revAfter != rev {
+		t.Fatalf("expected revision unchanged (%s), got %s", rev, revAfter)
+	}
+}
+
+func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ZRem(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err == nil {
+		t.Fatal("expected ReadSetMembers to refuse placement drift, got nil")
+	}
+	if !errors.Is(err, ntable.ErrDrift) {
+		t.Fatalf("expected ErrDrift, got: %v", err)
+	}
+}
+
+func TestReviewHiddenDuplicatePlacementAccepted(t *testing.T) {
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 7); err != nil {
+		t.Fatal(err)
+	}
+	hidden := ntable.CellKey("demo", "build", "working")
+	if err := c.ZAdd(ctx, hidden, redis.Z{Score: 9, Member: "m1"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	before := storeImage(t, c)
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	manifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "review-hidden",
+		Actor:                 "review",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row: "build",
+					Col: "done",
+				},
+			},
+		},
+	}
+	_, err := ntable.ApplyBatch(ctx, c, manifest)
+	after := storeImage(t, c)
+	if err == nil {
+		t.Fatal("expected ApplyBatch to refuse hidden duplicate placement, got nil")
+	}
+	if !errors.Is(err, ntable.ErrDrift) {
+		t.Fatalf("expected ErrDrift, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("expected store unchanged on hidden duplicate refusal")
+	}
+	if destScore := c.ZScore(ctx, ntable.CellKey("demo", "build", "done"), "m1").Val(); destScore != 0 {
+		t.Fatalf("expected dest score 0, got %v", destScore)
+	}
+}
+
+func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// 1. Unknown top-level field rejected with REFUSED MANIFEST and zero mutation
+	rawUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-unknown","actor":"review","members":[],"unknown":true}`, rev)
+	before := storeImage(t, c)
+	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawUnknown).Slice()
+	after := storeImage(t, c)
+	if err != nil {
+		t.Fatalf("FCall err: %v", err)
+	}
+	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
+		t.Fatalf("expected REFUSED MANIFEST for unknown top-level field, got: %v", ans)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("expected store unchanged after unknown field refusal")
+	}
+
+	// 2. Duplicate top-level key rejected with REFUSED MANIFEST and zero mutation
+	rawDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-duplicate","actor":"first","actor":"second","members":[]}`, rev)
+	before2 := storeImage(t, c)
+	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawDuplicate).Slice()
+	after2 := storeImage(t, c)
+	if err != nil {
+		t.Fatalf("FCall err: %v", err)
+	}
+	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
+		t.Fatalf("expected REFUSED MANIFEST for duplicate top-level key, got: %v", ans)
+	}
+	if !reflect.DeepEqual(before2, after2) {
+		t.Fatal("expected store unchanged after duplicate key refusal")
+	}
+
+	// 3. Nested unknown key inside expect rejected
+	rawNestedUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-unknown","actor":"review","members":[{"id":"m1","expect":{"revision":"1","unknown":true}}]}`, rev)
+	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedUnknown).Slice()
+	if err != nil {
+		t.Fatalf("FCall err: %v", err)
+	}
+	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
+		t.Fatalf("expected REFUSED MANIFEST for nested unknown key, got: %v", ans)
+	}
+
+	// 4. Nested duplicate key inside expect rejected
+	rawNestedDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-duplicate","actor":"review","members":[{"id":"m1","expect":{"revision":"1","revision":"2"}}]}`, rev)
+	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedDuplicate).Slice()
+	if err != nil {
+		t.Fatalf("FCall err: %v", err)
+	}
+	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
+		t.Fatalf("expected REFUSED MANIFEST for nested duplicate key, got: %v", ans)
+	}
+}

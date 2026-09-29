@@ -433,6 +433,9 @@ func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {
 		Members: []ntable.BatchMemberEntry{
 			{
 				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
 				Move: &ntable.MemberMoveOp{
 					Row: "build",
 					Col: "working",

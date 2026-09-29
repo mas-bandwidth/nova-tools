@@ -57,6 +57,7 @@ var (
 	ErrCounterOverflow  = errors.New("counter overflow")
 	ErrMutation         = errors.New("incompatible mutation")
 	ErrWrongType        = errors.New("WRONGTYPE")
+	ErrMalformedManifest = errors.New("malformed manifest")
 )
 
 // BoundError names the other writer. The table may read the binding but
@@ -364,7 +365,9 @@ func (o operation) refused(reply []any) error {
 		}
 		cause = fmt.Errorf("%w: %v", ErrMutation, reply[2:])
 	case "MANIFEST":
-		cause = fmt.Errorf("manifest: %v", reply[2:])
+		cause = fmt.Errorf("%w: %v", ErrMalformedManifest, reply[2:])
+	case "STREAMFULL":
+		cause = fmt.Errorf("%w: stream %v is full", ErrCounterOverflow, reply[2:])
 	case "SCHEMA":
 		cause = fmt.Errorf("schema: %v", reply[2:])
 	case "OPERATION":
@@ -1161,11 +1164,16 @@ func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (R
 	if manifest.Members == nil {
 		manifest.Members = []BatchMemberEntry{}
 	}
+	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
+	for _, m := range manifest.Members {
+		if m.Expect == nil {
+			return Receipt{}, fmt.Errorf("%s: member %q: %w: missing expect; changed=no; run: %s", o.location(), m.ID, ErrMalformedManifest, o.remedy())
+		}
+	}
 	body, err := payload(manifest)
 	if err != nil {
 		return Receipt{}, err
 	}
-	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
 	key := DefKey(manifest.Table)
 	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)
 	reply, err := cmd.Slice()
@@ -1295,11 +1303,20 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 			if !ok || len(item) < 7 {
 				return ReadSetResult{}, fmt.Errorf("table %q: malformed member in read set", table)
 			}
-			mRev, _ := strconv.ParseUint(fmt.Sprint(item[1]), 10, 64)
-			mScore, _ := strconv.ParseFloat(fmt.Sprint(item[5]), 64)
-			fieldsRaw, _ := item[6].([]any)
+			mRev, err := strconv.ParseUint(fmt.Sprint(item[1]), 10, 64)
+			if err != nil {
+				return ReadSetResult{}, fmt.Errorf("table %q: invalid member revision %v: %w", table, item[1], err)
+			}
+			mScore, err := strconv.ParseFloat(fmt.Sprint(item[5]), 64)
+			if err != nil {
+				return ReadSetResult{}, fmt.Errorf("table %q: invalid member score %v: %w", table, item[5], err)
+			}
+			fieldsRaw, ok := item[6].([]any)
+			if !ok || len(fieldsRaw)%2 != 0 {
+				return ReadSetResult{}, fmt.Errorf("table %q: malformed member fields shape", table)
+			}
 			fields := make(map[string]string, len(fieldsRaw)/2)
-			for i := 0; i+1 < len(fieldsRaw); i += 2 {
+			for i := 0; i < len(fieldsRaw); i += 2 {
 				fields[fmt.Sprint(fieldsRaw[i])] = fmt.Sprint(fieldsRaw[i+1])
 			}
 			res.Members = append(res.Members, ReadSetMember{
