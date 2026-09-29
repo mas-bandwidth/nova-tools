@@ -1,6 +1,7 @@
 package cairn
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,10 +10,10 @@ import (
 
 // The blast radius of one damaged session, as the spec states it. A record
 // whose PATH holds no record refuses every verb addressed to it; a record whose
-// CONTENT is damaged is flagged by index and refused by receipt, while open and
-// append, which read it only to find their own entry, still work and rewrite
-// nothing. Every other session is listed throughout.
-func TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable(t *testing.T) {
+// CONTENT is damaged is flagged by index and refused by receipt and by append,
+// which names the damage and a command that lists the headings; open is a no-op.
+// Every other session is listed throughout.
+func TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
 	good := "# g\n\n## 2026-09-29T08:00:00Z — e1\n\nw\n"
@@ -35,7 +36,7 @@ func TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable(t *tes
 			t.Errorf("a flagged cause is the session's own, not a store-level refusal: %q", f.Cause)
 		}
 	}
-	for _, id := range []string{"dup", "badstamp"} {
+	for id, damage := range map[string]string{"dup": `duplicate entry "e1"`, "badstamp": "invalid entry heading"} {
 		if r, err := IndexAll(store, id, 0); err != nil || len(r.Flagged) != 1 || r.Flagged[0].Session != id {
 			t.Errorf("index --session %s: want its one flagged row, got %+v %v", id, r, err)
 		}
@@ -46,16 +47,25 @@ func TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable(t *tes
 		if err := Open(store, id, "", benchNow, PublishManual); err != nil {
 			t.Errorf("open %s: %v", id, err)
 		}
-		if _, err := Append(store, id, "new", "words", "", benchNow, PublishManual); err != nil {
-			t.Errorf("append %s: %v", id, err)
+		_, err := Append(store, id, "new", "words", "", benchNow, PublishManual)
+		var rp *RecordPathError
+		if !errors.As(err, &rp) {
+			t.Fatalf("append %s: want a refusal, got %v", id, err)
 		}
-		after, _ := os.ReadFile(benchFile(store, id))
-		if !strings.HasPrefix(string(after), string(before)) || !strings.Contains(string(after[len(before):]), "— new") {
-			t.Errorf("append %s rewrote the record or did not add its section: %q", id, after)
+		for _, w := range []string{"cannot append an entry", benchFile(store, id), "is damaged", damage, "grep -n '^## ' -- ", "run the same command again"} {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("append %s: %q lacks %q", id, err, w)
+			}
+		}
+		if after, _ := os.ReadFile(benchFile(store, id)); string(after) != string(before) {
+			t.Errorf("a refused append changed the record %s", id)
 		}
 	}
 	if r, err := Receipt(store, "good", "e1"); err != nil || r.ID != "e1" {
 		t.Fatalf("a good session beside the damaged ones: %+v %v", r, err)
+	}
+	if _, err := Append(store, "good", "e2", "words", "", benchNow, PublishManual); err != nil {
+		t.Fatalf("append to the good session: %v", err)
 	}
 }
 

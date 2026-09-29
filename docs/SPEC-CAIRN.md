@@ -92,9 +92,10 @@ has its own answer.
   refuse at exit 2 naming the path, what is there and the next action.
 - The record is a file whose headings are damaged (an invalid stamp or entry
   id, a repeated entry heading): `index --session` prints that session's
-  flagged row and exits 1, `receipt` for it refuses at exit 2, and `open` and
-  `append` still work, because they read the record only to find their own
-  entry and add a section after it; they rewrite nothing.
+  flagged row and exits 1, and `receipt` and `append` refuse at exit 2. The
+  `append` refusal names the damage, the record, and a command that lists its
+  headings (`grep -n '^## ' -- <path>`); it stores nothing, because a section
+  added to a damaged record could not be read back. `open` is a no-op.
 
 In both, `index` reports the session as one flagged row, `INDEX FLAGGED
 session=<id> cause=<why>`, while every other session is listed; `index` prints
@@ -259,5 +260,5 @@ New regression cases must demonstrate the defect before the repair.
 49. `TestNoVerbFollowsASymbolicLink` — a link at the store as given, `sessions/`, `entries/`, an entry directory, `log.jsonl` or a record, in either shape, is refused with the one text and nothing is written where it leads. `TestARecordSwappedForALinkNeverCarriesAWriteOutside`, `TestAnAncestorOfTheStoreSwappedUnderAppendsLosesAndInventsNothing` and `TestAStoreSwappedForALinkNeverCarriesAWriteOutside` run the swaps of a record, of an ancestor and of the store while a fixed number of appends run, in a temp directory each; `TestADirectoryThatChangesAfterItWasCheckedIsRefused` fixes the check on a directory looked at earlier; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs one store named relative, absolute and in other letter cases.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
-    `TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append leaves no entry file, no pointer line and no log line.
+    `TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append leaves no entry file, no pointer line and no log line.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.

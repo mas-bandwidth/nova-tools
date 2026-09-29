@@ -283,11 +283,15 @@ func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 // appendBench files one entry into a bench record: a dated section at the end
 // of the file, in the file's own shape (one blank line between sections), the
 // friend's words under it. f is the record, open for reading and appending, and
-// raw is what it holds. A retry with the same id and the
+// raw is what it holds. A record with a damaged heading refuses the append: a
+// section added to it could never be read back. A retry with the same id and the
 // same words adds nothing; the same id with different words is a conflict. No
 // index is written and no directory appears beside the file.
 func appendBench(f *os.File, raw []byte, path, session, id, text string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
+	if _, err := parseBench(raw, session); err != nil {
+		return res, damagedRecord("append", path, err)
+	}
 	if prev, storedStamp, found := benchSection(raw, id); found {
 		if prev != strings.TrimSpace(text) {
 			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
@@ -313,6 +317,13 @@ func appendBench(f *os.File, raw []byte, path, session, id, text string, now tim
 	// A bench section stores no pointer of its own, so what is reported is the
 	// session's, read from the header open wrote.
 	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw)}, nil
+}
+
+// damagedRecord is the refusal for a record whose headings cannot be read.
+func damagedRecord(op, path string, cause error) error {
+	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is damaged (%v); "+
+		"list its headings with: %s; repair it by hand, then run the same command again",
+		opPhrase(op), path, cause, shellLine("grep -n '^## ' -- %s", shellWord{"path", path}))}
 }
 
 // appendTo adds content to the end of the open record f and fsyncs before return.

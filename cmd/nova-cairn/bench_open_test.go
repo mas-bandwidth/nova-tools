@@ -238,3 +238,27 @@ func TestIndexAtTheCLIFlagsOneBadSessionAmongFive(t *testing.T) {
 		t.Fatalf("index --session bad exited %d, want 2", code)
 	}
 }
+
+// A damaged bench record refuses the append at exit 2 in one line that names the
+// damage and a command that lists the headings, and does not end by pointing at
+// the help, which says nothing about repairing a heading.
+func TestADamagedBenchRecordRefusesAppendWithoutThePointerToHelp(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	body := "# s\n\n## 2026-09-29T08:00:00Z — e1\n\nw\n\n## 2026-09-29T08:00:00Z — e1\n\nw2\n"
+	if err := os.WriteFile(filepath.Join(store, "s1.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e2", "--text", "x", "--publish", "manual")
+	if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 {
+		t.Fatalf("exit=%d out=%q err=%q", code, out, errOut)
+	}
+	for _, want := range []string{"is damaged", `duplicate entry "e1"`, "grep -n '^## ' -- "} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("%q lacks %q", errOut, want)
+		}
+	}
+	if strings.Contains(errOut, "run: nova-cairn help") {
+		t.Errorf("the refusal points at the help: %q", errOut)
+	}
+}

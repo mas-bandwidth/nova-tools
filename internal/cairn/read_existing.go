@@ -56,6 +56,12 @@ func benchReceipts(d *dirs, path, session string) ([]ReceiptInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseBench(raw, session)
+}
+
+// parseBench reads the dated sections of a bench record already in memory, or
+// says what is damaged in it.
+func parseBench(raw []byte, session string) ([]ReceiptInfo, error) {
 	lines := strings.Split(string(raw), "\n")
 	var rows []ReceiptInfo
 	seen := map[string]bool{}
