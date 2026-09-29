@@ -3,12 +3,36 @@ package wake
 import (
 	"context"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// TestWakeDoesNotImportGhevent ensures that the wake reader depends only on the
+// wire stream contract, never compiling the webhook decoder or ingestion logic.
+func TestWakeDoesNotImportGhevent(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range pkgs {
+		for filename, file := range pkg.Files {
+			for _, imp := range file.Imports {
+				path := strings.Trim(imp.Path.Value, `"`)
+				if path == "github.com/mas-bandwidth/nova-tools/internal/ghevent" {
+					t.Fatalf("file %s imports %s; wake must not depend on internal/ghevent", filename, path)
+				}
+			}
+		}
+	}
+}
 
 // Check the established key independently of the reader's constant. The hook
 // answers Redis commands in memory, with no connection, clock or listener.
