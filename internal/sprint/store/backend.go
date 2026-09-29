@@ -66,9 +66,11 @@ type Backend interface {
 	NotesSince(ctx context.Context, after string, max int) ([]sprint.Note, []string, error)
 	Cursor(ctx context.Context) (string, error)
 	SetCursor(ctx context.Context, id string) error
-	// DropKeys removes every key of the deployment outside its tables: member
-	// records, operation records, the notifications and the cursor.
-	DropKeys(ctx context.Context) (int, error)
+	// RecordIDs is every member id the table has held a record of, placed
+	// or not, as its change log names them: the records its drop keeps.
+	RecordIDs(ctx context.Context, table string) ([]string, error)
+	// DeleteKeys deletes exactly the keys named, and counts those it deleted.
+	DeleteKeys(ctx context.Context, keys []string) (int, error)
 }
 
 // Fence is the sprint-wide fence as read: its generation, advanced by every

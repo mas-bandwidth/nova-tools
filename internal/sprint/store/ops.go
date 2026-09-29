@@ -25,17 +25,6 @@ func (st *Store) Init(ctx context.Context) error {
 	return st.B.ViewSet(ctx, st.Names.ViewDef())
 }
 
-// Teardown drops the four tables, the view and every key of the deployment.
-func (st *Store) Teardown(ctx context.Context) (int, error) {
-	_ = st.B.ViewDelete(ctx, st.Names.View())
-	for _, t := range All {
-		if err := st.B.DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
-			return 0, err
-		}
-	}
-	return st.B.DropKeys(ctx)
-}
-
 // CheckReport is check's answer.
 type CheckReport struct {
 	Violations []sprint.Violation `json:"violations"`
@@ -54,6 +43,7 @@ type CheckReport struct {
 // when it is older.
 func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Snapshot, error) {
 	var rep CheckReport
+	quiet := st.retry()
 	for i := 0; i < max(reads, 1); i++ {
 		rep.Reads++
 		f, err := st.B.ReadFence(ctx)
@@ -75,7 +65,7 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		last := i == max(reads, 1)-1
 		switch {
 		case pending == nil && f.Gen != f2.Gen, pending != nil && !last:
-			st.backoff(i + 2) // another writer is at it: look again for a quiet moment
+			quiet.wait() // another writer is at it: look again for a quiet moment
 			continue
 		}
 		var ops *sprint.Pending
