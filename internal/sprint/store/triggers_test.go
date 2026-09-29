@@ -7,6 +7,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,8 +132,8 @@ func TestTriggerReturnedPrimaryIsAJudgment(t *testing.T) {
 	h.clean("accepted again")
 }
 
-// ack of "work came back failed" no longer strands the primary: the ack
-// writes "stranded in review" (rework, drop), open whatever the cursor.
+// ack does not answer "work came back failed": it is refused, the judgment
+// stays open whatever the cursor, and rework answers it.
 func TestTriggerAckOfFailedWorkIsStranded(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -143,14 +144,12 @@ func TestTriggerAckOfFailedWorkIsStranded(t *testing.T) {
 	if len(open) != 1 || open[0].Note.Type != sprint.NWorkFailed {
 		t.Fatalf("open: %v", open)
 	}
-	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"}))
-	h.readInbox()
-	if got := h.judgmentsOn("s1-1"); len(got) != 1 || got[0] != sprint.NStranded {
-		t.Fatalf("after the ack: %v", got)
+	if res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"})); len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "nova-sprint rework --group") {
+		t.Fatalf("ack of failed work: %+v", res)
 	}
-	open, _ = h.m.OpenNotes(h.ctx)
-	if d := open[0].Note.Decisions; len(d) != 2 || d[0] != "rework" || d[1] != "drop" {
-		t.Fatalf("decisions: %v", d)
+	h.readInbox()
+	if got := h.judgmentsOn("s1-1"); len(got) != 1 || got[0] != sprint.NWorkFailed {
+		t.Fatalf("after the refused ack: %v", got)
 	}
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
 	if got := h.judgmentsOn("s1-1"); len(got) != 0 {

@@ -203,34 +203,47 @@ func (f *failAt) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Rece
 func TestRepairAppliesWhatHoldsOfAFirstManifestPastTheGrace(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.setup(1)
-	h.run(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
-	c := h.snap().Fleet.Cell("m1", sprint.Working)[0]
+	h.setup(2)
+	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+	h.run(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 2}, Who: "m1"}))
+	cards := h.snap().Fleet.Cell("m1", sprint.Working)
+	c, other := cards[0], cards[1]
 	st := *h.st
 	st.B = &failAt{Backend: h.m, at: "apply t-fleet"}
-	if _, err := st.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: true, Report: "boom", Who: "m1"})); err == nil || h.m.Pending() == nil {
+	gens := map[string]int{c.ID: c.Int("gen"), other.ID: other.Int("gen")}
+	if _, err := st.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID, other.ID}}, Gens: gens, Failed: true, Report: "boom", Who: "m1"})); err == nil || h.m.Pending() == nil {
 		t.Fatalf("the writer did not die with its operation pending: %v", err)
 	}
-	// The member's control card, counted by the finish, moves under it.
+	// The work card moves under it: an outside writer sets a field on it.
 	fleet := h.snap().Fleet
-	ctl := fleet.Card(sprint.CtlID("m1"))
+	card := fleet.Card(c.ID)
 	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(fleet.Revision),
-		OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: ctl.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(ctl.Rev)}, Set: map[string]string{"note": "outside"}}}}); err != nil {
+		OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: card.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(card.Rev)}, Set: map[string]string{"note": "outside"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	h.tick(2 * time.Minute)
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 1 || !strings.Contains(rr[0].Skipped[0], ctl.ID) {
+	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) == 0 || !strings.Contains(strings.Join(rr[0].Skipped, " "), c.ID) {
 		t.Fatalf("repair: %+v %v", rr, err)
 	}
-	if h.state("s1-1") != sprint.Review || h.snap().Fleet.Card(c.ID).Col != sprint.Done {
-		t.Fatalf("s1-1 %s, its work card %s", h.state("s1-1"), h.snap().Fleet.Card(c.ID).Col)
+	// The entry that held applied: the other card is in failed and its
+	// primary in review.
+	if h.snap().Fleet.Card(other.ID).Col != sprint.DoneFailed || h.state(other.F("primary")) != sprint.Review {
+		t.Fatalf("the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
 	}
-	if h.written(sprint.NWorkFailed) != 1 || len(h.skipNotes()) != 1 || h.written(sprint.NAbandoned) != 0 {
-		t.Fatalf("work failed %d, skip judgments %d, abandoned %d", h.written(sprint.NWorkFailed), len(h.skipNotes()), h.written(sprint.NAbandoned))
+	skips := h.skipNotes()
+	if h.written(sprint.NAbandoned) != 0 || len(skips) != 1 || !strings.Contains(skips[0].What, c.ID) {
+		t.Fatalf("skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
 	}
-	h.clean("repaired")
+	// The card whose entry was skipped is left half-moved, named in the skip
+	// judgment; check says so, and the judgment's drop restores the rules.
+	rep, _, err := h.st.Check(h.ctx, 5)
+	if err != nil || len(rep.Violations) == 0 || !strings.Contains(fmt.Sprint(rep.Violations), c.F("primary")) {
+		t.Fatalf("check after the half move: %+v %v", rep.Violations, err)
+	}
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{c.F("primary")}}, Reason: "half moved by repair", Answers: []string{skips[0].ID}}))
+	h.clean("dropped the half-moved card")
 }
 
 // Within the grace the tick finishes a live writer's operation for it: the

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -27,7 +28,10 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	stuck := fs.Float64("stuck", 0.10, "the chance a batch has a card that does not merge")
 	cross := fs.Float64("cross", 0.01, "the chance a batch has a card that needs a card of another stream first")
 	red := fs.Float64("red", 0.0, "the chance a batch turns the stream branch red")
-	flap := fs.Float64("flap", 0, "the chance, per member and tick, that an up member goes down, and the same chance that a down member comes up; members it took down are brought up before it stops")
+	flap := fs.Float64("flap", 0, "the chance, per member and tick, that a member's machine falls silent (stops beating), and the same chance that a silent one beats again")
+	hold := fs.Bool("hold", false, "play --flap's downs as the coordinator's hold (fleet down, fleet up) instead of a machine falling silent; holds it took are released before it stops")
+	var silent silenceFlag
+	fs.Var(&silent, "silent", "<member>@<from>+<for>: the member's machine stops beating <from> after play starts, for <for> (e.g. m3@30s+20s); repeatable")
 	ticks := fs.Int("ticks", 0, "stop after n ticks; 0 is until every stream lands")
 	take := fs.Int("take", 10, "work cards a member takes a tick")
 	reads := fs.Int("reads", 10, "read cards a reader reports a tick")
@@ -50,7 +54,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	facts := driver.NewSeeded(*seed)
 	facts.Fail, facts.Broken, facts.Stuck, facts.Cross, facts.Red, facts.Flap = *fail, *broken, *stuck, *cross, *red, *flap
 	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout,
-		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks}}
+		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks, Hold: *hold, Silent: silent}}
 	why, err := d.Loop()
 	if err != nil {
 		fmt.Fprintf(stderr, "%s play: %s\n", prog, oneline.Escape(err.Error()))
@@ -58,4 +62,33 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "PLAY OK stopped=%s seed=%d\n", why, *seed)
 	return 0
+}
+
+// silenceFlag is --silent <member>@<from>+<for>, repeatable.
+type silenceFlag []driver.Silence
+
+func (f *silenceFlag) String() string {
+	var out []string
+	for _, s := range *f {
+		out = append(out, s.Member+"@"+s.From.String()+"+"+s.For.String())
+	}
+	return strings.Join(out, ",")
+}
+
+func (f *silenceFlag) Set(v string) error {
+	member, rest, ok := strings.Cut(v, "@")
+	from, dur, ok2 := strings.Cut(rest, "+")
+	if !ok || !ok2 || member == "" {
+		return fmt.Errorf("--silent wants <member>@<from>+<for>, e.g. m3@30s+20s, got %q", v)
+	}
+	a, err := time.ParseDuration(from)
+	if err != nil {
+		return fmt.Errorf("--silent %q: %v", v, err)
+	}
+	b, err := time.ParseDuration(dur)
+	if err != nil {
+		return fmt.Errorf("--silent %q: %v", v, err)
+	}
+	*f = append(*f, driver.Silence{Member: member, From: a, For: b})
+	return nil
 }

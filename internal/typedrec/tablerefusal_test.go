@@ -25,6 +25,7 @@ func TestParseTableRefusal(t *testing.T) {
 		{"WHERE", typedrec.TableRefusalWhere},
 		{"COLEXISTS", typedrec.TableRefusalColExists},
 		{"DEPENDS", typedrec.TableRefusalDepends},
+		{"FORMULA", typedrec.TableRefusalFormula},
 		{"LASTCOL", typedrec.TableRefusalLastCol},
 		{"SORTED", typedrec.TableRefusalSorted},
 		{"SORTKEY", typedrec.TableRefusalSortKey},

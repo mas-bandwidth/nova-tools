@@ -63,9 +63,9 @@ func script(t *testing.T, seen *[]Run) Executor {
 
 func suiteOptions(root string, cases []Case, out string, exec Executor, clock *fakeClock) Options {
 	return Options{
-		Root: root, Cases: cases, Out: out, Budget: 110 * time.Second, Workers: 2, Host: "bench",
+		Root: root, Cases: cases, Out: out, Budget: 110 * time.Second, Workers: 2, Platform: "linux-amd64", CPUs: 8,
 		Jar:  Jar{Path: "/j/tla2tools.jar", Source: "flag", SHA256: strings.Repeat("b", 64)},
-		Java: "/usr/bin/java", Clock: clock.Now, Exec: exec,
+		Java: "/usr/bin/java", JavaVer: "21.0.12.1", Clock: clock.Now, Exec: exec,
 	}
 }
 
@@ -85,9 +85,16 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	if !reflect.DeepEqual(reported, res.Records) || len(res.Records) != 3 {
 		t.Fatalf("reported %d records, kept %d", len(reported), len(res.Records))
 	}
-	fingerprint, _ := Fingerprint(root)
+	src, err := SourceAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp, files, err := src.Fingerprint("MCA.cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
 	first := res.Records[0]
-	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fingerprint, JarSHA256: strings.Repeat("b", 64), Host: "bench",
+	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), JavaVersion: "21.0.12.1", Workers: 2, Host: "linux-amd64", CPUs: 8,
 		StartedUTC: "2026-09-28T12:00:00.250000+00:00", Generated: "15518", Distinct: "263", Seconds: "0.250",
 		Exit: 0, Result: "PASS", Expected: "pass", Property: "-", Budget: "110", Mode: "bounded"}
 	if first != want {
@@ -272,23 +279,31 @@ func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 	}
 }
 
-func TestACopyOfTheModelsHasTheFingerprintOfItsSource(t *testing.T) {
+func TestACopyOfTheModelsHasTheFingerprintsOfItsSource(t *testing.T) {
 	t.Parallel()
-	root, _ := suiteTree(t)
+	root, cases := suiteTree(t)
 	work := filepath.Join(t.TempDir(), "work")
 	if err := CopyModels(filepath.Join(root, "tla"), work); err != nil {
 		t.Fatal(err)
 	}
-	want, _ := Fingerprint(root)
-	got, _, err := fingerprint(root, work)
-	if err != nil || got != want {
-		t.Fatalf("copy fingerprint %s (%v), source %s", got, err, want)
+	src, err := SourceAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := fingerprints(src, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := src
+	copied.TLADir = work
+	if got, err := fingerprints(copied, cases); err != nil || !sameFingerprints(got, want) {
+		t.Fatalf("copy fingerprints %v (%v), source %v", got, err, want)
 	}
 	if err := os.WriteFile(filepath.Join(work, "MCA.tla"), []byte("other\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, _ := fingerprint(root, work); got == want {
-		t.Fatal("an edited copy has its source's fingerprint")
+	if got, _ := fingerprints(copied, cases); sameFingerprints(got, want) {
+		t.Fatal("an edited copy has its source's fingerprints")
 	}
 }
 
@@ -453,5 +468,84 @@ func TestRunSuiteRunsTheDigestedPlansCases(t *testing.T) {
 			res.Records[i].Expected != c.Expected || res.Records[i].Property != c.Property {
 			t.Errorf("case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c)
 		}
+	}
+}
+
+// A suite holds itself to the inputs of the cases it runs. A model that only
+// another group reads may be edited under it; one of its own may not.
+func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		edited  string
+		refused bool
+	}{{"MCB.tla", false}, {"MCB.cfg", false}, {"Unread.tla", false}, {"Shared.tla", true}, {"MCA.tla", true}, {"MCA.cfg", true}} {
+		t.Run(tc.edited, func(t *testing.T) {
+			t.Parallel()
+			root := tree(t, map[string]string{
+				"CASES.tsv": header +
+					row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-") +
+					row("MCB.cfg", "MCB.tla", "pass", "-", "check", "beta", "required", "-"),
+				"MCA.tla": "EXTENDS Shared\n", "MCB.tla": "model\n", "Shared.tla": "shared\n", "Unread.tla": "unread\n",
+				"MCA.cfg": "c\n", "MCB.cfg": "c\n",
+			})
+			cases, err := LoadCases(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			chosen, _ := Select(cases, "alpha", 1, 0)
+			exec := func(_ context.Context, r Run, log string) int {
+				_ = os.WriteFile(filepath.Join(root, "tla", tc.edited), []byte("edited while running\n"), 0o644)
+				_ = os.WriteFile(log, []byte(fixture(t, "pass.log")), 0o644)
+				return 0
+			}
+			clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+			o := suiteOptions(root, chosen, filepath.Join(t.TempDir(), "o"), exec, clock)
+			o.Selection = Selection{Group: "alpha"}
+			res, err := RunSuite(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.refused != (res.Refused == "model inputs changed during execution") || res.Failed != tc.refused {
+				t.Fatalf("suite = %+v", res)
+			}
+		})
+	}
+}
+
+// A record names the workers its case ran with (a counterexample case runs with
+// one) and the java version the suite was given; a suite with no java version
+// refuses to run.
+func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
+	t.Parallel()
+	root, cases := suiteTree(t)
+	var seen []Run
+	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock))
+	if err != nil || len(res.Records) != 3 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	for i, want := range []int{2, 1, 1} {
+		if r := res.Records[i]; r.Workers != want || r.JavaVersion != "21.0.12.1" || seen[i].Workers != want {
+			t.Errorf("%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want)
+		}
+	}
+	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o2"), script(t, &seen), clock)
+	o.JavaVer = ""
+	if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no java version") {
+		t.Fatalf("a suite with no java version: %v", err)
+	}
+	for name, mutate := range map[string]func(*Options){
+		"a machine name": func(o *Options) { o.Platform = "build-host-7.example" },
+		"no platform":    func(o *Options) { o.Platform = "" },
+		"no CPU count":   func(o *Options) { o.CPUs = 0 },
+	} {
+		o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o3"), script(t, &seen), clock)
+		mutate(&o)
+		if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no platform label and CPU count") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if res.Records[0].Host != "linux-amd64" || res.Records[0].CPUs != 8 {
+		t.Errorf("record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
 	}
 }

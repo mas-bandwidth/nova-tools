@@ -269,6 +269,7 @@ func TestCannotAskIsWrittenOncePerPrimary(t *testing.T) {
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 	h.startMachine()
@@ -299,10 +300,10 @@ func TestCannotAskIsWrittenOncePerPrimary(t *testing.T) {
 	}
 }
 
-// A tick judgment the coordinator acknowledged is not written again while
-// its condition holds; it is written again once the condition has cleared
-// and come back.
-func TestAnAckedTickJudgmentComesBackOnlyWithItsCondition(t *testing.T) {
+// A tick judgment is answered by wait, not ack: the condition is held until
+// the time has passed in running time (STOPPED time does not count), and then,
+// while it still holds, it is raised again.
+func TestAWaitedTickJudgmentComesBackAfterItsTime(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
@@ -312,21 +313,29 @@ func TestAnAckedTickJudgmentComesBackOnlyWithItsCondition(t *testing.T) {
 	if len(o) != 1 {
 		t.Fatalf("no member: %d", len(o))
 	}
-	h.must(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
+	if res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"})); len(res.Refused) != 1 ||
+		!strings.Contains(res.Refused[0].Why, "nova-sprint wait "+o[0].Note.ID) {
+		t.Fatalf("ack of a condition the tick keeps: %+v", res)
+	}
+	if _, held, err := h.st.Wait(h.ctx, o[0].Note.ID, h.now.Add(10*time.Minute)); err != nil || !held {
+		t.Fatalf("wait: held %v %v", held, err)
+	}
 	for i := 0; i < 5; i++ {
 		h.tick(time.Minute + time.Second)
 		h.machine()
 	}
-	if n := h.written(sprint.NNoMember); n != 1 {
-		t.Fatalf("written %d times while acknowledged", n)
-	}
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.tick(time.Second)
+	// an hour STOPPED does not count
+	h.stopMachine()
+	h.tick(time.Hour)
+	h.startMachine()
 	h.machine()
-	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
-	h.tick(time.Second)
+	if n := h.written(sprint.NNoMember); n != 1 || len(h.openOf(sprint.NNoMember)) != 1 {
+		t.Fatalf("written %d times while waited", n)
+	}
+	h.tick(6 * time.Minute)
 	h.machine()
 	if n := h.written(sprint.NNoMember); n != 2 {
-		t.Fatalf("written %d times after the condition cleared and came back, want 2", n)
+		t.Fatalf("written %d times after the wait ran out, want 2", n)
 	}
+	h.clean("waited")
 }

@@ -28,6 +28,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `gh/` | the one GitHub client: every call counted per verb, one paced writer, events over polling (#4343) | `go test ./internal/gh` | `go test ./internal/gh` |
 | [ghevent/](ghevent/AGENTS.md) | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
+| `hostload/` | a machine's load: CPU busy percent of all its cores, else the load average over them | `go test ./internal/hostload` | `go test ./internal/hostload` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
 | `jev/` | Jev's mechanical passes (lint, scope, base) as one JEV gate line | `go test ./internal/jev` | `go test ./internal/jev` |
 | `jobs/` | the job graph and admission kernel internal/worklang imports | `go test ./internal/jobs` | `go test ./internal/jobs` |

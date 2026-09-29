@@ -15,8 +15,11 @@ type AckReq struct {
 }
 
 // Ack closes the named judgments, every subject of each, and records the
-// reason as their answer. It is refused for the judgment of a stream that is
-// stopped: that judgment stays open until the stream resumes. A primary in
+// reason as their answer. It answers only a judgment whose own decisions list
+// ack (information to be seen); any other is refused, with its decisions as
+// commands. It is refused for the judgment of a stream that is stopped: that
+// judgment stays open until the stream resumes. It is refused when it would
+// leave a primary held by nobody. A primary in
 // review whose last open judgment it closes, and that nothing then moves
 // (reads exhausted, or stranded in review), is a judgment of its own.
 func Ack(s *Snapshot, r AckReq) Plan {
@@ -41,6 +44,10 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			continue
 		}
 		n := entries[0].Note
+		if !contains(n.Decisions, "ack") {
+			p.refuse(id, notAckable(n, entries))
+			continue
+		}
 		if n.StreamLevel && s.StreamCtl(n.Stream).F("state") == StreamStopped {
 			p.refuse(id, "stream "+n.Stream+" is stopped: its judgment stays open until it resumes; run: nova-sprint resume --stream "+n.Stream+" --did <what was done>")
 			continue
@@ -48,7 +55,7 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		closing[id] = true
 		u := Unit{Key: id, Stream: n.Stream, Closes: entries, Moved: fmt.Sprintf("%s (%s) acknowledged: %s", id, n.Type, r.Reason)}
 		u.Notes = append(u.Notes, decided(entries[0], "ack: "+r.Reason, r.Who, s.Now))
-		if _, ticks := TickDecisions[n.Type]; ticks {
+		if TickKept(n.Type) {
 			// The tick's condition may still hold: the acknowledgement is
 			// kept on it, so the tick does not write it again until it has
 			// cleared and come back.
@@ -68,12 +75,39 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
-	// A primary in review whose judgments this call closes gets the judgment
-	// it needs after them, once, unless the call acknowledged exactly that.
+	// An ack cannot silence a card: one that would leave a primary held by
+	// nobody (no outside actor, no move the tick would make, no other open
+	// judgment) is refused, with the decisions that do move it as commands.
 	acked := map[string][]string{}
 	for _, u := range p.Units {
 		for _, o := range u.Closes {
 			acked[o.Subject()] = append(acked[o.Subject()], o.Note.Type)
+		}
+	}
+	silenced := map[string]string{} // note id -> the primary it would leave held by nobody
+	for _, u := range p.Units {
+		for _, o := range u.Closes {
+			if pr := s.Work.Placed(o.Subject()); pr != nil && silenced[o.Note.ID] == "" && !heldAfterAck(s, pr, closing, acked[pr.ID]) {
+				silenced[o.Note.ID] = pr.ID
+			}
+		}
+	}
+	if len(silenced) > 0 {
+		kept := p.Units[:0]
+		for _, u := range p.Units {
+			if pr := silenced[u.Key]; pr != "" {
+				p.refuse(u.Key, silenceRefusal(s, u, pr))
+				delete(closing, u.Key)
+				continue
+			}
+			kept = append(kept, u)
+		}
+		p.Units = kept
+		acked = map[string][]string{}
+		for _, u := range p.Units {
+			for _, o := range u.Closes {
+				acked[o.Subject()] = append(acked[o.Subject()], o.Note.Type)
+			}
 		}
 	}
 	written := map[string]bool{}
@@ -181,4 +215,114 @@ func acknowledged(n Note, entries []Open, who string, now time.Time) Note {
 		a.Count = len(a.Primaries)
 	}
 	return a
+}
+
+// heldAfterAck says a primary is still held by someone after an ack closes the
+// judgments in closing (of the types acked on it): any state but review is
+// held (by its worker, its needs, the tick, the merger or the coordinator's
+// release); in review, a read outstanding, a read the tick would ask for, or
+// another judgment open on it, or one the ack itself writes, holds it.
+func heldAfterAck(s *Snapshot, pr *Card, closing map[string]bool, acked []string) bool {
+	if pr.Col != Review || s.Readers == nil {
+		return true
+	}
+	reads := readsAt(s, pr, pr.Int("attempt"))
+	for _, rc := range reads {
+		if rc.Col == Asked || rc.Col == Reading {
+			return true
+		}
+	}
+	if len(reads) == 0 && pr.F("result") != "failed" {
+		return true // the tick asks it
+	}
+	for _, o := range closesFor(s.Open, nil, pr.ID) {
+		if !closing[o.Note.ID] {
+			return true
+		}
+	}
+	j, ok := reviewJudgment(s, pr, reviewStep{closing: closing})
+	return ok && !contains(acked, j.Type)
+}
+
+// silenceRefusal is why an ack is refused: the primary it would leave held by
+// nobody, and the judgment's other decisions as the commands that make them.
+func silenceRefusal(s *Snapshot, u Unit, pr string) string {
+	n := u.Closes[0].Note
+	var members []string
+	for _, o := range u.Closes {
+		members = append(members, o.Subject())
+	}
+	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID},
+		Members: members, Decisions: removeDecision(n.Decisions, "ack")}
+	var lines []string
+	for _, c := range commands(g, n, "") {
+		lines = append(lines, c.Decision+": "+strings.Join(c.Lines, " && "))
+	}
+	why := fmt.Sprintf("%s is the last judgment on %s, which would then be held by nobody (no read outstanding, nothing the tick would do, no other judgment open on it); decide instead", n.ID, pr)
+	if len(lines) == 0 {
+		return why + ": rework, return or drop it"
+	}
+	return why + ": " + strings.Join(lines, "; ")
+}
+
+// TickKept says the tick keeps the judgments of this type: it writes one while
+// its condition holds and closes it when the condition clears.
+func TickKept(typ string) bool {
+	_, ok := TickDecisions[typ]
+	return ok || typ == NRemindFailed
+}
+
+// notAckable is why ack is refused for a judgment whose decisions do not list
+// it: the decisions that answer it, as commands.
+func notAckable(n Note, entries []Open) string {
+	var members []string
+	for _, o := range entries {
+		members = append(members, o.Subject())
+	}
+	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID}, Members: members, Decisions: n.Decisions}
+	var lines []string
+	for _, c := range commands(g, n, "") {
+		lines = append(lines, c.Decision+": "+strings.Join(c.Lines, " && "))
+	}
+	why := fmt.Sprintf("ack does not answer %s (%s): its decisions are", n.ID, n.Type)
+	if TickKept(n.Type) {
+		why = fmt.Sprintf("ack does not answer %s (%s), a condition the tick keeps; wait sets when it is shown again: its decisions are", n.ID, n.Type)
+	}
+	return why + " " + strings.Join(lines, "; ")
+}
+
+// WaitReq holds a condition the tick keeps until a time: the judgment is
+// closed and a hold kept on its condition; when the time has passed in
+// running time and the condition still holds, the tick raises it again.
+type WaitReq struct {
+	Note  string
+	Until time.Time
+	Who   string
+}
+
+// Wait is the step of WaitReq; it is refused for a judgment the tick does not
+// keep (its review time is set instead) and for one not open.
+func Wait(s *Snapshot, r WaitReq) Plan {
+	var p Plan
+	var entries []Open
+	for _, o := range s.Open {
+		if o.Note.ID == r.Note {
+			entries = append(entries, o)
+		}
+	}
+	if len(entries) == 0 {
+		p.refuse(r.Note, noJudgment(s, r.Note))
+		return p
+	}
+	n := entries[0].Note
+	if !TickKept(n.Type) {
+		p.refuse(r.Note, n.Type+" is not a condition the tick keeps: its review time is set instead")
+		return p
+	}
+	hold := acknowledged(n, entries, r.Who, s.Now)
+	hold.Review = r.Until
+	u := Unit{Key: r.Note, Stream: n.Stream, Closes: entries, Notes: []Note{decided(entries[0], "wait until "+r.Until.UTC().Format(time.RFC3339), r.Who, s.Now), hold},
+		Moved: fmt.Sprintf("%s (%s) held until %s of running time", r.Note, n.Type, r.Until.UTC().Format(time.RFC3339))}
+	p.Units = append(p.Units, u)
+	return p
 }

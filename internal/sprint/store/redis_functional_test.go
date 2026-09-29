@@ -42,7 +42,7 @@ func liveStore(t *testing.T) (*Store, *redis.Client) {
 func TestRedisTheLifeOfAStream(t *testing.T) {
 	t.Parallel()
 	st, _ := liveStore(t)
-	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
 	h.setup(5)
 	h.through("s1-1", "s1-2", "s1-3", "s1-4", "s1-5")
 	h.clean("accepted")
@@ -66,7 +66,7 @@ func TestRedisTheLifeOfAStream(t *testing.T) {
 func TestRedisALargeSet(t *testing.T) {
 	t.Parallel()
 	st, _ := liveStore(t)
-	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
 	h.setup(300)
 	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 300}}))
 	if len(res.Moved) != 300 {
@@ -80,7 +80,7 @@ func TestRedisALargeSet(t *testing.T) {
 func TestRedisAPendingOperationIsFinishedByTheNextVerb(t *testing.T) {
 	t.Parallel()
 	st, c := liveStore(t)
-	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
 	h.setup(1)
 	lost := &lostOnce{Backend: st.B, table: st.Names.Table(sprint.Work)}
 	cut := *st
@@ -151,7 +151,7 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 func TestRedisClear(t *testing.T) {
 	t.Parallel()
 	st, c := liveStore(t)
-	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
 	h.setup(3)
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))

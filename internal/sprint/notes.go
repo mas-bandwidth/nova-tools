@@ -40,6 +40,7 @@ const (
 	NWorkOK         = "work came back ok"
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
+	NUnknownMachine = "an unknown machine is beating"
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"
@@ -77,7 +78,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBlocked:         {"drop", "ack"},
-	NCIRed:           {"rework with a fix", "return", "drop", "look"},
+	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
 	NReadsExhausted:  {"ask another reader", "rework", "drop"},
 	NStranded:        {"ask", "rework", "drop"},
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},

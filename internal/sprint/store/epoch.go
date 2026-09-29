@@ -157,3 +157,25 @@ func (st *Store) SetReview(ctx context.Context, noteID string, at time.Time) err
 	}
 	return st.B.SetReview(ctx, noteID, at)
 }
+
+// Wait is the coordinator's wait on a judgment: for a condition the tick keeps
+// it is a step that closes the judgment and holds the condition until the time
+// (in running time); for any other it sets the judgment's review time. held
+// says it was the step, and res is its result.
+func (st *Store) Wait(ctx context.Context, noteID string, at time.Time) (res Result, held bool, err error) {
+	st, err = st.pin(ctx)
+	if err != nil {
+		return res, false, err
+	}
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return res, false, err
+	}
+	for _, o := range open {
+		if o.Note.ID == noteID && o.Note.Kind == sprint.Judgment && sprint.TickKept(o.Note.Type) {
+			res, err = st.Run(ctx, WaitStep(sprint.WaitReq{Note: noteID, Until: at, Who: st.Actor}))
+			return res, true, err
+		}
+	}
+	return res, false, st.SetReview(ctx, noteID, at)
+}

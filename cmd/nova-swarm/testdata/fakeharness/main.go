@@ -255,7 +255,7 @@ func main() {
 	// so `cost` has the numbers a rate-limited attempt did burn.
 	// A PROVIDER'S INPUT LIMIT, IN THE PROVIDER'S OWN WORDS AND ITS OWN PAINT (#103).
 	// OpenCode on Mercury 2.5 printed exactly this, three times, and exited 1 after ~215s
-	// on two of forty Freddy jobs (2026-09-12): the ANSI is there because the quote a
+	// on two of forty worker jobs: the ANSI is there because the quote a
 	// triage line carries has to be readable with it in the log. The words `rate limit`
 	// are in the sentence, which is why this death was read as a 429 and retried.
 	// THE STRUCTURED SIGNAL (issue #163): a harness adapter records the provider's refusal as
@@ -459,10 +459,10 @@ func main() {
 		fmt.Println("STEP 3 run the gate")
 		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
 	}
-	// FAKE-DENY-AND-RECOVER is STELLA'S P2 WITNESS (PR #1478 comment 5737662335): a plain
+	// FAKE-DENY-AND-RECOVER is THE P2 WITNESS (PR #1478 comment 5737662335): a plain
 	// shell REDIRECTION to a path the card may not write prints the very same words as a
 	// refused exec -- `/bin/bash: <path>: Permission denied` -- and then the card carries on
-	// and exits 0, having attempted no program at all. She measured it with
+	// and exits 0, having attempted no program at all. Measured with
 	// `: > "$1"; printf "RECOVERED\n"` against a non-writable directory. Nothing in the text
 	// says which operation was denied, which is the whole of P2.
 	if path, ok := directive(prompt, "FAKE-DENY-AND-RECOVER"); ok {
@@ -473,7 +473,7 @@ func main() {
 		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
 		fmt.Println("RECOVERED")
 	}
-	// FAKE-REWRITE-CAPTURE is JOHNNY'S #1478 WITNESS (the #1892 class): a card that printed a
+	// FAKE-REWRITE-CAPTURE is THE #1478 WITNESS (the #1892 class): a card that printed a
 	// denial and then REPLACES its own capture's name -- unlink, and a clean file in its place
 	// -- inside the job directory it may write. The parent's descriptor still holds the real
 	// bytes; the path now holds none of them. A verdict read from the path after exit would

@@ -38,11 +38,26 @@ func openTypes(w *world, id string) string {
 // ackAll acknowledges every judgment open on the subject, in one call.
 func ackAll(w *world, id string) Plan {
 	w.t.Helper()
+	return w.must(Ack(w.s, AckReq{Notes: openIDs(w, id), Reason: "seen"}))
+}
+
+func openIDs(w *world, id string) []string {
 	var ids []string
 	for _, o := range w.openOn(id) {
 		ids = append(ids, o.Note.ID)
 	}
-	return w.must(Ack(w.s, AckReq{Notes: ids, Reason: "seen"}))
+	return ids
+}
+
+// ackRefused is an ack of every judgment open on the primary that must be
+// refused: ack answers none of the judgments that offer accept, and the
+// refusal names accept's command.
+func ackRefused(w *world, id string) {
+	w.t.Helper()
+	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, id), Reason: "seen"}))
+	if len(p.Refused) != 1 || len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "ack does not answer") || !strings.Contains(p.Refused[0].Why, "nova-sprint accept --group") {
+		w.t.Fatalf("an ack that silences %s: %+v", id, p)
+	}
 }
 
 // Finish: failed work is its own judgment and nothing more; ok work that
@@ -82,16 +97,18 @@ func TestReviewJudgmentRead(t *testing.T) {
 	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
 	w.must(Read(w.s, ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "f", Sel: Sel{IDs: []string{rcs[1].ID}}}))
-	ackAll(w, "s1-2")
-	if got := openTypes(w, "s1-2"); got != NReadsExhausted {
-		t.Fatalf("one ok, one broken acknowledged: %q", got)
+	if p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"})); len(p.Refused) != 1 {
+		t.Fatalf("ack of a broken read: %+v", p)
+	}
+	if got := openTypes(w, "s1-2"); got != NReadBroken {
+		t.Fatalf("one ok, one broken, the ack refused: %q", got)
 	}
 	w.clean("read")
 }
 
 // Return: a primary sent back to review with its reads standing has the one
 // judgment returned to review, which offers accept; a further ok read writes
-// nothing more, and acknowledging it leaves ready to accept.
+// nothing more, and ack of it is refused.
 func TestReviewJudgmentReturnAndAck(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
@@ -106,30 +123,23 @@ func TestReviewJudgmentReturnAndAck(t *testing.T) {
 	if got := openTypes(w, "s1-1"); got != NReturned {
 		t.Fatalf("a third ok after return: %q", got)
 	}
-	ackAll(w, "s1-1")
-	if got := openTypes(w, "s1-1"); got != NReadyToAccept {
-		t.Fatalf("returned acknowledged, acceptable: %q", got)
-	}
-	// Acknowledging ready to accept itself does not write it again.
-	ackAll(w, "s1-1")
-	if got := openTypes(w, "s1-1"); got != "" {
-		t.Fatalf("ready to accept acknowledged: %q", got)
+	// ack answers neither returned to review nor ready to accept.
+	ackRefused(w, "s1-1")
+	if got := openTypes(w, "s1-1"); got != NReturned {
+		t.Fatalf("returned after the refused ack: %q", got)
 	}
 	w.clean("returned")
 }
 
-// Ask: one more reader for a primary acceptable and silent (its ready to
-// accept acknowledged) writes ready to accept again.
+// Ask: one more reader for an acceptable primary keeps the one ready to
+// accept judgment; its ack stays refused.
 func TestReviewJudgmentAsk(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	finished(w, "s1-1", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	readOK(w, "s1-1")
-	ackAll(w, "s1-1")
-	if got := openTypes(w, "s1-1"); got != "" {
-		t.Fatalf("acknowledged: %q", got)
-	}
+	ackRefused(w, "s1-1")
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	if got := openTypes(w, "s1-1"); got != NReadyToAccept {
 		t.Fatalf("asked of another: %q", got)
@@ -144,7 +154,6 @@ func TestReviewJudgmentRefusedRework(t *testing.T) {
 	finished(w, "s1-1", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	readOK(w, "s1-1")
-	ackAll(w, "s1-1")
 	p := w.do(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	if len(p.Refused) != 1 || w.state("s1-1") != Review {
 		t.Fatalf("rework with no fix: %+v", p)

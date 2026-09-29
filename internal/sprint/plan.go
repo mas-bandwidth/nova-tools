@@ -15,9 +15,9 @@ type Change struct {
 	Entry ntable.BatchMemberEntry
 }
 
-// Bump adds Delta to a counter field of a card that several units share (a
-// member's control card counts ok and failed work): the store binding sums the
-// bumps of the units it applies together into one entry.
+// Bump adds Delta to a counter field of a card that several units of one step
+// share: the store binding sums the bumps of the units it applies together
+// into one entry.
 type Bump struct {
 	Table, ID, Field string
 	Delta            int

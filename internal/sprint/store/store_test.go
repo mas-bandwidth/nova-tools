@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -22,11 +23,15 @@ type harness struct {
 	ctx context.Context
 	mu  sync.Mutex
 	now time.Time
+	// live is the members that beat, at the start and at every step of the
+	// clock: the fleet machines alive (a test that has one fall silent takes
+	// it out).
+	live []string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0}
+	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0, live: []string{"m1", "m2"}}
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
@@ -38,10 +43,25 @@ func newHarness(t *testing.T) *harness {
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	return h
 }
 
-func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.mu.Unlock() }
+func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.mu.Unlock(); h.beat() }
+
+// beat is one beat of every live member, at load 0.
+func (h *harness) beat() {
+	h.t.Helper()
+	h.mu.Lock()
+	live := append([]string(nil), h.live...)
+	h.mu.Unlock()
+	zero := 0.0
+	for _, m := range live {
+		if _, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{}); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+}
 
 func (h *harness) run(step Step) Result {
 	h.t.Helper()
@@ -147,8 +167,12 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	if shapes[0].Rows[0].Texts[sprint.StateCol] != sprint.StreamLanded || shapes[0].Rows[0].Texts[sprint.CI] != "green" {
 		t.Errorf("merge display cells: %v", shapes[0].Rows[0].Texts)
 	}
-	if got := shapes[1].Rows[0].Texts[sprint.OkPct]; got != "100.0%" {
+	fleet := shapes[1]
+	if got := ntable.CellText(fleet.Columns, fleet.Rows[0], fleet.Column(sprint.OkPct)); got != "100.0%" {
 		t.Errorf("fleet ok%%: %q", got)
+	}
+	if _, written := fleet.Rows[0].Texts[sprint.OkPct]; written {
+		t.Errorf("ok%% is written as text: %v", fleet.Rows[0].Texts)
 	}
 }
 
@@ -385,7 +409,7 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 	}
 	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 		OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: "s1-1.w1", Expect: &ntable.MemberExpect{Absent: true},
-			Create: &ntable.MemberCreateOp{Row: "m1", Col: "done", Score: 1}}}}); err != nil {
+			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"})); err == nil || h.m.Pending() == nil {
@@ -425,8 +449,8 @@ func TestD3ARetriedFinishReturnsTheOriginal(t *testing.T) {
 	if !again.Replay || len(again.Moved) != len(first.Moved) || again.Op != first.Op {
 		t.Fatalf("retry: %+v, first %+v", again, first)
 	}
-	if ctl := h.snap().MemberCtl(m); ctl.F("failed") != "1" {
-		t.Fatalf("failed counted %s times", ctl.F("failed"))
+	if n := h.snap().Fleet.Count(m, sprint.DoneFailed); n != 1 {
+		t.Fatalf("failed counted %d times", n)
 	}
 	if open, _ := h.m.OpenNotes(h.ctx); len(open) != 1 {
 		t.Fatalf("notified %d times", len(open))

@@ -288,6 +288,9 @@ func commands(g Group, first Note, prefix string) []Command {
 	s := g.Stream
 	resume := func(did string) string { return cmd + "resume --stream " + s + " --did " + did + ans }
 	look := func() []string {
+		if len(g.Members) == 0 {
+			return []string{cmd + "inbox --open " + g.ID}
+		}
 		var out []string
 		for i, m := range g.Members {
 			if i == MaxLook {
@@ -316,8 +319,10 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, look()...)
 		case d == "act" && first.StreamLevel:
 			add(d, cmd+"wait "+first.ID+" --for 30m")
-		case d == "act":
+		case d == "act" && contains(g.Decisions, "ack"):
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+g.ID+" --for 30m")
+		case d == "act":
+			add(d, cmd+"wait "+g.ID+" --for 30m")
 		case g.Type == NSprintDone:
 			switch d {
 			case "clear":
@@ -395,7 +400,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "return":
 			add(d, cmd+"return"+grp+" --reason "+whyText+ans)
 		case d == "look":
-			add(d, append(look(), cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)...)
+			add(d, look()...)
 		case d == "check":
 			add(d, cmd+"check")
 		case d == "wait":
@@ -408,9 +413,11 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"reader add '<reader>'")
 		case d == "fleet up":
 			add(d, cmd+"fleet up '<member>'")
+		case d == "fleet beat":
+			add(d, cmd+"fleet beat '<member>'")
 		case d == "ask --another":
 			add(d, cmd+"ask"+grp+" --another"+ans)
-		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "merge --stream "):
+		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "merge --stream ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
