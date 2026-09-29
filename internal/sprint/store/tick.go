@@ -656,6 +656,14 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if res.Due > 0 {
 		seen.Full = time.Time{}
 	}
+	if f.Pending != nil {
+		// An operation in flight at the tick's start may have finished during
+		// it (its writer, or a part that repaired it): its fleet cells are
+		// brought up to date now, not left to the next tick.
+		if _, err := st.SyncFleet(ctx); err != nil {
+			return last, err
+		}
+	}
 	// What it saw is the read before its own moves: a change by anyone after
 	// that read, its own moves included, makes the next tick read the whole
 	// sprint again, so nothing that happens during a tick is missed.
