@@ -59,55 +59,16 @@
     cache_valid_time: 3600
 
 # A rootless user namespace maps a range of subordinate ids; without a row the
-# user has none. An existing row is left as it is: it is checked below and never
-# rewritten.
-- name: the user's subordinate id rows
-  ansible.builtin.slurp:
-    src: "/etc/{{ item }}"
-  register: container_runtime_subid_files
+# user has none. tasks/subid.yml reads the whole of /etc/subuid and /etc/subgid,
+# allocates a missing row after every range already there, and stops on an
+# existing row that overlaps another user's or is too short.
+- name: subordinate id rows
+  ansible.builtin.include_tasks: subid.yml
   loop:
     - subuid
     - subgid
-  failed_when: false
-
-- name: the user's subordinate id ranges, as they are
-  ansible.builtin.set_fact:
-    container_runtime_subid_have: >-
-      {{ container_runtime_subid_have | default({}) | combine({
-           item.item: (
-             (item.content | default('') | b64decode).splitlines()
-             | select('match', '^' ~ container_runtime_user ~ ':')
-             | map('split', ':') | map(attribute=2) | map('int') | list
-           )
-         }) }}
-  loop: "{{ container_runtime_subid_files.results }}"
   loop_control:
-    label: "{{ item.item }}"
-
-- name: the files that have no row for the user
-  ansible.builtin.set_fact:
-    container_runtime_subid_missing: "{{ container_runtime_subid_have | dict2items | selectattr('value', 'equalto', []) | map(attribute='key') | list }}"
-
-- name: subordinate id rows the user lacks
-  become: true
-  ansible.builtin.lineinfile:
-    path: "/etc/{{ item }}"
-    line: "{{ container_runtime_user }}:{{ container_runtime_subid_start }}:{{ container_runtime_subid_count }}"
-    create: true
-    mode: "0644"
-  loop: "{{ container_runtime_subid_missing }}"
-
-- name: an existing subordinate id range is large enough
-  ansible.builtin.assert:
-    quiet: true
-    that: item.value | length == 0 or (item.value | max) >= container_runtime_subid_count
-    fail_msg: >-
-      /etc/{{ item.key }} gives {{ container_runtime_user }} {{ item.value }}
-      ids; a rootless user namespace needs {{ container_runtime_subid_count }}.
-      The role never rewrites an existing row: widen it by hand.
-  loop: "{{ container_runtime_subid_have | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
+    loop_var: container_runtime_subid_file
 
 # Linger keeps /run/user/<uid>, the rootless runtime directory, and the user's
 # systemd manager alive with no login session, which a runner started by

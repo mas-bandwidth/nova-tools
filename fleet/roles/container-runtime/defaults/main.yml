@@ -22,8 +22,11 @@ container_runtime_packages:
 container_runtime_install_recommends: true
 
 # Subordinate id range for the user when /etc/subuid or /etc/subgid has no row
-# for it. An existing row is never changed; one shorter than the count a
-# rootless user namespace needs fails the play.
+# for it. The range starts at container_runtime_subid_start or, when another
+# user's range in the file reaches that far, right after the highest range in the
+# file, so it never overlaps another user's. An existing row is never changed;
+# one that overlaps another user's row, or is shorter than the count a rootless
+# user namespace needs, fails the play.
 container_runtime_subid_start: 100000
 container_runtime_subid_count: 65536
 

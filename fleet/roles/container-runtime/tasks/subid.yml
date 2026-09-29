@@ -1,0 +1,112 @@
+---
+# One of /etc/subuid, /etc/subgid (container_runtime_subid_file) for the runner
+# user. A rootless user namespace maps a range of subordinate ids onto host ids,
+# so two users whose ranges overlap share host ids: their containers' processes
+# can signal each other and share file ownership. The role therefore
+#
+#   - never gives the user a range that overlaps another user's row: a missing
+#     row is allocated after the highest range end in the file (and no lower
+#     than container_runtime_subid_start);
+#   - stops when a row the user already holds overlaps another user's row or is
+#     shorter than a namespace needs, and never rewrites an existing row.
+#
+# Rows are read by name or by numeric uid, as shadow reads them.
+
+- name: "/etc/{{ container_runtime_subid_file }} exists"
+  ansible.builtin.stat:
+    path: "/etc/{{ container_runtime_subid_file }}"
+  register: container_runtime_subid_stat
+
+# A file that cannot be read fails here; it is never taken for an empty one.
+- name: "the rows of /etc/{{ container_runtime_subid_file }}"
+  ansible.builtin.slurp:
+    src: "/etc/{{ container_runtime_subid_file }}"
+  register: container_runtime_subid_slurp
+  when: container_runtime_subid_stat.stat.exists
+
+- name: "the rows, as name:start:count lines"
+  ansible.builtin.set_fact:
+    container_runtime_subid_lines: >-
+      {{ ((container_runtime_subid_slurp.content | default('') | b64decode).splitlines()
+          if container_runtime_subid_stat.stat.exists else [])
+         | map('trim') | reject('equalto', '') | reject('match', '#') | list }}
+
+# A line that is not name:start:count would hide a range from the overlap
+# check, so the play stops on it.
+- name: every row is name:start:count
+  ansible.builtin.assert:
+    quiet: true
+    that: item is match('^[^:]+:[0-9]+:[0-9]+$')
+    fail_msg: "/etc/{{ container_runtime_subid_file }} holds a line the role cannot read as name:start:count: {{ item }}"
+  loop: "{{ container_runtime_subid_lines }}"
+
+# mine: the user's rows; others: everyone else's. The block computes the
+# highest range end among the others and the others' rows that overlap one of
+# the user's rows.
+- name: the user's rows against everyone else's
+  ansible.builtin.set_fact:
+    container_runtime_subid: >-
+      {%- set names = [container_runtime_user, container_runtime_uid | string] -%}
+      {%- set rows = container_runtime_subid_lines | map('split', ':') | list -%}
+      {%- set mine = rows | selectattr('0', 'in', names) | list -%}
+      {%- set others = rows | rejectattr('0', 'in', names) | list -%}
+      {%- set ns = namespace(end=0, clash=[]) -%}
+      {%- for o in others -%}
+        {%- set o_end = o[1] | int + o[2] | int -%}
+        {%- if o_end > ns.end -%}{%- set ns.end = o_end -%}{%- endif -%}
+        {%- for m in mine -%}
+          {%- if o[2] | int > 0 and m[2] | int > 0 and o[1] | int < m[1] | int + m[2] | int and m[1] | int < o_end -%}
+            {%- set ns.clash = ns.clash + [o | join(':')] -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ {'mine': mine | map('join', ':') | list,
+          'longest': (mine | map(attribute=2) | map('int') | list | max) if mine | length > 0 else 0,
+          'others_end': ns.end,
+          'clash': ns.clash | unique | list} }}
+
+- name: the user's existing rows overlap no other user's
+  ansible.builtin.assert:
+    quiet: true
+    that: container_runtime_subid.clash | length == 0
+    fail_msg: >-
+      /etc/{{ container_runtime_subid_file }} gives {{ container_runtime_user }}
+      {{ container_runtime_subid.mine }}, which overlaps
+      {{ container_runtime_subid.clash }}. Two users whose ranges
+      overlap share host ids. The role never rewrites an existing row: correct
+      the file by hand.
+
+- name: an existing subordinate id range is large enough
+  ansible.builtin.assert:
+    quiet: true
+    that: container_runtime_subid.mine | length == 0 or container_runtime_subid.longest | int >= container_runtime_subid_count | int
+    fail_msg: >-
+      /etc/{{ container_runtime_subid_file }} gives {{ container_runtime_user }}
+      {{ container_runtime_subid.mine }}; a rootless user
+      namespace needs {{ container_runtime_subid_count }} ids. The role never
+      rewrites an existing row: widen it by hand.
+
+- name: the start of the range a missing row gets
+  ansible.builtin.set_fact:
+    container_runtime_subid_new_start: >-
+      {{ [container_runtime_subid_start | int, container_runtime_subid.others_end | int] | max }}
+  when: container_runtime_subid.mine | length == 0
+
+- name: a new range fits in the 32-bit id space
+  ansible.builtin.assert:
+    quiet: true
+    that: container_runtime_subid_new_start | int + container_runtime_subid_count | int <= 4294967296
+    fail_msg: >-
+      /etc/{{ container_runtime_subid_file }} leaves no room for
+      {{ container_runtime_subid_count }} ids after its highest range (end
+      {{ container_runtime_subid_new_start }}).
+  when: container_runtime_subid.mine | length == 0
+
+- name: "a row for the user in /etc/{{ container_runtime_subid_file }}"
+  become: true
+  ansible.builtin.lineinfile:
+    path: "/etc/{{ container_runtime_subid_file }}"
+    line: "{{ container_runtime_user }}:{{ container_runtime_subid_new_start }}:{{ container_runtime_subid_count }}"
+    create: true
+    mode: "0644"
+  when: container_runtime_subid.mine | length == 0
