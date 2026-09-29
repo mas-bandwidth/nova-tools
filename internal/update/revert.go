@@ -4,10 +4,11 @@ import (
 	"strings"
 )
 
-// WorkflowRunOutcome represents the status and conclusion of a GitHub Actions / CI workflow run.
+// WorkflowRunOutcome represents the status, conclusion, and attempt of a GitHub Actions / CI workflow run.
 type WorkflowRunOutcome struct {
-	Status     string `json:"status"`     // e.g. "completed", "in_progress", "queued"
-	Conclusion string `json:"conclusion"` // e.g. "success", "failure", "cancelled", "timed_out", "skipped", "neutral"
+	Status     string `json:"status"`      // e.g. "completed", "in_progress", "queued"
+	Conclusion string `json:"conclusion"`  // e.g. "success", "failure", "cancelled", "timed_out", "skipped", "neutral"
+	RunAttempt int    `json:"run_attempt"` // 1 for initial run, > 1 for reruns
 }
 
 // RevertDecision describes whether a workflow run outcome requires a revert under revert-on-red.
@@ -82,6 +83,13 @@ func CheckRevertOnRed(outcome WorkflowRunOutcome, revertOnRedEnabled bool) Rever
 			Reason:         "workflow run not completed",
 		}
 	}
+	if outcome.RunAttempt == 1 {
+		return RevertDecision{
+			RequiresRevert: false,
+			IsRed:          isRed,
+			Reason:         "attempt 1 triggers flake guard rerun before revert",
+		}
+	}
 	if isRed {
 		concl := strings.ToLower(strings.TrimSpace(outcome.Conclusion))
 		if concl == "" {
@@ -104,4 +112,14 @@ func CheckRevertOnRed(outcome WorkflowRunOutcome, revertOnRedEnabled bool) Rever
 // requires a revert when revert-on-red is enabled.
 func ShouldRevert(conclusion string, revertOnRedEnabled bool) bool {
 	return revertOnRedEnabled && IsRedWorkflowRun(conclusion)
+}
+
+// ShouldRevertAttempt reports whether a workflow run requires a revert given its run attempt number
+// and conclusion under revert-on-red. Attempt 1 triggers a flake guard rerun and does not revert.
+// A red run on attempt > 1 requires a revert.
+func ShouldRevertAttempt(runAttempt int, conclusion string, revertOnRedEnabled bool) bool {
+	if !revertOnRedEnabled || !IsRedWorkflowRun(conclusion) {
+		return false
+	}
+	return runAttempt != 1
 }

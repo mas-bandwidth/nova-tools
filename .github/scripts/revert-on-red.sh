@@ -19,9 +19,16 @@ export GH_TOKEN="${GITHUB_TOKEN}"
 repo="${GITHUB_REPOSITORY}"
 head_sha="${HEAD_SHA}"
 run_id="${RUN_ID}"
+run_attempt="${RUN_ATTEMPT:-2}"
 
 short() { printf '%s' "${1:0:12}"; }
 notice() { echo "::notice::$*"; }
+
+# --- guard 0: attempt 1 is a rerun trigger only (flake guard) ---
+if [ "$run_attempt" = "1" ]; then
+  notice "run $run_id is on attempt 1; flake guard re-run must execute before revert, skipping."
+  exit 0
+fi
 
 # --- guard 1: never revert a revert (no revert loops) ---
 subject="$(git log -1 --format=%s "$head_sha")"

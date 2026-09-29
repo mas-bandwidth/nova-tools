@@ -145,3 +145,69 @@ func TestColdCacheCancellationRegression(t *testing.T) {
 		t.Fatalf("cold-cache cancellation: got %+v, want RequiresRevert=true and IsRed=true", d)
 	}
 }
+
+func TestRevertAttemptGating(t *testing.T) {
+	t.Parallel()
+
+	// Attempt 1 fails -> flake guard triggers rerun, does not revert yet
+	runAttempt1 := WorkflowRunOutcome{
+		Status:     "completed",
+		Conclusion: "failure",
+		RunAttempt: 1,
+	}
+	d1 := CheckRevertOnRed(runAttempt1, true)
+	if d1.RequiresRevert {
+		t.Errorf("CheckRevertOnRed(attempt 1, failure).RequiresRevert = true, want false (rerun first)")
+	}
+	if !d1.IsRed {
+		t.Errorf("CheckRevertOnRed(attempt 1, failure).IsRed = false, want true")
+	}
+	if ShouldRevertAttempt(1, "failure", true) {
+		t.Errorf("ShouldRevertAttempt(1, failure) = true, want false")
+	}
+
+	// Attempt 1 cancelled -> flake guard triggers rerun, does not revert yet
+	runCancelled1 := WorkflowRunOutcome{
+		Status:     "completed",
+		Conclusion: "cancelled",
+		RunAttempt: 1,
+	}
+	dc1 := CheckRevertOnRed(runCancelled1, true)
+	if dc1.RequiresRevert {
+		t.Errorf("CheckRevertOnRed(attempt 1, cancelled).RequiresRevert = true, want false (rerun first)")
+	}
+	if ShouldRevertAttempt(1, "cancelled", true) {
+		t.Errorf("ShouldRevertAttempt(1, cancelled) = true, want false")
+	}
+
+	// Attempt 2 fails -> rerun came back red, now requires revert
+	runAttempt2 := WorkflowRunOutcome{
+		Status:     "completed",
+		Conclusion: "failure",
+		RunAttempt: 2,
+	}
+	d2 := CheckRevertOnRed(runAttempt2, true)
+	if !d2.RequiresRevert {
+		t.Errorf("CheckRevertOnRed(attempt 2, failure).RequiresRevert = false, want true")
+	}
+	if !d2.IsRed {
+		t.Errorf("CheckRevertOnRed(attempt 2, failure).IsRed = false, want true")
+	}
+	if !ShouldRevertAttempt(2, "failure", true) {
+		t.Errorf("ShouldRevertAttempt(2, failure) = false, want true")
+	}
+
+	// Attempt 2 cancelled -> rerun came back cancelled, now requires revert
+	runCancelled2 := WorkflowRunOutcome{
+		Status:     "completed",
+		Conclusion: "cancelled",
+		RunAttempt: 2,
+	}
+	dc2 := CheckRevertOnRed(runCancelled2, true)
+	if !dc2.RequiresRevert {
+		t.Errorf("CheckRevertOnRed(attempt 2, cancelled).RequiresRevert = false, want true")
+	}
+	if !ShouldRevertAttempt(2, "cancelled", true) {
+		t.Errorf("ShouldRevertAttempt(2, cancelled) = false, want true")
+	}
+}
