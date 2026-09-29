@@ -127,6 +127,13 @@
 \*                                                       (MergeMatchesWork)
 \*   "reportown"        a slow writer reports its own plan, not the recorded
 \*                      result                            (ReportIsRecorded)
+\*   "noautorework"     the tick never reworks failed work or a broken read
+\*                                                         (OwnersRule)
+\*   "noautoaccept"     the tick never accepts                (OwnersRule)
+\*   "latesilent"       a late card past the redeal bound opens no judgment
+\*                                                         (OwnersRule)
+\*   "nomachinenote"    the machine STOPPED with moves due opens no judgment
+\*                                                         (OwnersRule)
 \*   "ackanything"      ack closes a judgment whose decisions do not list it
 \*                                                     (AckOnlyListed)
 \*   "insertnoback"     an inserted sentinel leaves the ready cards behind it
@@ -164,6 +171,7 @@ CONSTANTS Streams, Primaries, Members, Readers,
           Admitted0,  \* the primaries admitted before the first step
           Sentinels,  \* the primaries of kind sentinel
           MaxAttempt, MaxBad, MaxReturns, MaxRanks, MaxStops, MaxEpoch, MaxAcks,
+          MaxRedeals, \* the redeals and re-asks of late cards per attempt
           FreeCoordinator,
           TickParts,  \* TRUE: the tick runs its parts in order, each bounded
           TickBound,  \* the moves one part makes per tick
@@ -181,36 +189,43 @@ WorkCells == {"waiting", "ready", "working", "review", "merging", "landed"}
 FleetCells == {"ready", "working", "done"}
 ReadCells == {"asked", "reading", "ok", "broken"}
 MergeCells == {"queued", "merged", "stuck"}
-Attempts == 1..MaxAttempt
+\* A primary reworks by itself up to MaxAttempt; the coordinator may give one
+\* more attempt at the bound.
+Attempts == 1..(MaxAttempt + 1)
 WC(p, a) == <<"w", p, a>>
 RC(p, a, r) == <<"r", p, a, r>>
 WorkCards == {WC(p, a) : p \in Primaries, a \in Attempts}
 ReadCards == {RC(p, a, r) : p \in Primaries, a \in Attempts, r \in Readers}
 Cards == WorkCards \cup ReadCards
 CardCauses == {"conflict", "needs"}
-CardNoteTypes == {"failed", "broken", "reads", "blocked", "ci", "skipped", "reached",
-                  "accept", "returned", "stranded"}
+\* The maximum is mechanical (the owner's policy): judgments remain only for
+\* what the machine cannot decide: a dropped need, a sentinel reached, a red
+\* CI, a repair that skipped, a return, the bounds (attempts, redeals), cannot
+\* ask, and the stream and fleet and machine judgments below.
+CardNoteTypes == {"blocked", "ci", "skipped", "reached", "returned", "bound", "cannotask"}
 \* A judgment notification about a card, and a stream's stopped judgment.
 Note(t, p) == [t |-> t, p |-> p, s |-> StreamOf[p]]
 StopNote(s) == [t |-> "stopped", p |-> None, s |-> s]
 \* The fleet's judgment: no member is up (audit gap 6).
 FleetNote == [t |-> "nomember", p |-> None, s |-> None]
+\* The machine is STOPPED and moves are due.
+MachineNote == [t |-> "machine", p |-> None, s |-> None]
 Notes == {Note(t, p) : t \in CardNoteTypes, p \in Primaries}
-         \cup {StopNote(s) : s \in Streams} \cup {FleetNote}
+         \cup {StopNote(s) : s \in Streams} \cup {FleetNote, MachineNote}
 
 VARIABLES added, dropped, work, fleet, readers, merge, sstate, mstatus,
           score, attempt, head, pair, gen, held, fin, result,
           made, gone, twice, cause, need, open, op, crashed,
           bad, returnsN, ranks, waived, released, machine, stops, redstop,
           epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep,
-          rt, age, clr, cshape, owed, oldstat, oldopen, extra
+          rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals
 
 vars == <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
           score, attempt, head, pair, gen, held, fin, result,
           made, gone, twice, cause, need, open, op, crashed,
           bad, returnsN, ranks, waived, released, machine, stops, redstop,
           epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep,
-          rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+          rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* ------------------------------------------------------------------ views
 
@@ -276,6 +291,22 @@ MaxScore == CHOOSE n \in {score[p] : p \in Primaries} :
               \A q \in Primaries : n >= score[q]
 Bump(S) == [c \in WorkCards |-> IF c \in S THEN gen[c] + 1 ELSE gen[c]]
 Failed(p) == result[WC(p, attempt[p])] = "failed"
+HasBroken(p) == \E c \in LiveReads : c[2] = p /\ c[3] = attempt[p] /\ result[c] = "broken"
+NoteOn(p) == \E n \in open : n.p = p
+FreeReaders(p) == {r \in Readers : RC(p, attempt[p], r) \notin made}
+\* The tick's review duties: rework by itself under the bound, accept.
+AutoReworkDue(p) ==
+  /\ InWork(p, "review") /\ attempt[p] < MaxAttempt /\ (Failed(p) \/ HasBroken(p))
+  /\ ~NoteOn(p) /\ ~Br("noautorework")
+AutoAcceptDue(p) ==
+  /\ InWork(p, "review") /\ Acceptable(p) /\ OutOf(p) = {} /\ ~NoteOn(p) /\ ~HasBroken(p)
+  /\ ~Br("noautoaccept")
+BoundDue(p) ==
+  \/ \E c \in lateset : c[2] = p /\ redeals[p] >= MaxRedeals /\ ~Br("latesilent")
+CannotAskDue(p) ==
+  \/ InWork(p, "review") /\ ~Failed(p) /\ (\A c \in LiveReads : c[2] # p)
+     /\ Cardinality(FreeReaders(p)) < 2
+  \/ \E c \in lateset \cap Outstanding : c[2] = p /\ redeals[p] < MaxRedeals /\ FreeReaders(p) = {}
 
 \* G3: a primary asked at its attempt, in review, with no read outstanding,
 \* without two different readers ok at its head, and no open judgment on it.
@@ -320,10 +351,10 @@ StreamAfter(s, q, st, was, mergedNow, leaving) ==
 HeldOutside(p) ==
   \/ /\ InWork(p, "working")
      /\ \E m \in Members, c \in WorkCards :
-          /\ c[2] = p
+          /\ c[2] = p /\ c \notin lateset
           /\ \/ m \in Up /\ c \in fleet[m]["ready"]
              \/ c \in fleet[m]["working"] /\ <<c, gen[c], epoch>> \in held[m]
-  \/ InWork(p, "review") /\ OutOf(p) # {}
+  \/ InWork(p, "review") /\ OutOf(p) \ lateset # {}
   \/ /\ InWork(p, "merging") /\ sstate[StreamOf[p]] = "merging"
      /\ p \in merge[StreamOf[p]]["queued"]
 TickResumable(s) ==
@@ -332,17 +363,24 @@ TickResumable(s) ==
 TickMove(p) ==
   \/ InWork(p, "waiting") /\ p \notin Sentinels /\ NeedsMet(p)
   \/ InWork(p, "ready") /\ Up # {}
-  \/ InWork(p, "ready") /\ FleetNote \notin open /\ ~Br("nofleetnote")
-  \/ InWork(p, "review") /\ ~Failed(p) /\ \A c \in LiveReads : c[2] # p
+  \/ InWork(p, "ready") /\ Up = {} /\ FleetNote \notin open /\ ~Br("nofleetnote")
+  \/ InWork(p, "review") /\ ~Failed(p) /\ (\A c \in LiveReads : c[2] # p)
+     /\ Cardinality(FreeReaders(p)) >= 2
+  \/ AutoReworkDue(p) \/ AutoAcceptDue(p)
+  \/ \E c \in lateset : c[2] = p /\ redeals[p] < MaxRedeals
+  \/ BoundDue(p) /\ Note("bound", p) \notin open
+  \/ CannotAskDue(p) /\ Note("cannotask", p) \notin open
   \/ InWork(p, "merging") /\ TickResumable(StreamOf[p])
 JudgedIn(p, opn) ==
   \/ \E n \in opn : n.p = p
   \/ /\ InWork(p, "merging") /\ StopNote(StreamOf[p]) \in opn
      /\ p \in merge[StreamOf[p]]["queued"] \cup merge[StreamOf[p]]["stuck"]
   \/ InWork(p, "ready") /\ FleetNote \in opn
+  \/ MachineNote \in opn /\ machine = "stopped" /\ TickMove(p)
 RECURSIVE RuleIn(_, _, _)
 RuleIn(p, opn, n) ==
-  \/ HeldOutside(p) \/ TickMove(p) \/ JudgedIn(p, opn)
+  \/ HeldOutside(p) \/ JudgedIn(p, opn)
+  \/ TickMove(p) /\ (machine = "running" \/ (MachineNote \notin opn /\ ~Br("nomachinenote")))
   \/ /\ n > 0 /\ InWork(p, "waiting")
      /\ LET unmet == {q \in EffNeeds(p) : ~InWork(q, "landed") /\ q \notin waived[p]}
         IN /\ unmet # {}
@@ -463,6 +501,7 @@ Init ==
   /\ rt = 0 /\ age = [n \in Notes |-> 0]
   /\ clr = "none" /\ cshape = mstatus /\ owed = FALSE /\ oldstat = mstatus /\ oldopen = {}
   /\ extra = [p \in Primaries |-> {}]
+  /\ lateset = {} /\ redeals = [p \in Primaries |-> 0]
 
 \* ------------------------------------------------------------------ verbs
 
@@ -499,7 +538,7 @@ Add(p) ==
                   IF @ = "landed" /\ ~Br("addlanded") THEN "waiting" ELSE @]
   /\ UNCHANGED <<dropped, fleet, readers, merge, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, cause,
-                 need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen>>
+                 need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, lateset, redeals>>
 
 \* resolve (a tick duty): waiting -> ready where needs have landed.
 Resolve(p) ==
@@ -511,7 +550,7 @@ Resolve(p) ==
                           ![StreamOf[p]]["ready"] = @ \cup {p}]
   /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
   /\ TickCount("resolve")
 
 \* waive (ack of a blocked judgment): the coordinator waives a dropped need of
@@ -531,7 +570,7 @@ Waive(p, q) ==
              \cup ReachNotes(Landed, [waived EXCEPT ![p] = @ \cup {q}])
   /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, op, crashed, bad, returnsN, ranks, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 twice, cause, need, op, crashed, bad, returnsN, ranks, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* release: the coordinator lands a reached sentinel (waiting -> landed), the
 \* only way a sentinel lands; its reached judgment closes, the release is
@@ -552,7 +591,7 @@ Release(g) ==
   /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
                  cause, need, op, crashed, bad, returnsN, ranks, waived, machine,
-                 stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* deal (a tick duty; there is no verb that deals): ready -> working; the work
 \* card of the attempt is dealt to the up member with the shortest ready
@@ -570,7 +609,7 @@ Deal(p) ==
   /\ Begin(Op("deal", {<<p, "ready", "working">>}, {}, {}, {}, {}))
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, held, fin, result, cause, need, open, bad,
-                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
   /\ TickCount("deal")
 
 \* take: the worker on an up member moves a work card ready -> working and
@@ -581,14 +620,14 @@ Take(m, c) ==
   /\ held' = [held EXCEPT ![m] = @ \cup {<<c, gen[c], epoch>>}]
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* finish: a worker reports the card it holds, naming its generation (F2),
 \* done ok or failed. Accepted only for the live generation in its member's
 \* working cell (D3): the card to done, its primary to review at the head the
-\* card produced; failed notifies for judgment; ok asks the readers kept on
-\* the primary (G2), or on a first attempt two readers (T2). Fleet and
-\* readers first, work last.
+\* card produced; ok asks the readers kept on the primary (G2) (on a first
+\* attempt the tick asks); failed is reworked by the tick, and at the bound
+\* is a judgment. Fleet and readers first, work last.
 Live(m, c, g) == c \in fleet[m]["working"] /\ gen[c] = g
 \* CLEAR: a writer holding an old epoch is refused.
 InEpoch(e) == e = epoch \/ Br("oldepoch")
@@ -605,24 +644,19 @@ Finish(m, h, v) ==
                  IF x = m /\ y = "done" THEN fleet[x][y] \cup {c} ELSE fleet[x][y] \ {c}]]
   /\ result' = [result EXCEPT ![c] = v]
   /\ fin' = [fin EXCEPT ![c] = g]
-  /\ LET p == c[2] IN
-     \E again \in SUBSET Readers :
-        /\ IF v = "ok" /\ ~Br("finishnomove")
-           THEN IF pair[p] # {} THEN again = pair[p]
-                ELSE Cardinality(again) = 2 /\ ShortestTwo(again)
-           ELSE again = {}
-        /\ pair' = IF again # {} THEN [pair EXCEPT ![p] = again] ELSE pair
-        /\ LET rcs == {RC(p, c[3], r) : r \in again} IN
-           /\ readers' = [r \in Readers |-> [x \in ReadCells |->
-                            IF x = "asked" /\ r \in again
-                            THEN readers[r][x] \cup {RC(p, c[3], r)} ELSE readers[r][x]]]
-           /\ made' = made \cup rcs
-           /\ twice' = (twice \/ rcs \cap made # {})
+  /\ LET p == c[2]
+         again == IF v = "ok" /\ ~Br("finishnomove") THEN pair[p] ELSE {}
+         rcs == {RC(p, c[3], r) : r \in again}
+     IN /\ readers' = [r \in Readers |-> [x \in ReadCells |->
+                         IF x = "asked" /\ r \in again
+                         THEN readers[r][x] \cup {RC(p, c[3], r)} ELSE readers[r][x]]]
+        /\ made' = made \cup rcs
+        /\ twice' = (twice \/ rcs \cap made # {})
   /\ IF Br("finishnomove") THEN UNCHANGED <<op, crashed>>
      ELSE Begin(Op("finish", {<<c[2], "working", "review">>}, {}, {<<c[2], c[3]>>},
-                   IF v = "failed" THEN {Note("failed", c[2])} ELSE {}, {}))
+                   IF v = "failed" /\ c[3] >= MaxAttempt THEN {Note("bound", c[2])} ELSE {}, {}))
   /\ UNCHANGED <<added, dropped, work, merge, sstate, mstatus, score, attempt,
-                 head, gen, gone, cause, need, open, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 head, pair, gen, gone, cause, need, open, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* A finish refused as stale, or from an old epoch: it changes nothing but
 \* the worker's hold.
@@ -631,14 +665,15 @@ FinishRefused(m, h) ==
   /\ held' = [held EXCEPT ![m] = @ \ {h}]
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* ask (a tick duty): a primary in review whose work did not fail (G2), with no read card
 \* on the table, is dealt to two different readers: the two kept on it (D2),
 \* or the shortest asked queues.
 Ask(p) ==
   /\ PartOK("ask") /\ Fenced /\ InWork(p, "review") /\ ~Failed(p)
-  /\ \A c \in LiveReads : c[2] # p
+  /\ Cardinality(FreeReaders(p)) >= 2
+  /\ (\A c \in LiveReads : c[2] # p)
   /\ \E two \in SUBSET Readers :
        /\ Cardinality(two) = 2
        /\ IF pair[p] # {} THEN two = pair[p]
@@ -653,7 +688,7 @@ Ask(p) ==
        /\ twice' = (twice \/ \E r \in two : RC(p, attempt[p], r) \in made)
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, gen, held, fin, result, gone, cause, need, open,
-                 op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
   /\ TickCount("ask")
 
 \* ask --another: the coordinator's judgment, free (F1): one more reader for
@@ -668,7 +703,7 @@ AskAnother(p, r) ==
   /\ open' = open \ {Note("broken", p), Note("reads", p)}
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, gone, twice, cause,
-                 need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* A reader moves its own read card asked -> reading and holds it at the
 \* epoch.
@@ -678,11 +713,11 @@ ReadStart(r, c) ==
   /\ rheld' = [rheld EXCEPT ![r] = @ \cup {<<c, epoch>>}]
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, open, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* read: a reader records ok or broken; a report against a retired card finds
-\* no card and is refused. Broken notifies for judgment; the read that leaves
-\* the reads exhausted notifies for judgment (G3).
+\* no card and is refused. A broken read is reworked by the tick; at the bound
+\* it is a judgment.
 Read(r, h, v) ==
   LET c == h[1] IN
   /\ Fenced /\ h \in rheld[r] /\ c \in readers[r]["reading"] /\ InEpoch(h[2])
@@ -692,12 +727,11 @@ Read(r, h, v) ==
   /\ readers' = [readers EXCEPT ![r]["reading"] = @ \ {c}, ![r][v] = @ \cup {c}]
   /\ result' = [result EXCEPT ![c] = v]
   /\ LET p == c[2]
-         opn == open \cup (IF v = "broken" THEN {Note("broken", p)} ELSE {})
          oks == OkReaders(p) \cup (IF v = "ok" /\ c[3] = head[p] THEN {r} ELSE {})
-     IN open' = opn \cup ReviewNote(p, OutOf(p) \ {c}, oks, opn)
+     IN open' = open \cup (IF v = "broken" /\ c[3] >= MaxAttempt THEN {Note("bound", p)} ELSE {})
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, made, gone, twice, cause,
-                 need, op, crashed, returnsN, ranks, waived, released, machine, stops, redstop, epoch, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 need, op, crashed, returnsN, ranks, waived, released, machine, stops, redstop, epoch, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* A report refused: the card is not in the reader's reading cell (retired,
 \* or of an old epoch): it changes nothing but the reader's hold.
@@ -708,14 +742,14 @@ ReadRefused(r, h) ==
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks,
-                 waived, released, machine, stops, redstop, epoch, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 waived, released, machine, stops, redstop, epoch, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* accept: a named set, all or nothing (D4): review -> merging and into merge
 \* queued; refused unless every one has two different readers ok at its head.
 \* Its asked and reading read cards retire in the same step (F1); a waiting
 \* stream becomes merging (G4); its card judgments close. Readers and merge
 \* first, work last.
-Accept(S) ==
+AcceptStep(S) ==
   /\ Free /\ S # {}
   /\ \A p \in S : InWork(p, "review") /\ Acceptable(p)
   /\ LET rl == IF Br("acceptkeepsreads") THEN {} ELSE {c \in Outstanding : c[2] \in S}
@@ -729,14 +763,25 @@ Accept(S) ==
   /\ Begin(Op("accept", {<<p, "review", "merging">> : p \in S}, {}, {}, {}, S))
   /\ UNCHANGED <<added, dropped, work, fleet, mstatus, score, attempt, head,
                  pair, gen, held, fin, result, made, twice, cause, need, open,
-                 bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
+
+\* The coordinator's accept (an answer, under the judged bound).
+Accept(S) ==
+  /\ \A p \in S : Judged(p)
+  /\ AcceptStep(S) /\ UNCHANGED <<tp, tm, te, dirty>>
+
+\* The tick's accept: two different readers ok at the head, nothing
+\* outstanding, no judgment open on the primary.
+TickAccept(p) ==
+  /\ PartOK("review") /\ AutoAcceptDue(p)
+  /\ AcceptStep({p}) /\ TickCount("review")
 
 \* rework (D2): the primary's read cards retire; with a member up the next
 \* work card is cut into the shortest ready queue and the primary goes
 \* review -> working; with none up, review -> ready and start cuts it later.
 \* Readers and fleet first, work last.
-Rework(p) ==
-  /\ Free /\ InWork(p, "review") /\ attempt[p] < MaxAttempt /\ Judged(p)
+ReworkStep(p) ==
+  /\ Free /\ InWork(p, "review")
   /\ LET live == {c \in LiveReads : c[2] = p}
          nc == WC(p, attempt[p] + 1)
          to == IF Up # {} /\ ~Br("reworkready") THEN "working" ELSE "ready"
@@ -749,10 +794,23 @@ Rework(p) ==
                   /\ made' = made \cup {nc}
                   /\ twice' = (twice \/ nc \in made)
         /\ Begin(Op("rework", {<<p, "review", to>>}, {p}, {}, {}, {p}))
+  /\ redeals' = [redeals EXCEPT ![p] = 0]
+  /\ lateset' = lateset \ {c \in Cards : c[2] = p}
   /\ score' = IF Br("reworktail") THEN [score EXCEPT ![p] = MaxScore + 1] ELSE score
   /\ UNCHANGED <<added, dropped, work, merge, sstate, mstatus, attempt, head,
                  pair, gen, held, fin, result, cause, need, open, bad, returnsN,
-                 ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+
+\* The coordinator's rework: an answer, under the attempt bound plus one.
+Rework(p) ==
+  /\ Judged(p) /\ attempt[p] <= MaxAttempt
+  /\ ReworkStep(p) /\ UNCHANGED <<tp, tm, te, dirty>>
+
+\* The tick's rework: failed work or a broken read (one is enough, beside an
+\* ok), under the attempt bound, no judgment open on the primary.
+AutoRework(p) ==
+  /\ PartOK("review") /\ AutoReworkDue(p)
+  /\ ReworkStep(p) /\ TickCount("review")
 
 \* drop: off the table with the reason. Its unfinished work card is withdrawn,
 \* its outstanding read cards retire, its merge place goes; work last. A
@@ -776,7 +834,7 @@ Drop(p) ==
   /\ cause' = [cause EXCEPT ![p] = None]
   /\ need' = [need EXCEPT ![p] = None]
   /\ UNCHANGED <<added, dropped, work, mstatus, score, attempt, head, pair, gen,
-                 held, fin, result, made, twice, open, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 held, fin, result, made, twice, open, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* rank: the coordinator changes a score; here, ranks a card first. Refused
 \* for a landed primary (G6).
@@ -788,7 +846,7 @@ Rank(p) ==
   /\ ranks' = ranks + 1
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, open, op, crashed, bad, returnsN, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, open, op, crashed, bad, returnsN, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* return: merging -> review; the card leaves merge queued or stuck (with its
 \* cause); it answers the card's judgments (F3). Merge first, work last.
@@ -807,7 +865,7 @@ Return(p) ==
               IF Br("noreturnnote") THEN {} ELSE {Note("returned", p)}, {p}))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, open,
-                 bad, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 bad, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* merge, given the fact green: the batch, a prefix of the stream's queued and
 \* stuck cards in score order (a stuck card is a barrier, D6), lands on the
@@ -831,7 +889,7 @@ MergeGreen(s, B) ==
                                \cup {<<q, "waiting", "ready">> : q \in waiters}, {}, {}, {}, {}))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, cause,
-                 need, open, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 need, open, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* merge, given a fact on a card that stops the stream: a conflict on it, or
 \* its need of a card q of another stream first, recorded as data (D6);
@@ -850,7 +908,7 @@ MergeStop(s, p, why, q) ==
   /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {StopNote(s)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, op,
-                 crashed, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 crashed, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* merge, given a fact on the stream: its branch red, or the merge queue
 \* rejected the batch. The stream stops; no card moves; the coordinator is
@@ -863,7 +921,7 @@ MergeRed(s) ==
   /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {StopNote(s)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, op, crashed, returnsN, ranks, waived, released, machine, stops, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, op, crashed, returnsN, ranks, waived, released, machine, stops, epoch, rheld, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* resume (D6, G5), with what was done (--did): refused while a stuck card's
 \* cross-stream need has not landed; a conflict or a red branch is resolved
@@ -884,7 +942,7 @@ ResumeStep(s) ==
   /\ redstop' = redstop \ {s}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, need, op,
-                 crashed, bad, returnsN, ranks, waived, released, machine, stops, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 crashed, bad, returnsN, ranks, waived, released, machine, stops, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* resume: the coordinator's verb.
 Resume(s) == ResumeStep(s) /\ UNCHANGED <<tp, tm, te, dirty>>
@@ -929,7 +987,7 @@ FleetDown(m) ==
              /\ UNCHANGED open
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, score, attempt,
                  head, pair, held, fin, result, made, twice, cause, need,
-                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* A member comes up (fleet up; of an up member it is a level): ready queues
 \* are levelled in one call; the newest cards (highest score) of the longest
@@ -951,7 +1009,7 @@ FleetUp(m) ==
                /\ gen' = Bump(mv)
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, score, attempt,
                  head, pair, held, fin, result, made, gone, twice, cause, need,
-                 op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* level (a tick duty): when two up members' ready queues differ by more than
 \* one, the newest card of the longer moves to the shorter at a new
@@ -965,7 +1023,7 @@ Level(a, b) ==
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, held, fin, result, made, gone, twice, cause,
                  need, open, op, crashed, bad, returnsN, ranks, waived, released,
-                 machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 machine, stops, redstop, epoch, rheld, stale, acks, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
   /\ TickCount("level")
 
 \* The no-member judgment is a condition the tick keeps true: a primary
@@ -981,8 +1039,87 @@ TickNoMember ==
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
-                 released, machine, stops, redstop, epoch, rheld, stale, acks, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 released, machine, stops, redstop, epoch, rheld, stale, acks, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
   /\ TickCount("deal")
+
+\* Late: an outside actor's card is late (a work card not taken or not
+\* finished, a read not begun or not reported); the model has no clocks, so
+\* lateness is a nondeterministic outside event.
+Late(c) ==
+  /\ Fenced /\ c \in Unfinished \cup Outstanding /\ c \notin lateset
+  /\ Spend(TRUE)
+  /\ lateset' = lateset \cup {c}
+  /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
+                 score, attempt, head, pair, gen, held, fin, result, made, gone,
+                 twice, cause, need, open, op, crashed, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks,
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape,
+                 owed, oldstat, oldopen, extra, redeals>>
+MemberOf(c) == CHOOSE m \in Members : \E x \in {"ready", "working"} : c \in fleet[m][x]
+\* The tick withdraws a late work card and deals it to a DIFFERENT up member
+\* at a new generation, bounded per attempt.
+TickRedealWork(c) ==
+  /\ PartOK("deal") /\ Fenced /\ c \in lateset \cap Unfinished
+  /\ redeals[c[2]] < MaxRedeals
+  /\ LET m == MemberOf(c) IN
+     \E t \in Up \ {m} :
+       /\ ShortestIn(t, Up \ {m})
+       /\ fleet' = [fleet EXCEPT ![m]["ready"] = @ \ {c}, ![m]["working"] = @ \ {c},
+                                ![t]["ready"] = @ \cup {c}]
+  /\ gen' = Bump({c})
+  /\ redeals' = [redeals EXCEPT ![c[2]] = @ + 1]
+  /\ lateset' = lateset \ {c}
+  /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus,
+                 score, attempt, head, pair, held, fin, result, made, gone,
+                 twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks,
+                 dirty, rev, late, rec, lie, mep, rt, age, clr, cshape,
+                 owed, oldstat, oldopen, extra>>
+  /\ TickCount("deal")
+\* The tick retires a late read and asks a DIFFERENT free reader, bounded.
+TickReask(c) ==
+  /\ PartOK("ask") /\ Fenced /\ c \in lateset \cap Outstanding
+  /\ redeals[c[2]] < MaxRedeals
+  /\ \E r \in FreeReaders(c[2]) :
+       LET n == RC(c[2], c[3], r) IN
+       /\ readers' = [x \in Readers |-> [y \in ReadCells |->
+                         IF x = r /\ y = "asked" THEN readers[x][y] \cup {n}
+                         ELSE readers[x][y] \ {c}]]
+       /\ made' = made \cup {n}
+  /\ gone' = gone \cup {c}
+  /\ redeals' = [redeals EXCEPT ![c[2]] = @ + 1]
+  /\ lateset' = lateset \ {c}
+  /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus,
+                 score, attempt, head, pair, gen, held, fin, result,
+                 twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks,
+                 dirty, rev, late, rec, lie, mep, rt, age, clr, cshape,
+                 owed, oldstat, oldopen, extra>>
+  /\ TickCount("ask")
+\* The judgments of the bounds and of cannot ask, written once by the tick.
+TickJudge(p) ==
+  /\ PartOK("ask") /\ Fenced
+  /\ \/ BoundDue(p) /\ Note("bound", p) \notin open /\ open' = open \cup {Note("bound", p)}
+     \/ CannotAskDue(p) /\ Note("cannotask", p) \notin open /\ open' = open \cup {Note("cannotask", p)}
+  /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
+                 score, attempt, head, pair, gen, held, fin, result, made, gone,
+                 twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks,
+                 dirty, rev, late, rec, lie, mep, rt, age, clr, cshape,
+                 owed, oldstat, oldopen, extra, lateset, redeals>>
+  /\ TickCount("ask")
+\* The machine is STOPPED and moves are due: one judgment (no clocks: raised
+\* when the machine is stopped and a tick move is due); start closes it.
+WatchStopped ==
+  /\ Fenced /\ machine = "stopped" /\ MachineNote \notin open /\ ~Br("nomachinenote")
+  /\ \E p \in Primaries : Placedp(p) /\ ~InWork(p, "landed") /\ TickMove(p)
+  /\ open' = open \cup {MachineNote}
+  /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
+                 score, attempt, head, pair, gen, held, fin, result, made, gone,
+                 twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks,
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape,
+                 owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* A tick begins only while running, at the epoch it reads.
 TickBegin ==
@@ -991,7 +1128,7 @@ TickBegin ==
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
-                 released, machine, stops, redstop, epoch, rheld, stale, acks, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 released, machine, stops, redstop, epoch, rheld, stale, acks, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* What each part has due.
 Due(x) ==
@@ -1001,14 +1138,23 @@ Due(x) ==
                                            /\ merge[s]["stuck"] # {}
                                            /\ \A p \in merge[s]["stuck"] :
                                                 cause[p] = "needs" /\ Resolved(p)
+    [] x = "review"  -> \E p \in Primaries : AutoReworkDue(p) \/ AutoAcceptDue(p)
     [] x = "deal"    -> \/ Up # {} /\ \E p \in Primaries : InWork(p, "ready")
+                        \/ \E c \in lateset \cap Unfinished : redeals[c[2]] < MaxRedeals
+                                                              /\ Up \ {MemberOf(c)} # {}
                         \/ NoMemberCond /\ FleetNote \notin open /\ ~Br("nofleetnote")
     [] x = "level"   -> \E a, b \in Up : RL(a) > RL(b) + 1
-    [] x = "ask"     -> \E p \in Primaries : InWork(p, "review") /\ ~Failed(p)
-                                             /\ \A c \in LiveReads : c[2] # p
+    [] x = "ask"     -> \/ \E p \in Primaries : InWork(p, "review") /\ ~Failed(p)
+                                                /\ (\A c \in LiveReads : c[2] # p)
+                                                /\ Cardinality(FreeReaders(p)) >= 2
+                        \/ \E c \in lateset \cap Outstanding : redeals[c[2]] < MaxRedeals
+                                                               /\ FreeReaders(c[2]) # {}
+                        \/ \E p \in Primaries :
+                             \/ BoundDue(p) /\ Note("bound", p) \notin open
+                             \/ CannotAskDue(p) /\ Note("cannotask", p) \notin open
 NextPart(x) ==
-  CASE x = "resolve" -> "resume" [] x = "resume" -> "deal" [] x = "deal" -> "level"
-    [] x = "level" -> "ask" [] OTHER -> "idle"
+  CASE x = "resolve" -> "resume" [] x = "resume" -> "review" [] x = "review" -> "deal"
+    [] x = "deal" -> "level" [] x = "level" -> "ask" [] OTHER -> "idle"
 \* The tick goes to its next part when this one is done or at its bound; STOP
 \* is honoured between the parts, and a tick at an old epoch ends.
 TickNext ==
@@ -1021,7 +1167,7 @@ TickNext ==
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
-                 released, machine, stops, redstop, epoch, rheld, stale, acks, te, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 released, machine, stops, redstop, epoch, rheld, stale, acks, te, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* e. Running time: it advances only while the machine is RUNNING. (The
 \* per-card deadlines, measured from a work card's FIRST deal and FIRST take,
@@ -1040,7 +1186,7 @@ Clock ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 \* The judgments that carry a due time: every one ("nodue": the tick's own
 \* judgments carry none).
 HasDue(n) == ~(Br("nodue") /\ n.t \in {"nomember", "reached"})
@@ -1051,10 +1197,11 @@ Overdue(n) == HasDue(n) /\ age[n] >= Deadline
 MachineStart ==
   /\ Fenced /\ machine = "stopped"
   /\ machine' = "running"
+  /\ open' = open \ {MachineNote}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, open, op, crashed, bad, returnsN, ranks,
-                 waived, released, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 twice, cause, need, op, crashed, bad, returnsN, ranks,
+                 waived, released, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 MachineStop ==
   /\ Fenced /\ machine = "running" /\ stops < MaxStops
@@ -1062,7 +1209,7 @@ MachineStop ==
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks,
-                 waived, released, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 waived, released, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* clear: stops the machine and advances one epoch; every table is empty at
 \* the new epoch. The outside actors keep what they hold (with its epoch).
@@ -1088,7 +1235,7 @@ Clear ==
   /\ waived' = [p \in Primaries |-> {}] /\ released' = {}
   /\ returnsN' = [p \in Primaries |-> 0] /\ ranks' = 0
   /\ age' = [n \in Notes |-> 0]
-  /\ UNCHANGED <<mstatus, held, op, crashed, bad, stops, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, cshape, extra>>
+  /\ UNCHANGED <<mstatus, held, op, crashed, bad, stops, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, cshape, extra, lateset, redeals>>
 
 \* The reversed witness "shapebefore": clear reads the shape before the
 \* advance, with no fence, and restores that.
@@ -1099,7 +1246,7 @@ ClearRead ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* The owed restore: the new epoch's rows and the members' statuses, read
 \* after the advance; performed first by the next verb or tick.
@@ -1111,7 +1258,7 @@ Restore ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, oldstat, oldopen, extra, lateset, redeals>>
 
 \* The reversed witness "crossepochanswer": an answer naming a judgment's id
 \* of the old epoch closes the new epoch's judgment with that id.
@@ -1122,7 +1269,7 @@ StaleAck(n) ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* ci (D8): a red CI observation on a placed primary in any state. It
 \* notifies for judgment and moves nothing. (Green only notifies what
@@ -1133,20 +1280,18 @@ CiRed(p) ==
   /\ open' = open \cup {Note("ci", p)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, op, crashed, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 twice, cause, need, op, crashed, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
-\* ci green on a primary's current head resolves a red CI on it; the review
-\* function writes what the primary then needs (d).
+\* ci green on a primary's current head resolves a red CI on it; what the
+\* primary then needs is the tick's (d: one function, TickMove, decides it).
 CiGreen(p) ==
   /\ Fenced /\ Note("ci", p) \in open
-  /\ LET opn == open \ {Note("ci", p)}
-     IN open' = opn \cup (IF Br("noreviewjudgment") THEN {}
-                          ELSE ReviewNote(p, OutOf(p), OkReaders(p), opn))
+  /\ open' = open \ {Note("ci", p)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* A step cut after its record and before its first phase: nothing of it
 \* applied; repair abandons it (a happened note), which releases the fence.
@@ -1157,7 +1302,7 @@ CutBeforeFirst ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* The merger reads the stream's queue at the epoch it holds.
 MergerSync ==
@@ -1166,7 +1311,7 @@ MergerSync ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* ack <note> --reason (F3): the coordinator looked and nothing is to be done;
 \* the judgment closes with the reason. Refused for a stopped stream's
@@ -1195,7 +1340,7 @@ Ack(n) ==
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
-                 released, machine, stops, redstop, epoch, rheld, stale, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 released, machine, stops, redstop, epoch, rheld, stale, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* The reversed witness "sentinelself": a reached sentinel lands by itself.
 SentinelSelf(g) ==
@@ -1205,7 +1350,7 @@ SentinelSelf(g) ==
   /\ open' = open \ {Note("reached", g)}
   /\ UNCHANGED <<added, dropped, fleet, readers, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, result, made, gone, twice,
-                 cause, need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 cause, need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* The last write of a step over two tables: the same process (Continue), or
 \* repair after the process was cut (Crash), from the operation record.
@@ -1215,7 +1360,7 @@ Continue ==
   /\ op' = NoOp
   /\ UNCHANGED <<added, fleet, readers, merge, sstate, mstatus, score, pair, gen,
                  held, fin, result, made, gone, twice, cause, need, crashed, bad,
-                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, rev, late, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, rev, late, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 Crash ==
   /\ op # NoOp /\ ~crashed
@@ -1223,7 +1368,7 @@ Crash ==
   /\ crashed' = TRUE /\ late' = op
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
-                 twice, cause, need, open, op, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 twice, cause, need, open, op, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, dirty, rev, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 Repair ==
   /\ op # NoOp /\ crashed /\ ~Br("norepair")
@@ -1231,7 +1376,7 @@ Repair ==
   /\ op' = NoOp /\ crashed' = FALSE
   /\ UNCHANGED <<added, fleet, readers, merge, sstate, mstatus, score, pair, gen,
                  held, fin, result, made, gone, twice, cause, need, bad,
-                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, rev, late, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks, tp, tm, te, rev, late, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* c. A writer outside the fence changes a member of a pending operation's
 \* entries (a raw table write): its revision moves on.
@@ -1243,7 +1388,7 @@ RawWrite(p) ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* c. The slow writer whose operation another finished wakes and reports: the
 \* recorded result, never its own plan.
@@ -1255,7 +1400,7 @@ WriterWake ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, rec, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, rec, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* The reversed witness "abandonapplied": an operation whose first phase
 \* applied is abandoned: the fence released, its work table never written.
@@ -1266,25 +1411,22 @@ Abandon ==
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, open, bad, returnsN, ranks, waived,
                  released, machine, stops, redstop, epoch, rheld, stale, acks,
-                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra>>
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
 
 \* ------------------------------------------------------------------ next
 
 \* The decisions open to a judgment notification (section 8), as verbs.
 Answer(n) ==
   /\ n \in open
-  /\ CASE n.t = "failed"  -> Rework(n.p) \/ Drop(n.p)
-       [] n.t \in {"broken", "reads"} ->
-             Rework(n.p) \/ Drop(n.p) \/ \E r \in Readers : AskAnother(n.p, r)
-       [] n.t = "blocked" -> Drop(n.p) \/ \E q \in Primaries : Waive(n.p, q)
-       [] n.t = "ci"      -> Ack(n) \/ Rework(n.p) \/ Return(n.p) \/ Drop(n.p) \/ CiGreen(n.p)
-       [] n.t = "skipped" -> Ack(n) \/ Drop(n.p)
-       [] n.t = "reached" -> Release(n.p) \/ Drop(n.p)
-       [] n.t \in {"accept", "returned"} -> Accept({n.p}) \/ Rework(n.p) \/ Drop(n.p)
-       [] n.t = "stranded" -> Rework(n.p) \/ Drop(n.p) \/ \E r \in Readers : AskAnother(n.p, r)
-                              \/ \E q \in Primaries : Waive(n.p, q)
+  /\ CASE n.t = "blocked"  -> Drop(n.p) \/ \E q \in Primaries : Waive(n.p, q)
+       [] n.t = "ci"       -> Ack(n) \/ Rework(n.p) \/ Return(n.p) \/ Drop(n.p) \/ CiGreen(n.p)
+       [] n.t = "skipped"  -> Ack(n) \/ Drop(n.p)
+       [] n.t = "reached"  -> Release(n.p) \/ Drop(n.p)
+       [] n.t = "returned" -> Accept({n.p}) \/ Rework(n.p) \/ Drop(n.p)
+       [] n.t \in {"bound", "cannotask"} -> Rework(n.p) \/ Drop(n.p)
        [] n.t = "nomember" -> \E m \in Members : FleetUp(m)
-       [] n.t = "stopped" -> Resume(n.s) \/
+       [] n.t = "machine"  -> MachineStart
+       [] n.t = "stopped"  -> Resume(n.s) \/
              \E p \in merge[n.s]["stuck"] \cup merge[n.s]["queued"] : Return(p) \/ Drop(p)
 
 MergeStep(s) ==
@@ -1311,7 +1453,9 @@ Next ==
        \/ \E h \in rheld[r] : ReadRefused(r, h) \/ \E v \in {"ok", "broken"} : Read(r, h, v)
   \/ \E s \in Streams : MergeStep(s) \/ Resume(s) \/ TickResume(s)
   \/ \E a, b \in Members : Level(a, b)
-  \/ MachineStart \/ MachineStop \/ Clear \/ ClearRead \/ Restore \/ TickNoMember
+  \/ MachineStart \/ MachineStop \/ Clear \/ ClearRead \/ Restore \/ TickNoMember \/ WatchStopped
+  \/ \E p \in Primaries : AutoRework(p) \/ TickAccept(p) \/ TickJudge(p)
+  \/ \E c \in Cards : Late(c) \/ TickRedealWork(c) \/ TickReask(c)
   \/ \E n \in Notes : StaleAck(n) \/ TickBegin \/ TickNext
   \/ Clock
   \/ Continue \/ Crash \/ Repair \/ WriterWake \/ Abandon \/ CutBeforeFirst \/ MergerSync
@@ -1324,10 +1468,37 @@ Spec == Init /\ [][Next]_vars
 \* write and repair run, the coordinator accepts what is acceptable and
 \* answers every open judgment with one of its decisions. A member going down,
 \* a cut, a red CI, ask --another and rank are never forced.
+\* The tick's duties, one action.
+TickDuty ==
+  \/ \E p \in Primaries : Resolve(p) \/ Deal(p) \/ Ask(p) \/ AutoRework(p) \/ TickAccept(p) \/ TickJudge(p)
+  \/ \E s \in Streams : TickResume(s)
+  \/ \E a, b \in Members : Level(a, b)
+  \/ \E c \in Cards : TickRedealWork(c) \/ TickReask(c)
+  \/ TickNoMember
+
+\* Mechanical fairness: the tick while running, the outside actors, the
+\* process that finishes its own step, repair and restore. NO fairness on the
+\* coordinator (Answer, Accept, MachineStart).
+MechFairness ==
+  /\ \A p \in Primaries : WF_vars(Add(p))
+  /\ \A m \in Members :
+       /\ WF_vars(\E c \in WorkCards : Take(m, c))
+       /\ WF_vars(\E h \in held[m] : FinishRefused(m, h) \/
+                    \E v \in {"ok", "failed"} : Finish(m, h, v))
+  /\ \A r \in Readers :
+       /\ WF_vars(\E c \in ReadCards : ReadStart(r, c))
+       /\ WF_vars(\E h \in rheld[r] : ReadRefused(r, h) \/
+                    \E v \in {"ok", "broken"} : Read(r, h, v))
+  /\ \A s \in Streams : WF_vars(MergeStep(s))
+  /\ WF_vars(\E m \in Members : FleetUp(m))
+  /\ WF_vars(Continue) /\ WF_vars(Repair) /\ WF_vars(WriterWake) /\ WF_vars(MergerSync)
+  /\ WF_vars(Restore) /\ WF_vars(TickBegin) /\ WF_vars(TickNext) /\ WF_vars(TickDuty)
+  /\ WF_vars(WatchStopped)
+
 Fairness ==
   /\ \A p \in Primaries :
        /\ WF_vars(Add(p)) /\ WF_vars(Resolve(p)) /\ WF_vars(Deal(p))
-       /\ WF_vars(Ask(p)) /\ WF_vars(Accept({p}))
+       /\ WF_vars(Ask(p))
   /\ \A m \in Members :
        /\ WF_vars(\E c \in WorkCards : Take(m, c))
        /\ WF_vars(\E h \in held[m] : FinishRefused(m, h) \/
@@ -1343,12 +1514,13 @@ Fairness ==
   /\ WF_vars(\E a, b \in Members : Level(a, b))
   /\ WF_vars(MachineStart) /\ WF_vars(Restore)
   /\ WF_vars(TickNoMember) /\ WF_vars(TickBegin) /\ WF_vars(TickNext)
-  /\ WF_vars(\/ \E p \in Primaries : Resolve(p) \/ Deal(p) \/ Ask(p)
-             \/ \E s \in Streams : TickResume(s)
-             \/ \E a, b \in Members : Level(a, b))
-  /\ \A n \in Notes : WF_vars(Answer(n))
+  /\ WF_vars(TickDuty)
+  /\ \A p \in Primaries : WF_vars(AutoRework(p)) /\ WF_vars(TickAccept(p)) /\ WF_vars(TickJudge(p))
+  /\ \A c \in Cards : WF_vars(TickRedealWork(c)) /\ WF_vars(TickReask(c))
+  /\ WF_vars(WatchStopped)
 
-FairSpec == Spec /\ Fairness
+FairSpec == Spec /\ Fairness /\ \A n \in Notes : WF_vars(Answer(n))
+MechSpec == Spec /\ MechFairness
 
 \* ------------------------------------------------------------------ rules
 
@@ -1516,10 +1688,12 @@ RestoreKeepsShape == [][owed /\ ~owed' => mstatus' = oldstat]_vars
 \* coordinator is not claimed.)
 SilenceIsNamed == \A n \in open : age[n] >= Deadline => Overdue(n)
 
-\* d. No primary in review without an outside actor holding a read of it, or
-\* an open judgment on it.
+\* d. No primary in review without an outside actor holding a read of it, an
+\* open judgment on it, or a tick move due for it (TickMove is the one
+\* function that decides what a review primary needs).
 ReviewNeverSilent ==
-  op = NoOp => \A p \in Primaries : InWork(p, "review") => (OutOf(p) # {} \/ \E n \in open : n.p = p)
+  op = NoOp => \A p \in Primaries : InWork(p, "review") =>
+    (OutOf(p) # {} \/ (\E n \in open : n.p = p) \/ TickMove(p))
 
 \* c. A writer whose operation another finished reports the recorded result.
 ReportIsRecorded == ~lie
@@ -1536,6 +1710,13 @@ CutRepaired == (op # NoOp) ~> (op = NoOp)
 
 \* The no-member condition is eventually judged (or clears).
 NoMemberIsJudged == NoMemberCond ~> (FleetNote \in open \/ ~NoMemberCond)
+
+\* THE DEFINITION OF DONE, with no coordinator fairness (MechSpec): every
+\* primary always eventually ends, or stands at an open judgment that names
+\* it (a stream's stop, the fleet's or the machine's judgment count).
+WorkEndsOrJudged ==
+  \A p \in Primaries :
+    []<>(~Placedp(p) \/ InWork(p, "landed") \/ JudgedIn(p, open))
 
 \* Every primary that is not dropped eventually lands.
 EveryPrimaryEnds ==
