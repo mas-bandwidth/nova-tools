@@ -610,7 +610,7 @@ func TestInventoryVerb(t *testing.T) {
 	}
 
 	alphaHV := inv.Meta.Hostvars["bench-alpha"]
-	if alphaHV["ansible_host"] != "bench-alpha" || alphaHV["ansible_user"] != "user-a" || alphaHV["registry_seat"] != "seat-alpha" || alphaHV["kind"] != "machine" {
+	if alphaHV["ansible_host"] != "bench-alpha" || alphaHV["ansible_user"] != "user-a" || alphaHV["nova_seat"] != "seat-alpha" || alphaHV["kind"] != "machine" {
 		t.Fatalf("bench-alpha hostvars: %v", alphaHV)
 	}
 	if alphaHV["slots"] != float64(64) || alphaHV["runners"] != float64(1) {
@@ -946,6 +946,9 @@ func TestInventoryDocsCarryNoIssueNumbersOrHistory(t *testing.T) {
 	sec, _, _ = strings.Cut(sec, "\n## ")
 	if m := issue.FindString(sec); m != "" {
 		t.Errorf("the README's inventory section carries %q", m)
+	}
+	if strings.Contains(sec, "registry_seat") || !strings.Contains(sec, "`nova_seat`") || !strings.Contains(sec, "group_vars") {
+		t.Errorf("the README's inventory section must name nova_seat, say a deployment maps it in group_vars, and not name registry_seat")
 	}
 }
 

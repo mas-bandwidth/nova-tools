@@ -44,8 +44,10 @@ func BuildInventory(ctx context.Context, st Store, localHost string) (*AnsibleIn
 	for _, m := range machines {
 		slots, _ := strconv.Atoi(m.Fields["slots"])
 		runners, _ := strconv.Atoi(m.Fields["runners"])
-		// ansible_user and registry_seat are the two names ansible and the
-		// plays read; an empty value is left out, never emitted as "".
+		// ansible_user is the name ansible reads for the login; nova_seat
+		// carries the row's seat under a namespaced name that cannot collide
+		// with a play's own variable. An empty value is left out, never
+		// emitted as "".
 		hv := map[string]any{
 			"ansible_host": m.Name,
 			"slots":        slots,
@@ -56,7 +58,7 @@ func BuildInventory(ctx context.Context, st Store, localHost string) (*AnsibleIn
 			hv["ansible_user"] = u
 		}
 		if seat := m.Fields["seat"]; seat != "" {
-			hv["registry_seat"] = seat
+			hv["nova_seat"] = seat
 		}
 		if localHost != "" && m.Name == localHost {
 			hv["ansible_connection"] = "local"

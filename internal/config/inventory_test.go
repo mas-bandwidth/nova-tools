@@ -63,10 +63,10 @@ func TestBuildInventoryStructure(t *testing.T) {
 	if alphaHV["ansible_host"] != "bench-alpha" {
 		t.Errorf("bench-alpha ansible_host: got %v, want bench-alpha", alphaHV["ansible_host"])
 	}
-	if alphaHV["ansible_user"] != "user-a" || alphaHV["registry_seat"] != "seat-alpha" {
-		t.Errorf("bench-alpha ansible_user / registry_seat: got %v / %v, want user-a / seat-alpha", alphaHV["ansible_user"], alphaHV["registry_seat"])
+	if alphaHV["ansible_user"] != "user-a" || alphaHV["nova_seat"] != "seat-alpha" {
+		t.Errorf("bench-alpha ansible_user / nova_seat: got %v / %v, want user-a / seat-alpha", alphaHV["ansible_user"], alphaHV["nova_seat"])
 	}
-	for _, dup := range []string{"user", "seat"} {
+	for _, dup := range []string{"user", "seat", "registry_seat"} {
 		if _, ok := alphaHV[dup]; ok {
 			t.Errorf("bench-alpha carries %q, a second spelling of a value ansible or the plays already read", dup)
 		}
@@ -183,7 +183,7 @@ func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	hv := inv.Meta.Hostvars["bench-empty"]
-	for _, k := range []string{"ansible_user", "registry_seat", "user", "seat"} {
+	for _, k := range []string{"ansible_user", "nova_seat", "registry_seat", "user", "seat"} {
 		if v, ok := hv[k]; ok {
 			t.Errorf("empty value emitted as %s=%q", k, v)
 		}

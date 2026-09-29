@@ -280,10 +280,10 @@ nova-config inventory
 groups `benches`, `coordinator`, `store` and `runners` and every host's
 variables under `_meta.hostvars`. The machine rows are the one machine list;
 there is no second one. Each host's variables are `ansible_host`,
-`ansible_user` (the row's user), `registry_seat` (the row's seat), `slots`,
-`runners` and `kind=machine`. `ansible_user` is the name ansible reads for the
-login and `registry_seat` the name the plays read for the seat, so each value
-has one name; a user or seat that is empty is left out. The machine rows and
+`ansible_user` (the row's user, the name ansible reads for the login),
+`nova_seat` (the row's seat), `slots`, `runners` and `kind=machine`; each value
+has one name, and a user or seat that is empty is left out. A deployment maps
+`nova_seat` to its own variable name in its `group_vars`. The machine rows and
 the fleet row are read in one transaction.
 
 The machine the command runs on is named by the env `NOVA_MACHINE`, else it is
