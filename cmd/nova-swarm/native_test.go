@@ -96,7 +96,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 // 2026-09-18, and it is the whole bug in one assertion: the provisioning standard puts Go
 // and sbcl under `~/sdk` with `~/go/bin` on PATH and the module cache at `~/go/pkg/mod`,
 // the wall named none of them, and `nova-swarm native` pins GOTOOLCHAIN=local -- so every
-// Go card on hulk got `Permission denied` on the bench's own go and then
+// Go card on the bench got `Permission denied` on the bench's own go and then
 // `go.mod requires go >= 1.26 (running go 1.22.2)` from the only one the wall left it.
 // The roots are read-only and come from ONE list (swarm.ToolchainRoots).
 func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
@@ -139,7 +139,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
 	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
 	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
-	// read-only root that slipped onto --read is exactly the widening Johnny's security
+	// read-only root that slipped onto --read is exactly the widening the security
 	// read of #1364 refused.
 	for _, root := range swarm.ToolchainRootList("linux") {
 		path := filepath.Join(home, filepath.FromSlash(root.Name))
@@ -177,7 +177,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 			}
 		}
 	}
-	// ~/go/bin is granted BY NEITHER KIND (Johnny's security read of #1364): every
+	// ~/go/bin is granted BY NEITHER KIND (the security read of #1364): every
 	// `go install` on the bench lands there and the bench user can write to it. On a
 	// provisioned bench ~/go/bin/go is a symlink into the sdk tree and the kernel checks
 	// the resolved target, so a card's PATH still finds the granted toolchain.
@@ -251,7 +251,7 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 	}
 	// AND NEVER A DIRECTORY OF LAUNCHERS. `/opt/homebrew/bin` holds a symlink for every
 	// formula on the machine and brew writes it; the grant is on the Cellar tree the runtime
-	// lives in, and naming the bin directory as a toolchain root is the widening Johnny's
+	// lives in, and naming the bin directory as a toolchain root is the widening the
 	// security read of #1364 refused on ~/go/bin.
 	for _, r := range swarm.ToolchainRootList("darwin") {
 		if strings.HasSuffix(r.Name, "/bin") {
@@ -1026,13 +1026,13 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 
 // TestWallNamedDecodesTheProducersEscapedCwd is the unit half of issue #572: the wall writes
 // `cwd=` through oneline.Field (cmd/nova-sandbox/main.go), so the job directory reaches this
-// side with its spaces escaped (`stella 2` -> `stella\x202`). wallNamed must decode that
+// side with its spaces escaped (`worker 2` -> `worker\x202`). wallNamed must decode that
 // field back to the path the producer held before it names the directory the child ran in.
 // The receipt is built by the producer's own encoder, not hard-coded unescaped.
 func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
 	t.Parallel()
 
-	dir := "/Users/glenn/Documents/ChatGPT/stella 2/.scratch/stella-tools/runs/1/jobs/terminology"
+	dir := "/workspace/test dir 2/.scratch/tools/runs/1/jobs/terminology"
 	line := "SANDBOX OK backend=sandbox-exec abi=- read=3 write=2 net=nopromise cwd=" +
 		oneline.Field(dir) + " ancestors=17 cmd=opencode\n"
 	backend, cwd, reason := wallNamed(line)
@@ -1048,7 +1048,7 @@ func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
 }
 
 // TestNativeWalledJobPathWithSpacesCompletes is the regression for issue #572: a job whose
-// path holds a space -- the configured root sits under `stella 2` -- is not a pre-launch
+// path holds a space -- the configured root sits under `worker 2` -- is not a pre-launch
 // refusal. The wall is the fake sandbox, which encodes its `cwd=` through oneline.Field
 // exactly as the real producer does, so the escape round-trip is exercised rather than a
 // hard-coded unescaped receipt. A job that completed must be validated against the decoded
@@ -1058,7 +1058,7 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
 
-	root := filepath.Join(t.TempDir(), "stella 2")
+	root := filepath.Join(t.TempDir(), "worker 2")
 	slot := filepath.Join(root, "slot-1")
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
@@ -1189,7 +1189,7 @@ func TestNativeRunDeniesBusInsideWall(t *testing.T) {
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "a-label",
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
-		sandbox: sandbox, recipients: []string{"adrienne", "rowan"},
+		sandbox: sandbox, recipients: []string{"peer-a", "peer-b"},
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("a walled run exits 0, got %d:\n%s", code, errOut.String())

@@ -24,6 +24,34 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		return row
 	}
 
+	t.Run("machines and fleet come from one read", func(t *testing.T) {
+		t.Parallel()
+		st := open(t)
+		machines, fleet, err := st.MachinesAndFleet(ctx)
+		if err != nil || len(machines) != 0 || fleet.Fields["store"] != "" || fleet.Fields["coordinator"] != "" {
+			t.Fatalf("empty store: %+v %+v %v", machines, fleet, err)
+		}
+		for _, n := range []string{"bench-b", "bench-a"} {
+			if _, err := st.Insert(ctx, KindMachine, mk(machine, n, map[string]string{"user": "user-x", "seat": "seat-x", "slots": "4"}), "operator"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "bench-b", "coordinator": "bench-a"}, "operator"); err != nil {
+			t.Fatal(err)
+		}
+		machines, fleet, err = st.MachinesAndFleet(ctx)
+		if err != nil || len(machines) != 2 || machines[0].Name != "bench-a" || machines[1].Name != "bench-b" || machines[0].Fields["slots"] != "4" {
+			t.Fatalf("machines: %+v %v", machines, err)
+		}
+		if fleet.Fields["store"] != "bench-b" || fleet.Fields["coordinator"] != "bench-a" {
+			t.Fatalf("fleet row: %+v", fleet)
+		}
+		listed, _ := st.List(ctx, KindMachine)
+		if len(listed) != len(machines) {
+			t.Fatalf("List sees %d machines, MachinesAndFleet %d", len(listed), len(machines))
+		}
+	})
+
 	t.Run("add, get, list, set, history, remove", func(t *testing.T) {
 		t.Parallel()
 		st := open(t)

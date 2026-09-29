@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-// AN UNREAD DENIAL CANNOT RETURN OK (issue #1465, as Stella's HOLD on #1478 reshaped it).
+// AN UNREAD DENIAL CANNOT RETURN OK (issue #1465, as the hold on #1478 reshaped it).
 //
 // The run this closes: a `native` Go card was handed GOMODCACHE, GOCACHE and
 // GOTOOLCHAIN=local, wrote its test, and could not compile it --
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied
+//	/usr/bin/bash: line 1: /home/worker/go/bin/go: Permission denied
 //
 // -- because the toolchain those three names are FOR is under no root the wall admits. The
 // card said so in its own RESULT.md, and the tool said
@@ -29,7 +29,7 @@ import (
 // denial the card's own shell reported is a HARD REFUSAL. There is no NATIVE OK line at all
 // and the exit is non-zero.
 //
-// WHAT THE REFUSAL MAY SAY is a separate question, and Stella's P2 settled it: the shell
+// WHAT THE REFUSAL MAY SAY is a separate question, and the P2 witness settled it: the shell
 // names a path and a refusal and NOT an operation, so the line labels the operation
 // unverified and asks for the measurement instead of inventing a cause. This case is WALLED,
 // because the run it closes was (sandbox=landlock), and a walled run may offer the read set

@@ -335,8 +335,8 @@ func TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain(t *testing.T
 }
 
 // TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample: the "once more before any
-// relaunch" test reads the job's FINAL usage, not only the last periodic sample (stella's
-// hold 6 on #1635). Under a 60s --usage-interval and a 120s deadline, a first launch that
+// relaunch" test reads the job's FINAL usage, not only the last periodic sample (hold
+// 6 on #1635). Under a 60s --usage-interval and a 120s deadline, a first launch that
 // reports 200 against --tokens 100 and dies on a provider 5xx at once is gone before any
 // sample fires; its final read alone reaches the budget, so there is exactly one launch.
 func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T) {

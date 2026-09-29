@@ -170,8 +170,8 @@ internal/docs/spec_pulse_links_test.go
 STEP 7. THE COMMIT. The card ends here; publication is the coordinator's.
 
 ```
-git config user.name "Rowan"
-git config user.email "rowan@mas-bandwidth.com"
+git config user.name "Worker"
+git config user.email "worker@example.com"
 git add docs/spec-pulse/00-preamble.md docs/spec-pulse/02-the-rules-numbered.md docs/spec-pulse/08-rate-and-convergence.md docs/spec-pulse/16-layout.md internal/docs/spec_pulse_links_test.go
 git commit -q -m "docs/spec-pulse: a section file's links are relative to the section file (#1547)"
 git rev-parse HEAD
