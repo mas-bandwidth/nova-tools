@@ -30,3 +30,35 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 	}
 	w.clean("closed")
 }
+
+// H3: add with a need that names a dropped primary writes the blocked
+// judgment itself, in the same step; its decisions are drop and ack.
+func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
+	p := w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
+	var notes []Note
+	for _, u := range p.Units {
+		notes = append(notes, u.Notes...)
+	}
+	if len(notes) != 1 || notes[0].Type != NBlocked || len(w.openOn("later")) != 1 {
+		t.Fatalf("add did not write the blocked judgment: %+v", notes)
+	}
+	if got := notes[0].Decisions; len(got) != 2 || got[0] != "drop" || got[1] != "ack" {
+		t.Fatalf("decisions: %v", got)
+	}
+	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open})
+	var ds []string
+	for _, c := range g[0].Commands {
+		ds = append(ds, c.Decision+": "+c.Lines[0])
+	}
+	if len(ds) != 2 || ds[1] != "ack: nova-sprint ack "+g[0].ID+" --reason "+noneText {
+		t.Fatalf("commands: %v", ds)
+	}
+	w.must(Resolve(w.s, ResolveReq{}))
+	if len(w.notesOf(NBlocked)) != 1 {
+		t.Fatalf("blocked written again")
+	}
+	w.clean("blocked")
+}

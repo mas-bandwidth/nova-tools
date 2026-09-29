@@ -132,6 +132,11 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		u := Unit{Key: id, Stream: r.Stream, Changes: append(head, change(Work, createEntry(id, r.Stream, col, score, fields))),
 			Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", id, col, r.Stream, fmtScore(score))}
+		if gone := droppedNeeds(s, r.Needs); len(gone) > 0 {
+			n := judgment(NBlocked, r.Stream, s.Now, 0, id)
+			n.What, n.Who = id+" needs "+strings.Join(gone, ",")+", dropped", r.Who
+			u.Notes = append(u.Notes, n)
+		}
 		head = nil
 		p.Units = append(p.Units, u)
 		score++
@@ -140,6 +145,17 @@ func Add(s *Snapshot, r AddReq) Plan {
 		p.Units = append(p.Units, Unit{Key: CtlID(r.Stream), Changes: head, Moved: "stream " + r.Stream + " open"})
 	}
 	return p
+}
+
+// droppedNeeds is the needs that name a primary dropped off the table.
+func droppedNeeds(s *Snapshot, needs []string) []string {
+	var out []string
+	for _, n := range needs {
+		if c := s.Work.Card(n); c != nil && !c.Placed() && c.F("outcome") == "dropped" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func placeWord(c *Card) string {

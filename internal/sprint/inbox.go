@@ -340,8 +340,8 @@ func commands(g Group, first Note) []Command {
 			add(d, cmd+"return"+grp+" --reason "+whyText+ans)
 		case d == "look":
 			add(d, append(look(), cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)...)
-		case d == "replace":
-			add(d, cmd+"drop"+grp+" --reason 'replaced by <new id>'"+ans, cmd+"add --stream "+s+" '<new id>' --brief '<brief>'")
+		case d == "ack":
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
 		}
 	}
 	if g.Type == NRed {
