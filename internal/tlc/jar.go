@@ -1,6 +1,7 @@
 package tlc
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 // JarEnv is the environment variable that names the TLC jar when --jar is not
@@ -80,3 +83,37 @@ func FindHelper(name, override string, lookPath func(string) (string, error)) (s
 
 // LookPath is exec.LookPath, named so callers pass one seam.
 var LookPath = exec.LookPath
+
+// javaVersionLine matches the line `java -version` prints for the version: it
+// starts with openjdk version or java version, then the quoted version. A line
+// that only contains version " (the "Picked up JAVA_TOOL_OPTIONS: ..." lines a
+// JVM prints first echo the variable's text) is not one. The version is digits
+// first, then letters, digits and . _ + -.
+var javaVersionLine = regexp.MustCompile(`^\s*(?:openjdk|java) version "([0-9][0-9A-Za-z._+-]*)"`)
+
+// JavaVersion reads the version out of what `java -version` prints (it goes to
+// standard error): the quoted token of the first line that starts with
+// `openjdk version "` or `java version "`, for example 21.0.12.1. Lines before
+// it are skipped, so a "Picked up JAVA_TOOL_OPTIONS" line never gives the
+// version. It is an error when no line is one, so a record never names a java
+// of no version.
+func JavaVersion(output string) (string, error) {
+	trimmed := strings.TrimSpace(output)
+	first, _, _ := strings.Cut(trimmed, "\n")
+	for _, line := range strings.Split(trimmed, "\n") {
+		if m := javaVersionLine.FindStringSubmatch(line); m != nil {
+			return m[1], nil
+		}
+	}
+	return "", fmt.Errorf("java -version printed no line of the form openjdk version \"...\" or java version \"...\": %q", strings.TrimSpace(first))
+}
+
+// ReadJavaVersion runs `java -version`, bounded by ctx, and returns its
+// version. It runs java, so it belongs on a bench.
+func ReadJavaVersion(ctx context.Context, java string) (string, error) {
+	out, err := exec.CommandContext(ctx, java, "-version").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s -version failed: %v", java, err)
+	}
+	return JavaVersion(string(out))
+}

@@ -774,7 +774,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; --rules prints every rule and what it wants instead")
+	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; give --fleet <file> instead to lint a launcher script, or --rules to print every rule and what it wants")
 	if f.refused(stderr) {
 		return 2
 	}

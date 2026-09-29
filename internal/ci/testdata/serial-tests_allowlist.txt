@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 419
+# ceiling: 396
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -256,17 +256,6 @@ internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls seria
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome serial: t.Setenv
-internal/sandbox/policy_test.go:TestACommandInTheCallersHomeIsRefused serial: t.Setenv
-internal/sandbox/systemreads_test.go:TestLinuxWallGrantsTheResolvedResolverConfigDirectory serial: swaps package var sandbox.resolvConfPath
-internal/sandbox/wrap_darwin_test.go:TestNoSandboxRefusesOnDarwin serial: swaps package var sandbox.available
-internal/sandbox/wrap_linux_test.go:TestLandlockABIBelowTheTableRefusesOnLinux serial: swaps package var sandbox.available
-internal/sandbox/wrap_linux_test.go:TestNewerLandlockABIIsClampedToTheTableOnLinux serial: swaps package var sandbox.available
-internal/sandbox/wrap_linux_test.go:TestNoLandlockRefusesOnLinux serial: swaps package var sandbox.available
 internal/scaffold/scaffold_test.go:TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight serial: swaps package var scaffold.BeforeCreate
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
 internal/secrets/storepull_test.go:TestStorePullUsesBenchOwnedKey serial: t.Setenv
@@ -319,10 +308,6 @@ internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLau
 internal/swarm/usagecard_functional_test.go:TestUsageRowWithoutSqlite serial: t.Setenv
 internal/swarm/warm_functional_test.go:TestAClipResetsTheWorktreeToBase serial: t.Setenv
 internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
-internal/testguard/testguard_test.go:TestAFakeOnPATHIsNotAHost serial: os.Unsetenv, t.Setenv
-internal/testguard/testguard_test.go:TestAllowHostsIsScopedAndNests serial: os.Unsetenv, t.Setenv
-internal/testguard/testguard_test.go:TestArmedGuardNamesTheCommandAndTheRemedy serial: os.Unsetenv, t.Setenv
-internal/testguard/testguard_test.go:TestUnsetGuardLetsTheSeamRun serial: t.Setenv
 internal/tokens/package_test.go:TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace serial: swaps package var tokens.FsyncHook
 internal/update/adopt_test.go:TestWatchAdoptRunsPassEscalatesAndPostsReceipt serial: t.Setenv
 internal/update/ahead_test.go:TestDevBuildAheadOfReleaseReportsAhead serial: t.Setenv
@@ -377,15 +362,7 @@ internal/seatcred/seatcred_test.go:TestActiveResolvesOnceAndOnlyWhenSelected ser
 cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/doctor_test.go:TestDoctorOKWhenBothStampsMatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorOKWhenPATHResolvesToTheLocalBinary serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorOKWhenTheLocalBinaryIsAbsent serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorRefusesWhenThePATHBinaryIsShadowed serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorResolvesNovaSwarmOnPATH serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorSurvivesAnUnreadablePATHBinary serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
 cmd/nova-swarm/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestPreflightLeavesNonLaunchVerbsAlone serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestPreflightRefusesALaunchUnderAShadowedBinary serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
 cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-swarm/gate_hold_test.go:TestWalledRefusalOffersTheReadRootsAsOnePossibility serial: t.Setenv
 cmd/nova-swarm/gate_test.go:TestNativeGateThatCouldNotRunIsNeverOK serial: t.Setenv
