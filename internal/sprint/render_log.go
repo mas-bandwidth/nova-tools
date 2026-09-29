@@ -14,6 +14,16 @@ func Render(l Line) string {
 	if l.Note != nil {
 		return renderNote(l)
 	}
+	if n := len(l.Cards); n > 1 {
+		one := l
+		one.Cards = nil
+		words := Render(one)
+		more := strings.Join(l.Cards[1:min(n, 4)], ", ")
+		if n > 4 {
+			more += fmt.Sprintf(" and %d more", n-4)
+		}
+		return fmt.Sprintf("%d cards: %s (with %s)", n, words, more)
+	}
 	by := byWhom(l.Actor)
 	fromRow, fromCol, _ := strings.Cut(l.From, ":")
 	toRow, toCol, _ := strings.Cut(l.To, ":")

@@ -223,7 +223,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	}
 	// 11. A primary anywhere but waiting has every need landed or waived.
 	for _, c := range s.Work.Column(Ready, Working, Review, Merging, Landed) {
-		if w := WaitsFor(s, c, nil); len(w) > 0 {
+		if w := NamedWaits(s, c, nil); len(w) > 0 {
 			out = append(out, Violation{11, fmt.Sprintf("%s is %s and needs %s, not landed", c.ID, c.Col, strings.Join(w, ","))})
 		}
 	}

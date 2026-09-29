@@ -167,83 +167,60 @@ func indexOf(xs []string, x string) int {
 	return -1
 }
 
-// placeSentinel is the spec's section 16 for a sentinel just admitted: it
-// waits for every primary of its stream that sorts before it and has not
-// landed; the cards behind it that wait wait on it too, the ready ones go
-// back to waiting, and those in flight are past the stop and waited for.
-// From the spec, not yet in the model.
+// placeSentinel is the spec's section 16 for a sentinel just admitted. It
+// blocks by its position: nothing is written as a need. The ready cards behind
+// it go back to waiting (the order says so), and a reached sentinel behind it
+// is no longer reached: it now waits for this one too.
 func (n *State) placeSentinel(id string) {
 	me := n.Primaries[id]
 	for _, q := range n.StreamOrder(me.Stream) {
-		if q == id {
-			continue
-		}
 		qp := n.Primaries[q]
-		if qp.State == Landed {
+		if q == id || qp.State == Landed || qp.Score < me.Score {
 			continue
 		}
-		if qp.Score < me.Score {
-			me.Needs = addSorted(me.Needs, q)
-			continue
-		}
-		switch qp.State {
-		case Waiting:
-			qp.Needs = addSorted(qp.Needs, id)
-			if qp.Reached {
-				qp.Reached = false
-				delete(n.Open, Judgment{JReached, q})
-			}
-		case Ready:
+		switch {
+		case qp.State == Ready && qp.Kind != KindSentinel && !n.withdrawn(q):
 			qp.State = Waiting
-			qp.Needs = addSorted(qp.Needs, id)
-		default:
-			me.Needs = addSorted(me.Needs, q)
+		case qp.Kind == KindSentinel && qp.Reached:
+			qp.Reached = false
+			delete(n.Open, Judgment{JReached, q})
 		}
 		n.Primaries[q] = qp
 	}
-	n.Primaries[id] = me
 }
 
-// placeBehindSentinel is the spec's section 16 for a card just admitted: it
-// waits on the latest unlanded sentinel before it, and is a need of the first
-// unlanded sentinel after it ("a card added --before a sentinel is a need of
-// it"), which it un-reaches; the sentinels after that one wait on it through
-// their chain. From the spec, not yet in the model.
+// placeBehindSentinel is the spec's section 16 for a card just admitted: by
+// its position it waits behind the latest unlanded sentinel before it, and
+// the first unlanded sentinel after it now waits for it, which un-reaches
+// it. Nothing is written as a need.
 func (n *State) placeBehindSentinel(id string) {
 	me := n.Primaries[id]
-	latest, next := "", ""
 	for _, q := range n.StreamOrder(me.Stream) {
 		qp := n.Primaries[q]
-		if q == id || qp.Kind != KindSentinel || qp.State == Landed {
+		if q == id || qp.Kind != KindSentinel || qp.State == Landed || qp.Score < me.Score {
 			continue
 		}
-		if qp.Score < me.Score {
-			latest = q
-			continue
-		}
-		if next == "" {
-			next = q
-		}
-	}
-	if next != "" {
-		qp := n.Primaries[next]
-		qp.Needs = addSorted(qp.Needs, id)
 		if qp.Reached {
 			qp.Reached = false
-			delete(n.Open, Judgment{JReached, next})
+			delete(n.Open, Judgment{JReached, q})
+			n.Primaries[q] = qp
 		}
-		n.Primaries[next] = qp
+		break
 	}
-	if latest != "" {
-		me.Needs = addSorted(me.Needs, latest)
-	}
-	n.Primaries[id] = me
+}
+
+// withdrawn says the primary's live work card was withdrawn: it has started,
+// and is past any stop put in front of it.
+func (s State) withdrawn(p string) bool {
+	pr := s.Primaries[p]
+	w, ok := s.Work[WC(p, pr.Attempt)]
+	return ok && w.Place == FWithdrawn
 }
 
 // inCycle is SprintTables.tla InCycle(p, added).
 func (s State) inCycle(p string) bool {
 	seen := map[string]bool{}
-	stack := append([]string(nil), s.Primaries[p].Needs...)
+	stack := append(append([]string(nil), s.Primaries[p].Needs...), s.PositionWaits(p)...)
 	for len(stack) > 0 {
 		q := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -254,7 +231,7 @@ func (s State) inCycle(p string) bool {
 			continue
 		}
 		seen[q] = true
-		stack = append(stack, s.Primaries[q].Needs...)
+		stack = append(append(stack, s.Primaries[q].Needs...), s.PositionWaits(q)...)
 	}
 	return false
 }

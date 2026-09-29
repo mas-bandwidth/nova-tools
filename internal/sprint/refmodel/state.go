@@ -313,7 +313,38 @@ func (s State) NeedsMet(p string) bool {
 			return false
 		}
 	}
-	return true
+	return len(s.PositionWaits(p)) == 0
+}
+
+// PositionWaits is what p waits for by its place in its stream's order
+// (spec section 16): a sentinel, every primary before it on the table that
+// has not landed; a waiting primary, the latest unlanded sentinel before it.
+// Nothing of it is stored as a need.
+func (s State) PositionWaits(p string) []string {
+	pr, ok := s.Primaries[p]
+	if !ok || pr.State == Landed || pr.State == Off {
+		return nil
+	}
+	var out []string
+	latest := ""
+	for _, q := range s.StreamOrder(pr.Stream) {
+		qp := s.Primaries[q]
+		if q == p || qp.State == Landed || qp.State == Off || !(qp.Score < pr.Score) {
+			continue
+		}
+		if pr.Kind == KindSentinel {
+			out = append(out, q)
+		} else if qp.Kind == KindSentinel {
+			latest = q
+		}
+	}
+	if pr.Kind != KindSentinel {
+		if pr.State != Waiting || latest == "" {
+			return nil
+		}
+		return []string{latest}
+	}
+	return out
 }
 
 // DroppedNeeds is the needs of p that were dropped and are not waived.

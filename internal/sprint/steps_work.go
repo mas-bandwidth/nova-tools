@@ -30,8 +30,20 @@ type AddReq struct {
 	// Before or After places the cards in line, in front of or after this
 	// card of the stream: their scores lie between its and its neighbour's.
 	Before, After string
-	Only          []string
-	Who           string
+	// Every, with Count, puts a sentinel <stream>-gate-<n> after every Every
+	// cards, none after the last unless Last: a stream in stops, one step.
+	Every int
+	Last  bool
+	Only  []string
+	Who   string
+}
+
+// gatePrefix is the prefix of the sentinels add --sentinel-every names.
+func gatePrefix(stream string) string { return stream + "-gate-" }
+
+// IsGate says the id is a sentinel this add names by --sentinel-every.
+func (r AddReq) IsGate(id string) bool {
+	return r.Every > 0 && strings.HasPrefix(id, gatePrefix(r.Stream))
 }
 
 // AddIDs is the ids an add admits: the named ones, or Count generated ones
@@ -43,16 +55,23 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 	if len(r.IDs) > 0 || r.Count <= 0 {
 		return r.IDs
 	}
-	high := 0
-	prefix := r.Stream + "-"
+	high, gates := 0, 0
+	prefix, gp := r.Stream+"-", gatePrefix(r.Stream)
 	for id := range s.Work.Cards {
 		if n, err := strconv.Atoi(strings.TrimPrefix(id, prefix)); err == nil && strings.HasPrefix(id, prefix) && n > high {
 			high = n
 		}
+		if n, err := strconv.Atoi(strings.TrimPrefix(id, gp)); err == nil && strings.HasPrefix(id, gp) && n > gates {
+			gates = n
+		}
 	}
-	out := make([]string, r.Count)
-	for i := range out {
-		out[i] = fmt.Sprintf("%s-%d", r.Stream, high+1+i)
+	out := make([]string, 0, r.Count+r.Count/max(r.Every, 1))
+	for i := 1; i <= r.Count; i++ {
+		out = append(out, fmt.Sprintf("%s-%d", r.Stream, high+i))
+		if r.Every > 0 && i%r.Every == 0 && (i < r.Count || r.Last) {
+			gates++
+			out = append(out, fmt.Sprintf("%s%d", gp, gates))
+		}
 	}
 	return out
 }
@@ -82,6 +101,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	if r.Sentinel && len(ids) != 1 {
 		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
+	}
+	if r.Every > 0 && (r.Count <= 0 || r.Sentinel || r.Before != "" || r.After != "" || len(r.IDs) > 0) {
+		return refuseAll("--sentinel-every goes with --count, at the end of the stream")
 	}
 	scores, why := addScores(s, r, len(ids))
 	if why != "" {
@@ -119,8 +141,10 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score  float64
 		needs  []string
 		behind string // the sentinel it waits behind by position
+		gate   bool   // a stop of --sentinel-every
 	}
 	var in []admit
+	lastGate := ""
 	seen := map[string]bool{}
 	for i, id := range ids {
 		switch {
@@ -138,10 +162,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...)}
-		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel && !contains(a.needs, st.ID) {
-			a.behind = st.ID
-			a.needs = append(a.needs, st.ID)
+		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...), gate: r.IsGate(id)}
+		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel {
+			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
+		}
+		if lastGate != "" && !a.gate {
+			a.behind = lastGate // behind a stop of this add
+		}
+		if a.gate {
+			a.needs = nil // a stop names nothing: it waits by its place
+			lastGate = id
 		}
 		in = append(in, a)
 	}
@@ -150,43 +180,31 @@ func Add(s *Snapshot, r AddReq) Plan {
 	var past, pulled []string
 	if r.Sentinel && len(in) == 1 {
 		st := &in[0]
+		// The sentinel waits for what is before it and what is in flight
+		// past it by its place in line; nothing of either is written.
 		for _, c := range streamLine(s, r.Stream) {
 			switch {
 			case c.Col == Landed:
 			case c.Score < st.score:
-				if !contains(st.needs, c.ID) {
-					st.needs = append(st.needs, c.ID)
+				if !IsSentinel(c) && c.Col != Waiting && (c.Col != Ready || withdrawnCard(s, c)) {
+					past = append(past, c.ID)
 				}
-				if c.Col != Waiting && (c.Col != Ready || withdrawnCard(s, c)) {
-					past = append(past, c.ID) // in flight: it waits for it
-				}
-			case c.Col == Waiting || c.Col == Ready && !withdrawnCard(s, c):
+			case c.Col == Ready && !withdrawnCard(s, c) && !IsSentinel(c):
 				m := modOf(mods, c)
-				m.addNeed(st.id)
-				if c.Col == Ready {
-					m.to = Waiting
-					pulled = append(pulled, c.ID)
-				}
-				if c.F("reached") != "" {
-					m.unreach = st.id
-				}
+				m.to = Waiting
+				pulled = append(pulled, c.ID)
+			case IsSentinel(c) && c.F("reached") != "":
+				// a later stop now waits for this one too: no longer reached
+				modOf(mods, c).unreach = st.id
+			case c.Col == Waiting:
 			default: // in flight: past the stop, and the sentinel waits for it
 				past = append(past, c.ID)
-				if !contains(st.needs, c.ID) {
-					st.needs = append(st.needs, c.ID)
-				}
 			}
 		}
 	} else if len(in) > 0 {
 		// A card placed in front of an unlanded sentinel is a need of it.
-		if st := sentinelAfter(s, r.Stream, in[0].score); st != nil {
-			m := modOf(mods, st)
-			for _, a := range in {
-				m.addNeed(a.id)
-			}
-			if st.F("reached") != "" {
-				m.unreach = in[0].id
-			}
+		if st := sentinelAfter(s, r.Stream, in[0].score); st != nil && st.F("reached") != "" {
+			modOf(mods, st).unreach = in[0].id // it waits for them by their place
 		}
 	}
 	edges := map[string][]string{}
@@ -209,24 +227,35 @@ func Add(s *Snapshot, r AddReq) Plan {
 				col = Waiting
 			}
 		}
+		if a.behind != "" {
+			col = Waiting
+		}
 		kind := "primary"
-		if r.Sentinel {
+		if r.Sentinel || a.gate {
 			kind, col = "sentinel", Waiting
 		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
-		if r.Brief != "" {
+		if r.Brief != "" && !a.gate {
 			fields["brief"] = r.Brief
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
 		}
 		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
+		if a.gate {
+			u.Moved = "sentinel " + u.Moved
+		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved
 			var open []string
 			for _, n := range a.needs {
 				if s.StateOf(n) != Landed {
 					open = append(open, n)
+				}
+			}
+			for _, c := range streamLine(s, r.Stream) {
+				if c.Col != Landed && c.Score < a.score {
+					open = append(open, c.ID)
 				}
 			}
 			if len(open) == 0 {
@@ -283,6 +312,33 @@ func Add(s *Snapshot, r AddReq) Plan {
 	return p
 }
 
+// AddEach is one add of several streams, one step: each stream's add on the
+// same pre-state, their plans as one.
+func AddEach(s *Snapshot, rs []AddReq) Plan {
+	var p Plan
+	p.on(s)
+	closed := map[string]bool{}
+	for _, r := range rs {
+		q := Add(s, r)
+		p.Rows = append(p.Rows, q.Rows...)
+		p.Refused = append(p.Refused, q.Refused...)
+		p.Notes = append(p.Notes, q.Notes...)
+		p.inserting = p.inserting || q.inserting
+		for _, u := range q.Units {
+			var keep []Open
+			for _, o := range u.Closes {
+				if !closed[o.Key] {
+					closed[o.Key] = true
+					keep = append(keep, o)
+				}
+			}
+			u.Closes = keep
+			p.Units = append(p.Units, u)
+		}
+	}
+	return p
+}
+
 // admits says the plan places a card on the work table.
 func admits(p Plan) bool {
 	for _, u := range p.Units {
@@ -303,7 +359,8 @@ func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
 		if n, ok := edges[id]; ok {
 			return n
 		}
-		return Split(s.Work.Card(id).F("needs"))
+		c := s.Work.Card(id)
+		return append(Split(c.F("needs")), PositionWaits(s, c, nil)...)
 	}
 	var path []string
 	on, done := map[string]bool{}, map[string]bool{}
@@ -346,6 +403,18 @@ func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
 // WaitsFor is what a primary still waits for: its needs that have not landed
 // (before the step, or in it: landing) and that the coordinator did not waive.
 func WaitsFor(s *Snapshot, c *Card, landing map[string]bool) []string {
+	out := NamedWaits(s, c, landing)
+	for _, n := range PositionWaits(s, c, landing) {
+		if !contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// NamedWaits is what a primary waits for among the needs it names (stored on
+// it): the part of WaitsFor that is not its place in line.
+func NamedWaits(s *Snapshot, c *Card, landing map[string]bool) []string {
 	var out []string
 	waived := Split(c.F("waived"))
 	for _, n := range Split(c.F("needs")) {
@@ -370,7 +439,13 @@ type NeedState struct {
 // the table that need it (with the needs read as records into s).
 func NeedsOf(s *Snapshot, id string) (needs []NeedState, neededBy []string) {
 	c := s.Work.Card(id)
-	for _, n := range Split(c.F("needs")) {
+	named := Split(c.F("needs"))
+	for _, n := range PositionWaits(s, c, nil) {
+		if !contains(named, n) {
+			named = append(named, n)
+		}
+	}
+	for _, n := range named {
 		st := "not on the table"
 		if nc := s.Work.Card(n); nc.Placed() {
 			st = nc.Col
@@ -386,6 +461,13 @@ func NeedsOf(s *Snapshot, id string) (needs []NeedState, neededBy []string) {
 	for _, o := range s.Work.Column(States...) {
 		if contains(Split(o.F("needs")), id) {
 			neededBy = append(neededBy, o.ID)
+		}
+	}
+	if c.Placed() && IsSentinel(c) {
+		for _, b := range Behind(s, c) {
+			if !contains(neededBy, b.ID) {
+				neededBy = append(neededBy, b.ID)
+			}
 		}
 	}
 	return needs, neededBy

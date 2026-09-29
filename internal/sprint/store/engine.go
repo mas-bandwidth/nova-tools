@@ -920,6 +920,7 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 	for _, k := range logOrder {
 		op.Log = append(op.Log, moveLine(k, entries[k.table][seen[k]-1], logUnits[k], snap, id, verb, actor))
 	}
+	op.Log = sprint.GroupSets(op.Log)
 	var all []sprint.Note
 	var closes []sprint.Open
 	for _, u := range plan.Units {

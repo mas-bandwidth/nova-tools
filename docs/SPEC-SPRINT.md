@@ -815,25 +815,43 @@ epoch's: a clear keeps them and resets their pushes.
 A sentinel is a primary of kind sentinel, a stop in its stream, admitted by
 `add --stream <s> --sentinel <id>`, at the end of the stream or
 `--before`/`--after` a card (its score between its neighbours; refused when no
-score lies between; the line is never renumbered). It waits for every primary
-of its stream that sorts before it and has not landed, and for the needs it
-names in other streams. Every primary of its stream that sorts after it waits
-behind it: a card added later waits on the latest unlanded sentinel before it
-(add prints `waits behind sentinel <id>`). Inserted in line, the waiting cards
-behind it wait on it too, the ready ones go back to waiting, and the ones in
-flight are printed as already past the stop and waited for. A card added
-`--before` a sentinel is a need of it and un-reaches it. It is never dealt,
-read or merged. When its needs have all landed or been waived, the step that
-landed the last of them (or the tick, as the backstop) marks it reached and
-writes one judgment. Only `release <id> --reason <text>`, by the sprint's
-coordinator (`init --coordinator`, shown by `where`), lands it. The same step
-moves what waited behind it to ready, marks reached any sentinel now due, and
-always writes a notification that it landed. A dropped need blocks it like any
-waiting card; ack waives the need. It counts in the sprint line and in waiting
-and landed, and the sprint is not done while one waits. A ready primary whose
-work card was withdrawn (no member up) stays ready when a sentinel is inserted
-in front of it, and is waited for as past the stop: check's rule 2 holds that
-the primary of a withdrawn card is ready.
+score lies between; the line is never renumbered), or many at once: `add
+--stream <s>[,<s>...] --count <n> --sentinel-every <k> [--sentinel-last]` puts
+n cards in each stream named with a sentinel `<s>-gate-<i>` after every k of
+them (none after the last unless `--sentinel-last`), all streams in one step.
+
+A sentinel's property belongs to its position in its stream's order, and
+nothing about position is stored as a need, on the sentinel or on any card
+behind it: stored needs are only what a card names itself (`--needs`), in its
+own stream or another. One function reads position for the needs rule, the
+tick's resolve, reached, `card`, `check` and the reference model:
+
+- A sentinel waits for every primary of its stream that sorts before it and
+  is on the table and not landed (a dropped one is off the line), and for the
+  needs it names.
+- A primary that sorts after an unlanded sentinel of its stream may not
+  leave waiting: it waits behind the latest such sentinel before it (add
+  prints `waits behind sentinel <id>`).
+
+So adding a sentinel writes one card at one position, whatever the stream's
+length. Inserted in line, the ready cards behind it go back to waiting because
+the order now says so, as one set move and one line of the log; a reached
+sentinel behind it is no longer reached; the cards in flight are printed as
+already past the stop. A card added in front of a reached sentinel un-reaches
+it. A rank that moves a card across a sentinel changes what it waits for, by
+the same reading. A sentinel is never dealt, read or merged. When what it
+waits for has landed, been dropped or been waived, the step that ended the
+last of it (or the tick, as the backstop) marks it reached and writes one
+judgment. Only `release <id> --reason <text>`, by the sprint's coordinator
+(`init --coordinator`, shown by `where`), lands it; the same step moves what
+waited behind it, up to the next sentinel, to ready as one set, marks reached
+any sentinel now due, and always writes a notification that it landed. A need
+it names that is dropped blocks it like any waiting card; ack waives the need.
+It counts in the sprint line and in waiting and landed, and the sprint is not
+done while one waits. A ready primary whose work card was withdrawn (no member
+up) stays ready when a sentinel is inserted in front of it: it has started,
+and is past the stop; check's rule 2 holds that the primary of a withdrawn card
+is ready.
 
 ## 17. The log
 
@@ -856,7 +874,10 @@ the cause in the step's own words, the judgments the step answered on it, the
 words given with it (brief, fix, report, finding, reason, return reason, did,
 note, ci note), whole, and the other fields it set. A notification's line has
 its kind (judgment, happened, decided, acknowledged) and the notification as
-written. A note on a card will be a line of its own kind.
+written. A note on a card will be a line of its own kind. A set move (many
+cards of one step with the same place before and after, the same words and
+fields, a score aside) is one line naming its cards: the log grows by the
+steps, not by the cards they move.
 
 `log` prints each line in plain words at its local time, the words given
 following it as paragraphs; one function renders a line, for `log` and for a

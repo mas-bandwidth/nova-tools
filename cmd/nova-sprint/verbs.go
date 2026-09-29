@@ -598,7 +598,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("add")
-	stream := fs.String("stream", "", "the stream the primaries belong to, for life")
+	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
 	brief := fs.String("brief", "", "the brief")
@@ -606,6 +606,8 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
 	after := fs.String("after", "", "place the cards in line after this primary of the stream")
+	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
+	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
@@ -619,20 +621,34 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *stream == "" || (len(ids) == 0) == (*count == 0) {
 		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id>")
 	}
-	r := sprint.AddReq{Stream: *stream, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
-		Sentinel: *sentinel != "", Before: *before, After: *after}
-	if *score != "" {
-		f, err := strconv.ParseFloat(*score, 64)
-		if err != nil {
-			return refuse(stderr, "add", "--score wants a number")
+	if *last && *every == 0 {
+		return refuse(stderr, "add", "--sentinel-last goes with --sentinel-every <k>")
+	}
+	streams := sprint.Split(*stream)
+	if len(streams) > 1 && *count == 0 {
+		return refuse(stderr, "add", "several streams take --count <n>: each gets n cards")
+	}
+	var rs []sprint.AddReq
+	for _, sn := range streams {
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
+			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last}
+		if *score != "" {
+			f, err := strconv.ParseFloat(*score, 64)
+			if err != nil {
+				return refuse(stderr, "add", "--score wants a number")
+			}
+			r.Score = &f
 		}
-		r.Score = &f
+		rs = append(rs, r)
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
 	}
-	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
+	if len(rs) == 1 {
+		return a.runStep("add", *c, st, store.AddStep(rs[0]), stdout, stderr)
+	}
+	return a.runStep("add", *c, st, store.AddEachStep(rs), stdout, stderr)
 }
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {

@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,10 +27,13 @@ type Line struct {
 	At    time.Time `json:"at"`
 	Epoch uint64    `json:"epoch"`
 	Op    string    `json:"op,omitempty"` // the step that wrote it: one op, many lines
-	// The card a move line is of, its primary and its stream.
-	Card    string `json:"card,omitempty"`
-	Primary string `json:"primary,omitempty"`
-	Stream  string `json:"stream,omitempty"`
+	// The card a move line is of, its primary and its stream. Cards, when
+	// set, is every card of a set move: one line for the set (the same
+	// place before and after, the same words), Card the first of them.
+	Card    string   `json:"card,omitempty"`
+	Cards   []string `json:"cards,omitempty"`
+	Primary string   `json:"primary,omitempty"`
+	Stream  string   `json:"stream,omitempty"`
 	// Table is the logical table; From and To are member:column ("" From:
 	// the step created it; Removed: the step took it off the table); Gen is
 	// its generation after the step (0 when it has none).
@@ -65,6 +69,9 @@ var TextFields = []string{"brief", "fix", "report", "finding", "reason", "return
 // notification's subjects and named cards.
 func (l Line) Names() []string {
 	if l.Note == nil {
+		if len(l.Cards) > 0 {
+			return l.Cards
+		}
 		return []string{l.Card}
 	}
 	out := append([]string(nil), l.Note.Subjects()...)
@@ -111,13 +118,63 @@ func ReplayOnto(out map[string]Place, l Line) map[string]Place {
 	if l.Kind != LineMove || l.Card == "" {
 		return out
 	}
-	k := l.Table + "/" + l.Card
-	if l.Removed {
-		delete(out, k)
-		return out
+	cards := l.Cards
+	if len(cards) == 0 {
+		cards = []string{l.Card}
 	}
-	if row, col, ok := strings.Cut(l.To, ":"); ok {
-		out[k] = Place{Row: row, Col: col, Gen: l.Gen}
+	row, col, placed := strings.Cut(l.To, ":")
+	for _, c := range cards {
+		k := l.Table + "/" + c
+		switch {
+		case l.Removed:
+			delete(out, k)
+		case placed:
+			out[k] = Place{Row: row, Col: col, Gen: l.Gen}
+		}
+	}
+	return out
+}
+
+// GroupSets is a step's move lines with every set move one line: lines of
+// the same table, place before and after, generation, verb, actor, words
+// given and fields set (a score aside) become one line naming its cards.
+// The log grows by the steps, not by the cards they move.
+func GroupSets(lines []Line) []Line {
+	key := func(l Line) string {
+		set := map[string]string{}
+		for k, v := range l.Set {
+			if k != "score" {
+				set[k] = v
+			}
+		}
+		b, _ := json.Marshal([]any{l.Kind, l.Table, l.From, l.To, l.Removed, l.Gen, l.Verb, l.Actor, l.Text, set, l.Answers, l.Stream})
+		return string(b)
+	}
+	var out []Line
+	at := map[string]int{}
+	for _, l := range lines {
+		if l.Note != nil || l.Kind != LineMove {
+			out = append(out, l)
+			continue
+		}
+		k := key(l)
+		if i, ok := at[k]; ok {
+			g := &out[i]
+			if len(g.Cards) == 0 {
+				g.Cards = []string{g.Card}
+			}
+			g.Cards = append(g.Cards, l.Card)
+			if g.Cause != l.Cause {
+				g.Cause = ""
+			}
+			if g.Primary != l.Primary {
+				g.Primary = ""
+			}
+			delete(g.Set, "score")
+			continue
+		}
+		at[k] = len(out)
+		out = append(out, l)
 	}
 	return out
 }

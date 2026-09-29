@@ -178,7 +178,12 @@ func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 		return Change{}, nil
 	}
 	set := map[string]string{"waived": strings.Join(append(Split(c.F("waived")), gone...), ","), "waived_by": who, "waived_at": stamp(s.Now)}
-	after := &Card{ID: c.ID, Fields: map[string]string{"needs": c.F("needs"), "waived": set["waived"]}}
+	fields := map[string]string{}
+	for k, v := range c.Fields {
+		fields[k] = v
+	}
+	fields["waived"] = set["waived"]
+	after := &Card{ID: c.ID, Row: c.Row, Col: c.Col, Score: c.Score, Fields: fields}
 	switch {
 	case len(WaitsFor(s, after, nil)) > 0:
 	case IsSentinel(c):

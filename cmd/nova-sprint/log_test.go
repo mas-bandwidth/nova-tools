@@ -20,7 +20,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
 	out := ta.ok("log --card s1-1")
 	for _, want := range []string{
-		"03:04:05  s1-1 added to s1 by coordinator",
+		"03:04:05  2 cards: s1-1 added to s1 by coordinator (with s1-2)",
 		"    brief: handle the empty case",
 		"attempt 1 dealt to m1",
 		"m1 took attempt 1",
@@ -32,8 +32,8 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 			t.Errorf("log --card s1-1 has no %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "s1-2") {
-		t.Errorf("log --card s1-1 shows s1-2:\n%s", out)
+	if strings.Contains(out, "s1-2.w1") {
+		t.Errorf("log --card s1-1 shows s1-2's work:\n%s", out)
 	}
 	if out := ta.ok("log --member m1"); !strings.Contains(out, "s1-2.w1: attempt 2") && !strings.Contains(out, "attempt 1 dealt to m1") {
 		t.Errorf("log --member m1:\n%s", out)
@@ -47,10 +47,11 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	var j struct {
 		Lines []struct {
 			Kind, Card string
+			Cards      []string
 		} `json:"lines"`
 	}
 	ta.json("log --card s1-2", &j)
-	if len(j.Lines) == 0 || j.Lines[0].Kind != "move" || j.Lines[0].Card != "s1-2" {
+	if len(j.Lines) == 0 || j.Lines[0].Kind != "move" || len(j.Lines[0].Cards) != 2 || j.Lines[0].Cards[1] != "s1-2" {
 		t.Errorf("log --json: %+v", j)
 	}
 	ta.ok("clear --confirm t-")

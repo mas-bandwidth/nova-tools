@@ -51,7 +51,7 @@ func TestASentinelIsAStopTheCoordinatorReleases(t *testing.T) {
 	w := setup(t, 5)
 	w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true})))
 	stop := w.s.Work.Card("stop")
-	if stop.Col != Waiting || stop.F("needs") != "s1-1,s1-2,s1-3,s1-4,s1-5" || stop.F("reached") != "" {
+	if stop.Col != Waiting || stop.F("needs") != "" || strings.Join(WaitsFor(w.s, stop, nil), ",") != "s1-1,s1-2,s1-3,s1-4,s1-5" || stop.F("reached") != "" {
 		t.Fatalf("the sentinel: %s %v", stop.Col, stop.Fields)
 	}
 	w.must(Lawful(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"stop"}})))
@@ -149,8 +149,9 @@ func TestAChainOfSentinelsIsReleasedOneAtATime(t *testing.T) {
 	for _, id := range []string{"x1", "x2", "x3"} {
 		w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{id}, Sentinel: true})))
 	}
-	if w.s.Work.Card("x2").F("needs") != "s1-1,x1" || w.s.Work.Card("x3").F("needs") != "s1-1,x1,x2" {
-		t.Fatalf("needs: x2 %q x3 %q", w.s.Work.Card("x2").F("needs"), w.s.Work.Card("x3").F("needs"))
+	x2, x3 := strings.Join(WaitsFor(w.s, w.s.Work.Card("x2"), nil), ","), strings.Join(WaitsFor(w.s, w.s.Work.Card("x3"), nil), ",")
+	if x2 != "s1-1,x1" || x3 != "s1-1,x1,x2" || w.s.Work.Card("x3").F("needs") != "" {
+		t.Fatalf("waits by position: x2 %q x3 %q", x2, x3)
 	}
 	accepted(w, "s1-1")
 	mergeOne(w, "s1")
@@ -173,22 +174,28 @@ func TestAChainOfSentinelsIsReleasedOneAtATime(t *testing.T) {
 	}
 }
 
-// H7: a need of a sentinel that is dropped blocks it like any waiting card;
-// ack waives it, and the sentinel is reached.
+// H7: a card before a sentinel that is dropped is no longer before it: the
+// stop is reached with no judgment. A need the sentinel names that is
+// dropped blocks it like any waiting card; ack waives it, and it is reached.
 func TestADroppedNeedOfASentinel(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true})))
+	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"x"}}))
+	w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true, Needs: []string{"x"}})))
 	accepted(w, "s1-1")
 	mergeOne(w, "s1")
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
+	if open := w.openOn("stop"); len(open) != 0 || strings.Join(WaitsFor(w.s, w.s.Work.Card("stop"), nil), ",") != "x" {
+		t.Fatalf("a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
+	}
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"x"}}, Reason: "obsolete"}))
 	blocked := w.openOn("stop")
 	if len(blocked) != 1 || blocked[0].Note.Type != NBlocked || w.s.Work.Card("stop").F("reached") != "" {
 		t.Fatalf("blocked: %+v", blocked)
 	}
 	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed", Who: "coordinator"}))
 	stop := w.s.Work.Card("stop")
-	if stop.F("waived") != "s1-2" || stop.F("reached") == "" || stop.Col != Waiting || len(notesIn(p, NSentinelReached)) != 1 {
+	if stop.F("waived") != "x" || stop.F("reached") == "" || stop.Col != Waiting || len(notesIn(p, NSentinelReached)) != 1 {
 		t.Fatalf("ack: %v", stop.Fields)
 	}
 	w.clean("waived")
@@ -196,7 +203,7 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 		t.Fatalf("the sprint is done with a sentinel waiting")
 	}
 	w.must(release(w, "done", "stop"))
-	if done := w.notesOf(NSprintDone); len(done) != 1 || done[0].What != "2 landed, 1 dropped" {
+	if done := w.notesOf(NSprintDone); len(done) != 1 || done[0].What != "2 landed, 2 dropped" {
 		t.Fatalf("the sprint is done: %+v", done)
 	}
 	w.clean("released")
@@ -209,8 +216,8 @@ func TestASentinelWithNeedsInTwoStreams(t *testing.T) {
 	w := setup(t, 1)
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
 	w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true, Needs: []string{"s2-1"}})))
-	if got := w.s.Work.Card("stop").F("needs"); got != "s2-1,s1-1" {
-		t.Fatalf("needs: %q", got)
+	if got, waits := w.s.Work.Card("stop").F("needs"), strings.Join(WaitsFor(w.s, w.s.Work.Card("stop"), nil), ","); got != "s2-1" || waits != "s2-1,s1-1" {
+		t.Fatalf("needs named %q, waits %q", got, waits)
 	}
 	accepted(w, "s1-1")
 	mergeOne(w, "s1")
@@ -231,7 +238,7 @@ func TestASentinelStopsTheStreamByPosition(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "a", IDs: []string{"a1", "a2"}}))
 	w.must(Lawful(Add(w.s, AddReq{Stream: "a", IDs: []string{"A"}, Sentinel: true})))
 	p := w.must(Lawful(Add(w.s, AddReq{Stream: "a", IDs: []string{"b1"}})))
-	if w.state("b1") != Waiting || w.s.Work.Card("b1").F("needs") != "A" || !strings.Contains(p.Units[0].Moved, "waits behind sentinel A") {
+	if b1 := w.s.Work.Card("b1"); w.state("b1") != Waiting || b1.F("needs") != "" || strings.Join(WaitsFor(w.s, b1, nil), ",") != "A" || !strings.Contains(p.Units[0].Moved, "waits behind sentinel A") {
 		t.Fatalf("b1: %s %v %q", w.state("b1"), w.s.Work.Card("b1").Fields, p.Units[0].Moved)
 	}
 	accepted(w, "a1", "a2")
@@ -242,7 +249,7 @@ func TestASentinelStopsTheStreamByPosition(t *testing.T) {
 		t.Fatalf("A not reached")
 	}
 	w.must(Lawful(Add(w.s, AddReq{Stream: "a", IDs: []string{"a3"}, Before: "A"})))
-	if A.F("reached") != "" || !contains(Split(A.F("needs")), "a3") || len(w.openOn("A")) != 0 || w.state("a3") != Ready || w.state("b1") != Waiting {
+	if A.F("reached") != "" || !contains(WaitsFor(w.s, A, nil), "a3") || A.F("needs") != "" || len(w.openOn("A")) != 0 || w.state("a3") != Ready || w.state("b1") != Waiting {
 		t.Fatalf("a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
 	}
 	if a3 := w.s.Work.Card("a3"); !(a3.Score < A.Score) || a3.F("needs") != "" {
@@ -280,9 +287,9 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-4"}}}))
 	p := w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true, After: "s1-4"})))
 	stop := w.s.Work.Card("stop")
-	if w.state("s1-5") != Waiting || w.state("s1-6") != Waiting || stop.F("needs") != "s1-4" ||
+	if w.state("s1-5") != Waiting || w.state("s1-6") != Waiting || stop.F("needs") != "" || strings.Join(WaitsFor(w.s, stop, nil), ",") != "s1-4" ||
 		!strings.Contains(p.Units[0].Moved, "already past the stop: s1-4") || !strings.Contains(p.Units[0].Moved, "s1-5,s1-6 ready -> waiting behind it") {
-		t.Fatalf("inserted: s1-5 %s s1-6 %s needs %q moved %q", w.state("s1-5"), w.state("s1-6"), stop.F("needs"), p.Units[0].Moved)
+		t.Fatalf("inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
 	}
 	if !(w.s.Work.Card("s1-4").Score < stop.Score && stop.Score < w.s.Work.Card("s1-5").Score) {
 		t.Fatalf("the stop is not in line after s1-4")

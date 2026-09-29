@@ -165,12 +165,18 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 		switch {
 		case e.Create != nil && e.Create.Col == Ready:
 			needs, waived = Split(e.Set["needs"]), Split(e.Set["waived"])
+			if pre != nil && e.Set["kind"] != "sentinel" {
+				if st := StopBefore(pre, e.Create.Row, e.Create.Score, landing); st != nil {
+					needs = append(needs, st.ID) // behind a stop: it waits
+				}
+			}
 		case e.Move != nil && e.Move.Col == Ready && waitingFrom(e, pre):
 			if pre == nil {
 				return "a move waiting -> ready is judged against the step's pre-state, and this plan carries none"
 			}
 			pc := pre.Work.Card(e.ID)
 			needs, waived = Split(pc.F("needs")), append(Split(pc.F("waived")), Split(e.Set["waived"])...)
+			needs = append(needs, PositionWaits(pre, pc, landing)...)
 		default:
 			continue
 		}

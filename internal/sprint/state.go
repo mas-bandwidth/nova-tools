@@ -46,6 +46,7 @@ type Table struct {
 
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
+	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
 }
 
 // Put adds or replaces a card.
@@ -61,7 +62,7 @@ func (t *Table) index() {
 	if t.cells != nil {
 		return
 	}
-	t.cells, t.byPrimary = map[[2]string][]*Card{}, map[string][]*Card{}
+	t.cells, t.byPrimary, t.lines = map[[2]string][]*Card{}, map[string][]*Card{}, nil
 	for _, c := range t.Cards {
 		if !c.Placed() {
 			continue

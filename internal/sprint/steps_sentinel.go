@@ -134,6 +134,7 @@ func addScores(s *Snapshot, r AddReq, n int) ([]float64, string) {
 // move back to waiting, and the step's reason when it is no longer reached.
 type mod struct {
 	needs   []string
+	named   int // the needs it names before the step: needs are written only when this step adds one
 	to      State
 	unreach string
 }
@@ -143,6 +144,7 @@ func modOf(mods map[string]*mod, c *Card) *mod {
 		return m
 	}
 	m := &mod{needs: Split(c.F("needs"))}
+	m.named = len(m.needs)
 	mods[c.ID] = m
 	return m
 }
@@ -154,7 +156,10 @@ func (m *mod) addNeed(id string) {
 }
 
 func (m *mod) change(c *Card) Change {
-	set := map[string]string{"needs": strings.Join(m.needs, ",")}
+	var set map[string]string
+	if len(m.needs) != m.named {
+		set = map[string]string{"needs": strings.Join(m.needs, ",")}
+	}
 	var unset []string
 	if m.unreach != "" {
 		unset = append(unset, "reached")
@@ -176,9 +181,12 @@ func reachedNote(s *Snapshot, c *Card, landing map[string]bool, extra int, who s
 		}
 	}
 	behind := extra
+	if c.Placed() {
+		behind += len(Behind(s, c))
+	}
 	for _, w := range s.Work.Column(Waiting) {
-		if contains(Split(w.F("needs")), c.ID) {
-			behind++
+		if w.Row != c.Row && contains(Split(w.F("needs")), c.ID) {
+			behind++ // it names the stop from another stream
 		}
 	}
 	n := judgment(NSentinelReached, c.Row, s.Now, 0, c.ID)
@@ -276,11 +284,20 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		chosen = append(chosen, c)
 	}
 	after := resolveAfter(s, landing, r.Who)
+	moving := map[string]bool{}
+	for _, u := range after {
+		moving[u.Key] = true
+	}
 	for _, c := range chosen {
 		ready := 0
-		for _, u := range after {
-			if pc := s.Work.Card(u.Key); !IsSentinel(pc) && contains(Split(pc.F("needs")), c.ID) {
+		for _, b := range Behind(s, c) {
+			if moving[b.ID] {
 				ready++
+			}
+		}
+		for _, u := range after {
+			if pc := s.Work.Card(u.Key); !IsSentinel(pc) && pc.Row != c.Row && contains(Split(pc.F("needs")), c.ID) {
+				ready++ // named it from another stream
 			}
 		}
 		n := happened(NSentinelLanded, c.Row, s.Now, c.ID)

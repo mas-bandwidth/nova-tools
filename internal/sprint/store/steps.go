@@ -17,6 +17,23 @@ func AddStep(r sprint.AddReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }
 
+// AddEachStep admits primaries into several streams in one step.
+func AddEachStep(rs []sprint.AddReq) Step {
+	named := false
+	for _, r := range rs {
+		named = named || len(r.IDs) > 0
+	}
+	return Step{Named: named, Args: ArgsOf(rs), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			var ids []string
+			for _, r := range rs {
+				ids = append(append(ids, sprint.AddIDs(s, r)...), r.Needs...)
+			}
+			return map[string][]string{sprint.Work: ids}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.AddEach(s, rs) }}
+}
+
 // ResolveStep moves waiting primaries whose needs landed.
 func ResolveStep(r sprint.ResolveReq) Step {
 	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "resolve", Load: tables(sprint.Work),
