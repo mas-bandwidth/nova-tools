@@ -116,6 +116,42 @@ func TestAnOwnShapeDamagedEntryRefusesTheIndex(t *testing.T) {
 	}
 }
 
+// In the own shape a session file that is a directory or a link, and an entry
+// directory that is a link, are each that session's defect: index flags the
+// session, lists none of its entries, and lists the others.
+func TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	for _, id := range []string{"good", "adir", "gone", "linked"} {
+		if err := Open(store, id, "", benchNow, PublishManual); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Append(store, id, "e1", "words", "", benchNow, PublishManual); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replace := func(path string, with func(string) error) {
+		if err := os.Rename(path, filepath.Join(t.TempDir(), "moved")); err != nil {
+			t.Fatal(err)
+		}
+		if err := with(path); err != nil {
+			t.Skipf("no symlinks here: %v", err)
+		}
+	}
+	replace(sessionFile(store, "adir"), func(p string) error { return os.Mkdir(p, 0o755) })
+	replace(sessionFile(store, "gone"), func(p string) error { return os.Symlink(filepath.Join(store, "nowhere"), p) })
+	replace(filepath.Join(store, "entries", "linked"), func(p string) error { return os.Symlink(t.TempDir(), p) })
+	res, err := IndexAll(store, "", 0)
+	if err != nil || res.Sessions != 4 || len(res.Flagged) != 3 || len(res.Rows) != 1 || res.Rows[0].Session != "good" {
+		t.Fatalf("index: %+v %v", res, err)
+	}
+	for _, f := range res.Flagged {
+		if want := map[string]string{"adir": "is a directory", "gone": "is a symbolic link", "linked": "is a symbolic link"}[f.Session]; !strings.Contains(f.Cause, want) {
+			t.Errorf("session %s: cause %q lacks %q", f.Session, f.Cause, want)
+		}
+	}
+}
+
 // An own-shape append that the record refuses stores nothing: no entry file,
 // no pointer line, no log line. The record is opened and read before the entry
 // is written.

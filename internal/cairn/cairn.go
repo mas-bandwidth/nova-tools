@@ -897,7 +897,8 @@ func flaggedSession(session string, err error) FlaggedSession {
 	return FlaggedSession{Session: session, Cause: strings.TrimPrefix(err.Error(), "cannot "+opPhrase("index")+": ")}
 }
 
-// ownSessions counts the session files under sessions/. A sessions/ that is a
+// ownSessions counts the session files under sessions/ and flags each whose
+// path holds no record (a directory, a link, a device). A sessions/ that is a
 // link refuses the whole call.
 func ownSessions(d *dirs, store, session string) (n int, flagged []FlaggedSession, err error) {
 	files, err := d.list(filepath.Join(store, "sessions"))
@@ -909,10 +910,13 @@ func ownSessions(d *dirs, store, session string) (n int, flagged []FlaggedSessio
 	}
 	for _, f := range files {
 		id := strings.TrimSuffix(f.Name(), ".md")
-		if f.IsDir() || id == f.Name() || !sessionFileID(id) || (session != "" && id != session) {
+		if id == f.Name() || !sessionFileID(id) || (session != "" && id != session) {
 			continue
 		}
 		n++
+		if _, err := recordState(d, "index", filepath.Join(store, "sessions", f.Name())); err != nil {
+			flagged = append(flagged, flaggedSession(id, err))
+		}
 	}
 	return n, flagged, nil
 }

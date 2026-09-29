@@ -1872,8 +1872,8 @@ A defect in one session's record is that session's. A record path that holds no
 record (a directory, a link) refuses the verbs addressed to that session at exit
 2. A damaged file (an invalid heading, a repeated entry) is refused by `receipt`
 and by `append`; the `append` refusal names the damage and a command that lists
-the file's headings, `grep -n '^## ' -- <path>`, and stores nothing. On a bench
-store `index` reports a defective session as one `INDEX FLAGGED session=<id>
+the file's headings, `grep -n '^## ' -- <path>`, and stores nothing. On either
+shape `index` reports a defective session as one `INDEX FLAGGED session=<id>
 cause=<why>` row, lists every other session, and exits 1 after printing
 everything. The lifecycle is modelled in `tla/CairnStore.tla`.
 

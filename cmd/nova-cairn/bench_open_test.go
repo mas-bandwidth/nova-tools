@@ -262,3 +262,22 @@ func TestADamagedBenchRecordRefusesAppendWithoutThePointerToHelp(t *testing.T) {
 		t.Errorf("the refusal points at the help: %q", errOut)
 	}
 }
+
+// In the tool's own shape a session that is a directory is one flagged row and
+// index exits 1 after listing the others.
+func TestIndexFlagsAnOwnShapeSessionThatIsADirectory(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	for _, id := range []string{"s1", "s2"} {
+		runOK(t, "", "open", "--store", store, "--session", id, "--publish", "manual")
+		runOK(t, "", "append", "--store", store, "--session", id, "--entry", "e1", "--text", "w", "--publish", "manual")
+	}
+	os.Remove(filepath.Join(store, "sessions", "s2.md"))
+	if err := os.Mkdir(filepath.Join(store, "sessions", "s2.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCode("", "index", "--store", store)
+	if code != 1 || errOut != "" || strings.Count(out, "INDEX FLAGGED session=s2 cause=") != 1 || !strings.Contains(out, "session=s1 entry=e1") || strings.Contains(out, "session=s2 entry") {
+		t.Fatalf("exit=%d err=%q out=%s", code, errOut, out)
+	}
+}
