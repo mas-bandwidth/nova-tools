@@ -452,8 +452,8 @@ answer from `probeAnswer` and never touches the store while answering.
 ## Atomic member batches
 
 `BatchMemberTable` extends `EpochMemberTable`; existing per-verb configurations
-remain separate. The required `batchmembertable` group contains eleven positive
-configurations and twenty-six deliberately faulty variants. All positive instances
+remain separate. The required `batchmembertable` group contains twelve positive
+configurations and twenty-seven deliberately faulty variants. All positive instances
 retain three members, two rows, two columns and two epochs. The primary instance
 explores request lengths one through three, a guard-only request, and interacting
 cross-row changes for up to three actions. The second instance retains an old-epoch
@@ -477,7 +477,14 @@ and the other uses two guard-only no-ops, leaving every member revision at zero.
 Both must reach refusal, and refusal/replay read-only checks preserve the store.
 A reversed overflow case forces the third move and violates `RevisionWithinBounds`;
 separate reversed cases name `UnplacedMoveRequiresPlacement` and
-`OnePlacePerDimension`.
+`OnePlacePerDimension`. A separate input fixture seeds the existing member at
+its revision limit while leaving the table revision zero, then attempts a batch.
+Its positive case requires refusal; its reversed case violates
+`RevisionWithinBounds`. This independently tests the member guard and makes no
+claim that the seeded counter relation is reachable from the all-zero fixture.
+The runtime stores these counters separately. Score lookup returns the no-score
+sentinel for an unplaced member, so even the forced omitted-score move reaches
+the named property failure instead of a function-domain error.
 Absent member records carry no application fields, and create starts from that
 empty field image before applying its explicit set; every positive configuration
 checks the absent-record invariant and the create receipt's empty before image.
@@ -524,16 +531,15 @@ unplaced member. `CASES.tsv` names each exact expected property.
 `BATCH-SOURCES.tsv` records the batch model,
 configuration, inherited model and runner hashes. `RUNS.tsv` records measured results,
 combined input hashes and the TLC executable hash;
-timeouts and unexpected diagnostics are failures. Published records use the
-portable bench label `linux-amd64` in the host column. The current command emits a
-machine hostname, so publishing still requires explicit platform relabeling.
-Making the runner emit that portable label directly remains a follow-up; hashes,
-outcomes, counts and timings must not change during relabeling.
+timeouts and unexpected diagnostics are failures. `RUNS.tsv` retains the
+host field emitted by the runner. A configurable portable platform label remains
+a runner follow-up; publication must not replace measured fields by hand.
 
 This is a finite request-template model, not a JSON parser, Redis rollback proof or
 implementation refinement proof. Its three-action main bound is explicit; the
 second positive trace separately exercises successful new-epoch mutation and old
 image preservation. Additional named follow-ups are reversed witnesses for the remaining invariants,
+a distinct legacy missing-revision state (currently normalized to zero),
 a model property that detects omitted field unsets, automatic verification of
 `BATCH-SOURCES.tsv` and `BATCH-REPLAY-RUNS.tsv`, and a structured first-bad-step
 diagnostic (currently present only in the TLC log).

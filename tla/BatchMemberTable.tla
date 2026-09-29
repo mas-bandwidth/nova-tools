@@ -162,8 +162,11 @@ EntryIDs(q) == {q.members[i].id:i \in 1..Len(q.members)}
 Entry(q,m) == CHOOSE e \in {q.members[i]:i \in 1..Len(q.members)}:e.id=m
 \* An expected source may be stale in a reversed witness. Read the actual
 \* indexed pre-state cell, so even the faulty receipt remains evaluable.
-ScoreAt(e) == CHOOSE s \in Scores:
- <<place[e.id][e.source[1]],e.id,s>> \in data
+ScoreAt(e) ==
+ IF e.source=NoPlace THEN NoScore
+ ELSE IF place[e.id][e.source[1]]=NoPlace THEN NoScore
+ ELSE CHOOSE s \in Scores:
+  <<place[e.id][e.source[1]],e.id,s>> \in data
 DesiredScore(e) == IF e.absent \/ e.scoreChange THEN e.score ELSE ScoreAt(e)
 EffectiveChange(e) ==
  IF ~e.change THEN FALSE
@@ -262,10 +265,10 @@ Receipt(q) ==
   guardCount |-> Cardinality(EntryIDs(q) \ RequestedChanges(q)),
   selectedCount |-> Cardinality(EntryIDs(q)),
   kind |-> IF Changed(q)={} THEN "noop" ELSE "changed"]
-BatchInit ==
+BatchInitWithMemberRevision(revisions) ==
  /\ EpochInit
  /\ present={m \in Members: \E e \in Seed:e[2]=m /\ e[1]#External}
- /\ memberRevision=[m \in Members |-> 0]
+ /\ memberRevision=revisions
  /\ memberFields=[m \in Members |->
       [f \in FieldNames |->
        IF m \in present /\ m=MoveMember /\ f="status" THEN "ready"
@@ -276,6 +279,15 @@ BatchInit ==
  /\ returned="none" /\ attempt="none"
  /\ cellType=[c \in Cells |-> "zset"]
  /\ permitted=[c \in Cells |-> TRUE]
+BatchInit == BatchInitWithMemberRevision([m \in Members |-> 0])
+\* The runtime counters are separate stored values. This input fixture does
+\* not claim reachability from the all-zero seed: it isolates a member at its
+\* limit while the table has room, so the table guard cannot mask this guard.
+SeededMemberOverflowInit == BatchInitWithMemberRevision(
+ [m \in Members |-> IF m=MoveMember THEN MaxRevision ELSE 0])
+MemberOverflowRequest ==
+ [Normal(1) EXCEPT !.id="op-member-overflow", !.bytes="bytes-member-overflow",
+    !.members[1].revision=MaxRevision]
 \* The replay harness starts from the same constrained finite fixture as TLC.
 \* Flatten the inherited state so a trace comparison cannot omit a field.
 BatchReplayInit == BatchInit
@@ -490,6 +502,14 @@ TableOverflowEventuallyRefused ==
  <> (op="batch-refused" /\ attempt.id=RevisionNoop(3).id /\
      tableRevision[BatchTable]=MaxRevision /\
      (\A m \in Members:memberRevision[m]=0) /\ Len(receipts)=2)
+MemberOverflowNext == step=0 /\ Apply(MemberOverflowRequest)
+MemberOverflowSpec == SeededMemberOverflowInit /\
+ [][MemberOverflowNext \/ (step=MaxSteps /\ UNCHANGED bvars)]_bvars /\
+ WF_bvars(MemberOverflowNext)
+MemberOverflowEventuallyRefused ==
+ <> (op="batch-refused" /\ attempt.id=MemberOverflowRequest.id /\
+     memberRevision[MoveMember]=MaxRevision /\
+     tableRevision[BatchTable]=0 /\ receipts= <<>>)
 RevisionWithinBounds ==
  /\ \A m \in Members:memberRevision[m]<=MaxRevision
  /\ \A t \in Tables:tableRevision[t]<=MaxRevision
@@ -775,7 +795,7 @@ BadAlreadyUnplacedRemoveNext ==
 BadUnplacedMoveNext ==
  (step=0 /\ Apply(Normal(1))) \/
  (step=1 /\ Apply(EarlyRemoveRequest)) \/
- (step=2 /\ ForcedAccept(UnplacedMoveWithScore))
+ (step=2 /\ ForcedAccept(UnplacedMoveRequest))
 BadOverflowNext == OverflowPrefix \/ (step=2 /\ ForcedAccept(OverflowRequest))
 BoundedBad(next) == next \/ (step=MaxSteps /\ UNCHANGED bvars)
 BrokenLateGuardSpec == BatchInit /\ [][BoundedBad(FaultSetup("guard") \/ PartialRefusal(Normal(3)))]_bvars
@@ -800,6 +820,8 @@ BrokenRemoveDeletesRecordSpec == BatchInit /\ [][BoundedBad(BadRemoveDeletesReco
 BrokenSameCellRevisionSpec == BatchInit /\ [][BoundedBad(BadSameCellRevisionNext)]_bvars
 BrokenRemoveFalseAcceptedSpec == BatchInit /\ [][BoundedBad(BadRemoveFalseAcceptedNext)]_bvars
 BrokenSetUnsetAcceptedSpec == BatchInit /\ [][BoundedBad(BadSetUnsetAcceptedNext)]_bvars
+BrokenMemberOverflowSpec == SeededMemberOverflowInit /\
+ [][BoundedBad(step=0 /\ ForcedAccept(MemberOverflowRequest))]_bvars
 BrokenOverflowSpec == BatchInit /\ [][BoundedBad(BadOverflowNext)]_bvars
 BrokenUnplacedMoveSpec == BatchInit /\ [][BoundedBad(BadUnplacedMoveNext)]_bvars
 BrokenAlreadyUnplacedRemoveSpec == BatchInit /\ [][BoundedBad(BadAlreadyUnplacedRemoveNext)]_bvars
