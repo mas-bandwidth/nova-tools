@@ -83,9 +83,9 @@ true of one is true of all:
 nova-config <kind> add <name> --<field> <value> ... --as <friend>
 nova-config <kind> set <name> --<field> <value> ... --as <friend>
 nova-config <kind> remove <name> --as <friend>
-nova-config <kind> list
+nova-config <kind> list [--max <n>]
 nova-config <kind> show <name>
-nova-config <kind> history <name>
+nova-config <kind> history <name> [--max <n>]
 nova-config <kind> <verb> -h
 ```
 
