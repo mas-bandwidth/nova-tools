@@ -18,6 +18,7 @@ make map            # regenerate AGENTS.md and per-directory maps
 | `deprecated/` | tools and modules not in use, kept for reference only; never built, tested or maintained | none | none |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fleet/` | fleet loop units and bench templates | none | none |
+| `future/` | designs of what is not built yet; the living docs do not name them | none | none |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
 | `profiles/` | the darwin sandbox profile template internal/sandbox embeds, and its check script | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
