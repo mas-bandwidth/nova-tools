@@ -1530,11 +1530,29 @@ different runs.
 **The test.** `TestFunctionalImageBaseIsPinnedByDigest`,
 `TestFunctionalImageGoIsTheModulesPin`, `TestFunctionalImageInputsArePinned`,
 `TestFunctionalImageRunsAsTheTierExpects`,
-`TestFunctionalImageCarriesEveryBinaryTheTierExecs` and
+`TestFunctionalImageCarriesEveryBinaryTheTierExecs`,
+`TestFunctionalImageDownloadCheckSeesEveryWayAroundIt`,
+`TestFunctionalImageSourceCheckSeesADeletedInstall` and
 `TestFunctionalImageRuntimeAndReadmeAgree`
-(`internal/ci/functional_image_class_test.go`). The last holds the runtime
-role's probe (`fleet/roles/container-runtime`) to the image's base and to the
-flags of the README's run command.
+(`internal/ci/functional_image_class_test.go`), and
+`TestFunctionalImageReadmeKeepsTheBuildCachePerTrustDomain`,
+`TestFunctionalImageBuildLeavesNothingBehind`,
+`TestContainerRuntimeRefusesRootBeforeItsFirstChange`,
+`TestContainerRuntimeSubidsNeverReuseARange`,
+`TestContainerRuntimeDropInHasItsDirectory` and
+`TestContainerRuntimeProbeValuesAreNumbers`
+(`internal/ci/functional_image_runtime_class_test.go`). The
+`RuntimeAndReadmeAgree` test holds the runtime role's probe
+(`fleet/roles/container-runtime`) to the image's base and to the flags of the
+README's run command. The download check requires every `curl` to use `-f` and
+`-o` and never pipe, forbids `wget` and an `ADD` of a URL, and requires every
+`sha256sum` to be `sha256sum -c -` fed a pinned ARG value; a `source` row is
+read from instructions, comments excluded. The role tests hold that the role
+refuses root before its first change, allocates a subordinate id range after
+every existing one, makes the delegation drop-in's directory (for the runner's
+manager only), computes the probe's cpu.max as a number and probes
+`no-new-privileges` and the dropped capabilities; the README's build cache is
+per trust domain.
 **Its allowlist.** `infra/functional-image/binaries.txt` itself: one row per
 program, checked in both directions, so a program no file runs any more is a
 row to delete.
