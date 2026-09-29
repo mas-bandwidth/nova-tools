@@ -384,11 +384,11 @@ func TestApplyWritesRoutes(t *testing.T) {
 	ap := newFake()
 	route, _ := Lookup(KindRoute)
 	r1, _ := route.NewRow("deepseek-flash", map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "flash"})
-	if _, err := st.Insert(ctx, KindRoute, r1, "rowan"); err != nil {
+	if _, err := st.Insert(ctx, KindRoute, r1, "operator"); err != nil {
 		t.Fatal(err)
 	}
 	var reported []string
-	res, err := Apply(ctx, st, ap, KindRoute, "rowan", false, func(op Op) { reported = append(reported, op.Op+":"+op.Name) })
+	res, err := Apply(ctx, st, ap, KindRoute, "operator", false, func(op Op) { reported = append(reported, op.Op+":"+op.Name) })
 	if err != nil || res.Add != 1 || res.Rev != 1 {
 		t.Fatalf("route apply: %+v %v", res, err)
 	}

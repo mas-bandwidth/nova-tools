@@ -208,7 +208,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		t.Parallel()
 		st := open(t)
 		route, _ := Lookup(KindRoute)
-		id, err := st.Insert(ctx, KindRoute, mk(route, "deepseek-flash", map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "flash"}), "rowan")
+		id, err := st.Insert(ctx, KindRoute, mk(route, "deepseek-flash", map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "flash"}), "operator")
 		if err != nil || id != 1 {
 			t.Fatalf("add route: id %d err %v", id, err)
 		}
@@ -220,7 +220,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		if err != nil || len(rows) != 1 || rows[0].Name != "deepseek-flash" {
 			t.Fatalf("list route: %+v %v", rows, err)
 		}
-		after, id, err := st.Update(ctx, KindRoute, "deepseek-flash", map[string]string{"tier": "pro"}, "stella")
+		after, id, err := st.Update(ctx, KindRoute, "deepseek-flash", map[string]string{"tier": "pro"}, "runner")
 		if err != nil || id != 2 || after.Fields["tier"] != "pro" {
 			t.Fatalf("set route: %+v id %d err %v", after, id, err)
 		}
@@ -228,7 +228,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		if err != nil || rev != 2 {
 			t.Fatalf("rev route: %d %v", rev, err)
 		}
-		id, err = st.Delete(ctx, KindRoute, "deepseek-flash", "rowan")
+		id, err = st.Delete(ctx, KindRoute, "deepseek-flash", "operator")
 		if err != nil || id != 3 {
 			t.Fatalf("remove route: id %d err %v", id, err)
 		}

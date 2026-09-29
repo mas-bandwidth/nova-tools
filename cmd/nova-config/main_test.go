@@ -557,7 +557,7 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
-	h.env["NOVA_FRIEND"] = "emma"
+	h.env["NOVA_FRIEND"] = "operator"
 	step := func(want int, args ...string) (string, string) {
 		t.Helper()
 		code, out, errs := h.run(t, args...)
@@ -640,7 +640,7 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 
 	out, _ = step(0, "route", "history", "claude")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "HISTORY id=3 kind=route name=claude op=add actor=emma at=") || !strings.HasSuffix(lines[1], " tier=frontier>pro") || lines[2] != "CONFIG HISTORY kind=route name=claude changes=2" {
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "HISTORY id=3 kind=route name=claude op=add actor=operator at=") || !strings.HasSuffix(lines[1], " tier=frontier>pro") || lines[2] != "CONFIG HISTORY kind=route name=claude changes=2" {
 		t.Fatalf("route history:\n%s", out)
 	}
 
