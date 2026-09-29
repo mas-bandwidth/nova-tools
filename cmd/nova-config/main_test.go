@@ -102,10 +102,12 @@ type harness struct {
 	redis *fakeRedis
 	env   map[string]string
 	opens int
+	// hostname is what the machine reports as its own name.
+	hostname string
 }
 
 func newHarness() *harness {
-	return &harness{store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
 }
 
 func (h *harness) deps() deps {
@@ -120,6 +122,7 @@ func (h *harness) deps() deps {
 		},
 		openRedis: func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
 		now:       func() time.Time { return time.Unix(1700000000, 0) },
+		hostname:  func() (string, error) { return h.hostname, nil },
 	}
 }
 
@@ -559,7 +562,7 @@ func TestInventoryVerb(t *testing.T) {
 	h := newHarness()
 	h.env["NOVA_PG_DSN"] = dsn
 	h.env["NOVA_FRIEND"] = "operator"
-	h.env["FLEET_SELF"] = "bench-alpha"
+	h.env["NOVA_MACHINE"] = "bench-alpha"
 
 	step := func(want int, args ...string) (string, string) {
 		t.Helper()
@@ -816,5 +819,64 @@ func TestInventoryBadFlagsAreRefusedBeforeTheStoreIsOpened(t *testing.T) {
 		if h.opens != 0 {
 			t.Fatalf("%v: opened the store %d times before refusing", tc.args, h.opens)
 		}
+	}
+}
+
+// localMachines is the machines of an inventory that carry
+// ansible_connection=local.
+func localMachines(t *testing.T, out string) []string {
+	t.Helper()
+	var inv config.AnsibleInventory
+	if err := json.Unmarshal([]byte(out), &inv); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	var local []string
+	for _, n := range inv.All.Hosts {
+		if inv.Meta.Hostvars[n]["ansible_connection"] == "local" {
+			local = append(local, n)
+		}
+	}
+	return local
+}
+
+func TestInventoryLocalMachineComesFromNovaMachine(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 3)
+	h.env["NOVA_MACHINE"] = "bench-02"
+	code, out, errs := h.run(t, "inventory")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d stderr %q", code, errs)
+	}
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-02" {
+		t.Fatalf("NOVA_MACHINE=bench-02 marks %v local", got)
+	}
+}
+
+func TestInventoryLocalMachineFallsBackToTheShortHostname(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 3)
+	h.hostname = "bench-03.tailnet.example"
+	_, out, _ := h.run(t, "inventory")
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-03" {
+		t.Fatalf("hostname bench-03.tailnet.example marks %v local", got)
+	}
+	// NOVA_MACHINE outranks the hostname.
+	h.env["NOVA_MACHINE"] = "bench-01"
+	_, out, _ = h.run(t, "inventory")
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-01" {
+		t.Fatalf("NOVA_MACHINE=bench-01 with hostname bench-03 marks %v local", got)
+	}
+}
+
+func TestInventoryIgnoresTheOldFleetSelfName(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.env["FLEET_SELF"] = "bench-01"
+	_, out, _ := h.run(t, "inventory")
+	if got := localMachines(t, out); len(got) != 0 {
+		t.Fatalf("FLEET_SELF still marks %v local", got)
 	}
 }

@@ -1705,7 +1705,7 @@ nova-config kinds                                                        # every
 nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
 nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
 nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
-nova-config inventory [--pg <dsn>] [--list] [--host <name>]              # print an Ansible dynamic JSON inventory (_meta.hostvars and groups) from the machine rows
+nova-config inventory [--pg <dsn>] [--list | --host <name>]            # print an Ansible dynamic JSON inventory (_meta.hostvars and groups) from the machine rows
 nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
 nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
 nova-config <kind> remove <name> --as <friend>                           # delete the row

@@ -53,6 +53,7 @@ const (
 	envSprintRedis = "NOVA_SPRINT_REDIS"
 	envRedisAddr   = "NOVA_REDIS_ADDR"
 	envActor       = "NOVA_FRIEND"
+	envMachine     = "NOVA_MACHINE"
 )
 
 const usageTop = `nova-config: the fleet's permanent configuration, in Postgres, applied into Redis (see docs/CLI.md)
@@ -64,7 +65,8 @@ usage:
   nova-config migrate [--pg <dsn>] [--print]
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
-  nova-config inventory [--pg <dsn>] [--list] [--host <name>]
+  nova-config inventory [--pg <dsn>] [--list | --host <name>]
+      env NOVA_MACHINE is the machine row this process runs on (the short hostname when unset); that host gets ansible_connection=local
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -161,6 +163,7 @@ type deps struct {
 	openStore func(ctx context.Context, dsn string) (pgStore, error)
 	openRedis func(ctx context.Context, addr string) (redisSide, error)
 	now       func() time.Time
+	hostname  func() (string, error)
 }
 
 type redisApplier struct {
@@ -183,7 +186,8 @@ func realDeps() deps {
 			}
 			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
 		},
-		now: time.Now,
+		now:      time.Now,
+		hostname: os.Hostname,
 	}
 }
 
@@ -889,13 +893,13 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	return 0
 }
 
-// localHost resolves the short hostname of the machine executing the command,
-// used by inventory to set ansible_connection=local for the control node itself.
-func localHost(getenv func(string) string) string {
-	if s := getenv("FLEET_SELF"); s != "" {
+// localHost is the machine row this process runs on, which inventory marks
+// ansible_connection=local: the env NOVA_MACHINE, else the short hostname.
+func localHost(getenv func(string) string, hostname func() (string, error)) string {
+	if s := getenv(envMachine); s != "" {
 		return s
 	}
-	if h, err := os.Hostname(); err == nil {
+	if h, err := hostname(); err == nil {
 		return strings.Split(h, ".")[0]
 	}
 	return ""
@@ -934,7 +938,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	inv, err := config.BuildInventory(ctx, st, localHost(d.getenv))
+	inv, err := config.BuildInventory(ctx, st, localHost(d.getenv, d.hostname))
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
