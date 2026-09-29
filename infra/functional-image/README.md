@@ -108,12 +108,28 @@ user as "other", so it is world-readable.
 | `--cpus` | the run takes no more cores than it was given |
 | `--security-opt no-new-privileges` | no process in the run gains privilege through a setuid binary (the base image carries `su`, `passwd` and `mount`) |
 | `--cap-drop all` | the run holds no capability; the fixtures need none as the `bench` user |
-| `--read-only` | the image is not written; only the tmpfs mounts and the named cache volume are |
+| `--read-only` | the image is not written; the writable places are listed under "Where a run can write" |
 | `--tmpfs /tmp` | test directories and built test binaries live in memory and are gone at exit; `exec` because test binaries run from there |
 | `--tmpfs /home/bench` | a writable home, in memory; `mode=1777` because podman does not take a `uid` option here |
 | `-v …:/src:ro` | a test cannot change the tree it tests |
 | `-v nova-gocache-<domain>:/gocache` | the build cache: warm runs compile nothing. One volume per trust domain and one writer at a time (see below) |
 | `-v nova-gomod:/gomodcache:ro` | the complete module cache, read only |
+
+### Where a run can write
+
+With `--read-only` the test user (`bench`) can write in these places and no
+other:
+
+| place | what | size |
+|---|---|---|
+| `/tmp` | the `--tmpfs` mount: test directories and test binaries | 2 GB, counted in `--memory` |
+| `/home/bench` | the `--tmpfs` mount: the home directory | 1 GB, counted in `--memory` |
+| `/gocache` | the build cache volume, on disk, not counted in `--memory` (see below) | none |
+| `/var/tmp` | a tmpfs that `--read-only` adds; podman gives it no size option | no size limit of its own; a run that fills it is stopped by `--memory` or not at all, and that has not been measured |
+| `/dev/shm` | the container's own shared memory, which Postgres uses | 64 MB |
+
+`/run` is also a tmpfs that `--read-only` adds, and `bench` cannot write to it.
+`/src` and `/gomodcache` are read only mounts, and `/` is read only.
 
 ### The build cache
 

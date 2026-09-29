@@ -728,6 +728,31 @@ func aptInstalls(containerfile, pkg string) bool {
 	return false
 }
 
+// TestFunctionalImageReadmeNamesEveryWritablePlace: --read-only leaves a
+// writable /var/tmp and /dev/shm (and a /run the test user cannot write), so
+// the README names them beside the mounts the run command makes, and never
+// says only the tmpfs mounts and the cache are writable.
+func TestFunctionalImageReadmeNamesEveryWritablePlace(t *testing.T) {
+	t.Parallel()
+	readme := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageReadme)))
+	i := strings.Index(readme, "### Where a run can write")
+	if i < 0 {
+		t.Fatalf("%s has no \"Where a run can write\" section", functionalImageReadme)
+	}
+	section := readme[i:]
+	if j := strings.Index(section[3:], "\n### "); j >= 0 {
+		section = section[:j+3]
+	}
+	for _, want := range []string{"`/tmp`", "`/home/bench`", "`/gocache`", "`/var/tmp`", "`/dev/shm`", "`/run`", "Postgres"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s: the writable places do not name %s", functionalImageReadme, want)
+		}
+	}
+	if strings.Contains(readme, "only the tmpfs mounts and the named cache volume are") {
+		t.Errorf("%s still says only the tmpfs mounts and the cache volume are writable", functionalImageReadme)
+	}
+}
+
 // TestFunctionalImageRuntimeAndReadmeAgree: the runtime role probes with the
 // image's base and with the flags the README's run command uses, so what the
 // probe proves is what a run relies on.

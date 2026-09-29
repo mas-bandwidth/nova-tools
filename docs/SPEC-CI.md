@@ -1538,6 +1538,7 @@ different runs.
 `TestFunctionalImageReadmeKeepsTheBuildCachePerTrustDomain`,
 `TestFunctionalImageBuildLeavesNothingBehind`,
 `TestFunctionalImageRootUserSpellings`,
+`TestFunctionalImageReadmeNamesEveryWritablePlace`,
 `TestFunctionalImageReadmeRunCommandCarriesEveryFlag`,
 `TestContainerRuntimeRefusesRootBeforeItsFirstChange`,
 `TestContainerRuntimeSubidsNeverReuseARange`,
