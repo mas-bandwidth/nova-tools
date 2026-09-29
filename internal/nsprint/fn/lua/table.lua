@@ -1708,7 +1708,7 @@ do
           if not T.word(key) then return nil, "invalid field name: " .. key end
           val_ctx = 'string'
         else
-          return nil, "unexpected object context: " .. tostring(ctx)
+          return nil, "an object is not allowed here"
         end
 
         skip_ws()
