@@ -42,8 +42,9 @@ type CheckReport struct {
 // reported: in flight when it is younger than the grace, cut (a violation)
 // when it is older.
 func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Snapshot, error) {
+	ctx = withBudget(ctx)
 	var rep CheckReport
-	quiet := st.retry()
+	quiet := st.retry(ctx)
 	for i := 0; i < max(reads, 1); i++ {
 		rep.Reads++
 		f, err := st.B.ReadFence(ctx)
@@ -208,7 +209,7 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	if err != nil {
 		return v, err
 	}
-	v.Groups = sprint.Inbox(sprint.InboxReq{Now: st.Now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale})
+	v.Groups = sprint.Inbox(sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale})
 	return v, nil
 }
 

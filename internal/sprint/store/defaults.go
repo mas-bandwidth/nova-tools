@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	mrand "math/rand/v2"
@@ -25,15 +26,42 @@ const (
 	backoffCap  = time.Second
 )
 
-// retry is one retry loop's tries, waits and the time it has slept.
+// retry is one retry loop's tries and waits, and the step's budget it sleeps
+// from.
 type retry struct {
 	st    *Store
 	tries int
 	waits int
-	slept time.Duration
+	b     *budget
 }
 
-func (st *Store) retry() *retry { return &retry{st: st} }
+// budget is one step's time asleep: every retry loop of the step (the table
+// reads, the fence, the plans) sleeps from it, so a step as a whole sleeps at
+// most RetryBudget.
+type budget struct{ slept time.Duration }
+
+type budgetKey struct{}
+
+// withBudget gives ctx a step's budget, unless it carries one already.
+func withBudget(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(budgetKey{}).(*budget); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, budgetKey{}, &budget{})
+}
+
+// retry is a retry loop that sleeps from ctx's step budget (a budget of its
+// own when ctx carries none).
+func (st *Store) retry(ctx context.Context) *retry {
+	b, ok := ctx.Value(budgetKey{}).(*budget)
+	if !ok {
+		b = &budget{}
+	}
+	return &retry{st: st, b: b}
+}
+
+// slept is the time the step has slept so far.
+func (r *retry) slept() time.Duration { return r.b.slept }
 
 // next is asked before every try: the first goes at once, a later one waits
 // first. It is false, with nothing slept, when the tries are spent or the
@@ -55,11 +83,11 @@ func (r *retry) wait() bool {
 		step = backoffBase << r.waits
 	}
 	d := time.Duration(r.st.jitter(int64(step)))
-	if r.slept+d > RetryBudget {
+	if r.b.slept+d > RetryBudget {
 		return false
 	}
 	r.waits++
-	r.slept += d
+	r.b.slept += d
 	r.st.sleep(d)
 	return true
 }
@@ -83,6 +111,14 @@ func (st *Store) sleep(d time.Duration) {
 		return
 	}
 	time.Sleep(d)
+}
+
+// now is Store.Now when set, else the clock.
+func (st *Store) now() time.Time {
+	if st.Now != nil {
+		return st.Now()
+	}
+	return time.Now()
 }
 
 // newID is Store.NewID when set, else NewID.

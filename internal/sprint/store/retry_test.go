@@ -154,7 +154,7 @@ func TestAZeroStoreHasWorkingDefaults(t *testing.T) {
 	if err != nil || res.Op == "" {
 		t.Fatalf("run: %+v %v", res, err)
 	}
-	r := st.retry()
+	r := st.retry(context.Background())
 	st.Rand = func(int64) int64 { return 0 } // time.Sleep(0): the default sleeps, it does not spin on nil
 	if !r.next(2) || !r.next(2) || r.next(2) {
 		t.Fatal("two tries, then none")
@@ -197,5 +197,28 @@ func TestFreshStoresGenerateDifferentOperationIDs(t *testing.T) {
 		if s.MemberCtl(id) == nil || s.MemberCtl(id).F("status") != sprint.Up {
 			t.Fatalf("%s is not up: the second step was swallowed", id)
 		}
+	}
+}
+
+// One budget per step: the retry loops of a step (the reads, the fence, the
+// plans) sleep from one budget, so the step sleeps at most RetryBudget in all.
+func TestOneBudgetPerStep(t *testing.T) {
+	t.Parallel()
+	st := &Store{Sleep: func(time.Duration) {}, Rand: func(n int64) int64 { return n - 1 }}
+	ctx := withBudget(context.Background())
+	a, b := st.retry(ctx), st.retry(ctx)
+	for a.next(1000) {
+	}
+	if a.slept() > RetryBudget || a.slept() < RetryBudget-backoffCap {
+		t.Fatalf("the first loop slept %s", a.slept())
+	}
+	before := a.slept()
+	for b.next(1000) {
+	}
+	if b.slept() > RetryBudget || b.slept() < before || a.slept() != b.slept() {
+		t.Fatalf("two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
+	}
+	if other := st.retry(context.Background()); !other.next(2) || !other.next(2) {
+		t.Fatalf("another step has a budget of its own")
 	}
 }

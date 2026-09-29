@@ -5,7 +5,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -27,10 +26,8 @@ func liveStore(t *testing.T) (*Store, *redis.Client) {
 	if err := fn.Load(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-	n := 0
 	names := sprint.Names{Prefix: "f-"}
-	st := &Store{B: &Redis{C: c, Names: names, Now: time.Now}, Names: names, Actor: "functional", Now: time.Now,
-		NewID: func() string { n++; return fmt.Sprint(n) }}
+	st := &Store{B: &Redis{C: c, Names: names, Now: time.Now}, Names: names, Actor: "functional"}
 	if err := st.Init(ctx); err != nil {
 		t.Fatal(err)
 	}

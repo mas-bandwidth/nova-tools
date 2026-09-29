@@ -29,7 +29,7 @@ func (e *movedError) Error() string { return "table " + e.table + " changed whil
 // extras names records to read as well (unplaced ones included), by table.
 func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
 	var last *movedError
-	r := st.retry()
+	r := st.retry(ctx)
 	for r.next(LoadTries) {
 		s, err := st.loadOnce(ctx, tables, extras)
 		var moved *movedError
@@ -40,11 +40,11 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 		return s, err
 	}
 	return nil, fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
-		last.table, r.tries, r.slept.Round(time.Millisecond))
+		last.table, r.tries, r.slept().Round(time.Millisecond))
 }
 
 func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	s := &sprint.Snapshot{Now: st.Now()}
+	s := &sprint.Snapshot{Now: st.now()}
 	stored := make([]string, len(tables))
 	for i, t := range tables {
 		stored[i] = st.Names.Table(t)

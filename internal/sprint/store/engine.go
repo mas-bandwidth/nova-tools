@@ -196,7 +196,7 @@ func (st *Store) grace() time.Duration {
 // pending operation first: the snapshot is no partial state of any operation,
 // and gen is the fence's generation it was read at.
 func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, error) {
-	r := st.retry()
+	r := st.retry(ctx)
 	for r.next(st.attempts()) {
 		f, err := st.B.ReadFence(ctx)
 		if err != nil {
@@ -208,7 +208,7 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 				return nil, 0, err
 			}
 			if r.Done == "open" {
-				if st.Now().Sub(f.Pending.At) < st.grace() {
+				if st.now().Sub(f.Pending.At) < st.grace() {
 					continue // in flight: its writer is at it
 				}
 				return nil, 0, &PendingError{Op: r.Op, Why: r.Detail}
@@ -231,11 +231,12 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 		}
 		return snap, f.Gen, nil
 	}
-	return nil, 0, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept.Round(time.Millisecond))
+	return nil, 0, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
 }
 
 // Run plans and applies a step as one operation.
 func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
+	ctx = withBudget(ctx)
 	res := Result{Verb: step.Verb, Args: step.Args}
 	if step.CallerOp != "" {
 		if raw, ok, err := st.B.Done(ctx, step.CallerOp); err != nil {
@@ -249,7 +250,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
 	rowsAdded := false
-	plans := st.retry()
+	plans := st.retry(ctx)
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		snap, gen, err := st.Fenced(ctx, step.Load, step.Extras, &res.Repaired)
@@ -861,10 +862,10 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 		if i == 0 {
 			// a first manifest refused on a bound or a rule can never apply:
 			// it is abandoned at once, whoever its writer is
-			if st.Now().Sub(op.At) < st.grace() && curable(err, man) {
+			if st.now().Sub(op.At) < st.grace() && curable(err, man) {
 				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "in flight: its first manifest has not applied yet"}, nil
 			}
-			if err := st.B.Release(ctx, abandonment(op, st.Actor, st.Now()), true); err != nil {
+			if err := st.B.Release(ctx, abandonment(op, st.Actor, st.now()), true); err != nil {
 				return r, err
 			}
 			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairAbandoned, Detail: "its first manifest never applied: " + err.Error()}, nil
@@ -1014,7 +1015,7 @@ func (st *Store) withSkips(op OpRecord, skips []Skip) OpRecord {
 	sort.Strings(prims)
 	n := sprint.Note{ID: op.ID + ".skip", Kind: sprint.Judgment, Type: NRepairSkipped, Primaries: prims, Count: len(prims),
 		What: fmt.Sprintf("repair of %s (%s) skipped %d entries the store refused as recorded: %s", op.ID, op.Verb, len(skips), strings.Join(lines, "; ")),
-		Who:  st.Actor, At: st.Now(), Decisions: append([]string(nil), RepairSkippedDecisions...)}
+		Who:  st.Actor, At: st.now(), Decisions: append([]string(nil), RepairSkippedDecisions...)}
 	op.Notes = append(append([]sprint.Note(nil), op.Notes...), n)
 	var res Result
 	if op.Result != "" && json.Unmarshal([]byte(op.Result), &res) == nil {

@@ -106,7 +106,11 @@ func (r *Redis) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Recei
 }
 
 func (r *Redis) Create(ctx context.Context, t ntable.Table) error {
-	return ntable.Create(ctx, r.C, t, r.Now())
+	now := time.Now
+	if r.Now != nil {
+		now = r.Now
+	}
+	return ntable.Create(ctx, r.C, t, now())
 }
 
 func (r *Redis) RowsAdd(ctx context.Context, table string, rows []string) error {
