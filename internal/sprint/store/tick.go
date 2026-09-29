@@ -392,6 +392,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		return last, err
 	}
 	if f.Pending != nil && st.now().Sub(f.Pending.At) >= st.grace() {
+		if _, left, err := st.left(ctx); err != nil || left {
+			if left {
+				res.Stale = fmt.Sprintf("the sprint was cleared before the tick's repair (epoch %d): the tick stops here", st.epoch)
+			}
+			return last, err
+		}
 		rr, err := st.Repair(ctx)
 		res.Repaired = rr
 		if err != nil {
@@ -411,9 +417,14 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	} else if ok {
 		// A stuck operation repaired since: its judgment, once, by a step
 		// that writes nothing else.
-		r, err := st.Run(ctx, Step{Verb: "tick stuck", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
+		at := st.epoch
+		r, err := st.Run(ctx, Step{Verb: "tick stuck", Epoch: &at, Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
 		if err != nil {
 			return last, fmt.Errorf("tick stuck: %w", err)
+		}
+		if staleRefusal(r.Refused, at) {
+			res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d): the tick stops here", at)
+			return last, nil
 		}
 		res.Parts = append(res.Parts, PartResult{Name: "stuck", Result: r})
 	}
@@ -454,6 +465,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		}
 		r, err := st.Run(ctx, TickPartStep(part.Name, part.Fn, req, &at, nil))
 		dirty = true
+		var cleared *ClearedError
+		if errors.As(err, &cleared) {
+			// the clear finished this part at the epoch it closed
+			res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d) as the part %s finished: the tick stops here", at, part.Name)
+			return last, nil
+		}
 		if len(r.Moved) > 0 || len(r.Refused) > 0 || r.Notes > 0 || len(r.Repaired) > 0 {
 			res.Parts = append(res.Parts, PartResult{Name: part.Name, Result: r})
 		}

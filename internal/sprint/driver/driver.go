@@ -74,7 +74,15 @@ type Driver struct {
 	Out    io.Writer
 	Config Config
 	downed map[string]bool // members this driver took down and has not brought up
+	// held is the sprint's epoch the driver read at its start: every verb it
+	// runs that writes carries it. cleared says a verb was refused because
+	// the sprint left it: the driver stops, running nothing more.
+	held    uint64
+	cleared bool
 }
+
+// clearedMark is how a verb holding an epoch the sprint has left says so.
+const clearedMark = "the sprint was cleared at"
 
 // coordinatorVerbs are never run by the driver: the coordinator's, and the
 // machine's.
@@ -87,9 +95,15 @@ func (d *Driver) run(quiet bool, args ...string) (int, string) {
 	if coordinatorVerbs[args[0]] {
 		panic("the driver never runs the coordinator's verb " + args[0])
 	}
+	if d.cleared {
+		return 1, ""
+	}
 	full := append(append([]string{}, args...), d.Base...)
 	var out, errb bytes.Buffer
 	code := d.Run(full, &out, &errb)
+	if code != 0 && strings.Contains(out.String()+errb.String(), clearedMark) {
+		d.cleared = true
+	}
 	if !quiet {
 		fmt.Fprintf(d.Out, "  %-60s %s\n", commandLine(full), short(args[0], out.String()+errb.String(), code))
 	}
@@ -221,10 +235,17 @@ func (d *Driver) Loop() (string, error) {
 	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") {
 		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
+	d.held = first.Epoch
 	for tick := 1; c.Ticks == 0 || tick <= c.Ticks; tick++ {
 		var w where
 		if !d.read(&w, "where") {
 			return "", fmt.Errorf("tick %d: the view could not be read: run: %s", tick, commandLine(append([]string{"where"}, d.Base...)))
+		}
+		if w.Epoch != d.held {
+			d.cleared = true
+		}
+		if d.cleared {
+			return d.stopCleared(), nil
 		}
 		if landed(w) {
 			fmt.Fprintf(d.Out, "every stream has landed: %s\n", w.Summary)
@@ -233,6 +254,9 @@ func (d *Driver) Loop() (string, error) {
 		}
 		fmt.Fprintf(d.Out, "tick %d %s\n", tick, d.Clock.Now().Format("15:04:05"))
 		d.tick(tick, c, w)
+		if d.cleared {
+			return d.stopCleared(), nil
+		}
 		d.waits()
 		var after where
 		if d.read(&after, "where") {
@@ -249,8 +273,17 @@ func (d *Driver) Loop() (string, error) {
 	return "ticks", nil
 }
 
+// stopCleared is the driver stopping at a clear: the sprint left the epoch it
+// holds, so it writes nothing more and brings up no member (the new epoch's
+// fleet is the clear's).
+func (d *Driver) stopCleared() string {
+	fmt.Fprintf(d.Out, "the sprint was cleared: this driver holds epoch %d, which the sprint has left; it stops without writing; run: nova-sprint where\n", d.held)
+	return "cleared"
+}
+
 // restore brings up every member this driver took down, so a run never ends
-// with the fleet short of what it started with.
+// with the fleet short of what it started with. Each fleet up holds the
+// driver's epoch: after a clear it is refused.
 func (d *Driver) restore() {
 	var ms []string
 	for m := range d.downed {
@@ -258,7 +291,7 @@ func (d *Driver) restore() {
 	}
 	sort.Strings(ms)
 	for _, m := range ms {
-		if code, _ := d.run(false, "fleet", "up", m); code == 0 {
+		if code, _ := d.run(false, "fleet", "up", m, "--epoch", strconv.FormatUint(d.held, 10)); code == 0 {
 			delete(d.downed, m)
 		}
 	}
@@ -277,10 +310,9 @@ func landed(w where) bool {
 }
 
 func (d *Driver) tick(tick int, c Config, w where) {
-	// The workers', readers' and merge step's verbs hold the epoch the tick
-	// read: a clear since refuses them, naming it, and nothing of the old
-	// epoch lands in the new one.
-	held := []string{"--epoch", strconv.FormatUint(w.Epoch, 10)}
+	// Every verb that writes holds the driver's epoch: a clear since refuses
+	// it, naming the clear, and nothing of the old epoch lands in the new one.
+	held := []string{"--epoch", strconv.FormatUint(d.held, 10)}
 	// Members up and down, as the facts say.
 	fleet := w.Tables["fleet"]
 	members := sortedRows(fleet)
@@ -292,11 +324,11 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	for _, m := range members {
 		switch {
 		case next[m] && !up[m]:
-			if code, _ := d.run(false, "fleet", "up", m); code == 0 {
+			if code, _ := d.run(false, append([]string{"fleet", "up", m}, held...)...); code == 0 {
 				delete(d.downed, m)
 			}
 		case !next[m] && up[m]:
-			if code, _ := d.run(false, "fleet", "down", m); code == 0 {
+			if code, _ := d.run(false, append([]string{"fleet", "down", m}, held...)...); code == 0 {
 				if d.downed == nil {
 					d.downed = map[string]bool{}
 				}
