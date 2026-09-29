@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // captureStageLine redirects os.Stdout around fn and returns the first line fn prints that
@@ -98,7 +100,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "vision",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -122,7 +124,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "vision",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -154,7 +156,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "hulk",
+			benchName:    "bench-1",
 			stageTimeout: 1 * time.Nanosecond,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -172,7 +174,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			t.Fatalf("RESULT.md not written on stage timeout: %v", err)
 		}
 		resultLines := strings.Split(string(resultBytes), "\n")
-		expectedLine1 := "RESULT: BLOCKED stage-timeout hulk 1"
+		expectedLine1 := "RESULT: BLOCKED stage-timeout bench-1 1"
 		if resultLines[0] != expectedLine1 {
 			t.Fatalf("expected RESULT.md line 1 %q, got %q", expectedLine1, resultLines[0])
 		}
@@ -188,7 +190,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 	})
 }
 
-// TestStageOKLinePrintsOnSuccessfulStage is nova-tools#3050: the rowan-tools #187 launcher
+// TestStageOKLinePrintsOnSuccessfulStage is nova-tools#3050: the launcher (#187)
 // detaches 2s after it sees a STAGE OK line on stdout instead of waiting the full 135s.
 // #3050's staging returned silently, so every launch waited out the timeout and printed
 // STAGE UNSEEN even though staging had already finished. RED WITHOUT THE FIX: nativeRun
@@ -229,7 +231,7 @@ func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "vision",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -241,7 +243,7 @@ func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
 	if !strings.HasPrefix(line, "STAGE OK ") {
 		t.Fatalf("expected a STAGE OK line, got %q", line)
 	}
-	for _, want := range []string{"bench=vision", "repo=https://example.com/mas-bandwidth/sample-repo.git", "base=" + headSha[:8], "secs="} {
+	for _, want := range []string{"bench=bench-1", "repo=https://example.com/mas-bandwidth/sample-repo.git", "base=" + headSha[:8], "secs="} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("STAGE OK line missing %q:\n%s", want, line)
 		}
@@ -268,7 +270,7 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "vision",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -280,7 +282,7 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 	if !strings.HasPrefix(line, "STAGE FAIL ") {
 		t.Fatalf("expected a STAGE FAIL line, got %q", line)
 	}
-	if !strings.Contains(line, "bench=vision") || !strings.Contains(line, "repo=https://example.com/mas-bandwidth/missing-mirror.git") {
+	if !strings.Contains(line, "bench=bench-1") || !strings.Contains(line, "repo=https://example.com/mas-bandwidth/missing-mirror.git") {
 		t.Fatalf("STAGE FAIL line missing bench/repo fields:\n%s", line)
 	}
 }
@@ -289,7 +291,7 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 // header is `REPO: mas-bandwidth/nova-tools` / `BASE: dev` / `base-sha: <sha>` (the header
 // every pushed card carries) is staged into <job>/repo at that sha from the bench mirror
 // before the model starts, and STAGE OK names the repo and the 8-char sha. RED WITHOUT THE
-// FIX: `STAGE OK bench=vision repo= base= secs=0` and no <job>/repo, as on all 12 quack-0925b
+// FIX: `STAGE OK bench=bench-1 repo= base= secs=0` and no <job>/repo, as on all 12 quack-0925b
 // cards.
 func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	bin := nativeHarness(t)
@@ -319,9 +321,9 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	runGit(t, root, "clone", "--mirror", "-q", srcDir, mirrorDir)
 	base := shas[0] // the older commit: the check is the sha, not the mirror's tip
 
-	cardText := []byte("RESULT: s00-0302-quack-hulk-flash sha=" + base[:12] + "\n" +
+	cardText := []byte("RESULT: s00-0302-quack-bench-flash sha=" + base[:12] + "\n" +
 		"KIND: fix\nTYPE: code\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n" +
-		"base-sha: " + base + "\nPATHS: docs/quack/s00-0302-quack-hulk-flash.txt\n")
+		"base-sha: " + base + "\nPATHS: docs/quack/s00-0302-quack-bench-flash.txt\n")
 	var errOut bytes.Buffer
 	var code int
 	line := captureStageLine(t, func() {
@@ -333,7 +335,7 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "vision",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -345,7 +347,7 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	if !strings.HasPrefix(line, "STAGE OK ") {
 		t.Fatalf("expected a STAGE OK line, got %q", line)
 	}
-	for _, want := range []string{"bench=vision", "/mas-bandwidth/nova-tools.git", "base=" + base[:8]} {
+	for _, want := range []string{"bench=bench-1", "/mas-bandwidth/nova-tools.git", "base=" + base[:8]} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("STAGE OK line missing %q:\n%s", want, line)
 		}
@@ -354,8 +356,12 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	if head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD")); head != base {
 		t.Fatalf("<job>/repo HEAD = %s, want base-sha %s", head, base)
 	}
-	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != "rowan/s00-0302-quack-hulk-flash" {
-		t.Fatalf("<job>/repo is on %q, want the card's branch rowan/s00-0302-quack-hulk-flash", branch)
+	wantBranch := swarm.CardStageBranch(cardText)
+	if wantBranch == "" || wantBranch == swarm.CardStageBranch(nil) {
+		t.Fatalf("the card's branch is %q, want one derived from its label", wantBranch)
+	}
+	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != wantBranch {
+		t.Fatalf("<job>/repo is on %q, want the card's branch %q", branch, wantBranch)
 	}
 }
 
@@ -380,7 +386,7 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "hulk",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,
@@ -389,8 +395,8 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected refusal exit 2, got %d:\n%s", code, errOut.String())
 	}
-	if !strings.HasPrefix(line, "STAGE FAIL ") || !strings.Contains(line, "reason=no-repo-staged") || !strings.Contains(line, "bench=hulk") || !strings.Contains(line, "repo=nova-tools") {
-		t.Fatalf("expected STAGE FAIL bench=hulk repo=nova-tools ... reason=no-repo-staged, got %q", line)
+	if !strings.HasPrefix(line, "STAGE FAIL ") || !strings.Contains(line, "reason=no-repo-staged") || !strings.Contains(line, "bench=bench-1") || !strings.Contains(line, "repo=nova-tools") {
+		t.Fatalf("expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
 	}
 	if !strings.Contains(errOut.String(), "nothing was staged") {
 		t.Fatalf("refusal does not name the cause:\n%s", errOut.String())
@@ -408,7 +414,7 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 			slotDir:      slot,
 			root:         root,
 			benchHome:    benchHome,
-			benchName:    "hulk",
+			benchName:    "bench-1",
 			stageTimeout: 30 * time.Second,
 			deadline:     30 * time.Second,
 			noWall:       true,

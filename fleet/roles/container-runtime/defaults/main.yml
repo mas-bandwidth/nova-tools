@@ -1,0 +1,55 @@
+---
+# The user whose containers these are: the runner user. The play connects as
+# this user by default. When it connects as another, the tasks that run podman
+# become this user.
+container_runtime_user: "{{ ansible_facts['user_id'] }}"
+# The lowest uid the role acts for. Root is refused whatever this is set to.
+container_runtime_min_uid: 1000
+
+# The distribution's packages for rootless, daemonless podman. Recommended
+# packages come with them by default (the rootless helpers, the init and the
+# user bus are recommends); set false only where the set below is known enough.
+container_runtime_packages:
+  - podman
+  - uidmap
+  - passt
+  - crun
+  - conmon
+  - netavark
+  - aardvark-dns
+  - catatonit
+  - dbus-user-session
+container_runtime_install_recommends: true
+
+# Subordinate id range for the user when /etc/subuid or /etc/subgid has no row
+# for it. The range starts at container_runtime_subid_start or, when another
+# user's range in the file reaches that far, right after the highest range in the
+# file, so it never overlaps another user's. An existing row is never changed;
+# one that overlaps another user's row, or is shorter than the count a rootless
+# user namespace needs, fails the play.
+container_runtime_subid_start: 100000
+container_runtime_subid_count: 65536
+
+# Controllers a rootless container's limits need delegated to the user's
+# systemd manager (cgroup v2): pids for --pids-limit, memory for --memory, cpu
+# for --cpus.
+container_runtime_controllers:
+  - cpu
+  - memory
+  - pids
+
+# The probe: a trivial container run with the limits a functional run uses.
+# The image is the base of the functional image (infra/functional-image/
+# Containerfile); a class test holds the two equal. The play pulls it once when
+# the host does not have it.
+container_runtime_probe_image: "docker.io/library/ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
+container_runtime_probe_name: "nova-runtime-probe"
+container_runtime_probe_pids: 128
+container_runtime_probe_memory_bytes: 268435456
+container_runtime_probe_cpus: 2
+# The runtime's own bound on the probe container, in seconds, and the bound it
+# is proved against: a container that sleeps past --timeout is gone within
+# container_runtime_probe_grace seconds of it.
+container_runtime_probe_timeout: 60
+container_runtime_probe_kill_after: 3
+container_runtime_probe_grace: 20

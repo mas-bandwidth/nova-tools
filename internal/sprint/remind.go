@@ -162,9 +162,9 @@ func RemindNotes(s *Snapshot, g Goals, who string) Plan {
 			continue
 		}
 		conds = append(conds, cond{typ: NRemindFailed, streamLevel: true, what: FailureWhat(p),
-			decisions: []string{"goal set " + p.Name + " --to <route>", "goal drop " + p.Name}})
+			decisions: []string{"goal set " + p.Name + " --to <route>", "goal drop " + p.Name, "ack"}})
 	}
 	var p Plan
-	notify(&p, s, conds, []string{NRemindFailed}, who)
+	notify(&p, s, conds, []string{NRemindFailed}, TickReq{Who: who})
 	return p
 }

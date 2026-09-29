@@ -74,9 +74,21 @@ type PG struct {
 	db *sql.DB
 }
 
+// ConnectTimeout bounds the connection check of OpenPG when the context
+// carries no deadline of its own.
+const ConnectTimeout = 10 * time.Second
+
 // OpenPG opens the store and pings it once, so a wrong address or login is
-// refused here rather than on the first verb.
+// refused here rather than on the first verb. The ping is bounded by the
+// context's deadline when it has one and by ConnectTimeout when it has none.
 func OpenPG(ctx context.Context, dsn string) (*PG, error) {
+	return openPGWithin(ctx, dsn, ConnectTimeout)
+}
+
+// openPGWithin is OpenPG with the bound for a context that carries no
+// deadline given, so the package's tests can shorten it: a caller's deadline,
+// longer or shorter, always governs.
+func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres dsn: %w", err)
@@ -87,8 +99,12 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
 	db.SetMaxOpenConns(2)
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	pingCtx := ctx
+	if _, has := ctx.Deadline(); !has {
+		var cancel context.CancelFunc
+		pingCtx, cancel = context.WithTimeout(ctx, noDeadline)
+		defer cancel()
+	}
 	if err := db.PingContext(pingCtx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("postgres at %s: %w", Redact(dsn), err)
@@ -269,13 +285,23 @@ func kindOf(kind string) (*Kind, error) {
 	return k, nil
 }
 
+// queryer is what *sql.DB and *sql.Tx share, so one read runs on either.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 func (p *PG) Get(ctx context.Context, kind, name string) (Row, bool, error) {
+	return getRow(ctx, p.db, kind, name)
+}
+
+func getRow(ctx context.Context, q queryer, kind, name string) (Row, bool, error) {
 	k, err := kindOf(kind)
 	if err != nil {
 		return Row{}, false, err
 	}
-	q := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` WHERE name = $1`
-	row, err := scanRow(k, p.db.QueryRowContext(ctx, q, name).Scan)
+	stmt := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` WHERE name = $1`
+	row, err := scanRow(k, q.QueryRowContext(ctx, stmt, name).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Row{}, false, nil
 	}
@@ -286,12 +312,16 @@ func (p *PG) Get(ctx context.Context, kind, name string) (Row, bool, error) {
 }
 
 func (p *PG) List(ctx context.Context, kind string) ([]Row, error) {
+	return listRows(ctx, p.db, kind)
+}
+
+func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 	k, err := kindOf(kind)
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` ORDER BY name`
-	rows, err := p.db.QueryContext(ctx, q)
+	stmt := `SELECT ` + columns(k) + `, created_at, updated_at FROM config.` + quoteIdent(k.Table) + ` ORDER BY name`
+	rows, err := q.QueryContext(ctx, stmt)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list %s: %w", kind, err)
 	}
@@ -308,6 +338,27 @@ func (p *PG) List(ctx context.Context, kind string) ([]Row, error) {
 		return nil, fmt.Errorf("postgres: list %s: %w", kind, err)
 	}
 	return out, nil
+}
+
+// MachinesAndFleet reads every machine row and the fleet row in one
+// read-only repeatable-read transaction: both come from one snapshot, so a
+// write between them cannot show one revision of the machines and another of
+// the fleet row.
+func (p *PG) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, Row{}, fmt.Errorf("postgres: begin read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	machines, err := listRows(ctx, tx, KindMachine)
+	if err != nil {
+		return nil, Row{}, err
+	}
+	fleet, _, err := getRow(ctx, tx, KindFleet, KindFleet)
+	if err != nil {
+		return nil, Row{}, err
+	}
+	return machines, fleet, nil
 }
 
 // record appends the history row inside the write's transaction.

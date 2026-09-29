@@ -127,7 +127,7 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
 	other := w.s.Fleet.Card("s1-1.w1").Row
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
-	if c := w.s.Fleet.Card("s1-1.w1"); c.Col != Done || c.Row != other || c.F("gen") != "2" {
+	if c := w.s.Fleet.Card("s1-1.w1"); c.Col != DoneOK || c.Row != other || c.F("gen") != "2" {
 		t.Fatalf("a done card was redistributed: %+v", c)
 	}
 	// a level move and a withdrawal change the generation too
@@ -408,14 +408,17 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReadsExhausted || !contains(o[0].Note.Decisions, "ask another reader") {
 		t.Fatalf("reads exhausted by a read: %v", o)
 	}
-	// s1-2: one ok, one broken; ack closes the broken judgment: exhausted.
+	// s1-2: one ok, one broken; ack does not answer a broken read: refused,
+	// and the broken judgment stays open.
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
 	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[1].ID}}}))
 	broken := w.openOn("s1-2")[0].Note.ID
-	w.must(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
-	if o := w.openOn("s1-2"); len(o) != 1 || o[0].Note.Type != NReadsExhausted {
-		t.Fatalf("reads exhausted by an ack: %v", o)
+	if p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"})); len(p.Refused) != 1 || len(p.Units) != 0 {
+		t.Fatalf("ack of a broken read: %+v", p)
+	}
+	if o := w.openOn("s1-2"); len(o) != 1 || o[0].Note.Type != NReadBroken {
+		t.Fatalf("after the refused ack: %v", o)
 	}
 }
 
@@ -573,6 +576,40 @@ func TestEveryDecisionPrintsItsCommands(t *testing.T) {
 					t.Errorf("%s: the decision %q prints no command", typ, d)
 				}
 			}
+		}
+	}
+}
+
+// ack answers a judgment only when the judgment's own decisions list it:
+// every type, one by one, on a primary that something else holds (ready, so
+// the tick deals it). Every other type is refused, and the refusal prints its
+// decisions as commands; a condition the tick keeps names wait.
+func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
+	t.Parallel()
+	all := map[string][]string{}
+	for typ, ds := range Decisions {
+		all[typ] = ds
+	}
+	for typ, ds := range TickDecisions {
+		all[typ] = ds
+	}
+	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
+	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true}
+	for typ, ds := range all {
+		w := setup(t, 1)
+		n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: ds, At: w.s.Now}
+		w.s.Open = append(w.s.Open, Open{Key: OpenKey(n.ID, "s1-1"), Note: n})
+		p := w.do(Ack(w.s, AckReq{Notes: []string{n.ID}, Reason: "seen"}))
+		if ackable[typ] != contains(ds, "ack") {
+			t.Errorf("%s: its decisions %v and the ack rule disagree", typ, ds)
+		}
+		switch {
+		case ackable[typ] && (len(p.Refused) != 0 || len(p.Units) != 1):
+			t.Errorf("%s lists ack and the ack was refused: %+v", typ, p.Refused)
+		case !ackable[typ] && (len(p.Refused) != 1 || len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "ack does not answer")):
+			t.Errorf("%s does not list ack and the ack was not refused: %+v", typ, p)
+		case !ackable[typ] && TickKept(typ) && !strings.Contains(p.Refused[0].Why, "nova-sprint wait n-x.1"):
+			t.Errorf("%s is kept by the tick and its refusal names no wait: %s", typ, p.Refused[0].Why)
 		}
 	}
 }

@@ -217,7 +217,7 @@ func TestTheOtherQueuesAreReadWhenAFactNeedsThem(t *testing.T) {
 func TestAMemberTakenDownIsBroughtUpBeforeTheDriverStops(t *testing.T) {
 	t.Parallel()
 	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
-	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 2}}
+	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 2, Hold: true}}
 	if why, err := d.Loop(); err != nil || why != "ticks" {
 		t.Fatalf("%s %v", why, err)
 	}
@@ -280,8 +280,8 @@ func TestLandedIgnoresAStreamWithNoPrimaries(t *testing.T) {
 func writes(ran [][]string) []string {
 	var out []string
 	for _, a := range ran {
-		if a[0] == "where" || a[0] == "queue" || a[0] == "inbox" {
-			continue
+		if a[0] == "where" || a[0] == "queue" || a[0] == "inbox" || len(a) > 1 && a[0] == "fleet" && a[1] == "beat" {
+			continue // reads, and beats: a machine's record, the sprint's, never an epoch's
 		}
 		out = append(out, strings.Join(a, " "))
 	}
@@ -342,5 +342,39 @@ func TestAVerbRefusedAsClearedStopsThePass(t *testing.T) {
 	}
 	if last := strings.Join(w.ran[len(w.ran)-1], " "); !strings.HasPrefix(last, "take --as m1 --epoch 0") {
 		t.Fatalf("the driver ran on after the refusal: %v", w.ran)
+	}
+}
+
+// Without Hold, a member the facts take down falls silent: its machine stops
+// beating, no fleet verb is run for it, and it beats again when it comes back.
+func TestAMemberTakenDownFallsSilent(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
+	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 2}}
+	if why, err := d.Loop(); err != nil || why != "ticks" {
+		t.Fatalf("%s %v", why, err)
+	}
+	if index(w.ran, 0, "fleet down") >= 0 || index(w.ran, 0, "fleet up") >= 0 || index(w.ran, 0, "fleet beat m1") >= 0 {
+		t.Fatalf("a silent member: %v", w.ran)
+	}
+}
+
+// --silent: a member stops beating for a while, then beats again.
+func TestASilenceStopsTheBeatsForAWhile(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
+	d := &Driver{Run: w.run, Facts: &scripted{}, Clock: &fakeClock{}, Out: io.Discard,
+		Config: Config{Every: time.Second, Ticks: 5, Silent: []Silence{{Member: "m1", From: time.Second, For: 2 * time.Second}}}}
+	if why, err := d.Loop(); err != nil || why != "ticks" {
+		t.Fatalf("%s %v", why, err)
+	}
+	beats := 0
+	for _, a := range w.ran {
+		if strings.Join(a, " ") == "fleet beat m1 --load 0" {
+			beats++
+		}
+	}
+	if beats != 3 {
+		t.Fatalf("m1 beat %d times in five ticks, two of them silent: %v", beats, w.ran)
 	}
 }

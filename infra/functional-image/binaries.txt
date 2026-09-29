@@ -1,0 +1,71 @@
+# Every program the functional tier runs by name, and what carries it.
+#
+# One row per name: `<name><TAB><how><TAB><provider or reason>`.
+#   apt     an apt package named in the Containerfile's apt-get install
+#   source  a pinned download or source build; the provider is a word the
+#           Containerfile must contain (a stage name or the binary's own name)
+#   base    the base image's own package (coreutils, bash, dash); not installed here
+#   tree    built or stubbed by the tests from the checkout
+#   absent  not in the image, with the reason it can be done without
+#
+# internal/ci TestFunctionalImageCarriesEveryBinaryTheTierExecs reads every Go
+# file under cmd, internal and tools for a name given to exec.Command,
+# exec.CommandContext or exec.LookPath as a string literal or a package-level
+# constant, and holds this list to that set in both directions: a program run
+# and not listed is red, and a row that no file runs any more is red. The rows
+# below `[unscanned]` are programs the tier needs that a name in a Go file does
+# not show (a script, a list of candidates, a path built at run time); the
+# Containerfile must still carry them.
+
+age-keygen	source	age
+ansible-inventory	absent	the one test that runs it reads only a wrapper script and skips when it is not installed; ansible is a control-node tool, not carried by the runner image
+bash	base	bash
+c++	absent	only the macOS sandbox tests compile with it; the darwin body is skipped on Linux by design
+cat	base	coreutils
+cmd.exe	absent	Windows only; a Linux container has no Windows shell
+date	base	coreutils
+diskutil	absent	macOS only; the volume tests that call it are darwin tests
+docker	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
+echo	base	coreutils
+gh	absent	reaches the forge over the network, which the container has none of; the tier fakes it
+git	apt	git
+go	source	fetch
+icacls	absent	Windows only; a Linux container has no Windows file ACLs
+java	absent	runs the TLC model checker on a bench, not in the functional tier
+kill	apt	procps
+log	absent	macOS unified logging; only the darwin sandbox tests read it
+lsof	apt	lsof
+make	apt	make
+mkdir	base	coreutils
+nc	absent	only the darwin sandbox socket test dials with it and that test skips on Linux
+nova-bus	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
+nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
+nova-secrets	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
+nova-swarm	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
+opencode	absent	the vendor harness binary belongs to the card image; the tier drives a fake harness
+pg_ctl	apt	postgresql-16
+podman	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
+ps	apt	procps
+python3	apt	python3
+redis-server	source	redis-build
+rsync	absent	reaches another host, and the container has no network
+sandbox-exec	absent	macOS only; the sandbox tests that need it skip on Linux by design
+sbcl	absent	one swarm prewarm test skips without it; the Lisp toolchain belongs to the card image
+scp	absent	reaches another host, and the container has no network
+sh	base	dash
+sleep	base	coreutils
+sops	source	sops
+sqlite3	apt	sqlite3
+ssh	absent	reaches another host, and the container has no network
+ssh-keygen	absent	only the nova-secrets keygen path for ssh keys calls it and its tests use a stand-in
+stty	absent	reads a password from a terminal; the tier has no terminal
+sudo	absent	edits the darwin packet filter for the sandbox; not something a container does
+sysctl	apt	procps
+taskkill	absent	Windows only; a Linux container has no Windows tasks
+top	absent	macOS only; the process tests that read it are darwin tests
+
+[unscanned]
+initdb	apt	postgresql-16
+postgres	apt	postgresql-16
+redis-cli	source	redis-build
+perl	base	perl-base

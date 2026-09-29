@@ -37,7 +37,7 @@ func midFlight(t *testing.T) *harness {
 	s = h.snap()
 	for table, cols := range map[*sprint.Table][]string{
 		s.Work:    {sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging, sprint.Landed},
-		s.Fleet:   {sprint.Ready, sprint.Working, sprint.Done},
+		s.Fleet:   {sprint.Ready, sprint.Working, sprint.DoneOK},
 		s.Readers: {sprint.Asked, sprint.Reading, sprint.OK},
 		s.Merge:   {sprint.Queued, sprint.Merged, sprint.Stuck},
 	} {
@@ -80,7 +80,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 			}
 		}
 	}
-	if after.StreamCtl("s1").F("state") != sprint.StreamWaiting || after.MemberCtl("m1").F("status") != sprint.Up || after.MemberCtl("m1").F("ok") != "0" {
+	if after.StreamCtl("s1").F("state") != sprint.StreamWaiting || after.MemberCtl("m1").F("status") != sprint.Up || after.Fleet.Count("m1", sprint.DoneOK) != 0 {
 		t.Fatalf("control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields)
 	}
 	if open, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(open.Groups) != 0 {

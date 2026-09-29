@@ -70,12 +70,12 @@ const Sentinel = "sentinel"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
-	NCannotAsk: {"reader add", "rework", "drop"},
-	NNoMember:  {"fleet up"},
-	NInvariant: {"look at the card", "repair"},
+	NCannotAsk: {"reader add", "rework", "drop", "wait"},
+	NNoMember:  {"fleet beat", "fleet up", "wait"},
+	NInvariant: {"look at the card", "repair", "wait"},
 	NWorkLate:  {"fleet down <member>", "wait", "drop"},
 	NReadLate:  {"ask --another", "wait", "drop"},
-	NMergeLate: {"merge --stream <s>", "look"},
+	NMergeLate: {"merge --stream <s>", "look", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -84,6 +84,10 @@ type TickReq struct {
 	// Stopped is the time the machine was STOPPED between two clock readings:
 	// a deadline compares running time only. nil is none.
 	Stopped func(from, to time.Time) time.Duration
+	// Beats is each fleet member's last beat, read by the binding with the
+	// tick: the presence part applies the status it derives. nil is none
+	// read, and the presence part does nothing.
+	Beats map[string]Beat
 }
 
 func (r TickReq) who() string {
@@ -126,6 +130,7 @@ var TickParts = []struct {
 	Name string
 	Fn   TickPartFn
 }{
+	{"presence", TickPresence},
 	{"resolve", TickResolve},
 	{"resume", TickResume},
 	{"deal", TickDeal},
@@ -243,7 +248,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var conds []cond
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
-			what: fmt.Sprintf("%d primaries wait to be dealt; bring a member up: nova-sprint fleet up <member>", len(ready))})
+			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
 	}
 	if len(up) > 0 {
 		room := 0
@@ -260,7 +265,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	due += notify(&p, s, conds, []string{NNoMember}, r.who())
+	due += notify(&p, s, conds, []string{NNoMember}, r)
 	return p, due
 }
 
@@ -297,7 +302,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Refused = nil
-	due += notify(&p, s, conds, []string{NCannotAsk}, r.who())
+	due += notify(&p, s, conds, []string{NCannotAsk}, r)
 	return p, due
 }
 
@@ -320,7 +325,7 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
-	due := notify(&p, s, conds, []string{NInvariant}, r.who())
+	due := notify(&p, s, conds, []string{NInvariant}, r)
 	return p, due
 }
 
@@ -371,10 +376,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		if d, ok := r.running(s.Now, last); ok && d > DeadlineMergeIdle {
 			conds = append(conds, cond{typ: NMergeLate, stream: st, streamLevel: true,
 				what:      fmt.Sprintf("state %s, no merge step since %s", state, last),
-				decisions: []string{"merge --stream " + st, "look"}})
+				decisions: []string{"merge --stream " + st, "look", "wait"}})
 		}
 	}
-	due := notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r.who())
+	due := notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r)
 	return p, due
 }
 
@@ -501,10 +506,26 @@ func (c cond) subjects() []string {
 // no longer holds: each judgment is written once and never every tick. It
 // returns how many conditions it left unwritten past the bound: those are
 // due.
-func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) int {
+func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
+	who := r.who()
 	// A condition is open while its judgment is, or while the coordinator's
-	// acknowledgement of it is held: either way it is not written again.
-	held := append(append([]Open(nil), s.Open...), s.Acked...)
+	// hold of it stands (an acknowledgement, or a wait until its time has
+	// passed in running time): either way it is not written again. A wait
+	// that has run out is closed, and the condition, when it holds, is raised
+	// again.
+	var held []Open
+	for _, o := range s.Open {
+		held = append(held, o)
+	}
+	for _, o := range s.Acked {
+		if !o.Note.Review.IsZero() && contains(types, o.Note.Type) {
+			if d, ok := r.running(s.Now, o.Note.At.UTC().Format(time.RFC3339)); ok && d >= o.Note.Review.Sub(o.Note.At) {
+				p.Closes = append(p.Closes, o)
+				continue
+			}
+		}
+		held = append(held, o)
+	}
 	open := map[string]bool{}
 	for _, o := range held {
 		if contains(types, o.Note.Type) {

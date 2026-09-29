@@ -42,13 +42,18 @@ where a primary sent back from merging waits (the table layer never places a
 removed member again, so an accept after a return moves it back), and `ctl`,
 where each stream's control card holds the stream's state, cause, ci and
 `since`. The fleet table has a hidden `ctl` column where each member's control
-card holds its status and its ok and failed counts, and a hidden `withdrawn`
+card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
-layer never places a removed member again). `done` holds a member's
-finished work cards, ok and failed; `ok%` (the column `okpct`, labelled `ok%`)
-is ok / (ok + failed) from the member's counts. The text cells (ci, state,
-since, ok%, status, load) are display copies of the control cards, written
-after each step; the control cards are written with the moves.
+layer never places a removed member again), and hidden `ok` and `failed`
+columns that hold a member's finished work cards, finished ok and finished
+failed. `done` and `ok%` are the table's own formulas over those two cells,
+computed at render and never written: `done:sum(ok+failed)` and
+`okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
+member with no finished card shows `0` and `0.0%`; the footer pools ok% over
+the members (every ok over every finished card, never a mean of the members'
+percentages). The text cells (ci, state, since, status, load) are display
+copies of the control cards, written after each step; the control cards are
+written with the moves.
 
 ## 2. The cards
 
@@ -128,9 +133,34 @@ and it is the coordinator's decision, receipted.
   generation; the attempt advances only on rework. A primary with a withdrawn
   card is ready, never working.
 - A member coming up: ready queues are levelled in one call; the newest cards move.
-- ok% is computed from the member's ok and failed counts behind done. load and
-  status are reported, never typed by the coordinator except `fleet up|down` to
-  override.
+- done and ok% are computed by the table from the member's `ok` and `failed`
+  cells.
+- A fleet member says it is there by beating: `nova-sprint fleet beat
+  <member>`, run on the machine every few seconds, writes its last beat time
+  (to the second) and its load in one write of its own record, outside the
+  tables, whether the machine is RUNNING or STOPPED. The load is the machine's
+  CPU busy percent of all its cores, measured between beats; where that cannot
+  be measured, the one-minute load average over the logical cores, capped at
+  1000%. `--load <percent>` gives it instead.
+- A member's status is derived, never typed: up while its last beat is at
+  most 15 s old, down past that or when it has never beaten, and held while
+  the coordinator holds it, whatever it beats. `fleet down <member>` holds a
+  member and takes it down; `fleet up <member>` releases the hold, adding a
+  member the sprint does not know, and brings it up at once when its beat is
+  fresh.
+- The tick's first part (presence) applies one change of derived status a
+  tick, ups first: a member going down has its unfinished work cards dealt to
+  the members up, or withdrawn when none is; a member coming up levels the
+  ready queues; each change writes one happened notification that says why.
+  While STOPPED, beats are accepted and the fleet's cells show the derived
+  status, but nothing is dealt; the first tick after `start` applies what
+  changed.
+- The status cell shows held, up or down. The load cell shows the highest load
+  of the last 10 s with one decimal while the beat is fresh, and is empty
+  otherwise, never a zero.
+- A beat from a machine the sprint does not know writes one happened
+  notification, "an unknown machine is beating: <name>; add it with nova-sprint
+  fleet up <name>". Teardown removes every beat record.
 
 Every work card carries an assignment generation bound to its identity, attempt
 and member. It is 1 when the card is cut and changes on every redeal, drain,
@@ -139,7 +169,7 @@ the worker holds (`<card>@<gen>`); one that names none is refused, and one
 whose generation is not the live one is refused as stale and changes nothing.
 A take by selection (`--as` and `--limit`) takes the live generation; a finish
 by selection without `--as` is refused. A finish that arrives first moves the card to
-done, which no redistribution touches. A retried finish with the same operation
+the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
 ## 6. The readers
@@ -149,7 +179,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own.
   Work that came back failed is not read: it waits for the coordinator.
-  `ask --another` deals a primary already asked to one more reader.
+  `ask --another` deals a primary already asked to one more reader; before
+  the first ask of its attempt it is refused, naming `ask` and the tick as
+  what asks first.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
   A report on a card still asked is accepted: it is the begin and the report in
   one step, and `begun` is stamped with it.
@@ -242,28 +274,50 @@ resumed because the card it needed landed.
 
 **judgment**: needs the coordinator. Each names the decisions open to it.
 
-| notification | decisions |
-|---|---|
-| work came back failed | rework with a fix, drop |
-| a reader found it broken | rework with the finding, ask another reader, drop |
-| stream stopped: conflict on a card | resolve and resume, rework, drop |
-| stream stopped: stream branch red | take the suspect off and resume, rework the suspect |
-| stream stopped: needs a card of another stream first | rank that card first, wait, look at both, return, drop |
-| stream stopped: the merge queue rejected | resume, return, drop |
-| ci red on a primary | rework with a fix, return, drop, look |
-| a primary came back a second time for the same cause | stop and look |
-| a primary is blocked on something dropped | drop, ack (the ack waives the dropped need) |
-| a primary is blocked on something missing | drop, ack (the ack waives the named missing need) |
-| reads exhausted | ask another reader, rework, drop |
-| ready to accept | accept, rework, drop |
-| returned to review | rework, accept (while its reads stand at its head), drop |
-| stranded in review | rework, drop (and ask when never asked) |
-| sentinel reached | release, do more before going on, drop |
-| the sprint is done | clear, add |
-| repair skipped changes the store refused as recorded | look at the card, return, drop, rework, ack |
-| an operation was stuck | check, ack |
-| a judgment notification has waited past its due time | act |
-| a stream has made no progress past its deadline | look |
+Every judgment type, the verbs that answer it, and whether `ack` is one of
+them. `ack` answers only a judgment whose own decisions list it: information
+to be seen. For every other judgment it is refused, and the refusal prints that
+judgment's decisions as commands. For the types that list it, `ack` is still
+refused when it would leave a primary held by nobody (no outside actor, no move
+the tick would make, no other open judgment on it).
+
+| notification | answered by | ack |
+|---|---|---|
+| work came back failed | rework (with a fix), drop | no |
+| a reader found it broken | rework (with the finding), ask --another, drop | no |
+| stream stopped: conflict on a card | resume (resolved), rework, drop | no |
+| stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
+| stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |
+| stream stopped: the merge queue rejected | resume, return, drop | no |
+| ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
+| a primary came back a second time for the same cause | card (stop and look) | no |
+| a primary is blocked on something dropped | drop, ack (waives the dropped need) | yes |
+| a primary is blocked on something missing | drop, ack (waives the named missing need) | yes |
+| reads exhausted | ask --another, rework, drop | no |
+| ready to accept | accept, rework, drop | no |
+| returned to review | rework, accept (while its reads stand at its head), drop | no |
+| stranded in review | rework, drop (and ask when never asked) | no |
+| sentinel reached | release, add --before (do more before going on), drop | no |
+| the sprint is done | clear, add | no |
+| repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
+| an operation was stuck | check, ack | yes |
+| a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
+| cannot ask | reader add, rework, drop, wait | no |
+| no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
+| a work card is past its deadline | fleet down (the member), wait, drop | no |
+| a read card is past its deadline | ask --another, wait, drop | no |
+| a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
+| an invariant is broken | card (look at the card), repair, wait | no |
+| a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
+| a stream has made no progress past its deadline (stalled) | where, queue (look) | no |
+
+A condition the tick keeps (cannot ask, no member up, a deadline passed, an
+invariant broken; a failing reminder too) is answered for a while by
+`wait <note> --for <duration>`: the judgment is closed and the condition held
+until that much running time has passed (STOPPED time does not count); when it
+has and the condition still holds, the tick raises it again, and when the
+condition clears first the hold is closed. `wait` on any other judgment sets
+its review time.
 
 The machine's tick writes its own judgments (section 14): cannot ask, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
@@ -327,9 +381,9 @@ it drops, and accept every card judgment of the primaries it accepts; ask --anot
 resolves a red one; return resolves a red CI on the primaries it returns, and
 answers its stream's red or rejected batch (recorded; that judgment stays open
 while the stream is stopped); resume resolves the stream's stop.
-`ack <notification> --reason <text>` says the coordinator looked and nothing is
-to be done ("look", "act"): it closes that judgment and records the reason. It
-is refused for the judgment of a stopped stream while the stream is stopped. Acting on one card of a
+`ack <notification> --reason <text>` answers a judgment that lists ack (the
+table above): it closes that judgment and records the reason. It is refused
+for the judgment of a stopped stream while the stream is stopped. Acting on one card of a
 group leaves the rest of the group open. A stopped stream keeps an open
 judgment until it is no longer stopped. `--answers <notification>` names what a
 verb answers. It is accepted for every decision the notification itself lists
@@ -509,7 +563,10 @@ cleared and naming the new epoch.
 (`--seed`) so a run repeats: workers taking and finishing work cards (`--fail`),
 readers reporting read cards (`--broken`), each stream's merge step with its
 facts (`--batch`, `--stuck`, `--cross`, `--red`), members going down and up
-(`--flap`). The mechanical moves are the machine's (section 14): the driver
+(`--flap`: a member's machine falls silent, stops beating, and beats again
+later; `--hold` plays those as the coordinator's hold instead;
+`--silent <member>@<from>+<for>` silences one member for a while). The driver
+beats every member it plays. The mechanical moves are the machine's (section 14): the driver
 plays only the outside actors, and refuses to play (exit 2) while no machine is
 running. Everything it does is a nova-sprint verb run
 through the command's own entry point, printed as the line to type with its
@@ -518,10 +575,10 @@ never runs accept, rework, drop, rank, return, resume, release, resolve, ask,
 start, stop, tick or run. It keeps running while
 things wait for the coordinator, says what waits and for how long, tolerates
 the coordinator writing at the same time, and stops when every stream has
-landed. It reads a stream's merge queue just before that stream's merge step,
-and the other streams' queues only when a fact needs them; `--flap` takes an up
-member down and brings a down member up with the same chance, and the driver
-brings up every member it took down before it stops. Its facts come through one interface (a worker's result, a reader's
+landed (every primary on the table landed). It reads a stream's merge queue just before that stream's merge step,
+and the other streams' queues only when a fact needs them; `--flap` silences an
+up member's machine and brings a silent one back with the same chance; with
+`--hold` the driver releases every hold it took before it stops. Its facts come through one interface (a worker's result, a reader's
 finding, a merge batch's outcome, which members are up); the seeded source is
 one implementation.
 
@@ -608,10 +665,9 @@ taken, 2 hours taken and not finished), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
 and the cards). Deadlines count running time: time spent STOPPED does not
-count. A judgment of the tick the coordinator acknowledges while its condition
-still holds is kept as acknowledged on the condition, in no inbox: the tick
-does not write it again until the condition has cleared (the tick then closes
-the acknowledgement) and come back.
+count. A judgment the tick keeps is answered by its decisions or held by `wait`
+(section 8), never by `ack`, except a failing reminder, whose ack is held on
+the condition in no inbox until the condition clears and comes back.
 
 Every open judgment is due 10 minutes of running time (DeadlineJudgment) after
 it was written, or at the review time a `wait` set; when that passes, the tick

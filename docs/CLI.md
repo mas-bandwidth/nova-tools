@@ -735,11 +735,15 @@ a missing flag, an unreadable pool or worker description, a key file that is
 absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
-default number of workers, no default deadline, no default file budget and no
-default token budget. --files is required because a budget this tool supplied
-would be a guess about somebody else's task; --tokens is required for the same
-reason, and --tokens unmetered is a caller's statement that this provider has
-no live accounting and the deadline is the only stop. Zero is refused for both.
+default number of workers, no default deadline, and no default token budget.
+batch takes --cards; native and route require --card; lint takes --card, or
+--fleet or --rules instead; verify takes --card as an option and reads it only
+when given (because a card this tool chose would be a guess about somebody
+else's task); the remaining verbs take no card flag. --tokens is required on
+batch and native because a budget this tool supplied would be a guess about
+somebody else's task, and --tokens unmetered is a caller's statement that this
+provider has no live accounting and the deadline is the only stop. Zero is
+refused for tokens.
 
 THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
 description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
@@ -778,7 +782,7 @@ read-pr — read one pull request against the rules
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
 3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+4. A FILE BUDGET: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop. Say in RESULT.md which files you
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
@@ -833,13 +837,11 @@ hundred lines of Go, and the whole test suite runs against it with no provider, 
 and no key worth anything. It is the shortest way to see the contract, and to test a pool
 of your own before a real model touches it.
 
-**`native` takes directory leases (`.lease`, `.slot-lease`), but no bench slot lease (#3877).** A bench's capacity is one number,
+**`native` takes directory leases (`.lease`, `.slot-lease`).** A bench's capacity is one number,
 `bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
 is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
 reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
-card. The file ledger it used to lease from was a second answer to the same question.
-`--slots-store` and `--owner` flags are accepted for compatibility with callers built before
-#3877, but are read by nothing in `native`.
+card. `--slots-store` and `--owner` flags are accepted and ignored by `native`.
 
 **The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
 own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
@@ -854,6 +856,35 @@ toolchain roots on the wall's argv, read-only and skipped when one is not there:
 **Deadline and process group.** The harness runs as the leader of its own process group. At
 `--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
 and records the outcome.
+
+### The doctor
+
+The doctor compares the `version` line of the `nova-swarm` first on PATH with the one at
+`~/.local/bin/nova-swarm`, and `batch` and `native` run the same check before they start
+anything (`-h` never does). Each binary is asked for `version` under a 5-second deadline,
+both at the same time; the first line it prints, at most 4096 bytes, is its stamp, and a
+stamp is printed as a bounded, escaped excerpt.
+
+| line | meaning | exit | next action |
+|---|---|---|---|
+| `DOCTOR OK stamp=<stamp>` | the two agree, or there is one binary to read | 0 | none |
+| `DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory` | no binary was read | 0 | none |
+| `DOCTOR DRIFT path=<binary> stamp=<stamp>` and `DOCTOR DRIFT local=<binary> stamp=<stamp>` | the two stamps differ; both are printed | 2 | see the next line |
+| `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
+| `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
+
+The cause is one of `timed out after <deadline>`, `exited <n>`, `was killed (<signal>)`
+(a run ended by a signal), `printed nothing`, `printed a line longer than <n> bytes`,
+`not found`, or the system's own words when the binary cannot be started, such as
+`fork/exec <path>: permission denied` for a file that is not executable. The other binary
+is described in one sentence: it reported a stamp, it could not be read either, it is not
+installed, or there is no other binary. A stamp printed before a failure is still compared, so a stale binary that then
+hangs is refused as shadowing and as unreadable.
+
+When the check itself is the problem, the refusal's own next action is the way out: run the
+named binary's `version` by hand to see what it does, then rebuild it or remove it.
+Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
+shadow with, and the check passes on the PATH binary alone. No flag skips the check.
 
 ## nova-sandbox
 
@@ -1705,6 +1736,7 @@ nova-config kinds                                                        # every
 nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
 nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
 nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
+nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>] # print an Ansible dynamic JSON inventory from the machine rows; --list is the default, --host prints one machine
 nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
 nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
 nova-config <kind> remove <name> --as <friend>                           # delete the row
@@ -1743,6 +1775,18 @@ nova-config apply --redis 127.0.0.1:6379 --as rowan
 ```
 
 **What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write (omitted on `apply --check`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
+
+**Ansible inventory.** `inventory` reads Postgres only and prints an Ansible dynamic JSON inventory: the groups `all` and `benches` (every machine row), `coordinator` and `store` (the machines the fleet row names; empty when it names none) and `runners` (every machine with at least one runner), and every host's variables under `_meta.hostvars`. On a store that is not migrated, or is at an older schema, it exits 1 with `run: nova-config migrate`. On a store migrated ahead of the binary it exits 1 with `this nova-config is older than the store` and names the schema version to install a `nova-config` for. `--list` (the default with no flag) prints all of it; because `_meta.hostvars` is there, ansible never calls `--host <name>`, which prints one machine's variables and exits 1 with the known names when no row has that name. `--list` and `--host` together are refused. `--timeout` (a Go duration, default `10s`) bounds the wait for the store; on expiry, at the connection, the schema check or the read, the verb exits 2 with `timed out after <d> waiting for the store while <stage>`, what to check, and the command to repeat with a longer timeout; a connection the store refuses outright keeps the generic refusal. Env `NOVA_MACHINE` names the machine row the command runs on (an empty value counts as unset), matched by exact machine name and refused with exit 1 and the known names when no row has it; unset, the lower-cased first label of the hostname (machine names are lower-case) is matched the same way and nothing is marked local when no row has it. The matched host gets `ansible_connection=local`. Ansible's `-i` wants an executable, so a two-line wrapper carries the tool and its environment:
+
+```sh
+export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
+nova-config inventory
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
+chmod +x nova-inventory
+ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
+```
+
+Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova-config` missing from the PATH, a `nova-config` without the verb, an unknown `NOVA_MACHINE`, a store that is down, a timeout, an unmigrated schema), `ansible-inventory` and `ansible-playbook` log a warning, use an empty inventory and exit 0, so a playbook does nothing. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the environment, or `[inventory] unparsed_is_failed = True` in `ansible.cfg`, makes the same run exit non-zero.
 
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 
@@ -1919,7 +1963,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `row order <table> <row>...` | Puts the named rows first; the rest keep their order |
 | `row sort <table> [--by name/label/<col>] [--desc] [--keep]` | Sorts once; `--keep` maintains name/label order, `--manual` ends it |
 | `col add <table> <spec> [--first/--last/--before/--after]` | Adds one column, last unless a place is named |
-| `col del <table> <col>` | Removes an empty column with no formula dependency |
+| `col del <table> <col>` | Removes an empty column no formula (`pct(...)`, `sum(...)`) reads |
 | `col move <table> <col> --first/--last/--before/--after` | Moves one column |
 | `cell add/remove <table> <row> <col> <member>...` | Adds or removes a batch; add takes `--score` |
 | `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
@@ -1961,8 +2005,10 @@ COL MOVE table= col= place= [of=]`. `col add <table>
 `TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
 COL DEL table= col=` and is refused, exit 1, writing nothing, while the
 column holds a member (the refusal names all blocking rows and members, with a
-batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
-the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+batch `cell remove` command for each occupied cell) or a text value, while a formula column (`pct(...)` or `sum(...)`) reads it, and when it is
+the last column. `col add` of a formula over a column the table does not have is
+refused with the `col add` of that column as the remedy; over a column that is not
+a count, with `show` as the remedy. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Batch mutation
 
@@ -2118,14 +2164,19 @@ next newline. Failures name their input line. See the
 ### Columns, identity and output
 
 `--columns` is `name[:projection[:fold[:label]]]`, comma-separated. The projections
-are `count` (default), `members`, `first`, `last`, `text`, and
-`pct(<count-column>)`. Text is blank until `row set` writes it; the row label
+are `count` (default), `members`, `first`, `last`, `text`, `pct(<count-column>)`,
+`pct(<count-column>/<a>+<b>)` and `sum(<a>+<b>)`. Text is blank until `row set` writes it; the row label
 always has a separate leading cell. Quote specs containing parentheses, for
 example `'ready,done,note:text,progress:pct(done)'`, so zsh passes them unchanged.
 
-Folds are `sum` (count default), `max`, `avg` (count only), `union` (members),
-`pooled` (percentage default), or `none`. Percentages divide their named count by
-all count columns. Pooled footers divide the summed counts, not the row
+Folds are `sum` (count and sum default), `max`, `avg` (count and sum only), `union` (members),
+`pooled` (percentage default), or `none`. `pct(<col>)` divides its named count by
+all count columns of the row; `pct(<col>/<a>+<b>)` divides it by the named count
+columns `a`, `b` of the row; `sum(<a>+<b>)` adds the named count columns of the row.
+Every column a formula names is a count column of the table, hidden or not; any
+other is refused at `create`, `set --columns` and `col add`. For example
+`'ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%'`. Pooled footers
+divide the summed numerators by the summed denominators, not the row
 percentages. Known-empty percentages are `0.0%`; an unread dependency is `?`.
 `--footer <label>` names the otherwise blank footer label. `--width col=n,...`
 sets column widths; render/watch also accept `--label-width` and `--hide-zero-rows`.

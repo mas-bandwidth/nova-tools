@@ -77,8 +77,8 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	if len(w.openOn("s1-4")) != 1 {
 		t.Fatalf("failed work is not an open judgment: %v", w.s.Open)
 	}
-	if ctl := w.s.MemberCtl("m2"); ctl.F("failed") != "1" && w.s.MemberCtl("m1").F("failed") != "1" {
-		t.Errorf("failed count not bumped on the member's control card")
+	if w.s.Fleet.Count("m1", DoneFailed)+w.s.Fleet.Count("m2", DoneFailed) != 1 {
+		t.Errorf("the failed work card is not in a member's failed cell")
 	}
 
 	ask := w.must(Ask(w.s, AskReq{}))

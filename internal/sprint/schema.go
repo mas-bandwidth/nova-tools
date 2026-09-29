@@ -49,15 +49,21 @@ const (
 
 // Fleet table columns (ready and working are named as in the work table).
 // withdrawn (hidden) holds a work card withdrawn because no member was up, so
-// that start deals the same card again rather than cutting another: the table
-// layer never places a removed member again. ctl (hidden) holds the member's
-// control card: status, and the ok and failed counts behind ok%.
+// that the tick deals the same card again rather than cutting another: the table
+// layer never places a removed member again. ok and failed (hidden) hold the
+// member's finished work cards, finished ok and finished failed. done and ok%
+// are the table's own formulas over them, computed at render and never
+// written: done is sum(ok+failed), ok% (the column okpct) is
+// pct(ok/ok+failed), and the footer pools ok% over the members. ctl (hidden)
+// holds the member's control card: its status.
 const (
-	Done      = "done"
-	OkPct     = "okpct"
-	Status    = "status"
-	Load      = "load"
-	Withdrawn = "withdrawn"
+	Done       = "done"
+	OkPct      = "okpct"
+	DoneOK     = "ok"
+	DoneFailed = "failed"
+	Status     = "status"
+	Load       = "load"
+	Withdrawn  = "withdrawn"
 )
 
 // Stream states (the merge table's state column).
@@ -188,7 +194,8 @@ func (n Names) Definitions() []ntable.Table {
 		mk(Work, "waiting,ready,working,review,merging,landed"),
 		mk(Readers, "asked,reading,ok,broken"),
 		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Returned, Ctl),
-		mk(Fleet, "ready,working,done,okpct:text:none:ok%,status:text,load:text,withdrawn,ctl:first:none", Withdrawn, Ctl),
+		mk(Fleet, "ready,working,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none",
+			Withdrawn, DoneOK, DoneFailed, Ctl),
 	}
 }
 

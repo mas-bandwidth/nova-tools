@@ -131,3 +131,9 @@ func AckStep(r sprint.AckReq) Step {
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ack(s, r) }}
 }
+
+// WaitStep holds a condition the tick keeps until a time (sprint.Wait).
+func WaitStep(r sprint.WaitReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "wait",
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
+}
