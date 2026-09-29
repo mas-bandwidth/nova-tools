@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -71,14 +72,17 @@ usage:
       --podman <path>         the podman binary (default: podman on PATH)
 
   functionalrun reap [--grace <duration>] [--dry-run] [--podman <path>]
-      Remove every container carrying this tool's run label whose deadline
-      label plus the grace has passed, in any state. Nothing else is touched:
-      no container without the label, no cache volume, no process.
+      Remove every container of this tool and this user whose deadline label
+      plus the grace has passed, in any state: the run label with a run id of
+      the tool's own shape, and the owner label equal to this uid. A container
+      of ours with an unreadable start or deadline label is reported and left.
+      Nothing else is touched: no other container, no volume, no process.
 
 exit codes (run): the container's own (make test-functional: 0 green, 2 red);
   124 the deadline ended the run; 130 interrupted; 125 the run could not be
   started, or a container of the run was still present at the end.
-exit codes (reap): 0 nothing reaped; 1 a container was reaped; 2 could not run.
+exit codes (reap): 0 nothing reaped and nothing unreadable; 1 a container was
+  reaped, or one of ours was left with an unreadable label; 2 could not run.
 `
 
 func main() {
@@ -122,12 +126,12 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			return 2
 		}
 		eng := newPodman(cfg.podman, stderr)
-		n, err := reap(ctx, eng, time.Now(), cfg.grace, cfg.dryRun, stderr)
+		n, unreadable, err := reap(ctx, eng, time.Now(), cfg.grace, strconv.Itoa(os.Getuid()), cfg.dryRun, stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "functionalrun reap: %v\n", err)
 			return 2
 		}
-		if n > 0 {
+		if n > 0 || unreadable > 0 {
 			return 1
 		}
 		return 0

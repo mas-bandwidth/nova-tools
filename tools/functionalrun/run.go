@@ -21,7 +21,7 @@ func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, st
 	}
 
 	// 1. Anything an earlier run left past its deadline goes first.
-	if _, err := reap(ctx, eng, now(), c.grace, false, stderr); err != nil {
+	if _, _, err := reap(ctx, eng, now(), c.grace, c.ownerID, false, stderr); err != nil {
 		logf("the reaper could not list containers: %v", err)
 		return setupExit(ctx)
 	}

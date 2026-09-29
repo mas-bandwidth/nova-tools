@@ -378,105 +378,6 @@ func TestEnsureVolume(t *testing.T) {
 	}
 }
 
-func TestJudgeByDeadlineLabelPlusGrace(t *testing.T) {
-	t.Parallel()
-	now := time.Unix(1_800_001_000, 0)
-	grace := 30 * time.Second
-	dl := func(sec int64) string { return strconv.FormatInt(sec, 10) }
-	cs := []listed{
-		{ID: "a-overdue", State: "running", Labels: map[string]string{labelRun: "r1", labelDeadline: dl(now.Unix() - 31)}},
-		{ID: "b-in-grace", State: "running", Labels: map[string]string{labelRun: "r2", labelDeadline: dl(now.Unix() - 30)}},
-		{ID: "c-young", State: "created", Labels: map[string]string{labelRun: "r3", labelDeadline: dl(now.Unix() + 600)}},
-		{ID: "d-no-deadline", State: "exited", Labels: map[string]string{labelRun: "r4"}},
-		{ID: "e-garbage", State: "exited", Labels: map[string]string{labelRun: "r5", labelDeadline: "soon"}},
-		{ID: "h-zero", State: "exited", Labels: map[string]string{labelRun: "r8", labelDeadline: "0"}},
-		{ID: "i-negative", State: "exited", Labels: map[string]string{labelRun: "r9", labelDeadline: "-5"}},
-		{ID: "f-unlabelled", Names: []string{"nova-functional-decoy"}, State: "exited", Labels: map[string]string{labelDeadline: dl(1)}},
-		{ID: "g-created-never-started", State: "configured", Labels: map[string]string{labelRun: "r7", labelDeadline: dl(now.Unix() - 3600)}},
-	}
-	got := map[string]verdict{}
-	for _, v := range judge(cs, now, grace) {
-		got[v.id] = v
-	}
-	if _, ok := got["f-unlabelled"]; ok {
-		t.Errorf("a container without the run label is judged at all, though its name looks like ours")
-	}
-	for id, want := range map[string]struct {
-		remove bool
-		reason string
-	}{
-		"a-overdue":               {true, ""},
-		"b-in-grace":              {false, "within-deadline"},
-		"c-young":                 {false, "within-deadline"},
-		"d-no-deadline":           {false, "no-deadline-label"},
-		"e-garbage":               {false, "unreadable-deadline"},
-		"h-zero":                  {false, "unreadable-deadline"},
-		"i-negative":              {false, "unreadable-deadline"},
-		"g-created-never-started": {true, ""},
-	} {
-		v, ok := got[id]
-		if !ok {
-			t.Errorf("%s not judged", id)
-			continue
-		}
-		if v.remove != want.remove || v.reason != want.reason {
-			t.Errorf("%s: remove=%t reason=%q, want remove=%t reason=%q", id, v.remove, v.reason, want.remove, want.reason)
-		}
-	}
-}
-
-func TestReapRemovesOnlyOverdueLabelledContainers(t *testing.T) {
-	t.Parallel()
-	now := time.Unix(1_800_001_000, 0)
-	listing := fmt.Sprintf(`[
- {"Id":"aaaaaaaaaaaaaaaa1","Names":["nova-functional-old"],"State":"running","Labels":{"%[1]s":"old","%[2]s":"%[3]d"}},
- {"Id":"bbbbbbbbbbbbbbbb2","Names":["nova-functional-young"],"State":"running","Labels":{"%[1]s":"young","%[2]s":"%[4]d"}},
- {"Id":"cccccccccccccccc3","Names":["nova-functional-decoy"],"State":"exited","Labels":{"other":"x"}}
-]`, labelRun, labelDeadline, now.Unix()-3600, now.Unix()+3600)
-	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
-	var stderr bytes.Buffer
-	n, err := reap(context.Background(), eng, now, 30*time.Second, false, &stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Errorf("reaped %d, want 1", n)
-	}
-	calls := eng.argvs()
-	want := []string{strings.Join(reapListArgs(), " "), strings.Join(removeArgs("aaaaaaaaaaaaaaaa1"), " ")}
-	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
-		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
-	}
-	for _, c := range calls {
-		verb := strings.Fields(c)[0]
-		if verb != "ps" && verb != "rm" || strings.Contains(c, "prune") {
-			t.Errorf("the reaper does more than list and remove containers: %q", c)
-		}
-	}
-	out := stderr.String()
-	if !strings.Contains(out, "REAPED id=aaaaaaaaaaaa run=old state=running") || !strings.Contains(out, "REAP containers=3 reaped=1 left=1") {
-		t.Errorf("reap lines:\n%s", out)
-	}
-}
-
-func TestReapDryRunChangesNothing(t *testing.T) {
-	t.Parallel()
-	now := time.Unix(1_800_001_000, 0)
-	listing := fmt.Sprintf(`[{"Id":"a1","State":"exited","Labels":{"%s":"old","%s":"1"}}]`, labelRun, labelDeadline)
-	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
-	var stderr bytes.Buffer
-	n, err := reap(context.Background(), eng, now, 0, true, &stderr)
-	if err != nil || n != 1 {
-		t.Fatalf("n=%d err=%v", n, err)
-	}
-	if calls := eng.argvs(); len(calls) != 1 {
-		t.Errorf("a dry run ran more than the listing: %q", calls)
-	}
-	if !strings.Contains(stderr.String(), "REAP-WOULD id=a1 run=old") {
-		t.Errorf("dry run lines:\n%s", stderr.String())
-	}
-}
-
 func TestParseListed(t *testing.T) {
 	t.Parallel()
 	for _, empty := range []string{"", "  \n", "[]", "null"} {
@@ -521,6 +422,7 @@ func TestParseRun(t *testing.T) {
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "29s", "./a"}, "under 30s"},
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "0s", "./a"}, "under 30s"},
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "-1m", "./a"}, "under 30s"},
+		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "25h", "./a"}, "over 24h"},
 		{[]string{"--src", dir, "--context", ctxDir, "--cpus", "0", "./a"}, "--cpus"},
 		{[]string{"--src", dir, "--context", ctxDir, "--memory", "lots", "./a"}, "--memory"},
 		{[]string{"--src", dir, "--context", dir, "./a"}, "no Containerfile"},
@@ -989,5 +891,184 @@ func TestLeftoversHaveOneBudget(t *testing.T) {
 	}
 	if n != -1 {
 		t.Errorf("an unreadable count is %d, want -1 (unknown)", n)
+	}
+}
+
+// ours are the labels this tool writes for a run of uid 501.
+func ours(run string, start, deadline string) map[string]string {
+	return map[string]string{labelRun: run, labelOwner: "501", labelStart: start, labelDeadline: deadline}
+}
+
+func TestJudgeOnlyOursByDeadlineLabelPlusGrace(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_001_000, 0)
+	grace := 30 * time.Second
+	u := func(sec int64) string { return strconv.FormatInt(sec, 10) }
+	st := u(now.Unix() - 7200)
+	const id = "20300102t030405-0123abcd"
+	with := func(m map[string]string, k, v string) map[string]string {
+		out := map[string]string{}
+		for a, b := range m {
+			out[a] = b
+		}
+		if v == "<delete>" {
+			delete(out, k)
+		} else {
+			out[k] = v
+		}
+		return out
+	}
+	base := ours(id, st, u(now.Unix()-31))
+	cs := []listed{
+		{ID: "a-overdue", State: "running", Labels: base},
+		{ID: "a2-overdue-mod", State: "exited", Labels: with(base, labelRun, id+"-mod")},
+		{ID: "b-in-grace", State: "running", Labels: with(base, labelDeadline, u(now.Unix()-30))},
+		{ID: "c-young", State: "created", Labels: with(base, labelDeadline, u(now.Unix()+600))},
+		{ID: "d-no-deadline", State: "exited", Labels: with(base, labelDeadline, "<delete>")},
+		{ID: "e-garbage", State: "exited", Labels: with(base, labelDeadline, "soon")},
+		{ID: "h-zero", State: "exited", Labels: with(base, labelDeadline, "0")},
+		{ID: "i-negative", State: "exited", Labels: with(base, labelDeadline, "-5")},
+		{ID: "j-plus", State: "exited", Labels: with(base, labelDeadline, "+1")},
+		{ID: "k-far", State: "exited", Labels: with(base, labelDeadline, "99999999999")},
+		{ID: "l-no-start", State: "exited", Labels: with(base, labelStart, "<delete>")},
+		{ID: "m-before-start", State: "exited", Labels: with(base, labelDeadline, u(now.Unix()-7201))},
+		{ID: "g-created-never-started", State: "configured", Labels: with(base, labelDeadline, u(now.Unix()-3600))},
+		// Not ours: never judged, whatever else they carry.
+		{ID: "f-unlabelled", Names: []string{"nova-functional-decoy"}, State: "exited", Labels: map[string]string{labelDeadline: u(1)}},
+		{ID: "n-other-tool", State: "exited", Labels: with(base, labelRun, "othertool-value")},
+		{ID: "o-empty-run", State: "exited", Labels: with(base, labelRun, "")},
+		{ID: "p-other-owner", State: "exited", Labels: with(base, labelOwner, "9999")},
+		{ID: "q-no-owner", State: "exited", Labels: with(base, labelOwner, "<delete>")},
+		{ID: "r-upper", State: "exited", Labels: with(base, labelRun, "20300102T030405-0123ABCD")},
+	}
+	verdicts, foreign := judge(cs, now, grace, "501")
+	if foreign != 5 {
+		t.Errorf("foreign = %d, want 5 (the other tool, the empty run, the other owner, no owner, the wrong shape)", foreign)
+	}
+	got := map[string]verdict{}
+	for _, v := range verdicts {
+		got[v.id] = v
+	}
+	for _, id := range []string{"f-unlabelled", "n-other-tool", "o-empty-run", "p-other-owner", "q-no-owner", "r-upper"} {
+		if _, ok := got[id]; ok {
+			t.Errorf("%s is not this tool's container of this user, and was judged", id)
+		}
+	}
+	for id, want := range map[string]struct {
+		remove bool
+		reason string
+	}{
+		"a-overdue":               {true, ""},
+		"a2-overdue-mod":          {true, ""},
+		"b-in-grace":              {false, "within-deadline"},
+		"c-young":                 {false, "within-deadline"},
+		"d-no-deadline":           {false, "unreadable-deadline"},
+		"e-garbage":               {false, "unreadable-deadline"},
+		"h-zero":                  {false, "unreadable-deadline"},
+		"i-negative":              {false, "unreadable-deadline"},
+		"j-plus":                  {false, "unreadable-deadline"},
+		"k-far":                   {false, "unreadable-bound"},
+		"l-no-start":              {false, "unreadable-start"},
+		"m-before-start":          {false, "unreadable-bound"},
+		"g-created-never-started": {true, ""},
+	} {
+		v, ok := got[id]
+		if !ok {
+			t.Errorf("%s not judged", id)
+			continue
+		}
+		if v.remove != want.remove || v.reason != want.reason {
+			t.Errorf("%s: remove=%t reason=%q, want remove=%t reason=%q", id, v.remove, v.reason, want.remove, want.reason)
+		}
+	}
+}
+
+func TestReapRemovesOnlyOverdueContainersOfOurs(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_001_000, 0)
+	st := strconv.FormatInt(now.Unix()-7200, 10)
+	listing := fmt.Sprintf(`[
+ {"Id":"aaaaaaaaaaaaaaaa1","Names":["nova-functional-old"],"State":"running","Labels":{"%[1]s":"20300102t030405-0000000a","%[2]s":"%[3]d","%[4]s":"501","%[5]s":"%[7]s"}},
+ {"Id":"bbbbbbbbbbbbbbbb2","Names":["nova-functional-young"],"State":"running","Labels":{"%[1]s":"20300102t030405-0000000b","%[2]s":"%[6]d","%[4]s":"501","%[5]s":"%[7]s"}},
+ {"Id":"cccccccccccccccc3","Names":["nova-functional-decoy"],"State":"exited","Labels":{"other":"x"}},
+ {"Id":"dddddddddddddddd4","Names":["someone-else"],"State":"exited","Labels":{"%[1]s":"20300102t030405-0000000d","%[2]s":"%[3]d","%[4]s":"9999","%[5]s":"%[7]s"}}
+]`, labelRun, labelDeadline, now.Unix()-3600, labelOwner, labelStart, now.Unix()+3600, st)
+	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
+	var stderr bytes.Buffer
+	n, unreadable, err := reap(context.Background(), eng, now, 30*time.Second, "501", false, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || unreadable != 0 {
+		t.Errorf("reaped %d unreadable %d, want 1 and 0", n, unreadable)
+	}
+	calls := eng.argvs()
+	want := []string{strings.Join(reapListArgs(), " "), strings.Join(removeArgs("aaaaaaaaaaaaaaaa1"), " ")}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+	for _, c := range calls {
+		verb := strings.Fields(c)[0]
+		if verb != "ps" && verb != "rm" || strings.Contains(c, "prune") {
+			t.Errorf("the reaper does more than list and remove containers: %q", c)
+		}
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "REAPED id=aaaaaaaaaaaa run=20300102t030405-0000000a state=running") || !strings.Contains(out, "REAP containers=4 reaped=1 left=1 unreadable=0 foreign=1") {
+		t.Errorf("reap lines:\n%s", out)
+	}
+}
+
+func TestReapReportsUnreadableAndDispatchExitsNonZero(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_001_000, 0)
+	listing := fmt.Sprintf(`[{"Id":"a1","State":"exited","Labels":{"%s":"20300102t030405-0000000a","%s":"501","%s":"1","%s":"abc"}}]`, labelRun, labelOwner, labelStart, labelDeadline)
+	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
+	var stderr bytes.Buffer
+	n, unreadable, err := reap(context.Background(), eng, now, 0, "501", false, &stderr)
+	if err != nil || n != 0 || unreadable != 1 {
+		t.Fatalf("n=%d unreadable=%d err=%v", n, unreadable, err)
+	}
+	if len(eng.argvs()) != 1 {
+		t.Errorf("an unreadable container was touched: %q", eng.argvs())
+	}
+	if !strings.Contains(stderr.String(), "REAP-UNREADABLE id=a1 run=20300102t030405-0000000a state=exited reason=unreadable-deadline") {
+		t.Errorf("reap lines:\n%s", stderr.String())
+	}
+}
+
+func TestReapDryRunChangesNothing(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_001_000, 0)
+	listing := fmt.Sprintf(`[{"Id":"a1","State":"exited","Labels":{"%s":"20300102t030405-0000000a","%s":"501","%s":"1","%s":"2"}}]`, labelRun, labelOwner, labelStart, labelDeadline)
+	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
+	var stderr bytes.Buffer
+	n, _, err := reap(context.Background(), eng, now, 0, "501", true, &stderr)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if calls := eng.argvs(); len(calls) != 1 {
+		t.Errorf("a dry run ran more than the listing: %q", calls)
+	}
+	if !strings.Contains(stderr.String(), "REAP-WOULD id=a1 run=20300102t030405-0000000a") {
+		t.Errorf("dry run lines:\n%s", stderr.String())
+	}
+}
+
+func TestEveryRunIDMatchesTheReapersPattern(t *testing.T) {
+	t.Parallel()
+	id := newRunID(time.Now())
+	if !runIDRE.MatchString(id) || !runIDRE.MatchString(id+"-mod") {
+		t.Errorf("the reaper would not take this tool's own run id %q", id)
+	}
+	labels := map[string]string{}
+	args := testArgs(testConfig(), "img", id, time.Unix(1_800_000_000, 0))
+	for _, kv := range flagValues(args, "--label") {
+		k, v, _ := strings.Cut(kv, "=")
+		labels[k] = v
+	}
+	vs, foreign := judge([]listed{{ID: "x", Labels: labels}}, time.Unix(1_800_000_000, 0).Add(testConfig().deadline+time.Minute), 30*time.Second, "501")
+	if foreign != 0 || len(vs) != 1 || !vs[0].remove {
+		t.Errorf("the reaper does not take an overdue container with the labels a run writes: %+v foreign=%d", vs, foreign)
 	}
 }

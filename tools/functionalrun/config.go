@@ -24,6 +24,9 @@ const (
 	// the in-container timeout ends 10 s before it and go test's own -timeout
 	// 20 s before it, so go test prints the stack of a hung test first.
 	minDeadline = 30 * time.Second
+	// maxDeadline is the longest bound a run may ask for; the reaper reads a
+	// longer one on a container as a label this tool did not write.
+	maxDeadline = 24 * time.Hour
 )
 
 // runConfig is everything one run needs, from flags. Nothing is guessed: every
@@ -98,6 +101,9 @@ func parseRun(args []string) (runConfig, error) {
 	}
 	if c.deadline < minDeadline {
 		return c, fmt.Errorf("--deadline %s is under %s", c.deadline, minDeadline)
+	}
+	if c.deadline > maxDeadline {
+		return c, fmt.Errorf("--deadline %s is over %s", c.deadline, maxDeadline)
 	}
 	if c.grace < 0 {
 		return c, fmt.Errorf("--grace %s is negative", c.grace)
