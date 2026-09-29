@@ -24,7 +24,7 @@ usage:
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
   nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
-  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets placed --machine <name> [--receipts <dir>] [--max <n>]
   nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
   nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
   nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
@@ -734,6 +734,7 @@ func runPlacedCLI(args []string) {
 
 	machineFlag := fs.String("machine", "", "fleet machine name")
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
+	maxFlag := fs.Int("max", 20, "max items")
 
 	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
@@ -744,18 +745,22 @@ func runPlacedCLI(args []string) {
 		os.Exit(2)
 	}
 
-	okLine, itemLines, err := secrets.RunPlaced(secrets.PlacedInput{
+	okLine, itemLines, more, err := secrets.RunPlaced(secrets.PlacedInput{
 		Machine:  *machineFlag,
 		Receipts: *receiptsFlag,
+		Max:      *maxFlag,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
-	fmt.Println(okLine)
 	for _, l := range itemLines {
 		fmt.Println(l)
 	}
+	if more != "" {
+		fmt.Println(more)
+	}
+	fmt.Println(okLine)
 	os.Exit(0)
 }
 
