@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 	_ "time/tzdata" // the ETA prints Eastern on every bench, zone files or not
 
@@ -84,6 +86,25 @@ func (s StreamCounts) Cell(state string) int64 {
 	return 0
 }
 
+// ActiveDuty is one duty card in working state.
+type ActiveDuty struct {
+	ID        string
+	Stream    string
+	Friend    string
+	EST       time.Duration
+	CreatedAt time.Time
+	Age       time.Duration
+	Overdue   bool
+}
+
+// LandDuty describes an active stream land duty.
+type LandDuty struct {
+	ID     string
+	Stream string
+	Age    time.Duration
+	EST    time.Duration
+}
+
 // SprintCounts is the sprint's progress at one read: what Counts returns.
 type SprintCounts struct {
 	// Sprint is the sprint named, or the open one (the last member of
@@ -95,6 +116,10 @@ type SprintCounts struct {
 	// sums (Stream "total").
 	Streams []StreamCounts
 	Total   StreamCounts
+	// Duties is the list of active working duty cards.
+	Duties []ActiveDuty
+	// LandDuty is the active stream land duty, if any.
+	LandDuty *LandDuty
 	// LandedHour is the cards (sentinels aside) moved to landed in ws:log
 	// over the hour before At, the ETA's rate; LogErr is set when ws:log did not come back.
 	LandedHour int64
@@ -176,12 +201,16 @@ func Eastern(now, t time.Time) string {
 	return out
 }
 
-// Header is the one progress line: landed/total done N%, left L, eta HH:MM ET.
+// Header is the one progress line: landed/total done N%, left L, eta HH:MM ET [land: <stream> <age>].
 func (c SprintCounts) Header() string {
 	if c.Unread() {
 		return "?/? done ?%, left ?, eta ?"
 	}
-	return fmt.Sprintf("%d/%d done %d%%, left %d, eta %s", c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
+	h := fmt.Sprintf("%d/%d done %d%%, left %d, eta %s", c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
+	if c.LandDuty != nil {
+		h += fmt.Sprintf(" land: %s %s", c.LandDuty.Stream, formatDuration(c.LandDuty.Age))
+	}
+	return h
 }
 
 // Receipt is the same numbers as one key=value line (ws counts).
@@ -258,6 +287,7 @@ type CountsReader struct {
 	// by it, and a read that finds another epoch after its cells is read
 	// again, like a membership change (#4238)
 	epoch  uint64
+	duties []string
 	primed bool
 }
 
@@ -280,7 +310,9 @@ type CountsCmd struct {
 	cells   CellsCmd // the cells of every cached stream
 	// epochQ is sprint:epoch read after every cell (#4238): a clear that
 	// lands before or between the cells shows as another epoch
-	epochQ *redis.StringCmd
+	epochQ   *redis.StringCmd
+	dutySet  *redis.StringSliceCmd
+	dutyCmds map[string]*redis.SliceCmd
 }
 
 // Queue queues the read made for now on pipe.
@@ -301,6 +333,13 @@ func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time
 	}
 	q.cells = cells.Queue(ctx, pipe, r.epoch, r.streams)
 	q.epochQ = pipe.HGet(ctx, EpochKey, EpochField)
+	q.dutySet = pipe.SMembers(ctx, "duty:working")
+	if len(r.duties) > 0 {
+		q.dutyCmds = make(map[string]*redis.SliceCmd, len(r.duties))
+		for _, id := range r.duties {
+			q.dutyCmds[id] = pipe.HMGet(ctx, "task:"+id, "where", "kind", "stream", "friend", "est", "created_at")
+		}
+	}
 	return q
 }
 
@@ -406,14 +445,20 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 	if err != nil {
 		return SprintCounts{}, false, err
 	}
+	gotDuties, err := q.dutySet.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return SprintCounts{}, false, fmt.Errorf("smembers duty:working: %w", err)
+	}
+	sort.Strings(gotDuties)
+
 	// The open sprint only names the counts; it is taken from this read's
 	// statuses whenever sprint:order held still (a caller keying other
 	// reads on it compares SprintName before and after).
-	changed := !r.primed || !slices.Equal(order, r.streams) || !slices.Equal(sprints, r.sprints) || epoch != r.epoch
+	changed := !r.primed || !slices.Equal(order, r.streams) || !slices.Equal(sprints, r.sprints) || epoch != r.epoch || !slices.Equal(gotDuties, r.duties)
 	r.primed = true
 	r.open = open
 	if changed {
-		r.streams, r.sprints, r.epoch = order, sprints, epoch
+		r.streams, r.sprints, r.epoch, r.duties = order, sprints, epoch, gotDuties
 		return SprintCounts{}, true, nil
 	}
 	if r.Sprint != "" && r.Sprint != open {
@@ -432,6 +477,53 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 			id, _ := m.Values["id"].(string)
 			if to, _ := m.Values["to"].(string); to == Landed && !IsSentinel(id) {
 				c.LandedHour++ // a stream's stop landing is not a card landed
+			}
+		}
+	}
+	for _, id := range r.duties {
+		cmd, ok := q.dutyCmds[id]
+		if !ok {
+			continue
+		}
+		vals, err := cmd.Result()
+		if err != nil || len(vals) < 6 {
+			continue
+		}
+		where := pipeValue(vals[0])
+		if where != "working" {
+			continue
+		}
+		kind := pipeValue(vals[1])
+		stream := pipeValue(vals[2])
+		friend := pipeValue(vals[3])
+		estStr := pipeValue(vals[4])
+		est := parseEST(estStr, stream)
+		var createdAt time.Time
+		if ms, err := strconv.ParseInt(pipeValue(vals[5]), 10, 64); err == nil && ms > 0 {
+			createdAt = time.UnixMilli(ms)
+		} else {
+			createdAt = q.at
+		}
+		age := q.at.Sub(createdAt)
+		if age < 0 {
+			age = 0
+		}
+		ad := ActiveDuty{
+			ID:        id,
+			Stream:    stream,
+			Friend:    friend,
+			EST:       est,
+			CreatedAt: createdAt,
+			Age:       age,
+			Overdue:   age > est,
+		}
+		c.Duties = append(c.Duties, ad)
+		if c.LandDuty == nil && (strings.HasSuffix(id, ":land") || strings.Contains(id, ":land-") || (kind == "duty" && stream != "ops")) {
+			c.LandDuty = &LandDuty{
+				ID:     id,
+				Stream: stream,
+				Age:    age,
+				EST:    est,
 			}
 		}
 	}
@@ -469,3 +561,33 @@ func isReplyError(err error) bool {
 	var re redis.Error
 	return errors.As(err, &re)
 }
+
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		return "0s"
+	}
+	d = d.Truncate(time.Second)
+	return d.String()
+}
+
+func parseEST(s, stream string) time.Duration {
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d
+	}
+	if stream == "ops" {
+		return 5 * time.Minute
+	}
+	return 15 * time.Minute
+}
+
+func pipeValue(v any) string {
+	if v == nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Sprint(v)
+	}
+	return strings.TrimSpace(s)
+}
+

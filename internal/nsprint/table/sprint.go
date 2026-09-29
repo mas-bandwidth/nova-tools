@@ -164,6 +164,8 @@ type SprintSnapshot struct {
 	// window or the Studio beat that did not come back): the rows stand,
 	// and each prints as one ERR line under the tables, never nothing.
 	Errors []string
+	// Alarms are active alarm lines (e.g. duty cards exceeding their EST).
+	Alarms []string
 }
 
 // Consumer is one consumer of copies: <Kind>:<Name>, bench or friend.
@@ -195,18 +197,22 @@ type ConsumerRow struct {
 	Paused                   bool
 	Behind                   string
 	Load                     string
+	// Duty is an active duty card ID the friend is working on (e.g. dev:land).
+	Duty string
 	// Models is a friend beat's models field: the models of the copies it
 	// holds in working (life.FriendBeat); the row prints it beside the name
 	// while the row is up and working.
 	Models string
 }
 
-// Status is the row's status cell: down, behind: <role> (up, its last
+// Status is the row's status cell: down, duty, behind: <role> (up, its last
 // fleet play stopped in role), paused (up and paused) or up.
 func (r ConsumerRow) Status() string {
 	switch {
 	case !r.Up:
 		return "down"
+	case r.Duty != "":
+		return "duty"
 	case r.Behind != "":
 		return "behind: " + r.Behind
 	case r.Paused:
@@ -523,6 +529,11 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 
 	snap := &SprintSnapshot{Config: cfg, Epoch: gotEpoch, Counts: gotCounts}
+	for _, d := range gotCounts.Duties {
+		if d.Overdue {
+			snap.Alarms = append(snap.Alarms, fmt.Sprintf("ALARM duty=%s age=%s est=%s", d.ID, formatDuration(d.Age), formatDuration(d.EST)))
+		}
+	}
 	if gotCounts.LogErr != nil {
 		// The ETA rate would read as none with no word.
 		snap.Errors = append(snap.Errors, "ws:log not read (eta rate unknown): "+gotCounts.LogErr.Error())
@@ -554,6 +565,14 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	for i, c := range roster {
 		row := ConsumerRow{Consumer: c, Load: "-"}
+		if c.Kind == "friend" {
+			for _, d := range gotCounts.Duties {
+				if d.Friend == c.Name {
+					row.Duty = d.ID
+					break
+				}
+			}
+		}
 		cells := []*int64{&row.Ready, &row.Working, &row.OK, &row.Fail}
 		for j, cmd := range cmds[i].cells {
 			n, err := cmd.Result()
@@ -646,6 +665,9 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 		// less is more).
 		b.WriteString(line + "\n")
 	}
+	for _, a := range s.Alarms {
+		b.WriteString(a + "\n")
+	}
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
 	}
@@ -731,6 +753,13 @@ const nameWidth = 25
 // cell's width, because a column would push the row past 80 and the status
 // cell (6 wide) has no room: the row stays as wide as it was.
 func workerName(name string, r ConsumerRow) string {
+	if r.Duty != "" {
+		s := name + " " + r.Duty
+		if len(s) > nameWidth {
+			s = s[:nameWidth]
+		}
+		return s
+	}
 	if r.Kind != "friend" || !r.Up || r.Working == 0 || r.Unread[1] || r.Models == "" {
 		return name
 	}
@@ -739,6 +768,14 @@ func workerName(name string, r ConsumerRow) string {
 		s = s[:nameWidth]
 	}
 	return s
+}
+
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		return "0s"
+	}
+	d = d.Truncate(time.Second)
+	return d.String()
 }
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes

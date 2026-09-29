@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,3 +131,66 @@ func TestCountsRefuseASprintNotOpen(t *testing.T) {
 		t.Fatalf("primed --sprint other: %v; want NotOpen", err)
 	}
 }
+
+func TestCountsWithActiveDutyCards(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	now := time.Date(2026, 9, 26, 18, 0, 0, 0, time.UTC)
+
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: "dev"})
+	c.ZAdd(ctx, ws.KeyAt(0, "dev", ws.Landed), redis.Z{Score: 1, Member: "d1"})
+	c.ZAdd(ctx, ws.KeyAt(0, "dev", ws.Working), redis.Z{Score: 2, Member: "d2"})
+
+	// Add an active land duty card created 42s ago with 15m EST
+	createdAt := now.Add(-42 * time.Second)
+	c.SAdd(ctx, "duty:working", "dev:land")
+	c.HSet(ctx, "task:dev:land", map[string]any{
+		"where":      "working",
+		"kind":       "duty",
+		"stream":     "dev",
+		"friend":     "rowan",
+		"est":        "15m",
+		"created_at": strconv.FormatInt(createdAt.UnixMilli(), 10),
+	})
+
+	got, err := (&ws.CountsReader{}).Read(ctx, c, now)
+	if err != nil {
+		t.Fatalf("CountsReader.Read: %v", err)
+	}
+
+	if got.LandDuty == nil {
+		t.Fatal("expected LandDuty to be non-nil")
+	}
+	if got.LandDuty.Stream != "dev" || got.LandDuty.ID != "dev:land" {
+		t.Fatalf("LandDuty = %+v, want stream dev, id dev:land", got.LandDuty)
+	}
+	if got.LandDuty.Age != 42*time.Second {
+		t.Fatalf("LandDuty.Age = %v, want 42s", got.LandDuty.Age)
+	}
+
+	header := got.Header()
+	if !strings.HasSuffix(header, "land: dev 42s") {
+		t.Fatalf("Header = %q; want suffix 'land: dev 42s'", header)
+	}
+
+	if len(got.Duties) != 1 {
+		t.Fatalf("len(Duties) = %d, want 1", len(got.Duties))
+	}
+	if got.Duties[0].Overdue {
+		t.Fatalf("duty should not be overdue (age 42s < est 15m)")
+	}
+
+	// Now advance time so age is 16m > 15m
+	overdueNow := now.Add(16 * time.Minute)
+	gotOverdue, err := (&ws.CountsReader{}).Read(ctx, c, overdueNow)
+	if err != nil {
+		t.Fatalf("CountsReader.Read overdue: %v", err)
+	}
+	if len(gotOverdue.Duties) != 1 || !gotOverdue.Duties[0].Overdue {
+		t.Fatalf("expected duty to be overdue, got %+v", gotOverdue.Duties)
+	}
+}
+

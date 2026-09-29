@@ -36,6 +36,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -180,14 +181,37 @@ func runFnDeploy(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 		return 0
 	}
+	start := time.Now()
+	duty, _ := taskcard.StartDuty(ctx, st.Client(), taskcard.DutyOpts{
+		Stream: "ops",
+		Op:     "fn-deploy",
+		Actor:  "rowan",
+		Title:  "fn deploy",
+		Now:    start,
+	})
+
 	_, loaded, err := fn.Ensure(ctx, st.Client())
 	if err != nil {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "load-failed")
+		}
 		return fnDeployFailed(out, addr, "load", err)
 	}
 	if err := store.DeployACLs(ctx, st.Client()); err != nil {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "deploy-acls-failed")
+		}
 		return fnDeployFailed(out, addr, "deploy-acls", err)
 	}
-	return fnDeployReadBack(ctx, st.Client(), addr, sha, loaded, out)
+	code := fnDeployReadBack(ctx, st.Client(), addr, sha, loaded, out)
+	if duty != nil {
+		if code == 0 {
+			_ = taskcard.LandDuty(ctx, st.Client(), duty.ID, "rowan", "-", "fn deploy receipt", time.Since(start))
+		} else {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "read-back-failed")
+		}
+	}
+	return code
 }
 
 // fnDeployReadBack is the step after the load: the store must hold exactly

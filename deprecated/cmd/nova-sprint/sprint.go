@@ -21,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -457,12 +458,24 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 	if *force {
 		forceArg = "1"
 	}
+	startDuty := time.Now()
+	duty, _ := taskcard.StartDuty(ctx, st.Client(), taskcard.DutyOpts{
+		Stream: "ops",
+		Op:     "sprint-clear",
+		Actor:  who,
+		Title:  "sprint clear",
+		Now:    startDuty,
+	})
+
 	// ms is the clear's own time: the one call, not the dial or the
 	// checkpoint before it (DONE-WHEN of #4238: under 10 ms)
 	start := time.Now()
 	reply, err := st.Client().FCall(ctx, "ns_sprint_clear", nil, who, *why, forceArg).Slice()
 
 	if err != nil {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, who, "clear error")
+		}
 		return refuse(errOut, verb, err.Error())
 	}
 	words := make([]string, len(reply))
@@ -470,6 +483,9 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 		words[i] = fmt.Sprint(v)
 	}
 	if len(words) == 0 || words[0] != "CLEARED" {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, who, "clear refused")
+		}
 		if len(words) >= 2 && words[0] == "REFUSED" {
 			fmt.Fprintf(errOut, "REFUSED %s: %s\n", verb, oneline.Escape(words[1]))
 			return 1
@@ -477,7 +493,13 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 		return refuse(errOut, verb, "unexpected reply "+oneline.Escape(strings.Join(words, " ")))
 	}
 	if len(words) < 8 {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, who, "short reply")
+		}
 		return refuse(errOut, verb, "short reply "+oneline.Escape(strings.Join(words, " ")))
+	}
+	if duty != nil {
+		_ = taskcard.LandDuty(ctx, st.Client(), duty.ID, who, "-", "sprint cleared", time.Since(startDuty))
 	}
 	ms := time.Since(start).Milliseconds()
 	// the parked cards the clear left parked in the epoch it left, sentinels

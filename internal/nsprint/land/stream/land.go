@@ -15,6 +15,7 @@ import (
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -177,6 +178,28 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		remote = "git@github.com:" + o.Repo + ".git"
 	}
 	rep.Workdir = o.Workdir
+	actor := o.By
+	if actor == "" {
+		actor = "coordinator"
+	}
+	var dutyID string
+	duty, err := taskcard.StartDuty(ctx, c, taskcard.DutyOpts{
+		ID:     slug + ":land",
+		Stream: slug,
+		Actor:  actor,
+		Title:  "land stream " + slug,
+	})
+	if err != nil {
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, "duty start: %v\n", err)
+		}
+	} else if duty != nil {
+		dutyID = duty.ID
+	}
+	if dutyID == "" && hadPrev && prev.Duty != "" {
+		dutyID = prev.Duty
+	}
+
 	b := Build{Repo: o.Repo, Remote: remote, Mirror: o.Mirror, Base: o.Base, Branch: rep.Branch, Workdir: o.Workdir,
 		Test: test, TestTimeout: o.TestTimeout, NoTest: o.NoTest, Author: o.Author, Log: o.Log, ParkConflicts: o.ParkConflicts,
 		Steps: steps}
@@ -190,7 +213,8 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		rep.Skips = append(rep.Skips, Skip{Task: m.Task, N: m.N, Why: m.Why})
 	}
 	l := Landing{Repo: o.Repo, Slug: slug, Streams: strings.Join(o.Streams, ","), Base: o.Base, BaseSHA: res.BaseSHA,
-		Branch: rep.Branch, Head: res.Head, Members: res.Kept, Parked: res.Parked, Tests: res.Tests, Workdir: o.Workdir}
+		Branch: rep.Branch, Head: res.Head, Members: res.Kept, Parked: res.Parked, Tests: res.Tests, Workdir: o.Workdir,
+		Duty: dutyID}
 	// The build can drop members too (a conflict parked, a red bisected
 	// out, a head that moved): the PR would carry fewer than the stream
 	// has in merging. The same line, after the build: with Partial it
@@ -478,6 +502,15 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			rep.NotesDropped += n
 		}
 	}
+	dutyID := l.Duty
+	if dutyID == "" {
+		dutyID = slug + ":land"
+	}
+	var wall time.Duration
+	if createdAt, err := c.HGet(ctx, taskcard.Key(dutyID), "created_at").Int64(); err == nil && createdAt > 0 {
+		wall = time.Since(time.UnixMilli(createdAt))
+	}
+	_ = taskcard.LandDuty(ctx, c, dutyID, o.By, rep.MergeSHA, "stream merged", wall)
 	var ns []int
 	for _, m := range l.Members {
 		ns = append(ns, m.N)

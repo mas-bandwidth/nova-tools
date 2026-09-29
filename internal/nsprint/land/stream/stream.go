@@ -604,6 +604,7 @@ type Landing struct {
 	Workdir                                          string
 	At                                               string
 	MergeSHA                                         string
+	Duty                                             string
 	// CommitCloses is, per kept member, the issues its commit messages
 	// close; SaveBuilt stores it on the member's record (commit_closes).
 	CommitCloses map[int]string
@@ -634,6 +635,9 @@ func (l Landing) fields() map[string]string {
 		"member_streams": strings.Join(streams, "\n"), "parked": strings.Join(parked, " "),
 		"state": l.State, "tests": strconv.Itoa(l.Tests), "workdir": l.Workdir, "at": now(),
 	}
+	if l.Duty != "" {
+		f["duty"] = l.Duty
+	}
 	if l.PR > 0 {
 		f["pr"] = strconv.Itoa(l.PR)
 	}
@@ -653,7 +657,7 @@ func (l Landing) fields() map[string]string {
 func landingFrom(repo string, m map[string]string) Landing {
 	l := Landing{Repo: repo, Slug: m["slug"], Streams: m["streams"], Base: m["base"], BaseSHA: m["base_sha"],
 		Branch: m["branch"], Head: m["head"], State: m["state"], Workdir: m["workdir"], At: m["at"],
-		MergeSHA: m["merge_sha"], Serial: m["serial"], PartialBy: m["partial_by"], PartialAt: m["partial_at"]}
+		MergeSHA: m["merge_sha"], Duty: m["duty"], Serial: m["serial"], PartialBy: m["partial_by"], PartialAt: m["partial_at"]}
 	l.PR, _ = strconv.Atoi(m["pr"])
 	l.Tests, _ = strconv.Atoi(m["tests"])
 	mem := strings.Fields(m["members"])

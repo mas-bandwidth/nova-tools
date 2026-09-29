@@ -22,8 +22,11 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -67,17 +70,44 @@ func runSelfWith(ctx context.Context, args []string, out, errOut io.Writer, deps
 	if err != nil {
 		return selfRefused(errOut, fmt.Errorf("no home directory: %v", err))
 	}
+	var duty *taskcard.Duty
+	var st *store.Store
+	start := time.Now()
+	if redisAddr := redisDefault(); redisAddr != "" {
+		if s, err := store.Open(ctx, redisAddr); err == nil {
+			st = s
+			defer st.Close()
+			duty, _ = taskcard.StartDuty(ctx, st.Client(), taskcard.DutyOpts{
+				Stream: "ops",
+				Op:     "self-update",
+				Actor:  "rowan",
+				Title:  "self update",
+				Now:    start,
+			})
+		}
+	}
+
 	s := &fleetbuild.SelfUpdate{Runner: deps.Runner, Home: home, From: *from, Sha: *sha,
 		AllowBranch: *allow, PID: deps.PID, Out: out}
 	res, err := s.Run(ctx)
 	if err != nil {
+		if duty != nil && st != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "self update refused")
+		}
 		return selfRefused(errOut, err)
 	}
+	wall := time.Since(start)
 	if res.Skipped {
 		fmt.Fprintf(out, "SELF UPDATE SKIPPED %s already answers %s commit=%s\n", res.Bin, res.New, res.Commit[:12])
+		if duty != nil && st != nil {
+			_ = taskcard.LandDuty(ctx, st.Client(), duty.ID, "rowan", res.Commit, "self update skipped", wall)
+		}
 		return 0
 	}
 	fmt.Fprintf(out, "SELF UPDATE OK %s -> %s commit=%s toolchain=%s bin=%s\n", res.Old, res.New, res.Commit[:12], res.Toolchain, res.Bin)
+	if duty != nil && st != nil {
+		_ = taskcard.LandDuty(ctx, st.Client(), duty.ID, "rowan", res.Commit, "self update ok", wall)
+	}
 	return 0
 }
 

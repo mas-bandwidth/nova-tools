@@ -44,6 +44,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -252,16 +253,36 @@ func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writ
 		Redis: fleetAddr(*redisAddr), AdminEnv: *adminEnv, AdminPassword: pw, AdminWhy: why, Seat: seat,
 		BuildCmd: fleetBuildCmd(), Machines: ms, Benches: only, PlayDir: dir, Play: *play, Registry: registry,
 		Wait: *wait, Poll: fleetbuild.DefaultVerifyPoll, Sleep: deps.Sleep, Out: out}
+	start := time.Now()
+	duty, _ := taskcard.StartDuty(ctx, st.Client(), taskcard.DutyOpts{
+		Stream: "ops",
+		Op:     "fleet-roll",
+		Actor:  "rowan",
+		Title:  "fleet roll " + pos[0],
+		Now:    start,
+	})
 	res, err := rel.Run(ctx, pos[0])
 	if errors.Is(err, fleetbuild.ErrRefused) {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "fleet release refused")
+		}
 		return releaseRefused(errOut, err)
 	}
 	if err != nil {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "fleet release error")
+		}
 		return unreachable(errOut, "fleet release", err.Error())
 	}
 	fmt.Fprintln(out, res.Line())
 	if !res.OK() {
+		if duty != nil {
+			_ = taskcard.CancelDuty(ctx, st.Client(), duty.ID, "rowan", "fleet release not ok")
+		}
 		return 1
+	}
+	if duty != nil {
+		_ = taskcard.LandDuty(ctx, st.Client(), duty.ID, "rowan", "-", "fleet release receipt", time.Since(start))
 	}
 	return 0
 }
