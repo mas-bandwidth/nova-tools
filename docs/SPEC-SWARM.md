@@ -58,7 +58,7 @@ usage:
                        (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
-  nova-swarm slots list --store <dir>
+  nova-swarm slots list --store <dir> [--max <n>]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 ```
 
@@ -137,7 +137,7 @@ The seven rules:
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--kind <kind>]
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
-   nova-swarm slots list --store <dir>
+   nova-swarm slots list --store <dir> [--max <n>]
    ```
 
    `init` makes a store: the directory, its `slots/` and one `shares.tsv` with the
@@ -149,7 +149,7 @@ The seven rules:
    Card kinds carry a weight charged at take, before any child starts: a schema or
    fix-red card weighs 4 because it spawns build chains; a read card weighs 1.
    A schema card is refused at take when the remaining share fits only a read.
-4. `nova-swarm slots list --store <dir>` prints who holds what, one line per lease.
+4. `nova-swarm slots list --store <dir> [--max <n>]` prints who holds what, one line per lease.
 5. Reaping: a lease past until= whose pid is gone is reaped by the next take;
    drift: a pid alive past until= is DRIFT, printed by name, never reaped and never regranted.
 6. In the survey, a card found running under a root with no matching lease is DRIFT.
@@ -166,7 +166,7 @@ Red tests (each seen red before it is trusted):
 
 A bench holds slot leases: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>` first reaps every lease whose `until=` is past AND whose pid is not alive — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+demand stays within its share and the total held+demand stays within `capacity` minus `reserve`.
 
-`nova-swarm slots list --store <dir>` prints one line per lease.
+`nova-swarm slots list --store <dir> [--max <n>]` prints one line per lease.
 
 native takes directory leases (.lease, .slot-lease); bench capacity-store lease was removed in #3877.
 
