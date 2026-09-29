@@ -27,6 +27,8 @@ func TestMain(m *testing.M) {
 		joinWrapper()
 		return
 	}
+	os.Setenv("NOVA_UPDATE_HELPER", "1")
+	os.Setenv("GORACE", "atexit_sleep_ms=0")
 	code := m.Run()
 	removeJoinBinaries()
 	os.Exit(code)

@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 385
+# ceiling: 367
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -325,13 +325,11 @@ internal/testguard/testguard_test.go:TestArmedGuardNamesTheCommandAndTheRemedy s
 internal/testguard/testguard_test.go:TestUnsetGuardLetsTheSeamRun serial: t.Setenv
 internal/tokens/package_test.go:TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace serial: swaps package var tokens.FsyncHook
 internal/update/adopt_test.go:TestWatchAdoptRunsPassEscalatesAndPostsReceipt serial: t.Setenv
-internal/update/ahead_test.go:TestDevBuildAheadOfReleaseReportsAhead serial: t.Setenv
 internal/update/delivery_test.go:TestALineOutsideTheBusGrammarIsNotRelayed serial: t.Setenv
 internal/update/delivery_test.go:TestNewObservationCannotReplaceUnresolvedPending serial: t.Setenv
 internal/update/delivery_test.go:TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget serial: t.Setenv
 internal/update/delivery_test.go:TestTheBusOwnWordsReachTheCallerBoundedToOneLine serial: t.Setenv
 internal/update/fleetdrift_test.go:TestReportStorePrintsOneDriftLineForTheStaleBench serial: t.Setenv
-internal/update/inventory_spec_test.go:TestSnapshotIsBoundedByTheClock serial: swaps package var update.snapshotChildTimeout
 internal/update/issue2288_test.go:TestIssue2288 serial: t.Setenv
 internal/update/issue2288_test.go:TestMovedEmptyDiffIsNotARefusal serial: t.Setenv
 internal/update/issue2288_test.go:TestMovedIsBoundedByTheClock serial: t.Setenv
@@ -341,29 +339,13 @@ internal/update/process_functional_test.go:TestJoinInterruptionNegativeControlWi
 internal/update/process_functional_test.go:TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers serial: t.Setenv
-internal/update/rules_test.go:TestRule18EveryRefusalNamesARemedy serial: t.Setenv
-internal/update/rules_test.go:TestRule25SnapshotSurvivesAReporterKilledWhileWriting serial: t.Setenv
 internal/update/rules_test.go:TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked serial: t.Setenv
-internal/update/rules_test.go:TestRule9CheckWritesNothingAndNeverRunsAnApply serial: t.Setenv
-internal/update/rules_test.go:TestSnapshotRenameBarrierHelper serial: swaps package var update.renameSnapshot
 internal/update/slow_test.go:TestJoinChildDeathAtWriteBoundariesRecoversOneContribution serial: t.Setenv
 internal/update/slow_test.go:TestJoinLostConfirmationRecoversWithoutASecondNote serial: t.Setenv
 internal/update/slow_test.go:TestJoinRealBusPublishesOneNoteAndOneIndexRow serial: t.Setenv
 internal/update/slow_test.go:TestJoinRefusedPushRecoversToOneNoteWithTheSameID serial: t.Setenv
 internal/update/slow_test.go:TestPendingBeforeDispatchAndQuietRetry serial: t.Setenv
-internal/update/stella_deadline_test.go:TestDeadlineHealthyChildUnderLoadIsFullyDrained serial: t.Setenv
-internal/update/stella_deadline_unix_test.go:TestDeadlineEscapedPipeGrandchildReturnsInsideBudget serial: t.Setenv
 internal/update/stella_snapshot_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
-internal/update/update_test.go:TestApplyOnlyNamedEntryAndExactTarget serial: t.Setenv
-internal/update/update_test.go:TestCheckCapsAndFilterActuallyAvoidsReads serial: t.Setenv
-internal/update/update_test.go:TestFourReadLimitAndOverallBudget serial: t.Setenv
-internal/update/update_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv
-internal/update/process_functional_test.go:TestHeldPipePastGraceIsNamedAndEchoesNoContent serial: t.Setenv
-internal/update/update_test.go:TestProcessFailuresAreDistinguishable serial: t.Setenv
-internal/update/update_test.go:TestProcessesAreBoundedAndRawSurvivesFailure serial: t.Setenv
-internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled serial: t.Setenv
-internal/update/update_test.go:TestReportNeverReadsLatestAndPartialIsVisible serial: t.Setenv
-internal/update/update_test.go:TestSnapshotObservationDoesNotSuppressDelivery serial: t.Setenv
 internal/nsprint/card/copy_functional_test.go:TestReadCopyDealtToBenchRendersALintedCard serial: t.Setenv
 cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
