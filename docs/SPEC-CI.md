@@ -2370,24 +2370,56 @@ proofs or silently replaced by smaller configurations.
 
 `tla/RUNS.tsv` retains each measured module/configuration, generated and distinct
 states, elapsed time, result, exit, declared expectation, budget and run mode.
-It also records the bench, UTC start, installed jar hash and an input fingerprint
-covering all TLA modules, MC configurations, case declarations and the runner's
-Go files (`internal/tlc`, without its tests); `tlacheck merge` joins the records of
-the group runs into the committed file.
+It also records the platform of the bench (`host`: the label `<goos>-<goarch>` the tool
+computes, from the closed list `Platforms` in `internal/tlc/records.go`, never a machine's
+name), its logical CPU count (`cpus`), the java version, the TLC workers of the case, UTC
+start, installed jar hash, an input fingerprint and the count of files under it. The fingerprint covers what
+that case's TLC run reads and nothing else: its configuration; the module `CASES.tsv`
+names for it and, transitively, every module that one `EXTENDS` or `INSTANCE`s (a name
+with no file under `tla/` must be one of the ten modules the TLC jar bundles, the `standardModules` list in
+`internal/tlc/inputs.go`, which read nothing from the tree; any other name refuses the case);
+the case's own row of `CASES.tsv` under the file's header; and the runner's result files
+(`outcome.go`, `plan.go`, `run.go` and `suite.go` of `internal/tlc`: the command line, flags, workers
+and timeouts of a run, the reading of TLC's output and the reading of a plan row into the case a run is judged by). The package's other non-test files
+are bookkeeping and in no fingerprint, and `TestEveryRunnerFileIsClassified` holds each file
+to exactly one of the two lists (`ResultFiles`, `BookkeepingFiles`). It is the SHA-256 over those inputs in path
+order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline: no timestamp,
+no host and no absolute path. The jar is not an input; the record names it in its own
+column, beside the java version and the worker count. `tlacheck inputs --case <config>` prints each input and its hash, the fingerprint
+and the count. `tlacheck merge` joins the records of the group runs into the committed
+file, refuses a record that is not the fingerprint its case has at that checkout (another
+runner, or a model edited since the run) or whose module, expected outcome or property cell is not the plan's for the case, and with `--keep` carries the current records of
+the cases no run measured again; `tlacheck groups --stale` names the groups to run again.
 Unknown state counts on a failed timeout stay unknown, never zero-state success.
-Updating any fingerprinted input requires refreshing the records on a bench.
+Editing a model, a configuration or a case's row requires refreshing the records of the
+cases that read it, and only those; editing a result file of the runner requires refreshing every record, and editing a
+bookkeeping file or the standard-module list requires none.
 
 `TestTLCRecordsCoverCurrentModels` checks declaration coverage and current evidence
 without executing Java or making a network call. Required models cannot become
 bench debt to evade their gate. Only the two named deferred models may retain
 failed or missing measurements, and the class lists that debt explicitly; any
 existing debt record must still have a current fingerprint and honest provenance.
-It also holds `internal/tlc`'s own fingerprint, computed from the bytes the runner was
-built with, to the one the class computes from the checkout's files, so a record the
-runner writes is stale only because an input changed.
-`TestTLCRecordFreshnessAndCoverageWitnesses` proves changed models, changed bounds,
-changed runners, omitted/added cases, wrong exits and invalid gate waivers refuse,
-while a declared failed bench measurement is retained as debt, never PASS.
+It holds `internal/tlc`'s own fingerprint of every case, computed from the bytes the
+runner was built with, to the one the class computes from the checkout's files, so a
+record the runner writes is stale only because an input changed, and it holds the real
+tree to the rule that a case reads its own models and the ones they extend and no others.
+`TestTLCStaleRecordNamesTheCaseAndItsInputFiles` holds a stale record to being refused by
+naming its case and the files that case reads. `TestTLCRecordsAndCasesMustMatchOneToOne`
+holds a configuration with no declared case or no record, a record with no configuration,
+and a case whose module or extended module cannot be found to being refused by name.
+`TestTLCPerCaseFingerprintStalesOnlyTheCasesThatReadWhatChanged` proves, on a fixture of
+two models that share a module and a third that shares nothing, that an edit to one model
+stales that case only, an edit to the shared module stales the cases that extend it and no
+other, an edit to one row of the case plan stales that case only, an edit to the runner
+stales every case, and edits to files no case reads stale none.
+`TestTLCEveryFileACaseReadsStalesIt` changes each file a case reads, one at a time, and
+each change stales the case. `TestTLCRecordHostIsAPlatformLabel` refuses a `host` cell that is not a listed platform label
+and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
+set of records measured with more than one jar, naming each jar with its record count and the
+groups to run again. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
+records, wrong exits, invalid gate waivers and manual required records refuse, while a
+declared failed bench measurement is retained as debt, never PASS.
 
 The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
 from the case plan and runs only on self-hosted Linux runners, with two-minute

@@ -4,9 +4,12 @@ package config
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
 )
@@ -109,5 +112,60 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "postgres at postgres@127.0.0.1:1/nova") {
 		t.Fatalf("refusal %q does not name the store", got)
+	}
+}
+
+// Without a deadline of its own the connection check is bounded by the
+// fallback it is given (ConnectTimeout in OpenPG); with one, the caller's
+// deadline governs and the fallback is not applied. Both are read from the
+// context, not the clock: after the fallback fires the caller's context is
+// still open, and after the caller's deadline fires it is done.
+func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
+	t.Parallel()
+
+	// stall is a store that accepts connections and never answers; accepted
+	// gets one value per connection.
+	stall := func() (dsn string, accepted chan struct{}) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = l.Close() })
+		accepted = make(chan struct{}, 8)
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				defer c.Close()
+				accepted <- struct{}{}
+			}
+		}()
+		return "postgres://nova_config@" + l.Addr().String() + "/nova", accepted
+	}
+
+	// No deadline: the 100ms fallback ends the wait, the context stays open.
+	dsn, _ := stall()
+	ctx := context.Background()
+	_, err := openPGWithin(ctx, dsn, 100*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		t.Fatalf("no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
+	}
+
+	// A deadline (a distant one, so nothing here waits on it): it governs, so
+	// a 1ns fallback is not applied and the call is still waiting when the
+	// store has accepted the connection. The test then cancels the context
+	// and the call returns with it done.
+	dsn, accepted := stall()
+	dctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	go func() {
+		<-accepted
+		cancel()
+	}()
+	_, err = openPGWithin(dctx, dsn, time.Nanosecond)
+	if err == nil || dctx.Err() == nil {
+		t.Fatalf("a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
 	}
 }

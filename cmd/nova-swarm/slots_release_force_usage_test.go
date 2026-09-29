@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// THE FLAG THE HELP DID NOT HAVE (#1902, Johnny's hold on PR #1943).
+// THE FLAG THE HELP DID NOT HAVE (#1902, hold on PR #1943).
 //
 // `slots release` keeps a lease whose holder is still running, and `--force` is the only
 // way past that. Both facts were in the code and in nobody's help: the usage banner still

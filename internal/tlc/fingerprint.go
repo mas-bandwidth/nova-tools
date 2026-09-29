@@ -1,93 +1,110 @@
 package tlc
 
 import (
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 )
 
-// The runner's own files. The list is explicit because go:embed cannot leave
-// out the tests; TestEmbeddedSourcesAreTheNonTestFiles holds it to the
-// directory.
+// The runner's files that decide how a result is produced and read: the command
+// line of a TLC run, its flags, its workers and its timeouts (run.go, suite.go)
+// and the reading of TLC's exit status and output into pass or fail
+// (outcome.go), and the reading of a row of the case plan into the case a run is
+// judged by (plan.go: the expected outcome, the property and the deadlock policy
+// that outcome.go and suite.go apply). A change to one of them can change what a
+// record means, so they are inputs of every case's fingerprint. go:embed cannot
+// take a list, so the directive below repeats ResultFiles and InputListFiles;
+// TestEmbeddedSourcesAreTheCheckedFiles holds them together.
 //
-//go:embed cases.go doc.go fingerprint.go jar.go outcome.go records.go run.go suite.go
+//go:embed outcome.go plan.go run.go suite.go inputs.go
 var sources embed.FS
+
+// ResultFiles are the runner's files that are inputs of every fingerprint, by
+// name in RunnerDir.
+var ResultFiles = []string{"outcome.go", "plan.go", "run.go", "suite.go"}
+
+// InputListFiles are the bookkeeping files that decide which files a case's
+// fingerprint covers (the parser of module references and the list of TLC's
+// standard modules: inputs.go). They are in no fingerprint, because the digest
+// is a function of the list they compute; but a binary built from another
+// version of them computes another list than the checkout, so CheckRunner holds
+// them to the checkout beside ResultFiles. They are also in BookkeepingFiles.
+var InputListFiles = []string{"inputs.go"}
+
+// BookkeepingFiles are the runner's other non-test files: the description
+// (doc.go), the plan's checks against the tree and the choice of a run's cases
+// (cases.go), the records (records.go), the jar and helper lookup (jar.go), the
+// listing of a case's inputs and the list of TLC's standard modules (inputs.go)
+// and this file. They decide no
+// result, so a change to one of them stales no record. Every non-test file of
+// the package is in exactly one of ResultFiles and BookkeepingFiles, so a new
+// file cannot be left unclassified: TestEveryRunnerFileIsClassified.
+var BookkeepingFiles = []string{"cases.go", "doc.go", "fingerprint.go", "inputs.go", "jar.go", "records.go"}
 
 // RunnerDir is where the runner's files live in a checkout, and the prefix
 // their paths carry in the fingerprint.
 const RunnerDir = "internal/tlc"
 
-// RunnerFiles returns the runner's non-test files as they were when this
-// binary was built, by their path under the checkout root.
+// RunnerFiles returns the runner's result files as they were when this binary
+// was built, by their path under the checkout root.
 func RunnerFiles() (map[string][]byte, error) {
-	entries, err := sources.ReadDir(".")
-	if err != nil {
-		return nil, err
-	}
 	out := map[string][]byte{}
-	for _, e := range entries {
-		raw, err := sources.ReadFile(e.Name())
+	for _, name := range ResultFiles {
+		raw, err := sources.ReadFile(name)
 		if err != nil {
 			return nil, err
 		}
-		out[RunnerDir+"/"+e.Name()] = raw
+		out[RunnerDir+"/"+name] = raw
 	}
 	return out, nil
 }
 
-// Fingerprint identifies the inputs a run record was measured on: every TLA+
-// module, every MC configuration and the case plan under root/tla, and the
-// runner that reads TLC's results. A record whose fingerprint is not the
-// current one is stale. The digest is over each input's path under root, a
-// NUL, its bytes and a NUL, in path order; internal/ci computes the same from
-// a checkout.
-func Fingerprint(root string) (string, error) {
-	digest, _, err := fingerprint(root, filepath.Join(root, "tla"))
-	return digest, err
+// CheckedFiles are the files CheckRunner holds to the checkout: ResultFiles and
+// InputListFiles.
+func CheckedFiles() []string {
+	return append(append([]string{}, ResultFiles...), InputListFiles...)
 }
 
-// fingerprint is Fingerprint with the modules and configurations read from
-// tlaDir, which is root/tla or a copy of it. The case plan is always read from
-// root/tla, and every path is digested as tla/<name>, so a faithful copy has
-// the fingerprint of its source.
-//
-// It also returns the bytes of the case plan that the digest covers, so a
-// caller can parse the plan from exactly the bytes the digest names.
-func fingerprint(root, tlaDir string) (string, []byte, error) {
-	files, err := RunnerFiles()
-	if err != nil {
-		return "", nil, err
-	}
-	paths := []string{filepath.Join(root, "tla", CasesFile)}
-	for _, pattern := range []string{"*.tla", "MC*.cfg"} {
-		matches, err := filepath.Glob(filepath.Join(tlaDir, pattern))
+// CheckedSources returns the bytes of CheckedFiles as they were when this
+// binary was built, by their path under the checkout root.
+func CheckedSources() (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for _, name := range CheckedFiles() {
+		raw, err := sources.ReadFile(name)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
-		paths = append(paths, matches...)
+		out[RunnerDir+"/"+name] = raw
 	}
-	for _, p := range paths {
-		raw, err := os.ReadFile(p)
+	return out, nil
+}
+
+// CheckRunner holds the result files and the input-list files this binary was
+// built from to the ones under root: a binary built from another checkout
+// computes fingerprints or input lists that the checkout does not, so its
+// verdict on what is stale is wrong. It returns an error naming the files that
+// differ. A root that holds no internal/tlc has
+// no runner to compare (a bench copy of tla/ only), and nothing is checked.
+func CheckRunner(root string) error {
+	dir := filepath.Join(root, filepath.FromSlash(RunnerDir))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil
+	}
+	var differ []string
+	for _, name := range CheckedFiles() {
+		built, err := sources.ReadFile(name)
 		if err != nil {
-			return "", nil, fmt.Errorf("cannot read %s: %v", p, err)
+			return err
 		}
-		files["tla/"+filepath.Base(p)] = raw
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(raw) != string(built) {
+			differ = append(differ, RunnerDir+"/"+name)
+		}
 	}
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
+	if len(differ) > 0 {
+		return fmt.Errorf("this tlacheck was built from other runner files than the ones under %s (%s differ); build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck", root, strings.Join(differ, ", "))
 	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, name := range names {
-		h.Write([]byte(name))
-		h.Write([]byte{0})
-		h.Write(files[name])
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil)), files["tla/"+CasesFile], nil
+	return nil
 }

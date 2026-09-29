@@ -139,3 +139,86 @@ func TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue(t *testing.
 		t.Errorf("a value reached the output:\n%s", combined)
 	}
 }
+
+// `worker check` reads its own flags by hand, so its help and its parser are two statements
+// of one contract: --env is a boolean and takes no value, --max is an integer. This pins
+// both, so a help that declares them as anything else, or a parser that reads them
+// differently, fails here.
+func TestWorkerCheckFlagTypes(t *testing.T) {
+	t.Parallel()
+
+	code, help, errb := runWorkerCheck("--help")
+	if code != 0 {
+		t.Fatalf("worker check --help: exit %d, want 0\nstderr: %s", code, errb)
+	}
+	helpLines := strings.Split(help, "\n")
+	hasLine := func(want string) bool {
+		for _, l := range helpLines {
+			if l == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasLine("  --env") {
+		t.Errorf("help does not declare --env as a boolean flag (a bare `  --env` line):\n%s", help)
+	}
+	if !hasLine("  --max <int>") {
+		t.Errorf("help does not declare --max as an integer (`  --max <int>`):\n%s", help)
+	}
+
+	// A description with two drifts: the harness is absent, and the named secret is not in
+	// this process's environment (which only --env asks about).
+	const secret = "NOVA_WORKERCHECK_TYPES_UNSET_SECRET"
+	path := workerCheckFixture(t, func(d map[string]any) {
+		delete(d, "key_file")
+		d["secret"] = secret
+		d["harness"] = filepath.Join(t.TempDir(), "no-such-harness")
+	})
+	drifts := func(out string) (n int, all string) {
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "WORKER DRIFT ") {
+				n++
+			}
+		}
+		return n, out
+	}
+
+	cases := []struct {
+		name       string
+		args       []string
+		wantDrifts int
+		wantSecret bool
+	}{
+		{"--env takes no value: the path after it is the path", []string{"--env", path}, 2, true},
+		{"--env=true", []string{"--env=true", path}, 2, true},
+		{"--env=false", []string{"--env=false", path}, 1, false},
+		{"no --env asks nothing of the environment", []string{path}, 1, false},
+		{"--max 1 caps the list", []string{"--env", "--max", "1", path}, 1, true},
+		{"--max=1 caps the list", []string{"--env", "--max=1", path}, 1, true},
+		{"--max 5 shows both", []string{"--env", "--max", "5", path}, 2, true},
+		{"--max=0 shows all", []string{"--env", "--max=0", path}, 2, true},
+	}
+	for _, c := range cases {
+		code, out, errb := runWorkerCheck(c.args...)
+		if code != 2 {
+			t.Errorf("%s: exit %d, want 2\nstdout: %s\nstderr: %s", c.name, code, out, errb)
+			continue
+		}
+		n, all := drifts(out)
+		if n != c.wantDrifts {
+			t.Errorf("%s: %d drift lines, want %d:\n%s%s", c.name, n, c.wantDrifts, all, errb)
+		}
+		if got := strings.Contains(out, "WORKER DRIFT secret"); got != c.wantSecret && c.wantDrifts == 2 {
+			t.Errorf("%s: secret drift present = %v, want %v:\n%s", c.name, got, c.wantSecret, out)
+		}
+	}
+
+	// A value that is not the flag's type is a refusal naming the flag.
+	for _, args := range [][]string{{"--max", "x", path}, {"--max=x", path}, {"--max"}, {"--env=maybe", path}} {
+		code, out, errb := runWorkerCheck(args...)
+		if code != 2 || !strings.Contains(errb, "worker check") || out != "" {
+			t.Errorf("%v: exit %d, want a refusal on stderr\nstdout: %s\nstderr: %s", args, code, out, errb)
+		}
+	}
+}
