@@ -86,7 +86,7 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		cfg, err := parseRun(args[1:])
 		if err != nil {
 			fmt.Fprintf(stderr, "functionalrun run: %v; run: functionalrun help\n", err)
-			return exitUsage
+			return exitCannotRun
 		}
 		eng := newPodman(cfg.podman, stderr)
 		return runTier(ctx, eng, cfg, time.Now, stdout, stderr)
