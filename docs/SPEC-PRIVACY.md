@@ -314,6 +314,12 @@ standard error. The exit code is the same.
 each refusal path, the threshold at exactly three, the background model as the
 thing that keeps ordinary words quiet (the same payload flags without it), the
 hash sample under each bound, one file under two roots counted once, and every
-bound. `cmd/nova-privacy` pins the exit
-contract, the evidence on a flag, the remedies, `--json`, verb help, and the
-docs/TESTS.md first run against `cmd/nova-privacy/testdata/example`.
+bound. A property test checks that no arrangement of lines leaves a marked
+line outside a private entry. `measure_test.go` builds an invented corpus (40
+private entries, 300 background documents, 60 payloads: 20 quoted leaks, 20
+leaks in another spelling, 20 innocent) and pins how many of each group flag:
+20, 20, and at most 3, the three being payloads that name a private hyphenated
+compound whole. `cmd/nova-privacy` pins the exit contract, the evidence on a
+flag, the remedies, a structure refusal outranking a broken corpus, `--json`
+on every exit, verb help, and the docs/TESTS.md first run against
+`cmd/nova-privacy/testdata/example`.
