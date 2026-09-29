@@ -644,3 +644,38 @@ func TestCompareBinariesReadsTheTwoAtTheSameTime(t *testing.T) {
 		t.Errorf("the comparison lost a stamp: %+v", r)
 	}
 }
+
+// The preflight reads its arguments the way the dispatcher does: --seat comes out first,
+// wherever it stands. A help request with a --seat in it is still help, and a launch with
+// --seat before the verb is still a launch. The PATH binary here cannot be read, so a launch
+// is refused and help is not.
+func TestPreflightReadsArgumentsAfterTheGlobalFlagsAreStripped(t *testing.T) {
+	t.Parallel()
+	env := doctorFake(map[string]string{doctorLocal("/home/me"): doctorRebuiltLine}, func(string) (string, error) {
+		return "/opt/go/bin/nova-swarm", nil
+	}, "/home/me")
+
+	cases := []struct {
+		name string
+		args []string
+		stop bool
+	}{
+		{"help after --seat", []string{"batch", "--seat", "foo", "-h"}, false},
+		{"help after --seat=", []string{"native", "--seat=foo", "--help"}, false},
+		{"help before --seat", []string{"batch", "-h", "--seat", "foo"}, false},
+		{"--seat before the verb, help", []string{"--seat", "foo", "batch", "-h"}, false},
+		{"--seat before the verb is a launch", []string{"--seat", "foo", "batch", "--tokens", "1"}, true},
+		{"--seat=name before the verb is a launch", []string{"--seat=foo", "native", "--card", "c"}, true},
+		{"--seat after the verb is a launch", []string{"batch", "--seat", "foo", "--tokens", "1"}, true},
+		{"a value spelled -h is still a value", []string{"--seat", "foo", "batch", "--id", "-h"}, true},
+		{"no seat name is the dispatcher's refusal", []string{"batch", "--seat"}, false},
+		{"another verb is untouched", []string{"--seat", "foo", "template", "--name", "read-pr"}, false},
+	}
+	for _, c := range cases {
+		var errOut bytes.Buffer
+		code, stop := env.preflight(c.args, &errOut)
+		if stop != c.stop || (stop && code != 2) || (!stop && code != 0) {
+			t.Errorf("%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
+		}
+	}
+}

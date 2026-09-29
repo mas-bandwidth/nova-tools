@@ -49,6 +49,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 // doctorLookPath resolves a bare binary name on PATH. A package var so a test answers the
@@ -415,6 +416,13 @@ func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
 }
 
 func (e doctorEnv) preflight(args []string, stderr io.Writer) (int, bool) {
+	// The dispatcher takes --seat out of the arguments before it reads the verb, so the
+	// preflight reads them the same way: `--seat s batch ...` is a launch, and `batch --seat
+	// s -h` is a help request. A --seat with no name is the dispatcher's own refusal to make.
+	args, err := doctorStripSeat(args)
+	if err != nil {
+		return 0, false
+	}
 	// -h is a question about the verb, not a launch: the preflight stands aside for it.
 	if len(args) == 0 || !doctorLaunchVerb(args[0]) || doctorLaunchHelp(args[0], args[1:]) {
 		return 0, false
@@ -425,6 +433,13 @@ func (e doctorEnv) preflight(args []string, stderr io.Writer) (int, bool) {
 	}
 	writeDoctorRefusal(stderr, r)
 	return 2, true
+}
+
+// doctorStripSeat is the dispatcher's own removal of --seat, on a selection of its own so
+// the preflight selects no seat for the process: the same code, the same arguments left.
+func doctorStripSeat(args []string) ([]string, error) {
+	var scratch seatcred.Selection
+	return scratch.FromArgs(args, nil)
 }
 
 // doctorLaunchHelp reports whether args asking for a launch verb (batch or native)
