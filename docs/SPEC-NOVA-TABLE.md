@@ -370,31 +370,41 @@ constants with this table:
 | guards per member | 1000 |
 | one_of options | 1000 |
 | read set members | 1024 |
+| columns per table | 1000 |
+| rows per table | 100000 |
 
 The 128 set-fields and 1000 unset-fields limits are intentionally different.
 The field-value byte limit applies to each value in `set`. The read-set member
 limit counts unique member IDs in the selection.
+The column and row limits bound table definitions and whole-table operations;
+`create`, `bind`, column edits and row additions refuse a resulting table over
+the corresponding bound as `LIMIT` before writing.
 
 Manifest size counts the encoded request bytes supplied to the server, including
 whitespace and JSON escaping. ID and field-value sizes count decoded UTF-8 bytes.
 
 An entry has changes when it holds a create, a move, a remove, a nonempty set or
-a nonempty unset; otherwise it is guard-only. For an unrecorded operation, an
-otherwise valid manifest at a bound is accepted; one over it refuses the whole
-request as `LIMIT` after operation lookup and before table/member state
-validation or any write. The refusal names the bound, its value and the count
-found (and the member at fault for a per-member bound), without echoing field
-values or the whole manifest. No automatic chunking turns one requested
+a nonempty unset; otherwise it is guard-only. An otherwise valid manifest at a
+bound is accepted. The raw 1 MiB request envelope is checked before operation
+lookup; an overlong request refuses as `LIMIT` even if its identity was recorded.
+For an unrecorded request, decoded manifest bounds are checked after operation
+lookup and before table/member state validation or any write. A matching
+recorded request returns its original result before those decoded checks. A
+refusal names the bound, its value and the count found (and the member at fault
+for a per-member bound), without echoing field values or the whole manifest.
+No automatic chunking turns one requested
 transaction into several. A caller can explicitly narrow its next request,
 accepting the separately identified transaction scope.
 
 ### Validation, atomicity and replay
 
-Validation has three ordered stages: recorded-operation lookup, static manifest
-checks, then table/member state checks. Decoding and the identity needed to
-locate the operation record precede lookup. A matching recorded request returns
-its original result before static or state checks; a different request with the
-same operation identity refuses.
+Validation checks the raw 1 MiB request envelope first, then performs
+recorded-operation lookup, static manifest checks and table/member state checks.
+Only the identity needed to locate the operation record is decoded before lookup.
+A matching recorded request returns its original result before static or state
+checks; a different request with the same operation identity refuses. The
+envelope is the only request bound evaluated before replay; requests accepted
+under this bound already satisfy it on an exact-byte retry.
 
 For an unrecorded operation, static checks reject malformed canonical encoding,
 repeated IDs/keys, an empty members array, incompatible changes, nonfinite
@@ -436,13 +446,17 @@ new current-epoch action. No retry loop in transport may silently invent a new
 operation ID.
 
 Operation records do not expire: replay is guaranteed while the table exists.
-`clear` advances the epoch without removing operation records, so a recorded
-old-epoch retry returns its original receipt, epoch and revisions. Both `drop` and
-`drop --definition` remove the table's operation records from every epoch in the
-same atomic call. Historical epoch snapshots retained by `drop` remain readable;
-they are separate from operation records. A table created again under the same
-name has no replay history from the dropped table; deduplication does not cross
-that lifetime boundary.
+All epochs' records are fields `<epoch>:<operation_id>` of one
+`table:<table>:ops` hash, with each field value holding the canonical request
+bytes, digest and original result. `clear` leaves this hash intact and does not
+itself advance the configured external epoch. An external epoch advance is
+separate and also retains the hash, so an old-epoch retry returns its original
+receipt, epoch and revisions.
+Both `drop` and `drop --definition` remove the entire hash in the same atomic
+call. Historical epoch snapshots retained by `drop` remain readable; they are
+separate from operation records. A table created again under the same name has
+no replay history from the dropped table; deduplication does not cross that
+lifetime boundary.
 
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.
@@ -457,6 +471,20 @@ affected members' before/after placements, scores, revisions and
 application-field changes. Guard/selection counts are explicit; a missing member
 is not silently omitted. One batch receipt maps to one model action. Returning
 the original result on retry must return the same receipt identity.
+
+Before and after application-field values distinguish absence from a present
+empty string. Each side of a touched field whose value is at most 256 bytes is
+recorded in full. A longer side is `null` with its byte length and SHA-1 in
+`before_bytes`/`before_sha1` or `after_bytes`/`after_sha1`; `null` without that
+length means absence. `fields_set` contains only set instructions with values
+recorded in full; `fields` still names every touched field, including no-op
+set/unset instructions. These digests are evidence identifiers, not a security
+boundary. The receipt and retained operation result therefore do not contain
+full historical values above 256 bytes; a consumer requiring those bytes must
+retain separate evidence. Placed-member scores in batch receipts, change events,
+read sets and CLI output are the exact decimal strings returned by the store;
+an unplaced member has a `null` score. Scores in manifests remain finite JSON
+numbers.
 
 Required refusals include stale or future epoch, an empty members array,
 table/member revision mismatch, failed field guard, existing/placed member on
