@@ -542,8 +542,8 @@ func validateManifestSemantics(m *BatchManifest) error {
 	if !word(m.OperationID) {
 		return errors.New("operation_id must be a nonempty string without control characters")
 	}
-	if m.Members == nil {
-		return errors.New("members array required")
+	if len(m.Members) == 0 {
+		return errors.New("a manifest names at least one member")
 	}
 	if !uintString(m.Epoch) {
 		return errors.New("epoch must be a decimal uint64 string")

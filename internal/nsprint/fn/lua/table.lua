@@ -1815,6 +1815,7 @@ do
   -- A refusal here happens before the store is read.
   function T.static_entries(manifest)
     local seen, changed, guards = {}, 0, 0
+    if #manifest.members == 0 then return T.refuse('MANIFEST', 'a manifest names at least one member') end
     local function finite(n) return type(n) == 'number' and n == n and n ~= math.huge and n ~= -math.huge end
     local function score_refusal(id, v)
       local found = type(v)

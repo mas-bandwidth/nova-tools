@@ -1321,10 +1321,10 @@ func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (R
 	if !ValidName(manifest.Table) {
 		return Receipt{}, fmt.Errorf("table %q: invalid name; run: nova-table help", manifest.Table)
 	}
-	if manifest.Members == nil {
-		manifest.Members = []BatchMemberEntry{}
-	}
 	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
+	if len(manifest.Members) == 0 {
+		return Receipt{}, fmt.Errorf("%s: %w: a manifest names at least one member; changed=no; run: %s", o.location(), ErrMalformedManifest, o.remedy())
+	}
 	for _, m := range manifest.Members {
 		if m.Expect == nil {
 			return Receipt{}, fmt.Errorf("%s: member %q: %w: missing expect; changed=no; run: %s", o.location(), m.ID, ErrMalformedManifest, o.remedy())

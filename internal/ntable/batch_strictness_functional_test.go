@@ -85,6 +85,7 @@ func malformedManifests() []struct{ name, raw string } {
 	for _, v := range []string{`{}`, `"m"`, `null`, `5`, `[5]`, `["a"]`, `[null]`, `[[]]`} {
 		add("members "+v, root("members", v))
 	}
+	add("members empty", root("members", `[]`))
 	add("members missing", root("members", ""))
 	add("unknown root key", strings.Replace(root("actor", `"p"`), `"actor"`, `"actorx":1,"actor"`, 1))
 	add("duplicate root key", strings.Replace(root("actor", `"p"`), `"actor":"p"`, `"actor":"p","actor":"q"`, 1))
@@ -348,5 +349,29 @@ func TestReadSetRefusesRequestsOutsideItsShapes(t *testing.T) {
 		if got := len(rs[4].([]any)); got != want {
 			t.Errorf("scope %q: %d members, want %d", scope, got, want)
 		}
+	}
+}
+
+// A manifest names at least one member: an empty one is refused on every path and
+// does not advance the table revision.
+func TestBatchWithoutMembersIsRefusedAndAdvancesNothing(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	rev := probeRev(ctx, c)
+	before := storeImage(t, c)
+	raw := manifestWith(rev, "empty", "")
+	ans, err := rawApply(ctx, c, raw)
+	if err != nil || len(ans) < 3 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" || !strings.Contains(fmt.Sprint(ans[2]), "at least one member") {
+		t.Errorf("the server: %v %v", trunc(ans), err)
+	}
+	if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err == nil || !strings.Contains(err.Error(), "at least one member") {
+		t.Errorf("the validator: %v", err)
+	}
+	_, err = ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "empty"})
+	if err == nil || !strings.Contains(err.Error(), "at least one member") || !strings.Contains(err.Error(), "changed=no") {
+		t.Errorf("ApplyBatch: %v", err)
+	}
+	if probeRev(ctx, c) != rev || !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("a refused empty manifest changed the store")
 	}
 }

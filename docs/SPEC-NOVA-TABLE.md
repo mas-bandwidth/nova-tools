@@ -287,7 +287,8 @@ list or separate implementation of the transaction is permitted.
 
 A version-1 manifest contains table, epoch, expected_table_revision, operation_id,
 actor and a members array. Epoch/revision counters are decimal strings bounded as
-uint64; they never traverse floating-point numbers. Members have unique IDs across
+uint64; they never traverse floating-point numbers. A manifest names at least one member: an empty `members` array refuses, so a request
+that does nothing cannot advance the table revision. Members have unique IDs across
 the entire array. Each entry has an `expect` record and zero or more compatible
 changes. Read-only guard entries have no changes. All referenced rows/columns must
 be declared and owned. Unknown schema fields and duplicate JSON keys refuse. Every value has one JSON
