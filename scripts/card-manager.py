@@ -151,6 +151,26 @@ def get_table_revision(table):
             return 0
     return 0
 
+def get_active_table_epoch(table):
+    # Match ns_table's definition/identity configuration and epoch-zero default.
+    template = redis_hgetall(f"table:{table}")
+    identity = redis_hgetall(f"table:{table}:identity")
+    config = template or identity
+    if not config:
+        return None
+    epoch_key = config.get("epoch_key", "")
+    if not epoch_key:
+        return "0"
+    active = redis_cmd("HGET", epoch_key, config.get("epoch_field") or "n")
+    return "0" if active is None else active
+
+def is_uint64_epoch(value):
+    if not isinstance(value, str) or not value or (len(value) > 1 and value[0] == "0"):
+        return False
+    if any(c < "0" or c > "9" for c in value):
+        return False
+    return len(value) < 20 or (len(value) == 20 and value <= "18446744073709551615")
+
 def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
     """
     Decodes the actual committed receipt from nova-table stdout,
@@ -600,7 +620,8 @@ def cmd_move(args):
             "revision": pre_rev,
             "stream": mem.get("stream", "stream-1"),
             "kind": mem.get("kind", ""),
-            "head": mem.get("head", "")
+            "head": mem.get("head", ""),
+            "digest": mem.get("digest", "")
         }
 
     # Prepare atomic batch mutation
@@ -648,6 +669,10 @@ def cmd_move(args):
                 edata = redis_hgetall(ekey)
                 r_name = edata.get("reader")
                 if not r_name:
+                    continue
+                if (edata.get("card_id") != cid or edata.get("table") != table or
+                        edata.get("epoch") != epoch or edata.get("digest") != state["digest"] or
+                        not state["digest"]):
                     continue
                 if edata.get("disposition") in ("accepted", "approved") and edata.get("ci_status") in ("pass", "passed", "green"):
                     valid_readers.append(r_name)
@@ -750,8 +775,23 @@ def cmd_evidence(args):
         manifest = json.load(f)
 
     op_id = manifest.get("operation_id", "op-evidence")
-    epoch = str(manifest.get("epoch", "0"))
+    epoch = manifest.get("epoch", "0")
     evidence_list = manifest.get("evidence", [])
+
+    if not is_uint64_epoch(epoch):
+        sys.stderr.write(f"PREFLIGHT REFUSED {op_id} cause=invalid_epoch expected=uint64_decimal observed={epoch} changed=no\n")
+        return 1
+
+    active_epoch = get_active_table_epoch(table)
+    if active_epoch is None:
+        sys.stderr.write(f"PREFLIGHT REFUSED {op_id} cause=table_not_found expected=existing_table observed=none changed=no\n")
+        return 1
+    if not is_uint64_epoch(active_epoch):
+        sys.stderr.write(f"PREFLIGHT REFUSED {op_id} cause=invalid_active_epoch expected=uint64_decimal observed={active_epoch} changed=no\n")
+        return 1
+    if epoch != active_epoch:
+        sys.stderr.write(f"PREFLIGHT REFUSED {op_id} cause=stale_epoch expected={active_epoch} observed={epoch} changed=no\n")
+        return 1
 
     recorded = []
     for ev in evidence_list:
@@ -799,6 +839,7 @@ def cmd_evidence(args):
         ev_key = f"evidence:{cid}:{op_id}:{reader}"
         ev_data = {
             "card_id": cid,
+            "table": table,
             "operation_id": op_id,
             "head": exact_head,
             "digest": actual_digest,
