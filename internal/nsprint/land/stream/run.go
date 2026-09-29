@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 	"github.com/redis/go-redis/v9"
 	"os"
 	"os/exec"
@@ -72,7 +73,8 @@ type RunReport struct {
 	// Calls is the landing's own REST calls: the stream PR opened by this
 	// run, and the merge. The members' closes are Merge's and counted in
 	// the GitHub client's total, not here.
-	Calls int
+	Calls   int
+	TotalMS int64 // total wall of the landing in milliseconds
 }
 
 // Run lands the streams end to end: build (or resume), CI request, wait,
@@ -215,7 +217,7 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 		}
 		// The stream branch sits on the base tip: it merges cleanly. That is
 		// the record's mergeable word, from the fact, not from GitHub.
-		if _, err := Record(ctx, c, o.Repo, l.PR, RecordFields{Mergeable: "true"}); err != nil {
+		if _, err := Record(ctx, c, o.Repo, l.PR, RecordFields{Mergeable: "true", CI: rep.CI}); err != nil {
 			return rep, err
 		}
 		mr, err := Merge(ctx, c, MergeOptions{Repo: o.Repo, Streams: o.Streams, By: o.By, GH: o.GH})
@@ -230,7 +232,8 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 			return rep, err
 		}
 		rep.State = "landed"
-		steps.Line("LANDED n=%d stream=%s moved=%d total_ms=%d", len(l.Members), field(slug), mr.Moved, steps.Total().Milliseconds())
+		rep.TotalMS = steps.Total().Milliseconds()
+		steps.Line("LANDED n=%d stream=%s moved=%d total_ms=%d", len(l.Members), field(slug), mr.Moved, rep.TotalMS)
 		return rep, nil
 	}
 }
@@ -252,6 +255,16 @@ func waitCI(ctx context.Context, c Client, o RunOptions, l Landing, deadline tim
 		}
 		if r.CI == "green" || r.CI == "red" {
 			return r.CI, nil
+		}
+		// The check state at the head, from the webhook / runner receipt in Redis, never GitHub (#4386).
+		key := webhook.Key(o.Repo, l.Head)
+		m, err := c.HGetAll(ctx, key).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return "", fmt.Errorf("HGETALL %s: %w", key, err)
+		}
+		ci := webhook.Parse(m)
+		if ci.Word == webhook.Green || ci.Word == webhook.Red {
+			return ci.Word, nil
 		}
 		if !time.Now().Before(deadline) {
 			return orDash(r.CI), nil

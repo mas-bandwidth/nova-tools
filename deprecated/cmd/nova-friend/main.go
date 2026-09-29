@@ -79,7 +79,7 @@ func main() { os.Exit(run(os.Args[1:], os.Getenv, os.Stdout, os.Stderr)) }
 // through it and nowhere else).
 func run(args []string, getenv func(string) string, stdout, stderr io.Writer) (code int) {
 	// -h on any verb: its usage line and flags on stdout, exit 2.
-	defer verbflag.Recover(stdout, "nova-friend", &code)
+	defer verbflag.Recover(stdout, "nova-friend", "", &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; want "+verbs)
 	}

@@ -15,6 +15,7 @@ import (
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -451,31 +452,83 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			return rep, &Refusal{Why: "no record " + PRKey(o.Repo, l.PR), Remedy: prCmd + " --head " + l.Head + " --base " + l.Base + " --stream <s>"}
 		case r.Head != l.Head:
 			return rep, &Refusal{Why: fmt.Sprintf("record head %s is not the stream head %s", short(r.Head), short(l.Head)), Remedy: "re-run land stream, or " + prCmd + " --head <sha>"}
-		case r.CI != "green":
-			return rep, &Refusal{Why: fmt.Sprintf("ci=%s on %s#%d at %s, not green", orDash(r.CI), o.Repo, l.PR, short(l.Head)), Remedy: prCmd + " --ci green once CI passes"}
+		}
+		// The CI ci-ok verdict from Redis at the proved SHA (nova-tools#4386).
+		ciWord := r.CI
+		if ciWord != "green" {
+			key := webhook.Key(o.Repo, l.Head)
+			m, err := c.HGetAll(ctx, key).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return rep, fmt.Errorf("HGETALL %s: %w", key, err)
+			}
+			ci := webhook.Parse(m)
+			if ci.Word == webhook.Green {
+				ciWord = "green"
+			} else if ci.Word != "" {
+				ciWord = ci.Word
+			}
+		}
+		switch {
+		case ciWord != "green":
+			return rep, &Refusal{Why: fmt.Sprintf("ci=%s on %s#%d at %s, not green", orDash(ciWord), o.Repo, l.PR, short(l.Head)), Remedy: prCmd + " --ci green once CI passes"}
 		case !r.MergeableOK():
 			return rep, &Refusal{Why: fmt.Sprintf("mergeable=%s on %s#%d", orDash(r.Mergeable), o.Repo, l.PR), Remedy: prCmd + " --mergeable true"}
 		}
 		if o.GH == nil {
 			return rep, &Refusal{Why: "no GitHub client", Remedy: "set GH_TOKEN"}
 		}
-		title := fmt.Sprintf("Merge stream %s (#%d): %d members", l.Streams, l.PR, len(l.Members))
-		sha, err := o.GH.MergePR(ctx, o.Repo, l.PR, l.Head, title)
+
+		// The land pr path for the stream PR (#4311, #4386): one REST read,
+		// verify state and mergeable_state, and one PUT merge at the proved head
+		// (admin merge that skips the merge queue).
+		pr, err := o.GH.ViewPR(ctx, o.Repo, l.PR)
 		if err != nil {
 			return rep, err
 		}
-		rep.MergeSHA = sha
-		rep.Already, rep.Release, err = saveLanded(ctx, c, l, o.By, sha)
-		if err != nil {
-			return rep, err
-		}
-		// The stream's MERGE-NOTEs were the merge card's; it landed.
-		for _, s := range o.Streams {
-			n, err := note.Drop(ctx, c, note.StreamNotesKey(s))
+		switch {
+		case pr.Merged:
+			rep.Already, rep.MergeSHA = true, pr.MergeCommitSHA
+			rep.Already, rep.Release, err = saveLanded(ctx, c, l, o.By, pr.MergeCommitSHA)
 			if err != nil {
-				return rep, fmt.Errorf("notes of %s: %w", s, err)
+				return rep, err
 			}
-			rep.NotesDropped += n
+			for _, s := range o.Streams {
+				n, err := note.Drop(ctx, c, note.StreamNotesKey(s))
+				if err != nil {
+					return rep, fmt.Errorf("notes of %s: %w", s, err)
+				}
+				rep.NotesDropped += n
+			}
+		case pr.State == "closed":
+			return rep, &Refusal{Why: fmt.Sprintf("%s#%d is closed without a merge", o.Repo, l.PR), Remedy: "re-run land stream to open a new stream PR"}
+		case pr.MergeableState == "dirty":
+			return rep, &Refusal{Why: fmt.Sprintf("%s#%d has conflict with base (mergeable_state=dirty)", o.Repo, l.PR), Remedy: "rebuild stream branch on base tip"}
+		case pr.Head.SHA != "" && pr.Head.SHA != l.Head:
+			return rep, &Refusal{Why: fmt.Sprintf("PR head %s is not stream head %s", short(pr.Head.SHA), short(l.Head)), Remedy: "re-run land stream"}
+		default:
+			if pr.Head.SHA != "" {
+				if err := staleRecord(ctx, c, o.Repo, l.PR, pr.Head.SHA); err != nil {
+					return rep, err
+				}
+			}
+			title := fmt.Sprintf("Merge stream %s (#%d): %d members", l.Streams, l.PR, len(l.Members))
+			sha, err := o.GH.MergePR(ctx, o.Repo, l.PR, l.Head, title)
+			if err != nil {
+				return rep, err
+			}
+			rep.MergeSHA = sha
+			rep.Already, rep.Release, err = saveLanded(ctx, c, l, o.By, sha)
+			if err != nil {
+				return rep, err
+			}
+			// The stream's MERGE-NOTEs were the merge card's; it landed.
+			for _, s := range o.Streams {
+				n, err := note.Drop(ctx, c, note.StreamNotesKey(s))
+				if err != nil {
+					return rep, fmt.Errorf("notes of %s: %w", s, err)
+				}
+				rep.NotesDropped += n
+			}
 		}
 	}
 	var ns []int
