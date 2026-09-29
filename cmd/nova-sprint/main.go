@@ -131,6 +131,10 @@ type common struct {
 	max                      int
 	epoch                    int64       // the epoch the caller holds; -1 is none
 	group                    groupReport // set by --group, for the verb's report
+	// packets, when set, is what the step hands its actor (take: each
+	// card's packet), read after the step and printed with its report.
+	packets func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet
+	handed  []sprint.Packet
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {

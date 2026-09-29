@@ -132,6 +132,9 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		if h := l.Set["head"]; h != "" {
 			s += ", head " + h
 		}
+		if b := l.Set["branch"]; b != "" {
+			s += " on " + b
+		}
 		return s
 	case toCol == DoneFailed:
 		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)

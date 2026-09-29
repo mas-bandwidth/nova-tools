@@ -715,7 +715,10 @@ type FinishReq struct {
 	Failed bool
 	Head   string
 	Report string
-	Who    string
+	// Branch and Base are the branch the work is on and the one it started
+	// from, as the worker reports them.
+	Branch, Base string
+	Who          string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -780,6 +783,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if r.Report != "" {
 			cardSet["report"] = r.Report
+		}
+		if r.Branch != "" {
+			cardSet["branch"] = r.Branch
+		}
+		if r.Base != "" {
+			cardSet["base"] = r.Base
 		}
 		set := map[string]string{"head": head, "result": result}
 		if r.Failed {

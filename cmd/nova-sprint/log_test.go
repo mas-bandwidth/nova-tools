@@ -114,3 +114,48 @@ func TestCardTellsTheStory(t *testing.T) {
 		}
 	}
 }
+
+// The worker's packet: take hands the brief, this attempt's fix, the notes,
+// the epoch and generation and the branch to work on (a rework starts from
+// the attempt before's branch); queue --as shows the same; finish takes
+// --branch and --base; a reader's packet carries the work it reads, its
+// branch and the worker's report. No actor needs card to learn its task.
+func TestTakeAndQueueHandTheirPackets(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1 --brief 'handle the empty case'")
+	ta.deal(1)
+	out := ta.ok("take --as m1 s1-1.w1@1")
+	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/t-s1-1.w1", "  brief:\n    handle the empty case", "  notes: none",
+		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/t-s1-1.w1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("take has no %q:\n%s", want, out)
+		}
+	}
+	ta.ok("finish --as m1 s1-1.w1@1 --failed --branch feature/empty --report 'the tests went red'")
+	ta.ok("rework s1-1 --fix 'check the nil slice too'")
+	ta.deal(1)
+	var j struct {
+		Packets []struct {
+			Card, Branch, Base, Brief, Fix string
+			Gen                            int
+		} `json:"packets"`
+	}
+	ta.json("take --as m1 s1-1.w2@1", &j)
+	if len(j.Packets) != 1 || j.Packets[0].Fix != "check the nil slice too" || j.Packets[0].Base != "feature/empty" || j.Packets[0].Brief != "handle the empty case" {
+		t.Fatalf("take --json packets: %+v", j)
+	}
+	if out := ta.ok("queue --as m1"); !strings.Contains(out, "  fix (this attempt):\n    check the nil slice too") || !strings.Contains(out, "  base: feature/empty") {
+		t.Fatalf("queue --as m1:\n%s", out)
+	}
+	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --branch feature/empty-2 --base feature/empty --report 'handled; tests green'")
+	ta.ok("ask")
+	out = ta.ok("queue --as reader-a")
+	for _, want := range []string{"PACKET s1-1.r2.reader-a attempt=2", "  work: attempt 2 by m1", "  head: h2", "  branch: feature/empty-2", "  base: feature/empty",
+		"  report:\n    handled; tests green", "  report it: nova-sprint read --as reader-a (--ok | --broken) s1-1.r2.reader-a --epoch 0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the reader's queue has no %q:\n%s", want, out)
+		}
+	}
+}

@@ -65,6 +65,8 @@ type queueCard struct {
 	Begun string `json:"begun,omitempty"`
 	// WaitsFor is, for a waiting primary, the needs it still waits for.
 	WaitsFor []string `json:"waits_for,omitempty"`
+	// Packet is what the member or reader is handed with the card.
+	Packet *sprint.Packet `json:"packet,omitempty"`
 }
 
 func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
@@ -118,12 +120,21 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 		add(sprint.Merge, cs)
 	} else {
+		var mine []*sprint.Card
 		for _, t := range []struct{ table, a, b string }{{sprint.Readers, sprint.Asked, sprint.Reading}, {sprint.Fleet, sprint.Ready, sprint.Working}} {
 			cs, err := st.ReadCells(ctx, t.table, *as, t.a, t.b)
 			if err != nil {
 				return a.readFailed("queue", err, stderr)
 			}
 			add(t.table, cs)
+			mine = append(mine, cs...)
+		}
+		ps, err := st.Packets(ctx, mine)
+		if err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+		for i := range ps {
+			cards[i].Packet = &ps[i]
 		}
 	}
 	if c.json {
@@ -153,6 +164,19 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		lines = append(lines, l)
+	}
+	if len(lines) > 0 && cards[0].Packet != nil {
+		// a member's or a reader's queue: each card with its packet
+		for i, l := range lines {
+			if c.max > 0 && i >= c.max {
+				fmt.Fprintf(stdout, "CARD ... and %d more; --max 0 lists all\n", len(lines)-i)
+				break
+			}
+			fmt.Fprintln(stdout, "CARD "+oneline.Escape(l))
+			printPacket(stdout, *cards[i].Packet)
+		}
+		fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
+		return 0
 	}
 	listed(stdout, "CARD", lines, c.max, "queue")
 	fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)

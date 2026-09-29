@@ -48,6 +48,55 @@ func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...str
 	return out, nil
 }
 
+// Packets is the packet of each work or read card: its primary, and the work
+// card before it or the one it reads, read by identity in one read set per
+// table.
+func (st *Store) Packets(ctx context.Context, cards []*sprint.Card) ([]sprint.Packet, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var prim, work []string
+	for _, c := range cards {
+		p, prev, w := sprint.PacketCards(c)
+		prim = append(prim, p)
+		for _, id := range []string{prev, w} {
+			if id != "" {
+				work = append(work, id)
+			}
+		}
+	}
+	byID := func(cs []*sprint.Card) map[string]*sprint.Card {
+		m := map[string]*sprint.Card{}
+		for _, c := range cs {
+			m[c.ID] = c
+		}
+		return m
+	}
+	ps, err := st.records(ctx, sprint.Work, prim)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := st.records(ctx, sprint.Fleet, work)
+	if err != nil {
+		return nil, err
+	}
+	pt, ft := byID(ps), byID(ws)
+	var out []sprint.Packet
+	for _, c := range cards {
+		p, prev, w := sprint.PacketCards(c)
+		var pc, wc *sprint.Card
+		if prev != "" {
+			pc = ft[prev]
+		}
+		if w != "" {
+			wc = ft[w]
+		}
+		out = append(out, sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], pc, wc))
+	}
+	return out, nil
+}
+
 // CardInfo is everything about one primary: its record, its work cards and
 // read cards of every attempt (placed or kept), its merge record and the
 // judgments open on it.

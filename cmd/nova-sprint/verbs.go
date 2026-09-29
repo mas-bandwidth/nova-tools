@@ -399,6 +399,9 @@ func (a *app) runStep(verbName string, c common, st *store.Store, step store.Ste
 		step.Epoch = &e
 	}
 	res, err := st.Run(ctx, step)
+	if c.packets != nil && err == nil {
+		c.handed = c.packets(ctx, st, res)
+	}
 	return a.report(ctx, verbName, c, st, res, err, stdout, stderr)
 }
 
@@ -417,6 +420,8 @@ type output struct {
 	Group    string `json:"group,omitempty"`
 	ActedOn  int    `json:"acted_on,omitempty"`
 	Expected int    `json:"expected,omitempty"`
+	// Packets is what the step hands its actor: take's cards' packets.
+	Packets []sprint.Packet `json:"packets,omitempty"`
 }
 
 // groupReport is what a verb given --group says about the group.
@@ -455,7 +460,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	}
 	line := sprintLine(ctx, st)
 	if c.json {
-		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected}
+		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected, Packets: c.handed}
 		if o.Moved == nil {
 			o.Moved = []string{}
 		}
@@ -473,6 +478,9 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 		fmt.Fprintf(stdout, "REPAIRED %s\n", oneline.Escape(r))
 	}
 	listed(stdout, "MOVED", res.Moved, c.max, verbName)
+	for _, p := range c.handed {
+		printPacket(stdout, p)
+	}
 	if c.group.ID != "" {
 		fmt.Fprintln(stdout, c.group.line())
 	}
@@ -788,6 +796,27 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	if len(ids) > 0 {
 		name = "take by id" // a report on named cards
 	}
+	member := *as
+	c.packets = func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet {
+		taken := map[string]bool{}
+		for _, m := range res.Moved {
+			if f := strings.Fields(m); len(f) > 0 {
+				taken[f[0]] = true
+			}
+		}
+		cs, err := st.ReadCells(ctx, sprint.Fleet, member, sprint.Working)
+		if err != nil {
+			return nil
+		}
+		var mine []*sprint.Card
+		for _, x := range cs {
+			if taken[x.ID] {
+				mine = append(mine, x)
+			}
+		}
+		ps, _ := st.Packets(ctx, mine)
+		return ps
+	}
 	return a.runStep(name, *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
 }
 
@@ -797,6 +826,8 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	failed := fs.Bool("failed", false, "the work failed (default: ok)")
 	head := fs.String("head", "", "the head the work finished at (default: the card's id)")
 	report := fs.String("report", "", "the worker's report")
+	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
+	baseBranch := fs.String("base", "", "the branch the work started from")
 	words, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
@@ -814,7 +845,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "finish", err.Error())
 	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
-		Head: *head, Report: *report, Who: *as}), stdout, stderr)
+		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {

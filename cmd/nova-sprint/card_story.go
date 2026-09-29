@@ -273,6 +273,12 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 	if h := p.F("head"); h != "" && h != p.ID {
 		head += "   head " + h
 	}
+	for i := len(v.Work) - 1; i >= 0; i-- {
+		if b := v.Work[i].F("branch"); b != "" {
+			head += "   branch " + b
+			break
+		}
+	}
 	if place != "" && !ended {
 		head += "   " + place
 	}
