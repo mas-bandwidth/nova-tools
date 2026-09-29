@@ -325,7 +325,7 @@ read — and `convergence` is a reading of the work itself. Each is a ledger
 written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, plus `version` and `help`.
+`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, `exec-deadline`, plus `version` and `help`.
 `nova-check version` is the Conventions' build line, exit 0, so a green from
 this tool names its build.
 

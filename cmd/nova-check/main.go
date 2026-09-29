@@ -102,8 +102,15 @@ usage:
                                                      fenced code blocks and inline code spans
                                                      are blanked so code is not prose;
                                                      --write fixes misspellings in place
+  nova-check exec-deadline (--dir <dir> | --file <path>)
+                           [--exclude <prefix>] [--strict] [--include-tests]
+                           [--fail-max <n>]
+                                                     audit Go files for exec.CommandContext calls
+                                                     without a deadline or timeout attached;
+                                                     flags context.Background(), context.TODO(),
+                                                     nil, or contexts lacking WithTimeout/WithDeadline
 
-  --fail-max <n>   on quickstart, attest, links, nocode, corpus and spelling: how many
+  --fail-max <n>   on quickstart, attest, links, nocode, corpus, spelling and exec-deadline: how many
                    FAIL lines to print before one MORE line stands for the
                    rest. Default 20, and 0 means all. The count line prints
                    whether the check passed or failed, so a run that found 800
@@ -241,6 +248,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
 		return cmdSpelling(args[1:], stdout, stderr)
+	case "exec-deadline", "deadline":
+		return cmdExecDeadline(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

@@ -22,6 +22,7 @@ nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --ver
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--fail-max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
+nova-check exec-deadline (--dir <dir> | --file <path>) [--exclude <prefix>] [--strict] [--include-tests] [--fail-max <n>]   # audit Go files for exec.CommandContext calls without a deadline or timeout attached
 ```
 
 ### First run
@@ -239,6 +240,23 @@ scripts README, whose dated rows say what the window retired, and `--bin` is
 what is left. `--since` is an instant or a duration (`24h`), and there is no
 default, because the window is the whole question. The rules and the refusals
 are in [SPEC-CHECK.md](SPEC-CHECK.md).
+
+### exec-deadline
+
+Audit Go source files for `exec.CommandContext` calls that lack a deadline or timeout attached. A subprocess executed under `context.Background()`, `context.TODO()`, `nil`, or an untimed context can hang indefinitely when a child process hangs or an escaped pipe-holder keeps pipes open.
+
+```
+nova-check exec-deadline (--dir <dir> | --file <path>) [--exclude <prefix>] [--strict] [--include-tests] [--fail-max <n>]
+```
+
+`exec-deadline` scans Go source files for calls to `exec.CommandContext` and inspects the context passed as the first argument:
+- Flags direct `context.Background()`, `context.TODO()`, `nil`, or `context.WithCancel()` calls passed as the context.
+- Traces local variables and flags those initialized from `context.Background()` or `context.TODO()` without an intervening `context.WithTimeout` or `context.WithDeadline` before the call.
+- With `--strict`, also flags context parameters that do not have a local deadline attached or `Deadline()` check in the function.
+- With `--include-tests`, includes `_test.go` files in directory walks (omitted by default).
+- `--fail-max <n>` limits the number of printed violations (default 20, 0 for all).
+
+Exit codes: 0 for clean (no violations), 1 for violations found, 2 for bad invocation or unreadable files.
 
 ## nova-self-talk
 
