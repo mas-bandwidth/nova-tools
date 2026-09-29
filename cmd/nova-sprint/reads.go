@@ -260,11 +260,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	}
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
-	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + strings.TrimSpace(v.Summary+"  "+v.Machine) + "\n")
-	if coordinator != "" {
-		b.WriteString("coordinator: " + coordinator + "\n")
-	}
-	b.WriteString("\n")
+	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -293,6 +289,18 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		fmt.Fprintf(&b, "\npending: operation %s (%s, since %s); run: nova-sprint repair\n", f.Pending.ID, f.Pending.Verb, f.Pending.At.Local().Format("15:04:05"))
 	}
 	return v, b.String(), nil
+}
+
+// whereHeader is the one line under the title of the where view: STOPPED when
+// the machine is stopped (with its silence, when a RUNNING machine has not
+// ticked), and the progress line, with no machine text, when it is running. A
+// failed last tick stays on the line.
+func whereHeader(summary, machine string) string {
+	state := strings.TrimPrefix(machine, "machine: ")
+	if strings.HasPrefix(state, "STOPPED") {
+		return state
+	}
+	return strings.TrimSpace(summary + strings.TrimPrefix(state, "running"))
 }
 
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {

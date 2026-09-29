@@ -25,8 +25,12 @@ fleet | ready | working | done | ok% | status | load
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
 
-The view shows work, readers, merge, fleet in that order, with the summary line
-landed / all primaries, percent, ETA. Every count cell is an ordered set.
+The view shows work, readers, merge, fleet in that order. The one line under
+the title is the word `STOPPED` when the machine is stopped, and the summary
+line (landed / all primaries, percent, ETA, with no machine text) when it is
+running; a RUNNING machine that has not ticked for 5 s shows
+`STOPPED (no tick for Ns)`. The coordinator is not printed in the view
+(`where --json` carries it). Every count cell is an ordered set.
 
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. One deployment's tables,
@@ -519,10 +523,11 @@ their total. `run` is the process that ticks once a second (TickEvery) while
 RUNNING and does nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick: a tick in flight finishes, and no tick
 begins after `stop`. Every verb works in both states; only the tick's duties
-wait. The sprint line of every verb, `where` and `inbox` says
+wait. The sprint line of every verb and `inbox` says
 `machine: running`, `machine: STOPPED`, or `machine: STOPPED (no tick for Ns)`
 when the state is RUNNING and nothing has ticked for 5 s; a failed tick keeps
-its error on the heartbeat and the line shows it.
+its error on the heartbeat and the line shows it. `where` shows the same
+state as the one line under its title (section 1).
 
 A tick first finishes an operation pending past its grace (T5). It then reads
 the fence and the tables' shapes; if nothing changed since the last tick, this
