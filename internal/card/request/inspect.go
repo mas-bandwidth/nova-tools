@@ -134,14 +134,8 @@ func ValidateInspectResult(r *InspectResult) error {
 		}
 		seen[ic.ID] = true
 		v.name(i, id, "place.row", ic.Place.Row)
-		v.enum(i, id, "place.col", string(ic.Place.Col), stateNames())
 		v.counter(i, id, "revision", ic.Revision, true)
-		switch {
-		case ic.Place.Col == Done && !ic.Outcome.Valid():
-			c.add(i, id, "outcome", CauseRequired, quote(string(ic.Outcome)), "completed, cancelled, dependency-failed or replaced", "a done card carries an outcome")
-		case ic.Place.Col != Done && ic.Outcome != "":
-			c.add(i, id, "outcome", CauseNotApplicable, quote(string(ic.Outcome)), "", "only a done card carries an outcome")
-		}
+		v.placeAndOutcome(i, id, "place.col", "outcome", ic.Place.Col, ic.Outcome)
 		v.digest(i, id, "pin.digest", ic.Pin.Digest)
 		v.objectID(i, id, "pin.object_id", ic.Pin.ObjectID)
 		v.objectID(i, id, "pin.commit", ic.Pin.Commit)

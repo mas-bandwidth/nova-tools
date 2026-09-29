@@ -190,20 +190,6 @@
       "issuer": "reader-1",
       "source": "artifact:card-12",
       "dependency": "card-00"
-    },
-    {
-      "id": "card-13",
-      "type": "completed",
-      "expect": {
-        "place": {
-          "row": "build",
-          "col": "review"
-        },
-        "revision": "2"
-      },
-      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "issuer": "reader-1",
-      "source": "artifact:card-13"
     }
   ]
 }

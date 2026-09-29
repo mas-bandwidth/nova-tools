@@ -23,61 +23,6 @@ const (
 	ChangedUnknown = card.ChangedUnknown
 )
 
-// State is a card state, the column a card is placed in.
-type State string
-
-// The card states.
-const (
-	Waiting State = "waiting"
-	Ready   State = "ready"
-	Working State = "working"
-	Review  State = "review"
-	Merging State = "merging"
-	Landed  State = "landed"
-	Done    State = "done"
-)
-
-var allStates = [...]State{Waiting, Ready, Working, Review, Merging, Landed, Done}
-
-// States lists every state in lifecycle order, as a new slice.
-func States() []State { return append([]State(nil), allStates[:]...) }
-
-// Valid reports whether s is one of the seven states.
-func (s State) Valid() bool {
-	for _, v := range allStates {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
-// Outcome is what a card in Done carries.
-type Outcome string
-
-// The outcomes of a done card. A card in any other state has none.
-const (
-	Completed        Outcome = "completed"
-	Cancelled        Outcome = "cancelled"
-	DependencyFailed Outcome = "dependency-failed"
-	Replaced         Outcome = "replaced"
-)
-
-var allOutcomes = [...]Outcome{Completed, Cancelled, DependencyFailed, Replaced}
-
-// Outcomes lists every outcome, as a new slice.
-func Outcomes() []Outcome { return append([]Outcome(nil), allOutcomes[:]...) }
-
-// Valid reports whether o is one of the four outcomes.
-func (o Outcome) Valid() bool {
-	for _, v := range allOutcomes {
-		if o == v {
-			return true
-		}
-	}
-	return false
-}
-
 // Operation names what a request asks of the manager.
 type Operation string
 
@@ -150,35 +95,6 @@ type Admission struct {
 	PolicyDigest  Digest
 }
 
-// InputType is one of the closed set of lifecycle input types. It is split where
-// the destination depends on the variant (a verdict), so that Destination is a
-// pure function of the type and the source state.
-type InputType string
-
-// The lifecycle input types. A CI result is not among them: it is evidence.
-const (
-	InStart            InputType = "start"
-	InResult           InputType = "result"
-	InVerdictAccept    InputType = "verdict-accept"
-	InVerdictRetry     InputType = "verdict-retry"
-	InVerdictRework    InputType = "verdict-rework"
-	InHead             InputType = "head"
-	InQueueRejected    InputType = "queue-rejected"
-	InCancel           InputType = "cancel"
-	InLanding          InputType = "landing"
-	InExternalLanding  InputType = "external-landing"
-	InDependencyFailed InputType = "dependency-failed"
-	InCompleted        InputType = "completed"
-)
-
-var allInputTypes = [...]InputType{
-	InStart, InResult, InVerdictAccept, InVerdictRetry, InVerdictRework, InHead, InQueueRejected,
-	InCancel, InLanding, InExternalLanding, InDependencyFailed, InCompleted,
-}
-
-// InputTypes lists every lifecycle input type, as a new slice.
-func InputTypes() []InputType { return append([]InputType(nil), allInputTypes[:]...) }
-
 // ResultValue is the value of a result input: what the worker reports.
 type ResultValue string
 
@@ -250,27 +166,6 @@ var allDispositions = [...]Disposition{DispAccept, DispReject, DispGreen, DispRe
 
 // Dispositions lists every disposition, as a new slice.
 func Dispositions() []Disposition { return append([]Disposition(nil), allDispositions[:]...) }
-
-// DispositionsOf lists the dispositions a kind takes.
-func DispositionsOf(k EvidenceKind) []Disposition {
-	switch k {
-	case KindRead:
-		return []Disposition{DispAccept, DispReject}
-	case KindCI:
-		return []Disposition{DispGreen, DispRed}
-	case KindSweep:
-		return []Disposition{DispClean, DispNegative}
-	case KindLanding:
-		return []Disposition{DispLanded}
-	case KindQueue:
-		return []Disposition{DispReject}
-	}
-	return nil
-}
-
-// Negative reports whether the disposition is an observation against the card:
-// a rejection, a red result, a negative sweep.
-func (d Disposition) Negative() bool { return d == DispReject || d == DispRed || d == DispNegative }
 
 // Evidence is the evidence recorded for one card: the card, its expected place
 // (and revision, when the observer read it) and one to MaxEvidenceRecordsPerCard

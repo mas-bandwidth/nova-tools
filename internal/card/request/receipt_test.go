@@ -15,8 +15,8 @@ func sampleReceipt() *Receipt {
 		Changed: []CardChange{
 			{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Working, Revision: "3", Counters: Counters{Starts: "1"}},
 				Notifications: []Notification{{Kind: NoteStarted, Judgment: No, Escalation: EscalationNone, Counters: Counters{Starts: "1"}}}},
-			{ID: "c2", Before: &CardState{Row: "build", State: Review, Revision: "5"}, After: CardState{Row: "build", State: Done, Revision: "6", Outcome: Completed},
-				Notifications: []Notification{{Kind: NoteCompleted, Judgment: No, Readiness: "two reads and ci:unit at the head", Escalation: EscalationNone}}},
+			{ID: "c2", Before: &CardState{Row: "build", State: Review, Revision: "5"}, After: CardState{Row: "build", State: Merging, Revision: "6"},
+				Notifications: []Notification{{Kind: NoteMerging, Judgment: No, Readiness: "two reads and ci:unit at the head", Escalation: EscalationNone}}},
 			{ID: "c3", Before: &CardState{Row: "build", State: Merging, Revision: "9", Counters: Counters{MergeReturns: "1"}}, After: CardState{Row: "build", State: Landed, Revision: "10", Counters: Counters{MergeReturns: "1"}}, Landing: "land:" + g40},
 		},
 		Blocked:      []Named{{ID: "c5", Reason: "waits on c9"}},
@@ -39,7 +39,7 @@ func sampleInspect() *InspectResult {
 			{ID: "c2", Place: Place{Row: "build", Col: Review}, Revision: "5", Pin: pin(), Head: g40, Standing: "2 of 2 reads, ci:unit green",
 				Missing: []string{"sweep"}, Drift: []Drift{DriftStanding}, Counters: Counters{Rework: "1", Red: "2", RedSameHead: "1"}, Escalation: EscalationEscalated, Marks: []Mark{MarkRedTotal}},
 			{ID: "c1", Place: Place{Row: "build", Col: Ready}, Revision: "2", Pin: pin(), Escalation: EscalationNone},
-			{ID: "c3", Place: Place{Row: "build", Col: Done}, Outcome: Cancelled, Revision: "8", Pin: pin(), Escalation: EscalationNone},
+			{ID: "c3", Place: Place{Row: "build", Col: Unplaced}, Outcome: Cancelled, Revision: "8", Pin: pin(), Escalation: EscalationNone},
 		},
 		Missing: []ID{"c9"}}
 }
@@ -72,6 +72,9 @@ func TestValidReceiptRejectionAndInspectPass(t *testing.T) {
 
 func TestReceiptRefusals(t *testing.T) {
 	t.Parallel()
+	move := func(id string, from, to State) CardChange {
+		return CardChange{ID: ID(id), Before: &CardState{Row: "build", State: from, Revision: "2"}, After: CardState{Row: "build", State: to, Revision: "3"}}
+	}
 	one := func(op Operation, ch ...CardChange) func(*Receipt) {
 		return func(r *Receipt) {
 			r.Operation = op
@@ -81,9 +84,6 @@ func TestReceiptRefusals(t *testing.T) {
 		}
 	}
 	st := func(s State, rev string) CardState { return CardState{Row: "build", State: s, Revision: rev} }
-	move := func(id string, from, to State) CardChange {
-		return CardChange{ID: ID(id), Before: &CardState{Row: "build", State: from, Revision: "2"}, After: st(to, "3")}
-	}
 	cases := []struct {
 		name string
 		edit func(r *Receipt)
@@ -105,9 +105,21 @@ func TestReceiptRefusals(t *testing.T) {
 		{"result unknown", func(r *Receipt) { r.Result = "maybe" }, wantTriples("-1|result|invalid-value")},
 		{"card revision skips", func(r *Receipt) { r.Changed[0].After.Revision = "5" }, wantTriples("0|after.revision|invalid-value")},
 		{"created card revision", one(OpAdmit, CardChange{ID: "c1", After: st(Waiting, "2")}), wantTriples("0|after.revision|invalid-value")},
-		{"done without outcome", func(r *Receipt) { r.Changed[1].After.Outcome = "" }, wantTriples("1|after.outcome|required")},
-		{"outcome without done", func(r *Receipt) { r.Changed[0].After.Outcome = Cancelled }, wantTriples("0|after.outcome|not-applicable")},
-		{"outcome unknown", func(r *Receipt) { r.Changed[1].After.Outcome = "vanished" }, wantTriples("1|after.outcome|required")},
+		{"a card that left the table has no outcome", func(r *Receipt) { r.Changed[1].After.State = Unplaced }, wantTriples("1|after.outcome|required", "1|reason|required")},
+		{"a placed card has no outcome", func(r *Receipt) { r.Changed[0].After.Outcome = Cancelled }, wantTriples("0|after.outcome|not-applicable")},
+		{"outcome unknown", func(r *Receipt) { r.Changed[1].After.State, r.Changed[1].After.Outcome = Unplaced, "vanished" }, wantTriples("1|after.outcome|required", "1|reason|required")},
+		{"outcome completed is not an outcome", func(r *Receipt) { r.Changed[1].After.State, r.Changed[1].After.Outcome = Unplaced, "completed" }, wantTriples("1|after.outcome|required", "1|reason|required")},
+		{"state unknown", func(r *Receipt) { r.Changed[0].After.State = "limbo" }, wantTriples("0|after.state|invalid-value")},
+		{"a card that left needs a reason", func(r *Receipt) {
+			r.Operation = OpApplyEvents
+			r.Changed[1] = CardChange{ID: "c2", Before: &CardState{Row: "build", State: Review, Revision: "5"}, After: CardState{Row: "build", State: Unplaced, Revision: "6", Outcome: Cancelled}}
+		}, wantTriples("1|reason|required")},
+		{"a placed card has no reason", func(r *Receipt) { r.Changed[0].Reason = "why" }, wantTriples("0|reason|not-applicable")},
+		{"a reason with bidi", func(r *Receipt) {
+			r.Changed[1] = CardChange{ID: "c2", Before: &CardState{Row: "build", State: Review, Revision: "5"}, After: CardState{Row: "build", State: Unplaced, Revision: "6", Outcome: Cancelled}, Reason: "a\u202eb"}
+		}, wantTriples("1|reason|control-character")},
+		{"nothing moves a landed card", func(r *Receipt) { r.Changed[1] = move("c2", Landed, Ready) }, wantTriples("1|after.state|invalid-value")},
+		{"there is no done state", func(r *Receipt) { r.Changed[1].After.State = "done" }, wantTriples("1|after.state|invalid-value")},
 		{"card repeated", func(r *Receipt) { r.Changed[1].ID = "c1" }, wantTriples("1|id|repeated-id")},
 		{"card id bad", func(r *Receipt) { r.Changed[0].ID = "a b" }, wantTriples("0|id|invalid-value")},
 		{"before state unknown", func(r *Receipt) { r.Changed[0].Before.State = "limbo" }, wantTriples("0|before.state|invalid-value")},
@@ -130,7 +142,7 @@ func TestReceiptRefusals(t *testing.T) {
 		{"resolve moves waiting to ready", one(OpResolve, move("c1", Waiting, Ready)), nil},
 		{"resolve moves ready to working", one(OpResolve, move("c1", Ready, Working)), wantTriples("0|after.state|invalid-value")},
 		{"resolve moves waiting to landed", one(OpResolve, move("c1", Waiting, Landed)), wantTriples("0|after.state|invalid-value", "0|landing|required")},
-		{"resolve moves waiting to done", one(OpResolve, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Waiting, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"}), wantTriples("0|after.state|invalid-value")},
+		{"resolve moves waiting to done", one(OpResolve, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Waiting, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Replaced}, Reason: "stopped", Successor: "c2"}), wantTriples("0|after.state|invalid-value")},
 		{"resolve creates a card", one(OpResolve, CardChange{ID: "c1", After: st(Ready, "1")}), wantTriples("0|after.state|invalid-value")},
 		{"resolve changes the row", one(OpResolve, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Waiting, Revision: "2"}, After: CardState{Row: "docs", State: Ready, Revision: "3"}}), wantTriples("0|after.state|invalid-value")},
 		{"apply creates a card", one(OpApplyEvents, CardChange{ID: "c1", After: st(Waiting, "1")}), wantTriples("0|after.state|invalid-value")},
@@ -140,8 +152,8 @@ func TestReceiptRefusals(t *testing.T) {
 		{"apply moves merging to review", one(OpApplyEvents, move("c1", Merging, Review)), nil},
 		{"apply moves review to ready", one(OpApplyEvents, move("c1", Review, Ready)), nil},
 		{"apply moves landed anywhere", one(OpApplyEvents, move("c1", Landed, Working)), wantTriples("0|after.state|invalid-value")},
-		{"apply ends done as replaced", one(OpApplyEvents, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"}), wantTriples("0|after.state|invalid-value")},
-		{"apply ends done as cancelled", one(OpApplyEvents, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Merging, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Cancelled}}), nil},
+		{"apply takes a card off the table as replaced", one(OpApplyEvents, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Replaced}, Reason: "stopped", Successor: "c2"}), wantTriples("0|after.state|invalid-value")},
+		{"apply takes a card off the table as cancelled", one(OpApplyEvents, CardChange{ID: "c1", Before: &CardState{Row: "build", State: Merging, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Cancelled}, Reason: "stopped"}), nil},
 		{"admit moves a card", one(OpAdmit, move("c1", Waiting, Ready)), wantTriples("0|after.state|invalid-value")},
 		{"admit creates in ready", one(OpAdmit, CardChange{ID: "c1", After: st(Ready, "1")}), wantTriples("0|after.state|invalid-value")},
 		{"admit creates in waiting", one(OpAdmit, CardChange{ID: "c1", After: st(Waiting, "1")}), nil},
@@ -152,16 +164,16 @@ func TestReceiptRefusals(t *testing.T) {
 		{"evidence creates a card", one(OpRecordEvidence, CardChange{ID: "c1", After: st(Waiting, "1")}), wantTriples("0|after.state|invalid-value")},
 		{"replace creates without ending", one(OpReplace, CardChange{ID: "c1", After: st(Waiting, "1")}), wantTriples("-1|changed|invalid-value")},
 		{"replace ends a working card", one(OpReplace,
-			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Working, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"},
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Working, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Replaced}, Reason: "stopped", Successor: "c2"},
 			CardChange{ID: "c2", After: st(Waiting, "1")}), wantTriples("0|after.state|invalid-value")},
 		{"replace without a successor link", one(OpReplace,
-			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}},
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Replaced}, Reason: "stopped"},
 			CardChange{ID: "c2", After: st(Waiting, "1")}), wantTriples("0|successor|required")},
 		{"replace successor is not created here", one(OpReplace,
-			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "zz"},
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Replaced}, Reason: "stopped", Successor: "zz"},
 			CardChange{ID: "c2", After: st(Waiting, "1")}), wantTriples("0|successor|invalid-value")},
 		{"replace ready to replaced and a new card", one(OpReplace,
-			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Done, Revision: "3", Outcome: Replaced}, Successor: "c2"},
+			CardChange{ID: "c1", Before: &CardState{Row: "build", State: Ready, Revision: "2"}, After: CardState{Row: "build", State: Unplaced, Revision: "3", Outcome: Replaced}, Reason: "stopped", Successor: "c2"},
 			CardChange{ID: "c2", After: st(Waiting, "1")}), nil},
 
 		// links
@@ -335,8 +347,10 @@ func TestInspectResultRefusals(t *testing.T) {
 		{"table", func(r *InspectResult) { r.Table = "" }, wantTriples("-1|table|required")},
 		{"card repeated", func(r *InspectResult) { r.Cards[1].ID = r.Cards[0].ID }, wantTriples("1|id|repeated-id")},
 		{"place col", func(r *InspectResult) { r.Cards[0].Place.Col = "limbo" }, wantTriples("0|place.col|invalid-value")},
-		{"done without outcome", func(r *InspectResult) { r.Cards[2].Outcome = "" }, wantTriples("2|outcome|required")},
-		{"outcome without done", func(r *InspectResult) { r.Cards[0].Outcome = Cancelled }, wantTriples("0|outcome|not-applicable")},
+		{"a card off the table has an outcome", func(r *InspectResult) { r.Cards[2].Outcome = "" }, wantTriples("2|outcome|required")},
+		{"a placed card has none", func(r *InspectResult) { r.Cards[0].Outcome = Cancelled }, wantTriples("0|outcome|not-applicable")},
+		{"a landed card is placed and has no outcome", func(r *InspectResult) { r.Cards[1].Place.Col = Landed }, nil},
+		{"there is no done state", func(r *InspectResult) { r.Cards[1].Place.Col = "done" }, wantTriples("1|place.col|invalid-value")},
 		{"pin digest", func(r *InspectResult) { r.Cards[0].Pin.Digest = "x" }, wantTriples("0|pin.digest|invalid-value")},
 		{"pin repository is a URL", func(r *InspectResult) { r.Cards[0].Pin.Repository = "https://u:secret@h/o/r" }, wantTriples("0|pin.repository|invalid-repository")},
 		{"pin path", func(r *InspectResult) { r.Cards[0].Pin.Path = "../x" }, wantTriples("0|pin.path|path-escapes")},

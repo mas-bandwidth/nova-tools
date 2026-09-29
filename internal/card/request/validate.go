@@ -412,16 +412,16 @@ func (v validator) input(i int, e *Input) {
 	v.digest(i, id, "digest", e.Digest)
 	v.token(i, id, "issuer", e.Issuer, MaxIdentityBytes)
 	v.token(i, id, "source", e.Source, MaxRefBytes)
-	spec, known := inputSpecs[e.Type]
+	required, allowed, known := fieldsOf(e.Type)
 	if !known {
 		return
 	}
 	for _, f := range inputFields {
 		val := e.field(f)
 		switch {
-		case contains(spec.required, f):
+		case contains(required, f):
 			v.inputField(i, id, e, f, val)
-		case contains(spec.allowed, f):
+		case contains(allowed, f):
 			if val != "" {
 				v.inputField(i, id, e, f, val)
 			}
@@ -443,10 +443,7 @@ func (v validator) input(i int, e *Input) {
 }
 
 func sortedTypes() []string {
-	out := make([]string, 0, len(inputSpecs))
-	for t := range inputSpecs {
-		out = append(out, string(t))
-	}
+	out := toStrings(InputTypes())
 	sort.Strings(out)
 	return out
 }
@@ -586,9 +583,9 @@ func (v validator) replacements(list []Replacement) {
 		v.cardID(i, oid, "old.id", r.Old.ID)
 		v.digest(i, oid, "old.digest", r.Old.Digest)
 		v.expect(i, oid, "old.expect", r.Old.Expect, false)
-		if col := r.Old.Expect.Place.Col; col.Valid() && col != Waiting && col != Ready {
-			v.c.add(i, oid, "old.expect.place.col", CauseNotEligible, quote(string(col)), "waiting or ready",
-				"only a card that is waiting or ready is replaced; end a card in any other state with a lifecycle input")
+		if col := r.Old.Expect.Place.Col; col.Valid() && !Replaceable(col) {
+			v.c.add(i, oid, "old.expect.place.col", CauseNotEligible, quote(string(col)), strings.Join(toStrings(ReplaceableStates()), " or "),
+				"only a card in "+strings.Join(toStrings(ReplaceableStates()), " or ")+" is replaced; end a card in any other state with a lifecycle input")
 		}
 		v.admission(i, "new.", &r.New)
 		note(i, "old.id", r.Old.ID)

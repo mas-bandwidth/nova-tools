@@ -48,7 +48,7 @@ func input(t InputType, id string) Input {
 		col = src[0]
 	}
 	e := Input{ID: ID(id), Type: t, Expect: expect("2", "build", col), Digest: Digest(dig), Issuer: "reader-1", Source: "artifact/" + id}
-	for _, f := range inputSpecs[t].required {
+	for _, f := range reqOf(t) {
 		switch f {
 		case "head":
 			e.Head = g40
@@ -201,9 +201,9 @@ func genRequest(rng *rand.Rand, op Operation) *Request {
 			t := types[rng.Intn(len(types))]
 			src := SourceStates(t)
 			e := Input{ID: ID(fmt.Sprintf("c%d", i)), Type: t, Expect: expect(rev(), row(), src[rng.Intn(len(src))]), Digest: Digest(hex(64)), Issuer: "reader-" + fmt.Sprint(rng.Intn(5)), Source: "src/" + hex(6)}
-			spec := inputSpecs[t]
-			for _, f := range append(append([]string{}, spec.required...), spec.allowed...) {
-				if !contains(spec.required, f) && rng.Intn(2) == 0 {
+			required, allowed, _ := fieldsOf(t)
+			for _, f := range append(append([]string{}, required...), allowed...) {
+				if !contains(required, f) && rng.Intn(2) == 0 {
 					continue
 				}
 				switch f {
@@ -357,3 +357,7 @@ func leaves(v reflect.Value, f func(reflect.Value)) {
 		f(v)
 	}
 }
+
+func reqOf(t InputType) []string { r, _, _ := fieldsOf(t); return r }
+
+func allowOf(t InputType) []string { _, a, _ := fieldsOf(t); return a }

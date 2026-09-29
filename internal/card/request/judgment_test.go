@@ -8,7 +8,7 @@ import "testing"
 // cancellation, a dependency failure and a landing outside the review path are
 // points where judgment may be required.
 var wantInputClass = map[InputType]Class{
-	InStart: Mechanical, InResult: Mechanical, InVerdictAccept: Mechanical, InLanding: Mechanical, InCompleted: Mechanical,
+	InStart: Mechanical, InResult: Mechanical, InVerdictAccept: Mechanical, InLanding: Mechanical,
 	InVerdictRetry: Judgment, InVerdictRework: Judgment, InHead: Judgment, InQueueRejected: Judgment,
 	InCancel: Judgment, InExternalLanding: Judgment, InDependencyFailed: Judgment,
 }
@@ -27,23 +27,39 @@ func TestEveryLifecycleInputIsClassified(t *testing.T) {
 			t.Errorf("ClassifyInput(%s) = %s, want %s", it, got, want)
 		}
 	}
-	if len(inputClass) != len(InputTypes()) || len(wantInputClass) != len(InputTypes()) {
-		t.Errorf("%d classifications for %d input types (test lists %d)", len(inputClass), len(InputTypes()), len(wantInputClass))
+	if len(transitions) != len(InputTypes()) || len(wantInputClass) != len(InputTypes()) {
+		t.Errorf("%d classifications for %d input types (test lists %d)", len(transitions), len(InputTypes()), len(wantInputClass))
 	}
 	if _, ok := ClassifyInput("ci-red"); ok {
 		t.Error("a CI result has an input classification")
 	}
 	// Every transition that returns a card to an earlier state is a judgment
 	// point, whichever input makes it.
-	order := map[State]int{Waiting: 0, Ready: 1, Working: 2, Review: 3, Merging: 4, Landed: 5, Done: 6}
+	order := map[State]int{}
+	for i, s := range States() {
+		order[s] = i
+	}
 	for _, it := range InputTypes() {
 		for _, from := range SourceStates(it) {
 			to, _ := Destination(it, from)
-			if to != Done && to != Landed && order[to] <= order[from] {
+			if to != Unplaced && order[to] <= order[from] {
 				if c, _ := ClassifyInput(it); c != Judgment {
 					t.Errorf("%s@%s -> %s returns the card and is %s", it, from, to, c)
 				}
 			}
+		}
+	}
+}
+
+// The coordinator's decisions are never mechanical.
+func TestTheCoordinatorsDecisionsAreJudgmentPoints(t *testing.T) {
+	t.Parallel()
+	for _, it := range []InputType{InCancel, InVerdictRework, InVerdictRetry} {
+		if c, ok := ClassifyInput(it); !ok || c != Judgment {
+			t.Errorf("%s is %s, %v", it, c, ok)
+		}
+		if !contains(reqOf(it), "reason") {
+			t.Errorf("%s requires no reason", it)
 		}
 	}
 }
@@ -175,12 +191,12 @@ func TestNotificationKindsMarksAndDriftAreClosed(t *testing.T) {
 			t.Errorf("drift %s", d)
 		}
 	}
-	if len(Marks()) != 11 || len(Drifts()) != 11 || len(NotificationKinds()) != 25 {
+	if len(Marks()) != 11 || len(Drifts()) != 11 || len(NotificationKinds()) != 24 {
 		t.Errorf("closed sets changed size: %d marks, %d drifts, %d kinds", len(Marks()), len(Drifts()), len(NotificationKinds()))
 	}
 	// The notification for every judgment classification of an input exists.
-	for it, c := range inputClass {
-		if c == Judgment {
+	for it, row := range transitions {
+		if row.class == Judgment {
 			found := false
 			for _, k := range NotificationKinds() {
 				if notificationRule[k] == ruleAlways || notificationRule[k] == ruleEither {

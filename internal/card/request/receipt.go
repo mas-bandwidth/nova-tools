@@ -70,7 +70,8 @@ func (c Counters) tree() card.Obj {
 }
 
 // CardState is a card's recorded state: its row, its state (the column), its
-// revision, its outcome when it is done, and its cycle counters.
+// revision, and its cycle counters. A card that left the table has no state
+// (Unplaced): it keeps its row and carries an Outcome instead.
 type CardState struct {
 	Row      string
 	State    State
@@ -111,35 +112,18 @@ type Notification struct {
 	Counters   Counters
 }
 
-// judgmentRule is whether a notification kind is always a judgment point, never
-// one, or one depending on what it carries.
-type judgmentRule int
-
-const (
-	ruleNever judgmentRule = iota
-	ruleAlways
-	ruleEither
-)
-
-var notificationRule = map[NotificationKind]judgmentRule{
-	NoteAdmitted: ruleNever, NoteReady: ruleNever, NoteStarted: ruleNever, NoteMerging: ruleNever,
-	NoteLanded: ruleNever, NoteCompleted: ruleNever, NoteReadAccept: ruleNever, NoteLandingRecorded: ruleNever,
-	NoteBlocked: ruleAlways, NoteReturned: ruleAlways, NoteAuthorized: ruleAlways, NoteLandedExternal: ruleAlways,
-	NoteCancelled: ruleAlways, NoteDependencyFailed: ruleAlways, NoteReplaced: ruleAlways, NoteHead: ruleAlways,
-	NoteReadReject: ruleAlways, NoteCIRed: ruleAlways, NoteStale: ruleAlways, NoteForeignWrite: ruleAlways,
-	NoteResult: ruleEither, NoteInapplicable: ruleEither, NoteCIGreen: ruleEither, NoteOtherHead: ruleEither, NoteSweep: ruleEither,
-}
-
 // CardChange is one changed card, before and after. Before is nil for a card the
 // batch created. Successor names the card that replaced this one (on a card that
-// ended replaced), Landing the landing identity (on a card that landed), and
-// Notifications what the coordinator is told about the card.
+// left the table as replaced), Landing the landing identity (on a card that
+// landed), Reason why a card left the table (required then), and Notifications
+// what the coordinator is told about the card.
 type CardChange struct {
 	ID            ID
 	Before        *CardState
 	After         CardState
 	Successor     ID
 	Landing       string
+	Reason        string
 	Notifications []Notification
 }
 
@@ -246,6 +230,7 @@ func (c CardChange) tree() card.Obj {
 	}
 	m.Str("successor", string(c.Successor))
 	m.Str("landing", c.Landing)
+	m.Str("reason", c.Reason)
 	if len(c.Notifications) > 0 {
 		// The order of notifications is the manager's derivation order.
 		l := make([]any, len(c.Notifications))
@@ -534,16 +519,30 @@ func ValidateReceipt(r *Receipt) error {
 	return c.err()
 }
 
+// placeAndOutcome checks a card's column and outcome: a placed card is in one of
+// the states and has no outcome; a card that left the table is in none and has one.
+// It reports whether the pair is well formed.
+func (v validator) placeAndOutcome(i int, id, colField, outField string, col State, outcome Outcome) bool {
+	switch {
+	case col == Unplaced && !outcome.Valid():
+		v.c.add(i, id, outField, CauseRequired, quote(string(outcome)), strings.Join(toStrings(Outcomes()), ", "), "a card that left the table carries an outcome")
+		return false
+	case col == Unplaced:
+		return true
+	case !col.Valid():
+		v.c.add(i, id, colField, CauseInvalidValue, quote(string(col)), "one of "+strings.Join(stateNames(), ", ")+", or none for a card that left the table", "send one of the listed values")
+		return false
+	case outcome != "":
+		v.c.add(i, id, outField, CauseNotApplicable, quote(string(outcome)), "", "only a card that left the table carries an outcome")
+		return false
+	}
+	return true
+}
+
 func (v validator) cardState(i int, id, prefix string, s *CardState) {
 	v.name(i, id, prefix+".row", s.Row)
-	v.enum(i, id, prefix+".state", string(s.State), stateNames())
 	v.counter(i, id, prefix+".revision", s.Revision, true)
-	switch {
-	case s.State == Done && !s.Outcome.Valid():
-		v.c.add(i, id, prefix+".outcome", CauseRequired, quote(string(s.Outcome)), "completed, cancelled, dependency-failed or replaced", "a done card carries an outcome")
-	case s.State != Done && s.Outcome != "":
-		v.c.add(i, id, prefix+".outcome", CauseNotApplicable, quote(string(s.Outcome)), "", "only a done card carries an outcome")
-	}
+	v.placeAndOutcome(i, id, prefix+".state", prefix+".outcome", s.State, s.Outcome)
 	for _, n := range counterNames {
 		if val := *n.get(&s.Counters); val != "" && !card.ValidCounter(val) {
 			v.c.add(i, id, prefix+".counters."+n.name, CauseInvalidValue, quote(val), "a decimal integer within uint64", "send a decimal counter")
@@ -564,14 +563,15 @@ func (v validator) countersGrow(i int, id string, before, after Counters) {
 	}
 }
 
-// changeLinks checks the successor and landing identity of a changed card.
+// changeLinks checks the successor, reason and landing identity of a changed card.
 func (v validator) changeLinks(i int, id string, ch *CardChange) {
-	replaced := ch.After.State == Done && ch.After.Outcome == Replaced
+	left := ch.After.State == Unplaced
+	replaced := left && ch.After.Outcome.HasSuccessor()
 	switch {
 	case replaced && ch.Successor == "":
 		v.c.add(i, id, "successor", CauseRequired, "", "the card that replaced it", "a replaced card names its successor")
 	case !replaced && ch.Successor != "":
-		v.c.add(i, id, "successor", CauseNotApplicable, quote(string(ch.Successor)), "", "only a card that ended replaced has a successor")
+		v.c.add(i, id, "successor", CauseNotApplicable, quote(string(ch.Successor)), "", "only a card that left the table as replaced has a successor")
 	case replaced:
 		v.cardID(i, id, "successor", ch.Successor)
 		if ch.Successor == ch.ID {
@@ -579,9 +579,17 @@ func (v validator) changeLinks(i int, id string, ch *CardChange) {
 		}
 	}
 	switch {
-	case ch.After.State == Landed && ch.Landing == "":
+	case left && ch.Reason == "":
+		v.c.add(i, id, "reason", CauseRequired, "", "why the card left the table", "a card that left the table keeps its outcome and a reason")
+	case !left && ch.Reason != "":
+		v.c.add(i, id, "reason", CauseNotApplicable, quote(ch.Reason), "", "only a card that left the table has a reason")
+	case left:
+		v.reason(i, id, "reason", ch.Reason)
+	}
+	switch {
+	case HoldsLanding(ch.After.State) && ch.Landing == "":
 		v.c.add(i, id, "landing", CauseRequired, "", "the landing identity", "a landed card holds a landing identity")
-	case ch.After.State != Landed && ch.Landing != "":
+	case !HoldsLanding(ch.After.State) && ch.Landing != "":
 		v.c.add(i, id, "landing", CauseNotApplicable, quote(ch.Landing), "", "only a landed card holds a landing identity")
 	case ch.Landing != "":
 		v.token(i, id, "landing", ch.Landing, MaxRefBytes)
@@ -634,30 +642,31 @@ func (v validator) notifications(i int, id string, ch *CardChange) {
 }
 
 // opMoves checks that every changed card's move is one the receipt's operation
-// makes.
+// makes, as the lifecycle tables (lifecycle.go) say.
 func (v validator) opMoves(r *Receipt, index map[ID]int) {
+	resolveFrom, resolveTo := ResolveMove()
 	for i := range r.Changed {
 		ch := &r.Changed[i]
 		id := knownID(string(ch.ID))
 		bad := func(found, limit, next string) {
 			v.c.add(i, id, "after.state", CauseInvalidValue, found, limit, next)
 		}
-		if !ch.After.State.Valid() || (ch.Before != nil && !ch.Before.State.Valid()) || (ch.After.State == Done && !ch.After.Outcome.Valid()) {
+		if !placeOK(ch.After.State, ch.After.Outcome) || (ch.Before != nil && !ch.Before.State.Valid()) {
 			continue // already refused for what it is
 		}
 		switch r.Operation {
 		case OpAdmit:
 			if ch.Before != nil {
-				bad("a card that existed", "a card the batch creates in waiting", "an admit only creates cards")
-			} else if ch.After.State != Waiting {
-				bad(quote(string(ch.After.State)), "waiting", "an admitted card starts in waiting")
+				bad("a card that existed", "a card the batch creates in "+string(Initial), "an admit only creates cards")
+			} else if ch.After.State != Initial {
+				bad(quote(string(ch.After.State)), string(Initial), "an admitted card starts in "+string(Initial))
 			}
 		case OpResolve:
 			switch {
 			case ch.Before == nil:
-				bad("a created card", "a card moved from waiting to ready", "a resolve creates no card")
-			case ch.Before.State != Waiting || ch.After.State != Ready:
-				bad(quote(string(ch.Before.State)+" -> "+string(ch.After.State)), "waiting -> ready", "a resolve only moves a waiting card to ready")
+				bad("a created card", "a card moved from "+string(resolveFrom)+" to "+string(resolveTo), "a resolve creates no card")
+			case ch.Before.State != resolveFrom || ch.After.State != resolveTo:
+				bad(quote(moveText(ch.Before.State, ch.After)), string(resolveFrom)+" -> "+string(resolveTo), "a resolve only moves a "+string(resolveFrom)+" card to "+string(resolveTo))
 			case ch.Before.Row != ch.After.Row:
 				bad("a change of row", "the same row", "a resolve keeps the card's row")
 			}
@@ -668,7 +677,7 @@ func (v validator) opMoves(r *Receipt, index map[ID]int) {
 			case ch.Before.Row != ch.After.Row:
 				bad("a change of row", "the same row", "a lifecycle input keeps the card's row")
 			case !inputMakes(ch.Before.State, ch.After):
-				bad(quote(string(ch.Before.State)+" -> "+string(ch.After.State)), "a move some lifecycle input names", "no lifecycle input makes this move")
+				bad(quote(moveText(ch.Before.State, ch.After)), "a move some lifecycle input names", "no lifecycle input makes this move")
 			}
 		case OpRecordEvidence:
 			switch {
@@ -677,7 +686,7 @@ func (v validator) opMoves(r *Receipt, index map[ID]int) {
 			case ch.Before.Row != ch.After.Row:
 				bad("a change of row", "the same row", "recording evidence keeps the card's row")
 			case ch.Before.State != ch.After.State && !evidenceForces(ch.Before.State, ch.After.State):
-				bad(quote(string(ch.Before.State)+" -> "+string(ch.After.State)), "the same state, or a forced move", "recording evidence forces only "+forcedList())
+				bad(quote(moveText(ch.Before.State, ch.After)), "the same state, or a forced move", "recording evidence forces only "+forcedList())
 			}
 		case OpReplace:
 			// Checked pairwise below.
@@ -693,14 +702,14 @@ func (v validator) opMoves(r *Receipt, index map[ID]int) {
 		switch {
 		case ch.Before == nil:
 			news++
-			if ch.After.State != Waiting {
-				v.c.add(i, id, "after.state", CauseInvalidValue, quote(string(ch.After.State)), "waiting", "the new side of a replacement starts in waiting")
+			if ch.After.State != Initial {
+				v.c.add(i, id, "after.state", CauseInvalidValue, quote(string(ch.After.State)), string(Initial), "the new side of a replacement starts in "+string(Initial))
 			}
 		default:
 			olds++
-			if !(ch.Before.State == Waiting || ch.Before.State == Ready) || ch.After.State != Done || ch.After.Outcome != Replaced {
-				v.c.add(i, id, "after.state", CauseInvalidValue, quote(string(ch.Before.State)+" -> "+string(ch.After.State)), "waiting or ready -> done/replaced",
-					"a replace only ends a waiting or ready card as replaced")
+			if !Replaceable(ch.Before.State) || ch.After.State != Unplaced || ch.After.Outcome != ReplaceOutcome() {
+				v.c.add(i, id, "after.state", CauseInvalidValue, quote(moveText(ch.Before.State, ch.After)), "a card in "+joinStrings(ReplaceableStates())+" leaving the table as "+string(ReplaceOutcome()),
+					"a replace only ends a card in "+joinStrings(ReplaceableStates())+" as "+string(ReplaceOutcome()))
 			}
 			if ch.Successor != "" {
 				if j, ok := index[ch.Successor]; !ok || r.Changed[j].Before != nil {
@@ -714,18 +723,29 @@ func (v validator) opMoves(r *Receipt, index map[ID]int) {
 	}
 }
 
+// placeOK says a card's column and outcome are well formed together.
+func placeOK(col State, o Outcome) bool {
+	if col == Unplaced {
+		return o.Valid()
+	}
+	return col.Valid() && o == ""
+}
+
+func moveText(from State, after CardState) string {
+	to := string(after.State)
+	if after.State == Unplaced {
+		to = "off the table (" + string(after.Outcome) + ")"
+	}
+	return string(from) + " -> " + to
+}
+
 // inputMakes says some lifecycle input takes a card from the state to the after
-// state, with the outcome of a done card.
+// state, with the outcome of a card that left the table.
 func inputMakes(from State, after CardState) bool {
 	for _, t := range allInputTypes {
-		dst, ok := Destination(t, from)
-		if !ok || dst != after.State {
+		m, ok := Transition(t, from)
+		if !ok || m.To != after.State || m.Outcome != after.Outcome {
 			continue
-		}
-		if after.State == Done {
-			if o, ok := OutcomeOf(t); !ok || o != after.Outcome {
-				continue
-			}
 		}
 		return true
 	}

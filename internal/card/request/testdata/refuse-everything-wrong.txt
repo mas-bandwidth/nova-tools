@@ -5,7 +5,7 @@ refused replace field=schema: invalid-value; found 2; limit 1; next: send schema
 refused replace field=table: invalid-value; found "bad table"; limit letters, digits, underscore, dot and hyphen, starting with a letter, digit or underscore; next: send a value of that form
 refused replace field=expected_table_revision: invalid-value; found "1.5"; limit a decimal integer within uint64; next: send a value of that form
 refused replace[0] card=a field=old.expect.revision: invalid-value; found "0"; limit a decimal integer from 1 within uint64; next: send a value of that form
-refused replace[0] card=a field=old.expect.place.col: not-eligible; found "working"; limit waiting or ready; next: only a card that is waiting or ready is replaced; end a card in any other state with a lifecycle input
+refused replace[0] card=a field=old.expect.place.col: not-eligible; found "working"; limit waiting or ready; next: only a card in waiting or ready is replaced; end a card in any other state with a lifecycle input
 refused replace[0] field=new.id: reserved-word; found "none"; limit "-" and "none" are reserved words, never IDs; next: send a valid card ID
 refused replace[0] field=new.digest: invalid-value; found "nope"; limit 64 lower-case hexadecimal characters (SHA-256); next: send a value of that form
 refused replace[0] field=new.repository: invalid-repository; found the value is not host[:port]/segment/... of letters, digits and . _ ~ - + only (not quoted); limit a repository identity host[:port]/owner/name, no scheme, no user, no .git; next: send the identity, not the remote URL

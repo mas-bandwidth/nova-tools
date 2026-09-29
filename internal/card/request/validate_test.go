@@ -210,7 +210,8 @@ func TestRefusals(t *testing.T) {
 		{"dependency on itself", OpApplyEvents, func(r *Request) { r.Inputs = []Input{input(InDependencyFailed, "c1")}; r.Inputs[0].Dependency = "c1" }, wantTriples("0|dependency|invalid-value")},
 		{"dependency bad id", OpApplyEvents, func(r *Request) { r.Inputs = []Input{input(InDependencyFailed, "c1")}; r.Inputs[0].Dependency = "a b" }, wantTriples("0|dependency|invalid-value")},
 		{"head event without head", OpApplyEvents, func(r *Request) { r.Inputs = []Input{input(InHead, "c1")}; r.Inputs[0].Head = "" }, wantTriples("0|head|required")},
-		{"completed with head", OpApplyEvents, func(r *Request) { r.Inputs = []Input{input(InCompleted, "c1")}; r.Inputs[0].Head = g40 }, wantTriples("0|head|not-applicable")},
+		{"completed is not an input", OpApplyEvents, func(r *Request) { r.Inputs[0].Type = "completed" }, wantTriples("0|type|invalid-value")},
+		{"reopen is not an input", OpApplyEvents, func(r *Request) { r.Inputs[0].Type = "reopen" }, wantTriples("0|type|invalid-value")},
 
 		// the derived destination
 		{"start from working", OpApplyEvents, func(r *Request) { r.Inputs[0].Expect.Place.Col = Working }, wantTriples("0|expect.place.col|no-transition")},
@@ -218,7 +219,7 @@ func TestRefusals(t *testing.T) {
 		{"result from ready", OpApplyEvents, func(r *Request) { r.Inputs[1].Expect.Place.Col = Ready }, wantTriples("1|expect.place.col|no-transition")},
 		{"accept from merging", OpApplyEvents, func(r *Request) { r.Inputs[2].Expect.Place.Col = Merging }, wantTriples("2|expect.place.col|no-transition")},
 		{"anything from landed", OpApplyEvents, func(r *Request) { r.Inputs[0].Expect.Place.Col = Landed }, wantTriples("0|expect.place.col|no-transition")},
-		{"anything from done", OpApplyEvents, func(r *Request) { r.Inputs[0].Expect.Place.Col = Done }, wantTriples("0|expect.place.col|no-transition")},
+		{"there is no done state", OpApplyEvents, func(r *Request) { r.Inputs[0].Expect.Place.Col = "done" }, wantTriples("0|expect.place.col|invalid-value")},
 		{"ci green is not a type", OpApplyEvents, func(r *Request) { r.Inputs[0].Type = "ci-green" }, wantTriples("0|type|invalid-value")},
 		{"ci red is not a type", OpApplyEvents, func(r *Request) { r.Inputs[0].Type = "ci-red" }, wantTriples("0|type|invalid-value")},
 		{"review to landed by landing", OpApplyEvents, func(r *Request) { r.Inputs = []Input{input(InLanding, "c1")}; r.Inputs[0].Expect.Place.Col = Review }, wantTriples("0|expect.place.col|no-transition")},
@@ -230,7 +231,6 @@ func TestRefusals(t *testing.T) {
 			r.Inputs = []Input{input(InExternalLanding, "c1")}
 			r.Inputs[0].Expect.Place.Col = Merging
 		}, wantTriples("0|expect.place.col|no-transition")},
-		{"completed from working", OpApplyEvents, func(r *Request) { r.Inputs = []Input{input(InCompleted, "c1")}; r.Inputs[0].Expect.Place.Col = Working }, wantTriples("0|expect.place.col|no-transition")},
 		{"dependency failed from ready", OpApplyEvents, func(r *Request) {
 			r.Inputs = []Input{input(InDependencyFailed, "c1")}
 			r.Inputs[0].Expect.Place.Col = Ready
@@ -312,7 +312,7 @@ func TestRefusals(t *testing.T) {
 		{"replace old working", OpReplace, func(r *Request) { r.Replacements[0].Old.Expect.Place.Col = Working }, wantTriples("0|old.expect.place.col|not-eligible")},
 		{"replace old review", OpReplace, func(r *Request) { r.Replacements[0].Old.Expect.Place.Col = Review }, wantTriples("0|old.expect.place.col|not-eligible")},
 		{"replace old landed", OpReplace, func(r *Request) { r.Replacements[0].Old.Expect.Place.Col = Landed }, wantTriples("0|old.expect.place.col|not-eligible")},
-		{"replace old done", OpReplace, func(r *Request) { r.Replacements[0].Old.Expect.Place.Col = Done }, wantTriples("0|old.expect.place.col|not-eligible")},
+		{"replace old done", OpReplace, func(r *Request) { r.Replacements[0].Old.Expect.Place.Col = "done" }, wantTriples("0|old.expect.place.col|invalid-value")},
 		{"replace old waiting ok", OpReplace, func(r *Request) { r.Replacements[0].Old.Expect.Place.Col = Waiting }, nil},
 		{"replace same id", OpReplace, func(r *Request) { r.Replacements[0].New.ID = r.Replacements[0].Old.ID }, wantTriples("0|new.id|repeated-id")},
 		{"replace new id in other pair", OpReplace, func(r *Request) {
@@ -356,7 +356,7 @@ func TestRefusals(t *testing.T) {
 		{"several refusals reported together", OpApplyEvents, func(r *Request) {
 			r.Table = ""
 			r.Inputs[0].Digest = "x"
-			r.Inputs[1].Expect.Place.Col = Done
+			r.Inputs[1].Expect.Place.Col = Landed
 			r.Inputs[2].Head = ""
 			r.Inputs = append(r.Inputs, input(InStart, "c1"))
 		}, wantTriples("-1|table|required", "0|digest|invalid-value", "1|expect.place.col|no-transition", "2|head|required", "3|id|conflicting-inputs")},
@@ -407,16 +407,16 @@ func TestRefusalsCarryLimitAndRemedyForBounds(t *testing.T) {
 func TestRefusalNamesCardIDAndIndex(t *testing.T) {
 	t.Parallel()
 	r := validRequest(OpApplyEvents)
-	r.Inputs[1].Expect.Place.Col = Done
+	r.Inputs[1].Expect.Place.Col = Landed
 	_, e := Validate(r)
 	f := e.(*Refusals).List[0]
 	if f.Index != 1 || f.ID != "c2" || f.Field != "expect.place.col" || f.Cause != CauseNoTransition || f.Operation != "apply_events" {
 		t.Fatalf("refusal = %+v", f)
 	}
-	if f.Found != `"result@done"` || !strings.Contains(f.Limit, "working") {
+	if f.Found != `"result@landed"` || !strings.Contains(f.Limit, "working") {
 		t.Fatalf("found %q limit %q", f.Found, f.Limit)
 	}
-	if want := `refused apply_events[1] card=c2 field=expect.place.col: no-transition; found "result@done"; limit source state one of working; next: declare a source state the type moves from; the destination is derived, never sent`; f.String() != want {
+	if want := `refused apply_events[1] card=c2 field=expect.place.col: no-transition; found "result@landed"; limit source state one of working; next: declare a source state the type moves from; the destination is derived, never sent`; f.String() != want {
 		t.Fatalf("line\n got  %s\n want %s", f.String(), want)
 	}
 }

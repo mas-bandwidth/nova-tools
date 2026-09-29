@@ -70,7 +70,7 @@ func worstInput(t InputType, i int) Input {
 	e := Input{ID: ID(pad(fmt.Sprintf("c%04d-", i), card.MaxIDBytes)), Type: t, Digest: Digest(dig), Issuer: strings.Repeat("i", card.MaxIdentityBytes), Source: strings.Repeat("s", card.MaxRefBytes)}
 	src := SourceStates(t)
 	e.Expect = worstExpect(src[0])
-	for _, f := range inputSpecs[t].required {
+	for _, f := range reqOf(t) {
 		switch f {
 		case "head":
 			e.Head = Digest(dig).Tagged()
@@ -84,7 +84,7 @@ func worstInput(t InputType, i int) Input {
 			e.Landing = strings.Repeat("l", card.MaxRefBytes)
 		}
 	}
-	for _, f := range inputSpecs[t].allowed {
+	for _, f := range allowOf(t) {
 		if f == "head" {
 			e.Head = Digest(dig).Tagged()
 		}

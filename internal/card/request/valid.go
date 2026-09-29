@@ -200,7 +200,7 @@ func (v *Valid) Cards() []CardRef {
 		for i := range r.Inputs {
 			e := r.Inputs[i].Expect
 			add(r.Inputs[i].ID, RoleChanged, &e)
-			if r.Inputs[i].Type == InDependencyFailed {
+			if r.Inputs[i].Type.NamesDependency() {
 				add(r.Inputs[i].Dependency, RoleDependency, nil)
 			}
 		}

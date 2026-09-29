@@ -1,1 +1,1 @@
-refused apply_events[0] card=c1 field=type: invalid-value; found "ci-green"; limit one of cancel, completed, dependency-failed, external-landing, head, landing, queue-rejected, result, start, verdict-accept, verdict-retry, verdict-rework; next: send one of the listed values
+refused apply_events[0] card=c1 field=type: invalid-value; found "ci-green"; limit one of cancel, dependency-failed, external-landing, head, landing, queue-rejected, result, start, verdict-accept, verdict-retry, verdict-rework; next: send one of the listed values
