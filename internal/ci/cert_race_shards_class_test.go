@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -111,14 +110,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 		t.Fatalf("the deal step does not deal the live list over matrix.shards:\n%s", script)
 	}
 
-	root := repoRoot(t)
-	cmd := exec.Command("go", "list", "./...")
-	cmd.Dir = root
-	cmd.Env = goenv.Clean(os.Environ())
-	list, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	list := repoGoList(t)
 	listFile := filepath.Join(t.TempDir(), "pkgs")
 	if err := os.WriteFile(listFile, list, 0o644); err != nil {
 		t.Fatal(err)
