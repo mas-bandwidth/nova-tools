@@ -49,9 +49,8 @@ import (
 // redis_dir (rowan-tools/fleet/redis.yml), beside users.acl.
 const DefaultRowsPath = "/var/lib/nova-redis/acl-rows.tsv"
 
-// PlayCommand converges the store's ACL: rowan-tools/fleet/Makefile `store`,
-// which runs rowan-tools/fleet/redis.yml (users.acl from the declared users, ACL LOAD).
-const PlayCommand = "make -C rowan-tools/fleet store"
+// PlayCommand converges the store's ACL: nova-sprint fleet play redis.
+const PlayCommand = "nova-sprint fleet play redis"
 
 // User is one user's rules: On is its state, Rules its normalized rule
 // tokens in order (Reduce). Line is the rows file line (0 when live).

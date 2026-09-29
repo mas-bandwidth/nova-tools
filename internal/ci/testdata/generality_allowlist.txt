@@ -202,7 +202,7 @@ internal/merge/verdict.go:johnny 9
 internal/merge/verdict.go:rowan 4
 internal/merge/verdict.go:space 2
 internal/merge/verdict.go:stella 12
-internal/nsprint/acl/acl.go:rowan 10
+internal/nsprint/acl/acl.go:rowan 7
 internal/nsprint/adopt/adopt.go:rowan 1
 internal/nsprint/beat/beat.go:glenn 1
 internal/nsprint/benchrole/role.go:glenn 1

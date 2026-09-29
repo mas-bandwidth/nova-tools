@@ -2,8 +2,8 @@
 // ACL LIST as the admin user and diffs it against the declared rows
 // (internal/nsprint/acl), one ACL DRIFT line per drifted user. It never
 // writes the ACL: --fix is refused with the play command, the play being the
-// only writer. Exit 0 no drift, 1 drift, 2 could not check (usage, rows,
-// password, store) or --fix.
+// only writer. Exit 0 no drift, 1 drift or --fix, 2 could not check (usage,
+// rows, password, store).
 package main
 
 import (
@@ -110,8 +110,8 @@ func aclCheck(ctx context.Context, args []string, out, errOut io.Writer, getenv 
 		return refuse(errOut, name, "takes flags, not positional arguments")
 	}
 	if *fix {
-		fmt.Fprintf(errOut, "REFUSED acl check --fix: the play is the only writer of the store's ACL, never a hand ACL SETUSER; run: %s\n", acl.PlayCommand)
-		return 2
+		fmt.Fprintf(errOut, "REFUSED acl check --fix: the play is the only writer; run: %s\n", acl.PlayCommand)
+		return 1
 	}
 	f, err := os.Open(*rows)
 	if err != nil {
@@ -152,7 +152,7 @@ func aclCheck(ctx context.Context, args []string, out, errOut io.Writer, getenv 
 		fmt.Fprintf(out, "ACL CHECK OK store=%s redis=%s users=%d rows=%s\n", oneline.Field(store), oneline.Field(server.Version), len(declared), oneline.Field(*rows))
 		return 0
 	}
-	fmt.Fprintf(out, "ACL CHECK DRIFT store=%s redis=%s drifted=%d users=%d rows=%s converge=%s\n",
+	fmt.Fprintf(out, "ACL CHECK DRIFT store=%s redis=%s drifted=%d users=%d rows=%s remedy=%s\n",
 		oneline.Field(store), oneline.Field(server.Version), len(drift), len(declared), oneline.Field(*rows), oneline.Quote(acl.PlayCommand))
 	return 1
 }

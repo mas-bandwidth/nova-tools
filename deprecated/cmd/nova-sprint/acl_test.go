@@ -12,7 +12,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/acl"
 )
 
-const aclRowsFixture = "../../internal/nsprint/acl/testdata/acl-rows.tsv"
+var aclRowsFixture = func() string {
+	for _, p := range []string{
+		"../../../internal/nsprint/acl/testdata/acl-rows.tsv",
+		"../../internal/nsprint/acl/testdata/acl-rows.tsv",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "../../../internal/nsprint/acl/testdata/acl-rows.tsv"
+}()
 
 // aclEnv is a getenv holding only NS_ADMIN=password ("" is unset).
 func aclEnv(password string) func(string) string {
@@ -29,7 +39,11 @@ func aclEnv(password string) func(string) string {
 // dialled with.
 func cannedACL(t *testing.T, edit func([]string) []string, err error) (aclReader, *[3]string) {
 	t.Helper()
-	f, rerr := os.Open("../../internal/nsprint/acl/testdata/redis-8.10.2.acl")
+	fixture := "../../../internal/nsprint/acl/testdata/redis-8.10.2.acl"
+	if _, serr := os.Stat(fixture); serr != nil {
+		fixture = "../../internal/nsprint/acl/testdata/redis-8.10.2.acl"
+	}
+	f, rerr := os.Open(fixture)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -82,25 +96,25 @@ func TestACLCheckDrift(t *testing.T) {
 	}, nil)
 	code, stdout, stderr := runACLCheck(aclEnv("pw"), list, "check", "--redis", "127.0.0.1:9", "--rows", aclRowsFixture)
 	want := `ACL DRIFT user=bench missing="+hset ~cfg:ci" extra="+keys"` + "\n" +
-		`ACL CHECK DRIFT store=127.0.0.1:9 redis=8.10.2 drifted=1 users=12 rows=` + aclRowsFixture + ` converge="make -C rowan-tools/fleet store"` + "\n"
+		`ACL CHECK DRIFT store=127.0.0.1:9 redis=8.10.2 drifted=1 users=12 rows=` + aclRowsFixture + ` remedy="nova-sprint fleet play redis"` + "\n"
 	if code != 1 || stderr != "" || stdout != want {
 		t.Fatalf("exit %d stdout %q stderr %q; want\n%s", code, stdout, stderr, want)
 	}
 }
 
-// --fix through the dispatcher: refused with the play command, exit 2.
+// --fix through the dispatcher: refused with the play command, exit 1.
 func TestACLCheckFixRefused(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runSprint("acl", "check", "--fix")
-	want := "REFUSED acl check --fix: the play is the only writer of the store's ACL, never a hand ACL SETUSER; run: make -C rowan-tools/fleet store\n"
-	if code != 2 || stdout != "" || stderr != want {
+	want := "REFUSED acl check --fix: the play is the only writer; run: nova-sprint fleet play redis\n"
+	if code != 1 || stdout != "" || stderr != want {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 }
 
-// Every refusal prints one line on stderr and exits 2; --fix and a missing
-// password never reach the store.
+// Every refusal prints one line on stderr and exits 2; a missing
+// password never reaches the store.
 func TestACLCheckRefusals(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +129,6 @@ func TestACLCheckRefusals(t *testing.T) {
 		want   string
 		dialed bool
 	}{
-		{"pw", []string{"check", "--fix"}, "REFUSED acl check --fix: the play is the only writer", false},
 		{"pw", []string{"check", "--rows", filepath.Join(dir, "none.tsv")}, "ACL CHECK REFUSED rows=", false},
 		{"pw", []string{"check", "--rows", bad}, "reason=rows\\x20line\\x201\\x20user\\x20bench:\\x20a\\x20password\\x20token", false},
 		{"", []string{"check", "--redis", "127.0.0.1:9", "--rows", aclRowsFixture}, "ACL CHECK REFUSED store=127.0.0.1:9 reason=no-admin-password env=NS_ADMIN remedy=export NS_ADMIN=", false},
