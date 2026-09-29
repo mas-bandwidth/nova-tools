@@ -169,6 +169,20 @@ do
   -- The longest text of a score read back from the store: a double as the store
   -- prints it ("-1.7976931348623157e+308").
   T.score_text_bytes = 24
+  -- T.receipt_size(encode, late): the byte length of the receipt's delta as encode
+  -- makes it, known before the first write. Each score a call reads back after its
+  -- writes (late[i].delta.after_score) is counted at its longest form, so the size
+  -- is never less than the size the receipt ends with; the scores are put back.
+  function T.receipt_size(encode, late)
+    local held = {}
+    for i, l in ipairs(late) do
+      held[i] = l.delta.after_score
+      l.delta.after_score = string.rep('9', T.score_text_bytes)
+    end
+    local size = #encode()
+    for i, l in ipairs(late) do l.delta.after_score = held[i] end
+    return size
+  end
   -- T.fieldchange(before, after): the change of one field as a receipt records it.
   -- Absent is null with no bytes; a value too long to record is null with its
   -- bytes and sha1.
@@ -2460,18 +2474,6 @@ do
 
     local outcome = real_changes == 0 and 'noop' or 'changed'
     local encode_delta
-    -- The receipt's size is known before the first write: the delta as it will be
-    -- encoded, each score read back after the writes counted at its longest.
-    local function delta_size()
-      local held = {}
-      for i, l in ipairs(late) do
-        held[i] = l.delta.after_score
-        l.delta.after_score = string.rep('9', T.score_text_bytes)
-      end
-      local size = #encode_delta()
-      for i, l in ipairs(late) do l.delta.after_score = held[i] end
-      return size
-    end
     function encode_delta()
       return cjson.encode({
         operation_id = manifest.operation_id,
@@ -2484,7 +2486,7 @@ do
       })
     end
 
-    local receipt_over = T.over('receipt_bytes', delta_size())
+    local receipt_over = T.over('receipt_bytes', T.receipt_size(encode_delta, late))
     if receipt_over then return receipt_over end
 
     -- The operation record is the last write, after the commit; its
