@@ -97,6 +97,20 @@ generation, and a generation that is not the live one is refused as stale.
 take with no card takes the member's oldest ready cards (--limit n, default 1)
 and prints each one's generation.
 
+start creates a work card for each primary (for example, card1.w1). Use the
+work card name and generation printed by queue --as <member> for take and
+finish. ask creates a read card for each reader. Use the card ID printed by
+queue --as <reader> for read; the primary ID is not a read-card ID.
+
+accept queues accepted primaries for merge; merge --stream <s> lands the
+stream's queued batch.
+
+For a new Redis store, load the function library once with nova-redis fn load
+--addr <host:port> before init. For ACL authentication, set
+NOVA_SPRINT_REDIS_USER to the ACL username. Set NOVA_SPRINT_REDIS_PASSWORD_ENV
+to the name of the variable holding that user's password (default:
+NOVA_REDIS_BENCH_PASSWORD).
+
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
 `)
@@ -505,7 +519,7 @@ func cardGens(words []string) ([]string, map[string]int, error) {
 
 func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("take")
-	as := fs.String("as", "", "the fleet member taking its cards")
+	as := fs.String("as", "", "the fleet member taking its cards; queue --as <member> prints work-card IDs and generations")
 	limit := fs.Int("limit", 0, "take the first n of its ready queue (default 1)")
 	words, err := parse(fs, args)
 	if err != nil {
@@ -527,7 +541,7 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("finish")
-	as := fs.String("as", "", "the fleet member finishing its cards")
+	as := fs.String("as", "", "the fleet member finishing its cards; use work-card IDs and generations from queue --as <member>")
 	failed := fs.Bool("failed", false, "the work failed (default: ok)")
 	head := fs.String("head", "", "the head the work finished at (default: the card's id)")
 	report := fs.String("report", "", "the worker's report")
@@ -563,7 +577,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("read")
-	as := fs.String("as", "", "the reader")
+	as := fs.String("as", "", "the reader; use read-card IDs from queue --as <reader>, not primary IDs")
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
@@ -598,7 +612,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var readOK *bool
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers")
+		readOK = fs.Bool("read-ok", false, "queue every primary in review with ok reads from two different readers for merge")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
@@ -688,7 +702,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge")
-	stream := fs.String("stream", "", "the stream")
+	stream := fs.String("stream", "", "the stream whose queued batch to merge and land")
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
