@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,6 +78,52 @@ type Step struct {
 	Plan     func(s *sprint.Snapshot) sprint.Plan
 	Mirrors  bool   // bring the fleet's and merge's display cells up to date after
 	CallerOp string // the caller's operation id: a retry returns the recorded result
+	// Args is the step's arguments in one canonical form (ArgsOf of its
+	// request): a caller's operation id replays only for the same verb and
+	// the same arguments.
+	Args string
+}
+
+// ArgsOf is a request's arguments in one canonical form: a digest of its JSON
+// (map keys sorted).
+func ArgsOf(req any) string {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:12])
+}
+
+// OpConflictError is a caller's operation id recorded for another verb, or
+// for the same verb with other arguments: the step is not a retry of it.
+type OpConflictError struct {
+	Op, Verb, Recorded string
+	OtherArgs          bool
+}
+
+func (e *OpConflictError) Error() string {
+	if e.OtherArgs {
+		return fmt.Sprintf("operation id %s is recorded for %s with other arguments: this %s is not a retry of it; nothing was done; give this step a fresh --op", e.Op, e.Recorded, e.Verb)
+	}
+	return fmt.Sprintf("operation id %s is recorded for %s: this %s is not a retry of it; nothing was done; give this step a fresh --op", e.Op, e.Recorded, e.Verb)
+}
+
+// replay is the recorded result of the step's caller operation id, refused as
+// a conflict when it was recorded for another verb or other arguments.
+func replay(step Step, raw string) (Result, error) {
+	var rec Result
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return Result{Verb: step.Verb}, fmt.Errorf("operation %s: its recorded result is unreadable: %w", step.CallerOp, err)
+	}
+	if rec.Verb != step.Verb {
+		return Result{Verb: step.Verb}, &OpConflictError{Op: step.CallerOp, Verb: step.Verb, Recorded: rec.Verb}
+	}
+	if step.Args != "" && rec.Args != "" && step.Args != rec.Args {
+		return Result{Verb: step.Verb}, &OpConflictError{Op: step.CallerOp, Verb: step.Verb, Recorded: rec.Verb, OtherArgs: true}
+	}
+	rec.Replay = true
+	return rec, nil
 }
 
 // Result is what a step did.
@@ -93,6 +141,7 @@ type Result struct {
 	// its expectation no longer held: recorded with the result, so a replay of
 	// the caller's operation id returns it.
 	Skipped []string `json:"skipped,omitempty"`
+	Args    string   `json:"args,omitempty"` // the step's arguments (ArgsOf), recorded with the result
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -192,16 +241,12 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 
 // Run plans and applies a step as one operation.
 func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
-	res := Result{Verb: step.Verb}
+	res := Result{Verb: step.Verb, Args: step.Args}
 	if step.CallerOp != "" {
 		if raw, ok, err := st.B.Done(ctx, step.CallerOp); err != nil {
 			return res, err
 		} else if ok {
-			if err := json.Unmarshal([]byte(raw), &res); err != nil {
-				return res, fmt.Errorf("operation %s: its recorded result is unreadable: %w", step.CallerOp, err)
-			}
-			res.Replay = true
-			return res, nil
+			return replay(step, raw)
 		}
 	}
 	family := step.CallerOp
@@ -217,9 +262,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		if step.CallerOp != "" {
 			if raw, ok, err := st.B.Done(ctx, step.CallerOp); err == nil && ok {
-				_ = json.Unmarshal([]byte(raw), &res)
-				res.Replay = true
-				return res, nil
+				return replay(step, raw)
 			}
 		}
 		plan := step.Plan(snap)
