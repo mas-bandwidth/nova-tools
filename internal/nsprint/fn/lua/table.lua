@@ -297,11 +297,13 @@ do
   function T.member(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER') end
     local mkey = T.memberkey(d, id)
-    local h, _, err = T.hash(mkey)
-    if err then
-      if string.find(err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, 'wrong type', 'hash') end
-      return nil, nil, { 'ERR', err }
+    local flat = redis.pcall('HGETALL', mkey)
+    if type(flat) == 'table' and flat.err then
+      if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, 'wrong type', 'hash') end
+      return nil, nil, { 'ERR', flat.err }
     end
+    local h = {}
+    for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
     local exists = next(h) ~= nil
     local epoch = h.epoch or '0'
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
@@ -1637,10 +1639,15 @@ do
 
     -- Check operation replay first:
     local op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
+    local op_kind = redis.call('TYPE', op_key)
+    op_kind = (type(op_kind) == 'table' and op_kind.ok) and op_kind.ok or op_kind
+    if op_kind ~= 'none' and op_kind ~= 'hash' then
+      return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
+    end
     local op_record, _, op_err = T.hash(op_key)
     if op_err then
       if string.find(op_err, 'WRONGTYPE') then
-        return T.refuse('WRONGTYPE', op_key, 'wrong type', 'hash')
+        return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
       end
       return {'ERR', op_err}
     end
@@ -1694,7 +1701,43 @@ do
       if seen_ids[entry.id] then return T.refuse('TWICE', entry.id) end
       seen_ids[entry.id] = true
 
-      local is_change = entry.create ~= nil or entry.move ~= nil or entry.remove ~= nil or
+      if entry.remove ~= nil and entry.remove ~= true then
+        return T.refuse('ARGS', 'remove must be true')
+      end
+
+      if entry.set ~= nil then
+        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object') end
+        local count = 0
+        for f, val in pairs(entry.set) do
+          count = count + 1
+          if count > 128 then return T.refuse('LIMIT', 'fields count exceeds 128') end
+          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
+            return T.refuse('RESERVEDFIELD', entry.id, f)
+          end
+          if not T.word(f) or type(val) ~= 'string' then
+            return T.refuse('ARGS', 'field name and value must be valid strings')
+          end
+          if #val > 65536 then return T.refuse('LIMIT', 'field value exceeds 64 KiB') end
+        end
+      end
+      if entry.unset ~= nil then
+        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array') end
+        for _, f in ipairs(entry.unset) do
+          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
+            return T.refuse('RESERVEDFIELD', entry.id, f)
+          end
+          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name') end
+        end
+      end
+      if entry.set ~= nil and entry.unset ~= nil then
+        for _, f in ipairs(entry.unset) do
+          if entry.set[f] ~= nil then
+            return T.refuse('MUTATION', entry.id, 'field ' .. f .. ' cannot be both set and unset')
+          end
+        end
+      end
+
+      local is_change = entry.create ~= nil or entry.move ~= nil or entry.remove == true or
                         (entry.set ~= nil and next(entry.set) ~= nil) or
                         (entry.unset ~= nil and #entry.unset > 0)
       if is_change then
@@ -1814,6 +1857,34 @@ do
       local current_place = member_places[id]
       local item = {id=id, entry=entry, record=record, current_place=current_place}
 
+      local member_fields = {}
+      local fields_changed = false
+      if entry.set then
+        for f, val in pairs(entry.set) do
+          local bval = record[f]
+          if bval ~= val then
+            fields_changed = true
+          end
+          member_fields[f] = {
+            before = bval ~= nil and bval or cjson.null,
+            after = val,
+          }
+        end
+      end
+      if entry.unset then
+        for _, f in ipairs(entry.unset) do
+          local bval = record[f]
+          if bval ~= nil then
+            fields_changed = true
+          end
+          member_fields[f] = {
+            before = bval ~= nil and bval or cjson.null,
+            after = cjson.null,
+          }
+        end
+      end
+      item.fields = member_fields
+
       if entry.create then
         if entry.move or entry.remove then
           return T.refuse('MUTATION', id, 'create cannot combine with move or remove')
@@ -1835,6 +1906,7 @@ do
           return T.refuse('SCORE', id)
         end
         item.action = 'create'
+        item.effective_change = true
         item.dst_row = crow
         item.dst_col = ccol
         item.dst_place = T.place(crow, ccol)
@@ -1842,6 +1914,8 @@ do
         item.score = score
         item.before_place = ''
         item.after_place = item.dst_place
+        item.before_score = cjson.null
+        item.after_score = score
         item.before_rev = '0'
         item.after_rev = '1'
       elseif entry.move then
@@ -1857,75 +1931,78 @@ do
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err2 = T.cell(d, src_row, src_col, true)
         if not src_cell then return err2 end
-        item.action = 'move'
+        local dst_place = T.place(mrow, mcol)
+        local cur_score = member_scores[id]
+        local place_changed = (dst_place ~= current_place)
+        local score_changed = (score ~= cur_score)
+        local effective = place_changed or score_changed or fields_changed
+
         item.src_row = src_row
         item.src_col = src_col
         item.src_place = current_place
         item.src_cell = src_cell
         item.dst_row = mrow
         item.dst_col = mcol
-        item.dst_place = T.place(mrow, mcol)
+        item.dst_place = dst_place
         item.dst_cell = dst_cell
         item.score = score
         item.before_place = current_place
-        item.after_place = item.dst_place
+        item.after_place = dst_place
+        item.before_score = cur_score
+        item.after_score = score
         item.before_rev = record.revision or '0'
-        item.after_rev = T.next(item.before_rev)
-        if not item.after_rev then return T.refuse('OVERFLOW', id) end
+        item.effective_change = effective
+
+        if effective then
+          item.action = 'move'
+          item.after_rev = T.next(item.before_rev)
+          if not item.after_rev then return T.refuse('OVERFLOW', id) end
+        else
+          item.action = 'noop'
+          item.after_rev = item.before_rev
+        end
       elseif entry.remove then
         if not current_place then return T.refuse('NOTMEMBER', id) end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err = T.cell(d, src_row, src_col, true)
         if not src_cell then return err end
         item.action = 'remove'
+        item.effective_change = true
         item.src_row = src_row
         item.src_col = src_col
         item.src_place = current_place
         item.src_cell = src_cell
         item.before_place = current_place
         item.after_place = ''
+        item.before_score = member_scores[id]
+        item.after_score = cjson.null
         item.before_rev = record.revision or '0'
         item.after_rev = T.next(item.before_rev)
         if not item.after_rev then return T.refuse('OVERFLOW', id) end
       else
         item.before_place = current_place or ''
         item.after_place = current_place or ''
+        item.before_score = member_scores[id] ~= nil and member_scores[id] or cjson.null
+        item.after_score = member_scores[id] ~= nil and member_scores[id] or cjson.null
         item.before_rev = record.revision or '0'
         local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
                            (entry.unset ~= nil and #entry.unset > 0)
         if has_fields then
           if not next(record) then return T.refuse('NOTMEMBER', id) end
-          item.action = 'fields'
-          item.after_rev = T.next(item.before_rev)
-          if not item.after_rev then return T.refuse('OVERFLOW', id) end
+          if fields_changed then
+            item.action = 'fields'
+            item.effective_change = true
+            item.after_rev = T.next(item.before_rev)
+            if not item.after_rev then return T.refuse('OVERFLOW', id) end
+          else
+            item.action = 'noop'
+            item.effective_change = false
+            item.after_rev = item.before_rev
+          end
         else
           item.action = 'guard'
+          item.effective_change = false
           item.after_rev = item.before_rev
-        end
-      end
-
-      if entry.set then
-        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object') end
-        local count = 0
-        for f, val in pairs(entry.set) do
-          count = count + 1
-          if count > 128 then return T.refuse('LIMIT', 'fields count exceeds 128') end
-          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
-            return T.refuse('RESERVEDFIELD', id, f)
-          end
-          if not T.word(f) or type(val) ~= 'string' then
-            return T.refuse('ARGS', 'field name and value must be valid strings')
-          end
-          if #val > 65536 then return T.refuse('LIMIT', 'field value exceeds 64 KiB') end
-        end
-      end
-      if entry.unset then
-        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array') end
-        for _, f in ipairs(entry.unset) do
-          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
-            return T.refuse('RESERVEDFIELD', id, f)
-          end
-          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name') end
         end
       end
 
@@ -1947,20 +2024,25 @@ do
         id = id,
         before_place = item.before_place,
         after_place = item.after_place,
+        before_score = item.before_score,
+        after_score = item.after_score,
         before_rev = item.before_rev,
         after_rev = item.after_rev,
         fields_set = entry.set or {},
         fields_unset = entry.unset or {},
+        fields = item.fields,
       }
       delta_members[#delta_members + 1] = delta_item
 
-      if item.action == 'create' then
+      if item.effective_change then
         real_changes = real_changes + 1
+      end
+
+      if item.action == 'create' then
         T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
         T.stage(d, 'HSET', mkey, 'epoch', d.epoch, 'place:' .. d.name, item.dst_place, 'revision', '1')
         T.change(d, id, nil, item.dst_place, item.score)
       elseif item.action == 'move' then
-        real_changes = real_changes + 1
         if item.src_cell.key ~= item.dst_cell.key then
           T.stage(d, 'ZREM', item.src_cell.key, id)
           T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
@@ -1972,13 +2054,11 @@ do
           T.change(d, id, item.src_place, item.dst_place, item.score)
         end
       elseif item.action == 'remove' then
-        real_changes = real_changes + 1
         T.stage(d, 'ZREM', item.src_cell.key, id)
         T.stage(d, 'HDEL', mkey, 'place:' .. d.name)
         T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
         T.change(d, id, item.src_place, nil, member_scores[id])
       elseif item.action == 'fields' then
-        real_changes = real_changes + 1
         T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
       end
 
@@ -2015,8 +2095,9 @@ do
       operation_id = manifest.operation_id,
       digest = digest,
       actor = manifest.actor or '',
+      selected_count = #manifest.members,
       guard_count = #guard_entries,
-      changed_count = #changed_entries,
+      changed_count = real_changes,
       members = delta_members,
     }
 

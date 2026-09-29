@@ -1768,6 +1768,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `cell members <table> <row> <col>` | Lists member IDs and scores in order |
 | `member create <table> <id>` | Allocates an unplaced identity |
 | `member find <table> <id>` | Reports its owned location or `state=missing/unplaced`, with epoch and revision |
+| `batch <manifest>` | Applies an atomic batch manifest (file path or inline JSON) of member mutations and preconditions |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
 | `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages |
@@ -1803,6 +1804,56 @@ COL DEL table= col=` and is refused, exit 1, writing nothing, while the
 column holds a member (the refusal names all blocking rows and members, with a
 batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
 the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+
+### Batch mutation
+
+`nova-table batch <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]`
+applies an atomic batch manifest (file path or inline JSON string) of member mutations and preconditions
+against one table in a single Redis transaction. It creates, moves, removes, and sets or unsets permitted
+member fields in one call, checking observed table revision, epoch, and member expectations whole against
+the single pre-state snapshot before staging any writes.
+
+The manifest file is a JSON object containing `operation_id`, optional `actor`, and `entries` (or `members`,
+an array of member mutation and guard objects). Each member entry specifies `id`, an optional `expect` guard
+(checking `absent`, `revision`, `place`, or application `fields`), and zero or more mutations (`create`, `move`,
+`remove`, `set`, `unset`). Every guard evaluates against the single pre-state snapshot before any mutation commits.
+
+On success, `batch` prints a summary line with operation ID, table revisions, counts and trips, the commit
+receipt, and one receipt line per member reporting before and after place, score, revision, and fields:
+
+```text
+TABLE BATCH table=demo operation=op-4590 epoch=0 before=2 after=3 outcome=changed trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=3 outcome=changed
+MEMBER m1 place=build:ready->build:working rev=1->2
+```
+
+Exit codes: 0 on success (including idempotent replays of identical requests), 1 on refusal (prints the refusal
+reason, observed state, and next action, leaving the store completely unchanged), and 2 on usage, syntax, or
+connection errors. `nova-table batch -h` prints the full usage banner to stdout at exit 0 with empty stderr.
+
+Runnable example:
+
+```sh
+cat > manifest.json <<'EOF'
+{
+  "schema": 1,
+  "table": "demo",
+  "epoch": "0",
+  "expected_table_revision": "2",
+  "operation_id": "op-4590",
+  "actor": "coordinator",
+  "members": [
+    {
+      "id": "m1",
+      "expect": {"revision": "1", "place": {"row": "build", "col": "ready"}},
+      "move": {"row": "build", "col": "working"}
+    }
+  ]
+}
+EOF
+nova-table batch manifest.json
+```
+
 
 ### Resident shell
 

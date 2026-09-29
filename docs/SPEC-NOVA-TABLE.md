@@ -119,6 +119,7 @@ nova-table cell move     <table> <row> <from-col> <to-col> <member>...
 nova-table cell members  <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
+nova-table batch  <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
@@ -428,6 +429,108 @@ write, invalid score/counter, operation-ID conflict and over-limit input. Each n
 operation, member or batch, expected/observed state, changed=no and the next usable
 command. A transport failure reports changed=unknown and operation reconciliation,
 never changed=no without evidence.
+
+### CLI batch verb (`nova-table batch`)
+
+`nova-table batch <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]`
+executes an atomic conditional mutation manifest against one table in a single Redis call (`ns_table_apply`).
+
+#### Manifest structure
+
+The manifest file is a JSON document containing `operation_id`, optional `actor`, and `entries` (or `members`, an array of member mutation and guard objects):
+
+```json
+{
+  "schema": 1,
+  "table": "demo",
+  "epoch": "0",
+  "expected_table_revision": "2",
+  "operation_id": "op-4590",
+  "actor": "coordinator",
+  "members": [
+    {
+      "id": "m1",
+      "expect": {
+        "revision": "1",
+        "place": {"row": "build", "col": "ready"},
+        "fields": {"role": {"equals": "builder"}}
+      },
+      "move": {"row": "build", "col": "working"},
+      "set": {"status": "in_progress"}
+    },
+    {
+      "id": "m2",
+      "expect": {"absent": true},
+      "create": {"row": "build", "col": "ready", "score": 10},
+      "set": {"role": "tester"}
+    }
+  ]
+}
+```
+
+#### Output format
+
+Upon successful execution, `batch` prints a summary line with operation ID, table revision, guard and changed counts, and trip count, the commit receipt, and one receipt line per affected member reporting before and after place, score, revision, and fields:
+
+```text
+TABLE BATCH table=demo operation=op-4590 epoch=0 before=2 after=4 outcome=changed trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=4 outcome=changed
+MEMBER m1 place=build:ready->build:working rev=1->2
+MEMBER m2 place=-->build:ready rev=0->1
+```
+
+Specifying `--receipt=false` suppresses the `TABLE RECEIPT` line.
+
+#### Error handling and exit codes
+
+- `0` (`done`): The batch commits successfully, or an identical request replays without additional side effects.
+- `1` (`refused`): A precondition, epoch check, revision check, or field guard fails. `batch` outputs the refusal reason, observed state, and remediation command on stderr. The entire table store remains unchanged (`changed=no`).
+- `2` (`usage`): Invalid syntax, missing manifest argument, unreadable file, or malformed JSON.
+
+`-h` prints the complete usage banner to stdout at exit 0 with empty stderr:
+
+```text
+usage: nova-table batch <manifest>
+
+example:
+  nova-table batch manifest.json
+
+connection:
+  --redis <string>  the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)
+  --seat <name>  dial as this seat: its seats.tsv row, else the nova-secrets seat of that name
+
+write epoch and receipt:
+  --actor <string>  actor recorded with the change
+  --epoch <uint>  the epoch this write observed (default 0)
+  --fence <string>  coordinator fence recorded with the change
+  --idem <string>  attempt identifier recorded with the change; does not deduplicate
+  --receipt  print the committed event ID, epoch and revision
+
+exit codes: 0 done, 1 refused, 2 usage
+```
+
+#### Runnable example
+
+```sh
+cat > manifest.json <<'EOF'
+{
+  "schema": 1,
+  "table": "demo",
+  "epoch": "0",
+  "expected_table_revision": "2",
+  "operation_id": "op-4590",
+  "actor": "coordinator",
+  "members": [
+    {
+      "id": "m1",
+      "expect": {"revision": "1", "place": {"row": "build", "col": "ready"}},
+      "move": {"row": "build", "col": "working"}
+    }
+  ]
+}
+EOF
+nova-table batch manifest.json
+```
 
 ### Model and table-layer gate
 

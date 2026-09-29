@@ -272,6 +272,39 @@ func newBatchOracle(tableName string, rows, cols []string, rev uint64) *batchOra
 	}
 }
 
+func (o *batchOracle) memberHasChange(entry ntable.BatchMemberEntry, mem *batchMemberState) bool {
+	if entry.Create != nil {
+		return true
+	}
+	if entry.Remove {
+		return true
+	}
+	fieldsChanged := false
+	for f, val := range entry.Set {
+		if curVal, ok := mem.fields[f]; !ok || curVal != val {
+			fieldsChanged = true
+			break
+		}
+	}
+	if !fieldsChanged {
+		for _, f := range entry.Unset {
+			if _, ok := mem.fields[f]; ok {
+				fieldsChanged = true
+				break
+			}
+		}
+	}
+	if entry.Move != nil {
+		placeChanged := (entry.Move.Row != mem.row || entry.Move.Col != mem.col)
+		scoreChanged := false
+		if entry.Move.Score != nil && *entry.Move.Score != mem.score {
+			scoreChanged = true
+		}
+		return placeChanged || scoreChanged || fieldsChanged
+	}
+	return fieldsChanged
+}
+
 func (o *batchOracle) predict(manifest ntable.BatchManifest) (verdict, bool) {
 	if manifest.Table != o.table.name || !o.table.present {
 		return refused("notable"), false
@@ -332,6 +365,14 @@ func (o *batchOracle) predict(manifest ntable.BatchManifest) (verdict, bool) {
 			}
 		}
 
+		if len(entry.Set) > 0 && len(entry.Unset) > 0 {
+			for f := range entry.Set {
+				if slices.Contains(entry.Unset, f) {
+					return refused("mutation"), false
+				}
+			}
+		}
+
 		if entry.Create != nil {
 			if entry.Move != nil || entry.Remove {
 				return refused("mutation"), false
@@ -375,7 +416,11 @@ func (o *batchOracle) predict(manifest ntable.BatchManifest) (verdict, bool) {
 
 	hasRealChanges := false
 	for _, entry := range manifest.Members {
-		if entry.Create != nil || entry.Move != nil || entry.Remove || len(entry.Set) > 0 || len(entry.Unset) > 0 {
+		mem := o.members[entry.ID]
+		if mem == nil {
+			mem = &batchMemberState{id: entry.ID, fields: make(map[string]string)}
+		}
+		if o.memberHasChange(entry, mem) {
 			hasRealChanges = true
 			break
 		}
@@ -392,6 +437,8 @@ func (o *batchOracle) apply(manifest ntable.BatchManifest) {
 			mem = &batchMemberState{id: entry.ID, fields: make(map[string]string)}
 			o.members[entry.ID] = mem
 		}
+		changed := o.memberHasChange(entry, mem)
+
 		if entry.Create != nil {
 			mem.exists = true
 			mem.placed = true
@@ -417,7 +464,9 @@ func (o *batchOracle) apply(manifest ntable.BatchManifest) {
 				o.table.cells[newCellKey] = make(map[string]float64)
 			}
 			o.table.cells[newCellKey][mem.id] = mem.score
-			mem.revision++
+			if changed {
+				mem.revision++
+			}
 		} else if entry.Remove {
 			oldCellKey := mem.row + ":" + mem.col
 			delete(o.table.cells[oldCellKey], mem.id)
@@ -426,8 +475,10 @@ func (o *batchOracle) apply(manifest ntable.BatchManifest) {
 			mem.col = ""
 			mem.score = 0
 			mem.revision++
-		} else if len(entry.Set) > 0 || len(entry.Unset) > 0 {
-			mem.revision++
+		} else {
+			if changed {
+				mem.revision++
+			}
 		}
 
 		if len(entry.Set) > 0 {
@@ -440,6 +491,128 @@ func (o *batchOracle) apply(manifest ntable.BatchManifest) {
 				delete(mem.fields, k)
 			}
 		}
+	}
+}
+
+func (o *batchOracle) predictDelta(manifest ntable.BatchManifest) ntable.BatchDelta {
+	guardCount := 0
+	changedCount := 0
+	memberDeltas := make([]ntable.BatchMemberDelta, len(manifest.Members))
+
+	for i, entry := range manifest.Members {
+		mem := o.members[entry.ID]
+		if mem == nil {
+			mem = &batchMemberState{id: entry.ID, fields: make(map[string]string)}
+		}
+
+		hasMutation := (entry.Create != nil || entry.Move != nil || entry.Remove || len(entry.Set) > 0 || len(entry.Unset) > 0)
+		if !hasMutation {
+			guardCount++
+		}
+
+		isChange := o.memberHasChange(entry, mem)
+		if isChange {
+			changedCount++
+		}
+
+		md := ntable.BatchMemberDelta{
+			ID:          entry.ID,
+			FieldsSet:   entry.Set,
+			FieldsUnset: entry.Unset,
+			Fields:      make(map[string]ntable.FieldChange),
+		}
+		if md.FieldsSet == nil {
+			md.FieldsSet = map[string]string{}
+		}
+		if md.FieldsUnset == nil {
+			md.FieldsUnset = []string{}
+		}
+
+		for f, v := range entry.Set {
+			var before *string
+			if curV, ok := mem.fields[f]; ok {
+				curVCopy := curV
+				before = &curVCopy
+			}
+			vCopy := v
+			md.Fields[f] = ntable.FieldChange{Before: before, After: &vCopy}
+		}
+		for _, f := range entry.Unset {
+			var before *string
+			if curV, ok := mem.fields[f]; ok {
+				curVCopy := curV
+				before = &curVCopy
+			}
+			md.Fields[f] = ntable.FieldChange{Before: before, After: nil}
+		}
+
+		if entry.Create != nil {
+			md.BeforePlace = ""
+			md.AfterPlace = entry.Create.Row + ":" + entry.Create.Col
+			md.BeforeScore = nil
+			sc := entry.Create.Score
+			md.AfterScore = &sc
+			md.BeforeRev = "0"
+			md.AfterRev = "1"
+		} else if entry.Move != nil {
+			md.BeforePlace = mem.row + ":" + mem.col
+			md.AfterPlace = entry.Move.Row + ":" + entry.Move.Col
+			bScore := mem.score
+			md.BeforeScore = &bScore
+			if entry.Move.Score != nil {
+				aScore := *entry.Move.Score
+				md.AfterScore = &aScore
+			} else {
+				md.AfterScore = &bScore
+			}
+			md.BeforeRev = strconv.FormatUint(mem.revision, 10)
+			if isChange {
+				md.AfterRev = strconv.FormatUint(mem.revision+1, 10)
+			} else {
+				md.AfterRev = md.BeforeRev
+			}
+		} else if entry.Remove {
+			md.BeforePlace = mem.row + ":" + mem.col
+			md.AfterPlace = ""
+			bScore := mem.score
+			md.BeforeScore = &bScore
+			md.AfterScore = nil
+			md.BeforeRev = strconv.FormatUint(mem.revision, 10)
+			md.AfterRev = strconv.FormatUint(mem.revision+1, 10)
+		} else {
+			if mem.placed {
+				md.BeforePlace = mem.row + ":" + mem.col
+				md.AfterPlace = md.BeforePlace
+				bScore := mem.score
+				md.BeforeScore = &bScore
+				md.AfterScore = &bScore
+			} else {
+				md.BeforePlace = ""
+				md.AfterPlace = ""
+				md.BeforeScore = nil
+				md.AfterScore = nil
+			}
+			if mem.exists {
+				md.BeforeRev = strconv.FormatUint(mem.revision, 10)
+			} else {
+				md.BeforeRev = "0"
+			}
+			if isChange {
+				md.AfterRev = strconv.FormatUint(mem.revision+1, 10)
+			} else {
+				md.AfterRev = md.BeforeRev
+			}
+		}
+		memberDeltas[i] = md
+	}
+
+	return ntable.BatchDelta{
+		OperationID:   manifest.OperationID,
+		Actor:         manifest.Actor,
+		SelectedCount: len(manifest.Members),
+		GuardCount:    guardCount,
+		ChangedCount:  changedCount,
+		Members:       memberDeltas,
 	}
 }
 
