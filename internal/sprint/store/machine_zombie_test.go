@@ -81,8 +81,8 @@ func (t *tagMem) Release(ctx context.Context, op OpRecord, commit bool) error {
 }
 
 func TestCRZombieWriter(t *testing.T) {
-	skipUntilEngineRepair(t)
-	for trial := 0; trial < 40; trial++ {
+	t.Parallel()
+	for trial := 0; trial < crScale.ZombieTrials; trial++ {
 		w := crSprint(t, uint64(trial+1))
 		h := w.h
 		h.startMachine()
@@ -109,7 +109,7 @@ func TestCRZombieWriter(t *testing.T) {
 		go loop(a)
 		go loop(b)
 		var bad error
-		for r := 1; r <= 60 && bad == nil; r++ {
+		for r := 1; r <= crScale.ZombieRounds && bad == nil; r++ {
 			for _, m := range crMembers {
 				if _, err := h.st.Run(h.ctx, TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m})); err != nil {
 					bad = err

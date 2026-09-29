@@ -570,9 +570,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 			return last, fmt.Errorf("tick %s: %w", part.Name, err)
 		}
 		res.Due += due
-		if r.Attempts >= st.attempts() {
-			// The part may have lost every attempt to other writers: what it
-			// had to do stays due, and the next tick reads it.
+		if r.Lost {
+			// The part lost every attempt to other writers: what it had to do
+			// stays due, and the next tick reads it.
 			seen.Full = time.Time{}
 		}
 	}

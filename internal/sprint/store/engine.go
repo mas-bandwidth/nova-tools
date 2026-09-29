@@ -153,6 +153,9 @@ type Result struct {
 	// the caller's operation id returns it.
 	Skipped []string `json:"skipped,omitempty"`
 	Args    string   `json:"args,omitempty"` // the step's arguments (ArgsOf), recorded with the result
+	// Lost says the step lost every attempt to other writers and applied
+	// nothing: what it had to do is still to do.
+	Lost bool `json:"lost,omitempty"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -400,6 +403,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	}
 	res.Moved = nil
 	res.Refused = nil
+	res.Notes, res.Op, res.Lost = 0, "", true
 	for _, k := range keys {
 		res.Refused = append(res.Refused, sprint.Refusal{Key: k, Why: fmt.Sprintf("the sprint kept changing under this step (%d attempts); run it again", res.Attempts)})
 	}

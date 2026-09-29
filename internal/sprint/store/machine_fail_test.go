@@ -14,7 +14,7 @@ import (
 
 func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 	t.Parallel()
-	for k := 1; k <= 400; k++ {
+	for k := 1; k <= 400; k += crScale.CallStride {
 		h := raceScene(t)
 		h.startMachine()
 		calls := 0

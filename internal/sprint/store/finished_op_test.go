@@ -319,7 +319,7 @@ func zombieSprint(t *testing.T) *harness {
 // done, whoever finished it), and check holds at the end.
 func TestTwoTickLoopsNeverTellAWriterItWasCut(t *testing.T) {
 	t.Parallel()
-	for trial := 0; trial < 2; trial++ {
+	for trial := 0; trial < crScale.CutTrials; trial++ {
 		h := zombieSprint(t)
 		h.startMachine()
 		mk := func(who string) *Store {
@@ -343,7 +343,7 @@ func TestTwoTickLoopsNeverTellAWriterItWasCut(t *testing.T) {
 		go loop(a)
 		go loop(b)
 		var bad error
-		for r := 1; r <= 30 && bad == nil; r++ {
+		for r := 1; r <= crScale.CutRounds && bad == nil; r++ {
 			for _, m := range zombieMembers {
 				if _, err := h.st.Run(h.ctx, TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m})); err != nil {
 					bad = err

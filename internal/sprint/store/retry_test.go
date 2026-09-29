@@ -222,3 +222,26 @@ func TestOneBudgetPerStep(t *testing.T) {
 		t.Fatalf("another step has a budget of its own")
 	}
 }
+
+// neverAcquire is a store where another writer takes the fence first,
+// every time.
+type neverAcquire struct{ Backend }
+
+func (neverAcquire) Acquire(context.Context, uint64, OpRecord) (bool, error) { return false, nil }
+
+// A step that loses every attempt to other writers says so, and counts no
+// notes: it applied nothing.
+func TestAStepThatLostEveryAttemptSaysSo(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	st := *h.st
+	st.B = neverAcquire{h.m}
+	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
+	if err != nil || !res.Lost || res.Notes != 0 || res.Op != "" || len(res.Moved) != 0 || len(res.Refused) == 0 {
+		t.Fatalf("a step that lost every attempt: %+v %v", res, err)
+	}
+	if h.state("s1-1") != sprint.Ready {
+		t.Fatalf("the lost step moved s1-1: %s", h.state("s1-1"))
+	}
+}

@@ -5,7 +5,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -250,7 +249,7 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 	for _, m := range []string{"m1", "m2", "m3"} {
 		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m}))
 	}
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1000}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: crScale.Ready}))
 	h.startMachine()
 	var dealtOrder []string
 	ticks := 0
@@ -278,7 +277,6 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 		}
 		h.tick(time.Second)
 	}
-	t.Logf("1000 ready dealt in %d ticks", ticks)
 	s := h.snap()
 	for i := 1; i < len(dealtOrder); i++ {
 		a, b := s.Work.Card(dealtOrder[i-1]), s.Work.Card(dealtOrder[i])
@@ -330,40 +328,5 @@ func TestCROneReaderThenTwo(t *testing.T) {
 }
 
 // PROBE 9: the idle cost.
-func TestCRIdleCost(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setup(3)
-	h.startMachine()
-	h.machine()
-	h.machine()
-	before := map[string]int{}
-	for k, v := range h.m.Calls {
-		before[k] = v
-	}
-	h.machine()
-	var ks []string
-	for k, v := range h.m.Calls {
-		if d := v - before[k]; d > 0 {
-			ks = append(ks, fmt.Sprintf("%s=%d", k, d))
-		}
-	}
-	sort.Strings(ks)
-	t.Logf("idle tick store calls (counted by Mem): %v (plus 2 kv reads and 1 kv write, uncounted)", ks)
-	// a full read with nothing to do
-	h.tick(TickFullEvery + time.Second)
-	for k, v := range h.m.Calls {
-		before[k] = v
-	}
-	res := h.machine()
-	ks = nil
-	for k, v := range h.m.Calls {
-		if d := v - before[k]; d > 0 {
-			ks = append(ks, fmt.Sprintf("%s=%d", k, d))
-		}
-	}
-	sort.Strings(ks)
-	t.Logf("full-read tick with nothing due: %v idle=%v parts=%d", ks, res.Idle, len(res.Parts))
-}
 
 var _ = ntable.BatchMemberEntry{}

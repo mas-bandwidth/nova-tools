@@ -14,7 +14,7 @@ import (
 
 func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 	t.Parallel()
-	for trial := 0; trial < 5; trial++ {
+	for trial := 0; trial < crScale.LoopTrials; trial++ {
 		w := crSprint(t, uint64(trial+1))
 		h := w.h
 		h.startMachine()
@@ -27,7 +27,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 		var errs []string
 		loop := func(st *Store) {
 			defer wg.Done()
-			for i := 0; i < 150; i++ {
+			for i := 0; i < crScale.LoopTicks; i++ {
 				if _, err := st.Tick(h.ctx); err != nil {
 					mu.Lock()
 					errs = append(errs, err.Error())
@@ -51,7 +51,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 			}
 		}
 		w.running = true
-		for r := 1; r <= 60; r++ {
+		for r := 1; r <= crScale.LoopRounds; r++ {
 			for _, m := range crMembers {
 				run(TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m}))
 				s := h.snap()
@@ -73,7 +73,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 			h.machine()
 		}
 		h.clean(fmt.Sprintf("trial %d", trial))
-		if cut > 0 && engineRepairFixed {
+		if cut > 0 {
 			t.Errorf("trial %d: %d outside verbs were told \"cut ... changed under the step\" while two ticks ran (their operation was applied by a tick's Fenced finish)", trial, cut)
 		}
 		if len(errs) > 0 {

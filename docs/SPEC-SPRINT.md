@@ -101,7 +101,12 @@ the table, and leaves only from an open state; a unit that does not is refused,
 naming the move. A primary leaves waiting only when every need has landed or
 was waived: a step that may move a primary to ready builds its plan on the
 snapshot it read, and the lifecycle judges the needs against it; a plan
-without it moves nothing waiting to ready. A primary is working if and only if
+without it moves nothing waiting to ready. The lifecycle is judged first on
+every unit of a plan; the needs rule is then judged against the landings of
+the units the lifecycle kept only, so a landing the lifecycle refuses
+satisfies no need. A work-table move whose expectation names no place is
+judged from where the plan's pre-state places the card, and is refused when
+the pre-state does not hold it. A primary is working if and only if
 it has a live work card. Nothing retries by itself. Nothing leaves review
 except by the coordinator.
 
@@ -265,8 +270,20 @@ merge step past its deadline, an invariant is broken.
 
 The step that lands or drops the last open primary of the sprint (every
 primary landed or off the table, at least one landed) writes one judgment, the
-sprint is done: n landed, m dropped; add closes it. add with a need on a
-dropped primary writes the blocked judgment in the same step.
+sprint is done: n landed, m dropped. It is written when every primary has
+landed or been dropped, even with none landed; it has no due time and is never
+overdue; only an add that admits a card closes it. add with a need on a
+dropped primary writes the blocked judgment in the same step. The blocked
+judgment names the dropped needs; acknowledging it waives those only (a need
+dropped later is its own judgment), and `card <id>` shows each waived need, by
+whom and when.
+
+A primary in review is never silent. With ok reads from two different readers
+at its head, some open judgment on it offers accept (ready to accept, or
+returned to review). Otherwise, with nothing open on it and no read
+outstanding, it is stranded in review (failed work, or never asked after its
+last judgment closed) or its reads are exhausted. Acknowledging exactly that
+judgment does not write it again.
 
 A CI result, red or green, recorded for a primary in any state is always a
 notification (red: judgment; green: happened). `ci` records the observation
@@ -384,19 +401,32 @@ still guarded by its own expectations, so it can never overwrite newer work.
 An entry whose expectation no longer holds (a writer outside the fence changed
 its member), or that the store refuses on a bound or a rule, is skipped; the
 rest applies, the fence is released, and one judgment, "repair skipped changes
-the store refused as recorded", lists every skipped entry and why. No pending
+the store refused as recorded", lists every skipped entry and why. Before
+repair applies a cut operation's entries one by one, it judges the entries
+left together by the lifecycle against a fresh read, counting the skipped ones
+and those whose expectation no longer holds as not happening; an entry the
+lifecycle refuses is skipped too, and the skip judgment lists it with why. A
+first manifest refused past the grace is applied entry by entry, like a later
+one: a card left half-moved by it is named in the skip judgment. No pending
 operation blocks the sprint for good. rework, return, drop and ack of the
 primary close that judgment. When the skipped entry was accept's work entry,
 the primary is in review with its merge card still queued: rework and return
 take that orphan card off (into returned) in the same step, so rule 4 holds
 again and a later accept moves it back.
-An operation whose first phase never applied is abandoned after the grace:
-nothing of it happened, and a notification says so (happened: an operation was
+An operation is abandoned only when none of its entries applied and the table
+layer holds no record of its first manifest, after the grace: nothing of it
+happened, and a notification says so (happened: an operation was
 abandoned, which verb, by whom, how old). Nothing is abandoned silently. An
 operation pending past its grace that the machine's tick cannot finish shows on
 the machine line (the tick fails and says why); the first step that writes once
 repair has freed the fence, a verb's or the tick's, writes one judgment: the
-operation, how long it was stuck and what repair did. `check` and `where` show a pending operation. The model
+operation, how long it was stuck and what repair did. Every operation's result
+is recorded at its commit, under the caller's operation id or its own, in the
+epoch's record of results; teardown removes those records with the epoch. A
+writer whose operation another writer finished (the tick, another verb,
+repair) reports the recorded result, as a replay, and is never told it was
+cut. A step that loses every attempt to other writers says so and applied
+nothing. `check` and `where` show a pending operation. The model
 includes the cut between every two phases. A multi-table batch in the table
 layer retires this section.
 
@@ -505,7 +535,17 @@ counted; these are written at the new epoch in the same verb, and a clear cut
 before they are is finished by the next clear. The old epoch stays where it is
 and readable (`where`, `card` and `inbox --at-epoch <n>`), and every writer
 still holding it is refused as stale: nothing of the old epoch lands in the
-new one. The machine's records (its state, its STOPPED spans, the heartbeat)
+new one. Operation ids and notification ids carry their epoch (`~<n>` after
+the first): a caller's operation id recorded at an earlier epoch is refused,
+naming the epoch, and never run again as new work; `ack` and `wait` of a
+judgment of another epoch are refused, naming it; and a step given
+`--answers` naming a judgment of another epoch is refused whole: nothing
+moves, and the refusal names the id's epoch and when the sprint was cleared.
+Every command builds its store pinned to the sprint's epoch, so no verb after
+a clear touches the old epoch; a writer caught mid-step by a clear is told the
+sprint was cleared. clear reads the shape it restores after the advance, and a
+restore the last clear owes is performed first by the next step that reads
+the sprint. The machine's records (its state, its STOPPED spans, the heartbeat)
 and the coordinator are the sprint's, not the epoch's: a clear keeps them. A
 tick in flight at a clear holds the epoch of its read: its next part is refused
 as stale, writes nothing, and the tick stops there; `run` goes on at the new
@@ -521,30 +561,38 @@ setting the state it has changes nothing and says so; each change is a
 happened notification (who, when), and the store keeps every STOPPED span and
 their total. `run` is the process that ticks once a second (TickEvery) while
 RUNNING and does nothing while STOPPED; `tick` is one tick by hand. The state
-is read at the start of each tick: a tick in flight finishes, and no tick
-begins after `stop`. Every verb works in both states; only the tick's duties
+is read at the start of each tick and before each of its parts: after `stop`
+returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. The sprint line of every verb and `inbox` says
-`machine: running`, `machine: STOPPED`, or `machine: STOPPED (no tick for Ns)`
-when the state is RUNNING and nothing has ticked for 5 s; a failed tick keeps
-its error on the heartbeat and the line shows it. `where` shows the same
+`machine: running`, `machine: running (catching up: <n> moves due)`,
+`machine: STOPPED`, or `machine: STOPPED (no tick for Ns)` when the state is
+RUNNING and nothing has ticked for 15 s (MachineSilence); a failed tick keeps
+its error on the heartbeat, with the count of failed ticks in a row, and the
+line shows it. A tick that did nothing writes the heartbeat at most once every
+5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
+looked. `where` shows the same
 state as the one line under its title (section 1).
 
 A tick first finishes an operation pending past its grace (T5). It then reads
-the fence and the tables' shapes; if nothing changed since the last tick, this
-is not the first tick after `start`, and a minute has not passed, it does
-nothing else. Otherwise it runs its parts in order, each one operation of the
-engine on a fresh read, sharing the fence with every verb: resolve (T1: only
-when something landed or was added; every stream's waiting cards in score
-order; a card whose needs have all landed moves to ready; a sentinel is never
+the fence and the tables' shapes. It reads what is due from the state whenever
+it reads the whole sprint, and it reads the whole sprint when any table's
+revision changed, after `start`, after a tick that did not finish (a part that
+lost to other writers, a stale epoch, a halt, a failure, or moves left past a
+bound), and once every minute (TickFullEvery); otherwise it does nothing
+else. Otherwise it runs its parts in order, each one operation of the
+engine on a fresh read, sharing the fence with every verb: resolve (T1:
+every stream's waiting cards in score order; a card whose needs have all landed moves to ready; a sentinel is never
 moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), level
 (T4), ask (T2: two different readers for each primary in review with no read
 card at its attempt and work not failed), check (T6), deadlines. Each part is
-bounded per tick (200 moves, 50 notes). A card made ready is dealt in the same
+bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
+catch up, and the machine line says so. A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.
 
 The tick writes a judgment once while its condition holds and closes it when
-the condition clears: cannot ask (fewer than two different readers are free),
+the condition clears: cannot ask (fewer than two different readers are free;
+one condition per primary whatever its count of free readers),
 no fleet member is up, a work card past its deadline (15 minutes dealt and not
 taken, 2 hours taken and not finished), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
@@ -554,6 +602,12 @@ count. A judgment of the tick the coordinator acknowledges while its condition
 still holds is kept as acknowledged on the condition, in no inbox: the tick
 does not write it again until the condition has cleared (the tick then closes
 the acknowledgement) and come back.
+
+Every open judgment is due 10 minutes of running time (DeadlineJudgment) after
+it was written, or at the review time a `wait` set; when that passes, the tick
+writes one overdue line naming it and marks it held, and marks it again only
+after the mark was lifted (the judgment closed, or a wait moved its due time
+on).
 
 ## 15. Reminders
 

@@ -13,7 +13,7 @@ import (
 // hooked is finished_op_test.go's.
 
 func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
-	skipUntilEngineRepair(t)
+	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.startMachine()
@@ -25,6 +25,7 @@ func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 	bAtReadSet := make(chan struct{}) // B reached its stillExpected
 	wApplied := make(chan struct{})   // W's refreshed manifest applied
 	stepStarted := false
+	stalled := make(chan struct{}) // W holds the fence, stalled past the grace
 	W := &hooked{Mem: h.m}
 	W.onApply = func(n int) {
 		switch n {
@@ -33,6 +34,7 @@ func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 				stepStarted = true
 				_ = h.m.RowSet(h.ctx, h.st.Names.Table(sprint.Fleet), "m1", map[string]string{"load": "x"})
 				h.tick(2 * time.Minute)
+				close(stalled)
 			}
 		case 2: // W's refreshed send waits until B has been refused and reads
 			<-bAtReadSet
@@ -67,9 +69,7 @@ func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 		wres, werr = ws.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: true, Report: "boom", Who: "m1"}))
 	}()
 	// B ticks once W has stalled with its operation in the fence
-	for h.m.Pending() == nil || !stepStarted {
-		time.Sleep(time.Millisecond)
-	}
+	<-stalled
 	tres, terr := bs.Tick(h.ctx)
 	<-done
 	t.Logf("worker's finish: moved %v err %v", wres.Moved, werr)
@@ -94,7 +94,7 @@ func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 // the writer is told its operation was cut (exit 2, "run: nova-sprint
 // repair") although it applied and was committed.
 func TestCRWriterToldCutWhenTheTickFinishedItsOperation(t *testing.T) {
-	skipUntilEngineRepair(t)
+	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.startMachine()
@@ -133,19 +133,5 @@ func TestCRWriterToldCutWhenTheTickFinishedItsOperation(t *testing.T) {
 	h.clean("after")
 	if werr != nil && h.state("s1-1") == sprint.Review && h.m.Pending() == nil {
 		t.Errorf("the worker's finish applied and was committed (s1-1 in review, nothing pending) but the worker was told: %v", werr)
-	}
-}
-
-// engineRepairFixed says the engine's repair (engine.go) keeps an operation
-// that applied instead of abandoning it, and tells a writer whose operation
-// the tick finished that it succeeded: the read's findings 3 and 6, fixed in
-// the engine by another change. Until that change is merged the tests of
-// those findings skip; set it true at integration.
-const engineRepairFixed = true
-
-func skipUntilEngineRepair(t *testing.T) {
-	t.Helper()
-	if !engineRepairFixed {
-		t.Skip("needed at integration: the engine's repair (findings 3 and 6, engine.go)")
 	}
 }

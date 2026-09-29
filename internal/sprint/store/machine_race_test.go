@@ -100,7 +100,7 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 		"fleet-up":    func() Step { return FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}) },
 	}
 	for name, mk := range verbs {
-		for k := 1; k <= 200; k++ {
+		for k := 1; k <= 200; k += crScale.CallStride {
 			h := raceScene(t)
 			h.startMachine()
 			other := &Store{B: h.m, Names: h.st.Names, Actor: "coordinator", Now: h.st.Now, NewID: h.st.NewID, Sleep: func(time.Duration) {}}

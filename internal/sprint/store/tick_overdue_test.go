@@ -37,7 +37,7 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 		w.silentCoord = at
 		w.running = true
 		h.startMachine()
-		for r := 1; r <= at+60; r++ { // sixty rounds five minutes apart: five hours
+		for r := 1; r <= at+crScale.SilentRounds; r++ { // rounds five minutes apart: past every due time
 			w.round(r)
 			if r < at {
 				h.tick(time.Second)

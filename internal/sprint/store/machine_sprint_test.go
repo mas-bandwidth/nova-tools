@@ -373,7 +373,7 @@ func (w *crWorld) runTo(rounds int, step time.Duration) (int, bool) {
 
 func TestCRFortyPrimariesLandByTheTick(t *testing.T) {
 	t.Parallel()
-	for seed := uint64(1); seed <= 20; seed++ {
+	for seed := uint64(1); seed <= uint64(crScale.Seeds); seed++ {
 		w := crSprint(t, seed)
 		r, ok := w.runTo(600, time.Second)
 		if !ok {
@@ -415,7 +415,7 @@ func TestCRStopAtEveryPoint(t *testing.T) {
 			}
 		}
 	}
-	for at := 1; at <= 30; at++ {
+	for _, at := range crScale.StopPoints {
 		w := crSprint(t, 5)
 		w.stopAt, w.stopFor = at, 3
 		r, ok := w.runTo(600, time.Second)
@@ -439,46 +439,6 @@ func TestCRStopAtEveryPoint(t *testing.T) {
 		}
 		if len(w.holderFail) > 0 {
 			t.Errorf("stop at %d: holders: %v", at, w.holderFail[:min(3, len(w.holderFail))])
-		}
-	}
-}
-
-// Each outside class going silent at a random round: what is visible after
-// sixty more rounds, five minutes apart.
-func TestCRSilentActors(t *testing.T) {
-	t.Parallel()
-	for _, who := range []string{"workers", "readers", "merger", "coordinator"} {
-		for seed := uint64(1); seed <= 3; seed++ {
-			w := crSprint(t, seed)
-			at := 3 + w.rng.IntN(15)
-			switch who {
-			case "workers":
-				w.silentWorkers = at
-			case "readers":
-				w.silentReaders = at
-			case "merger":
-				w.silentMerger = at
-			case "coordinator":
-				w.silentCoord = at
-			}
-			w.running = true
-			w.h.startMachine()
-			for r := 1; r <= at+60; r++ {
-				w.round(r)
-				if r < at {
-					w.h.tick(time.Second)
-				} else {
-					w.h.tick(5 * time.Minute)
-				}
-			}
-			open, _ := w.h.m.OpenNotes(w.h.ctx)
-			types := map[string]int{}
-			for _, o := range open {
-				types[o.Note.Type]++
-			}
-			stuckNoJudgment := dedupe(w.holderFail)
-			t.Logf("%s silent from round %d (seed %d): landed %d/%d; open judgments by type %v; holder failures %d; ready-to-accept primaries never judged %d",
-				who, at, seed, w.landed(), w.all(), types, len(stuckNoJudgment), len(w.readyToAccept))
 		}
 	}
 }
