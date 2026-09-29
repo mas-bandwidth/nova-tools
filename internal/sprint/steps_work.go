@@ -175,7 +175,9 @@ func ResolveExtras(s *Snapshot) []string {
 
 // Resolve moves waiting -> ready where every need has landed. A need that was
 // dropped is a judgment for the coordinator, once.
-func Resolve(s *Snapshot, r ResolveReq) Plan {
+func Resolve(s *Snapshot, r ResolveReq) Plan { return Lawful(resolvePlan(s, r)) }
+
+func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
 	for _, c := range chosen {
@@ -223,7 +225,9 @@ type StartReq struct {
 // card is dealt to the up member with the shortest ready queue. A card
 // withdrawn because no member was up is the same card dealt again at a new
 // generation, its attempt unchanged; otherwise the next attempt's card is cut.
-func Start(s *Snapshot, r StartReq) Plan {
+func Start(s *Snapshot, r StartReq) Plan { return Lawful(startPlan(s, r)) }
+
+func startPlan(s *Snapshot, r StartReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
 	up := s.UpMembers()
@@ -392,7 +396,9 @@ type FinishReq struct {
 // A finish always names the generation it holds for every card it finishes:
 // a card without one is refused, naming the live generation, and a finish
 // by selection without --as is refused outright.
-func Finish(s *Snapshot, r FinishReq) Plan {
+func Finish(s *Snapshot, r FinishReq) Plan { return Lawful(finishPlan(s, r)) }
+
+func finishPlan(s *Snapshot, r FinishReq) Plan {
 	var p Plan
 	if !named(r.Sel) && r.As == "" {
 		p.refuse("finish", "a finish by selection names its member: --as <member>; better, name each card: finish <card>@<gen>")
@@ -496,7 +502,9 @@ type FleetReq struct {
 // Fleet brings a member up (and levels the ready queues), takes one down
 // (dealing its unfinished work cards to up members, or withdrawing them when
 // none is up), or levels the ready queues.
-func FleetStep(s *Snapshot, r FleetReq) Plan {
+func FleetStep(s *Snapshot, r FleetReq) Plan { return Lawful(fleetStepPlan(s, r)) }
+
+func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 	var p Plan
 	switch r.Op {
 	case "up":
