@@ -348,9 +348,9 @@ dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
 whom and when. An add counts only valid candidate IDs as proposed dependencies;
-a missing prerequisite refuses the dependent too. Needs are shared across an
-add, so this refusal applies to every requested card. Without a missing need,
-other valid cards retain per-card partial acceptance. A stored waiting primary
+a missing prerequisite refuses the dependent too. An add naming its ids is
+all or nothing, as every verb that names its cards is: one refused id refuses
+them all. A stored waiting primary
 or sentinel whose need has no record gets one missing-need judgment from
 resolve or the tick, naming those needs. Acknowledging it waives only its
 named needs that are still missing; it never waives a live prerequisite or a
@@ -420,7 +420,11 @@ that names the card; ask --another on reads exhausted, which it closes: the
 new read outstanding is what keeps the primary from being exhausted), and
 refused for a notification the verb resolves nothing of; one refused answer
 refuses the whole step, which writes nothing (a verb refused has written
-nothing). Each answer is
+nothing). A verb that names its cards or notes (ids, `--group`, an ack's
+notes) applies all or none: when one is refused the step writes nothing and
+names every one, the refused with why and the rest as not written; a verb
+given a selection instead (`--stream`, `--col`, `--limit`, `--read-ok`) moves
+what is eligible. Each answer is
 recorded as a `decided` notification; a stopped stream's judgment stays open
 while it is stopped. `wait <notification>`
 records a next review time; it does not hide the notification. Reading the

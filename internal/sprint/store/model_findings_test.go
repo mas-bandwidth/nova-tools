@@ -268,3 +268,26 @@ func TestResumeSettlesAStreamWhoseCardsAllEnded(t *testing.T) {
 	}
 	h.clean("resumed")
 }
+
+// All or nothing (reader finding 2): an ack naming several judgments, one of
+// which it may not answer, closes none of them and names every one; the
+// card the answerable one holds stays where it is.
+func TestAnAckOfSeveralIsAllOrNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}, Needs: []string{"s1-1"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
+	open := h.openOn("late")
+	if len(open) != 1 || open[0].Note.Type != sprint.NBlocked {
+		t.Fatalf("blocked: %+v", open)
+	}
+	r := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID, "no-such-note"}, Reason: "not needed"}))
+	if len(r.Refused) != 2 || len(r.Moved) != 0 || !strings.Contains(fmt.Sprint(r.Refused), "all or none") {
+		t.Fatalf("a partial ack: %+v", r)
+	}
+	if len(h.openOn("late")) != 1 || h.state("late") != sprint.Waiting {
+		t.Fatalf("the refused ack closed the judgment or moved the card: %s %+v", h.state("late"), h.openOn("late"))
+	}
+	h.clean("all or nothing")
+}

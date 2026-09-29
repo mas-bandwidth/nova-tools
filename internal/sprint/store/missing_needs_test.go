@@ -22,17 +22,21 @@ func TestAddRefusesDependentsOfAnUnadmittedID(t *testing.T) {
 			h.clean("refused missing dependency")
 		})
 	}
-	// An unrelated refusal still permits the valid card, and an existing
-	// dependency need not be admitted again by this request.
+	// All or nothing: an add naming several writes none of them when any is
+	// refused, naming every one; an existing id is refused as well.
 	h := newHarness(t)
 	h.setup(1)
 	r := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"bad.id", "good"}}))
-	if len(r.Refused) != 1 || h.state("good") != sprint.Ready {
+	if len(r.Refused) != 2 || h.snap().Work.Card("good") != nil || !strings.Contains(fmt.Sprint(r.Refused), "all or none") {
 		t.Fatalf("partial acceptance: %+v", r)
 	}
 	r = h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"s1-1", "waiter"}, Needs: []string{"s1-1"}}))
-	if len(r.Refused) != 1 || h.state("waiter") != sprint.Waiting {
-		t.Fatalf("existing dependency: %+v", r)
+	if len(r.Refused) != 2 || h.snap().Work.Card("waiter") != nil {
+		t.Fatalf("an existing id with a new one: %+v", r)
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1"}}))
+	if h.state("waiter") != sprint.Waiting {
+		t.Fatalf("waiter: %s", h.state("waiter"))
 	}
 	h.clean("unrelated refusals")
 }

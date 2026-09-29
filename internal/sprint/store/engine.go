@@ -93,6 +93,10 @@ type Step struct {
 	// request): a caller's operation id replays only for the same verb and
 	// the same arguments.
 	Args string
+	// Named says the step names its cards or notes (ids, a group's members,
+	// an ack's notes): it applies all or none, and one refusal refuses the
+	// whole step, naming every one.
+	Named bool
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -303,6 +307,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.OnePerCause(snap, sprint.Lawful(step.Plan(snap)))
+		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
+			return allOrNone(res, plan), nil
+		}
 		// The fence is free: a stuck operation's judgment rides with this
 		// step, once.
 		stuck, isStuck, err := st.stuck(ctx)
@@ -581,6 +588,25 @@ func refuseWhole(res Result, plan sprint.Plan, why string) (Result, error) {
 		return res, errors.New("the step cannot be written, nothing was written: " + why)
 	}
 	return res, nil
+}
+
+// allOrNone is a step that names its cards or notes with one of them
+// refused: nothing is written, and every one it would have changed is named.
+func allOrNone(res Result, plan sprint.Plan) Result {
+	res.Moved = nil
+	res.Refused = append([]sprint.Refusal(nil), plan.Refused...)
+	seen := map[string]bool{}
+	for _, r := range res.Refused {
+		seen[r.Key] = true
+	}
+	why := fmt.Sprintf("not written: the verb names several and applies all or none, and %d of them %s refused", len(plan.Refused), map[bool]string{true: "was", false: "were"}[len(plan.Refused) == 1])
+	for _, u := range plan.Units {
+		if u.Key != "" && !seen[u.Key] {
+			seen[u.Key] = true
+			res.Refused = append(res.Refused, sprint.Refusal{Key: u.Key, Why: why})
+		}
+	}
+	return res
 }
 
 // twiceError is a step whose plan changes one card twice in ways that do not
