@@ -137,6 +137,8 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 	t.Parallel()
 	for _, bad := range []string{
 		"go test ./...",
+		"go test -v ./...",
+		"go test -v -count=1 ./...",
 		"run `go test ./...` before you push",
 		"go build ./... && go vet ./... && go test -race ./...",
 		"go test -tags perf -p 1 -parallel 1 ./...",
