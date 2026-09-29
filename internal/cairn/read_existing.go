@@ -23,10 +23,10 @@ func existingStore(store string) error {
 	return nil
 }
 
-// recordForRead finds the session's record in the store's shape without
-// treating permission errors or a directory at the record path as evidence
-// that the session is absent.
-func recordForRead(store, session string, sh shape) (string, bool, error) {
+// recordForRead finds the session's record in the store's shape. A path
+// holding something that is not a record is an error naming it, never "no such
+// session".
+func recordForRead(op, store, session string, sh shape) (string, bool, error) {
 	if err := checkSession(session); err != nil {
 		return "", false, err
 	}
@@ -34,15 +34,12 @@ func recordForRead(store, session string, sh shape) (string, bool, error) {
 	if sh == shapeBench {
 		path, bench = benchFile(store, session), true
 	}
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return "", false, &NotFoundError{Msg: fmt.Sprintf("no such session %q under store %q", session, store)}
-	}
+	ok, err := recordState(op, path)
 	if err != nil {
-		return "", false, fmt.Errorf("cannot read session %q: %w", session, err)
+		return "", false, err
 	}
-	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("session %q is not a regular file", session)
+	if !ok {
+		return "", false, &NotFoundError{Msg: fmt.Sprintf("no such session %q under store %q", session, store)}
 	}
 	return path, bench, nil
 }
@@ -98,7 +95,7 @@ func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
 		if !sessionFileID(id) || (session != "" && id != session) {
 			continue
 		}
-		path, _, err := recordForRead(store, id, shapeBench)
+		path, _, err := recordForRead("index", store, id, shapeBench)
 		if err != nil {
 			return nil, nil, err
 		}

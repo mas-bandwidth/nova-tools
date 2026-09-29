@@ -196,21 +196,15 @@ func benchFile(store, session string) string {
 
 // locateRecord returns the session record's path for a store of the given
 // shape and whether it is a bench file. Only the shape's own location is
-// consulted: a store never answers from two places.
-func locateRecord(store, session string, sh shape) (path string, bench, ok bool) {
+// consulted: a store never answers from two places. A path holding something
+// that is not a record is an error, never "no such session".
+func locateRecord(op, store, session string, sh shape) (path string, bench, ok bool, err error) {
 	name, bench := sessionFile(store, session), false
 	if sh == shapeBench {
 		name, bench = benchFile(store, session), true
 	}
-	if fileExists(name) {
-		return name, bench, true
-	}
-	return "", bench, false
-}
-
-func fileExists(name string) bool {
-	info, err := os.Stat(name)
-	return err == nil && !info.IsDir()
+	ok, err = recordState(op, name)
+	return name, bench, ok, err
 }
 
 // noRecord is the refusal for a verb addressing a session nothing holds. It
@@ -436,8 +430,8 @@ func Open(store, session, source string, now time.Time, publish string) error {
 		return err
 	}
 	// Re-open is a no-op: the record already stands.
-	if _, _, ok := locateRecord(store, session, sh); ok {
-		return nil
+	if _, _, ok, err := locateRecord("open", store, session, sh); err != nil || ok {
+		return err
 	}
 	name := sessionFile(store, session)
 	stamp := now.UTC().Format(time.RFC3339Nano)
@@ -507,7 +501,10 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err != nil {
 		return res, err
 	}
-	path, bench, ok := locateRecord(store, session, sh)
+	path, bench, ok, err := locateRecord("append", store, session, sh)
+	if err != nil {
+		return res, err
+	}
 	if !ok {
 		return res, noRecord(store, session, publish)
 	}
@@ -614,7 +611,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 	if err != nil {
 		return rc, err
 	}
-	path, bench, err := recordForRead(store, session, sh)
+	path, bench, err := recordForRead("receipt", store, session, sh)
 	if err != nil {
 		return rc, err
 	}
@@ -661,7 +658,7 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		return nil, 0, err
 	}
 	if session != "" {
-		if _, _, err := recordForRead(store, session, sh); err != nil {
+		if _, _, err := recordForRead("index", store, session, sh); err != nil {
 			return nil, 0, err
 		}
 	}

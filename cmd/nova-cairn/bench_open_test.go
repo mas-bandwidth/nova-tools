@@ -128,3 +128,28 @@ func TestOpenReadmeRefusesAtExitTwo(t *testing.T) {
 		t.Fatalf("refused open wrote %v", got)
 	}
 }
+
+// b/a.md is a session; b/s1.md is a dangling symlink. open used to print OPEN
+// OK, and the append after it refused "open first": a loop.
+func TestOpenOverADanglingSymlinkRefusesAtExitTwo(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	if err := os.WriteFile(filepath.Join(store, "a.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/nonexistent/zz.md", filepath.Join(store, "s1.md")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	for _, args := range [][]string{
+		{"open", "--store", store, "--session", "s1", "--publish", "manual"},
+		{"append", "--store", store, "--session", "s1", "--entry", "e", "--text", "w", "--publish", "manual"},
+		{"receipt", "--store", store, "--session", "s1", "--entry", "e"},
+		{"index", "--store", store, "--session", "s1"},
+	} {
+		code, out, errOut := runCode("", args...)
+		if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 ||
+			!strings.Contains(errOut, "a dangling symlink") || !strings.Contains(errOut, "s1.md") || strings.Contains(errOut, "open first") {
+			t.Errorf("%v: exit=%d out=%q err=%q", args, code, out, errOut)
+		}
+	}
+}

@@ -63,13 +63,16 @@ func storeShape(op, store string) (shape, error) {
 		return shapeOwn, nil
 	}
 	if err != nil {
-		return shapeOwn, fmt.Errorf("cannot %s: cannot read store %q: %v", op, store, err)
+		return shapeOwn, fmt.Errorf("cannot %s: cannot read store %q: %v", opPhrase(op), store, err)
 	}
 	var bench, own []string
 	for _, f := range files {
 		name := f.Name()
 		switch {
-		case name == "sessions" && f.IsDir(), name == "entries" && f.IsDir():
+		case (name == "sessions" || name == "entries") && (f.IsDir() || f.Type()&os.ModeSymlink != 0):
+			// A symlink named like an own-shape directory is a marker too,
+			// whatever it points at: the store's contents decide the shape,
+			// not what a link resolves to.
 			own = append(own, name+"/")
 		case name == "log.jsonl" && !f.IsDir():
 			own = append(own, name)
@@ -103,15 +106,82 @@ func benchHeader(session, source, stamp string) string {
 	return b.String()
 }
 
+// openBench creates the bench record for a session that has none. An
+// existing regular file, or a symlink that resolves to one, is already open and
+// stays as it is. Anything else at the record path (a directory, a symlink to a
+// directory or to nothing, a device) is refused, naming the path and what is
+// there: open reporting success over it would leave every later verb unable to
+// find the record.
 func openBench(store, session, source, stamp string) error {
 	name := benchFile(store, session)
-	if fileExists(name) {
-		return nil
+	exists, err := recordState("open", name)
+	if err != nil || exists {
+		return err
 	}
 	// NoReplace: a record that appears between the check and the write is kept.
-	err := atomicfile.WriteFile(name, []byte(benchHeader(session, source, stamp)), 0o644, atomicfile.NoReplace())
+	err = atomicfile.WriteFile(name, []byte(benchHeader(session, source, stamp)), 0o644, atomicfile.NoReplace())
 	if err != nil && errors.Is(err, os.ErrExist) {
-		return nil
+		// Whatever is there now, it is judged by what it is, not by the fact
+		// that something exists.
+		exists, err = recordState("open", name)
+		if err == nil && !exists {
+			return fmt.Errorf("cannot open a session: %q changed while it was being created; run the same command again", name)
+		}
+		return err
 	}
 	return err
+}
+
+// recordState judges the path a session record lives at. It reports whether a
+// record stands there: true for a regular file or a symlink that resolves to
+// one, false when nothing is there, and an error naming the path, what was
+// found and the next action for anything else.
+func recordState(op, path string) (bool, error) {
+	li, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cannot %s: cannot read %q: %v", opPhrase(op), path, err)
+	}
+	found := ""
+	switch {
+	case li.Mode()&os.ModeSymlink != 0:
+		target, _ := os.Readlink(path)
+		si, serr := os.Stat(path)
+		switch {
+		case serr != nil && os.IsNotExist(serr):
+			found = fmt.Sprintf("a dangling symlink (its target %q does not exist)", target)
+		case serr != nil:
+			found = fmt.Sprintf("a symlink whose target %q cannot be read: %v", target, serr)
+		case si.IsDir():
+			found = fmt.Sprintf("a symlink to a directory (%q)", target)
+		case !si.Mode().IsRegular():
+			found = fmt.Sprintf("a symlink to %q, which is not a regular file (%s)", target, si.Mode().Type())
+		}
+	case li.IsDir():
+		found = "a directory"
+	case !li.Mode().IsRegular():
+		found = fmt.Sprintf("not a regular file (%s)", li.Mode().Type())
+	}
+	if found != "" {
+		return false, fmt.Errorf("cannot %s: the session record %q is %s; move or remove it, or choose another session id",
+			opPhrase(op), path, found)
+	}
+	return true, nil
+}
+
+// opPhrase is the verb as it reads in a refusal sentence.
+func opPhrase(op string) string {
+	switch op {
+	case "open":
+		return "open a session"
+	case "append":
+		return "append an entry"
+	case "index":
+		return "index the store"
+	case "receipt":
+		return "read a receipt"
+	}
+	return op
 }

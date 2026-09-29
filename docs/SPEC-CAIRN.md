@@ -57,6 +57,15 @@ list it, and `README` (in any case) is refused as a session id by every verb
 with a message naming the reserved name. Any other top-level `<id>.md` beside
 `sessions/`, `entries/` or `log.jsonl` is a mixed store.
 
+A symlink named `sessions`, `entries` or `log.jsonl` counts as an own-shape
+marker whatever it points at, and a symlink named `<id>.md` counts as a session
+file. A session record is a regular file, or a symlink that resolves to one.
+Where a verb finds anything else at a session's record path (a directory, a
+symlink to a directory or to nothing, a device), it refuses at exit 2 naming the
+path, what is there and the next action (move or remove it, or choose another
+session id); `open` never reports success over it, and no verb answers "no such
+session" for it.
+
 On a bench store `open` creates `<store>/<id>.md` when none exists and is a
 no-op when one does. The new file holds a short header, fsynced before success
 is reported: a `# Cairn <first 8 characters of the id>` title line, a line
@@ -184,3 +193,4 @@ New regression cases must demonstrate the defect before the repair.
 39. `TestEmptyAndAbsentStoresGetTheOwnShape` and `TestEmptyStoreOpenGetsTheOwnShapeAtTheCLI` — an empty or absent store directory gets the tool's own layout.
 40. `TestBenchStoreOpenRemedyKeepsTheBenchShape` and `TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb` — the same behaviour at the command line: exit codes, one-line refusals, the listing after each verb. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` runs the printed remedy on a bench store in the functional tier.
 41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.
+42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkToARegularFileIsARecord`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory, a symlink to a directory and a dangling symlink at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlink to a regular file is a record; a symlinked own-shape marker is a marker.
