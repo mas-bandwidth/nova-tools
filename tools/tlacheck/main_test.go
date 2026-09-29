@@ -689,7 +689,7 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	built, err := tlc.RunnerFiles()
+	built, err := tlc.CheckedSources()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,10 +729,24 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 			t.Errorf("%s: %+v", name, r)
 		}
 	}
-	// A bookkeeping file that differs is no concern of the fingerprint.
+	// The list of inputs is computed by inputs.go: a binary built from another
+	// one lists other inputs than the checkout does, and each verb refuses it.
 	if err := os.WriteFile(filepath.Join(dir, "run.go"), built["internal/tlc/run.go"], 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range verbs {
+		r := ok(name, args, 2)
+		if r.code != 2 || !strings.Contains(r.stderr, "internal/tlc/inputs.go differ") || strings.Contains(r.stderr, "run.go") {
+			t.Errorf("%s with another input list: %+v", name, r)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), built["internal/tlc/inputs.go"], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A bookkeeping file that differs is no concern of the fingerprint.
 	if err := os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

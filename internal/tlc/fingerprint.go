@@ -13,15 +13,23 @@ import (
 // and the reading of TLC's exit status and output into pass or fail
 // (outcome.go). A change to one of them can change what a record means, so they
 // are inputs of every case's fingerprint. go:embed cannot take a list, so the
-// directive below repeats ResultFiles; TestEveryRunnerFileIsClassified holds the
-// two together.
+// directive below repeats ResultFiles and InputListFiles;
+// TestEmbeddedSourcesAreTheCheckedFiles holds them together.
 //
-//go:embed outcome.go run.go suite.go
+//go:embed outcome.go run.go suite.go inputs.go
 var sources embed.FS
 
 // ResultFiles are the runner's files that are inputs of every fingerprint, by
 // name in RunnerDir.
 var ResultFiles = []string{"outcome.go", "run.go", "suite.go"}
+
+// InputListFiles are the bookkeeping files that decide which files a case's
+// fingerprint covers (the parser of module references and the list of TLC's
+// standard modules: inputs.go). They are in no fingerprint, because the digest
+// is a function of the list they compute; but a binary built from another
+// version of them computes another list than the checkout, so CheckRunner holds
+// them to the checkout beside ResultFiles. They are also in BookkeepingFiles.
+var InputListFiles = []string{"inputs.go"}
 
 // BookkeepingFiles are the runner's other non-test files: the description
 // (doc.go), the reading of the case plan (cases.go), the records (records.go),
@@ -50,24 +58,45 @@ func RunnerFiles() (map[string][]byte, error) {
 	return out, nil
 }
 
-// CheckRunner holds the result files this binary was built from to the ones
-// under root: a binary built from another checkout computes fingerprints that
-// the checkout does not, so its verdict on what is stale is wrong. It returns
-// an error naming the files that differ. A root that holds no internal/tlc has
+// CheckedFiles are the files CheckRunner holds to the checkout: ResultFiles and
+// InputListFiles.
+func CheckedFiles() []string {
+	return append(append([]string{}, ResultFiles...), InputListFiles...)
+}
+
+// CheckedSources returns the bytes of CheckedFiles as they were when this
+// binary was built, by their path under the checkout root.
+func CheckedSources() (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for _, name := range CheckedFiles() {
+		raw, err := sources.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		out[RunnerDir+"/"+name] = raw
+	}
+	return out, nil
+}
+
+// CheckRunner holds the result files and the input-list files this binary was
+// built from to the ones under root: a binary built from another checkout
+// computes fingerprints or input lists that the checkout does not, so its
+// verdict on what is stale is wrong. It returns an error naming the files that
+// differ. A root that holds no internal/tlc has
 // no runner to compare (a bench copy of tla/ only), and nothing is checked.
 func CheckRunner(root string) error {
 	dir := filepath.Join(root, filepath.FromSlash(RunnerDir))
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil
 	}
-	built, err := RunnerFiles()
-	if err != nil {
-		return err
-	}
 	var differ []string
-	for _, name := range ResultFiles {
+	for _, name := range CheckedFiles() {
+		built, err := sources.ReadFile(name)
+		if err != nil {
+			return err
+		}
 		raw, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil || string(raw) != string(built[RunnerDir+"/"+name]) {
+		if err != nil || string(raw) != string(built) {
 			differ = append(differ, RunnerDir+"/"+name)
 		}
 	}

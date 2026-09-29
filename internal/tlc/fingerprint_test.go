@@ -3,6 +3,7 @@ package tlc
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -47,13 +48,22 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 	}
 }
 
-// The binary carries the bytes of the result files it was built from, and no
-// others.
-func TestEmbeddedSourcesAreTheResultFiles(t *testing.T) {
+// The binary carries the bytes of the files CheckRunner holds to the checkout
+// (the result files and the input-list files), and no others; the fingerprint
+// takes only the result files of them.
+func TestEmbeddedSourcesAreTheCheckedFiles(t *testing.T) {
 	t.Parallel()
-	files, err := RunnerFiles()
+	files, err := CheckedSources()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runner, err := RunnerFiles(); err != nil || len(runner) != len(ResultFiles) {
+		t.Fatalf("the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
+	}
+	for _, n := range InputListFiles {
+		if !slices.Contains(BookkeepingFiles, n) || slices.Contains(ResultFiles, n) {
+			t.Errorf("%s is an input-list file: it is bookkeeping and no result file", n)
+		}
 	}
 	var got, want []string
 	for name, raw := range files {
@@ -63,21 +73,21 @@ func TestEmbeddedSourcesAreTheResultFiles(t *testing.T) {
 			t.Errorf("%s: the embedded bytes are not the file's", name)
 		}
 	}
-	for _, n := range ResultFiles {
+	for _, n := range CheckedFiles() {
 		want = append(want, RunnerDir+"/"+n)
 	}
 	sort.Strings(got)
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("embedded %v, ResultFiles names %v: fix the go:embed line", got, want)
+		t.Fatalf("embedded %v, CheckedFiles names %v: fix the go:embed line", got, want)
 	}
 	entries, _ := sources.ReadDir(".")
-	if len(entries) != len(ResultFiles) {
-		t.Fatalf("the embedded directory holds %d files, ResultFiles %d", len(entries), len(ResultFiles))
+	if len(entries) != len(CheckedFiles()) {
+		t.Fatalf("the embedded directory holds %d files, CheckedFiles %d", len(entries), len(CheckedFiles()))
 	}
 }
 
-func TestCheckRunnerComparesTheEmbeddedResultFilesWithTheRoot(t *testing.T) {
+func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	if err := CheckRunner(root); err != nil {
@@ -90,7 +100,7 @@ func TestCheckRunnerComparesTheEmbeddedResultFilesWithTheRoot(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	built, _ := RunnerFiles()
+	built, _ := CheckedSources()
 	for path, raw := range built {
 		if err := os.WriteFile(filepath.Join(root, path), raw, 0o644); err != nil {
 			t.Fatal(err)
@@ -105,5 +115,27 @@ func TestCheckRunnerComparesTheEmbeddedResultFilesWithTheRoot(t *testing.T) {
 	err := CheckRunner(root)
 	if err == nil || !strings.Contains(err.Error(), "internal/tlc/suite.go differ") || !strings.Contains(err.Error(), "build tlacheck from this tree") {
 		t.Fatalf("an edited result file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "suite.go"), built[RunnerDir+"/suite.go"], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// inputs.go computes the list of files a case reads: a binary built from
+	// another one computes other inputs than the checkout does.
+	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = CheckRunner(root)
+	if err == nil || !strings.Contains(err.Error(), "internal/tlc/inputs.go differ") || strings.Contains(err.Error(), "suite.go") {
+		t.Fatalf("an edited input-list file: %v", err)
+	}
+	// Any other bookkeeping file decides nothing about the inputs.
+	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), built[RunnerDir+"/inputs.go"], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckRunner(root); err != nil {
+		t.Fatalf("an edited bookkeeping file: %v", err)
 	}
 }
