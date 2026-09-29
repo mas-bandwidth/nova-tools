@@ -1,8 +1,8 @@
 # Nova Tools 1.0.1
 
-Nova Tools 1.0.1 keeps the fifteen command-line tools from 1.0.0. Each tool
+Nova Tools 1.0.1 ships sixteen command-line tools. Each tool
 has its own entry point; choose the tools that fit your work. The
-[1.0.0 release notes](RELEASE-NOTES-1.0.0.md) describe their capabilities,
+[1.0.0 release notes](RELEASE-NOTES-1.0.0.md) describe the earlier release,
 and the [README](../README.md) gives a first command for each tool.
 
 ## Checkpoints and receipts
@@ -31,6 +31,8 @@ The secrets first-run guide explains its fixture and uses replaceable paths.
 `nova-tokens ledger --month` batches validated day files into one Redis call.
 
 `nova-tokens` writes day and fold-pool files atomically and refuses symlinked or non-regular fold lock files.
+
+`nova-swarm batch --cards` runs card batches with explicit deadline and token-budget inputs. Run `nova-swarm help batch` to see its required inputs.
 
 `nova-memory verify --exclude` applies to the whole verified corpus,
 including coverage and frontmatter selectors. An excluded directory also
