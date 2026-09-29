@@ -72,7 +72,7 @@ usage:
       printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
       chmod +x nova-inventory
       ansible-inventory -i ./nova-inventory --list
-      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on, matched by exact machine name and refused with the known names when it names no row; when it is unset the first label of the hostname is matched, and nothing is marked local when that matches no row
+      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on, matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -901,14 +901,14 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 // localHost is the machine row this process runs on, which inventory marks
 // ansible_connection=local. explicit is true when the env NOVA_MACHINE named
 // it (matched by exact machine name, refused when no row has it); otherwise
-// it is the first label of the hostname, matched the same way, and nothing is
+// it is the lower-cased first label of the hostname (machine names are lower-case), matched the same way, and nothing is
 // marked when no row has it.
 func localHost(getenv func(string) string, hostname func() (string, error)) (name string, explicit bool) {
 	if s := getenv(envMachine); s != "" {
 		return s, true
 	}
 	if h, err := hostname(); err == nil {
-		return strings.Split(h, ".")[0], false
+		return strings.ToLower(strings.Split(h, ".")[0]), false
 	}
 	return "", false
 }

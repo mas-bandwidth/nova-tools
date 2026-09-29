@@ -926,7 +926,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"_meta.hostvars", "ansible never calls --host", // why --host is not called
 		"the default when neither --list nor --host is given",                                                                                         // what --list is
 		"all and benches are every machine row", "coordinator and store come from the fleet row", "runners is every machine with at least one runner", // the groups
-		"matched by exact machine name", "first label of the hostname", "nothing is marked local", // how NOVA_MACHINE matches
+		"matched by exact machine name", "lower-cased first label", "nothing is marked local", // how NOVA_MACHINE matches
 	}
 	for _, w := range needs {
 		if !strings.Contains(help, w) {
@@ -941,7 +941,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "exact machine name", "first label of the hostname", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "exact machine name", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
 			if !strings.Contains(string(raw), w) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
@@ -1064,9 +1064,9 @@ func TestInventoryUnknownNovaMachineIsRefused(t *testing.T) {
 func TestInventoryUnsetNovaMachineAndNoHostnameMatchMarksNothing(t *testing.T) {
 	t.Parallel()
 
-	// The fallback compares the first label of the hostname to the machine
-	// name exactly, like NOVA_MACHINE: a different case is no match.
-	for _, hostname := range []string{"elsewhere.example", "BENCH-01.tailnet.ts.net", ""} {
+	// The fallback compares the lower-cased first label of the hostname to
+	// the machine name exactly, like NOVA_MACHINE.
+	for _, hostname := range []string{"elsewhere.example", "bench-011.local", "bench.01", ""} {
 		h := inventoryHarness(t, 2)
 		h.hostname = hostname
 		code, out, errs := h.run(t, "inventory")
@@ -1168,5 +1168,24 @@ func TestInventoryRefusalsQuoteTheValueSoAStraySpaceShows(t *testing.T) {
 	_, _, errs = h.run(t, "inventory")
 	if !strings.Contains(errs, `NOVA_MACHINE=" bench-01" names no machine row`) {
 		t.Fatalf("NOVA_MACHINE: %q", errs)
+	}
+}
+
+func TestInventoryHostnameFallbackLowercasesTheFirstLabel(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.hostname = "Bench-02.local"
+	code, out, errs := h.run(t, "inventory")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d stderr %q", code, errs)
+	}
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-02" {
+		t.Fatalf("hostname Bench-02.local marks %v local, want bench-02", got)
+	}
+	// NOVA_MACHINE is not lowered: it is matched exactly.
+	h.env["NOVA_MACHINE"] = "Bench-02"
+	if code, _, _ := h.run(t, "inventory"); code != 1 {
+		t.Fatalf("NOVA_MACHINE=Bench-02 exits %d, want 1", code)
 	}
 }

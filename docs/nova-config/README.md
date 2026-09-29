@@ -291,8 +291,8 @@ the fleet row are read in one transaction.
 
 The machine the command runs on is named by the env `NOVA_MACHINE`, matched by
 exact machine name; when no machine row has that name the verb exits 1 with
-the known names. When `NOVA_MACHINE` is unset, the first label of the hostname
-is matched the same way, and nothing is marked local when no row has it. The
+the known names. When `NOVA_MACHINE` is unset, the lower-cased first label of
+the hostname (machine names are lower-case) is matched the same way, and nothing is marked local when no row has it. The
 matched row gets `ansible_connection=local`, so ansible reaches it without
 ssh.
 
