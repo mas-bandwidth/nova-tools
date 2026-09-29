@@ -114,3 +114,18 @@ func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
 	}
 	h.clean("asked again")
 }
+
+// 6. A refused add writes nothing: its stream's rows are not declared.
+func TestARefusedAddWritesNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	before := h.m.Revision("t-work")
+	res := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1"}, Needs: []string{"a1"}}))
+	if len(res.Refused) == 0 {
+		t.Fatalf("add with a need that does not exist: %+v", res)
+	}
+	s := h.snap()
+	if s.Work.HasRow("s2") || s.Merge.HasRow("s2") || h.m.Revision("t-work") != before {
+		t.Fatalf("the refused add declared s2: work %v merge %v", s.Work.Rows, s.Merge.Rows)
+	}
+}

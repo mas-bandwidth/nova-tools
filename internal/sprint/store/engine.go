@@ -329,7 +329,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if why := unwritable(plan, op); why != "" {
 			return refuseWhole(res, plan, why)
 		}
-		if len(plan.Rows) > 0 && !rowsAdded {
+		// A step refused whole writes nothing: its rows are declared only
+		// with a unit to write.
+		if len(plan.Rows) > 0 && !rowsAdded && len(plan.Units) > 0 {
 			if err := st.addRows(ctx, plan.Rows); err != nil {
 				return res, err
 			}

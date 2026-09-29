@@ -57,22 +57,6 @@ var dKnown = []dKnownDiff{
 		a := f.Seq[len(f.Seq)-1]
 		return a.Kind == "add" && a.Sentinel && f.Kind == "state" && strings.Contains(f.Sig(), "primary.state=ready/waiting")
 	}},
-	// ENGINE. A refused step changes nothing (section 3: a unit that does
-	// not keep the lifecycle is never applied; section 11). An add whose
-	// every id is refused still declares its stream: the plan's rows
-	// (steps_work.go:90) are added before the units are looked at
-	// (store/engine.go:329), leaving a stream row with no control card.
-	{"ENGINE a refused add still declares its stream's rows", func(f dFinding) bool {
-		if f.Kind != "refusal" || f.Seq[len(f.Seq)-1].Kind != "add" || !strings.HasPrefix(f.Detail, "model refuses") {
-			return false
-		}
-		for _, d := range f.Diffs {
-			if d.Table != "stream" || d.Field != "exists" {
-				return false
-			}
-		}
-		return true
-	}},
 	// MODEL (or SPEC). NoNeedCycle and Add's guard judge cycles over every
 	// primary admitted, dropped ones included; the engine judges them over
 	// the primaries on the table, so a chain through a dropped card (whose
