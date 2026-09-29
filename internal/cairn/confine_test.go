@@ -3,8 +3,10 @@ package cairn
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // relativeTo spells dir relative to the working directory, without changing
@@ -93,4 +95,139 @@ func errText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// A record link re-pointed between the check and the open must never carry a
+// write outside the store. A background writer swaps the session's link
+// between a file inside the store and one outside it while appends run; the
+// outside file is never touched, whichever way each append ends.
+func TestAppendNeverWritesOutsideTheStoreWhileTheLinkIsSwapped(t *testing.T) {
+	for _, shape := range []string{"bench", "own"} {
+		t.Run(shape, func(t *testing.T) {
+			t.Parallel()
+			linkSwapped(t, shape == "own")
+		})
+	}
+}
+
+func linkSwapped(t *testing.T, own bool) {
+	store := t.TempDir()
+	inside := filepath.Join(store, "in.md")
+	if own {
+		// A top-level .md would make the own store a mixed one.
+		inside = filepath.Join(store, "sessions", "in.md")
+		if err := os.MkdirAll(filepath.Dir(inside), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.md")
+	const untouched = "# outside\n"
+	for path, body := range map[string]string{inside: "# in\n", outside: untouched} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := benchFile(store, "x")
+	if own {
+		link = sessionFile(store, "x")
+	}
+	if err := os.Symlink(inside, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		targets := [2]string{outside, inside}
+		tmp := filepath.Join(filepath.Dir(link), "swap.tmp")
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// An atomic re-point: a new link renamed over the old one.
+			os.Remove(tmp)
+			if os.Symlink(targets[i%2], tmp) == nil {
+				os.Rename(tmp, link)
+			}
+		}
+	}()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	landed := 0
+	for i := 0; time.Now().Before(deadline); i++ {
+		if _, err := Append(store, "x", "e"+strconv.Itoa(i), "words", "", benchNow, PublishManual); err == nil {
+			landed++
+		}
+		if raw, _ := os.ReadFile(outside); string(raw) != untouched {
+			break
+		}
+	}
+	close(stop)
+	<-done
+	if raw, _ := os.ReadFile(outside); string(raw) != untouched {
+		t.Fatalf("an append wrote outside the store (%d appends landed): %q", landed, raw)
+	}
+}
+
+// The check made on the open file: the descriptor held is the file the name
+// leads to, inside the store. A descriptor on some other file, or on a file
+// outside, is refused whatever the name says.
+func TestAnOpenedRecordMustBeTheFileTheNameLeadsToInsideTheStore(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	other := t.TempDir()
+	for path, body := range map[string]string{benchFile(store, "a"): "# a\n", benchFile(store, "b"): "# b\n", filepath.Join(other, "o.md"): "# o\n"} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open := func(path string) *os.File {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { f.Close() })
+		return f
+	}
+	d := newDirs()
+	if err := holdsRecord(d, "append", store, benchFile(store, "a"), open(benchFile(store, "a"))); err != nil {
+		t.Fatalf("the file the name leads to: %v", err)
+	}
+	for name, f := range map[string]*os.File{"another file in the store": open(benchFile(store, "b")), "a file outside the store": open(filepath.Join(other, "o.md"))} {
+		err := holdsRecord(d, "append", store, benchFile(store, "a"), f)
+		if err == nil || !strings.Contains(err.Error(), "is not the file that was checked") || !strings.Contains(err.Error(), "cannot append an entry") {
+			t.Errorf("%s: want a refusal, got %v", name, err)
+		}
+	}
+	// The name itself leading outside is refused for the file it leads to.
+	if err := os.Symlink(filepath.Join(other, "o.md"), benchFile(store, "leak")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if _, err := readRecord(d, "index", store, benchFile(store, "leak")); err == nil || !strings.Contains(err.Error(), "is not the file that was checked") {
+		t.Fatalf("reading a record that leads outside: %v", err)
+	}
+}
+
+// The check on the open file is the check recordState makes on the path, no
+// stricter: a store whose sessions/ directory is itself a link to a directory
+// elsewhere keeps working, because only the record's own name is judged.
+func TestOwnStoreWithALinkedSessionsDirectoryStillAppends(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(store, "sessions")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, "s1.md"), []byte("# s1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(store, "s1", "e1", "words", "", benchNow, PublishManual); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(elsewhere, "s1.md"))
+	if err != nil || !strings.Contains(string(raw), "ENTRY e1 ") {
+		t.Fatalf("the pointer line did not land in the linked directory: %q %v", raw, err)
+	}
 }

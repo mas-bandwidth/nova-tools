@@ -47,8 +47,8 @@ func recordForRead(d *dirs, op, store, session string, sh shape) (string, bool, 
 // Flat records store only a dated heading and prose. Source and publication
 // policy are not recoverable from this format; never infer them from a later
 // caller, unrelated log or prose. Body sizing matches benchSection's trimming.
-func benchReceipts(path, session string) ([]ReceiptInfo, error) {
-	raw, err := os.ReadFile(path)
+func benchReceipts(d *dirs, op, store, path, session string) ([]ReceiptInfo, error) {
+	raw, err := readRecord(d, op, store, path)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[st
 		path, _, err := recordForRead(d, "index", store, id, shapeBench)
 		if err == nil {
 			var receipts []ReceiptInfo
-			if receipts, err = benchReceipts(path, id); err == nil {
+			if receipts, err = benchReceipts(d, "index", store, path, id); err == nil {
 				for _, rc := range receipts {
 					rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
 				}

@@ -3,6 +3,7 @@ package cairn
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -240,8 +241,9 @@ func recordState(d *dirs, op, root, path string) (bool, error) {
 			found = fmt.Sprintf("a symlink to %q, which is not a regular file (%s)", target, si.Mode().Type())
 		default:
 			// A link to a regular file is a record only while it stays in the
-			// store: the tool never reads or appends outside the directory it
-			// was given.
+			// store: the tool never reads or appends a session record outside
+			// the directory it was given. openRecord repeats this judgement on
+			// the open file, which is what a re-pointed link meets.
 			if !within(d.resolvedRoot(root), resolved(path)) {
 				found = fmt.Sprintf("a symlink to %q, which resolves outside the store", target)
 			}
@@ -266,6 +268,78 @@ func recordState(d *dirs, op, root, path string) (bool, error) {
 			opPhrase(op), path, found)}
 	}
 	return true, nil
+}
+
+// openRecord opens the session record at path, in the store at root, and proves
+// the file it holds is inside the store. recordState judges a PATH, and a path
+// can be re-pointed between that judgement and this open; so the judgement is
+// made again on the OPEN FILE: the name is resolved once more, must lie inside
+// the store, and must lead to the very file this descriptor holds. What is read
+// or written afterwards goes through the descriptor, so no name is followed a
+// second time. The store's own record is the only thing it opens.
+func openRecord(d *dirs, op, root, path string, flag int) (*os.File, error) {
+	f, err := os.OpenFile(path, flag, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := holdsRecord(d, op, root, path, f); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// holdsRecord is the check openRecord makes on the open file f, the one
+// recordState makes on the path and no stricter: f is a regular file, and it is
+// the file the name leads to; when the name is a link, that file lies inside
+// the store.
+func holdsRecord(d *dirs, op, root, path string, f *os.File) error {
+	held, err := f.Stat()
+	if err == nil {
+		var named os.FileInfo
+		if named, err = os.Lstat(path); err == nil && named.Mode()&os.ModeSymlink != 0 {
+			real := resolved(path)
+			if !within(d.resolvedRoot(root), real) {
+				err = errors.New("outside the store")
+			} else {
+				named, err = os.Stat(real)
+			}
+		}
+		if err == nil && held.Mode().IsRegular() && os.SameFile(held, named) {
+			return nil
+		}
+	}
+	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is not the file that was checked "+
+		"(it changed, or leads outside the store); run the same command again", opPhrase(op), path)}
+}
+
+// readRecord is the whole content of the session record at path, read through
+// openRecord.
+func readRecord(d *dirs, op, root, path string) ([]byte, error) {
+	f, err := openRecord(d, op, root, path, os.O_RDONLY)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// appendRecord adds content to the end of the session record at path, through
+// openRecord, and fsyncs before return.
+func appendRecord(d *dirs, op, root, path, content string) error {
+	f, err := openRecord(d, op, root, path, os.O_WRONLY|os.O_APPEND)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // within reports whether path is root or lies under it.

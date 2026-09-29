@@ -69,8 +69,13 @@ with a message naming the reserved name. Any other top-level `<id>.md` beside
 A symlink named `sessions`, `entries` or `log.jsonl` counts as an own-shape
 marker whatever it points at, and a symlink named `<id>.md` counts as a session
 file. A session record is a regular file, or a symlink that resolves to one
-inside the store; the tool never reads or appends outside the directory it was
-given. Where a verb finds anything else at a session's record path (a directory,
+inside the store; the tool never reads or appends a session record that lies
+outside the directory it was given. The check is made on the open file, not
+only on the path: a record link re-pointed between the check and the open
+is refused before anything is read or written through it. (Only the record is
+confined. A symlinked `log.jsonl` or `entries/` is an own-shape marker and is
+followed.) The store is named the same way however `--store` is spelled,
+relative or absolute. Where a verb finds anything else at a session's record path (a directory,
 a symlink to a directory, to nothing or to somewhere outside the store, a
 device), it refuses at exit 2 naming the path, what is there and the next action
 (move or remove it, or choose another session id); `open` never reports success
@@ -229,6 +234,7 @@ New regression cases must demonstrate the defect before the repair.
 45. `TestCaseFoldedRecordNamesAreNotSessionFiles` — a file named `s1.MD` is not a session file: the store-wide readers skip it, and on a case-folding disk `open`, `append`, `receipt` and `index --session` refuse naming the fold and write nothing through it (on a case-keeping disk `open s1` creates `s1.md` beside it; the test probes the disk and asserts the outcome for whichever it is).
 46. `TestStoreHoldingOnlyReadmeIsAnEmptyStore` and `TestConcurrentBenchOpensWriteOneHeader` — a store holding only a `README.md` is an empty store in the tool's own shape; many concurrent `open`s of one new bench session write exactly one header and leave no temporary file. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` (functional tier) builds the binary and runs the printed remedy through `sh -c` with it first on `PATH`.
 49. `TestSymlinkResolvingOutsideTheStoreIsRefused` and `TestSymlinkToARegularFileInsideTheStoreIsARecord` — a link that resolves outside the store is refused by every verb naming the link and its target and nothing is written through it; a link to a regular file inside the store is a record.
+    `TestAppendNeverWritesOutsideTheStoreWhileTheLinkIsSwapped` re-points a record link between a file inside and a file outside while appends run, in both shapes, and the outside file is never touched; `TestAnOpenedRecordMustBeTheFileTheNameLeadsToInsideTheStore` fixes the check on the open file; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs the same store named relative and absolute.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.

@@ -285,9 +285,9 @@ func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 // nothing; the same id with different words is a conflict, as it is in the
 // nested store. No index is written and no directory appears beside the file:
 // this store is read, not converted.
-func appendBench(path, id, text string, now time.Time, publish string) (AppendResult, error) {
+func appendBench(d *dirs, store, path, id, text string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
-	raw, err := os.ReadFile(path)
+	raw, err := readRecord(d, "append", store, path)
 	if err != nil {
 		return res, err
 	}
@@ -310,30 +310,12 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimRight(text, "\n"))
 	b.WriteString("\n")
-	if err := appendBytes(path, b.String()); err != nil {
+	if err := appendRecord(d, "append", store, path, b.String()); err != nil {
 		return res, err
 	}
 	// A bench section stores no pointer of its own, so what is reported is the
 	// session's, read from the header open wrote.
 	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw)}, nil
-}
-
-// appendBytes adds content to an existing file and fsyncs before return, so a
-// bench append is as durable as a nested one before success is reported.
-func appendBytes(name, content string) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 func entryPath(store, session, id string) string {
@@ -502,7 +484,12 @@ func pointerLine(id string, stamp time.Time) string {
 // duplicating a line that is already there.
 func ensurePointer(store, session, id string, stamp time.Time) error {
 	name := sessionFile(store, session)
-	raw, err := os.ReadFile(name)
+	d := newDirs()
+	raw, err := readRecord(d, "append", store, name)
+	var changed *RecordPathError
+	if errors.As(err, &changed) {
+		return err
+	}
 	if err != nil {
 		return &NotFoundError{Msg: fmt.Sprintf("no such session %q; open first", session)}
 	}
@@ -512,7 +499,7 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 			return nil
 		}
 	}
-	return appendLine(name, want)
+	return appendRecord(d, "append", store, name, want+"\n")
 }
 
 // Append stores the friend's exact prose under a stable entry id with a real
@@ -552,7 +539,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	}
 	stamp := now.UTC()
 	if bench {
-		return appendBench(path, id, text, stamp, publish)
+		return appendBench(d, store, path, id, text, stamp, publish)
 	}
 	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
 	// where the record points back to; an append that names nothing else came
@@ -659,7 +646,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		return rc, err
 	}
 	if bench {
-		rows, err := benchReceipts(path, session)
+		rows, err := benchReceipts(d, "receipt", store, path, session)
 		if err != nil {
 			return rc, err
 		}
