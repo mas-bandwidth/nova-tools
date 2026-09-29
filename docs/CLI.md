@@ -1996,6 +1996,8 @@ MEMBER m2 place=-->build:ready score=-->10 rev=0->1 fields={"role":[null,"tester
 `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes nothing prints `outcome=noop`
 and, like any accepted batch, advances the table revision by one.
 
+An epoch behind the active one is refused as stale and one ahead of it as `EPOCHAHEAD`, naming the requested and the active epoch; `nova-table show <table>` prints the active epoch. A table that does not exist is refused as missing whatever the epoch.
+
 Exit codes: 0 on success (including the replay of an identical request, which returns the original receipt
 and writes nothing); 1 on refusal, which prints the operation, the member at fault, the state expected
 against the state found, `changed=no` and a next command, and leaves the store unchanged; 2 on usage: a

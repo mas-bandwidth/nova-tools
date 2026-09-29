@@ -192,3 +192,24 @@ func TestReadSetRefusalsNameOperationStateAndNextCommand(t *testing.T) {
 		}
 	}
 }
+
+// A table that does not exist is refused as missing, whatever epoch is asked
+// for: "ahead" is said only of a table that has an active epoch.
+func TestEpochAheadIsSaidOnlyOfATableThatExists(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	m := refusalFixtureBatch("0", "ghost-op", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}})
+	m.Table, m.Epoch = "ghost", "5"
+	_, aerr := ntable.ApplyBatch(ctx, c, m)
+	_, rerr := ntable.ReadSet(ctx, c, "ghost", ntable.ReadSetScope{Members: []string{"a"}}, 5)
+	_, gerr := ntable.ReadAt(ctx, c, "ghost", 7)
+	for what, err := range map[string]error{"apply": aerr, "read set": rerr, "read at": gerr} {
+		if err == nil || !strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "ahead") {
+			t.Errorf("%s of a missing table at a later epoch: %v; want no such table", what, err)
+		}
+	}
+	// and of a table that exists it is still said
+	if _, err := ntable.ReadAt(ctx, c, "demo", 7); err == nil || !strings.Contains(err.Error(), "ahead of the active epoch") {
+		t.Errorf("read at a later epoch of a table that exists: %v", err)
+	}
+}

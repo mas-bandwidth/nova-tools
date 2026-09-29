@@ -332,7 +332,8 @@ do
       for k, v in pairs(snap) do if string.sub(k, 1, 1) ~= '_' then h[k] = v end end
       cfg = T.config(h)
     elseif historical and epoch ~= active then
-      if T.uintgt(epoch, active) then return nil, T.refuse('EPOCHAHEAD', epoch, active) end
+      -- the table must exist before its epoch can be called ahead
+      if next(template) and T.uintgt(epoch, active) then return nil, T.refuse('EPOCHAHEAD', epoch, active) end
       return nil, T.refuse('NOTABLE')
     end
     if not h then return nil, T.refuse('NOTABLE') end

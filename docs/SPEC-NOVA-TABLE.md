@@ -483,7 +483,12 @@ guard, existing/placed member on create, duplicate manifest member, invalid/miss
 record, reverse-index or set drift, unknown row/column, bound cell, reserved-field
 write, invalid score/counter, operation-ID conflict and over-limit input. Each names
 operation, member or batch, expected/observed state, changed=no and the next usable
-command. A transport failure reports changed=unknown and operation reconciliation,
+command.
+A request for an epoch behind the active one refuses `STALE`; one for an epoch
+ahead of it refuses `EPOCHAHEAD`, naming the requested and the active epoch and
+suggesting `nova-table show <table>`, which prints the active epoch. Existence
+comes first: a table that does not exist refuses as missing whatever epoch is
+asked for. A transport failure reports changed=unknown and operation reconciliation,
 never changed=no without evidence.
 
 ### CLI batch verb (`nova-table batch`)
