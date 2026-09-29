@@ -107,7 +107,7 @@ func FleetStep(r sprint.FleetReq) Step {
 
 // CIStep records a CI observation.
 func CIStep(r sprint.CIReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "ci", Load: tables(sprint.Work),
+	return Step{Args: ArgsOf(r), Verb: "ci", Load: tables(sprint.Work, sprint.Readers),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordCI(s, r) }}
 }
 

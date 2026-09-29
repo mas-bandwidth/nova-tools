@@ -745,6 +745,15 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		}
 		if !r.Red && !old {
 			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)
+			if len(u.Closes) > 0 {
+				closing := map[string]bool{}
+				for _, o := range u.Closes {
+					closing[o.Note.ID] = true
+				}
+				if j, ok := exhaustedAfter(s, c, closing, r.Who); ok {
+					u.Notes = append(u.Notes, j)
+				}
+			}
 		}
 		p.Units = append(p.Units, u)
 	}

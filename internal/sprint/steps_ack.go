@@ -17,7 +17,14 @@ type AckReq struct {
 // of its own.
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
+	closing := map[string]bool{} // every note id this call closes
+	named := map[string]bool{}
 	for _, id := range r.Notes {
+		if named[id] {
+			p.refuse(id, "named twice")
+			continue
+		}
+		named[id] = true
 		var entries []Open
 		for _, o := range s.Open {
 			if o.Note.ID == id {
@@ -33,26 +40,42 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			p.refuse(id, "stream "+n.Stream+" is stopped: its judgment stays open until it resumes; run: nova-sprint resume --stream "+n.Stream+" --did <what was done>")
 			continue
 		}
+		closing[id] = true
 		u := Unit{Key: id, Stream: n.Stream, Closes: entries, Moved: fmt.Sprintf("%s (%s) acknowledged: %s", id, n.Type, r.Reason)}
 		u.Notes = append(u.Notes, decided(entries[0], "ack: "+r.Reason, r.Who, s.Now))
-		for _, o := range entries {
-			pr := s.Work.Placed(o.Subject())
-			if pr == nil || !exhausted(s, pr, nil) {
-				continue
-			}
-			left := 0
-			for _, x := range closesFor(s.Open, nil, pr.ID) {
-				if x.Note.ID != id {
-					left++
-				}
-			}
-			if left == 0 {
-				j := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
-				j.Who, j.Attempt = r.Who, pr.Int("attempt")
-				u.Notes = append(u.Notes, j)
-			}
-		}
 		p.Units = append(p.Units, u)
 	}
+	// A primary whose last open judgment this call closes, with its reads
+	// exhausted, is a judgment once, unless the call acknowledged exactly that.
+	written := map[string]bool{}
+	for i := range p.Units {
+		for _, o := range p.Units[i].Closes {
+			pr := s.Work.Placed(o.Subject())
+			if pr == nil || written[pr.ID] || o.Note.Type == NReadsExhausted {
+				continue
+			}
+			written[pr.ID] = true
+			if j, ok := exhaustedAfter(s, pr, closing, r.Who); ok {
+				p.Units[i].Notes = append(p.Units[i].Notes, j)
+			}
+		}
+	}
 	return p
+}
+
+// exhaustedAfter is the reads exhausted judgment of a primary in review whose
+// reads are exhausted and whose every open judgment is among closing (note ids
+// a step closes), if the condition holds.
+func exhaustedAfter(s *Snapshot, pr *Card, closing map[string]bool, who string) (Note, bool) {
+	if !exhausted(s, pr, nil) {
+		return Note{}, false
+	}
+	for _, x := range closesFor(s.Open, nil, pr.ID) {
+		if !closing[x.Note.ID] {
+			return Note{}, false
+		}
+	}
+	j := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
+	j.Who, j.Attempt = who, pr.Int("attempt")
+	return j, true
 }

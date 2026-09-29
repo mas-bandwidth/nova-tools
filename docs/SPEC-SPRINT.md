@@ -134,7 +134,10 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A primary in review whose reads are exhausted (asked, with no read card
   asked or reading, without two different readers' ok at its head, and with no
   open judgment) is a judgment, "reads exhausted", written by the step that
-  causes the condition (a read, or an ack of its last judgment).
+  causes the condition: a read, an ack that closes its last judgments (all
+  those one call closes counted together, the judgment written once), or a
+  green CI that closes its last one. An ack of the reads exhausted judgment
+  itself does not write it again.
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
   the primary's read cards are retired in the same step and its readers are
