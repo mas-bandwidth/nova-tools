@@ -13,6 +13,8 @@ type StreamClock struct {
 	State    string
 	Since    time.Time
 	Progress time.Time
+	// Empty says nothing of the stream is on the table: never stale.
+	Empty bool `json:",omitempty"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer
@@ -202,7 +204,7 @@ func Inbox(r InboxReq) []Group {
 	})
 	out := judg
 	for _, st := range r.Streams {
-		if st.State == StreamLanded || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
+		if st.State == StreamLanded || st.Empty || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
 			continue
 		}
 		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,

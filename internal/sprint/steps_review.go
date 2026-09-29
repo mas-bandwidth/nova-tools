@@ -490,6 +490,9 @@ func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool
 			n := happened(NStreamLanded, st, s.Now)
 			n.Who = who
 			setStream(p, s, st, map[string]string{"state": StreamLanded, "since": stamp(s.Now)}, n)
+		case open == 0 && landed == 0 && (state != StreamWaiting || ctl.F("since") != ""):
+			// empty: nothing is on the table for it; waiting, with no since
+			setStream(p, s, st, map[string]string{"state": StreamWaiting, "since": ""})
 		case left == 0 && state == StreamMerging:
 			setStream(p, s, st, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})
 		}

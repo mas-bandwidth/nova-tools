@@ -280,9 +280,17 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		return nil, err
 	}
 	name := st.Names.Table(sprint.Merge)
-	shapes, err := st.B.Shapes(ctx, []string{name})
+	shapes, err := st.B.Shapes(ctx, []string{name, st.Names.Table(sprint.Work)})
 	if err != nil {
 		return nil, err
+	}
+	onTable := map[string]int64{}
+	for _, r := range shapes[1].Rows {
+		for k, c := range shapes[1].Columns {
+			if c.HasSet() && k < len(r.Cells) {
+				onTable[r.Key] += r.Cells[k].Count
+			}
+		}
 	}
 	var ids []string
 	for _, r := range shapes[0].Rows {
@@ -307,7 +315,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p})
+		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p, Empty: onTable[r.Key] == 0})
 	}
 	return out, nil
 }

@@ -325,7 +325,7 @@ member is up, a work card or a read card past its deadline, a stream with no
 merge step past its deadline, an invariant is broken.
 
 The step that lands or drops the last open primary of the sprint (every
-primary landed or off the table, at least one landed) writes one judgment, the
+primary landed or off the table) writes one judgment, the
 sprint is done: n landed, m dropped. It is written when every primary has
 landed or been dropped, even with none landed; it has no due time and is never
 overdue; only an add that admits a card closes it. add with a need on a
@@ -398,8 +398,9 @@ machine was STOPPED is not counted, so a sprint stopped for hours shows
 nothing overdue because of those hours. Each stream has `since` (the last change of its state) and `progress`
 (the last change of its state or of any of its counts); a stream that has not
 landed and whose progress is older than its deadline is shown as stalled by
-inbox and where. This is pull visibility; nothing claims to detect a dead
-process.
+inbox and where. A stream with nothing on the table (every primary dropped,
+or restored empty by a clear) is waiting with no `since` and is never stale.
+This is pull visibility; nothing claims to detect a dead process.
 
 ## 9. What is always true
 

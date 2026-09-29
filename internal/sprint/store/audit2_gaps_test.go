@@ -512,23 +512,27 @@ func TestAudit2ClosedWaitCountsStoppedTime(t *testing.T) {
 // DEFECT G. A stream with no open primary that has not landed (every
 // primary dropped, or a new epoch's restored stream) is shown stale for
 // ever: a "look" line naming no card that no verb closes (ack refuses it).
-func TestAudit2DefectEmptyStreamIsStaleForEver(t *testing.T) {
+func TestAudit2ClosedEmptyStreamIsStaleForEver(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not needed"}))
 	h.startMachine()
-	h.a2Run(31*time.Minute, 5*time.Minute)
-	if st := h.a2Stale(); len(st) != 1 {
-		t.Fatalf("stale %v: defect fixed", st)
-	}
-	res := h.run(AckStep(sprint.AckReq{Notes: []string{sprint.StaleGroupID("s1")}, Reason: "empty"}))
-	if len(res.Refused) != 1 {
-		t.Fatalf("ack of the stale line: %+v", res)
-	}
 	h.a2Run(10*time.Hour, 30*time.Minute)
-	if st := h.a2Stale(); len(st) != 1 {
-		t.Fatalf("stale %v", st)
+	if st := h.a2Stale(); len(st) != 0 {
+		t.Fatalf("an empty stream is stale: %v", st)
+	}
+	if c := h.snap().StreamCtl("s1"); c.F("state") != sprint.StreamWaiting || c.F("since") != "" {
+		t.Fatalf("the empty stream: %v", c.Fields)
+	}
+	// a clear restores every stream empty: never stale either
+	if _, err := h.st.Clear(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.startMachine()
+	h.a2Run(2*time.Hour, 30*time.Minute)
+	if st := h.a2Stale(); len(st) != 0 {
+		t.Fatalf("a restored stream is stale: %v", st)
 	}
 }
 

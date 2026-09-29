@@ -43,7 +43,7 @@ func RestoreShape(s *Snapshot, sh Shape) Plan {
 			continue
 		}
 		p.Units = append(p.Units, Unit{Key: CtlID(st), Stream: st, Changes: []Change{change(Merge, createEntry(CtlID(st), st, Ctl, 0,
-			map[string]string{"kind": "stream", "state": StreamWaiting, "since": now}))}, Moved: "stream " + st + " waiting"})
+			map[string]string{"kind": "stream", "state": StreamWaiting}))}, Moved: "stream " + st + " waiting"})
 	}
 	for _, m := range sh.Members {
 		if s.Fleet.Card(CtlID(m)) != nil {
