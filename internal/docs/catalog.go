@@ -132,6 +132,7 @@ var DefaultCatalog = []Entry{
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
 	E("tools/sessiontrace", "bounded shell trace replay against TableSession", "go test ./tools/sessiontrace", "go test ./tools/sessiontrace"),
+	E("tools/sprintsize", "nova-sprint's size run: the sprint at 10x its largest real size on a local store, each operation timed against its limit", "go vet ./tools/sprintsize", "go run ./tools/sprintsize --bin <nova-sprint>"),
 	E("tools/tlacheck", "TLA+ model check CLI: run the declared cases, the table and member suites, the receipt replay and the finding witnesses", "go test ./tools/tlacheck", "go test ./tools/tlacheck"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }
