@@ -1217,7 +1217,9 @@ func (st *Store) bars(man ntable.BatchManifest, barred map[string]string) bool {
 
 // skipOf describes a skipped entry: what it expected and what the store holds.
 func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Skip {
-	k := Skip{Card: e.ID, Primary: e.ID, Table: table, Expected: "the member present", Found: "no member"}
+	// The card and its primary are named by their card ids: a stored id of a
+	// later epoch (id~n) never leaks into a judgment or a command.
+	k := Skip{Card: sprint.CardID(e.ID), Primary: sprint.CardID(e.ID), Table: table, Expected: "the member present", Found: "no member"}
 	var m *ntable.ReadSetMember
 	for i := range rs.Members {
 		if rs.Members[i].ID == e.ID {
@@ -1225,9 +1227,9 @@ func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Sk
 		}
 	}
 	if p := e.Set["primary"]; p != "" {
-		k.Primary = p
+		k.Primary = sprint.CardID(p)
 	} else if m != nil && m.Fields["primary"] != "" {
-		k.Primary = m.Fields["primary"]
+		k.Primary = sprint.CardID(m.Fields["primary"])
 	}
 	if x := e.Expect; x != nil {
 		var want []string
