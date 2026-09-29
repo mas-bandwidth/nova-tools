@@ -108,8 +108,9 @@ type Request struct {
 	// Base is the PR's base (the primary's BASE); Title its title. Stream,
 	// Origin, DoneWhen and Test are the primary's, carried in the PR body
 	// (TEST so a reader sees the class test, or why the card has none;
-	// #4313).
-	Base, Title, Stream, Origin, DoneWhen, Test string
+	// #4313). Tests is the test receipt from the copy wrapper's pre-push
+	// test run (nova-tools #4314), carried in the PR body under TESTS:.
+	Base, Title, Stream, Origin, DoneWhen, Test, Tests string
 	// Token is the push credential and the REST bearer token.
 	Token string
 

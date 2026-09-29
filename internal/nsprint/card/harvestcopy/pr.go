@@ -99,6 +99,7 @@ func PRBody(req Request) string {
 	line("ORIGIN", req.Origin)
 	line("DONE-WHEN", req.DoneWhen)
 	line("TEST", req.Test)
+	line("TESTS", req.Tests)
 	b.WriteString("\n" + ClaudeLine + "\n")
 	return b.String()
 }

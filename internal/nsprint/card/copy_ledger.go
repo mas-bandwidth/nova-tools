@@ -110,6 +110,9 @@ type CopyLedger struct {
 	// Harvest is the boundary step (#4227); nil is harvestcopy.Harvest. A
 	// test injects one that reaches no forge.
 	Harvest func(context.Context, harvestcopy.Request) (harvestcopy.Result, error)
+	// PrepushTest runs tests before pushing (#4314); nil is RunPrepushTest.
+	// A test injects one that avoids running actual test commands.
+	PrepushTest PrepushTestRunner
 	// Now is the clock the PR record is stamped by; nil is time.Now.
 	Now func() time.Time
 }
@@ -414,8 +417,12 @@ func (l *CopyLedger) prBranch(ctx context.Context, c CopyCard) (string, error) {
 // A fix copy's is the same with onto, the PR's head the fix built on, so the
 // push moves the PR's branch forward.
 func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, branch, onto string, fields []string) (int, error) {
-	fail := func(reason, text string) (int, error) {
-		return l.endCopy(ctx, taskcard.EndRequest{IDs: []string{l.Copy}, Why: reason + ": " + oneLine(text), Fields: fields})
+	fail := func(reason, text string, finding ...string) (int, error) {
+		req := taskcard.EndRequest{IDs: []string{l.Copy}, Why: reason + ": " + oneLine(text), Fields: fields}
+		if len(finding) > 0 && finding[0] != "" {
+			req.Finding = finding[0]
+		}
+		return l.endCopy(ctx, req)
 	}
 	if strings.TrimSpace(l.PushToken) == "" {
 		return fail("no-token", harvestcopy.TokenEnv+" is empty in the wrapper's environment; the bench cannot push "+branch+" or open its PR")
@@ -426,6 +433,30 @@ func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, br
 	if end.RepoDir == "" {
 		return fail("push-refused", "the commit step's checkout is unknown; nothing to push "+end.PushedSHA+" from")
 	}
+	var testsReceipt string
+	if l.PrepushTest != nil || hasMakefile(end.RepoDir) {
+		pkgs, err := DerivePrepushPackages(ctx, end.RepoDir, c.Paths)
+		if err != nil {
+			return fail("tests-red", "derive prepush packages: "+err.Error(), "derive-packages")
+		}
+		runner := l.PrepushTest
+		if runner == nil {
+			runner = RunPrepushTest
+		}
+		testRes, err := runner(ctx, end.RepoDir, pkgs)
+		if err != nil || !testRes.Passed {
+			finding := strings.Join(testRes.FailingTests, " ")
+			if finding == "" {
+				if err != nil {
+					finding = err.Error()
+				} else {
+					finding = "tests failed"
+				}
+			}
+			return fail("tests-red", finding, finding)
+		}
+		testsReceipt = testRes.Receipt
+	}
 	h := l.Harvest
 	if h == nil {
 		h = harvestcopy.Harvest
@@ -433,6 +464,7 @@ func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, br
 	res, err := h(ctx, harvestcopy.Request{
 		RepoDir: end.RepoDir, SHA: end.PushedSHA, Branch: branch, Onto: onto, Repo: c.Repo, Base: c.Base,
 		Title: c.Title, Stream: c.Stream, Origin: c.Origin, DoneWhen: c.DoneWhen, Test: c.Test,
+		Tests: testsReceipt,
 		Token: l.PushToken, Askpass: l.Askpass, Redis: l.Client,
 	})
 	if err != nil {

@@ -21,3 +21,23 @@ func TestPRBodyCarriesTheTestLine(t *testing.T) {
 		t.Fatalf("no TEST value, yet a line:\n%s", b)
 	}
 }
+
+// TestPRBodyCarriesTheTestsReceiptLine (#4314): the PR body carries the prepush
+// test receipt under TESTS: after TEST; a request with no Tests value adds no line.
+func TestPRBodyCarriesTheTestsReceiptLine(t *testing.T) {
+	t.Parallel()
+	body := harvestcopy.PRBody(harvestcopy.Request{
+		Stream:   "swarm: cards",
+		Origin:   "issue:nova-tools#4314",
+		DoneWhen: "prepush tests pass before push",
+		Test:     "./internal/sample TestOne",
+		Tests:    "make test PKGS=./internal/sample ./internal/ci ./internal/docs GOTEST_COUNT_FLAG= pass",
+	})
+	want := "TEST: ./internal/sample TestOne\nTESTS: make test PKGS=./internal/sample ./internal/ci ./internal/docs GOTEST_COUNT_FLAG= pass\n\n"
+	if !strings.Contains(body, want) {
+		t.Fatalf("body:\n%s\nwant substring:\n%s", body, want)
+	}
+	if b := harvestcopy.PRBody(harvestcopy.Request{Stream: "s", DoneWhen: "d"}); strings.Contains(b, "TESTS:") {
+		t.Fatalf("no Tests value, yet a TESTS line:\n%s", b)
+	}
+}
