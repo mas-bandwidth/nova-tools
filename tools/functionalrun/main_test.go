@@ -477,8 +477,8 @@ func TestParseRun(t *testing.T) {
 	}{
 		{[]string{"--src", dir, "--context", ctxDir}, "no package"},
 		{[]string{"--src", dir, "--context", ctxDir, "./a", "--deadline", "1m"}, "flags come first"},
-		{[]string{"--src", dir, "--context", ctxDir, "internal/ntable"}, "relative to the source tree"},
-		{[]string{"--src", dir, "--context", ctxDir, "./a b"}, "character"},
+		{[]string{"--src", dir, "--context", ctxDir, "internal/ntable"}, "not a package directory"},
+		{[]string{"--src", dir, "--context", ctxDir, "./a b"}, "not a package directory"},
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "29s", "./a"}, "under 30s"},
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "0s", "./a"}, "under 30s"},
 		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "-1m", "./a"}, "under 30s"},
@@ -897,6 +897,32 @@ func TestFreshGocacheIsAnAnonymousVolume(t *testing.T) {
 	for _, call := range eng.argvs() {
 		if strings.Contains(call, tc.gocache) {
 			t.Errorf("a fresh-cache run touched the shared build cache: %q", call)
+		}
+	}
+}
+
+func TestPackageArgumentsAreAllowlisted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, ok := range []string{".", "./...", "./internal/ntable", "./internal/ntable/", "./internal/ntable/...", "./cmd/nova-ci", "./a_b.c-d/e"} {
+		if _, err := parseRun([]string{"--src", dir, "--image", "x", ok}); err != nil {
+			t.Errorf("package %q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"./internal/ntable/;id>&2;cat</etc/hostname>&2;exit",
+		"./a|b", "./a&b", "./a<b", "./a>b", "./a*", "./a(b)", "./a;b", "./a$b", "./a`b`", "./a'b", `./a"b`, `./a\b`,
+		"./a b", "./a\tb", "./a\nb", "./../../../etc", "./a/../b", "..", "/abs", "internal/x", "",
+	} {
+		// The runtime is a path that does not exist, so even a refusal that
+		// regressed could never reach a real one; the refusal is before it.
+		var stdout, stderr bytes.Buffer
+		code := dispatch(context.Background(), []string{"run", "--src", dir, "--image", "x", "--podman", filepath.Join(dir, "no-such-podman"), bad}, &stdout, &stderr)
+		if code != exitCannotRun || !strings.Contains(stderr.String(), "not a package directory") || strings.Contains(stderr.String(), "no-such-podman") {
+			t.Errorf("package %q: exit %d, %q", bad, code, stderr.String())
 		}
 	}
 }

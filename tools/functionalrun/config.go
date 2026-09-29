@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,11 @@ type reapConfig struct {
 	podman string
 }
 
+// packageRE is the allowlist for a package argument. It reaches a shell inside
+// the container (make's recipe), so it admits only what a package directory is
+// made of: ./ then segments of [A-Za-z0-9_.-], and an optional /... at the end.
+var packageRE = regexp.MustCompile(`^\.(/[A-Za-z0-9_.-]+)*/?(\.\.\.)?$`)
+
 var sizeRE = regexp.MustCompile(`^[1-9][0-9]*[kmgKMG]?$`)
 
 // volumeNameRE is podman's own rule for a volume name.
@@ -86,11 +92,8 @@ func parseRun(args []string) (runConfig, error) {
 		if strings.HasPrefix(p, "-") {
 			return c, fmt.Errorf("flag %q after the packages; flags come first", p)
 		}
-		if !strings.HasPrefix(p, "./") && p != "." {
-			return c, fmt.Errorf("package %q is not a directory relative to the source tree (./...)", p)
-		}
-		if strings.ContainsAny(p, " \t\n'\"$`\\") {
-			return c, fmt.Errorf("package %q holds a character a package directory never has", p)
+		if !packageRE.MatchString(p) || slices.Contains(strings.Split(p, "/"), "..") {
+			return c, fmt.Errorf("package %q is not a package directory of the source tree: ./ then path segments of letters, digits, _ . and -, an optional trailing /..., and no ..", p)
 		}
 	}
 	if c.deadline < minDeadline {
