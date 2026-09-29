@@ -300,7 +300,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 			t.Errorf("the machine refusal does not name %q:\n%s", want, err)
 		}
 	}
-	row, err := machine.NewRow("studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64", "tiers": "pro,flash"})
+	row, err := machine.NewRow("bench-alpha", map[string]string{"user": "runner", "seat": "bench-alpha", "slots": "64", "tiers": "pro,flash"})
 	if err != nil {
 		t.Fatal(err)
 	}

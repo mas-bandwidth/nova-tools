@@ -568,27 +568,27 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 	}
 
 	// 1. Machine --tiers support
-	out, _ := step(0, "machine", "add", "space", "--user", "glenn", "--seat", "space", "--slots", "32", "--runners", "0", "--tiers", "frontier,pro")
-	if out != "CONFIG ADD kind=machine name=space rev=1\n" {
+	out, _ := step(0, "machine", "add", "bench-alpha", "--user", "runner", "--seat", "bench-alpha", "--slots", "32", "--runners", "0", "--tiers", "frontier,pro")
+	if out != "CONFIG ADD kind=machine name=bench-alpha rev=1\n" {
 		t.Fatalf("machine add: %q", out)
 	}
-	out, _ = step(0, "machine", "show", "space")
-	if !strings.HasPrefix(out, "MACHINE name=space user=glenn seat=space slots=32 runners=0 tiers=frontier,pro created=") {
+	out, _ = step(0, "machine", "show", "bench-alpha")
+	if !strings.HasPrefix(out, "MACHINE name=bench-alpha user=runner seat=bench-alpha slots=32 runners=0 tiers=frontier,pro created=") {
 		t.Fatalf("machine show: %q", out)
 	}
-	out, _ = step(0, "machine", "set", "space", "--tiers", "flash,frontier,pro")
-	if out != "CONFIG SET kind=machine name=space rev=2 changed=tiers\n" {
+	out, _ = step(0, "machine", "set", "bench-alpha", "--tiers", "flash,frontier,pro")
+	if out != "CONFIG SET kind=machine name=bench-alpha rev=2 changed=tiers\n" {
 		t.Fatalf("machine set tiers: %q", out)
 	}
-	out, _ = step(0, "machine", "show", "space")
-	if !strings.HasPrefix(out, "MACHINE name=space user=glenn seat=space slots=32 runners=0 tiers=flash,frontier,pro created=") {
+	out, _ = step(0, "machine", "show", "bench-alpha")
+	if !strings.HasPrefix(out, "MACHINE name=bench-alpha user=runner seat=bench-alpha slots=32 runners=0 tiers=flash,frontier,pro created=") {
 		t.Fatalf("machine show after set: %q", out)
 	}
-	_, errs := step(2, "machine", "set", "space", "--tiers", "bogus")
+	_, errs := step(2, "machine", "set", "bench-alpha", "--tiers", "bogus")
 	if !strings.Contains(errs, "want a comma list of flash, frontier, pro") {
 		t.Fatalf("invalid tiers refusal: %q", errs)
 	}
-	_, errs = step(2, "machine", "add", "badmach", "--user", "glenn", "--seat", "space", "--slots", "32", "--tiers", "bogus")
+	_, errs = step(2, "machine", "add", "badmach", "--user", "runner", "--seat", "bench-alpha", "--slots", "32", "--tiers", "bogus")
 	if !strings.Contains(errs, "want a comma list of flash, frontier, pro") {
 		t.Fatalf("invalid tiers on add refusal: %q", errs)
 	}
@@ -600,32 +600,32 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 			t.Errorf("missing %q in route add refusal: %s", req, errs)
 		}
 	}
-	_, errs = step(2, "route", "add", "badroute", "--provider", "openai", "--model", "gpt-4o", "--seat", "studio", "--tier", "bogus")
+	_, errs = step(2, "route", "add", "badroute", "--provider", "openai", "--model", "gpt-4o", "--seat", "worker", "--tier", "bogus")
 	if !strings.Contains(errs, "--tier \"bogus\": want one of flash, frontier, pro") {
 		t.Fatalf("invalid tier refusal: %q", errs)
 	}
 
-	out, _ = step(0, "route", "add", "claude", "--provider", "anthropic", "--model", "claude-3-opus", "--seat", "studio", "--tier", "frontier")
+	out, _ = step(0, "route", "add", "claude", "--provider", "anthropic", "--model", "claude-3-opus", "--seat", "worker", "--tier", "frontier")
 	if out != "CONFIG ADD kind=route name=claude rev=3\n" {
 		t.Fatalf("route add claude: %q", out)
 	}
-	out, _ = step(0, "route", "add", "gpt", "--provider", "openai", "--model", "gpt-4o", "--seat", "studio", "--tier", "frontier")
+	out, _ = step(0, "route", "add", "gpt", "--provider", "openai", "--model", "gpt-4o", "--seat", "worker", "--tier", "frontier")
 	if out != "CONFIG ADD kind=route name=gpt rev=4\n" {
 		t.Fatalf("route add gpt: %q", out)
 	}
-	_, errs = step(1, "route", "add", "claude", "--provider", "anthropic", "--model", "claude-3-opus", "--seat", "studio", "--tier", "frontier")
+	_, errs = step(1, "route", "add", "claude", "--provider", "anthropic", "--model", "claude-3-opus", "--seat", "worker", "--tier", "frontier")
 	if errs != "nova-config route add: route claude exists; run: nova-config route set claude --<field> <value>\n" {
 		t.Fatalf("duplicate route: %q", errs)
 	}
 
 	out, _ = step(0, "route", "list")
-	wantList := "ROUTE name=claude provider=anthropic model=claude-3-opus seat=studio tier=frontier\nROUTE name=gpt provider=openai model=gpt-4o seat=studio tier=frontier\nCONFIG LIST kind=route rows=2\n"
+	wantList := "ROUTE name=claude provider=anthropic model=claude-3-opus seat=worker tier=frontier\nROUTE name=gpt provider=openai model=gpt-4o seat=worker tier=frontier\nCONFIG LIST kind=route rows=2\n"
 	if out != wantList {
 		t.Fatalf("route list:\n%s\nwant:\n%s", out, wantList)
 	}
 
 	out, _ = step(0, "route", "show", "claude")
-	if !strings.HasPrefix(out, "ROUTE name=claude provider=anthropic model=claude-3-opus seat=studio tier=frontier created=") {
+	if !strings.HasPrefix(out, "ROUTE name=claude provider=anthropic model=claude-3-opus seat=worker tier=frontier created=") {
 		t.Fatalf("route show: %q", out)
 	}
 
@@ -634,7 +634,7 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 		t.Fatalf("route set: %q", out)
 	}
 	out, _ = step(0, "route", "show", "claude")
-	if !strings.HasPrefix(out, "ROUTE name=claude provider=anthropic model=claude-3-opus seat=studio tier=pro created=") {
+	if !strings.HasPrefix(out, "ROUTE name=claude provider=anthropic model=claude-3-opus seat=worker tier=pro created=") {
 		t.Fatalf("route show after set: %q", out)
 	}
 
@@ -649,7 +649,7 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 		t.Fatalf("route remove: %q", out)
 	}
 	out, _ = step(0, "route", "list")
-	wantListAfterRemove := "ROUTE name=gpt provider=openai model=gpt-4o seat=studio tier=frontier\nCONFIG LIST kind=route rows=1\n"
+	wantListAfterRemove := "ROUTE name=gpt provider=openai model=gpt-4o seat=worker tier=frontier\nCONFIG LIST kind=route rows=1\n"
 	if out != wantListAfterRemove {
 		t.Fatalf("route list after remove:\n%s\nwant:\n%s", out, wantListAfterRemove)
 	}
@@ -670,7 +670,7 @@ func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
 	if out != wantApply {
 		t.Fatalf("route apply:\n%s\nwant:\n%s", out, wantApply)
 	}
-	if view := h.redis.views["route"]["gpt"]; view["provider"] != "openai" || view["model"] != "gpt-4o" || view["seat"] != "studio" || view["tier"] != "frontier" {
+	if view := h.redis.views["route"]["gpt"]; view["provider"] != "openai" || view["model"] != "gpt-4o" || view["seat"] != "worker" || view["tier"] != "frontier" {
 		t.Fatalf("redis route view: %v", view)
 	}
 	if h.redis.revs["route"] != 6 {
