@@ -493,8 +493,12 @@ exactly, member by member, never by their counts.
     and a card the log never placed, or placed elsewhere, is a violation
     naming it (section 17). `check` and the property test hold it; the tick's
     check does not read the log.
+14. The log and the inbox agree: every notification is written to both, so
+    each notification line of the log (an update aside) has its inbox entry
+    with the same id, kind, type and text, and each inbox entry its line.
+    `check` and the property test hold it.
 
-Rules 2, 3, 4, 5, 9, 12 and 13 hold whenever no operation is pending (while one
+Rules 2, 3, 4, 5, 9, 12, 13 and 14 hold whenever no operation is pending (while one
 is, 12 judges only the operation); 1, 6, 7, 8 and
 11 always; 5 and 6 skip sentinels, which land by release and are never read or
 merged. A rank is the one step that changes scores: while a rank is pending, a

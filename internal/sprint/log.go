@@ -166,3 +166,39 @@ func NoteLine(n Note, op string) Line {
 	nn := n
 	return Line{Kind: n.Kind, At: n.At, Epoch: IDEpoch(n.ID), Op: op, Stream: n.Stream, Actor: n.Who, Note: &nn}
 }
+
+// StreamViolations is rule 14 over the epoch's log and its inbox stream:
+// every notification is written to both, so each notification line of the
+// log (an update aside, which rewrites an open judgment in place and is the
+// log's alone) has its entry in the inbox with the same id, kind, type and
+// text, and each inbox entry its line in the log.
+func StreamViolations(lines []Line, inbox []Note) []Violation {
+	key := func(n Note) string { return n.ID + " (" + n.Kind + ", " + n.Type + "): " + n.What }
+	logged := map[string]int{} // each notification as written, counted
+	var order []string
+	for _, l := range lines {
+		if l.Note == nil || l.Verb == "updated" {
+			continue
+		}
+		k := key(*l.Note)
+		if logged[k] == 0 {
+			order = append(order, k)
+		}
+		logged[k]++
+	}
+	var out []Violation
+	for _, n := range inbox {
+		k := key(n)
+		if logged[k] == 0 {
+			out = append(out, Violation{14, "notification " + k + " is in the inbox and not in the log"})
+			continue
+		}
+		logged[k]--
+	}
+	for _, k := range order {
+		if logged[k] > 0 {
+			out = append(out, Violation{14, "notification " + k + " is in the log and not in the inbox"})
+		}
+	}
+	return out
+}

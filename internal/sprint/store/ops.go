@@ -73,8 +73,13 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		if err != nil {
 			return rep, nil, err
 		}
-		// the log, read between the two fence reads: of the same state
+		// the log and the inbox's stream, read between the two fence reads:
+		// of the same state
 		lines, err := st.Log(ctx)
+		if err != nil {
+			return rep, nil, err
+		}
+		inbox, err := st.inboxAll(ctx)
 		if err != nil {
 			return rep, nil, err
 		}
@@ -102,6 +107,7 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		rep.Violations = sprint.Check(s, ops)
 		if pending == nil {
 			rep.Violations = append(rep.Violations, sprint.LogViolations(s, lines)...)
+			rep.Violations = append(rep.Violations, sprint.StreamViolations(lines, inbox)...)
 		}
 		held, err := st.heldState(ctx, s, pending)
 		if err != nil {
@@ -342,6 +348,23 @@ func (st *Store) Log(ctx context.Context) ([]sprint.Line, error) {
 			return nil, err
 		}
 		all = append(all, lines...)
+		if len(ids) < logPage {
+			return all, nil
+		}
+		after = ids[len(ids)-1]
+	}
+}
+
+// inboxAll is every notification of the epoch's inbox stream, in order.
+func (st *Store) inboxAll(ctx context.Context) ([]sprint.Note, error) {
+	var all []sprint.Note
+	after := ""
+	for {
+		notes, ids, err := st.B.NotesSince(ctx, after, logPage)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, notes...)
 		if len(ids) < logPage {
 			return all, nil
 		}

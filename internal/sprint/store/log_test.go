@@ -287,3 +287,39 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 	}
 	h.clean("reworked at the bound")
 }
+
+// Rule 14: every notification is in both streams, the same. One written to
+// the inbox alone, or to the log alone, is a violation naming it.
+func TestTheLogAndTheInboxAgree(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.clean("agree")
+	rule14 := func() []string {
+		rep, _, err := h.st.Check(h.ctx, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, v := range rep.Violations {
+			if v.Rule == 14 {
+				out = append(out, v.Detail)
+			}
+		}
+		return out
+	}
+	n := sprint.Note{ID: "outside-1.1", Kind: sprint.Happened, Type: "an outside note", What: "only in the inbox", At: h.now}
+	h.m.mu.Lock()
+	h.m.seq++
+	lg := h.m.log()
+	lg.inbox = append(lg.inbox, memNote{fmt.Sprintf("%d-0", h.m.seq), n})
+	h.m.mu.Unlock()
+	if v := rule14(); len(v) != 1 || !strings.Contains(v[0], "outside-1.1") || !strings.Contains(v[0], "not in the log") {
+		t.Fatalf("an inbox entry with no line: %v", v)
+	}
+	m := sprint.Note{ID: "outside-2.1", Kind: sprint.Happened, Type: "an outside note", What: "only in the log", At: h.now}
+	h.m.appendLine(sprint.NoteLine(m, "outside-2"))
+	if v := rule14(); len(v) != 2 || !strings.Contains(strings.Join(v, "\n"), "outside-2.1 (happened, an outside note): only in the log is in the log and not in the inbox") {
+		t.Fatalf("a line with no inbox entry: %v", v)
+	}
+}
