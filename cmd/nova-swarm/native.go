@@ -116,7 +116,7 @@ type nativeRunConfig struct {
 	// database while the launch runs (rule 13d). cmdNative has already refused one under a
 	// second and one not shorter than the deadline, so what reaches here is a usable interval.
 	usageInterval time.Duration
-	// benchName is the name of this bench (e.g. hulk, vision); "" means resolve via os.Hostname.
+	// benchName is the name of this bench; "" means resolve via os.Hostname.
 	benchName string
 	// stageTimeout is the hard timeout for staging (default 120s).
 	stageTimeout time.Duration
@@ -442,8 +442,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return nativeRunResult{}, 2
 	}
 	// TMPDIR is the slot's own tmp/<label>, never the job directory (which admission git-inits
-	// into a repo): a card's temp dir inside a repo is exactly what makes nova-wake's
-	// TestAwakeRefusesNonBus fail for a reason the card did not cause (#460). The slot
+	// into a repo): a card's temp dir inside a repo makes tests checking for a non-bus directory
+	// fail for a reason the card did not cause (#460). The slot
 	// directory is never a repo, so a temp file made here sits outside every repository the
 	// card's work could touch. It is made here so the child's TMPDIR exists before it starts.
 	tmpDir := filepath.Join(cfg.slotDir, "tmp", cfg.label)

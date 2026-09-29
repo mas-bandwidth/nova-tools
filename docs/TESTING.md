@@ -31,7 +31,9 @@ the real thing (a redis-server, a built binary, a child process) lives in a
 only those tests, and ci.yml's `functional` job runs it in the merge queue (a
 whole work stream merging into dev), nightly and by hand, never on a pull
 request. Keep them few and cheap: one server per package (`TestMain`) rather
-than one per test, and the same two-minute cap as every job.
+than one per test, and the same two-minute cap as every job. On a working machine
+they run inside one container per run, `make test-functional-container
+PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
 
 ### Table epoch actions and receipt replay
 

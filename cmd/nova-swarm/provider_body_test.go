@@ -284,7 +284,7 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	assertDialedProxy(t, got.res.job, got.proxy)
 }
 
-// TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown is Stella's HOLD
+// TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown is HOLD
 // 5782441006: the upstream accepts the POST and never sends response headers.
 // The proxy's own header wait ends it, the card is UNKNOWN (not failed), one
 // upstream request, one launch, the persisted mark, no result. The body gap is
