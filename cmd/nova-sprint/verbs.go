@@ -108,8 +108,8 @@ what did not and why (REFUSED, on stderr), its summary line, and the sprint's
 line: landed/all percent -> ETA. Exit 1 means at least one item was refused;
 other valid items may have moved. Read both MOVED and REFUSED before retrying.
 --answers takes judgment notification IDs printed by inbox, comma separated,
-not a description. An unknown judgment ID can be refused while valid moves
-still happen.
+not a description. If any named answer is invalid, the whole step is refused
+and nothing changes. Only the coordinator may answer judgments.
 
 A work card is named with its generation, <card>@<gen>: the generation the
 worker holds, from queue --as <member> (--json: "gen"). take by id and finish
