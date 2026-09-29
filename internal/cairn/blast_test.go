@@ -228,3 +228,34 @@ func TestSessionSourceRefusesALinkAndAnUnreadableHeader(t *testing.T) {
 		t.Fatalf("an unreadable header must be an error naming the record: %q %v", got, err)
 	}
 }
+
+// After a refused open, an append for the unopened session does not suggest the
+// open that was just refused: it repeats the refusal, and its next command.
+func TestAppendForAnUnopenedSessionRepeatsTheRefusalOfOpen(t *testing.T) {
+	t.Parallel()
+	store := laidStore(t, true)
+	log := filepath.Join(store, "log.jsonl")
+	if err := os.Rename(log, log+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(log+".moved", log); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	opened := Open(store, "y", "", benchNow, PublishManual)
+	_, appended := Append(store, "y", "e1", "words", "", benchNow, PublishManual)
+	if opened == nil || appended == nil {
+		t.Fatalf("open %v, append %v: both are refused", opened, appended)
+	}
+	for _, w := range append([]string{"cannot append an entry", log}, linkText...) {
+		if !strings.Contains(appended.Error(), w) {
+			t.Errorf("%q lacks %q", appended, w)
+		}
+	}
+	if strings.Contains(appended.Error(), "open first") {
+		t.Errorf("the append suggests the open that was refused: %q", appended)
+	}
+	// With a usable log the suggestion stands.
+	if _, err := Append(laidStore(t, true), "y", "e1", "words", "", benchNow, PublishManual); err == nil || !strings.Contains(err.Error(), "open first: nova-cairn open") {
+		t.Errorf("a store whose open would work keeps the suggestion: %v", err)
+	}
+}

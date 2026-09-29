@@ -246,6 +246,16 @@ func noRecord(store, session, publish string) error {
 		session, store, openRemedy(store, session, publish))}
 }
 
+// missingRecord is the refusal for a session with no record. It suggests the
+// open that would make one, unless that open would itself be refused: then it is
+// the open's refusal, with the open's own next command.
+func missingRecord(d *dirs, sh shape, store, session, publish string) error {
+	if _, err := sessionSource(d, sh, store, session); err != nil {
+		return err
+	}
+	return noRecord(store, session, publish)
+}
+
 // benchHeadingRe reads the one heading this tool writes into a bench file:
 // `## <rfc3339> — <entry>`. It is the section boundary too, which is why the
 // form is machine-tight -- a hand-written `## 21:55Z beat: …` heading in the
@@ -563,11 +573,11 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		return res, err
 	}
 	if !ok {
-		return res, noRecord(store, session, publish)
+		return res, missingRecord(d, sh, store, session, publish)
 	}
 	rec, err := d.openFile(path, os.O_RDWR|os.O_APPEND, 0)
 	if os.IsNotExist(err) {
-		return res, noRecord(store, session, publish)
+		return res, missingRecord(d, sh, store, session, publish)
 	}
 	if err != nil {
 		return res, err

@@ -155,7 +155,9 @@ shape.
 reconstruct. The remedy quotes the caller's store and session for a POSIX shell.
 Control bytes use octal decoding inside a subshell with a sentinel to preserve
 trailing newlines, so the printed command stays one line and opens exactly the
-named record, in the shape the store already has.
+named record, in the shape the store already has. Where that open would itself be refused (a
+`log.jsonl` that is a link, say), the append repeats the open's refusal and its
+own next command instead.
 
 The lifecycle of a store (shape, open, append, duplicate, conflict, refusal) is
 modelled in `tla/CairnStore.tla`: one shape per store, an entry id maps to one
@@ -264,5 +266,5 @@ New regression cases must demonstrate the defect before the repair.
 49. `TestNoVerbFollowsASymbolicLink` — a link at the store as given, `sessions/`, `entries/`, an entry directory, `log.jsonl` or a record, in either shape, is refused with the one text and nothing is written where it leads. `TestARecordSwappedForALinkNeverCarriesAWriteOutside`, `TestAnAncestorOfTheStoreSwappedUnderAppendsLosesAndInventsNothing` and `TestAStoreSwappedForALinkNeverCarriesAWriteOutside` run the swaps of a record, of an ancestor and of the store while a fixed number of appends run, in a temp directory each; `TestADirectoryThatChangesAfterItWasCheckedIsRefused` fixes the check on a directory looked at earlier; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs one store named relative, absolute and in other letter cases.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
-    `TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` and `TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append (a record or `log.jsonl` that is a link, a directory or read-only, `entries/` a link) leaves no entry file, no pointer line and no log line: the record and the log are opened before the entry is stored, and the pointer and the log line are written through those handles.
+    `TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` and `TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append (a record or `log.jsonl` that is a link, a directory or read-only, `entries/` a link) leaves no entry file, no pointer line and no log line: the record and the log are opened before the entry is stored, and the pointer and the log line are written through those handles. `TestAppendForAnUnopenedSessionRepeatsTheRefusalOfOpen` fixes that an append for an unopened session repeats the refusal of an open that would be refused instead of suggesting it.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.
