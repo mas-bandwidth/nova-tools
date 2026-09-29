@@ -21,10 +21,12 @@ import (
 // runs, and its unlisted card is refused with CARD REFUSED and never starts.
 
 func TestBatchPublicGateListedRunsUnlistedRefused(t *testing.T) {
+	t.Parallel()
+
 	// The repo probe is pointed at an in-process 200 for every repository, so
 	// the network never decides this test: checkRepos admits both cards and
 	// the public-class gate is what refuses one of them.
-	useProbeTransport(t, func(w http.ResponseWriter, r *http.Request) {
+	probeClient := makeProbeClient(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	dir := t.TempDir()
@@ -47,8 +49,9 @@ func TestBatchPublicGateListedRunsUnlistedRefused(t *testing.T) {
 	code := Batch(BatchInput{
 		Tokens: "unmetered",
 		ID:     "B1", Deadline: 20 * time.Second, Cards: tsv, Root: root, Runner: runner,
-		Worker: Worker{Name: "muse", Class: "public"},
-		Stdout: &out, Stderr: &errb,
+		Worker:      Worker{Name: "muse", Class: "public"},
+		ProbeClient: probeClient,
+		Stdout:      &out, Stderr: &errb,
 	})
 	packet, errors := out.String(), errb.String()
 	if !strings.Contains(errors, "CARD REFUSED reason=private-source repo=acme/secret class=public worker=muse") {

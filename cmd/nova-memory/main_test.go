@@ -28,6 +28,9 @@ func runCLI(t *testing.T, stdin string, args ...string) (exit int, stdout, stder
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_MEMORY_AS_TOOL") == "1" {
+		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	_ = os.Setenv("NOVA_MEMORY_ROOT", corpus)
 	os.Exit(m.Run())
 }

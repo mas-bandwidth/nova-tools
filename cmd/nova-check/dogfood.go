@@ -66,6 +66,10 @@ var (
 )
 
 func cmdDogfood(args []string, stdout, stderr io.Writer) int {
+	return cmdDogfoodWith(args, stdout, stderr, stagedEnv{})
+}
+
+func cmdDogfoodWith(args []string, stdout, stderr io.Writer, env stagedEnv) int {
 	if len(args) > 0 {
 		verbflag.HelpIfAsked(args[:1], "dogfood")
 	}
@@ -74,9 +78,9 @@ func cmdDogfood(args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "ledger":
-		return cmdDogfoodLedger(args[1:], stdout, stderr)
+		return cmdDogfoodLedgerWith(args[1:], stdout, stderr, env)
 	case "record":
-		return cmdDogfoodRecord(args[1:], stdout, stderr)
+		return cmdDogfoodRecordWith(args[1:], stdout, stderr, env)
 	case "gate":
 		return cmdDogfoodGate(args[1:], stdout, stderr)
 	default:
@@ -106,6 +110,10 @@ func addDogfoodSourceFlags(fs *flag.FlagSet) *dogfoodSources {
 // cannot answer is one NOTE and its tool falls back to the reference, because a
 // half-built directory should cost that tool's rows and not the whole ledger.
 func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([]dogfood.Verb, int) {
+	return s.verbListWith(verb, failMax, stderr, stagedEnv{})
+}
+
+func (s *dogfoodSources) verbListWith(verb string, failMax int, stderr io.Writer, env stagedEnv) ([]dogfood.Verb, int) {
 	if s.cli == "" && s.tools == "" {
 		refuse(stderr, " dogfood "+verb, sourceRemedy)
 		fmt.Fprintf(stderr, "  %s\n  %s\n", cliHint, toolsHint)
@@ -124,7 +132,7 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE asking the binaries for their verbs: %d/%d\n", done, total)
 		})
-		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, dogfoodHelpRunner, progress)
+		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, env.helpRunner(), progress)
 		if err != nil {
 			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -160,9 +168,13 @@ type dogfoodRead struct {
 }
 
 func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, repo string, gitTimeout, failMax int, stderr io.Writer) (dogfoodRead, int) {
+	return dogfoodGatherWith(verb, src, receiptsDir, authorsFile, repo, gitTimeout, failMax, stderr, stagedEnv{})
+}
+
+func dogfoodGatherWith(verb string, src *dogfoodSources, receiptsDir, authorsFile, repo string, gitTimeout, failMax int, stderr io.Writer, env stagedEnv) (dogfoodRead, int) {
 	var read dogfoodRead
 
-	verbs, code := src.verbList(verb, failMax, stderr)
+	verbs, code := src.verbListWith(verb, failMax, stderr, env)
 	if code != 0 {
 		return read, code
 	}
@@ -196,7 +208,7 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE reading authorship from git: %d/%d verbs\n", done, total)
 		})
-		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, dogfoodGitRunner, progress)
+		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, env.gitRunner(), progress)
 		if err != nil {
 			return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -249,6 +261,10 @@ func addDogfoodReadFlags(fs *flag.FlagSet) (receipts, authors, repo *string, git
 }
 
 func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
+	return cmdDogfoodLedgerWith(args, stdout, stderr, stagedEnv{})
+}
+
+func cmdDogfoodLedgerWith(args []string, stdout, stderr io.Writer, env stagedEnv) int {
 	fs := flag.NewFlagSet("dogfood ledger", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
@@ -259,7 +275,7 @@ func cmdDogfoodLedger(args []string, stdout, stderr io.Writer) int {
 	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
-	read, code := dogfoodGather("ledger", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
+	read, code := dogfoodGatherWith("ledger", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr, env)
 	if code != 0 {
 		return code
 	}
@@ -334,6 +350,10 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
+	return cmdDogfoodRecordWith(args, stdout, stderr, stagedEnv{})
+}
+
+func cmdDogfoodRecordWith(args []string, stdout, stderr io.Writer, env stagedEnv) int {
 	fs := flag.NewFlagSet("dogfood record", flag.ContinueOnError)
 	src := addDogfoodSourceFlags(fs)
 	tool := fs.String("tool", "", "the binary you ran (required)")
@@ -365,7 +385,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	// as a note that named nothing: on 2026-09-18 that stranded every receipt
 	// on the bench — nine real runs — and the bench read as having dogfooded
 	// nothing at all.
-	verbs, code := src.verbList("record", *failMax, stderr)
+	verbs, code := src.verbListWith("record", *failMax, stderr, env)
 	if code != 0 {
 		return code
 	}
@@ -390,7 +410,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		Tool:   *tool,
 		Verb:   *verb,
 		By:     *by,
-		At:     dogfoodClock().UTC().Format(time.RFC3339),
+		At:     env.clock()().UTC().Format(time.RFC3339),
 		OK:     *ok,
 		Notes:  *notes,
 		Issue:  *issue,

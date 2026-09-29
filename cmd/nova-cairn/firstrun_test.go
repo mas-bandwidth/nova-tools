@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,7 +150,39 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // tool PRINTS IT BACK on every line, so the test runs in a directory of its own
 // rather than rewriting the path: a rewritten one is no longer the line the
 // document promised, which is what the old test's `localize` gave up.
+func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_CAIRN_AS_TOOL") == "1" {
+		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
+
+// The `### First run` block of docs/TESTS.md is EXECUTED: every documented
+// command is run, in order, in one directory, and its whole output is compared
+// with the block written under it -- same number of lines, same lines, same
+// order.
+//
+// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
+// a `printed map[string]bool` and asked whether each documented line was in it,
+// with the VALUES deliberately not compared. Under that comparison an abridged
+// block passes (a dropped line removes a lookup, not an assertion), a reordered
+// pair is never looked at, and a wrong stamp, a wrong byte count or a wrong
+// `duplicate=` is invisible -- which for a tool whose whole job is a durable
+// receipt is most of what the transcript is for.
+//
+// NOTHING IS NORMALISED, and that is a property of this transcript rather than
+// a shortcut. The stamps come from `--now`, the ids and the store are named on
+// the command line, and the byte count is of the text typed there, so every
+// value on every line reproduces. onboarding.Execute is told so by being handed
+// no Norm, and it says as much under any line that disagrees.
+//
+// The store is typed as written. The documented `./cairns` is relative and the
+// tool PRINTS IT BACK on every line, so the test runs in a directory of its own
+// rather than rewriting the path: a rewritten one is no longer the line the
+// document promised, which is what the old test's `localize` gave up.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -178,21 +211,36 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	// ONE store for the whole sitting: the transcript opens a record and then
 	// appends to it, and a fresh directory per line would unmake that.
-	t.Chdir(t.TempDir())
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	dir := t.TempDir()
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		cmd := exec.Command(bin, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_CAIRN_AS_TOOL=1")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, runErr
+			}
+		}
+		return onboarding.Result{Code: exitCode, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+	for _, p := range onboarding.Execute(steps, runner) {
 		t.Error(p)
 	}
-}
-
-// runDocumented calls this binary's own entry point with the documented
-// arguments. nova-cairn's first run reads nothing on stdin.
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
-	if s.Stdin != "" {
-		return onboarding.Result{}, errReadsNothing
-	}
-	var out, errb bytes.Buffer
-	code := run(s.Args, strings.NewReader(""), &out, &errb)
-	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 }
 
 type readsNothing struct{}

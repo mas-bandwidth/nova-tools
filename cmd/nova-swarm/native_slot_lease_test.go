@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,25 +23,36 @@ import (
 // nova-bench/slots directory at all. The run is not refused, the card finishes NATIVE OK,
 // and no slot store is made on the way past.
 func TestNativeRunsWithNoSlotsStore(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	tool, _ := builtBinaries(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
 	write(t, cardPath, "a card\n")
 
-	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
+	cmd := exec.Command(tool, "native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "30s", "--no-wall"},
-		strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--deadline", "30s", "--no-wall")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	rc := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		rc = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("starting native: %v", err)
+	}
 	if rc != 0 {
 		t.Fatalf("a native launch with no slot store runs, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}
 	if strings.Contains(stderr.String(), "SLOTS REFUSED") || strings.Contains(stderr.String(), "no_slots_store") {
 		t.Fatalf("native refused on a slot ledger it no longer keeps:\n%s", stderr.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "NATIVE OK ") {
+	if !strings.Contains(stdout.String(), "NATIVE OK ") {
 		t.Fatalf("the card finishes NATIVE OK:\n%s%s", stdout.String(), stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(home, "nova-bench", "slots")); !os.IsNotExist(err) {

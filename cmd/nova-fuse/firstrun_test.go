@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -229,6 +231,8 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // fixture is copied to that name in a directory of the test's own rather than
 // the path being rewritten.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -263,22 +267,34 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "fuse-box.json"), fixture, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(dir)
-	for _, p := range onboarding.Execute(steps, documented(t)) {
-		t.Error(p)
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// documented runs one line of the transcript with the clock the document was
-// recorded at.
-func documented(t *testing.T) onboarding.Runner {
-	t.Helper()
-	return func(s onboarding.Step) (onboarding.Result, error) {
+	runner := func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, errReadsNothing
 		}
-		code, stdout, stderr := runFuse(t, s.Args...)
-		return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
+		cmd := exec.Command(bin, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_FUSE_AS_TOOL=1", "NOVA_FUSE_FIXED_TIME=2026-09-09T18:27:40Z")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, runErr
+			}
+		}
+		return onboarding.Result{Code: exitCode, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+	for _, p := range onboarding.Execute(steps, runner) {
+		t.Error(p)
 	}
 }
 

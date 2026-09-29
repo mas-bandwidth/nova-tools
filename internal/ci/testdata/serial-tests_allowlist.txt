@@ -22,13 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 248
-cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
-cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
+# ceiling: 227
 cmd/nova-sandbox/handoff_test.go:TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
 cmd/nova-sandbox/handoff_test.go:TestRunRefusesWhenTheHandoffFailsAfterACleanCommand serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
 cmd/nova-sandbox/reapverb_test.go:TestAnUnreadableMarkerIsAnOrphan serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
@@ -78,10 +72,6 @@ cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceInstea
 cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
 cmd/nova-sandbox/volumes_darwin_test.go:TestTheCreateLockIsAnExclusiveFlock serial: swaps package var main.volumeLockPath
 cmd/nova-sandbox/volumes_darwin_test.go:TestTheSandboxedCallerSentenceIsWrittenOnce serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
-cmd/nova-self-talk/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
-cmd/nova-update/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
-cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
 internal/merge/issue2185_test.go:TestIssue2185ProductionEnqueueEmits serial: swaps package var merge.DefaultEvents
@@ -151,9 +141,6 @@ internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Sete
 internal/nsprint/table/streams_records_test.go:TestTableTickMakesNoRestCall serial: swaps package var http.DefaultTransport
 internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
-internal/sandbox/policy_test.go:TestACommandInTheCallersHomeIsRefused serial: t.Setenv
-internal/sandbox/systemreads_test.go:TestLinuxWallGrantsTheResolvedResolverConfigDirectory serial: swaps package var sandbox.resolvConfPath
-internal/sandbox/wrap_darwin_test.go:TestNoSandboxRefusesOnDarwin serial: swaps package var sandbox.available
 internal/sandbox/wrap_linux_test.go:TestLandlockABIBelowTheTableRefusesOnLinux serial: swaps package var sandbox.available
 internal/sandbox/wrap_linux_test.go:TestNewerLandlockABIIsClampedToTheTableOnLinux serial: swaps package var sandbox.available
 internal/sandbox/wrap_linux_test.go:TestNoLandlockRefusesOnLinux serial: swaps package var sandbox.available
@@ -161,9 +148,6 @@ internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Un
 internal/secrets/storepull_test.go:TestStorePullUsesBenchOwnedKey serial: t.Setenv
 internal/sprinttable/session_unix_test.go:TestRefreshInTheUnitGroupDiesWithTheUnit serial: swaps package var sprinttable.heldUnit, swaps package var sprinttable.heldWait
 internal/sprinttable/session_unix_test.go:TestRefreshSurvivesUnitProcessGroupKill serial: swaps package var sprinttable.heldUnit, swaps package var sprinttable.heldWait
-internal/swarm/admitrepo_test.go:TestAdmitAcceptsPublicRepo serial: swaps package var swarm.probeClient
-internal/swarm/admitrepo_test.go:TestAdmitRefusesPrivateRepo serial: swaps package var swarm.probeClient
-internal/swarm/admitrepo_test.go:TestAdmitRefusesWhenProbeFails serial: swaps package var swarm.probeClient
 internal/swarm/batch_functional_test.go:TestBatchRelativeRootIsAbsolutized serial: os.Chdir
 internal/swarm/batch_tokens_13d_functional_test.go:TestBatchCardsPutsTheWordInTheRemoteNativeArgv serial: t.Setenv
 internal/swarm/bench_functional_test.go:TestBatchCopiesCardOnly serial: t.Setenv
@@ -191,7 +175,6 @@ internal/swarm/opencode_functional_test.go:TestOpenCodeSourceWaitsOutAWriteAhead
 internal/swarm/opencode_test.go:TestOpenCodeSourceWithoutSQLiteIsANamedRefusal serial: t.Setenv
 internal/swarm/opencode_functional_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
 internal/swarm/prewarm_functional_test.go:TestPrewarmGitChildrenDropSecrets serial: t.Setenv
-internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlistedRefused serial: swaps package var swarm.probeClient
 internal/swarm/pullworker_test.go:TestExecuteContainerRefusesSeatWithoutNovaSecrets serial: t.Setenv
 internal/swarm/pullworker_functional_test.go:TestExecuteContainerRunsThroughNovaSecrets serial: t.Setenv
 internal/swarm/queue_test.go:TestStealWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
@@ -240,12 +223,10 @@ internal/seatcred/seatcred_test.go:TestActiveResolvesOnceAndOnlyWhenSelected ser
 cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/issue2328_test.go:TestIssue2328 serial: t.Setenv
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerNeverRunsTwoReadsAtOnce serial: t.Setenv
 cmd/nova-swarm/native_budget_source_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
 cmd/nova-swarm/native_cardout_test.go:TestNativeHandsCardRepoToCardOut serial: t.Setenv
-cmd/nova-swarm/native_slot_lease_test.go:TestNativeRunsWithNoSlotsStore serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestFriendSequenceLocalModelCard serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeAllowsProviderLoopback serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeChildCwdIsJobDirFromForeignCwd serial: os.Chdir, t.Setenv
@@ -266,8 +247,6 @@ cmd/nova-swarm/native_test.go:TestNativeSilentHarnessIsNotOK serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
-cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
 cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
 cmd/nova-swarm/slow_test.go:TestNativeThreeFailedReadsEndTheCardUnverifiable serial: t.Setenv
-cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv
 cmd/nova-swarm/seat_event_test.go:TestSeatGivesTheCardEndWriterItsLogin serial: t.Setenv

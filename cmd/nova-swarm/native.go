@@ -1629,8 +1629,12 @@ func benchOS(cfg nativeRunConfig) string {
 // are empty on windows and in the unit tests of the argv builder, and the environment is
 // then exactly what it was.
 func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
+	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+}
+
+func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
 	var kept []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
 		if keepNativeEnv(name) {
 			kept = append(kept, kv)
@@ -1673,8 +1677,11 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 		out = append(out, "SHELL="+shimShell)
 	}
 	if secretEnv != "" {
-		if v, ok := os.LookupEnv(secretEnv); ok {
-			out = append(out, secretEnv+"="+v)
+		for _, kv := range environ {
+			if k, v, ok := strings.Cut(kv, "="); ok && k == secretEnv {
+				out = append(out, secretEnv+"="+v)
+				break
+			}
 		}
 	}
 	return out

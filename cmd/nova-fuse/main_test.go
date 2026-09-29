@@ -156,6 +156,15 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("NOVA_FUSE_AS_TOOL") == "1" {
+		now := time.Now()
+		if fixed := os.Getenv("NOVA_FUSE_FIXED_TIME"); fixed != "" {
+			if parsed, err := time.Parse(time.RFC3339, fixed); err == nil {
+				now = parsed
+			}
+		}
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, now))
+	}
 	dir, err := os.MkdirTemp("", "nova-fuse-ambient-")
 	if err == nil {
 		decoy := filepath.Join(dir, "decoy-box.json")

@@ -35,9 +35,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -45,7 +47,31 @@ import (
 // allowing tests to substitute a hermetic or fake git runner without
 // mutating the global process environment.
 type stagedEnv struct {
-	gitBin string // default "" uses "git"
+	gitBin            string // default "" uses "git"
+	dogfoodClock      func() time.Time
+	dogfoodGitRunner  dogfood.Runner
+	dogfoodHelpRunner dogfood.HelpRunner
+}
+
+func (e stagedEnv) clock() func() time.Time {
+	if e.dogfoodClock != nil {
+		return e.dogfoodClock
+	}
+	return dogfoodClock
+}
+
+func (e stagedEnv) gitRunner() dogfood.Runner {
+	if e.dogfoodGitRunner != nil {
+		return e.dogfoodGitRunner
+	}
+	return dogfoodGitRunner
+}
+
+func (e stagedEnv) helpRunner() dogfood.HelpRunner {
+	if e.dogfoodHelpRunner != nil {
+		return e.dogfoodHelpRunner
+	}
+	return dogfoodHelpRunner
 }
 
 func (e stagedEnv) cmd(args ...string) *exec.Cmd {

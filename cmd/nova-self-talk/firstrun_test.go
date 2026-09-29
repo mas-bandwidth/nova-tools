@@ -167,6 +167,8 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 // every finding: a rewritten path is no longer the line the document promised,
 // which is what the old test's `localize` gave up.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	doc := transcriptDoc(t)
 	lines, err := onboarding.FirstRun(doc, "nova-self-talk")
 	if err != nil {
@@ -182,22 +184,37 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	copyDir(t, examplePages, filepath.Join(dir, "pages"))
-	t.Chdir(dir)
 
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		cmd := exec.Command(bin, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_SELF_TALK_AS_TOOL=1")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, runErr
+			}
+		}
+		return onboarding.Result{Code: exitCode, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+
+	for _, p := range onboarding.Execute(steps, runner) {
 		t.Error(p)
 	}
-}
-
-// runDocumented calls this binary's own entry point with the documented
-// arguments, keeping the two streams apart.
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
-	if s.Stdin != "" {
-		return onboarding.Result{}, errReadsNothing
-	}
-	var out, errb bytes.Buffer
-	code := run(s.Args, &out, &errb)
-	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 }
 
 type readsNothing struct{}

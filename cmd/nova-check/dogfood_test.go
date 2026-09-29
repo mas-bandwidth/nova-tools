@@ -32,6 +32,13 @@ func dogfoodRun(t *testing.T, args ...string) (code int, stdout, stderr string) 
 	return code, out.String(), errOut.String()
 }
 
+func dogfoodRunWith(t *testing.T, env stagedEnv, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code = runWith(args, &out, &errOut, env)
+	return code, out.String(), errOut.String()
+}
+
 func writeCLI(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "CLI.md")

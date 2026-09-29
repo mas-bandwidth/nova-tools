@@ -69,8 +69,12 @@ var resolvConfPath = "/etc/resolv.conf"
 // read-only and skip-if-absent, exactly like every other root -- a machine with no resolver
 // config is the machine's shape, not a caller's mistake.
 func linuxRoots() []string {
+	return linuxRootsAt(resolvConfPath)
+}
+
+func linuxRootsAt(confPath string) []string {
 	roots := append([]string{}, linuxReadRoots...)
-	dir := resolverConfigDirectory(resolvConfPath)
+	dir := resolverConfigDirectory(confPath)
 	if dir == "" {
 		return roots
 	}

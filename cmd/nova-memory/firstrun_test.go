@@ -2,8 +2,9 @@ package main
 
 import (
 	"bytes"
-	"io"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -758,6 +759,8 @@ func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 // the scores, the snippets, the ids -- reproduces and is compared as written.
 // The second block declares no norm at all.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	// Resolve the document and the checkout root from the package directory,
 	// before the sitting moves this test somewhere else: the document is a
 	// fixed file, while the commands run where `./corpus` and `draft.md`
@@ -798,8 +801,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// the copy is also what makes the documented paths (`--root ./corpus`,
 	// `draft.md`) resolve as written, so no path norm is declared.
 	sit := firstRunSitting(t)
-	t.Chdir(sit)
-	run := runDocumented(t)
+	run := runDocumentedIn(t, sit)
 	norms := []onboarding.Norm{buildTimeNorm(t)}
 
 	var problems []onboarding.Problem
@@ -878,21 +880,42 @@ func firstRunSitting(t *testing.T) string {
 	return sit
 }
 
-func runDocumented(t *testing.T) onboarding.Runner {
+func runDocumentedIn(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return func(s onboarding.Step) (onboarding.Result, error) {
-		stdin := io.Reader(strings.NewReader(""))
+		cmd := exec.Command(bin, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_MEMORY_AS_TOOL=1")
 		if s.Stdin != "" {
-			f, err := os.Open(s.Stdin)
+			stdinPath := s.Stdin
+			if !filepath.IsAbs(stdinPath) {
+				stdinPath = filepath.Join(dir, stdinPath)
+			}
+			f, err := os.Open(stdinPath)
 			if err != nil {
 				return onboarding.Result{}, err
 			}
 			defer f.Close()
-			stdin = f
+			cmd.Stdin = f
 		}
 		var out, errb bytes.Buffer
-		code := run(s.Args, stdin, &out, &errb)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		runErr := cmd.Run()
+		var exitCode int
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return onboarding.Result{}, runErr
+			}
+		}
+		return onboarding.Result{Code: exitCode, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
 

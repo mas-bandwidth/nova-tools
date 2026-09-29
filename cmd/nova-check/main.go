@@ -240,7 +240,7 @@ func runWith(args []string, stdout, stderr io.Writer, env stagedEnv) (code int) 
 	case "hygiene":
 		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
-		return cmdDogfood(args[1:], stdout, stderr)
+		return cmdDogfoodWith(args[1:], stdout, stderr, env)
 	case "convergence":
 		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
