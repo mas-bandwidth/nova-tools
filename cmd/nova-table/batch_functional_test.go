@@ -100,7 +100,7 @@ func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
 	}
 
 	// Initial state assertions: table revision is 2.
-	snap, err := ntable.ReadSetMembers(ctx, c, "demo", nil)
+	snap, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"none"})
 	if err != nil {
 		t.Fatalf("table snapshot read: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBatchCLIRefusesMalformedRawManifestsWithZeroMutations(t *testing.T) {
 
 			// Verify 0 store mutations:
 			// 1. Table revision must still be 2.
-			curSnap, err := ntable.ReadSetMembers(ctx, c, "demo", nil)
+			curSnap, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"none"})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -265,6 +265,11 @@ selection. It returns table identity, epoch/revision, every selected member's
 record revision, fields, verified owned placement and score, and explicit missing
 members. A selection beyond the declared bound refuses; it cannot return a prefix
 marked complete. Bound/external cells are not writable through this interface.
+The request is `{"members": [<id>, ...]}`, `{"selection": [{"row": <row>, "col":
+<col>}, ...]}` or a bare array of ids; its list is nonempty, an id is a nonempty
+string, and an unknown key, both lists together or any other shape refuses as
+`ARGS`. A malformed request is never answered as an empty set; an empty cell in a
+valid selection is a complete, empty answer.
 
 `ns_table_apply` is one application call with one conditional mutation manifest.
 It creates placed members, moves existing members across owned cells (including
@@ -285,7 +290,13 @@ actor and a members array. Epoch/revision counters are decimal strings bounded a
 uint64; they never traverse floating-point numbers. Members have unique IDs across
 the entire array. Each entry has an `expect` record and zero or more compatible
 changes. Read-only guard entries have no changes. All referenced rows/columns must
-be declared and owned. Unknown schema fields and duplicate JSON keys refuse.
+be declared and owned. Unknown schema fields and duplicate JSON keys refuse. Every value has one JSON
+type and nothing is coerced: ids, rows, columns, field names and values,
+`operation_id` and `actor` are strings; `epoch`, `expected_table_revision` and a
+member `revision` guard are canonical decimal strings; `schema` is the integer
+1; `absent` and `remove` are the boolean `true` only; a `score` is a finite JSON
+number, and a string never is, whatever a parser would read from it (`"0x10"`,
+`" 7 "`, `"1e3"`). The server and the Go validator accept the same manifests.
 
 ```json
 {
@@ -327,7 +338,8 @@ A member appears exactly once: its expected revision, position, extra field guar
 move and field updates are grouped in that entry. A move plus set/unset is one
 member mutation; duplicate entries are never merged. Create requires absence of
 both record and any owned placement; create plus move, remove, or an existing
-member expectation refuses. Remove is expressed only as `"remove": true`; any
+member expectation refuses. `absent` stands alone in an `expect`: with `revision`,
+`place` or `fields` it refuses. Remove is expressed only as `"remove": true`; any
 other value refuses. A field cannot occur in both `set` and `unset` in one entry.
 An existing member may omit its revision guard; omission means no member-revision
 comparison, not a comparison against zero. Its other explicit guards and the

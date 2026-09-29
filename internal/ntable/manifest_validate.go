@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 type containerType int
@@ -108,6 +110,9 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 	if err := over(limitNameManifest, LimitManifestBytes, len(raw), ""); err != nil {
 		return nil, err
 	}
+	if !utf8.Valid(raw) {
+		return nil, errors.New("manifest is not valid UTF-8")
+	}
 
 	// 1. Strict exact-case, path-aware tokenization pass: duplicate keys, null checks, and type checks.
 	decToken := json.NewDecoder(bytes.NewReader(raw))
@@ -150,6 +155,18 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 
 		if top.kind == containerObject {
 			if delim, ok := tok.(json.Delim); ok && delim == '}' {
+				if top.path == "place" && (!top.seenKeys["row"] || !top.seenKeys["col"]) {
+					return nil, errors.New("place requires row and col")
+				}
+				if top.path == "move" && (!top.seenKeys["row"] || !top.seenKeys["col"]) {
+					return nil, errors.New("move requires row and col")
+				}
+				if top.path == "member" && (!top.seenKeys["id"] || !top.seenKeys["expect"]) {
+					if !top.seenKeys["id"] {
+						return nil, errors.New("member entry has no id")
+					}
+					return nil, errors.New("member entry has no expect record")
+				}
 				if top.path == "create" {
 					if !top.seenKeys["score"] {
 						return nil, errors.New("create requires score")
@@ -477,8 +494,117 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 		}
 	}
 
+	if err := validateManifestSemantics(&manifest); err != nil {
+		return nil, err
+	}
 	if err := CheckBatchBounds(&manifest); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
+}
+
+// word is the server's T.word: a nonempty string without control characters.
+func word(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// uintString is a canonical decimal uint64.
+func uintString(s string) bool {
+	v, err := strconv.ParseUint(s, 10, 64)
+	return err == nil && strconv.FormatUint(v, 10) == s
+}
+
+func reservedField(f string) bool {
+	return f == "epoch" || f == "revision" || strings.HasPrefix(f, "place:")
+}
+
+// validateManifestSemantics holds every check of the server's T.static_entries
+// and of ns_table_apply's manifest header that needs no store, so that a
+// manifest the server would refuse for its shape is refused here first.
+func validateManifestSemantics(m *BatchManifest) error {
+	if m.Schema != 1 {
+		return fmt.Errorf("schema %d is not supported, expected 1", m.Schema)
+	}
+	if !ValidName(m.Table) {
+		return fmt.Errorf("table %q wants letters, digits, _ . and -", m.Table)
+	}
+	if !word(m.OperationID) {
+		return errors.New("operation_id must be a nonempty string without control characters")
+	}
+	if m.Members == nil {
+		return errors.New("members array required")
+	}
+	if !uintString(m.Epoch) {
+		return errors.New("epoch must be a decimal uint64 string")
+	}
+	if !uintString(m.ExpectedTableRevision) {
+		return errors.New("expected_table_revision must be a decimal uint64 string")
+	}
+	for _, e := range m.Members {
+		if !word(e.ID) {
+			return errors.New("member id must be a nonempty string without control characters")
+		}
+		for f := range e.Set {
+			if reservedField(f) {
+				return fmt.Errorf("member %q: %w: field %q", e.ID, ErrReservedField, f)
+			}
+			if !word(f) {
+				return fmt.Errorf("member %q: field names are nonempty strings without control characters", e.ID)
+			}
+		}
+		for _, f := range e.Unset {
+			if reservedField(f) {
+				return fmt.Errorf("member %q: %w: field %q", e.ID, ErrReservedField, f)
+			}
+			if !word(f) {
+				return fmt.Errorf("member %q: field names are nonempty strings without control characters", e.ID)
+			}
+			if _, both := e.Set[f]; both {
+				return fmt.Errorf("member %q: %w: field %q cannot be both set and unset", e.ID, ErrMutation, f)
+			}
+		}
+		if e.Expect == nil {
+			return fmt.Errorf("member %q: %w: missing expect", e.ID, ErrMalformedManifest)
+		}
+		x := e.Expect
+		if x.Absent && (x.Revision != "" || x.Place != nil || x.Fields != nil) {
+			return fmt.Errorf("member %q: %w: expect absent cannot combine with revision, place or fields", e.ID, ErrMutation)
+		}
+		if x.Revision != "" && !uintString(x.Revision) {
+			return fmt.Errorf("member %q: expect revision must be a decimal string", e.ID)
+		}
+		for name := range x.Fields {
+			if !word(name) {
+				return fmt.Errorf("member %q: field guard names are nonempty strings without control characters", e.ID)
+			}
+		}
+		if e.Create != nil {
+			if e.Move != nil || e.Remove {
+				return fmt.Errorf("member %q: %w: create cannot combine with move or remove", e.ID, ErrMutation)
+			}
+			if !x.Absent {
+				return fmt.Errorf("member %q: %w: create requires expect absent", e.ID, ErrMutation)
+			}
+			if math.IsNaN(e.Create.Score) || math.IsInf(e.Create.Score, 0) {
+				return fmt.Errorf("member %q: %w: expected a finite JSON number", e.ID, ErrInvalidScore)
+			}
+		}
+		if e.Move != nil {
+			if e.Remove {
+				return fmt.Errorf("member %q: %w: move cannot combine with remove", e.ID, ErrMutation)
+			}
+			if e.Move.Score != nil && (math.IsNaN(*e.Move.Score) || math.IsInf(*e.Move.Score, 0)) {
+				return fmt.Errorf("member %q: %w: expected a finite JSON number", e.ID, ErrInvalidScore)
+			}
+		}
+	}
+	return nil
 }

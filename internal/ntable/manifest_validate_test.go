@@ -123,17 +123,17 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		},
 		{
 			name:      "duplicate member id in same manifest",
-			raw:       `{"schema":1,"table":"demo","members":[{"id":"m1"},{"id":"m1"}]}`,
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m1","expect":{}},{"id":"m1","expect":{}}]}`,
 			errSubstr: `duplicate member id "m1" in manifest`,
 		},
 		{
 			name:      "empty member id",
-			raw:       `{"schema":1,"table":"demo","members":[{"id":""}]}`,
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"","expect":{}}]}`,
 			errSubstr: "member id cannot be empty",
 		},
 		{
 			name:      "member id with control characters",
-			raw:       "{\"schema\":1,\"table\":\"demo\",\"members\":[{\"id\":\"m1\\n\"}]}",
+			raw:       "{\"schema\":1,\"table\":\"demo\",\"members\":[{\"id\":\"m1\\n\",\"expect\":{}}]}",
 			errSubstr: "invalid member id",
 		},
 		{
@@ -270,7 +270,7 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 	// case 4: application field named "remove" inside set is accepted
 	t.Run("case 4: application field remove in set accepted", func(t *testing.T) {
 		t.Parallel()
-		raw := `{"schema":1,"table":"demo","members":[{"id":"m","set":{"remove":"done"}}]}`
+		raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"0","operation_id":"op","members":[{"id":"m","expect":{},"set":{"remove":"done"}}]}`
 		m, err := ntable.ValidateBatchManifestRaw([]byte(raw))
 		if err != nil {
 			t.Fatalf("expected valid manifest, got error: %v", err)

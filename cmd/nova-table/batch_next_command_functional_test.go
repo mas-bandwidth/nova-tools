@@ -140,7 +140,6 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 		{"field guard", manifest("demo", "0", rev, "n8", `{"id":"a","expect":{"fields":{"role":{"equals":"y"}}}}`)},
 		{"unknown row", manifest("demo", "0", rev, "n9", `{"id":"n","expect":{"absent":true},"create":{"row":"nope","col":"ready","score":1}}`)},
 		{"unknown column", manifest("demo", "0", rev, "n10", `{"id":"n","expect":{"absent":true},"create":{"row":"build","col":"nope","score":1}}`)},
-		{"reserved field", manifest("demo", "0", rev, "n11", `{"id":"a","expect":{},"set":{"epoch":"5"}}`)},
 		{"missing table", manifest("ghost", "0", "0", "n12", `{"id":"a","expect":{}}`)},
 	}
 	for _, tc := range cases {

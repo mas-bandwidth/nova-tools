@@ -459,7 +459,11 @@ func (o operation) refused(reply []any) error {
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
-		cause = fmt.Errorf("%w: %v", ErrInvalidScore, reply[2:])
+		if len(reply) >= 4 {
+			cause = fmt.Errorf("%w: expected a finite JSON number, observed %v", ErrInvalidScore, reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrInvalidScore, words(reply[2:]))
+		}
 	case typedrec.TableRefusalOverflow:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])

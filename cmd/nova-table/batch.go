@@ -65,7 +65,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 			}
 			return refused(stderr, verb, what+"; changed=no; run: nova-table batch -h")
 		}
-		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v", err))
+		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v; changed=no; run: nova-table batch -h", err))
 	}
 
 	actorSet := false

@@ -92,7 +92,11 @@ do
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
   -- Reject malformed UTF-8 instead of letting a client rename them to U+FFFD.
   function T.row(n)
-    if not T.word(n) then return false end
+    return T.word(n) and T.utf8(n)
+  end
+  -- T.utf8(n): n is well-formed UTF-8 (no overlong forms, surrogates or
+  -- code points past U+10FFFF).
+  function T.utf8(n)
     local i = 1
     local function continuation(v) return v and v >= 128 and v <= 191 end
     while i <= #n do
@@ -138,6 +142,34 @@ do
       i = i + 1
     end
     return found
+  end
+  -- T.jsonnumber(s): s is one JSON number token (RFC 8259), nothing else.
+  function T.jsonnumber(s)
+    local i = 1
+    if string.sub(s, i, i) == '-' then i = i + 1 end
+    local c = string.sub(s, i, i)
+    if c == '0' then
+      i = i + 1
+    elseif string.match(c, '^[1-9]$') then
+      i = i + #string.match(s, '^%d+', i)
+    else
+      return false
+    end
+    if string.sub(s, i, i) == '.' then
+      local frac = string.match(s, '^%d+', i + 1)
+      if not frac then return false end
+      i = i + 1 + #frac
+    end
+    local e = string.sub(s, i, i)
+    if e == 'e' or e == 'E' then
+      i = i + 1
+      local sign = string.sub(s, i, i)
+      if sign == '+' or sign == '-' then i = i + 1 end
+      local exp = string.match(s, '^%d+', i)
+      if not exp then return false end
+      i = i + #exp
+    end
+    return i == #s + 1
   end
   function T.decode(s)
     local ok, v = pcall(cjson.decode, s or '')
@@ -1324,31 +1356,58 @@ do
     return out
   end}
 
+  -- A read set's request is one of three shapes, each nonempty:
+  --   {"members": ["id", ...]}
+  --   {"selection": [{"row": "r", "col": "c"}, ...]}
+  --   ["id", ...]
+  -- Anything else refuses; it is never answered as an empty set.
   function T.read_set(keys, args)
-    if #args < 2 then return T.refuse('ARGS', 'read_set') end
+    if #args < 2 or #args > 3 then return T.refuse('ARGS', 'read_set wants a table, a scope and at most an epoch') end
     local table_name = args[1]
+    local scope = T.decode(args[2])
+    if not scope then return T.refuse('ARGS', 'read_set scope must be a JSON object or array') end
+    local shape = 'read_set scope must be {"members": [...]}, {"selection": [...]} or a nonempty array of member ids'
+    local members, selection
+    if scope.members ~= nil or scope.selection ~= nil then
+      for k in pairs(scope) do
+        if k ~= 'members' and k ~= 'selection' then return T.refuse('ARGS', 'read_set scope has an unknown key') end
+      end
+      if scope.members ~= nil and scope.selection ~= nil then
+        return T.refuse('ARGS', 'read_set scope holds members or selection, not both')
+      end
+      members, selection = scope.members, scope.selection
+    elseif #scope > 0 and next(scope, #scope) == nil then
+      members = scope
+    else
+      return T.refuse('ARGS', shape)
+    end
+    if members ~= nil and (type(members) ~= 'table' or #members == 0) then
+      return T.refuse('ARGS', 'read_set members must be a nonempty array')
+    end
+    if selection ~= nil and (type(selection) ~= 'table' or #selection == 0) then
+      return T.refuse('ARGS', 'read_set selection must be a nonempty array')
+    end
     local d, err = T.def(table_name, args[3])
     if not d then return err end
-    local scope = T.decode(args[2])
-    if not scope or type(scope) ~= 'table' then return T.refuse('ARGS', 'read_set scope') end
     local target_ids = {}
     local seen_ids = {}
-    if scope.members ~= nil then
-      if type(scope.members) ~= 'table' then return T.refuse('ARGS', 'read_set members must be array') end
-      for _, id in ipairs(scope.members) do
+    if members then
+      for _, id in ipairs(members) do
         if type(id) ~= 'string' or id == '' then
-          return T.refuse('ARGS', 'read_set member ID must be string')
+          return T.refuse('ARGS', 'read_set member ID must be a nonempty string')
         end
         if not seen_ids[id] then
           seen_ids[id] = true
           target_ids[#target_ids + 1] = id
         end
       end
-    elseif scope.selection ~= nil then
-      if type(scope.selection) ~= 'table' then return T.refuse('ARGS', 'read_set selection must be array') end
-      for _, sel in ipairs(scope.selection) do
-        if type(sel) ~= 'table' or not sel.row or not sel.col or type(sel.row) ~= 'string' or type(sel.col) ~= 'string' or sel.row == '' or sel.col == '' then
-          return T.refuse('ARGS', 'read_set selection requires row and col')
+    else
+      for _, sel in ipairs(selection) do
+        if type(sel) ~= 'table' or type(sel.row) ~= 'string' or type(sel.col) ~= 'string' or sel.row == '' or sel.col == '' then
+          return T.refuse('ARGS', 'read_set selection requires row and col strings')
+        end
+        for k in pairs(sel) do
+          if k ~= 'row' and k ~= 'col' then return T.refuse('ARGS', 'read_set selection has an unknown key') end
         end
         local cell, why = T.cell(d, sel.row, sel.col, false)
         if not cell then return why end
@@ -1359,16 +1418,6 @@ do
             seen_ids[id] = true
             target_ids[#target_ids + 1] = id
           end
-        end
-      end
-    elseif #scope > 0 then
-      for _, id in ipairs(scope) do
-        if type(id) ~= 'string' or id == '' then
-          return T.refuse('ARGS', 'read_set member ID must be string')
-        end
-        if not seen_ids[id] then
-          seen_ids[id] = true
-          target_ids[#target_ids + 1] = id
         end
       end
     end
@@ -1524,8 +1573,12 @@ do
           pos = pos + 1
         end
         local num_str = string.sub(raw, start, pos - 1)
-        if not tonumber(num_str) then
-          return nil, "invalid number: " .. num_str
+        -- The JSON number grammar only: tonumber also reads 0x10, inf and 1e5 spellings JSON does not have.
+        if not T.jsonnumber(num_str) then
+          return nil, "invalid number"
+        end
+        if ctx == 'schema' and not string.match(num_str, '^[0-9]+$') then
+          return nil, "schema must be an integer"
         end
         return true
       end
@@ -1560,6 +1613,7 @@ do
           }
           if not root_keys[key] then return nil, "unknown field: " .. key end
           if key == 'members' then val_ctx = 'members' end
+          if key == 'schema' then val_ctx = 'schema' end
         elseif ctx == 'member' then
           local member_keys = {
             id=true, expect=true, create=true, move=true, remove=true, set=true, unset=true
@@ -1670,6 +1724,141 @@ do
     return nil
   end
 
+  -- T.static_entries(manifest): every check that needs no store: shape, types,
+  -- bounds and combinations, in one pass over the entries. It returns a refusal,
+  -- or nil and the counts of entries with changes and guard-only entries.
+  -- A refusal here happens before the store is read.
+  function T.static_entries(manifest)
+    local seen, changed, guards = {}, 0, 0
+    local function finite(n) return type(n) == 'number' and n == n and n ~= math.huge and n ~= -math.huge end
+    local function score_refusal(id, v)
+      local found = type(v)
+      if v == nil then found = 'missing'
+      elseif v == cjson.null then found = 'null'
+      elseif found == 'number' then found = 'non-finite number' end
+      return T.refuse('SCORE', id, found)
+    end
+    local function reserved(f) return f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' end
+    for idx, entry in ipairs(manifest.members) do
+      if type(entry) ~= 'table' or not T.word(entry.id) then
+        return T.refuse('MEMBER', 'entry ' .. idx .. ' is not an object with a nonempty id without control characters')
+      end
+      local id = entry.id
+      local over = T.over('member_id_bytes', #id)
+      if over then return over end
+      if seen[id] then return T.refuse('TWICE', id) end
+      seen[id] = true
+      if entry.remove ~= nil and entry.remove ~= true then return T.refuse('ARGS', 'remove must be true', id) end
+
+      if entry.set ~= nil then
+        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object', id) end
+        local count = 0
+        for _ in pairs(entry.set) do count = count + 1 end
+        over = T.over('set_fields', count, id)
+        if over then return over end
+        for f, val in pairs(entry.set) do
+          if reserved(f) then return T.refuse('RESERVEDFIELD', id, f) end
+          if not T.word(f) or type(val) ~= 'string' then
+            return T.refuse('ARGS', 'field name and value must be valid strings', id)
+          end
+          over = T.over('field_value_bytes', #val, id)
+          if over then return over end
+        end
+      end
+      if entry.unset ~= nil then
+        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array', id) end
+        over = T.over('unset_fields', #entry.unset, id)
+        if over then return over end
+        for _, f in ipairs(entry.unset) do
+          if type(f) == 'string' and reserved(f) then return T.refuse('RESERVEDFIELD', id, f) end
+          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', id) end
+        end
+      end
+      if entry.set ~= nil and entry.unset ~= nil then
+        for _, f in ipairs(entry.unset) do
+          if entry.set[f] ~= nil then
+            return T.refuse('MUTATION', id, 'field ' .. f .. ' cannot be both set and unset')
+          end
+        end
+      end
+
+      local exp = entry.expect
+      if type(exp) ~= 'table' then return T.refuse('MANIFEST', 'member ' .. id .. ' missing expect record') end
+      if exp.absent ~= nil then
+        if exp.absent ~= true then return T.refuse('ARGS', 'expect absent must be true', id) end
+        if exp.revision ~= nil or exp.place ~= nil or exp.fields ~= nil then
+          return T.refuse('MUTATION', id, 'expect absent cannot combine with revision, place or fields')
+        end
+      end
+      if exp.revision ~= nil and not T.uint(exp.revision) then
+        return T.refuse('ARGS', 'expect revision must be a decimal string', id)
+      end
+      if exp.place ~= nil and (type(exp.place) ~= 'table' or type(exp.place.row) ~= 'string' or type(exp.place.col) ~= 'string') then
+        return T.refuse('ARGS', 'expect place wants row and col strings', id)
+      end
+      if exp.fields ~= nil then
+        if type(exp.fields) ~= 'table' then return T.refuse('ARGS', 'expect fields must be object', id) end
+        local n = 0
+        for _, guard in pairs(exp.fields) do
+          n = n + 1
+          if type(guard) == 'table' and type(guard.one_of) == 'table' then
+            over = T.over('one_of_options', #guard.one_of, id)
+            if over then return over end
+          end
+        end
+        over = T.over('field_guards', n, id)
+        if over then return over end
+        for f, guard in pairs(exp.fields) do
+          if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
+          local conds = (guard.equals ~= nil and 1 or 0) + (guard.absent ~= nil and 1 or 0) + (guard.one_of ~= nil and 1 or 0)
+          if conds ~= 1 then return T.refuse('FIELDGUARD', id, f, 'exact one condition required') end
+          if guard.equals ~= nil and type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'equals must be string') end
+          if guard.absent ~= nil and guard.absent ~= true then return T.refuse('FIELDGUARD', id, f, 'absent must be true') end
+          if guard.one_of ~= nil then
+            if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
+              return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
+            end
+            for _, opt in ipairs(guard.one_of) do
+              if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
+            end
+          end
+        end
+      end
+
+      if entry.create ~= nil then
+        local cr = entry.create
+        if type(cr) ~= 'table' or type(cr.row) ~= 'string' or type(cr.col) ~= 'string' then
+          return T.refuse('ARGS', 'create wants row and col strings', id)
+        end
+        if not finite(cr.score) then return score_refusal(id, cr.score) end
+        if entry.move ~= nil or entry.remove ~= nil then
+          return T.refuse('MUTATION', id, 'create cannot combine with move or remove')
+        end
+        if exp.absent ~= true then return T.refuse('MUTATION', id, 'create requires expect absent') end
+      end
+      if entry.move ~= nil then
+        local mv = entry.move
+        if type(mv) ~= 'table' or type(mv.row) ~= 'string' or type(mv.col) ~= 'string' then
+          return T.refuse('ARGS', 'move wants row and col strings', id)
+        end
+        if mv.score ~= nil and not finite(mv.score) then return score_refusal(id, mv.score) end
+        if entry.remove ~= nil then return T.refuse('MUTATION', id, 'move cannot combine with remove') end
+      end
+
+      if entry.create ~= nil or entry.move ~= nil or entry.remove == true or
+          (entry.set ~= nil and next(entry.set) ~= nil) or (entry.unset ~= nil and #entry.unset > 0) then
+        changed = changed + 1
+      else
+        guards = guards + 1
+      end
+    end
+    local over = T.over('changed_entries', changed)
+    if over then return over end
+    over = T.over('guard_entries', guards)
+    if over then return over end
+    return nil, changed, guards
+  end
+
   function T.apply(keys, args)
     -- A refusal raised while one entry is judged carries that entry's id last.
     local function at_member(err, id) err[#err + 1] = id; return err end
@@ -1679,6 +1868,7 @@ do
     if type(raw_json) ~= 'string' then return T.refuse('ARGS', 'apply payload') end
     local over = T.over('manifest_bytes', #raw_json)
     if over then return over end
+    if not T.utf8(raw_json) then return T.refuse('MANIFEST', 'manifest is not valid UTF-8') end
     local manifest_err = T.validate_manifest_json(raw_json)
     if manifest_err then return manifest_err end
     local digest = redis.sha1hex(raw_json)
@@ -1687,10 +1877,13 @@ do
     if manifest.schema ~= 1 then return T.refuse('SCHEMA', tostring(manifest.schema)) end
     if manifest.table ~= table_name then return T.refuse('ARGS', 'table mismatch') end
     if not T.word(manifest.operation_id) then return T.refuse('OPERATION', 'invalid operation_id') end
+    if manifest.actor ~= nil and type(manifest.actor) ~= 'string' then return T.refuse('ARGS', 'actor must be a string') end
     if not T.uint(manifest.epoch) then return T.refuse('EPOCH', tostring(manifest.epoch)) end
     if not T.uint(manifest.expected_table_revision) then return T.refuse('REVISION', tostring(manifest.expected_table_revision)) end
     if type(manifest.members) ~= 'table' then return T.refuse('ARGS', 'members array required') end
     if not T.arrayfield(raw_json, 'members') then return T.refuse('MANIFEST', 'members must be json array') end
+    local static_err, changed_count, guard_count = T.static_entries(manifest)
+    if static_err then return static_err end
 
     -- Check operation replay first:
     local op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
@@ -1733,87 +1926,7 @@ do
       return T.refuse('REVISION', manifest.expected_table_revision, d.revision)
     end
 
-    -- Validate bounds on members:
     local members_list = manifest.members
-    local seen_ids = {}
-    local changed_entries = {}
-    local guard_entries = {}
-
-    for idx, entry in ipairs(members_list) do
-      if type(entry) ~= 'table' or not T.word(entry.id) then
-        return T.refuse('MEMBER', 'entry ' .. idx .. ' is not an object with a nonempty id without control characters')
-      end
-      local over = T.over('member_id_bytes', #entry.id)
-      if over then return over end
-      if seen_ids[entry.id] then return T.refuse('TWICE', entry.id) end
-      seen_ids[entry.id] = true
-
-      if entry.remove ~= nil and entry.remove ~= true then
-        return T.refuse('ARGS', 'remove must be true', entry.id)
-      end
-
-      if entry.set ~= nil then
-        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object', entry.id) end
-        local count = 0
-        for _ in pairs(entry.set) do count = count + 1 end
-        local over = T.over('set_fields', count, entry.id)
-        if over then return over end
-        for f, val in pairs(entry.set) do
-          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
-            return T.refuse('RESERVEDFIELD', entry.id, f)
-          end
-          if not T.word(f) or type(val) ~= 'string' then
-            return T.refuse('ARGS', 'field name and value must be valid strings', entry.id)
-          end
-          over = T.over('field_value_bytes', #val, entry.id)
-          if over then return over end
-        end
-      end
-      if entry.unset ~= nil then
-        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array', entry.id) end
-        local over = T.over('unset_fields', #entry.unset, entry.id)
-        if over then return over end
-        for _, f in ipairs(entry.unset) do
-          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
-            return T.refuse('RESERVEDFIELD', entry.id, f)
-          end
-          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', entry.id) end
-        end
-      end
-      if type(entry.expect) == 'table' and type(entry.expect.fields) == 'table' then
-        local guards = 0
-        for _, guard in pairs(entry.expect.fields) do
-          guards = guards + 1
-          if type(guard) == 'table' and type(guard.one_of) == 'table' then
-            local over = T.over('one_of_options', #guard.one_of, entry.id)
-            if over then return over end
-          end
-        end
-        local over = T.over('field_guards', guards, entry.id)
-        if over then return over end
-      end
-      if entry.set ~= nil and entry.unset ~= nil then
-        for _, f in ipairs(entry.unset) do
-          if entry.set[f] ~= nil then
-            return T.refuse('MUTATION', entry.id, 'field ' .. f .. ' cannot be both set and unset')
-          end
-        end
-      end
-
-      local is_change = entry.create ~= nil or entry.move ~= nil or entry.remove == true or
-                        (entry.set ~= nil and next(entry.set) ~= nil) or
-                        (entry.unset ~= nil and #entry.unset > 0)
-      if is_change then
-        changed_entries[#changed_entries + 1] = entry
-      else
-        guard_entries[#guard_entries + 1] = entry
-      end
-    end
-
-    local over = T.over('changed_entries', #changed_entries)
-    if over then return over end
-    over = T.over('guard_entries', #guard_entries)
-    if over then return over end
 
     -- Pre-state evaluation & expectation checking:
     local member_records = {}
@@ -1847,13 +1960,9 @@ do
         if drift then return drift end
       end
 
-      -- Check expectations:
-      if not entry.expect or type(entry.expect) ~= 'table' then
-        return T.refuse('MANIFEST', 'member ' .. id .. ' missing expect record')
-      end
+      -- Check expectations (their shapes are settled by T.static_entries):
       local exp = entry.expect
       if exp.absent ~= nil then
-        if exp.absent ~= true then return T.refuse('ARGS', 'expect absent must be true', id) end
         if exists or current_place then
           return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
         end
@@ -1864,40 +1973,23 @@ do
           return T.refuse('MEMBERREVISION', id, exp.revision, obs_rev)
         end
         if exp.place then
-          if not exp.place.row or not exp.place.col then
-            return T.refuse('ARGS', 'expect place wants row and col', id)
-          end
           local exp_place = T.place(exp.place.row, exp.place.col)
           if current_place ~= exp_place then
             return T.refuse('PLACEGUARD', id, exp_place, current_place or 'unplaced')
           end
         end
-        if exp.fields and type(exp.fields) == 'table' then
+        if exp.fields then
           for f, guard in pairs(exp.fields) do
-            if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
-            local num_conds = 0
-            if guard.equals ~= nil then num_conds = num_conds + 1 end
-            if guard.absent ~= nil then num_conds = num_conds + 1 end
-            if guard.one_of ~= nil then num_conds = num_conds + 1 end
-            if num_conds ~= 1 then return T.refuse('FIELDGUARD', id, f, 'exact one condition required') end
             local actual = record[f]
             if guard.equals ~= nil then
-              if type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'equals must be string') end
               if actual == nil or actual ~= guard.equals then
                 return T.refuse('FIELDGUARD', id, f, 'equals', guard.equals, actual or '<absent>')
               end
             elseif guard.absent ~= nil then
-              if guard.absent ~= true then return T.refuse('FIELDGUARD', id, f, 'absent must be true') end
               if actual ~= nil then
                 return T.refuse('FIELDGUARD', id, f, 'absent', actual)
               end
             elseif guard.one_of ~= nil then
-              if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
-                return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
-              end
-              for _, opt in ipairs(guard.one_of) do
-                if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
-              end
               local matched = false
               if actual ~= nil then
                 for _, opt in ipairs(guard.one_of) do
@@ -1950,28 +2042,13 @@ do
       item.fields = member_fields
 
       if entry.create then
-        if entry.move or entry.remove then
-          return T.refuse('MUTATION', id, 'create cannot combine with move or remove')
-        end
-        if entry.expect and (entry.expect.revision or entry.expect.place or entry.expect.fields) then
-          return T.refuse('MUTATION', id, 'create cannot expect existing record')
-        end
-        if not entry.expect or entry.expect.absent ~= true then
-          return T.refuse('MUTATION', id, 'create requires expect absent')
-        end
         if next(record) or current_place then
           return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
         end
         local crow, ccol = entry.create.row, entry.create.col
         local dst_cell, err = T.cell(d, crow, ccol, true)
         if not dst_cell then return at_member(err, id) end
-        if entry.create.score == nil or (type(entry.create.score) ~= 'number' and type(entry.create.score) ~= 'string') then
-          return T.refuse('SCORE', id)
-        end
-        local score = tonumber(entry.create.score)
-        if not score or score ~= score or score == math.huge or score == -math.huge then
-          return T.refuse('SCORE', id)
-        end
+        local score = entry.create.score
         item.action = 'create'
         item.effective_change = true
         item.dst_row = crow
@@ -1986,20 +2063,13 @@ do
         item.before_rev = '0'
         item.after_rev = '1'
       elseif entry.move then
-        if entry.remove then return T.refuse('MUTATION', id, 'move cannot combine with remove') end
         if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to move') end
         local mrow, mcol = entry.move.row, entry.move.col
         local dst_cell, err = T.cell(d, mrow, mcol, true)
         if not dst_cell then return at_member(err, id) end
         local score
         if entry.move.score ~= nil then
-          if type(entry.move.score) ~= 'number' and type(entry.move.score) ~= 'string' then
-            return T.refuse('SCORE', id)
-          end
-          score = tonumber(entry.move.score)
-          if not score or score ~= score or score == math.huge or score == -math.huge then
-            return T.refuse('SCORE', id)
-          end
+          score = entry.move.score
         else
           score = member_scores[id]
         end
@@ -2170,7 +2240,7 @@ do
       digest = digest,
       actor = manifest.actor or '',
       selected_count = #manifest.members,
-      guard_count = #guard_entries,
+      guard_count = guard_count,
       changed_count = real_changes,
       members = delta_members,
     })
