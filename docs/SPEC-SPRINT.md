@@ -71,7 +71,11 @@ first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
 no redeal or withdrawal rewrites it, so a member handed the card after
 someone else's take gets its own 15 minutes and a flapping member cannot
-reset the clock), ok (set
+reset the clock), redeals (how many times this attempt's card was dealt
+again after its member went down or away; a take never resets it; at
+MaxRedeals, 3, the card stays withdrawn, its primary ready and dealt no more,
+and the judgment "a card reached its bound" names it until a rework with a fix
+or a drop; each redeal's line in the log says "redeal n of 3"), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -315,6 +319,7 @@ the tick would make, no other open judgment on it).
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask | reader add, rework, drop, wait | no |
 | no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
+| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
@@ -483,8 +488,13 @@ exactly, member by member, never by their counts.
     holds, a stopped stream with no open judgment, and an operation pending
     past its grace that a tick since has not finished are stalls too. `card`
     prints what holds a primary (`HELD`).
+13. The log replays to the tables: replaying the epoch's move lines from
+    empty gives every card's place and generation (the control cards aside),
+    and a card the log never placed, or placed elsewhere, is a violation
+    naming it (section 17). `check` and the property test hold it; the tick's
+    check does not read the log.
 
-Rules 2, 3, 4, 5, 9 and 12 hold whenever no operation is pending (while one
+Rules 2, 3, 4, 5, 9, 12 and 13 hold whenever no operation is pending (while one
 is, 12 judges only the operation); 1, 6, 7, 8 and
 11 always; 5 and 6 skip sentinels, which land by release and are never read or
 merged. A rank is the one step that changes scores: while a rank is pending, a
@@ -603,7 +613,7 @@ command that loads it.
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
-| rework | delegates the next attempt at once with a fix; ready when no member is up; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
+| rework | delegates the next attempt at once with a fix; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
@@ -616,6 +626,7 @@ command that loads it.
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read` |
 | card | everything about one primary |
+| log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch`, with a pending operation and stalled streams |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
@@ -745,7 +756,14 @@ taken, ready or withdrawn again before a take: 15 minutes from untaken_since,
 the first deal since its last take; not finished, working or withdrawn from a
 take: 2 hours from the attempt's first take; no redeal or withdrawal rewrites
 either, and the time a card spends withdrawn counts; the no-stall rule holds a
-card to the same deadline), a read card past its deadline (30
+card to the same deadline; a lateness is one judgment per card and kind, and
+once raised it stays raised while its cause stands, whether or not the card is
+late at that moment: not finished until the attempt's work card is finished,
+reworked or dropped, not taken until it is taken, not begun until the read
+begins, not reported until it reports; a redeal or a return to ready closes
+none of them; while raised it is updated in place with where the card is, each
+update a line of the log; no judgment is closed by a move that does not
+resolve its cause), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
 and the cards), stalled (rule 12: what nothing holds, and why). Deadlines count running time: time spent STOPPED does not
@@ -810,3 +828,35 @@ and landed, and the sprint is not done while one waits. A ready primary whose
 work card was withdrawn (no member up) stays ready when a sentinel is inserted
 in front of it, and is waited for as past the stop: check's rule 2 holds that
 the primary of a withdrawn card is ready.
+
+## 17. The log
+
+Each epoch has one log: an append-only record of every change of every card
+and every notification, in the order written. A step's lines are written in
+the same transaction as its change (the operation's commit; a repair that
+finishes an operation writes its lines, and an entry the repair skips has no
+line, the skip's judgment saying what it skipped), so no card changes without
+its line. Nothing in the log is ever rewritten or trimmed within its epoch: a
+second accept, a second ci result and a return each add a line. The inbox's
+cursor never hides a line. The log has no hidden lines: every line is every
+actor's to read.
+
+A move line has: the time, the epoch, the operation that wrote it, the card,
+its primary and its stream, the table, the place before and after
+(member:column; none before when the step created it, removed when the step
+took it off), its generation after, who acted (the machine, for the tick's own
+moves: deal, redeal, level, withdraw, ask, resume, the sentinels), the verb,
+the cause in the step's own words, the judgments the step answered on it, the
+words given with it (brief, fix, report, finding, reason, return reason, did,
+note, ci note), whole, and the other fields it set. A notification's line has
+its kind (judgment, happened, decided, acknowledged) and the notification as
+written. A note on a card will be a line of its own kind.
+
+`log` prints each line in plain words at its local time, the words given
+following it as paragraphs; one function renders a line, for `log` and for a
+card's timeline. At clear, the log stays with its epoch and is read with
+`--at-epoch`, as `where` is; the new epoch's log starts empty. Teardown
+removes every epoch's log. The log is stored beside the notifications (a
+stream of its own in the same transaction), so the inbox's reads never page
+through it.
+

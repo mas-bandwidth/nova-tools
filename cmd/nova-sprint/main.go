@@ -51,6 +51,7 @@ type app struct {
 	conns   map[string]*redisconn.Conn
 	cached  map[string]store.Backend
 	meter   hostload.Source // how fleet beat measures this machine
+	loc     *time.Location  // the zone times print in: nil is the machine's local zone
 }
 
 func newApp(getenv func(string) string) *app {

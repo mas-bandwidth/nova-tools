@@ -21,3 +21,14 @@ func TestRandomSprintsLong(t *testing.T) {
 	}
 	propSeeds(t, from, to, 300)
 }
+
+// The first seed of every failure class the long run has found, run again:
+// 303 (a wait's expiry left the deadlines part owing), 709 and 1043 (an
+// operation in flight at a tick's start finished during it, and the fleet's
+// cells were left to the next tick).
+func TestRandomSprintsFoundSeeds(t *testing.T) {
+	t.Parallel()
+	for _, seed := range []uint64{303, 709, 1043} {
+		propSeeds(t, seed, seed+1, 300)
+	}
+}

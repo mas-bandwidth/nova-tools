@@ -211,6 +211,8 @@ func orphanInMerging(t *testing.T) (*harness, string) {
 		OperationID: "outside-remove", Members: []ntable.BatchMemberEntry{{ID: m.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(m.Rev)}, Remove: true}}}); err != nil {
 		t.Fatal(err)
 	}
+	// as the repair that skipped the create leaves the log: no merge card
+	h.m.appendLine(sprint.Line{Kind: sprint.LineMove, At: s.Now, Card: m.ID, Table: sprint.Merge, From: m.Row + ":" + m.Col, Removed: true, Verb: "repair"})
 	h.must(Step{Verb: "repair", Plan: func(s *sprint.Snapshot) sprint.Plan {
 		n := sprint.Note{Kind: sprint.Judgment, Type: sprint.NRepairSkipped, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, At: s.Now,
 			What: "the merge card of s1-1 was skipped", Decisions: append([]string(nil), sprint.Decisions[sprint.NRepairSkipped]...)}
@@ -373,4 +375,13 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 		t.Fatalf("%d sentinel-reached notes after one ack of both", reached)
 	}
 	h.clean("waived once")
+}
+
+// appendLine writes a line to the log as a writer outside the engine would.
+func (m *Mem) appendLine(l sprint.Line) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.seq++
+	lg := m.log()
+	lg.lines = append(lg.lines, memLine{fmt.Sprintf("%d-0", m.seq), l})
 }

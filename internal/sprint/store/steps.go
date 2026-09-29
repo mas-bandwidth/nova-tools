@@ -130,7 +130,7 @@ func ReleaseStep(r sprint.ReleaseReq) Step {
 
 // SentinelsDueStep marks reached every sentinel whose needs have all landed.
 func SentinelsDueStep(who string) Step {
-	return Step{Args: ArgsOf(who), Verb: "sentinels", Load: tables(sprint.Work),
+	return Step{Args: ArgsOf(who), Verb: "sentinels", Actor: who, Load: tables(sprint.Work),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SentinelsDue(s, who) }}
 }
 

@@ -48,6 +48,11 @@ const (
 	DeadlineJudgment = 10 * time.Minute
 )
 
+// MaxRedeals is how many times one attempt's work card is dealt again after
+// its member went down or away (its redeals counter, which no take resets):
+// past it the card stays withdrawn, and the bound's judgment names it.
+const MaxRedeals = 3
+
 // The tick's own notification types.
 const (
 	NResumed   = "stream resumed: the card it needed landed"
@@ -57,6 +62,7 @@ const (
 	NWorkLate  = "a work card is past its deadline"
 	NReadLate  = "a read card is past its deadline"
 	NMergeLate = "a stream has had no merge step past its deadline"
+	NBound     = "a card reached its bound"
 	// NOverdue (notes.go) is the overdue line: a happened note, once per
 	// judgment, when the judgment passes its due time.
 
@@ -70,6 +76,7 @@ const Sentinel = "sentinel"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
+	NBound:     {"rework with a fix", "drop", "wait"},
 	NCannotAsk: {"reader add", "rework", "drop", "wait"},
 	NNoMember:  {"fleet beat", "fleet up", "wait"},
 	NInvariant: {"look at the card", "repair", "wait"},
@@ -155,7 +162,7 @@ func Tick(s *Snapshot, r TickReq) []TickPart {
 
 // Empty says a plan writes nothing.
 func (p Plan) Empty() bool {
-	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0
+	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0 && len(p.Updates) == 0
 }
 
 // bound keeps the first TickMaxMoves units and the first TickMaxNotes
@@ -240,13 +247,18 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	due := 0
 	var ready []*Card
+	var conds []cond
 	for _, c := range s.Work.Column(Ready) {
+		if wc := AtRedealBound(s, c); wc != nil {
+			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
+				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
+			continue
+		}
 		if !IsSentinel(c) {
 			ready = append(ready, c)
 		}
 	}
 	up := s.UpMembers()
-	var conds []cond
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
@@ -266,8 +278,21 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	due += notify(&p, s, conds, []string{NNoMember}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound}, r)
 	return p, due
+}
+
+// AtRedealBound is the primary's withdrawn work card when it is at its
+// redeal bound: the tick deals it no more. nil when it is not.
+func AtRedealBound(s *Snapshot, pr *Card) *Card {
+	if pr == nil || pr.Col != Ready {
+		return nil
+	}
+	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
+	if wc != nil && wc.Col == Withdrawn && wc.Int("redeals") >= MaxRedeals {
+		return wc
+	}
+	return nil
 }
 
 // T4. TickLevel evens the up members' ready queues when two differ by more
@@ -371,7 +396,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 				decisions = append([]string{"fleet down " + c.Row}, decisions...)
 			}
 			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
-				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word),
+				what:      fmt.Sprintf("%s %s at %s, %s; at %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word, placeOf(c)),
 				decisions: decisions})
 		}
 	}
@@ -383,7 +408,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		if at, ok := late(field, c, limit); ok {
 			conds = append(conds, cond{typ: NReadLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
-				what: fmt.Sprintf("%s %s of %s at %s, %s", c.ID, field, c.Row, at, word)})
+				what: fmt.Sprintf("%s %s of %s at %s, %s; at %s", c.ID, field, c.Row, at, word, placeOf(c))})
 		}
 	}
 	// N6: a stream merging, or waiting with queued cards, with no merge step.
@@ -516,11 +541,67 @@ type cond struct {
 // condKey identifies a condition on one subject: the type, the subject and
 // what it says. N3's count and N1's count of free readers change while each
 // stays one condition, so they are keyed by their type and subject only.
-func condKey(typ, subject, what string) string {
-	if typ == NNoMember || typ == NCannotAsk {
+func condKey(typ, subject, card, what string) string {
+	switch typ {
+	case NNoMember, NCannotAsk:
 		what = ""
+	case NWorkLate, NReadLate:
+		// a lateness is one per attempt's card and kind (not taken, not
+		// finished, not begun, not reported), whatever its facts say now
+		what = card + "\x00" + lateKind(what)
 	}
 	return typ + "\x00" + subject + "\x00" + what
+}
+
+// lateKind is a lateness's kind, from its text: "<card> <stamp> at <time>,
+// <kind>; at <place>".
+func lateKind(what string) string {
+	what, _, _ = strings.Cut(what, "; at ")
+	if i := strings.LastIndex(what, ", "); i >= 0 {
+		return what[i+2:]
+	}
+	return what
+}
+
+// LateStands says the cause of a lateness still stands: no move that resolves
+// it has happened. Not finished stands while the attempt's work card is
+// ready, working or withdrawn (a redeal or a return to ready does not finish
+// it); not taken while the card is not taken (ready or withdrawn); not begun
+// while the read is asked; not reported while it is asked or reading. While
+// its cause stands a lateness stays raised, whether or not it is late at
+// this moment: no judgment flaps closed and open again.
+func LateStands(s *Snapshot, n Note) bool {
+	kind := lateKind(n.What)
+	switch n.Type {
+	case NWorkLate:
+		c := s.Fleet.Placed(n.Card)
+		if c == nil {
+			return false
+		}
+		if kind == "not taken" {
+			return c.Col == Ready || c.Col == Withdrawn
+		}
+		return c.Col == Ready || c.Col == Working || c.Col == Withdrawn
+	case NReadLate:
+		c := s.Readers.Placed(n.Card)
+		if c == nil {
+			return false
+		}
+		if kind == "not begun" {
+			return c.Col == Asked
+		}
+		return c.Col == Asked || c.Col == Reading
+	}
+	return false
+}
+
+// placeOf is where a card is, as a lateness says it: member:column, or
+// withdrawn.
+func placeOf(c *Card) string {
+	if c.Col == Withdrawn {
+		return "withdrawn"
+	}
+	return c.Row + ":" + c.Col
 }
 
 func (c cond) subjects() []string {
@@ -556,19 +637,36 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		held = append(held, o)
 	}
 	open := map[string]bool{}
+	judged := map[string]Note{} // the open judgment of a condition, to update in place
 	for _, o := range held {
 		if contains(types, o.Note.Type) {
-			open[condKey(o.Note.Type, o.Subject(), o.Note.What)] = true
+			k := condKey(o.Note.Type, o.Subject(), o.Note.Card, o.Note.What)
+			open[k] = true
+			if o.Note.Kind == Judgment {
+				judged[k] = o.Note
+			}
 		}
 	}
 	holds := map[string]bool{}
+	updated := map[string]bool{}
+	update := func(n Note, what string) {
+		if n.What == what || updated[n.ID] {
+			return
+		}
+		updated[n.ID] = true
+		n.What = what
+		p.Updates = append(p.Updates, n)
+	}
 	written, due := 0, 0
 	for _, c := range conds {
 		fresh := false
 		for _, sub := range c.subjects() {
-			k := condKey(c.typ, sub, c.what)
+			k := condKey(c.typ, sub, c.card, c.what)
 			holds[k] = true
 			fresh = fresh || !open[k]
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate) {
+				update(n, c.what) // the latest facts, in place
+			}
 		}
 		if !fresh {
 			continue
@@ -588,10 +686,24 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	}
 	closing := map[string]bool{}
 	for _, o := range held {
-		if contains(types, o.Note.Type) && !holds[condKey(o.Note.Type, o.Subject(), o.Note.What)] {
-			p.Closes = append(p.Closes, o)
-			closing[o.Note.ID] = true
+		if !contains(types, o.Note.Type) || holds[condKey(o.Note.Type, o.Subject(), o.Note.Card, o.Note.What)] {
+			continue
 		}
+		if LateStands(s, o.Note) {
+			// not late now, and its attempt lives: it stays raised, saying
+			// where the card is
+			if o.Note.Kind == Judgment {
+				c := s.Fleet.Placed(o.Note.Card)
+				if o.Note.Type == NReadLate {
+					c = s.Readers.Placed(o.Note.Card)
+				}
+				what, _, _ := strings.Cut(o.Note.What, "; at ")
+				update(o.Note, what+"; at "+placeOf(c))
+			}
+			continue
+		}
+		p.Closes = append(p.Closes, o)
+		closing[o.Note.ID] = true
 	}
 	// A primary in review whose last judgment the tick closes (its late read
 	// reported, say) gets the judgment it needs after it, as every step that
@@ -622,7 +734,7 @@ func MovesDue(s *Snapshot) int {
 		}
 	}
 	for _, c := range s.Work.Column(Ready) {
-		if !IsSentinel(c) {
+		if !IsSentinel(c) && AtRedealBound(s, c) == nil {
 			n++
 		}
 	}

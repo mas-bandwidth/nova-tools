@@ -246,6 +246,7 @@ type propRun struct {
 	errs      []error
 	tickRes   *TickResult
 	cutUsed   bool
+	logSeen   int // the log's lines the check has read
 }
 
 var errCut = errors.New("cut by the test")
@@ -805,6 +806,32 @@ func (r *propRun) check(i int, a pAct) *propFail {
 				return fail("stall", "%s", f)
 			}
 		}
+	}
+	// No judgment is closed by a move that does not resolve its cause: a
+	// lateness the machine closed while its cause stands is a finding.
+	if !pending {
+		lines, err := r.st.Log(r.ctx)
+		if err != nil {
+			return fail("error", "log: %v", err)
+		}
+		raised := map[string]sprint.Note{}
+		for _, l := range lines[:r.logSeen] {
+			if l.Note != nil && l.Note.Kind == sprint.Judgment {
+				raised[l.Note.ID] = *l.Note
+			}
+		}
+		for _, l := range lines[r.logSeen:] {
+			if l.Note != nil && l.Note.Kind == sprint.Judgment {
+				raised[l.Note.ID] = *l.Note
+			}
+			if l.Note == nil || l.Note.Kind != sprint.Decided || l.Note.Who != sprint.MachineActor {
+				continue
+			}
+			if n, ok := raised[l.Note.Answers]; ok && sprint.LateStands(s, n) {
+				return fail("closed", "%s (%s) closed by the machine while its cause stands: %s", n.ID, n.Type, n.What)
+			}
+		}
+		r.logSeen = len(lines)
 	}
 	// Scores change only by rank.
 	for _, c := range s.Work.Column(sprint.States...) {

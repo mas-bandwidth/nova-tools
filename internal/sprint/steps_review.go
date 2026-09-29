@@ -524,7 +524,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -534,9 +534,20 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // and start cuts its card later.
 func Rework(s *Snapshot, r ReworkReq) Plan {
 	var p Plan
-	chosen := pick(&p, r.Sel, s.Work.Column(Review), rowOf, func(c *Card) string {
+	// a primary in review, or one at its redeal bound (ready, its work card
+	// withdrawn and dealt no more): rework is its next attempt
+	pool := s.Work.Column(Review)
+	for _, c := range s.Work.Column(Ready) {
+		if AtRedealBound(s, c) != nil {
+			pool = append(pool, c)
+		}
+	}
+	chosen := pick(&p, r.Sel, pool, rowOf, func(c *Card) string {
 		if c.Placed() && c.Col == Merging {
 			return "merging: return it first: nova-sprint return " + c.ID
+		}
+		if AtRedealBound(s, c) != nil {
+			return ""
 		}
 		return inState(c, Review)
 	}, s.primaryCard)
@@ -563,6 +574,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		var asked []string
 		broken := 0
 		var retire []Change
+		if wc := AtRedealBound(s, c); wc != nil {
+			retire = append(retire, change(Fleet, removeEntry(wc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
+		}
 		for _, rc := range s.Readers.Of(c.ID) {
 			if rc.Int("attempt") == attempt && !contains(asked, rc.F("reader")) {
 				asked = append(asked, rc.F("reader"))

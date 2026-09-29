@@ -57,6 +57,7 @@ type memLog struct {
 	done     map[string]string
 	progress map[string]time.Time
 	inbox    []memNote
+	lines    []memLine // the log
 	notes    map[string]sprint.Note
 	open     map[string]string
 	cursor   string
@@ -65,6 +66,11 @@ type memLog struct {
 type memNote struct {
 	id   string
 	note sprint.Note
+}
+
+type memLine struct {
+	id   string
+	line sprint.Line
 }
 
 type memTable struct {
@@ -703,10 +709,16 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		return nil
 	}
 	if commit {
+		for _, line := range op.Log {
+			m.seq++
+			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
+		}
 		for _, n := range append(append([]sprint.Note{}, op.Notes...), op.Decided...) {
 			// every subject stays open; only the note's listing is bounded
 			subjects := n.Subjects()
 			n = n.Bound()
+			m.seq++
+			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), sprint.NoteLine(n, op.ID)})
 			m.seq++
 			l.inbox = append(l.inbox, memNote{fmt.Sprintf("%d-0", m.seq), n})
 			if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
@@ -715,6 +727,14 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 					l.open[sprint.OpenKey(n.ID, s)] = n.ID
 				}
 			}
+		}
+		for _, n := range op.Updates {
+			n = n.Bound()
+			l.notes[n.ID] = n
+			line := sprint.NoteLine(n, op.ID)
+			line.Verb = "updated"
+			m.seq++
+			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
 		}
 		for _, k := range op.Closes {
 			delete(l.open, k)
@@ -827,6 +847,27 @@ func (m *Mem) NotesSince(_ context.Context, after string, max int) ([]sprint.Not
 		ids = append(ids, n.id)
 	}
 	return notes, ids, nil
+}
+
+func (m *Mem) LogSince(_ context.Context, after string, max int) ([]sprint.Line, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.log()
+	var lines []sprint.Line
+	var ids []string
+	past := after == ""
+	for _, x := range l.lines {
+		if !past {
+			past = x.id == after
+			continue
+		}
+		if len(lines) == max {
+			break
+		}
+		lines = append(lines, x.line)
+		ids = append(ids, x.id)
+	}
+	return lines, ids, nil
 }
 
 func (m *Mem) Cursor(context.Context) (string, error) {
