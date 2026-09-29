@@ -35,6 +35,26 @@ backed by Redis data structures.
   - `text`: Plain string value stored in the row record, not an ordered set.
   - `pct(<count-column>)`: Percentage calculation of the named count column
     relative to the sum of all count columns in that row.
+  - `pct(<count-column>/<a>+<b>+...)`: Percentage calculation of the named count
+    column relative to the sum of the named count columns `a`, `b`, ... of that
+    row, for example `okpct:pct(ok/ok+failed):pooled:ok%`. The numerator need not
+    be one of the denominator's columns.
+  - `sum(<a>+<b>+...)`: The named count columns of that row added, printed and
+    right-aligned as a count, for example `done:sum(ok+failed)`.
+
+  The three formula projections hold no set: they are computed at render and
+  never written. Every column a formula names is a count column of the same
+  table (hidden or not); a missing column, a column that is not a count (text,
+  members, first, last or another formula), a name given twice, or an empty term
+  is refused at `create`, `set --columns` and `col add`, and `col del` refuses a
+  column a formula reads, naming the formula. A formula cell prints `?` when a
+  count it reads does not come back; `pct(<count-column>)` reads every count
+  column of the row, the named forms only the columns they name. A percentage
+  whose denominator is zero prints the known-empty `0.0%`.
+  Folds: a count or `sum(...)` column folds `sum` (the default), `max` or `avg`;
+  a percentage folds `pooled` (the default): the numerators summed over the rows
+  divided by the denominators summed over the rows, never a mean of the rows'
+  percentages. Hidden rows count in every fold.
 - **Row**: A declared horizontal entity identified by a row key. Holds an optional
   display label, an optional member exclusion (`--exclude`), an optional owner
   verb (`--owner`), an array of cells matching the table's declared columns, and

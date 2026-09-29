@@ -1919,7 +1919,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `row order <table> <row>...` | Puts the named rows first; the rest keep their order |
 | `row sort <table> [--by name/label/<col>] [--desc] [--keep]` | Sorts once; `--keep` maintains name/label order, `--manual` ends it |
 | `col add <table> <spec> [--first/--last/--before/--after]` | Adds one column, last unless a place is named |
-| `col del <table> <col>` | Removes an empty column with no formula dependency |
+| `col del <table> <col>` | Removes an empty column no formula (`pct(...)`, `sum(...)`) reads |
 | `col move <table> <col> --first/--last/--before/--after` | Moves one column |
 | `cell add/remove <table> <row> <col> <member>...` | Adds or removes a batch; add takes `--score` |
 | `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
@@ -1961,8 +1961,10 @@ COL MOVE table= col= place= [of=]`. `col add <table>
 `TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
 COL DEL table= col=` and is refused, exit 1, writing nothing, while the
 column holds a member (the refusal names all blocking rows and members, with a
-batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
-the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+batch `cell remove` command for each occupied cell) or a text value, while a formula column (`pct(...)` or `sum(...)`) reads it, and when it is
+the last column. `col add` of a formula over a column the table does not have is
+refused with the `col add` of that column as the remedy; over a column that is not
+a count, with `show` as the remedy. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Batch mutation
 
@@ -2118,14 +2120,19 @@ next newline. Failures name their input line. See the
 ### Columns, identity and output
 
 `--columns` is `name[:projection[:fold[:label]]]`, comma-separated. The projections
-are `count` (default), `members`, `first`, `last`, `text`, and
-`pct(<count-column>)`. Text is blank until `row set` writes it; the row label
+are `count` (default), `members`, `first`, `last`, `text`, `pct(<count-column>)`,
+`pct(<count-column>/<a>+<b>)` and `sum(<a>+<b>)`. Text is blank until `row set` writes it; the row label
 always has a separate leading cell. Quote specs containing parentheses, for
 example `'ready,done,note:text,progress:pct(done)'`, so zsh passes them unchanged.
 
-Folds are `sum` (count default), `max`, `avg` (count only), `union` (members),
-`pooled` (percentage default), or `none`. Percentages divide their named count by
-all count columns. Pooled footers divide the summed counts, not the row
+Folds are `sum` (count and sum default), `max`, `avg` (count and sum only), `union` (members),
+`pooled` (percentage default), or `none`. `pct(<col>)` divides its named count by
+all count columns of the row; `pct(<col>/<a>+<b>)` divides it by the named count
+columns `a`, `b` of the row; `sum(<a>+<b>)` adds the named count columns of the row.
+Every column a formula names is a count column of the table, hidden or not; any
+other is refused at `create`, `set --columns` and `col add`. For example
+`'ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%'`. Pooled footers
+divide the summed numerators by the summed denominators, not the row
 percentages. Known-empty percentages are `0.0%`; an unread dependency is `?`.
 `--footer <label>` names the otherwise blank footer label. `--width col=n,...`
 sets column widths; render/watch also accept `--label-width` and `--hide-zero-rows`.

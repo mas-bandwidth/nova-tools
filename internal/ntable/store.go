@@ -406,7 +406,20 @@ func (o operation) refused(reply []any) error {
 		remedy = "nova-table col move " + shellWord(o.table) + " " + shellWord(o.col) + " --last"
 	case typedrec.TableRefusalDepends:
 		o.col = fmt.Sprint(reply[2])
-		cause = fmt.Errorf("column %q is a percentage of it; remove that column first", reply[3])
+		cause = fmt.Errorf("column %q is a formula that reads it; remove that column first", reply[3])
+	case typedrec.TableRefusalFormula:
+		if len(reply) != 5 {
+			return fmt.Errorf("%s: malformed formula refusal", o.location())
+		}
+		o.col = fmt.Sprint(reply[2])
+		arg, found := fmt.Sprint(reply[3]), fmt.Sprint(reply[4])
+		if found == "missing" {
+			cause = fmt.Errorf("it reads column %q, which the table does not have; add %q as a count column first", arg, arg)
+			remedy = "nova-table col add " + shellWord(o.table) + " " + shellWord(arg)
+		} else {
+			cause = fmt.Errorf("it reads column %q, a %s column; a formula reads count columns only: name a count column", arg, found)
+			remedy = "nova-table show " + shellWord(o.table)
+		}
 		remedy = "nova-table col del " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[3]))
 	case typedrec.TableRefusalLastCol:
 		o.col = fmt.Sprint(reply[2])

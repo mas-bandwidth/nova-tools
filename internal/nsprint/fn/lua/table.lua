@@ -193,6 +193,42 @@ do
   end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
+  -- T.formula(proj): a formula projection read (internal/ntable ParseFormula):
+  -- pct(<col>), pct(<col>/<a>+<b>+...) or sum(<a>+<b>+...). It returns
+  -- {sum=bool, inputs={every column named, each once}}, or nil when proj is
+  -- not a well-formed formula.
+  function T.formula(proj)
+    if type(proj) ~= 'string' then return nil end
+    local kind, arg = string.match(proj, '^(%a%a%a)%((.*)%)$')
+    if kind ~= 'pct' and kind ~= 'sum' then return nil end
+    local inputs, seen = {}, {}
+    local function add(list)
+      for term in string.gmatch(list .. '+', '([^+]*)%+') do
+        if not T.name(term) or seen[term] then return false end
+        seen[term] = true
+        inputs[#inputs + 1] = term
+      end
+      return true
+    end
+    if kind == 'sum' then
+      if not add(arg) then return nil end
+      return {sum=true, inputs=inputs}
+    end
+    local part, over = string.match(arg, '^([^/]*)/(.*)$')
+    if not part then part = arg end
+    if not T.name(part) then return nil end
+    seen[part] = true
+    inputs[1] = part
+    if over then
+      seen = {}
+      if not add(over) then return nil end
+      -- the numerator is read once, whether or not the denominator names it
+      local once, dup = {}, {}
+      for _, name in ipairs(inputs) do if not dup[name] then dup[name] = true; once[#once + 1] = name end end
+      inputs = once
+    end
+    return {sum=false, inputs=inputs}
+  end
   -- Redis strings are arbitrary bytes; row identities also travel in JSON.
   -- Reject malformed UTF-8 instead of letting a client rename them to U+FFFD.
   function T.row(n)
@@ -358,24 +394,33 @@ do
     for col in string.gmatch(h.order, '[^,]+') do
       local proj, fold, width = string.match(h['col:' .. col] or '', '^([^:]+):([^:]+):([^:]+):')
       local valid = {count=true,members=true,first=true,last=true,text=true}
-      local formula = proj and string.match(proj, '^pct%([%w_.-]+%)$') ~= nil
+      local f = T.formula(proj)
+      local formula = f ~= nil
+      -- a sum(...) column folds as a count does; a pct(...) column pools
+      local counts = proj == 'count' or (f ~= nil and f.sum)
       local w = tonumber(width)
       if not T.name(col) or not (valid[proj or ''] or formula) or seen[col] or not T.uint(width) or #width > 19 or
         (#width == 19 and width > '9223372036854775807') or not w or w < 0 or w ~= math.floor(w) or
-        not (repair or fold == 'none' or ((fold == 'sum' or fold == 'max') and proj == 'count') or
-          (fold == 'avg' and proj == 'count') or (fold == 'pooled' and formula) or
+        not (repair or fold == 'none' or ((fold == 'sum' or fold == 'max') and counts) or
+          (fold == 'avg' and counts) or (fold == 'pooled' and formula and not f.sum) or
           (fold == 'union' and proj ~= 'count' and proj ~= 'text' and not formula)) then
         return nil, T.refuse('DEFINITION', col)
       end
       seen[col] = true
       order[#order + 1] = col
-      cols[#cols + 1] = {name=col, projection=proj, noset=proj == 'text' or formula}
+      cols[#cols + 1] = {name=col, projection=proj, noset=proj == 'text' or formula, inputs=f and f.inputs}
     end
     if #cols == 0 or table.concat(order, ',') ~= h.order then return nil, T.refuse('DEFINITION') end
     if h.sort and not (string.match(h.sort, '^-?name$') or string.match(h.sort, '^-?label$')) then return nil, T.refuse('DEFINITION', 'sort') end
+    -- every column a formula reads is a count column of the table (hidden
+    -- or not); FORMULA names the formula, the column and why
     for _, col in ipairs(cols) do
-      local arg = string.match(col.projection, '^pct%(([%w_.-]+)%)$')
-      if arg and (not seen[arg] or not string.match(h['col:' .. arg] or '', '^count:')) then return nil, T.refuse('DEFINITION', col.name) end
+      for _, arg in ipairs(col.inputs or {}) do
+        if not seen[arg] then return nil, T.refuse('FORMULA', col.name, arg, 'missing') end
+        if not string.match(h['col:' .. arg] or '', '^count:') then
+          return nil, T.refuse('FORMULA', col.name, arg, string.match(h['col:' .. arg], '^([^:]+):') or '')
+        end
+      end
     end
     if not repair then
       local hidden = {}
@@ -1132,7 +1177,10 @@ do
       for _, col in ipairs(T.split(h.order)) do
         if col ~= gone then
           list[#list + 1] = col
-          if string.match(h['col:' .. col] or '', '^pct%(([%w_.-]+)%)') == gone then return nil, T.refuse('DEPENDS', gone, col) end
+          local f = T.formula(string.match(h['col:' .. col] or '', '^([^:]+):'))
+          for _, arg in ipairs(f and f.inputs or {}) do
+            if arg == gone then return nil, T.refuse('DEPENDS', gone, col) end
+          end
         end
       end
       if #list == 0 then return nil, T.refuse('LASTCOL', gone) end

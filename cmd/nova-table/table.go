@@ -23,7 +23,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	epochKey := fs.String("epoch-key", "", "hash key naming the epoch domain (empty means epoch 0)")
 	epochField := fs.String("epoch-field", "n", "field in the epoch hash")
 	memberPrefix := fs.String("member-prefix", "", "member record prefix (default table::member:)")
-	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold")
+	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold, sum to the sum fold")
 	footer := fs.String("footer", ntable.DefaultFooter, "the footer row's label (none by default)")
 	widths := fs.String("width", "", "fixed column widths, col=n,...")
 	pos, err := parseInterleaved(fs, args)
@@ -34,7 +34,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: create <table> --columns <name[:projection[:fold[:label]]],...>")
 	}
 	if *columns == "" {
-		return refuse(stderr, verb, "--columns wants the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold")
+		return refuse(stderr, verb, "--columns wants the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold, sum to the sum fold")
 	}
 	cols, err := ntable.ParseColumns(*columns)
 	if err != nil {
