@@ -60,7 +60,6 @@ exit 1
 	}
 }
 
-
 // TestGHWholeReadsAPaginatedCommentsCaptureWhole is the positive control: a fake gh
 // answers 70,000-plus bytes of comments, the last of which is the typed line a merge
 // verdict is read from, and the fix must decode every one of them -- not a 64 KiB prefix
