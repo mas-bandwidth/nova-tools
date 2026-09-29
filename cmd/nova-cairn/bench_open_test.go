@@ -100,7 +100,7 @@ func TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb(t *testing.T) {
 		if strings.Contains(errOut, "run: nova-cairn help") {
 			t.Errorf("%v: the refusal is sent to the help banner, which does not help: %q", args, errOut)
 		}
-		for _, want := range []string{"cannot ", "hand.md", "sessions/", "to keep the bench shape run: mkdir -p ", "to keep the own shape run: mkdir -p "} {
+		for _, want := range []string{"cannot ", "hand.md", "sessions/", "keep one shape by moving the other shape's paths out of the store"} {
 			if !strings.Contains(errOut, want) {
 				t.Errorf("%v: refusal lacks %q: %q", args, want, errOut)
 			}
@@ -204,5 +204,37 @@ func TestBenchSourceIsRecordedInheritedAndReported(t *testing.T) {
 	}
 	if out, _ = runOK(t, "", "index", "--store", store, "--session", "s2"); strings.Contains(out, "forged") && strings.Contains(out, "INDEX ENTRY") {
 		t.Fatalf("source forged an entry: %q", out)
+	}
+}
+
+// One damaged session among five: index lists the four good ones, prints one
+// flagged row for the fifth, and exits 1 after printing everything; naming the
+// damaged session refuses at exit 2.
+func TestIndexAtTheCLIFlagsOneBadSessionAmongFive(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	for _, id := range []string{"s1", "s2", "s3", "s4"} {
+		body := "# s\n\n## 2026-09-29T08:00:00Z — e1\n\nwords\n"
+		if err := os.WriteFile(filepath.Join(store, id+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(store, "nowhere.md"), filepath.Join(store, "bad.md")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	code, out, errOut := runCode("", "index", "--store", store)
+	if code != 1 || errOut != "" {
+		t.Fatalf("exit=%d err=%q out=%q", code, errOut, out)
+	}
+	for _, want := range []string{"session=s1 entry=e1", "session=s4 entry=e1", "INDEX FLAGGED session=bad cause=", "a dangling symlink", "INDEX COVERAGE sessions=5 entries=4"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("index lacks %q: %s", want, out)
+		}
+	}
+	if strings.Count(out, "INDEX FLAGGED") != 1 {
+		t.Errorf("want one flagged row: %s", out)
+	}
+	if code, _, _ := runCode("", "index", "--store", store, "--session", "bad"); code != 2 {
+		t.Fatalf("index --session bad exited %d, want 2", code)
 	}
 }

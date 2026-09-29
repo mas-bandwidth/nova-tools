@@ -63,10 +63,20 @@ flags:
                     lands a dated "## <stamp> — <entry>" section at the end of
                     the file; no sessions/, entries/, log.jsonl or index
                     appears beside it. A store holding both shapes is refused
-                    by every verb, naming the paths found of each and the next
-                    action. A top-level README.md, in any case, is documentation
-                    and never a session file in either shape; README is refused
-                    as a session id.
+                    by every verb, naming the paths found of each and, in words,
+                    the next action: move the other shape's paths out of the
+                    store; the tool moves and deletes nothing. A store is
+                    written by one version family: a nova-cairn older than this
+                    one opening a new session in a bench store writes the own
+                    shape beside the records, and this version then refuses the
+                    store as mixed until those paths are moved out, so every
+                    writer of a shared store upgrades together. A top-level
+                    README.md, in any case, is documentation and never a
+                    session file in either shape; README is refused as a
+                    session id. A symlink named <id>.md counts as a record only
+                    if it resolves to a regular file inside the store. A defect
+                    in one session's record refuses verbs addressed to that
+                    session; index flags it as one row and lists the others.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:
@@ -95,7 +105,8 @@ flags:
 There is deliberately no seal, consume, delete, grade, consolidate or wake
 verb: the boundary in SPEC-CAIRN.md lists them, and naming one here is exit 2.
 
-exit codes: 0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).
+exit codes: 0 ran and passed, 1 ran and failed (a conflict; or index flagged a session
+whose record it could not read, after printing every other row), 2 could not run (bad invocation).
 
 example:
   nova-cairn open --store ./cairns --session s1 --publish manual
@@ -348,19 +359,26 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
-	all, total, err := cairn.Index(*store, *session, 0)
+	res, err := cairn.IndexAll(*store, *session, 0)
 	if err != nil {
 		return refuseErr(stderr, " index", err)
 	}
-	led := cairn.Coverage(*store)
 	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
-	for _, r := range all {
+	for _, r := range res.Rows {
 		list.Line(fmt.Sprintf("INDEX ENTRY session=%s entry=%s stamp=%s bytes=%d source=%s",
 			oneline.Field(r.Session), oneline.Field(r.ID),
 			r.Stamp.Format(time.RFC3339Nano), r.Bytes, sourceField(r.Source)))
 	}
 	list.More()
-	fmt.Fprintf(stdout, "INDEX COVERAGE sessions=%d entries=%d shown=%d\n", led.Sessions, total, list.Shown())
+	// A session whose own record could not be read is one flagged row; every
+	// other session was listed above.
+	for _, f := range res.Flagged {
+		fmt.Fprintf(stdout, "INDEX FLAGGED session=%s cause=%s\n", oneline.Field(f.Session), oneline.Escape(f.Cause))
+	}
+	fmt.Fprintf(stdout, "INDEX COVERAGE sessions=%d entries=%d shown=%d\n", res.Sessions, res.Total, list.Shown())
+	if len(res.Flagged) > 0 {
+		return 1
+	}
 	return 0
 }
 

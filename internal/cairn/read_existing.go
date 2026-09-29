@@ -26,7 +26,7 @@ func existingStore(store string) error {
 // recordForRead finds the session's record in the store's shape. A path
 // holding something that is not a record is an error naming it, never "no such
 // session".
-func recordForRead(op, store, session string, sh shape) (string, bool, error) {
+func recordForRead(d *dirs, op, store, session string, sh shape) (string, bool, error) {
 	if err := checkSession(session); err != nil {
 		return "", false, err
 	}
@@ -34,7 +34,7 @@ func recordForRead(op, store, session string, sh shape) (string, bool, error) {
 	if sh == shapeBench {
 		path, bench = benchFile(store, session), true
 	}
-	ok, err := recordState(op, path)
+	ok, err := recordState(d, op, store, path)
 	if err != nil {
 		return "", false, err
 	}
@@ -80,13 +80,12 @@ func benchReceipts(path, session string) ([]ReceiptInfo, error) {
 	return rows, nil
 }
 
-func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
-	files, err := os.ReadDir(store)
+func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[string]bool, flagged []FlaggedSession, sessions int, err error) {
+	files, err := d.list(store)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, 0, err
 	}
-	var rows []IndexRow
-	flat := map[string]bool{}
+	flat = map[string]bool{}
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 			continue
@@ -95,18 +94,21 @@ func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
 		if !sessionFileID(id) || (session != "" && id != session) {
 			continue
 		}
-		path, _, err := recordForRead("index", store, id, shapeBench)
-		if err != nil {
-			return nil, nil, err
-		}
-		receipts, err := benchReceipts(path, id)
-		if err != nil {
-			return nil, nil, err
-		}
+		sessions++
 		flat[id] = true
-		for _, rc := range receipts {
-			rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
+		path, _, err := recordForRead(d, "index", store, id, shapeBench)
+		if err == nil {
+			var receipts []ReceiptInfo
+			if receipts, err = benchReceipts(path, id); err == nil {
+				for _, rc := range receipts {
+					rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
+				}
+			}
+		}
+		if err != nil {
+			// This session's own defect: flag it and go on to the next.
+			flagged = append(flagged, FlaggedSession{Session: id, Cause: err.Error()})
 		}
 	}
-	return rows, flat, nil
+	return rows, flat, flagged, sessions, nil
 }

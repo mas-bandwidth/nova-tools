@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -86,10 +87,13 @@ func TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt(t *testing.T) {
 	}
 }
 
-func TestSymlinkToARegularFileIsARecord(t *testing.T) {
+func TestSymlinkToARegularFileInsideTheStoreIsARecord(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
-	real := filepath.Join(t.TempDir(), "real.md")
+	real := filepath.Join(store, "notes", "real.md")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(real, []byte("# real\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +115,44 @@ func TestSymlinkToARegularFileIsARecord(t *testing.T) {
 	}
 	if fi, _ := os.Lstat(benchFile(store, "s1")); fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatal("the link was replaced by a file")
+	}
+}
+
+// A link that resolves outside the store is refused: the tool never reads or
+// appends outside the directory it was given. The refusal names the link and
+// its target, and is about that session only.
+func TestSymlinkResolvingOutsideTheStoreIsRefused(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "elsewhere.md")
+	if err := os.WriteFile(outside, []byte("# secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(benchFile(store, "ok"), []byte("# ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, benchFile(store, "leak")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	link := benchFile(store, "leak")
+	checks := map[string]error{
+		"open":    Open(store, "leak", "", benchNow, PublishManual),
+		"append":  func() error { _, err := Append(store, "leak", "e", "w", "", benchNow, PublishManual); return err }(),
+		"index":   func() error { _, _, err := Index(store, "leak", 0); return err }(),
+		"receipt": func() error { _, err := Receipt(store, "leak", "e"); return err }(),
+	}
+	for verb, err := range checks {
+		var rp *RecordPathError
+		if !errors.As(err, &rp) || !strings.Contains(err.Error(), link) || !strings.Contains(err.Error(), outside) || !strings.Contains(err.Error(), "resolves outside the store") {
+			t.Errorf("%s: want a refusal naming the link and its target, got %v", verb, err)
+		}
+	}
+	if raw, _ := os.ReadFile(outside); string(raw) != "# secret\n" {
+		t.Fatalf("a verb wrote through the link: %q", raw)
+	}
+	// The other session is untouched by it.
+	if _, err := Append(store, "ok", "e1", "words", "", benchNow, PublishManual); err != nil {
+		t.Fatalf("append to the other session: %v", err)
 	}
 }
 
@@ -223,5 +265,81 @@ func TestCaseFoldedRecordNamesAreNotSessionFiles(t *testing.T) {
 		if _, err := Append(store, "A", "e", "w", "", benchNow, PublishManual); err == nil || !strings.Contains(err.Error(), "only by letter case") {
 			t.Fatalf("append to A beside a.md: %v", err)
 		}
+	}
+}
+
+// Names from a directory listing are exact by construction, so the directory is
+// read once per verb: index over many sessions must not ask the disk about the
+// store once per record. The seam counts the reads; no clock is asserted.
+func TestIndexReadsTheStoreDirectoryOnce(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	for i := 0; i < 40; i++ {
+		id := "s" + strconv.Itoa(i)
+		body := "# " + id + "\n\n## 2026-09-29T08:00:00Z — e1\n\nwords\n"
+		if err := os.WriteFile(benchFile(store, id), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reads := map[string]int{}
+	d := newDirs()
+	base := d.read
+	d.read = func(p string) ([]os.DirEntry, error) { reads[p]++; return base(p) }
+	res, err := indexAll(d, store, "", 0)
+	if err != nil || res.Total != 40 || res.Sessions != 40 || len(res.Flagged) != 0 {
+		t.Fatalf("index: %+v %v", res, err)
+	}
+	if reads[store] != 1 {
+		t.Fatalf("the store directory was read %d times for 40 sessions; want once", reads[store])
+	}
+	total := 0
+	for _, n := range reads {
+		total += n
+	}
+	if total > 3 {
+		t.Fatalf("index made %d directory reads: %v", total, reads)
+	}
+}
+
+// One session's damaged record is one flagged row; the rest are listed, and
+// naming the damaged session refuses instead.
+func TestIndexFlagsOneBadSessionAndListsTheOthers(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	good := "# s\n\n## 2026-09-29T08:00:00Z — e1\n\nwords\n"
+	for _, id := range []string{"s1", "s2", "s3", "s4"} {
+		if err := os.WriteFile(benchFile(store, id), []byte(good), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(store, "nowhere.md"), benchFile(store, "bad")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	res, err := IndexAll(store, "", 0)
+	if err != nil {
+		t.Fatalf("a bad session must not refuse the store: %v", err)
+	}
+	if res.Total != 4 || len(res.Rows) != 4 || res.Sessions != 5 {
+		t.Fatalf("rows %d total %d sessions %d; want the four good sessions listed of five", len(res.Rows), res.Total, res.Sessions)
+	}
+	if len(res.Flagged) != 1 || res.Flagged[0].Session != "bad" || !strings.Contains(res.Flagged[0].Cause, "a dangling symlink") {
+		t.Fatalf("flagged %+v", res.Flagged)
+	}
+	if _, _, err := Index(store, "", 0); err == nil {
+		t.Fatal("Index must report the flagged session as an error")
+	}
+	if _, err := IndexAll(store, "bad", 0); err == nil {
+		t.Fatal("naming the bad session refuses")
+	}
+	if r, err := IndexAll(store, "s1", 0); err != nil || r.Total != 1 {
+		t.Fatalf("naming a good session: %+v %v", r, err)
+	}
+	// A damaged heading is the same: one flagged row.
+	if err := os.WriteFile(benchFile(store, "s2"), []byte("## 2026-99-99T08:00:00Z — e1\n\nx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = IndexAll(store, "", 0)
+	if err != nil || len(res.Flagged) != 2 || res.Total != 3 {
+		t.Fatalf("after damaging s2: %+v %v", res, err)
 	}
 }

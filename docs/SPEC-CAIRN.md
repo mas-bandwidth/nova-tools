@@ -48,12 +48,17 @@ directory holds:
   are also this shape, so a new store gets the tool's own layout.
 - **mixed**: a top-level `<id>.md` together with any of `sessions/`, `entries/`
   or `log.jsonl`. Every verb refuses it at exit 2 with one line naming the
-  operation, the cause, the paths found of each shape and the next action,
-  as one runnable POSIX shell line per shape: `to keep the bench shape run:
-  mkdir -p <store>.aside && mv <sessions/, entries/, log.jsonl> <store>.aside/`,
-  or `to keep the own shape run: mkdir -p <store>.aside && mv <the <id>.md
-  files> <store>.aside/`. Nothing is written and nothing is deleted; the
-  refusal is not sent to the help banner.
+  operation, the cause (the store holds two shapes), the paths found of each
+  shape (the top-level files as a bounded list, then "and N more") and the next
+  action in words: keep one shape by moving the other shape's paths out of the
+  store, then run the same command again. Nothing is written, and the tool
+  moves and deletes nothing: it prints no command that does.
+
+**Mixed versions.** A store is written by one version family. A `nova-cairn`
+older than this one, run on a bench store, writes the own shape beside the
+records when `open` is called for a new session; this version then refuses the
+store as mixed until those paths are moved out. Every writer of a shared store
+upgrades together.
 
 A top-level `README.md`, in any case, is documentation and never a session file
 in either shape: it counts for no shape, `index` and the coverage ledger do not
@@ -63,12 +68,21 @@ with a message naming the reserved name. Any other top-level `<id>.md` beside
 
 A symlink named `sessions`, `entries` or `log.jsonl` counts as an own-shape
 marker whatever it points at, and a symlink named `<id>.md` counts as a session
-file. A session record is a regular file, or a symlink that resolves to one.
-Where a verb finds anything else at a session's record path (a directory, a
-symlink to a directory or to nothing, a device), it refuses at exit 2 naming the
-path, what is there and the next action (move or remove it, or choose another
-session id); `open` never reports success over it, and no verb answers "no such
-session" for it.
+file. A session record is a regular file, or a symlink that resolves to one
+inside the store; the tool never reads or appends outside the directory it was
+given. Where a verb finds anything else at a session's record path (a directory,
+a symlink to a directory, to nothing or to somewhere outside the store, a
+device), it refuses at exit 2 naming the path, what is there and the next action
+(move or remove it, or choose another session id); `open` never reports success
+over it, and no verb answers "no such session" for it.
+
+**A defect in one session's record is that session's.** It refuses the verbs
+addressed to that session (`open`, `append`, `receipt`, `index --session`), and
+`index` over the store reports it as one flagged row, `INDEX FLAGGED
+session=<id> cause=<why>`, while every other session is listed; `index` prints
+all its rows and the coverage line first and then exits 1 when any row was
+flagged. Only a store-level condition (two shapes, a store path that is not a
+directory, an unreadable directory) refuses every verb.
 
 Only the exact name `<id>.md` is a session file: `s1.MD` is not one on any
 file system, and `index` and the coverage ledger skip it. On a disk that folds
@@ -149,7 +163,8 @@ at exit 2; an existing empty store or session is a successful empty index.
 Every listing takes `--max` (default 20, 0 prints all) and
 prints one `MORE` line with its remedy; the count is never capped and the
 `INDEX COVERAGE sessions=<n> entries=<n>` line carries the total whether
-the run passed or failed.
+the run passed or failed. The store's directory is read once per verb, not
+once per record.
 
 **`receipt --store <dir> --session <id> --entry <id>` names what was
 preserved for one entry**: its stamp, source pointers, size and the same
@@ -210,6 +225,10 @@ New regression cases must demonstrate the defect before the repair.
 41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.
 42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkToARegularFileIsARecord`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory, a symlink to a directory and a dangling symlink at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlink to a regular file is a record; a symlinked own-shape marker is a marker.
 43. `TestBenchSourceIsRecordedInheritedAndReported` — on a bench store `open --source` prints the pointer it recorded, an `append` with no `--source` carries it, and `receipt` and `index` report it; a hand-kept record reports `source=-`; a source never forms a section.
-44. `TestMixedShapeMessageNamesThePathsOfEachShape`, `TestMixedShapeNextActionsRun` and `TestIDRefusalsNameTheRuleBroken` — the mixed-store refusal reads as a sentence for each verb and carries the two next actions, which run in a shell and leave one shape; an identifier refusal names the rule broken (empty, over 128 bytes, a directory name, `..`, whitespace, a control character, a slash) and never echoes an over-long id whole.
+44. `TestMixedShapeMessageNamesThePathsOfEachShape` and `TestIDRefusalsNameTheRuleBroken` — the mixed-store refusal names the paths of each shape and the next action in words, and prints no `mv`, `rm` or `find`; an identifier refusal names the rule broken (empty, over 128 bytes, a directory name, `..`, whitespace, a control character, a slash) and never echoes an over-long id whole.
 45. `TestCaseFoldedRecordNamesAreNotSessionFiles` — a file named `s1.MD` is not a session file: the store-wide readers skip it, and on a case-folding disk `open`, `append`, `receipt` and `index --session` refuse naming the fold and write nothing through it (on a case-keeping disk `open s1` creates `s1.md` beside it; the test probes the disk and asserts the outcome for whichever it is).
 46. `TestStoreHoldingOnlyReadmeIsAnEmptyStore` and `TestConcurrentBenchOpensWriteOneHeader` — a store holding only a `README.md` is an empty store in the tool's own shape; many concurrent `open`s of one new bench session write exactly one header and leave no temporary file. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` (functional tier) builds the binary and runs the printed remedy through `sh -c` with it first on `PATH`.
+49. `TestSymlinkResolvingOutsideTheStoreIsRefused` and `TestSymlinkToARegularFileInsideTheStoreIsARecord` — a link that resolves outside the store is refused by every verb naming the link and its target and nothing is written through it; a link to a regular file inside the store is a record.
+50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
+51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
+52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.

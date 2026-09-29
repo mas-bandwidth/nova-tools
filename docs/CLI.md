@@ -1852,9 +1852,12 @@ append addressing a session with no file refuses with the whole remedy verb:
 
 A store holding both shapes (a top-level `<id>.md` together with `sessions/`,
 `entries/` or `log.jsonl`) is refused by every verb at exit 2 with one line that
-names the operation, the paths found of each shape and the next action as
-one runnable shell line per shape (move the own-shape paths aside to keep the
-bench shape, or the `<id>.md` files aside to keep the own shape). A top-level `README.md`, in any case, is documentation
+names the operation, the paths found of each shape and the next action in words:
+move the other shape's paths out of the store, then run the same command again.
+The tool moves and deletes nothing, and prints no command that does. Every writer
+of a shared store upgrades together: an older `nova-cairn` opening a new session
+in a bench store writes the own shape beside the records, and this version then
+refuses the store until those paths are moved out. A top-level `README.md`, in any case, is documentation
 and never a session file in either shape: it counts for no shape and is not
 indexed, and `README` is refused as a session id. The lifecycle is modelled in
 `tla/CairnStore.tla`.

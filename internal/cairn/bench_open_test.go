@@ -7,16 +7,15 @@ package cairn
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 var benchNow = time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
@@ -270,7 +269,7 @@ func TestMixedShapeStoreIsRefusedByEveryVerb(t *testing.T) {
 				continue
 			}
 			msg := err.Error()
-			for _, want := range []string{"cannot " + opPhrase(verb) + ":", "hand.md", "own shape:", "to keep the bench shape run: mkdir -p ", "to keep the own shape run: mkdir -p ", store} {
+			for _, want := range []string{"cannot " + opPhrase(verb) + ":", "hand.md", "own shape:", "keep one shape by moving the other shape's paths out of the store", "the tool moves and deletes nothing", store} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("%s/%s: message lacks %q: %s", name, verb, want, msg)
 				}
@@ -299,63 +298,30 @@ func TestMixedShapeMessageNamesThePathsOfEachShape(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(store, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	aside := "'" + store + ".aside'"
 	err := Open(store, "s", "", benchNow, PublishManual)
 	want := "cannot open a session: store " + `"` + store + `"` + " holds two shapes at once (bench files: a.md, b.md, c.md and 2 more; own shape: log.jsonl, sessions/); " +
-		"to keep the bench shape run: mkdir -p " + aside + " && mv '" + store + "/log.jsonl' '" + store + "/sessions' " + "'" + store + ".aside/'" +
-		"; to keep the own shape run: mkdir -p " + aside + " && mv '" + store + "/a.md' '" + store + "/b.md' '" + store + "/c.md' '" + store + "/d.md' '" + store + "/e.md' '" + store + ".aside/'"
+		"keep one shape by moving the other shape's paths out of the store (the top-level <id>.md files, or sessions/, entries/ and log.jsonl), " +
+		"then run the same command again; the tool moves and deletes nothing"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got  %v\nwant %s", err, want)
 	}
+	// The next action is in words: no command that moves or deletes anything.
+	for _, cmd := range []string{"mv ", "rm ", "find ", "mkdir", "&&", "-exec"} {
+		if strings.Contains(err.Error(), cmd) {
+			t.Errorf("the refusal prints %q: it must name the next action in words only: %v", cmd, err)
+		}
+	}
 }
 
-// The next actions the refusal prints work: run through a POSIX shell, each
-// leaves the store in one shape and moves nothing but the named paths.
-func TestMixedShapeNextActionsRun(t *testing.T) {
+// An over-long id of multi-byte characters is shown cut at a character, never
+// inside one.
+func TestLongIDIsShownCutAtARuneBoundary(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("the next actions are POSIX shell lines")
-	}
-	for _, keep := range []string{"bench", "own"} {
-		store := filepath.Join(t.TempDir(), "my store's cairns")
-		if err := os.Mkdir(store, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		for _, id := range []string{"a", "b"} {
-			if err := os.WriteFile(benchFile(store, id), []byte("# "+id+"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := os.WriteFile(filepath.Join(store, "README.md"), []byte("about\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Join(store, "sessions"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(store, "log.jsonl"), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		err := Open(store, "s", "", benchNow, PublishManual)
-		msg := ""
-		if err != nil {
-			msg = err.Error()
-		}
-		_, rest, ok := strings.Cut(msg, "to keep the "+keep+" shape run: ")
-		if !ok {
-			t.Fatalf("%s: no command in %q", keep, msg)
-		}
-		cmdline, _, _ := strings.Cut(rest, "; to keep the ")
-		if out, err := exec.Command("/bin/sh", "-c", cmdline).CombinedOutput(); err != nil {
-			t.Fatalf("%s: %q: %v: %s", keep, cmdline, err, out)
-		}
-		if got, err := storeShape("open", store); err != nil || (keep == "bench") != (got == shapeBench) {
-			t.Fatalf("%s: after the command the store is %v (%v)", keep, got, err)
-		}
-		if _, err := os.Stat(filepath.Join(store, "README.md")); keep == "own" && err != nil {
-			t.Fatalf("README.md moved with the session files: %v", err)
-		}
-		if err := Open(store, "s", "", benchNow, PublishManual); err != nil {
-			t.Fatalf("%s: open after the command: %v", keep, err)
+	for pad := 0; pad < 4; pad++ {
+		id := strings.Repeat("a", pad) + strings.Repeat("é", 100)
+		err := badID("session", id)
+		if !utf8.ValidString(err.Error()) {
+			t.Fatalf("pad %d: the message holds a split character: %q", pad, err)
 		}
 	}
 }
@@ -451,11 +417,15 @@ func TestStoreShapeFromContents(t *testing.T) {
 	}
 }
 
+// readmeNames are the spellings the README tests try. The unit tier tries one;
+// the functional tier adds the other cases (readme_functional_test.go).
+var readmeNames = []string{"README.md"}
+
 // README.md, in any case, is documentation at the top of a store and never a
 // session file, in either shape.
 func TestReadmeIsNeverASessionFile(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"README.md", "readme.md", "Readme.md"} {
+	for _, name := range readmeNames {
 		// An own-shape store with a README beside its markers is own, not mixed.
 		own := t.TempDir()
 		if err := os.WriteFile(filepath.Join(own, name), []byte("# about this store\n"), 0o644); err != nil {
@@ -510,7 +480,7 @@ func TestReadmeIsNeverASessionFile(t *testing.T) {
 // shape, and the first open gives it the own layout beside the README.
 func TestStoreHoldingOnlyReadmeIsAnEmptyStore(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"README.md", "readme.md", "Readme.md"} {
+	for _, name := range readmeNames {
 		store := t.TempDir()
 		if err := os.WriteFile(filepath.Join(store, name), []byte("# about\n"), 0o644); err != nil {
 			t.Fatal(err)

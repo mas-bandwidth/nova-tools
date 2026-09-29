@@ -50,49 +50,60 @@ func (e *MixedShapeError) Error() string {
 		more = fmt.Sprintf(" and %d more", len(shown)-3)
 		shown = shown[:3]
 	}
-	return fmt.Sprintf("cannot %s: store %q holds two shapes at once (bench files: %s%s; own shape: %s); %s",
-		opPhrase(e.Op), e.Store, strings.Join(shown, ", "), more, strings.Join(e.Own, ", "), e.nextAction())
+	return fmt.Sprintf("cannot %s: store %q holds two shapes at once (bench files: %s%s; own shape: %s); "+
+		"keep one shape by moving the other shape's paths out of the store (the top-level <id>.md files, or sessions/, entries/ and log.jsonl), "+
+		"then run the same command again; the tool moves and deletes nothing",
+		opPhrase(e.Op), e.Store, strings.Join(shown, ", "), more, strings.Join(e.Own, ", "))
 }
 
-// nextAction names the two ways out, each as one command line that runs in a
-// POSIX shell: move the own-shape paths aside to keep the bench shape, or move
-// the bench files aside to keep the own shape. Nothing is deleted. A path with
-// bytes that cannot survive a one-line message gets the instruction without the
-// command.
-func (e *MixedShapeError) nextAction() string {
-	store := filepath.Clean(e.Store)
-	aside := store + ".aside"
-	plain := oneline.Escape(store) == store
-	for _, n := range append(append([]string(nil), e.Bench...), e.Own...) {
-		plain = plain && oneline.Escape(n) == n
+// dirs reads each directory at most once per verb. Names that come out of a
+// listing are exact by construction, so a verb that looks at many records
+// (index) asks the disk about the store's directory once, not once per record.
+// The read function is a field so a test can count the reads.
+type dirs struct {
+	read     func(string) ([]os.DirEntry, error)
+	listed   map[string]dirListing
+	realRoot map[string]string
+}
+
+type dirListing struct {
+	entries []os.DirEntry
+	err     error
+}
+
+func newDirs() *dirs {
+	return &dirs{read: os.ReadDir, listed: map[string]dirListing{}, realRoot: map[string]string{}}
+}
+
+func (d *dirs) list(path string) ([]os.DirEntry, error) {
+	if l, ok := d.listed[path]; ok {
+		return l.entries, l.err
 	}
-	if !plain {
-		return "keep one shape: move the top-level <id>.md files out of the store, or move sessions/, entries/ and log.jsonl out of it"
+	entries, err := d.read(path)
+	d.listed[path] = dirListing{entries, err}
+	return entries, err
+}
+
+// resolvedRoot is the store directory with its symlinks resolved, once.
+func (d *dirs) resolvedRoot(root string) string {
+	if r, ok := d.realRoot[root]; ok {
+		return r
 	}
-	join := func(names []string) string {
-		var w []string
-		for _, n := range names {
-			w = append(w, openShellWord(filepath.Join(store, strings.TrimSuffix(n, "/"))))
-		}
-		return strings.Join(w, " ")
+	r, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		r = root
 	}
-	move := func(names string) string {
-		return "mkdir -p " + openShellWord(aside) + " && mv " + names + " " + openShellWord(aside+"/")
-	}
-	keepBench := move(join(e.Own))
-	keepOwn := move(join(e.Bench))
-	if len(e.Bench) > 20 {
-		keepOwn = "mkdir -p " + openShellWord(aside) + " && find " + openShellWord(store) +
-			" -maxdepth 1 -type f -name '*.md' -exec mv {} " + openShellWord(aside+"/") + " \\;"
-	}
-	return "to keep the bench shape run: " + keepBench + "; to keep the own shape run: " + keepOwn
+	d.realRoot[root] = r
+	return r
 }
 
 // storeShape reads the store's contents and names its shape. A directory that
 // does not exist has no contents and is the tool's own shape. Any other read
 // failure is returned, never read as "empty".
-func storeShape(op, store string) (shape, error) {
-	files, err := os.ReadDir(store)
+func storeShape(op, store string) (shape, error) { return storeShapeIn(newDirs(), op, store) }
+
+func storeShapeIn(d *dirs, op, store string) (shape, error) {
+	files, err := d.list(store)
 	if os.IsNotExist(err) {
 		return shapeOwn, nil
 	}
@@ -140,12 +151,6 @@ func benchHeader(session, source, stamp string) string {
 	return b.String()
 }
 
-// openBench creates the bench record for a session that has none. An
-// existing regular file, or a symlink that resolves to one, is already open and
-// stays as it is. Anything else at the record path (a directory, a symlink to a
-// directory or to nothing, a device) is refused, naming the path and what is
-// there: open reporting success over it would leave every later verb unable to
-// find the record.
 // benchHeaderSource reads the source pointer back out of a header this tool
 // wrote: line one `# Cairn ...`, a blank line, `Session <id> opened <stamp>`,
 // then `Source: <ptr>`. A file with any other opening, a hand-kept record
@@ -167,9 +172,16 @@ func sourceLine(line string) string {
 	return strings.TrimPrefix(line, "Source: ")
 }
 
+// openBench creates the bench record for a session that has none. An
+// existing regular file, or a symlink that resolves to one inside the store, is
+// already open and stays as it is. Anything else at the record path (a
+// directory, a symlink to a directory, to nothing or to somewhere outside the
+// store, a device) is refused, naming the path and what is there: open
+// reporting success over it would leave every later verb unable to find the
+// record.
 func openBench(store, session, source, stamp string) error {
 	name := benchFile(store, session)
-	exists, err := recordState("open", name)
+	exists, err := recordState(newDirs(), "open", store, name)
 	if err != nil || exists {
 		return err
 	}
@@ -178,7 +190,7 @@ func openBench(store, session, source, stamp string) error {
 	if err != nil && errors.Is(err, os.ErrExist) {
 		// Whatever is there now, it is judged by what it is, not by the fact
 		// that something exists.
-		exists, err = recordState("open", name)
+		exists, err = recordState(newDirs(), "open", store, name)
 		if err == nil && !exists {
 			return fmt.Errorf("cannot open a session: %q changed while it was being created; run the same command again", name)
 		}
@@ -187,11 +199,12 @@ func openBench(store, session, source, stamp string) error {
 	return err
 }
 
-// recordState judges the path a session record lives at. It reports whether a
-// record stands there: true for a regular file or a symlink that resolves to
-// one, false when nothing is there, and an error naming the path, what was
-// found and the next action for anything else.
-func recordState(op, path string) (bool, error) {
+// recordState judges the path a session record lives at, inside the store at
+// root. It reports whether a record stands there: true for a regular file or a
+// symlink that resolves to one inside the store, false when nothing is there,
+// and an error naming the path, what was found and the next action for anything
+// else. The error is about this one session's path only.
+func recordState(d *dirs, op, root, path string) (bool, error) {
 	li, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -213,6 +226,13 @@ func recordState(op, path string) (bool, error) {
 			found = fmt.Sprintf("a symlink to a directory (%q)", target)
 		case !si.Mode().IsRegular():
 			found = fmt.Sprintf("a symlink to %q, which is not a regular file (%s)", target, si.Mode().Type())
+		default:
+			// A link to a regular file is a record only while it stays in the
+			// store: the tool never reads or appends outside the directory it
+			// was given.
+			if real, err := filepath.EvalSymlinks(path); err != nil || !within(d.resolvedRoot(root), real) {
+				found = fmt.Sprintf("a symlink to %q, which resolves outside the store", target)
+			}
 		}
 	case li.IsDir():
 		found = "a directory"
@@ -223,7 +243,7 @@ func recordState(op, path string) (bool, error) {
 		// On a disk that folds case, the path above may have reached a file
 		// whose name differs from the one asked for. Only the exact name is a
 		// session file, so the other is neither read nor written through.
-		if listed, ok := foldedName(path); ok {
+		if listed, ok := d.foldedName(path); ok {
 			return false, &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q matches the existing %q only by letter case; "+
 				"only the exact name %q is a session file: rename that file or choose another session id",
 				opPhrase(op), path, listed, filepath.Base(path))}
@@ -236,10 +256,17 @@ func recordState(op, path string) (bool, error) {
 	return true, nil
 }
 
+// within reports whether path is root or lies under it.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // foldedName reports the directory entry that path reached by letter case
-// alone: the name it holds when that is not the name asked for.
-func foldedName(path string) (string, bool) {
-	entries, err := os.ReadDir(filepath.Dir(path))
+// alone: the name it holds when that is not the name asked for. The directory
+// is read once per verb, through dirs.
+func (d *dirs) foldedName(path string) (string, bool) {
+	entries, err := d.list(filepath.Dir(path))
 	if err != nil {
 		return "", false
 	}

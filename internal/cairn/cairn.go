@@ -48,6 +48,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -170,7 +171,12 @@ func idProblem(s string) string {
 func badID(kind, s string) error {
 	shown := s
 	if len(shown) > 40 {
-		shown = shown[:40] + "..."
+		// Cut at a rune boundary, never inside a character.
+		cut := 40
+		for cut > 0 && !utf8.RuneStart(shown[cut]) {
+			cut--
+		}
+		shown = shown[:cut] + "..."
 	}
 	return fmt.Errorf("bad %s id %q: it %s; an id is a file name of 1 to 128 bytes with no whitespace, control characters, slashes or \"..\"",
 		kind, shown, idProblem(s))
@@ -217,12 +223,12 @@ func benchFile(store, session string) string {
 // shape and whether it is a bench file. Only the shape's own location is
 // consulted: a store never answers from two places. A path holding something
 // that is not a record is an error, never "no such session".
-func locateRecord(op, store, session string, sh shape) (path string, bench, ok bool, err error) {
+func locateRecord(d *dirs, op, store, session string, sh shape) (path string, bench, ok bool, err error) {
 	name, bench := sessionFile(store, session), false
 	if sh == shapeBench {
 		name, bench = benchFile(store, session), true
 	}
-	ok, err = recordState(op, name)
+	ok, err = recordState(d, op, store, name)
 	return name, bench, ok, err
 }
 
@@ -451,7 +457,8 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if !validPublish(publish) {
 		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
 	}
-	sh, err := storeShape("open", store)
+	d := newDirs()
+	sh, err := storeShapeIn(d, "open", store)
 	if err != nil {
 		return err
 	}
@@ -464,7 +471,7 @@ func Open(store, session, source string, now time.Time, publish string) error {
 		return err
 	}
 	// Re-open is a no-op: the record already stands.
-	if _, _, ok, err := locateRecord("open", store, session, sh); err != nil || ok {
+	if _, _, ok, err := locateRecord(newDirs(), "open", store, session, sh); err != nil || ok {
 		return err
 	}
 	name := sessionFile(store, session)
@@ -531,11 +538,12 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if text == "" {
 		return res, errors.New("empty note stores nothing; refusing to file it")
 	}
-	sh, err := storeShape("append", store)
+	d := newDirs()
+	sh, err := storeShapeIn(d, "append", store)
 	if err != nil {
 		return res, err
 	}
-	path, bench, ok, err := locateRecord("append", store, session, sh)
+	path, bench, ok, err := locateRecord(d, "append", store, session, sh)
 	if err != nil {
 		return res, err
 	}
@@ -641,11 +649,12 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 	if !validID(id) {
 		return rc, badID("entry", id)
 	}
-	sh, err := storeShape("receipt", store)
+	d := newDirs()
+	sh, err := storeShapeIn(d, "receipt", store)
 	if err != nil {
 		return rc, err
 	}
-	path, bench, err := recordForRead("receipt", store, session, sh)
+	path, bench, err := recordForRead(d, "receipt", store, session, sh)
 	if err != nil {
 		return rc, err
 	}
@@ -678,43 +687,95 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 	}, nil
 }
 
-// Index builds the bounded section/entry index mechanically from the stored
+// IndexResult is what one pass over the store found.
+type IndexResult struct {
+	Rows     []IndexRow // at most max, in stamp order
+	Total    int        // every entry found, never capped
+	Sessions int        // session records counted
+	// Flagged holds one row per session whose record could not be read: the
+	// session's own defect (a record path that is a directory, a dangling or
+	// outside link, a case-folded twin, a damaged heading). Every other session
+	// is listed.
+	Flagged []FlaggedSession
+}
+
+// FlaggedSession is one session the index could not read, and why.
+type FlaggedSession struct{ Session, Cause string }
+
+// FlaggedError is what Index answers when IndexAll flagged a session.
+type FlaggedError struct{ Flagged []FlaggedSession }
+
+func (e *FlaggedError) Error() string {
+	f := e.Flagged[0]
+	more := ""
+	if len(e.Flagged) > 1 {
+		more = fmt.Sprintf(" (and %d more sessions)", len(e.Flagged)-1)
+	}
+	return fmt.Sprintf("session %q: %s%s", f.Session, f.Cause, more)
+}
+
+// Index is IndexAll for callers that want an error when any session was flagged.
+func Index(store, session string, max int) ([]IndexRow, int, error) {
+	r, err := IndexAll(store, session, max)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(r.Flagged) > 0 {
+		return r.Rows, r.Total, &FlaggedError{Flagged: r.Flagged}
+	}
+	return r.Rows, r.Total, nil
+}
+
+// IndexAll builds the bounded section/entry index mechanically from the stored
 // entries: no narrative is recopied, work events are linked by
 // session/entry pointers, and a stale *.tmp from an interrupted append is
 // never a row. session "" indexes every record; max <= 0 lifts the ceiling
 // and returns everything with no MORE standing for the rest.
-func Index(store, session string, max int) ([]IndexRow, int, error) {
+//
+// A defect in one session's record does not stop the pass: that session is
+// flagged and every other session is listed. Naming the defective session
+// with session refuses instead, as every verb addressed to it does. Only a
+// store-level condition (two shapes, a store that is not a readable directory)
+// is an error for the whole call.
+func IndexAll(store, session string, max int) (IndexResult, error) {
+	return indexAll(newDirs(), store, session, max)
+}
+
+func indexAll(d *dirs, store, session string, max int) (IndexResult, error) {
+	var res IndexResult
 	if err := existingStore(store); err != nil {
-		return nil, 0, err
+		return res, err
 	}
-	sh, err := storeShape("index", store)
+	sh, err := storeShapeIn(d, "index", store)
 	if err != nil {
-		return nil, 0, err
+		return res, err
 	}
 	if session != "" {
-		if _, _, err := recordForRead("index", store, session, sh); err != nil {
-			return nil, 0, err
+		if _, _, err := recordForRead(d, "index", store, session, sh); err != nil {
+			return res, err
 		}
 	}
 	var rows []IndexRow
 	flat := map[string]bool{}
 	if sh == shapeBench {
-		if rows, flat, err = flatIndexRows(store, session); err != nil {
-			return nil, 0, err
+		if rows, flat, res.Flagged, res.Sessions, err = flatIndexRows(d, store, session); err != nil {
+			return res, err
 		}
+	} else {
+		res.Sessions = ownSessionCount(d, store)
 	}
 	root := filepath.Join(store, "entries")
-	entries, err := os.ReadDir(root)
+	entries, err := d.list(root)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, 0, err
+		return res, err
 	}
 	for _, sess := range entries {
 		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(root, sess.Name()))
+		files, err := d.list(filepath.Join(root, sess.Name()))
 		if err != nil {
-			return nil, 0, err
+			return res, err
 		}
 		for _, f := range files {
 			name := f.Name()
@@ -723,7 +784,7 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 			}
 			ef, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
 			if err != nil {
-				return nil, 0, err
+				return res, err
 			}
 			stamp, _ := time.Parse(time.RFC3339Nano, ef.Stamp)
 			rows = append(rows, IndexRow{
@@ -744,11 +805,25 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		}
 		return rows[i].ID < rows[j].ID
 	})
-	total := len(rows)
+	res.Total = len(rows)
 	if max > 0 && len(rows) > max {
 		rows = rows[:max]
 	}
-	return rows, total, nil
+	res.Rows = rows
+	return res, nil
+}
+
+// ownSessionCount counts the session files under sessions/.
+func ownSessionCount(d *dirs, store string) int {
+	n := 0
+	if files, err := d.list(filepath.Join(store, "sessions")); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") && sessionFileID(strings.TrimSuffix(f.Name(), ".md")) {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // Coverage derives the ledger from the store: session records and stored
@@ -779,8 +854,8 @@ func Coverage(store string) Ledger {
 		}
 	}
 	led.Sessions = len(names)
-	if _, total, err := Index(store, "", 0); err == nil {
-		led.Entries = total
+	if r, err := IndexAll(store, "", 0); err == nil {
+		led.Entries = r.Total
 	}
 	return led
 }
