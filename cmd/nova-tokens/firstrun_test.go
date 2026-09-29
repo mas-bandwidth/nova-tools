@@ -52,7 +52,6 @@ func fixtureIn(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(dst, "out"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(dst)
 	return dst
 }
 
@@ -60,7 +59,9 @@ func fixtureIn(t *testing.T) string {
 var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
 func TestTheExampleLinesRun(t *testing.T) {
-	fixtureIn(t)
+	t.Parallel()
+
+	dst := fixtureIn(t)
 	var banner bytes.Buffer
 	if exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp); exit != 0 {
 		t.Fatalf("`nova-tokens help` exits %d, want 0", exit)
@@ -74,12 +75,11 @@ func TestTheExampleLinesRun(t *testing.T) {
 	}
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
-		var out, errb bytes.Buffer
-		exit := run(args, &out, &errb, firstRunStamp)
+		r := invokeCmd(t, dst, nil, args...)
 		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
 		// exiting 2 is a broken example.
-		if exit == 2 {
-			t.Errorf("the example `%s` could not run (exit 2):\n%s", line, errb.String())
+		if r.exit == 2 {
+			t.Errorf("the example `%s` could not run (exit 2):\n%s", line, r.stderr)
 		}
 	}
 }
@@ -142,12 +142,14 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 // names in order -- and deliberately not by value, so the transcript stays a document
 // instead of becoming a fixture.
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixtureIn(t)
+	dst := fixtureIn(t)
 	var want []string
 	var got []string
 	var pending []string
@@ -158,9 +160,8 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	for _, line := range lines {
 		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
 			flush()
-			var out, errb bytes.Buffer
-			run(strings.Fields(args), &out, &errb, firstRunStamp)
-			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
+			r := invokeCmd(t, dst, nil, strings.Fields(args)...)
+			for _, printed := range strings.Split(r.stdout+r.stderr, "\n") {
 				if shape := onboarding.Shape(printed); shape != "" {
 					pending = append(pending, shape)
 				}
@@ -207,6 +208,8 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 // the test moves there rather than rewriting them -- a rewritten path is no
 // longer the line the document promised.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -230,8 +233,8 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	}
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
-	fixtureIn(t)
-	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+	dst := fixtureIn(t)
+	for _, p := range onboarding.Execute(steps, runDocumented(t, dst)) {
 		t.Error(p)
 	}
 }
@@ -240,15 +243,14 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 // arguments and the clock the transcript was produced under. nova-tokens takes
 // no stdin, so a step that names a `< path` is reported rather than quietly run
 // without it.
-func runDocumented(t *testing.T) onboarding.Runner {
+func runDocumented(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
 		}
-		var out, errb bytes.Buffer
-		code := run(s.Args, &out, &errb, firstRunStamp)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		r := invokeCmd(t, dir, nil, s.Args...)
+		return onboarding.Result{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}, nil
 	}
 }
 

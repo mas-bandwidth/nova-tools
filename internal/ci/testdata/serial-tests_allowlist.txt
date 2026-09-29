@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 272
+# ceiling: 248
 cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
@@ -79,36 +79,13 @@ cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceWhenTh
 cmd/nova-sandbox/volumes_darwin_test.go:TestTheCreateLockIsAnExclusiveFlock serial: swaps package var main.volumeLockPath
 cmd/nova-sandbox/volumes_darwin_test.go:TestTheSandboxedCallerSentenceIsWrittenOnce serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
 cmd/nova-self-talk/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
 cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
-cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv
-cmd/nova-tokens/demanded_test.go:TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted serial: t.Setenv
-cmd/nova-tokens/demanded_test.go:TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted serial: t.Setenv
-cmd/nova-tokens/determinism_test.go:TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay serial: t.Setenv
-cmd/nova-tokens/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-tokens/firstrun_test.go:TestTheExampleLinesRun serial: t.Chdir
-cmd/nova-tokens/firstrun_test.go:TestTheTranscriptIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-tokens/gen_transcript_test.go:TestGenerateTranscript serial: t.Chdir
-cmd/nova-tokens/slow_test.go:TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn serial: t.Setenv
-cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly serial: t.Setenv
-cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
 cmd/nova-update/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
-internal/merge/cisource_test.go:TestChecksMapsTheRecordWord serial: t.Setenv
 internal/merge/issue2185_test.go:TestIssue2185ProductionEnqueueEmits serial: swaps package var merge.DefaultEvents
 internal/merge/issue2185_test.go:TestIssue2185SweepParkThroughUpdateQueueEmits serial: swaps package var merge.DefaultEvents
-internal/merge/landing_capture_test.go:TestCommentsCaptureOverSixtyFourKiBIsReadWhole serial: t.Setenv
-internal/merge/maintenance_test.go:TestAPushThisToolMakesLeavesNoGitInTheReceivingRepository serial: t.Setenv
-internal/merge/maintenance_test.go:TestNoGitThisToolRunsStartsABackgroundGit serial: t.Setenv
-internal/merge/state_test.go:TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable serial: swaps package var merge.replaceRefusal
-internal/merge/uncapped_test.go:TestGHPRReadsALargePullRequestBodyWhole serial: t.Setenv
-internal/merge/uncapped_test.go:TestGHWholeReadsAPaginatedCommentsCaptureWhole serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedFailingCommandsStderrTailIsExactlyTheLast64KiB serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedKeepsOnlyTheTailOfAFailingCommandsOutput serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedKeepsWholeSuccessfulCaptureAt3Point4MB serial: t.Setenv
-internal/merge/uncapped_test.go:TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand serial: t.Setenv
 internal/nsprint/card/claim_fn_test.go:TestCardPathMakesNoEvalCall serial: t.Setenv
 internal/nsprint/card/end_result_record_test.go:TestCardEndStoresResultOnRecord serial: t.Setenv
 internal/nsprint/card/mirror_test.go:TestCardPushPrivateRepoNoMirrorNamesRemedy serial: t.Setenv
@@ -253,7 +230,6 @@ internal/update/slow_test.go:TestJoinRefusedPushRecoversToOneNoteWithTheSameID s
 internal/update/slow_test.go:TestPendingBeforeDispatchAndQuietRetry serial: t.Setenv
 internal/update/stella_snapshot_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
 internal/nsprint/card/copy_functional_test.go:TestReadCopyDealtToBenchRendersALintedCard serial: t.Setenv
-cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/nsprint/store/reach_test.go:TestUnreachable3277 serial: t.Setenv
 internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
