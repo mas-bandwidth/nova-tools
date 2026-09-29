@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -62,11 +63,13 @@ func TestBuildInventoryStructure(t *testing.T) {
 	if alphaHV["ansible_host"] != "bench-alpha" {
 		t.Errorf("bench-alpha ansible_host: got %v, want bench-alpha", alphaHV["ansible_host"])
 	}
-	if alphaHV["ansible_user"] != "user-a" || alphaHV["user"] != "user-a" {
-		t.Errorf("bench-alpha user: got %v / %v, want user-a", alphaHV["ansible_user"], alphaHV["user"])
+	if alphaHV["ansible_user"] != "user-a" || alphaHV["registry_seat"] != "seat-alpha" {
+		t.Errorf("bench-alpha ansible_user / registry_seat: got %v / %v, want user-a / seat-alpha", alphaHV["ansible_user"], alphaHV["registry_seat"])
 	}
-	if alphaHV["seat"] != "seat-alpha" || alphaHV["registry_seat"] != "seat-alpha" {
-		t.Errorf("bench-alpha seat: got %v / %v, want seat-alpha", alphaHV["seat"], alphaHV["registry_seat"])
+	for _, dup := range []string{"user", "seat"} {
+		if _, ok := alphaHV[dup]; ok {
+			t.Errorf("bench-alpha carries %q, a second spelling of a value ansible or the plays already read", dup)
+		}
 	}
 	if alphaHV["slots"] != 64 {
 		t.Errorf("bench-alpha slots: got %v, want 64", alphaHV["slots"])
@@ -89,8 +92,8 @@ func TestBuildInventoryStructure(t *testing.T) {
 	if betaHV["ansible_host"] != "bench-beta" {
 		t.Errorf("bench-beta ansible_host: got %v, want bench-beta", betaHV["ansible_host"])
 	}
-	if betaHV["ansible_user"] != "user-b" || betaHV["user"] != "user-b" {
-		t.Errorf("bench-beta user: got %v, want user-b", betaHV["user"])
+	if betaHV["ansible_user"] != "user-b" {
+		t.Errorf("bench-beta ansible_user: got %v, want user-b", betaHV["ansible_user"])
 	}
 	if betaHV["slots"] != 64 {
 		t.Errorf("bench-beta slots: got %v, want 64", betaHV["slots"])
@@ -163,5 +166,80 @@ func TestBuildInventoryEmptyStore(t *testing.T) {
 	var parsed map[string]any
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
+	}
+}
+
+func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := NewMem()
+	// A machine row whose login and seat are empty strings.
+	if _, err := st.Insert(ctx, KindMachine, Row{Name: "bench-empty", Fields: map[string]string{"user": "", "seat": "", "slots": "2", "runners": "0"}}, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := BuildInventory(ctx, st, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hv := inv.Meta.Hostvars["bench-empty"]
+	for _, k := range []string{"ansible_user", "registry_seat", "user", "seat"} {
+		if v, ok := hv[k]; ok {
+			t.Errorf("empty value emitted as %s=%q", k, v)
+		}
+	}
+	raw, err := inv.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `""`) {
+		t.Errorf("the inventory JSON holds an empty string:\n%s", raw)
+	}
+	if hv["ansible_host"] != "bench-empty" || hv["slots"] != 2 {
+		t.Errorf("hostvars: %v", hv)
+	}
+}
+
+// oneReadStore fails every read but MachinesAndFleet, so a BuildInventory
+// that reads the machines and the fleet row apart cannot pass.
+type oneReadStore struct {
+	Store
+	reads int
+}
+
+func (o *oneReadStore) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
+	o.reads++
+	return o.Store.MachinesAndFleet(ctx)
+}
+func (o *oneReadStore) List(context.Context, string) ([]Row, error) {
+	panic("inventory read machines apart from the fleet row")
+}
+func (o *oneReadStore) Get(context.Context, string, string) (Row, bool, error) {
+	panic("inventory read the fleet row apart from the machines")
+}
+
+func TestBuildInventoryReadsMachinesAndFleetInOneRead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	mem := NewMem()
+	machine, _ := Lookup(KindMachine)
+	row, err := machine.NewRow("bench-alpha", map[string]string{"user": "user-a", "seat": "seat-a", "slots": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.Insert(ctx, KindMachine, row, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := mem.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "bench-alpha"}, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	st := &oneReadStore{Store: mem}
+	inv, err := BuildInventory(ctx, st, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.reads != 1 || len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "bench-alpha" {
+		t.Fatalf("reads %d, store group %v", st.reads, inv.Store.Hosts)
 	}
 }

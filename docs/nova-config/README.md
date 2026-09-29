@@ -278,8 +278,11 @@ nova-config inventory
 `inventory` prints a standard Ansible dynamic JSON inventory (`_meta.hostvars`
 and groups `benches`, `coordinator`, `store`, `runners`) directly from the machine
 and fleet rows in Postgres: one record, no second machine list (ideas#820). Each
-host's variables include `ansible_host`, `ansible_user`, `user`, `seat`,
-`registry_seat`, `slots`, `runners` and `kind=machine`. When executed on a fleet
+host's variables are `ansible_host`, `ansible_user` (the row's user, left out
+when empty), `registry_seat` (the row's seat, left out when empty), `slots`,
+`runners` and `kind=machine`; `ansible_user` is the name ansible reads for the
+login and `registry_seat` the name the fleet plays read for the seat, so each
+value has one name. Machines and the fleet row are read in one transaction. When executed on a fleet
 machine (named by `NOVA_MACHINE`, else matching the short hostname), that host receives
 `ansible_connection=local` so the control machine connects to itself locally without
 ssh. Pass `--host <name>` for single-host inspection or `--list` for all hosts.

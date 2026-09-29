@@ -33,13 +33,9 @@ type AnsibleInventory struct {
 // include ansible_connection=local so the control machine reaches itself without
 // ssh.
 func BuildInventory(ctx context.Context, st Store, localHost string) (*AnsibleInventory, error) {
-	machines, err := st.List(ctx, KindMachine)
+	machines, fleetRow, err := st.MachinesAndFleet(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("inventory: read machines: %w", err)
-	}
-	fleetRow, _, err := st.Get(ctx, KindFleet, KindFleet)
-	if err != nil {
-		return nil, fmt.Errorf("inventory: read fleet: %w", err)
+		return nil, fmt.Errorf("inventory: read machines and fleet: %w", err)
 	}
 
 	hostvars := make(map[string]map[string]any, len(machines))
@@ -48,15 +44,19 @@ func BuildInventory(ctx context.Context, st Store, localHost string) (*AnsibleIn
 	for _, m := range machines {
 		slots, _ := strconv.Atoi(m.Fields["slots"])
 		runners, _ := strconv.Atoi(m.Fields["runners"])
+		// ansible_user and registry_seat are the two names ansible and the
+		// fleet plays read; an empty value is left out, never emitted as "".
 		hv := map[string]any{
-			"ansible_host":  m.Name,
-			"ansible_user":  m.Fields["user"],
-			"user":          m.Fields["user"],
-			"seat":          m.Fields["seat"],
-			"registry_seat": m.Fields["seat"],
-			"slots":         slots,
-			"runners":       runners,
-			"kind":          KindMachine,
+			"ansible_host": m.Name,
+			"slots":        slots,
+			"runners":      runners,
+			"kind":         KindMachine,
+		}
+		if u := m.Fields["user"]; u != "" {
+			hv["ansible_user"] = u
+		}
+		if seat := m.Fields["seat"]; seat != "" {
+			hv["registry_seat"] = seat
 		}
 		if localHost != "" && m.Name == localHost {
 			hv["ansible_connection"] = "local"

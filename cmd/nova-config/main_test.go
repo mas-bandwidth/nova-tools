@@ -604,7 +604,7 @@ func TestInventoryVerb(t *testing.T) {
 	}
 
 	alphaHV := inv.Meta.Hostvars["bench-alpha"]
-	if alphaHV["ansible_host"] != "bench-alpha" || alphaHV["ansible_user"] != "user-a" || alphaHV["user"] != "user-a" || alphaHV["seat"] != "seat-alpha" || alphaHV["registry_seat"] != "seat-alpha" || alphaHV["kind"] != "machine" {
+	if alphaHV["ansible_host"] != "bench-alpha" || alphaHV["ansible_user"] != "user-a" || alphaHV["registry_seat"] != "seat-alpha" || alphaHV["kind"] != "machine" {
 		t.Fatalf("bench-alpha hostvars: %v", alphaHV)
 	}
 	if alphaHV["slots"] != float64(64) || alphaHV["runners"] != float64(1) {
