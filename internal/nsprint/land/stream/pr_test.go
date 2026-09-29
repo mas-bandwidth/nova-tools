@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/mas-bandwidth/nova-tools/internal/cicost"
-	"github.com/mas-bandwidth/nova-tools/internal/cireceipt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 	"github.com/redis/go-redis/v9"
 )
@@ -389,75 +387,5 @@ func TestLandPRWithNoRecordWritesItFromTheReply(t *testing.T) {
 	}
 	if !c.SIsMember(ctx, "pr:r:head:"+head, "7").Val() {
 		t.Fatalf("the head index does not name 7: %v", c.Keys(ctx, "pr:*").Val())
-	}
-}
-
-// TestLandPRCostOptionPrintsCostLine verifies that when Cost is requested,
-// LandPR prints the COST line from ci:cost stream for the PR/head.
-func TestLandPRCostOptionPrintsCostLine(t *testing.T) {
-	t.Parallel()
-
-	f, c := newFakeForge(), prRedis(t)
-	ctx := context.Background()
-	ghLeg(t, c, "gh", "green", "wf:ci", "green 3 x")
-
-	// Add cost entry to ci:cost stream
-	rec := cireceipt.Receipt{
-		Repo:       "o/r",
-		SHA:        prHead,
-		RunID:      "889900",
-		Workflow:   "ci",
-		Conclusion: "success",
-		PR:         "7",
-	}
-	cost := cicost.Cost{
-		Jobs: []cicost.CostJob{
-			{Name: "lint", Seconds: 25, Conclusion: "success", Attempt: 1, Known: true},
-			{Name: "test", Seconds: 100, Conclusion: "success", Attempt: 1, Known: true},
-		},
-		Total: 125,
-		Spin:  0,
-	}
-	fields := cicost.Fields(rec, cost)
-	values := make(map[string]any)
-	for i := 0; i < len(fields); i += 2 {
-		values[fields[i]] = fields[i+1]
-	}
-	id, err := c.XAdd(ctx, &redis.XAddArgs{
-		Stream: cicost.Stream,
-		Values: values,
-	}).Result()
-	if err != nil {
-		t.Fatalf("failed to add cost entry: %v", err)
-	}
-
-	// First run with Cost: false -> no COST line in output
-	srv := httptest.NewServer(f.handler(t))
-	t.Cleanup(srv.Close)
-	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
-
-	var logNoCost bytes.Buffer
-	rep, err := LandPRWait(ctx, gh, c, LandPROptions{Repo: "o/r", N: f.n, Log: &logNoCost, Cost: false})
-	if err != nil || rep.State != "merged" {
-		t.Fatalf("no-cost land: %v, %+v", err, rep)
-	}
-	if strings.Contains(logNoCost.String(), "COST ") {
-		t.Fatalf("unexpected cost line when Cost=false:\n%s", logNoCost.String())
-	}
-
-	// Now run with Cost: true -> logs COST line
-	f2 := newFakeForge()
-	srv2 := httptest.NewServer(f2.handler(t))
-	t.Cleanup(srv2.Close)
-	gh2 := &GitHub{API: srv2.URL, Token: "t0k", HTTP: srv2.Client()}
-
-	var logCost bytes.Buffer
-	rep2, err := LandPRWait(ctx, gh2, c, LandPROptions{Repo: "o/r", N: f2.n, Log: &logCost, Cost: true})
-	if err != nil || rep2.State != "merged" {
-		t.Fatalf("cost land: %v, %+v", err, rep2)
-	}
-	wantCostLine := cost.Line(rec, id)
-	if !strings.Contains(logCost.String(), wantCostLine) {
-		t.Fatalf("expected cost line in output:\nwant: %s\ngot:\n%s", wantCostLine, logCost.String())
 	}
 }

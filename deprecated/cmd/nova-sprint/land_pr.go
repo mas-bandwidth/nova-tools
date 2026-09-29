@@ -45,9 +45,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	redisAddr := fs.String("redis", redisDefault(), "")
 	api := fs.String("api", gh.DefaultAPI, "")
 	wait := fs.Duration("wait", 0, "")
-	watch := fs.Duration("watch", 0, "")
 	tick := fs.Duration("tick", 30*time.Second, "")
-	cost := fs.Bool("cost", false, "")
 	// The one positional <n> may come before or after the flags.
 	var pos []string
 	for len(args) > 0 {
@@ -61,7 +59,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		args = fs.Args()
 	}
-	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> | --watch <d> [--tick <d>]] [--cost]"
+	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> [--tick <d>]]"
 	if len(pos) != 1 {
 		return refuse(errOut, verb, "wants one pull request number: "+usage)
 	}
@@ -72,12 +70,8 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if !landRepoOK(*repo) {
 		return refuse(errOut, verb, "--repo wants owner/name: "+usage)
 	}
-	w := *wait
-	if *watch > 0 {
-		w = *watch
-	}
-	if w < 0 || *tick <= 0 {
-		return refuse(errOut, verb, "--wait/--watch must not be negative and --tick must be positive: "+usage)
+	if *wait < 0 || *tick <= 0 {
+		return refuse(errOut, verb, "--wait must not be negative and --tick must be positive: "+usage)
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
@@ -98,11 +92,11 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	defer st.Close()
 	// Three calls per pass; a --wait pass again after the head's event.
 	budget := 3
-	if w > 0 {
+	if *wait > 0 {
 		budget = 0
 	}
 	c := &stream.GitHub{API: *api, Token: tok, Budget: budget, Verb: verb, Redis: st.Client(), Log: errOut}
-	rep, err := stream.LandPRWait(ctx, c, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out, Wait: w, Tick: *tick, Cost: *cost})
+	rep, err := stream.LandPRWait(ctx, c, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out, Wait: *wait, Tick: *tick})
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}
