@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -551,3 +552,170 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 		t.Fatalf("conflict: %q", errs)
 	}
 }
+
+func TestInventoryVerb(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["FLEET_SELF"] = "studio"
+
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+
+	step(0, "migrate")
+	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
+	step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
+	step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
+
+	// 1. nova-config inventory
+	out, _ := step(0, "inventory")
+	var inv config.AnsibleInventory
+	if err := json.Unmarshal([]byte(out), &inv); err != nil {
+		t.Fatalf("unmarshal inventory: %v\noutput:\n%s", err, out)
+	}
+
+	if len(inv.All.Hosts) != 2 || inv.All.Hosts[0] != "hulk" || inv.All.Hosts[1] != "studio" {
+		t.Fatalf("all hosts: got %v, want [hulk studio]", inv.All.Hosts)
+	}
+	if len(inv.Benches.Hosts) != 2 || inv.Benches.Hosts[0] != "hulk" || inv.Benches.Hosts[1] != "studio" {
+		t.Fatalf("benches hosts: got %v, want [hulk studio]", inv.Benches.Hosts)
+	}
+	if len(inv.Coordinator.Hosts) != 1 || inv.Coordinator.Hosts[0] != "studio" {
+		t.Fatalf("coordinator hosts: got %v, want [studio]", inv.Coordinator.Hosts)
+	}
+	if len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "hulk" {
+		t.Fatalf("store hosts: got %v, want [hulk]", inv.Store.Hosts)
+	}
+	if len(inv.Runners.Hosts) != 1 || inv.Runners.Hosts[0] != "studio" {
+		t.Fatalf("runners hosts: got %v, want [studio]", inv.Runners.Hosts)
+	}
+
+	studioHV := inv.Meta.Hostvars["studio"]
+	if studioHV["ansible_host"] != "studio" || studioHV["ansible_user"] != "glenn" || studioHV["user"] != "glenn" || studioHV["seat"] != "studio" || studioHV["registry_seat"] != "studio" || studioHV["kind"] != "machine" {
+		t.Fatalf("studio hostvars: %v", studioHV)
+	}
+	if studioHV["slots"] != float64(64) || studioHV["runners"] != float64(1) {
+		t.Fatalf("studio slots/runners: %v %v", studioHV["slots"], studioHV["runners"])
+	}
+	if studioHV["ansible_connection"] != "local" {
+		t.Fatalf("studio ansible_connection want local, got %v", studioHV["ansible_connection"])
+	}
+
+	hulkHV := inv.Meta.Hostvars["hulk"]
+	if hulkHV["ansible_host"] != "hulk" || hulkHV["ansible_user"] != "gaffer" || hulkHV["slots"] != float64(40) || hulkHV["runners"] != float64(0) {
+		t.Fatalf("hulk hostvars: %v", hulkHV)
+	}
+	if _, ok := hulkHV["ansible_connection"]; ok {
+		t.Fatalf("hulk should not have ansible_connection: %v", hulkHV)
+	}
+
+	// 2. nova-config inventory --list
+	listOut, _ := step(0, "inventory", "--list")
+	if listOut != out {
+		t.Fatalf("inventory --list output differs from inventory:\n%s\nvs\n%s", listOut, out)
+	}
+
+	// 3. nova-config inventory --host studio
+	hostOut, _ := step(0, "inventory", "--host", "studio")
+	var hostMap map[string]any
+	if err := json.Unmarshal([]byte(hostOut), &hostMap); err != nil {
+		t.Fatalf("unmarshal --host studio: %v\noutput:\n%s", err, hostOut)
+	}
+	if hostMap["ansible_host"] != "studio" || hostMap["ansible_user"] != "glenn" || hostMap["ansible_connection"] != "local" {
+		t.Fatalf("hostMap: %v", hostMap)
+	}
+
+	// 4. nova-config inventory --host unknown
+	unkOut, _ := step(0, "inventory", "--host", "unknown")
+	var unkMap map[string]any
+	if err := json.Unmarshal([]byte(unkOut), &unkMap); err != nil {
+		t.Fatalf("unmarshal --host unknown: %v", err)
+	}
+	if len(unkMap) != 0 {
+		t.Fatalf("unknown host vars should be empty: %v", unkMap)
+	}
+}
+
+func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "rowan"
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+
+	step(0, "migrate")
+	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
+	step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
+	step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
+
+	// Apply so Redis and Postgres are synchronized
+	step(0, "apply", "--kind", "machine")
+	step(0, "apply", "--kind", "fleet")
+
+	// Verify apply --check reports zero drift when synchronized
+	out, _ := step(0, "apply", "--check", "--kind", "machine")
+	if out != "CONFIG CHECK kind=machine add=0 set=0 remove=0 rev=2 applied=2\n" {
+		t.Fatalf("want no drift for machine, got:\n%s", out)
+	}
+	out, _ = step(0, "apply", "--check", "--kind", "fleet")
+	if out != "CONFIG CHECK kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n" {
+		t.Fatalf("want no drift for fleet, got:\n%s", out)
+	}
+
+	// 1. Detect drift: update machine slots in Postgres
+	step(0, "machine", "set", "hulk", "--slots", "80")
+	out, _ = step(0, "apply", "--check", "--kind", "machine")
+	wantDrift := "CHECK SET kind=machine name=hulk changed=slots\nCONFIG CHECK kind=machine add=0 set=1 remove=0 rev=4 applied=2\n"
+	if out != wantDrift {
+		t.Fatalf("drift on machine slots:\ngot:\n%s\nwant:\n%s", out, wantDrift)
+	}
+
+	// 2. Detect drift: add new machine in Postgres
+	step(0, "machine", "add", "space", "--user", "glenn", "--seat", "space", "--slots", "32")
+	out, _ = step(0, "apply", "--check", "--kind", "machine")
+	wantDrift = "CHECK SET kind=machine name=hulk changed=slots\nCHECK ADD kind=machine name=space\nCONFIG CHECK kind=machine add=1 set=1 remove=0 rev=5 applied=2\n"
+	if out != wantDrift {
+		t.Fatalf("drift on machine add+set:\ngot:\n%s\nwant:\n%s", out, wantDrift)
+	}
+
+	// 3. Detect drift: change fleet coordinator in Postgres
+	step(0, "fleet", "set", "--coordinator", "hulk")
+	out, _ = step(0, "apply", "--check", "--kind", "fleet")
+	wantDrift = "CHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=6 applied=3\n"
+	if out != wantDrift {
+		t.Fatalf("drift on fleet coordinator:\ngot:\n%s\nwant:\n%s", out, wantDrift)
+	}
+
+	// 4. Detect drift: machine removed from Postgres but present in Redis
+	// Manually inject a stale machine into fake redis
+	h.redis.views["machine"]["retired"] = config.View{"user": "nobody", "seat": "none", "slots": "10", "runners": "0"}
+	out, _ = step(0, "apply", "--check", "--kind", "machine")
+	if !strings.Contains(out, "CHECK REMOVE kind=machine name=retired") {
+		t.Fatalf("drift on machine remove missing:\ngot:\n%s", out)
+	}
+
+	// Verify apply --check wrote NOTHING to redis
+	// Redis revs should still be 2 and 3
+	if h.redis.revs["machine"] != 2 || h.redis.revs["fleet"] != 3 {
+		t.Fatalf("apply --check wrote to redis: %v", h.redis.revs)
+	}
+}
+

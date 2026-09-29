@@ -63,6 +63,7 @@ usage:
   nova-config migrate [--pg <dsn>] [--print]
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
+  nova-config inventory [--pg <dsn>] [--list] [--host <name>]
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -96,7 +97,9 @@ migrate creates or upgrades schema config from the migrations in this binary
 and applies nothing twice. apply reads Postgres and writes Redis, one kind at
 a time, through the runtime's own Redis Functions, and refuses CONFLICT when
 Redis holds a newer revision; --check prints the ADD, SET and REMOVE lines
-and writes nothing. Lose Redis: run nova-config apply.
+and writes nothing. inventory prints an Ansible dynamic JSON inventory
+(_meta.hostvars and groups benches, coordinator, store, runners) from the
+machine rows. Lose Redis: run nova-config apply.
 
 exit codes: 0 done, 1 refused, 2 usage
 
@@ -189,7 +192,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	defer verbflag.Recover(stdout, tool, usageTop+kindsUsage()+usageExamples, &code)
 	ctx := context.Background()
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, or <kind> add|set|remove|list|show|history")
+		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, or <kind> add|set|remove|list|show|history")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -224,11 +227,13 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return runStatus(ctx, args[1:], stdout, stderr, d)
 	case "apply":
 		return runApply(ctx, args[1:], stdout, stderr, d)
+	case "inventory":
+		return runInventory(ctx, args[1:], stdout, stderr, d)
 	}
 	if k, ok := config.Lookup(args[0]); ok {
 		return runKind(ctx, k, args[1:], stdout, stderr, d)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, or one of the kinds %s", args[0], strings.Join(config.KindNames(), ", ")))
+	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, or one of the kinds %s", args[0], strings.Join(config.KindNames(), ", ")))
 }
 
 // refuse is the exit 2 line: the invocation could not run.
@@ -880,5 +885,58 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
 	}
+	return 0
+}
+
+// localHost resolves the short hostname of the machine executing the command,
+// used by inventory to set ansible_connection=local for the control node itself.
+func localHost(getenv func(string) string) string {
+	if s := getenv("FLEET_SELF"); s != "" {
+		return s
+	}
+	if h, err := os.Hostname(); err == nil {
+		return strings.Split(h, ".")[0]
+	}
+	return ""
+}
+
+func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
+	const verb = "inventory"
+	fs := verbflag.New(verb)
+	pg, _, _ := connFlags(fs, false, false)
+	_ = fs.Bool("list", false, "output all hosts (Ansible dynamic inventory default)")
+	host := fs.String("host", "", "output hostvars for one host (Ansible dynamic inventory)")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if fs.NArg() > 0 {
+		return refuse(stderr, verb, "inventory takes no arguments; flags only")
+	}
+	dsn, err := pgDSN(*pg, d.getenv)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	st, err := d.openStore(ctx, dsn)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	defer st.Close()
+	inv, err := config.BuildInventory(ctx, st, localHost(d.getenv))
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if *host != "" {
+		data, err := inv.HostJSON(*host)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		fmt.Fprintln(stdout, string(data))
+		return 0
+	}
+	data, err := inv.JSON()
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	fmt.Fprintln(stdout, string(data))
 	return 0
 }

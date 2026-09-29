@@ -269,6 +269,21 @@ What Redis refuses, apply reports and stops at, stamping nothing:
 when the store has none, every registry is written from Postgres, and the
 stamps are set. Nothing about the fleet's configuration lives only in Redis.
 
+## Ansible inventory
+
+```
+nova-config inventory
+```
+
+`inventory` prints a standard Ansible dynamic JSON inventory (`_meta.hostvars`
+and groups `benches`, `coordinator`, `store`, `runners`) directly from the machine
+and fleet rows in Postgres: one record, no second machine list (ideas#820). Each
+host's variables include `ansible_host`, `ansible_user`, `user`, `seat`,
+`registry_seat`, `slots`, `runners` and `kind=machine`. When executed on a fleet
+machine (matching `FLEET_SELF` or the short hostname), that host receives
+`ansible_connection=local` so the control machine connects to itself locally without
+ssh. Pass `--host <name>` for single-host inspection or `--list` for all hosts.
+
 ## What is deliberately not here
 
 Runtime state (beats, states, copies, leases, the table), what a friend
