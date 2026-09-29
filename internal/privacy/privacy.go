@@ -90,9 +90,10 @@ type Rules struct {
 	Warn        []Pattern
 	Allow       []string
 
-	stop     map[string]bool
-	trimSet  string
-	allowSet map[string]bool
+	stop      map[string]bool
+	trimSet   string
+	allowSet  map[string]bool
+	markerKey string
 }
 
 // DefaultRules are the marker, entry tokens and stop words with no structure
@@ -136,6 +137,7 @@ func NewRules(marker string, entryTokens, stop []string, refuse, warn []Pattern,
 		stop:        map[string]bool{},
 		trimSet:     trim,
 		allowSet:    map[string]bool{},
+		markerKey:   foldSpace(marker),
 	}
 	for _, w := range baseStopWords {
 		r.stop[w] = true
@@ -152,9 +154,12 @@ func NewRules(marker string, entryTokens, stop []string, refuse, warn []Pattern,
 	return r, nil
 }
 
-// HasMarker reports whether s carries the marker, case-insensitively.
+// HasMarker reports whether s carries the marker. Both sides are compared
+// with invisible formatting characters dropped, any Unicode space read as a
+// space and runs of them collapsed, and case folded, so a no-break space or
+// a zero-width character cannot hide the marker.
 func (r Rules) HasMarker(s string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(r.Marker))
+	return strings.Contains(foldSpace(s), r.markerKey)
 }
 
 // Block is one entry of a private-material source. Source and Index are its

@@ -29,6 +29,13 @@ What makes an entry **private**, each rule on its own:
   section), whether or not that heading opens an entry. Bullets and
   sub-entries in that section are private, each still its own entry.
 
+The marker is matched case-insensitively with whitespace normalised on both
+sides: any Unicode space (a no-break space, a tab, an ideographic space) reads
+as one space, runs collapse, and invisible formatting characters (Unicode
+category Cf: the zero-width space and joiners, the soft hyphen, the
+byte-order mark) are dropped. `not public` matches `not<no-break space>public`
+and `NOT   public`.
+
 A private heading's entry is measured with the words of the entries under it,
 so an idea written as a heading and its bullets is compared as one. Rarity
 still counts each entry once, by its own title and body.

@@ -270,6 +270,36 @@ func TestTheMarkerAndEntryTokensAreConfigurable(t *testing.T) {
 	}
 }
 
+// Whitespace is normalised on both sides before the marker is matched: any
+// Unicode space counts as a space, runs collapse, and invisible formatting
+// characters are dropped.
+func TestTheMarkerMatchesWhateverTheSpacing(t *testing.T) {
+	t.Parallel()
+	r, err := privacy.NewRules("not  public", nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range []string{
+		"a plan, not public",
+		"a plan, not\u00a0public",
+		"a plan, NOT\t\u2003 public",
+		"a plan, not\u202fpublic",
+		"a plan, not\u3000public",
+		"a plan, not pub\u200blic",
+	} {
+		if !r.IsPrivate(privacy.Block{Title: title}) {
+			t.Errorf("%q does not carry the marker", title)
+		}
+	}
+	if r.IsPrivate(privacy.Block{Title: "a plan, notpublic"}) {
+		t.Error("a space in the marker is still a space")
+	}
+	d := privacy.DefaultRules()
+	if !d.IsPrivate(privacy.Block{Title: "a plan (pri\u00advate)"}) || !d.IsPrivate(privacy.Block{Title: "a plan (\u200bprivate\u200b)"}) {
+		t.Error("an invisible character inside the default marker hides it")
+	}
+}
+
 func TestAnEntryTokenWithABlankIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, tok := range []string{"", "a b", "\t"} {
