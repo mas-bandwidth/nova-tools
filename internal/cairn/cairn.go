@@ -18,11 +18,17 @@
 //	log.jsonl                    append-only event log feeding the ledger
 //
 // A store that keeps ONE MARKDOWN FILE PER SESSION directly under it --
-// <session>.md, the shape a friend appending by hand already has -- is read as
-// it stands. `open` on such a record is a no-op and `append` lands a dated
-// `## <stamp> — <entry>` section at the end of the file, with no entries/
-// directory, no log and no index appearing beside it. The tool adapts to the
-// store; the store is never converted to suit the tool.
+// <session>.md, the shape a friend appending by hand has -- is a bench store.
+// The shape is decided from the store's contents by storeShape (shape.go):
+// a top-level <id>.md and no sessions/, entries/ or log.jsonl is a bench
+// store; anything else, including an empty or absent directory, is the tool's
+// own shape; a store holding both is refused by every verb. On a bench store
+// `open` creates <session>.md with a short header when none exists and is a
+// no-op when one does, and `append` lands a dated `## <stamp> — <entry>`
+// section at the end of the file, with no sessions/, entries/ or log.jsonl
+// and no index appearing beside it. The tool adapts to the store; the store
+// is never converted to suit the tool. The lifecycle is modelled in
+// tla/CairnStore.tla (checked by TLC; the records are in tla/RUNS.tsv).
 //
 // Each entry file is written atomically via internal/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename),
@@ -35,6 +41,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,6 +49,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -133,60 +141,96 @@ type entryFile struct {
 // validID keeps identifiers stable and file-safe: nonempty, bounded, and
 // free of separators, escapes and whitespace, so an id is one token on every
 // output line and one file under entries/.
-func validID(s string) bool {
-	if s == "" || len(s) > 128 {
-		return false
-	}
-	if s == "." || s == ".." || strings.Contains(s, "..") {
-		return false
+func validID(s string) bool { return idProblem(s) == "" }
+
+// idProblem names the rule an identifier breaks, or "" when it breaks none.
+func idProblem(s string) string {
+	switch {
+	case s == "":
+		return "is empty"
+	case len(s) > 128:
+		return fmt.Sprintf("is %d bytes long; the limit is 128", len(s))
+	case s == "." || s == "..":
+		return "is a directory name"
+	case strings.Contains(s, ".."):
+		return `contains ".."`
 	}
 	for _, r := range s {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return false
-		}
-		if r == '/' || r == '\\' {
-			return false
+		switch {
+		case unicode.IsSpace(r):
+			return "contains whitespace"
+		case unicode.IsControl(r):
+			return "contains a control character"
+		case r == '/' || r == '\\':
+			return "contains a slash or backslash"
 		}
 	}
-	return true
+	return ""
+}
+
+// badID is the refusal for an identifier that breaks a rule, naming the rule.
+func badID(kind, s string) error {
+	shown := s
+	if len(shown) > 40 {
+		// Cut at a rune boundary, never inside a character.
+		cut := 40
+		for cut > 0 && !utf8.RuneStart(shown[cut]) {
+			cut--
+		}
+		shown = shown[:cut] + "..."
+	}
+	return fmt.Errorf("bad %s id %q: it %s; an id is a file name of 1 to 128 bytes with no whitespace, control characters, slashes or \"..\"",
+		kind, shown, idProblem(s))
+}
+
+// reservedSession reports the one name a session may never take: README, in
+// any case. A top-level README.md is documentation for whoever reads the
+// store, in either shape, never a session record. The rule is outside
+// tla/CairnStore.tla, whose sessions are an abstract set of ids.
+func reservedSession(id string) bool {
+	return strings.EqualFold(id, "readme")
+}
+
+// sessionFileID reports whether a top-level <id>.md names a session record.
+func sessionFileID(id string) bool {
+	return validID(id) && !reservedSession(id)
+}
+
+// checkSession refuses a session id that cannot name a record, naming the
+// cause. Read verbs and write verbs share it.
+func checkSession(session string) error {
+	if !validID(session) {
+		return badID("session", session)
+	}
+	if reservedSession(session) {
+		return fmt.Errorf("session id %q is reserved: README.md in a store is documentation, never a session record; choose another session id", session)
+	}
+	return nil
 }
 
 func sessionFile(store, session string) string {
 	return filepath.Join(store, "sessions", session+".md")
 }
 
-// benchFile is the other store shape this tool reads: one markdown file per
-// session directly under the store, kept and appended by hand. Rowan's bench
-// has kept its cairns that way since before the tool existed
-// (`cairns/<session>.md`), and on 2026-09-18 an append into it refused with
-// `no such session; open first` while the record sat right there. The refusal
-// was false, and its remedy was worse than the defect: `open` would have
-// written a second record under sessions/ and split one session in two.
-//
-// So the store's own shape is READ rather than imposed. Nothing is migrated,
-// nothing is renamed, and a bench file gets no sidecar: the file IS the
-// record, which is the same promise SPEC-CAIRN already makes about headers.
+// benchFile is the bench store's record: one markdown file per session
+// directly under the store, kept and appended by hand or created by open.
+// Nothing is migrated, nothing is renamed, and a bench file gets no sidecar:
+// the file IS the record.
 func benchFile(store, session string) string {
 	return filepath.Join(store, session+".md")
 }
 
-// locateRecord returns the session record's path and whether it is a bench
-// file. The nested record wins when both exist, so a store the tool opened
-// keeps its own shape and no caller is switched between two records by a file
-// appearing beside the store.
-func locateRecord(store, session string) (path string, bench, ok bool) {
-	if name := sessionFile(store, session); fileExists(name) {
-		return name, false, true
+// locateRecord returns the session record's path for a store of the given
+// shape and whether it is a bench file. Only the shape's own location is
+// consulted: a store never answers from two places. A path holding something
+// that is not a record is an error, never "no such session".
+func locateRecord(d *dirs, op, store, session string, sh shape) (path string, bench, ok bool, err error) {
+	name, bench := sessionFile(store, session), false
+	if sh == shapeBench {
+		name, bench = benchFile(store, session), true
 	}
-	if name := benchFile(store, session); fileExists(name) {
-		return name, true, true
-	}
-	return "", false, false
-}
-
-func fileExists(name string) bool {
-	info, err := os.Stat(name)
-	return err == nil && !info.IsDir()
+	ok, err = recordState(d, op, name)
+	return name, bench, ok, err
 }
 
 // noRecord is the refusal for a verb addressing a session nothing holds. It
@@ -200,6 +244,16 @@ func noRecord(store, session, publish string) error {
 	return &NotFoundError{Msg: fmt.Sprintf(
 		"no such session %q under store %q; open first: %s",
 		session, store, openRemedy(store, session, publish))}
+}
+
+// missingRecord is the refusal for a session with no record. It suggests the
+// open that would make one, unless that open would itself be refused: then it is
+// the open's refusal, with the open's own next command.
+func missingRecord(d *dirs, sh shape, store, session, publish string) error {
+	if _, err := sessionSource(d, sh, store, session); err != nil {
+		return err
+	}
+	return noRecord(store, session, publish)
 }
 
 // benchHeadingRe reads the one heading this tool writes into a bench file:
@@ -238,15 +292,15 @@ func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 
 // appendBench files one entry into a bench record: a dated section at the end
 // of the file, in the file's own shape (one blank line between sections), the
-// friend's words under it. A retry with the same id and the same words adds
-// nothing; the same id with different words is a conflict, as it is in the
-// nested store. No index is written and no directory appears beside the file:
-// this store is read, not converted.
-func appendBench(path, id, text string, now time.Time, publish string) (AppendResult, error) {
+// friend's words under it. f is the record, open for reading and appending, and
+// raw is what it holds. A record with a damaged heading refuses the append: a
+// section added to it could never be read back. A retry with the same id and the
+// same words adds nothing; the same id with different words is a conflict. No
+// index is written and no directory appears beside the file.
+func appendBench(f *os.File, raw []byte, path, session, id, text string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return res, err
+	if _, err := parseBench(raw, session); err != nil {
+		return res, damagedRecord("append", path, err)
 	}
 	if prev, storedStamp, found := benchSection(raw, id); found {
 		if prev != strings.TrimSpace(text) {
@@ -256,7 +310,7 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
+		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw), Duplicate: true}, nil
 	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
@@ -267,55 +321,41 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimRight(text, "\n"))
 	b.WriteString("\n")
-	if err := appendBytes(path, b.String()); err != nil {
+	if err := appendTo(f, b.String()); err != nil {
 		return res, err
 	}
-	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish}, nil
+	// A bench section stores no pointer of its own, so what is reported is the
+	// session's, read from the header open wrote.
+	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw)}, nil
 }
 
-// appendBytes adds content to an existing file and fsyncs before return, so a
-// bench append is as durable as a nested one before success is reported.
-func appendBytes(name, content string) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
+// damagedRecord is the refusal for a record whose headings cannot be read.
+func damagedRecord(op, path string, cause error) error {
+	return &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is damaged (%v); "+
+		"list its headings with: %s; repair it by hand, then run the same command again",
+		opPhrase(op), path, cause, shellLine("grep -n '^## ' -- %s", shellWord{"path", path}))}
+}
+
+// appendTo adds content to the end of the open record f and fsyncs before return.
+func appendTo(f *os.File, content string) error {
 	if _, err := f.WriteString(content); err != nil {
-		f.Close()
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return f.Sync()
 }
 
 func entryPath(store, session, id string) string {
 	return filepath.Join(store, "entries", session, id+".json")
 }
 
-// appendLine adds one line to a file, creating it, and fsyncs before return.
-func appendLine(name, line string) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return err
+// openLog opens the store's append-only log for appending, creating it. It is
+// opened before anything is stored, and the event is written through the
+// handle after, so a log that cannot be used refuses the verb with nothing stored.
+func (d *dirs) openLog(store string) (*os.File, error) {
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		return nil, err
 	}
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return fsyncDir(filepath.Dir(name))
+	return d.openFile(filepath.Join(store, "log.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 }
 
 func fsyncDir(dir string) error {
@@ -328,8 +368,9 @@ func fsyncDir(dir string) error {
 	return nil
 }
 
-// appendLog records one event on the store's append-only log.
-func appendLog(store, event, session, id, stamp, policy, source string) error {
+// appendLog records one event on the store's append-only log, through the open
+// handle f, and fsyncs before return.
+func appendLog(f *os.File, event, session, id, stamp, policy, source string) error {
 	rec, _ := json.Marshal(map[string]string{
 		"event":   event,
 		"session": session,
@@ -338,15 +379,22 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 		"publish": policy,
 		"source":  source,
 	})
-	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
+	if _, err := f.WriteString(string(rec) + "\n"); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return fsyncDir(filepath.Dir(f.Name()))
 }
 
-// SessionSource reads back the --source the session was opened with, from
-// the open record in log.jsonl. The session file's header is convention only
-// and is never parsed, so the log is where the pointer is read from.
+// SessionSource reads back the --source the session was opened with. In the
+// tool's own shape it is read from the open record in log.jsonl (the session
+// file's header is convention only and is never parsed there); in a bench store
+// it is read from the header open wrote, and a hand-kept record has none.
 //
 // CORRUPT PROVENANCE NEVER READS AS NONE. An absent log is a store with no
-// open records in it (a bench store, or one opened before the log carried a
+// open records in it (one opened before the log carried a
 // source) and answers "" with no error, as does an open record with no source
 // key. A log that exists and cannot be read is an error, and so is a line
 // that may be this session's open record and does not decode as one: a line
@@ -354,10 +402,40 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 // fields are not strings. Answering "" for either would let an append file
 // source=- over a pointer that open recorded.
 func SessionSource(store, session string) (string, error) {
+	d := newDirs()
+	sh, err := storeShapeIn(d, "open", store)
+	if err != nil {
+		return "", err
+	}
+	return sessionSource(d, sh, store, session)
+}
+
+func sessionSource(d *dirs, sh shape, store, session string) (string, error) {
+	if sh == shapeBench {
+		// A bench record keeps its pointer in the header open wrote. Only a
+		// record that is not there means "no source"; one that is there and
+		// cannot be read is an error naming it, never a source of none.
+		raw, err := d.readFile(benchFile(store, session))
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			return "", fmt.Errorf("cannot read the session's source from %s: %v", benchFile(store, session), pe.Err)
+		}
+		if err != nil {
+			return "", err
+		}
+		return benchHeaderSource(raw), nil
+	}
 	name := filepath.Join(store, "log.jsonl")
-	raw, err := os.ReadFile(name)
+	raw, err := d.readFile(name)
 	if os.IsNotExist(err) {
 		return "", nil
+	}
+	var refused *RecordPathError
+	if errors.As(err, &refused) {
+		return "", err
 	}
 	if err != nil {
 		var pe *os.PathError
@@ -393,27 +471,38 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if store == "" {
 		return errors.New("no store given; refusing to guess")
 	}
-	if !validID(session) {
-		return fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if err := checkSession(session); err != nil {
+		return err
 	}
 	if !validPublish(publish) {
 		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
 	}
-	// The source a session was opened with must be readable before anything
-	// is written or reported: open prints it, and append inherits it.
-	if _, err := SessionSource(store, session); err != nil {
+	d := newDirs()
+	sh, err := storeShapeIn(d, "open", store)
+	if err != nil {
 		return err
 	}
-	// Re-open is a no-op: the record already stands, in whichever shape the
-	// store keeps it. A bench file counts, or open would write a second
-	// record beside one already being appended to.
-	if _, _, ok := locateRecord(store, session); ok {
-		return nil
+	if sh == shapeBench {
+		return openBench(d, store, session, source, now.UTC().Format(time.RFC3339))
+	}
+	// The source a session was opened with must be readable before anything
+	// is written or reported: open prints it, and append inherits it.
+	if _, err := sessionSource(d, sh, store, session); err != nil {
+		return err
+	}
+	// Re-open is a no-op: the record already stands.
+	if _, _, ok, err := locateRecord(d, "open", store, session, sh); err != nil || ok {
+		return err
 	}
 	name := sessionFile(store, session)
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
+	logf, err := d.openLog(store)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return err
 	}
@@ -423,7 +512,7 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
 		return err
 	}
-	return appendLog(store, "open", session, "", stamp, publish, source)
+	return appendLog(logf, "open", session, "", stamp, publish, source)
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -435,20 +524,16 @@ func pointerLine(id string, stamp time.Time) string {
 
 // ensurePointer heals an interrupted append: the entry file is already
 // durable but its pointer line never landed, so land it now without
-// duplicating a line that is already there.
-func ensurePointer(store, session, id string, stamp time.Time) error {
-	name := sessionFile(store, session)
-	raw, err := os.ReadFile(name)
-	if err != nil {
-		return &NotFoundError{Msg: fmt.Sprintf("no such session %q; open first", session)}
-	}
+// duplicating a line that is already there. rec is the session's record, open
+// for appending, and raw is what it held.
+func ensurePointer(rec *os.File, raw []byte, id string, stamp time.Time) error {
 	want := pointerLine(id, stamp)
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "ENTRY "+id+" ") || line == want {
 			return nil
 		}
 	}
-	return appendLine(name, want)
+	return appendTo(rec, want+"\n")
 }
 
 // Append stores the friend's exact prose under a stable entry id with a real
@@ -457,16 +542,20 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 // conflict, never an overwrite. Offline use succeeds: the result carries
 // persisted=true with published=false, because local durability never waited
 // for the remote.
+//
+// The session's record is opened and read FIRST and stays open until its
+// pointer line is written through the same handle, so a record that cannot be
+// used refuses the append before anything is stored.
 func Append(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
 	if store == "" {
 		return res, errors.New("no store given; refusing to guess")
 	}
-	if !validID(session) {
-		return res, fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if err := checkSession(session); err != nil {
+		return res, err
 	}
 	if !validID(id) {
-		return res, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+		return res, badID("entry", id)
 	}
 	if !validPublish(publish) {
 		return res, fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
@@ -474,13 +563,33 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if text == "" {
 		return res, errors.New("empty note stores nothing; refusing to file it")
 	}
-	path, bench, ok := locateRecord(store, session)
+	d := newDirs()
+	sh, err := storeShapeIn(d, "append", store)
+	if err != nil {
+		return res, err
+	}
+	path, bench, ok, err := locateRecord(d, "append", store, session, sh)
+	if err != nil {
+		return res, err
+	}
 	if !ok {
-		return res, noRecord(store, session, publish)
+		return res, missingRecord(d, sh, store, session, publish)
+	}
+	rec, err := d.openFile(path, os.O_RDWR|os.O_APPEND, 0)
+	if os.IsNotExist(err) {
+		return res, missingRecord(d, sh, store, session, publish)
+	}
+	if err != nil {
+		return res, err
+	}
+	defer rec.Close()
+	raw, err := io.ReadAll(rec)
+	if err != nil {
+		return res, err
 	}
 	stamp := now.UTC()
 	if bench {
-		return appendBench(path, id, text, stamp, publish)
+		return appendBench(rec, raw, path, session, id, text, stamp, publish)
 	}
 	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
 	// where the record points back to; an append that names nothing else came
@@ -490,16 +599,19 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	// The read comes BEFORE any entry or pointer write, so a log that cannot
 	// be read refuses with nothing written.
 	if source == "" {
-		inherited, err := SessionSource(store, session)
+		inherited, err := sessionSource(d, sh, store, session)
 		if err != nil {
 			return res, err
 		}
 		source = inherited
 	}
 	final := entryPath(store, session, id)
-	if raw, err := os.ReadFile(final); err == nil {
+	if err := d.checkEntryDirs(store, session); err != nil {
+		return res, err
+	}
+	if prevRaw, err := d.readFile(final); err == nil {
 		var prev entryFile
-		if err := json.Unmarshal(raw, &prev); err != nil {
+		if err := json.Unmarshal(prevRaw, &prev); err != nil {
 			return res, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
 		}
 		if prev.Text != text {
@@ -509,12 +621,14 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		if err := ensurePointer(store, session, id, prevStamp); err != nil {
+		if err := ensurePointer(rec, raw, id, prevStamp); err != nil {
 			return res, err
 		}
 		return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
+	} else if !os.IsNotExist(err) {
+		return res, err
 	}
-	rec, _ := json.Marshal(entryFile{
+	entry, _ := json.Marshal(entryFile{
 		Session: session,
 		ID:      id,
 		Stamp:   stamp.Format(time.RFC3339Nano),
@@ -522,31 +636,57 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		Publish: publish,
 		Text:    text,
 	})
+	// Everything that can refuse is opened before the entry is stored: the
+	// record is held, and the log is opened here.
+	logf, err := d.openLog(store)
+	if err != nil {
+		return res, err
+	}
+	defer logf.Close()
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return res, err
 	}
 	// Atomic write per internal/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// atomic rename over target path.
-	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
+	if err := atomicfile.WriteFile(final, entry, 0o644); err != nil {
 		return res, err
 	}
-	if err := ensurePointer(store, session, id, stamp); err != nil {
+	if err := ensurePointer(rec, raw, id, stamp); err != nil {
 		return res, err
 	}
-	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
+	if err := appendLog(logf, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
-// readEntry loads one stored entry or explains its absence.
-func readEntry(store, session, id string) (entryFile, error) {
+// checkEntryDirs refuses a link at entries/ or at the session's entry
+// directory. A directory that is not there yet is made by the write.
+func (d *dirs) checkEntryDirs(store, session string) error {
+	for _, dir := range []string{filepath.Join(store, "entries"), filepath.Join(store, "entries", session)} {
+		if err := d.checkDir(dir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// readEntry loads one stored entry or explains its absence. A link at the
+// entry's path, or above it, is refused, not read.
+func readEntry(d *dirs, store, session, id string) (entryFile, error) {
 	var ef entryFile
 	if store == "" {
 		return ef, errors.New("no store given; refusing to guess")
 	}
-	raw, err := os.ReadFile(entryPath(store, session, id))
+	if err := d.checkEntryDirs(store, session); err != nil {
+		return ef, err
+	}
+	raw, err := d.readFile(entryPath(store, session, id))
+	var refused *RecordPathError
+	if errors.As(err, &refused) {
+		return ef, err
+	}
 	if err != nil {
 		return ef, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
 	}
@@ -559,7 +699,7 @@ func readEntry(store, session, id string) (entryFile, error) {
 // EntryText returns the friend's words byte-for-byte: the store never
 // rewrites, grades or consolidates what was appended.
 func EntryText(store, session, id string) (string, error) {
-	ef, err := readEntry(store, session, id)
+	ef, err := readEntry(newDirs(), store, session, id)
 	if err != nil {
 		return "", err
 	}
@@ -571,18 +711,23 @@ func EntryText(store, session, id string) (string, error) {
 // infer the remote from the local.
 func Receipt(store, session, id string) (ReceiptInfo, error) {
 	var rc ReceiptInfo
-	if err := existingStore(store); err != nil {
+	if err := existingStore("receipt", store); err != nil {
 		return rc, err
 	}
 	if !validID(id) {
-		return rc, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+		return rc, badID("entry", id)
 	}
-	path, bench, err := recordForRead(store, session)
+	d := newDirs()
+	sh, err := storeShapeIn(d, "receipt", store)
+	if err != nil {
+		return rc, err
+	}
+	path, bench, err := recordForRead(d, "receipt", store, session, sh)
 	if err != nil {
 		return rc, err
 	}
 	if bench {
-		rows, err := benchReceipts(path, session)
+		rows, err := benchReceipts(d, path, session)
 		if err != nil {
 			return rc, err
 		}
@@ -593,7 +738,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		}
 		return rc, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
 	}
-	ef, err := readEntry(store, session, id)
+	ef, err := readEntry(d, store, session, id)
 	if err != nil {
 		return rc, err
 	}
@@ -610,45 +755,130 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 	}, nil
 }
 
-// Index builds the bounded section/entry index mechanically from the stored
+// IndexResult is what one pass over the store found.
+type IndexResult struct {
+	Rows     []IndexRow // at most max, in stamp order
+	Total    int        // every entry found, never capped
+	Sessions int        // session records counted
+	// Flagged holds one row per bench session whose record could not be read:
+	// the session's own defect (a record path that is a dangling or outside
+	// link or not a regular file, an invalid heading, a duplicate entry).
+	// Every other session is listed. A directory named <id>.md and a file
+	// named <id>.MD are not session files, so they are neither listed nor
+	// flagged. In the tool's own shape the entry files are what index reads,
+	// and a damaged entry file is an error for the whole call.
+	Flagged []FlaggedSession
+}
+
+// FlaggedSession is one session the index could not read, and why.
+type FlaggedSession struct{ Session, Cause string }
+
+// FlaggedError is what Index answers when IndexAll flagged a session.
+type FlaggedError struct{ Flagged []FlaggedSession }
+
+func (e *FlaggedError) Error() string {
+	f := e.Flagged[0]
+	more := ""
+	if len(e.Flagged) > 1 {
+		more = fmt.Sprintf(" (and %d more sessions)", len(e.Flagged)-1)
+	}
+	return fmt.Sprintf("session %q: %s%s", f.Session, f.Cause, more)
+}
+
+// Index is IndexAll for callers that want an error when any session was flagged.
+func Index(store, session string, max int) ([]IndexRow, int, error) {
+	r, err := IndexAll(store, session, max)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(r.Flagged) > 0 {
+		return r.Rows, r.Total, &FlaggedError{Flagged: r.Flagged}
+	}
+	return r.Rows, r.Total, nil
+}
+
+// IndexAll builds the bounded section/entry index mechanically from the stored
 // entries: no narrative is recopied, work events are linked by
 // session/entry pointers, and a stale *.tmp from an interrupted append is
 // never a row. session "" indexes every record; max <= 0 lifts the ceiling
 // and returns everything with no MORE standing for the rest.
-func Index(store, session string, max int) ([]IndexRow, int, error) {
-	if err := existingStore(store); err != nil {
-		return nil, 0, err
+//
+// A defect in one session's record does not stop the pass: that session is
+// flagged and every other session is listed. Naming the defective session
+// with session refuses instead, as every verb addressed to it does. Only a
+// store-level condition (two shapes, a store that is not a readable directory)
+// is an error for the whole call.
+func IndexAll(store, session string, max int) (IndexResult, error) {
+	return indexAll(newDirs(), store, session, max)
+}
+
+func indexAll(d *dirs, store, session string, max int) (IndexResult, error) {
+	var res IndexResult
+	if err := existingStore("index", store); err != nil {
+		return res, err
+	}
+	sh, err := storeShapeIn(d, "index", store)
+	if err != nil {
+		return res, err
 	}
 	if session != "" {
-		if _, _, err := recordForRead(store, session); err != nil {
-			return nil, 0, err
+		if _, _, err := recordForRead(d, "index", store, session, sh); err != nil {
+			return res, err
 		}
 	}
-	rows, flat, err := flatIndexRows(store, session)
-	if err != nil {
-		return nil, 0, err
+	var rows []IndexRow
+	flat := map[string]bool{}
+	if sh == shapeBench {
+		if rows, flat, res.Flagged, res.Sessions, err = flatIndexRows(d, store, session); err != nil {
+			return res, err
+		}
+	} else if res.Sessions, res.Flagged, err = ownSessions(d, store, session); err != nil {
+		return res, err
+	}
+	flagged := map[string]bool{}
+	for _, f := range res.Flagged {
+		flagged[f.Session] = true
+	}
+	flag := func(id string, err error) {
+		if !flagged[id] {
+			flagged[id] = true
+			res.Flagged = append(res.Flagged, flaggedSession(id, err))
+		}
 	}
 	root := filepath.Join(store, "entries")
-	entries, err := os.ReadDir(root)
+	entries, err := d.list(root)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, 0, err
+		return res, err
 	}
 	for _, sess := range entries {
-		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
+		name := sess.Name()
+		if flat[name] || flagged[name] || (session != "" && name != session) {
+			continue // a flagged session lists nothing, in either shape
+		}
+		if sess.Type()&os.ModeSymlink != 0 {
+			flag(name, linkRefusal("index", filepath.Join(root, name)))
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(root, sess.Name()))
+		if !sess.IsDir() {
+			continue
+		}
+		files, err := d.list(filepath.Join(root, name))
 		if err != nil {
-			return nil, 0, err
+			return res, err
 		}
 		for _, f := range files {
-			name := f.Name()
-			if f.IsDir() || !strings.HasSuffix(name, ".json") {
+			file := f.Name()
+			if f.IsDir() || !strings.HasSuffix(file, ".json") {
 				continue // partials (*.tmp) and anything else are not rows
 			}
-			ef, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
+			ef, err := readEntry(d, store, name, strings.TrimSuffix(file, ".json"))
+			var refused *RecordPathError
+			if errors.As(err, &refused) {
+				flag(name, err) // a link: this session's defect, the others are listed
+				break
+			}
 			if err != nil {
-				return nil, 0, err
+				return res, err
 			}
 			stamp, _ := time.Parse(time.RFC3339Nano, ef.Stamp)
 			rows = append(rows, IndexRow{
@@ -669,34 +899,52 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		}
 		return rows[i].ID < rows[j].ID
 	})
-	total := len(rows)
+	res.Total = len(rows)
 	if max > 0 && len(rows) > max {
 		rows = rows[:max]
 	}
-	return rows, total, nil
+	res.Rows = rows
+	return res, nil
+}
+
+// flaggedSession is the row for a session whose record could not be read. The
+// cause is the session's; "cannot index the store" is not.
+func flaggedSession(session string, err error) FlaggedSession {
+	return FlaggedSession{Session: session, Cause: strings.TrimPrefix(err.Error(), "cannot "+opPhrase("index")+": ")}
+}
+
+// ownSessions counts the session files under sessions/ and flags each whose
+// path holds no record (a directory, a link, a device). A sessions/ that is a
+// link refuses the whole call.
+func ownSessions(d *dirs, store, session string) (n int, flagged []FlaggedSession, err error) {
+	files, err := d.list(filepath.Join(store, "sessions"))
+	if os.IsNotExist(err) {
+		return 0, nil, nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	for _, f := range files {
+		id := strings.TrimSuffix(f.Name(), ".md")
+		if id == f.Name() || !sessionFileID(id) || (session != "" && id != session) {
+			continue
+		}
+		n++
+		if _, err := recordState(d, "index", filepath.Join(store, "sessions", f.Name())); err != nil {
+			flagged = append(flagged, flaggedSession(id, err))
+		}
+	}
+	return n, flagged, nil
 }
 
 // Coverage derives the ledger from the store: session records and stored
 // entries counted, never remembered, so the number cannot drift from the
-// tree it reports on.
+// tree it reports on. A store that reads as mixed, or cannot be indexed, is
+// refused by every verb and has no ledger.
 func Coverage(store string) Ledger {
-	var led Ledger
-	names := map[string]bool{}
-	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
-		if files, err := os.ReadDir(dir); err == nil {
-			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-					id := strings.TrimSuffix(f.Name(), ".md")
-					if validID(id) {
-						names[id] = true
-					}
-				}
-			}
-		}
+	r, err := IndexAll(store, "", 0)
+	if err != nil {
+		return Ledger{}
 	}
-	led.Sessions = len(names)
-	if _, total, err := Index(store, "", 0); err == nil {
-		led.Entries = total
-	}
-	return led
+	return Ledger{Sessions: r.Sessions, Entries: r.Total}
 }

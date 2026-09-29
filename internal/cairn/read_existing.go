@@ -3,56 +3,65 @@ package cairn
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 // Read verbs require an existing directory. An empty directory is a valid
 // empty store; a missing directory is a wrong input, not an empty answer.
-func existingStore(store string) error {
+func existingStore(op, store string) error {
 	if store == "" {
 		return fmt.Errorf("no store given; refusing to guess")
 	}
-	info, err := os.Stat(store)
+	li, err := os.Lstat(filepath.Clean(store))
 	if err != nil {
 		return fmt.Errorf("cannot read store %q: %w", store, err)
 	}
-	if !info.IsDir() {
+	if isLink(li) {
+		return linkRefusal(op, store)
+	}
+	if !li.IsDir() {
 		return fmt.Errorf("store %q is not a directory", store)
 	}
 	return nil
 }
 
-// Preserve the nested-record precedence without treating permission errors or
-// a directory at the record path as evidence that the session is absent.
-func recordForRead(store, session string) (string, bool, error) {
-	if !validID(session) {
-		return "", false, fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+// recordForRead finds the session's record in the store's shape. A path
+// holding something that is not a record is an error naming it, never "no such
+// session".
+func recordForRead(d *dirs, op, store, session string, sh shape) (string, bool, error) {
+	if err := checkSession(session); err != nil {
+		return "", false, err
 	}
-	for i, path := range []string{sessionFile(store, session), benchFile(store, session)} {
-		info, err := os.Stat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return "", false, fmt.Errorf("cannot read session %q: %w", session, err)
-		}
-		if !info.Mode().IsRegular() {
-			return "", false, fmt.Errorf("session %q is not a regular file", session)
-		}
-		return path, i == 1, nil
+	path, bench := sessionFile(store, session), false
+	if sh == shapeBench {
+		path, bench = benchFile(store, session), true
 	}
-	return "", false, &NotFoundError{Msg: fmt.Sprintf("no such session %q under store %q", session, store)}
+	ok, err := recordState(d, op, path)
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return "", false, &NotFoundError{Msg: fmt.Sprintf("no such session %q under store %q", session, store)}
+	}
+	return path, bench, nil
 }
 
 // Flat records store only a dated heading and prose. Source and publication
 // policy are not recoverable from this format; never infer them from a later
 // caller, unrelated log or prose. Body sizing matches benchSection's trimming.
-func benchReceipts(path, session string) ([]ReceiptInfo, error) {
-	raw, err := os.ReadFile(path)
+func benchReceipts(d *dirs, path, session string) ([]ReceiptInfo, error) {
+	raw, err := d.readFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return parseBench(raw, session)
+}
+
+// parseBench reads the dated sections of a bench record already in memory, or
+// says what is damaged in it.
+func parseBench(raw []byte, session string) ([]ReceiptInfo, error) {
 	lines := strings.Split(string(raw), "\n")
 	var rows []ReceiptInfo
 	seen := map[string]bool{}
@@ -75,42 +84,41 @@ func benchReceipts(path, session string) ([]ReceiptInfo, error) {
 			end++
 		}
 		body := strings.TrimSpace(strings.Join(lines[i+1:end], "\n"))
-		rows = append(rows, ReceiptInfo{Session: session, ID: m[2], Stamp: stamp, Bytes: len(body), Policy: "unknown", Persisted: true})
+		rows = append(rows, ReceiptInfo{Session: session, ID: m[2], Stamp: stamp, Bytes: len(body), Source: benchHeaderSource(raw), Policy: "unknown", Persisted: true})
 		i = end
 	}
 	return rows, nil
 }
 
-func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
-	files, err := os.ReadDir(store)
+func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[string]bool, flagged []FlaggedSession, sessions int, err error) {
+	files, err := d.list(store)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, 0, err
 	}
-	var rows []IndexRow
-	flat := map[string]bool{}
+	flat = map[string]bool{}
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 			continue
 		}
 		id := strings.TrimSuffix(f.Name(), ".md")
-		if !validID(id) || (session != "" && id != session) {
+		if !sessionFileID(id) || (session != "" && id != session) {
 			continue
 		}
-		path, isFlat, err := recordForRead(store, id)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !isFlat {
-			continue
-		}
-		receipts, err := benchReceipts(path, id)
-		if err != nil {
-			return nil, nil, err
-		}
+		sessions++
 		flat[id] = true
-		for _, rc := range receipts {
-			rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Bytes: rc.Bytes})
+		path, _, err := recordForRead(d, "index", store, id, shapeBench)
+		if err == nil {
+			var receipts []ReceiptInfo
+			if receipts, err = benchReceipts(d, path, id); err == nil {
+				for _, rc := range receipts {
+					rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
+				}
+			}
+		}
+		if err != nil {
+			// This session's own defect: flag it and go on to the next.
+			flagged = append(flagged, flaggedSession(id, err))
 		}
 	}
-	return rows, flat, nil
+	return rows, flat, flagged, sessions, nil
 }

@@ -53,13 +53,35 @@ flags:
                     environment variable and no discovery from the working
                     directory. The store is plain files; a note is fsync-durable
                     before success is reported, independently of Redis and of
-                    any remote. Two shapes are read: this tool's own
-                    (sessions/<id>.md, entries/, log.jsonl) and a bench store of
-                    one markdown file per session directly under the store
-                    (<id>.md), appended by hand. On the second, open is a no-op
-                    and append lands a dated "## <stamp> - <entry>" section at
-                    the end of the file; no index and no directory appear
-                    beside it.
+                    any remote. Its shape is read from its contents, once:
+                    a bench store holds one markdown file per session directly
+                    under it (<id>.md), appended by hand or made by open;
+                    anything else is this tool's own shape (sessions/<id>.md,
+                    entries/, log.jsonl), and an empty or absent directory
+                    becomes it. On a bench store, open creates <id>.md with a
+                    short header (or does nothing when it exists), and append
+                    lands a dated "## <stamp> — <entry>" section at the end of
+                    the file; no sessions/, entries/, log.jsonl or index
+                    appears beside it. A store holding both shapes is refused
+                    by every verb, naming the paths found of each and, in words,
+                    the next action: move the other shape's paths out of the
+                    store; the tool moves and deletes nothing. A store is
+                    written by one version family: a nova-cairn older than this
+                    one opening a new session in a bench store writes the own
+                    shape beside the records, and this version then refuses the
+                    store as mixed until those paths are moved out, so every
+                    writer of a shared store upgrades together. A top-level
+                    README.md, in any case, is documentation and never a
+                    session file in either shape; README is refused as a
+                    session id. nova-cairn does not follow a symbolic link: at
+                    the store directory's own name, sessions/, entries/, an
+                    entry directory, log.jsonl or a record it refuses, naming
+                    the path and a command that shows where it leads. A defect
+                    in one session's record is that session's: a record path
+                    holding no record refuses the verbs addressed to it; a
+                    damaged file is refused by receipt and by append, which
+                    names the damage. index flags either as one row and lists
+                    the others.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:
@@ -71,7 +93,9 @@ flags:
                     bench/session pointer). Recorded, never opened. On open it
                     is the session's pointer; an append with no --source
                     carries it. Every line prints source=, and source=- is an
-                    entry with no pointer.
+                    entry with no pointer. A bench record keeps the session's
+                    pointer in the header open writes and no pointer of its own
+                    per entry, so its lines print the session's.
   --publish <pol>   caller-chosen publication policy, one of never, manual,
                     deferred, immediate. Required on open and append. This slice
                     implements no transport: every success reports
@@ -86,7 +110,8 @@ flags:
 There is deliberately no seal, consume, delete, grade, consolidate or wake
 verb: the boundary in SPEC-CAIRN.md lists them, and naming one here is exit 2.
 
-exit codes: 0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).
+exit codes: 0 ran and passed, 1 ran and failed (a conflict; or index flagged a session
+whose record it could not read, after printing every other row), 2 could not run (bad invocation).
 
 example:
   nova-cairn open --store ./cairns --session s1 --publish manual
@@ -103,6 +128,19 @@ index and receipt read it back. A line run alone names a record it did not make.
 func refuse(stderr io.Writer, where, what string) int {
 	fmt.Fprintf(stderr, "nova-cairn%s: %s; run: nova-cairn help\n", oneline.Escape(where), oneline.Escape(what))
 	return 2
+}
+
+// refuseErr is refuse for an error from the store. A refusal that already
+// names its own next action is not sent back to the help banner, which would
+// say nothing more about it.
+func refuseErr(stderr io.Writer, where string, err error) int {
+	var mixed *cairn.MixedShapeError
+	var path *cairn.RecordPathError
+	if errors.As(err, &mixed) || errors.As(err, &path) {
+		fmt.Fprintf(stderr, "nova-cairn%s: %s\n", oneline.Escape(where), oneline.Err(err))
+		return 2
+	}
+	return refuse(stderr, where, oneline.Err(err))
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -209,11 +247,11 @@ func cmdOpen(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := cairn.Open(*store, *session, *source, stamp, *publish); err != nil {
-		return refuse(stderr, " open", oneline.Err(err))
+		return refuseErr(stderr, " open", err)
 	}
 	stored, err := cairn.SessionSource(*store, *session)
 	if err != nil {
-		return refuse(stderr, " open", oneline.Err(err))
+		return refuseErr(stderr, " open", err)
 	}
 	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s source=%s publish=%s stamp=%s\n",
 		oneline.Field(*session), oneline.Escape(*store), sourceField(stored), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
@@ -275,7 +313,7 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				oneline.Field(*session), oneline.Field(*entry), oneline.Escape(err.Error()))
 			return 1
 		}
-		return refuse(stderr, " append", oneline.Err(err))
+		return refuseErr(stderr, " append", err)
 	}
 	dup := "false"
 	if res.Duplicate {
@@ -326,19 +364,26 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
-	all, total, err := cairn.Index(*store, *session, 0)
+	res, err := cairn.IndexAll(*store, *session, 0)
 	if err != nil {
-		return refuse(stderr, " index", oneline.Err(err))
+		return refuseErr(stderr, " index", err)
 	}
-	led := cairn.Coverage(*store)
 	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
-	for _, r := range all {
+	for _, r := range res.Rows {
 		list.Line(fmt.Sprintf("INDEX ENTRY session=%s entry=%s stamp=%s bytes=%d source=%s",
 			oneline.Field(r.Session), oneline.Field(r.ID),
 			r.Stamp.Format(time.RFC3339Nano), r.Bytes, sourceField(r.Source)))
 	}
 	list.More()
-	fmt.Fprintf(stdout, "INDEX COVERAGE sessions=%d entries=%d shown=%d\n", led.Sessions, total, list.Shown())
+	// A session whose own record could not be read is one flagged row; every
+	// other session was listed above.
+	for _, f := range res.Flagged {
+		fmt.Fprintf(stdout, "INDEX FLAGGED session=%s cause=%s\n", oneline.Field(f.Session), oneline.Escape(f.Cause))
+	}
+	fmt.Fprintf(stdout, "INDEX COVERAGE sessions=%d entries=%d shown=%d\n", res.Sessions, res.Total, list.Shown())
+	if len(res.Flagged) > 0 {
+		return 1
+	}
 	return 0
 }
 
@@ -361,7 +406,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer) int {
 	}
 	rc, err := cairn.Receipt(*store, *session, *entry)
 	if err != nil {
-		return refuse(stderr, " receipt", oneline.Err(err))
+		return refuseErr(stderr, " receipt", err)
 	}
 	fmt.Fprintf(stdout, "RECEIPT OK session=%s entry=%s stamp=%s bytes=%d source=%s persisted=true published=false publish=%s\n",
 		oneline.Field(rc.Session), oneline.Field(rc.ID),
