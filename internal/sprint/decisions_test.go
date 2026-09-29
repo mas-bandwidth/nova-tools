@@ -500,3 +500,44 @@ func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
 		t.Fatalf("a withdrawn card of a primary in review: %v", Check(w.s, nil))
 	}
 }
+
+// A reader counts once, and a read card counts for the row it occupies only
+// when that row is the reader its id and field name: a primary with both ok
+// cards on one reader's row is not acceptable, and a named set with it moves
+// nothing.
+func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
+		c := w.s.Fleet.Card(id)
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: gensOf(w.s, id)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, Gens: gensOf(w.s, id)}))
+	}
+	w.must(Ask(w.s, AskReq{}))
+	for _, id := range []string{"s1-1", "s1-2"} {
+		for _, rc := range readsAt(w.s, w.s.Work.Card(id), 1) {
+			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+		}
+	}
+	// A writer outside the verbs moves s1-2's second ok card onto the first reader's row.
+	rs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	rs[1].Row = rs[0].Row
+	w.s.Readers.cells, w.s.Readers.byPrimary = nil, nil
+	p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}})
+	if len(p.Units) != 0 || len(p.Refused) != 2 {
+		t.Fatalf("accept: %+v", p)
+	}
+	for _, r := range p.Refused {
+		if r.Key == "s1-2" && !strings.Contains(r.Why, "two different readers") || r.Key == "s1-1" && !strings.Contains(r.Why, "eligible, not moved") {
+			t.Fatalf("refusal: %+v", r)
+		}
+	}
+	found := false
+	for _, v := range Check(w.s, nil) {
+		found = found || v.Rule == 1 && strings.Contains(v.Detail, rs[1].ID)
+	}
+	if !found {
+		t.Fatalf("check does not report the card off its reader's row: %v", Check(w.s, nil))
+	}
+}

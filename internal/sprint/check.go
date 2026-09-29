@@ -88,6 +88,12 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 			}
 		}
 	}
+	// 1. A read card is on the row of the reader its id and its field name.
+	for _, c := range sortedCards(s.Readers) {
+		if c.Placed() && !ReadCardAgrees(c) {
+			out = append(out, Violation{1, fmt.Sprintf("read card %s is on reader %s's row and names reader %s", c.ID, c.Row, orDash(c.F("reader")))})
+		}
+	}
 	// 2. Primaries working = primaries of work cards in fleet ready + working.
 	working, dealt := primarySet{}, primarySet{}
 	for _, c := range s.Work.Column(Working) {
@@ -143,7 +149,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	for _, c := range s.Work.Column(Merging, Landed) {
 		readers := map[string]bool{}
 		for _, rc := range s.Readers.Of(c.ID) {
-			if rc.Col == OK && rc.F("head") == c.F("head") {
+			if rc.Col == OK && rc.F("head") == c.F("head") && ReadCardAgrees(rc) {
 				readers[rc.F("reader")] = true
 			}
 		}

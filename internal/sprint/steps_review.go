@@ -262,12 +262,23 @@ type AcceptReq struct {
 // current attempt and head, in reader row order; fewer when it has fewer.
 func okReaders(s *Snapshot, pr *Card) []*Card {
 	var out []*Card
+	seen := map[string]bool{}
 	for _, c := range readsAt(s, pr, pr.Int("attempt")) {
-		if c.Col == OK && c.F("head") == pr.F("head") && len(out) < 2 {
+		r := c.F("reader")
+		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < 2 {
+			seen[r] = true
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// ReadCardAgrees says a read card is where its identity says: the row it
+// occupies, the reader its id names and its reader field are one reader. A
+// card that disagrees counts for no reader; check reports it.
+func ReadCardAgrees(c *Card) bool {
+	_, _, idReader, ok := ParseReadCard(c.ID)
+	return ok && c.Row == idReader && c.F("reader") == idReader
 }
 
 // Accept moves review -> merging and places the primary in merge queued with

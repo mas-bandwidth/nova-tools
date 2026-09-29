@@ -128,7 +128,9 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
 - A primary is acceptable when two different readers have an ok read card at
   its current attempt and head. One reader's ok alone is never enough, whoever
-  the reader.
+  the reader. A reader counts once, and a read card counts only when the row it
+  occupies, the reader its id names and its reader field are one reader; a card
+  that disagrees counts for no one, and check reports it.
 - A primary in review whose reads are exhausted (asked, with no read card
   asked or reading, without two different readers' ok at its head, and with no
   open judgment) is a judgment, "reads exhausted", written by the step that
