@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -174,26 +175,37 @@ func matchNetAllow(entries []waitAllow, used []bool, f NetFinding) int {
 // cannot carry the shapes this check reads. A file whose header carries a
 // nightly or soak build constraint is skipped whole.
 func scanNetFile(rel string, src []byte) ([]NetFinding, bool) {
-	fset, file, err := parseSource(rel, src, parser.ParseComments)
+	mode := parser.Mode(0)
+	if bytes.Contains(src, []byte("nightly")) || bytes.Contains(src, []byte("soak")) {
+		mode = parser.ParseComments
+	}
+	fset, file, err := parseSource(rel, src, mode)
 	if err != nil {
 		return nil, false
 	}
-	if netBuildTagExempt(file) {
+	if mode == parser.ParseComments && netBuildTagExempt(file) {
+		return nil, true
+	}
+	if !bytes.Contains(src, []byte(":")) {
 		return nil, true
 	}
 	var out []NetFinding
 	seen := map[string]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
 		lit, ok := n.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
+		if !ok || lit.Kind != token.STRING || !strings.Contains(lit.Value, ":") {
 			return true
 		}
 		val, unqErr := strconv.Unquote(lit.Value)
 		if unqErr != nil {
 			return true
 		}
+		hits := netHostsIn(val)
+		if len(hits) == 0 {
+			return true
+		}
 		pos := fset.Position(lit.Pos())
-		for _, hit := range netHostsIn(val) {
+		for _, hit := range hits {
 			key := strconv.Itoa(pos.Line) + ":" + hit.kind + ":" + hit.host
 			if seen[key] {
 				continue

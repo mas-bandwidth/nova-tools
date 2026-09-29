@@ -325,6 +325,15 @@ var namedPathTestdataDirs = func() func(root string) []string {
 	var dirs []string
 	return func(root string) []string {
 		once.Do(func() {
+			if idx, err := sharedRepoTree(); err == nil && idx.Root == root {
+				for dir := range idx.dirEntries() {
+					if filepath.Base(dir) == "testdata" {
+						dirs = append(dirs, dir)
+					}
+				}
+				sort.Strings(dirs)
+				return
+			}
 			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil || !d.IsDir() {
 					return nil //nolint:nilerr // an unreadable directory holds no fixtures we can name

@@ -1,11 +1,13 @@
 package ci
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -81,6 +83,11 @@ var implicitTags = map[string]bool{
 // by the compiler and never passed with `-tags`.
 var goVersionTag = regexp.MustCompile(`^go1\.\d+$`)
 
+var (
+	buildTagsOnce sync.Once
+	buildTagsOut  map[string][]string
+)
+
 // buildTagsInTestFiles reads the shared tree and returns every opt-in build tag
 // a _test.go carries, mapped to the files that carry it. The four directory
 // names the walk used to skip are skipped here by path: .git is not in the
@@ -88,29 +95,35 @@ var goVersionTag = regexp.MustCompile(`^go1\.\d+$`)
 // not this repository's own tests.
 func buildTagsInTestFiles(t *testing.T) map[string][]string {
 	t.Helper()
-	tags := map[string][]string{}
-	for _, f := range repoTree(t).Files {
-		if !f.Test {
-			continue
-		}
-		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
-			continue
-		}
-		for _, line := range strings.Split(string(f.Src), "\n") {
-			line = strings.TrimSpace(line)
-			// A build constraint may only appear before the package clause.
-			if strings.HasPrefix(line, "package ") {
-				break
-			}
-			if !strings.HasPrefix(line, "//go:build") {
+	buildTagsOnce.Do(func() {
+		tags := map[string][]string{}
+		for _, f := range repoTree(t).Files {
+			if !f.Test {
 				continue
 			}
-			for _, tag := range optInTags(strings.TrimPrefix(line, "//go:build")) {
-				tags[tag] = append(tags[tag], f.Rel)
+			if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
+				continue
+			}
+			if !bytes.Contains(f.Src, []byte("//go:build")) {
+				continue
+			}
+			for _, line := range strings.Split(string(f.Src), "\n") {
+				line = strings.TrimSpace(line)
+				// A build constraint may only appear before the package clause.
+				if strings.HasPrefix(line, "package ") {
+					break
+				}
+				if !strings.HasPrefix(line, "//go:build") {
+					continue
+				}
+				for _, tag := range optInTags(strings.TrimPrefix(line, "//go:build")) {
+					tags[tag] = append(tags[tag], f.Rel)
+				}
 			}
 		}
-	}
-	return tags
+		buildTagsOut = tags
+	})
+	return buildTagsOut
 }
 
 // optInTags splits one //go:build expression into the tags that HIDE the file

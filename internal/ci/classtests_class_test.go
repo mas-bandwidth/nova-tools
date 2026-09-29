@@ -1,9 +1,14 @@
 package ci
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -111,11 +116,10 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	if err := parentInCheckout(root, parents[0]); err != nil {
 		return nil, "", err
 	}
-	shown, err := gitOut(root, "show", "-s", "--format=%h%n%s", commit)
+	head, subject, err := commitHeadSubject(root, commit)
 	if err != nil {
 		return nil, "", err
 	}
-	head, subject, _ := strings.Cut(strings.TrimSpace(shown), "\n")
 	m, err := readDeletionsAgainst(root, parents[0], commit, head, subject)
 	if err != nil {
 		return nil, "", err
@@ -167,7 +171,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 		}
 	}
 	if m.Incomplete == "" {
-		if _, err := gitOut(root, "merge-base", "--is-ancestor", second, devRef); err != nil {
+		if !isAncestor(root, second, devRef) {
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not an ancestor of %s (%s) in this checkout: a branch merged into main, or origin/dev stale or shallow here; only a promotion of dev is excused on main; fetch dev for a main run, `%s`", head, subject, where, second[:9], devRef, devTip[:9], devHistoryFetch)
 		}
 	}
@@ -175,13 +179,13 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	var excused, excusedRows int
 	var since string
 	if m.Incomplete == "" {
-		if mb, err := gitOut(root, "merge-base", parents[0], second); err != nil {
+		if mb, err := mergeBase(root, parents[0], second); err != nil {
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the parents %s and %s have no merge base in this checkout, so dev's history since the last promotion cannot be read and nothing is excused: `%s`", head, subject, where, parents[0][:9], second[:9], devHistoryFetch)
 		} else {
 			// The excusing history is dev since the last promotion,
 			// merge-base..second: a path dev deleted before that and main
 			// holds again is main's, and its loss is the merge's own.
-			since = strings.TrimSpace(mb)
+			since = mb
 			if history, err = deletedInAncestry(root, since+".."+second); err != nil {
 				return nil, "", err
 			}
@@ -265,6 +269,25 @@ func excuseDevDeletions(deleted []string, declared map[string]string, history, d
 
 // currentBranch is the checked-out branch, or HEAD when detached.
 func currentBranch(root string) (string, error) {
+	gitPath := filepath.Join(root, ".git")
+	if raw, err := os.ReadFile(gitPath); err == nil {
+		text := strings.TrimSpace(string(raw))
+		if strings.HasPrefix(text, "gitdir: ") {
+			gitPath = strings.TrimPrefix(text, "gitdir: ")
+			if !filepath.IsAbs(gitPath) {
+				gitPath = filepath.Join(root, gitPath)
+			}
+		}
+	}
+	if headBytes, err := os.ReadFile(filepath.Join(gitPath, "HEAD")); err == nil {
+		head := strings.TrimSpace(string(headBytes))
+		if strings.HasPrefix(head, "ref: refs/heads/") {
+			return strings.TrimPrefix(head, "ref: refs/heads/"), nil
+		}
+		if head != "" {
+			return "HEAD", nil
+		}
+	}
 	out, err := gitOut(root, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", err
@@ -277,6 +300,21 @@ func currentBranch(root string) (string, error) {
 // shallow graft). It is empty when the ancestry is complete, ending at a true
 // root.
 func shallowCut(root, sha string) (string, error) {
+	gitPath := filepath.Join(root, ".git")
+	if raw, err := os.ReadFile(gitPath); err == nil {
+		text := strings.TrimSpace(string(raw))
+		if strings.HasPrefix(text, "gitdir: ") {
+			gitPath = strings.TrimPrefix(text, "gitdir: ")
+			if !filepath.IsAbs(gitPath) {
+				gitPath = filepath.Join(root, gitPath)
+			}
+		}
+	}
+	if fi, err := os.Stat(gitPath); err == nil && fi.IsDir() {
+		if _, err := os.Stat(filepath.Join(gitPath, "shallow")); os.IsNotExist(err) {
+			return "", nil
+		}
+	}
 	out, err := gitOut(root, "rev-list", "--max-parents=0", sha)
 	if err != nil {
 		return "", err
@@ -298,11 +336,60 @@ func shallowCut(root, sha string) (string, error) {
 	return "", nil
 }
 
+var (
+	deletedInAncestryCache sync.Map
+	treePathsCache         sync.Map
+	diffAgainstCache       sync.Map
+	isAncestorCache        sync.Map
+	mergeBaseCache         sync.Map
+)
+
+type diffAgainstResult struct {
+	deleted  []string
+	declared map[string]string
+}
+
+type mergeBaseResult struct {
+	base string
+	err  error
+}
+
+func isAncestor(root, ancestor, descendant string) bool {
+	key := root + "\x00" + ancestor + "\x00" + descendant
+	if v, ok := isAncestorCache.Load(key); ok {
+		return v.(bool)
+	}
+	_, err := gitOut(root, "merge-base", "--is-ancestor", ancestor, descendant)
+	ok := err == nil
+	isAncestorCache.Store(key, ok)
+	return ok
+}
+
+func mergeBase(root, a, b string) (string, error) {
+	key := root + "\x00" + a + "\x00" + b
+	if v, ok := mergeBaseCache.Load(key); ok {
+		res := v.(mergeBaseResult)
+		return res.base, res.err
+	}
+	mb, err := gitOut(root, "merge-base", a, b)
+	if err != nil {
+		mergeBaseCache.Store(key, mergeBaseResult{err: err})
+		return "", err
+	}
+	base := strings.TrimSpace(mb)
+	mergeBaseCache.Store(key, mergeBaseResult{base: base})
+	return base, nil
+}
+
 // deletedInAncestry is every path a commit in the range deleted (a sha, or
 // since..sha), read with renames off so a moved file counts as deleted at
 // its old path (the comparison it excuses reads renames with -M and never
 // sees those). Trees suffice: no blob is read.
 func deletedInAncestry(root, revs string) (map[string]bool, error) {
+	key := root + "\x00" + revs
+	if v, ok := deletedInAncestryCache.Load(key); ok {
+		return v.(map[string]bool), nil
+	}
 	out, err := gitOut(root, "log", "--no-renames", "--diff-filter=D", "--name-only", "--format=", revs)
 	if err != nil {
 		return nil, err
@@ -313,11 +400,16 @@ func deletedInAncestry(root, revs string) (map[string]bool, error) {
 			set[rel] = true
 		}
 	}
+	deletedInAncestryCache.Store(key, set)
 	return set, nil
 }
 
 // treePaths is every path in sha's tree.
 func treePaths(root, sha string) (map[string]bool, error) {
+	key := root + "\x00" + sha
+	if v, ok := treePathsCache.Load(key); ok {
+		return v.(map[string]bool), nil
+	}
 	out, err := gitOut(root, "ls-tree", "-r", "--name-only", sha)
 	if err != nil {
 		return nil, err
@@ -328,6 +420,7 @@ func treePaths(root, sha string) (map[string]bool, error) {
 			set[rel] = true
 		}
 	}
+	treePathsCache.Store(key, set)
 	return set, nil
 }
 
@@ -335,6 +428,21 @@ func treePaths(root, sha string) (map[string]bool, error) {
 // the rows commit adds to the log relative to parent; head and subject name
 // the commit in the findings.
 func readDeletionsAgainst(root, parent, commit, head, subject string) (*mergeDeletions, error) {
+	key := root + "\x00" + parent + "\x00" + commit
+	if v, ok := diffAgainstCache.Load(key); ok {
+		res := v.(diffAgainstResult)
+		m := &mergeDeletions{
+			Head:     head,
+			Parent:   parent[:9],
+			Subject:  subject,
+			Deleted:  append([]string(nil), res.deleted...),
+			Declared: make(map[string]string, len(res.declared)),
+		}
+		for k, val := range res.declared {
+			m.Declared[k] = val
+		}
+		return m, nil
+	}
 	m := &mergeDeletions{Head: head, Parent: parent[:9], Subject: subject, Declared: map[string]string{}}
 	gone, err := gitOut(root, "diff", "-M", "--diff-filter=D", "--name-only", parent, commit)
 	if err != nil {
@@ -353,6 +461,7 @@ func readDeletionsAgainst(root, parent, commit, head, subject string) (*mergeDel
 	for p, why := range declaredRowsAdded(diff) {
 		m.Declared[p] = why
 	}
+	diffAgainstCache.Store(key, diffAgainstResult{deleted: m.Deleted, declared: m.Declared})
 	return m, nil
 }
 
@@ -372,9 +481,100 @@ func firstParent(root string) (string, error) {
 	return parents[0], nil
 }
 
+func gitDir(root string) string {
+	gitPath := filepath.Join(root, ".git")
+	if raw, err := os.ReadFile(gitPath); err == nil {
+		text := strings.TrimSpace(string(raw))
+		if strings.HasPrefix(text, "gitdir: ") {
+			gitPath = strings.TrimPrefix(text, "gitdir: ")
+			if !filepath.IsAbs(gitPath) {
+				gitPath = filepath.Join(root, gitPath)
+			}
+		}
+	}
+	return gitPath
+}
+
+func readLooseCommit(root, commit string) (parents []string, head string, subject string, ok bool) {
+	gd := gitDir(root)
+	sha := commit
+	if sha == "HEAD" {
+		headBytes, err := os.ReadFile(filepath.Join(gd, "HEAD"))
+		if err != nil {
+			return nil, "", "", false
+		}
+		text := strings.TrimSpace(string(headBytes))
+		if strings.HasPrefix(text, "ref: ") {
+			refFile := filepath.Join(gd, filepath.FromSlash(strings.TrimPrefix(text, "ref: ")))
+			refBytes, err := os.ReadFile(refFile)
+			if err != nil {
+				return nil, "", "", false
+			}
+			sha = strings.TrimSpace(string(refBytes))
+		} else {
+			sha = text
+		}
+	}
+	if len(sha) < 40 {
+		return nil, "", "", false
+	}
+	objPath := filepath.Join(gd, "objects", sha[:2], sha[2:40])
+	f, err := os.Open(objPath)
+	if err != nil {
+		return nil, "", "", false
+	}
+	defer f.Close()
+	zr, err := zlib.NewReader(f)
+	if err != nil {
+		return nil, "", "", false
+	}
+	defer zr.Close()
+	b, err := io.ReadAll(zr)
+	if err != nil {
+		return nil, "", "", false
+	}
+	nullIdx := bytes.IndexByte(b, 0)
+	if nullIdx < 0 || !bytes.HasPrefix(b, []byte("commit ")) {
+		return nil, "", "", false
+	}
+	content := string(b[nullIdx+1:])
+	head = sha[:7]
+	for _, line := range strings.Split(content, "\n") {
+		if p, hasP := strings.CutPrefix(line, "parent "); hasP {
+			parents = append(parents, p)
+		}
+		if line == "" {
+			break
+		}
+	}
+	if parts := strings.SplitN(content, "\n\n", 2); len(parts) == 2 {
+		msg := strings.TrimSpace(parts[1])
+		subject, _, _ = strings.Cut(msg, "\n")
+	}
+	return parents, head, subject, true
+}
+
+func commitHeadSubject(root, commit string) (string, string, error) {
+	if _, head, subject, ok := readLooseCommit(root, commit); ok {
+		return head, subject, nil
+	}
+	shown, err := gitOut(root, "show", "-s", "--format=%h%n%s", commit)
+	if err != nil {
+		return "", "", err
+	}
+	head, subject, _ := strings.Cut(strings.TrimSpace(shown), "\n")
+	return head, subject, nil
+}
+
 // commitParents is a commit's parents in order, read from the raw commit
 // object; a root commit is an error, since there is no merge to compare.
 func commitParents(root, commit string) ([]string, error) {
+	if parents, _, _, ok := readLooseCommit(root, commit); ok {
+		if len(parents) == 0 {
+			return nil, fmt.Errorf("HEAD has no parent: there is no merge to compare")
+		}
+		return parents, nil
+	}
 	raw, err := gitOut(root, "cat-file", "-p", commit)
 	if err != nil {
 		return nil, err
@@ -397,6 +597,12 @@ func commitParents(root, commit string) ([]string, error) {
 // parentInCheckout is nil when the parent's commit object is in the checkout,
 // else the error naming the fetch depth every workflow uses for this rule.
 func parentInCheckout(root, parent string) error {
+	gd := gitDir(root)
+	if len(parent) >= 40 {
+		if fi, err := os.Stat(filepath.Join(gd, "objects", parent[:2], parent[2:40])); err == nil && !fi.IsDir() {
+			return nil
+		}
+	}
 	if _, err := gitOut(root, "cat-file", "-e", parent+"^{commit}"); err != nil {
 		return fmt.Errorf("HEAD's parent %s is not in this checkout (a depth-1 fetch), so what the merge changed cannot be read; every workflow checks out with fetch-depth: 2 for this rule", parent[:9])
 	}
@@ -727,25 +933,46 @@ func TestExcuseDevDeletionsReadsHistoryAndDevTree(t *testing.T) {
 type promotionRepo struct {
 	*scratchRepo
 	base, mainTip, devTip, mainOnly string
+	promotionCommit, devNext        string
+	lostMainOnly, lostX, lostNew    string
+	squash, feature, featureMerge   string
+	shallowCutDir                   string
+	movedPromotionShallowDir        string
 }
 
 // promotionShared is the one promotionRepo per package; TestMain removes it.
 var promotionShared struct {
-	once sync.Once
+	done chan struct{}
 	dir  string
 	repo *promotionRepo
+	err  error
+}
+
+func init() {
+	promotionShared.done = make(chan struct{})
+	go func() {
+		defer close(promotionShared.done)
+		dir, err := os.MkdirTemp("", "classtests-promotion-")
+		if err != nil {
+			promotionShared.err = err
+			return
+		}
+		promotionShared.dir = dir
+		defer func() {
+			if r := recover(); r != nil {
+				promotionShared.err = fmt.Errorf("buildPromotionRepo panicked: %v", r)
+			}
+		}()
+		promotionShared.repo = buildPromotionRepo(nil, dir)
+	}()
 }
 
 func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	t.Helper()
-	promotionShared.once.Do(func() {
-		dir, err := os.MkdirTemp("", "classtests-promotion-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		promotionShared.dir = dir
-		promotionShared.repo = buildPromotionRepo(t, dir)
-	})
+	<-promotionShared.done
+	if promotionShared.err != nil {
+		t.Fatal(promotionShared.err)
+	}
 	base := promotionShared.repo
 	if base == nil {
 		t.Fatal("the shared promotion repository was not built")
@@ -753,6 +980,11 @@ func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	return &promotionRepo{
 		scratchRepo: &scratchRepo{t: t, root: base.root, index: filepath.Join(t.TempDir(), "index")},
 		base:        base.base, mainTip: base.mainTip, devTip: base.devTip, mainOnly: base.mainOnly,
+		promotionCommit: base.promotionCommit, devNext: base.devNext,
+		lostMainOnly: base.lostMainOnly, lostX: base.lostX, lostNew: base.lostNew,
+		squash: base.squash, feature: base.feature, featureMerge: base.featureMerge,
+		shallowCutDir:            base.shallowCutDir,
+		movedPromotionShallowDir: base.movedPromotionShallowDir,
 	}
 }
 
@@ -765,40 +997,128 @@ func TestMain(m *testing.M) {
 }
 
 func buildPromotionRepo(t *testing.T, root string) *promotionRepo {
-	t.Helper()
+	if t != nil {
+		t.Helper()
+	}
 	r := &promotionRepo{scratchRepo: &scratchRepo{t: t, root: root}}
-	r.git("init", "-q", "-b", "main")
+	r.git("init", "-q", "--template=", "-b", "main")
 	body := func(name string) string {
 		return "package a\n\n" + strings.Repeat("// "+name+": a line of its own so no other file resembles it\n", 4)
 	}
-	r.write(deletedTestsLogPath, "# the log\n")
-	r.write("keep_test.go", body("keep"))
-	r.write("x_test.go", body("x"))
-	r.write("gone_test.go", body("gone"))
-	r.base = r.commit("base")
-	base := r.base
-	r.write("main_only_test.go", body("main only"))
-	r.mainTip = r.commit("main adds main_only_test.go")
-	r.mainOnly = r.git("rev-parse", r.mainTip+":main_only_test.go")
-	r.git("checkout", "-q", "-b", "dev", base)
-	r.write("dev.txt", "dev\n")
-	r.remove("gone_test.go")
-	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\n")
-	r.stage("dev adds dev.txt and deletes gone_test.go, declared")
-	r.remove("x_test.go")
-	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\nx_test.go moved too\n")
-	r.stage("dev deletes x_test.go, declared")
-	r.write("x_test.go", body("x"))
-	r.write("new_test.go", body("new"))
-	r.write(deletedTestsLogPath, "# the log\n")
-	r.devTip = r.commit("dev restores x_test.go, trims the log, adds new_test.go")
-	r.git("update-ref", "refs/remotes/origin/dev", r.devTip)
+
+	bLog := r.hashBlob("# the log\n")
+	bDecl1 := r.hashBlob("# the log\ngone_test.go moved to the functional tier\n")
+	bDecl2 := r.hashBlob("# the log\ngone_test.go moved to the functional tier\nx_test.go moved too\n")
+	bKeep := r.hashBlob(body("keep"))
+	bX := r.hashBlob(body("x"))
+	bGone := r.hashBlob(body("gone"))
+	bMainOnly := r.hashBlob(body("main only"))
+	bDev := r.hashBlob("dev\n")
+	bNew := r.hashBlob(body("new"))
+
+	r.mainOnly = bMainOnly
+
+	// Base tree
+	baseFiles := map[string]string{
+		deletedTestsLogPath: bLog,
+		"keep_test.go":      bKeep,
+		"x_test.go":         bX,
+		"gone_test.go":      bGone,
+	}
+	tBase := r.buildTree(baseFiles)
+	r.base = r.commitObject(tBase, nil, "base")
+
+	// Main tip
+	mainFiles := cloneMap(baseFiles)
+	mainFiles["main_only_test.go"] = bMainOnly
+	tMain := r.buildTree(mainFiles)
+	r.mainTip = r.commitObject(tMain, []string{r.base}, "main adds main_only_test.go")
+	r.updateRef("refs/heads/main", r.mainTip)
+
+	// Dev commit 1
+	dev1Files := cloneMap(baseFiles)
+	dev1Files["dev.txt"] = bDev
+	dev1Files[deletedTestsLogPath] = bDecl1
+	delete(dev1Files, "gone_test.go")
+	tDev1 := r.buildTree(dev1Files)
+	cDev1 := r.commitObject(tDev1, []string{r.base}, "dev adds dev.txt and deletes gone_test.go, declared")
+
+	// Dev commit 2
+	dev2Files := cloneMap(dev1Files)
+	delete(dev2Files, "x_test.go")
+	dev2Files[deletedTestsLogPath] = bDecl2
+	tDev2 := r.buildTree(dev2Files)
+	cDev2 := r.commitObject(tDev2, []string{cDev1}, "dev deletes x_test.go, declared")
+
+	// Dev tip
+	devTipFiles := cloneMap(dev2Files)
+	devTipFiles["x_test.go"] = bX
+	devTipFiles["new_test.go"] = bNew
+	devTipFiles[deletedTestsLogPath] = bLog
+	tDevTip := r.buildTree(devTipFiles)
+	r.devTip = r.commitObject(tDevTip, []string{cDev2}, "dev restores x_test.go, trims the log, adds new_test.go")
+	r.updateRef("refs/remotes/origin/dev", r.devTip)
+	r.updateRef("refs/heads/dev", r.devTip)
+
+	// Promotion: devTip tree + main_only_test.go
+	promoFiles := cloneMap(devTipFiles)
+	promoFiles["main_only_test.go"] = bMainOnly
+	tPromo := r.buildTree(promoFiles)
+	r.promotionCommit = r.commitObject(tPromo, []string{r.mainTip, r.devTip}, "promotion")
+
+	r.devNext = r.commitObject(tDevTip, []string{r.devTip}, "dev moves on")
+	r.updateRef("refs/heads/witness-moved-promotion", r.promotionCommit)
+	r.updateRef("refs/heads/witness-moved-dev", r.devNext)
+
+	r.lostMainOnly = r.commitObject(tDevTip, []string{r.mainTip, r.devTip}, "promotion whose tree is dev's")
+
+	// lostX: promo tree minus x_test.go
+	lostXFiles := cloneMap(promoFiles)
+	delete(lostXFiles, "x_test.go")
+	tLostX := r.buildTree(lostXFiles)
+	r.lostX = r.commitObject(tLostX, []string{r.mainTip, r.devTip}, "promotion minus x_test.go")
+
+	// lostNew: promo tree minus new_test.go
+	lostNewFiles := cloneMap(promoFiles)
+	delete(lostNewFiles, "new_test.go")
+	tLostNew := r.buildTree(lostNewFiles)
+	r.lostNew = r.commitObject(tLostNew, []string{r.mainTip, r.devTip}, "promotion minus new_test.go")
+
+	// squash: lostX tree minus keep_test.go
+	squashFiles := cloneMap(lostXFiles)
+	delete(squashFiles, "keep_test.go")
+	tSquash := r.buildTree(squashFiles)
+	r.squash = r.commitObject(tSquash, []string{r.lostX}, "squash on main")
+
+	// feature: base tree minus keep_test.go
+	featureFiles := cloneMap(baseFiles)
+	delete(featureFiles, "keep_test.go")
+	tFeature := r.buildTree(featureFiles)
+	r.feature = r.commitObject(tFeature, []string{r.base}, "feature deletes keep_test.go")
+
+	// featureMerge: feature tree + main_only_test.go
+	featureMergeFiles := cloneMap(featureFiles)
+	featureMergeFiles["main_only_test.go"] = bMainOnly
+	tFeatureMerge := r.buildTree(featureMergeFiles)
+	r.featureMerge = r.commitObject(tFeatureMerge, []string{r.mainTip, r.feature}, "feature merged into main")
+
+	r.updateRef("refs/heads/witness-shallow", r.lostX)
+	r.shallowCutDir = filepath.Join(root, "shallow-cut")
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-shallow", "--no-local", r.root, r.shallowCutDir)
+
+	r.movedPromotionShallowDir = filepath.Join(root, "shallow-moved-promotion")
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-moved-promotion", "--no-local", r.root, r.movedPromotionShallowDir)
+	cMoved := &scratchRepo{root: r.movedPromotionShallowDir}
+	cMoved.updateRef("refs/remotes/origin/dev", r.devNext)
+
 	return r
 }
 
 // merge builds a two-parent commit on main, dev's tree edited in the index.
 func (r *promotionRepo) merge(subject string, edit func()) string {
-	r.t.Helper()
+	if r.t != nil {
+		r.t.Helper()
+	}
 	r.git("read-tree", r.devTip)
 	edit()
 	return r.git("commit-tree", r.git("write-tree"), "-p", r.mainTip, "-p", r.devTip, "-m", subject)
@@ -812,10 +1132,15 @@ func (r *promotionRepo) promotion() {
 // run is the class test's reading of one commit under an event, ref and
 // checked-out branch, with nothing checked out.
 func (r *scratchRepo) run(commit, event, ref, branch string) ([]string, string) {
-	r.t.Helper()
+	if r.t != nil {
+		r.t.Helper()
+	}
 	m, note, err := readCommitDeletions(r.root, commit, event, ref, branch)
 	if err != nil {
-		r.t.Fatal(err)
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
 	}
 	return m.findings(), note
 }
@@ -835,7 +1160,7 @@ func exactlyOne(t *testing.T, name string, got []string, file string) {
 func TestMainRunSeesWhatMainAloneHad(t *testing.T) {
 	t.Parallel()
 	r := sharedPromotionRepo(t)
-	lostMainOnly := r.merge("promotion whose tree is dev's", func() {})
+	lostMainOnly := r.lostMainOnly
 
 	got, note := r.run(lostMainOnly, "push", "refs/heads/main", "")
 	exactlyOne(t, "dev's tree on main under push", got, "main_only_test.go")
@@ -856,7 +1181,7 @@ func TestMainRunSeesWhatMainAloneHad(t *testing.T) {
 func TestMainRunExcusesOnlyWhatDevDeleted(t *testing.T) {
 	t.Parallel()
 	r := sharedPromotionRepo(t)
-	promotion := r.merge("promotion", r.promotion)
+	promotion := r.promotionCommit
 
 	if got, note := r.run(promotion, "push", "refs/heads/main", ""); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
 		t.Errorf("the true promotion: findings = %q, note = %q; want none, gone_test.go excused", got, note)
@@ -876,17 +1201,9 @@ func TestMainRunExcusesOnlyWhatDevDeleted(t *testing.T) {
 func TestMainRunHoldsItsTreeControls(t *testing.T) {
 	t.Parallel()
 	r := sharedPromotionRepo(t)
-	lostX := r.merge("promotion minus x_test.go", func() {
-		r.promotion()
-		r.git("update-index", "--force-remove", "x_test.go")
-	})
-	lostNew := r.merge("promotion minus new_test.go", func() {
-		r.promotion()
-		r.git("update-index", "--force-remove", "new_test.go")
-	})
-	r.git("read-tree", lostX)
-	r.git("update-index", "--force-remove", "keep_test.go")
-	squash := r.git("commit-tree", r.git("write-tree"), "-p", lostX, "-m", "squash on main")
+	lostX := r.lostX
+	lostNew := r.lostNew
+	squash := r.squash
 
 	got, _ := r.run(lostX, "push", "refs/heads/main", "")
 	exactlyOne(t, "control 1: x_test.go, deleted once on dev and restored", got, "x_test.go")
@@ -911,12 +1228,8 @@ func TestMainRunHoldsItsTreeControls(t *testing.T) {
 func TestMainRunExcusesOnlyDevsHistory(t *testing.T) {
 	t.Parallel()
 	r := sharedPromotionRepo(t)
-	r.git("read-tree", r.base)
-	r.git("update-index", "--force-remove", "keep_test.go")
-	feature := r.git("commit-tree", r.git("write-tree"), "-p", r.base, "-m", "feature deletes keep_test.go")
-	r.git("read-tree", feature)
-	r.promotion()
-	featureMerge := r.git("commit-tree", r.git("write-tree"), "-p", r.mainTip, "-p", feature, "-m", "feature merged into main")
+	feature := r.feature
+	featureMerge := r.featureMerge
 	got, note := r.run(featureMerge, "push", "refs/heads/main", "")
 	all := strings.Join(got, "\n")
 	if len(got) != 2 || !strings.Contains(all, "deletes keep_test.go,") || !strings.Contains(all, "second parent "+feature[:9]+" is not an ancestor of refs/remotes/origin/dev ("+r.devTip[:9]+")") ||
@@ -933,13 +1246,7 @@ func TestMainRunExcusesOnlyDevsHistory(t *testing.T) {
 func TestMainRunFailsClosedOnAShallowAncestry(t *testing.T) {
 	t.Parallel()
 	r := sharedPromotionRepo(t)
-	lostX := r.merge("promotion minus x_test.go", func() {
-		r.promotion()
-		r.git("update-index", "--force-remove", "x_test.go")
-	})
-	r.git("update-ref", "refs/heads/witness-shallow", lostX)
-	shallow := filepath.Join(t.TempDir(), "shallow")
-	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-shallow", "file://"+r.root, shallow)
+	shallow := r.shallowCutDir
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
 	if err != nil {
 		t.Fatal(err)
@@ -962,14 +1269,8 @@ func TestMainRunFailsClosedOnAShallowAncestry(t *testing.T) {
 func TestMainRunNamesTheFetchWhenDevHasMovedOn(t *testing.T) {
 	t.Parallel()
 	r := sharedPromotionRepo(t)
-	promotion := r.merge("promotion", r.promotion)
-	devNext := r.git("commit-tree", r.devTip+"^{tree}", "-p", r.devTip, "-m", "dev moves on")
-	r.git("update-ref", "refs/heads/witness-moved-promotion", promotion)
-	r.git("update-ref", "refs/heads/witness-moved-dev", devNext)
-	shallow := filepath.Join(t.TempDir(), "shallow")
-	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-moved-promotion", "file://"+r.root, shallow)
+	shallow := r.movedPromotionShallowDir
 	c := &scratchRepo{t: t, root: shallow}
-	c.git("update-ref", "refs/remotes/origin/dev", devNext)
 
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
 	if err != nil {
@@ -1003,22 +1304,29 @@ func TestMainRunNamesTheFetchWhenDevHasMovedOn(t *testing.T) {
 func TestMainRunNeverPassesOnAShallowAncestry(t *testing.T) {
 	t.Parallel()
 	r := newScratchRepo(t, "main")
-	r.write(deletedTestsLogPath, "# the log\n")
-	base := r.commit("base")
-	r.write("main.txt", "main\n")
-	mainTip := r.commit("main adds main.txt")
-	r.git("checkout", "-q", "-b", "dev", base)
-	r.write("new_test.go", "package a\n\n// new: dev's test\n")
-	devTip := r.commit("dev adds new_test.go")
-	r.git("update-ref", "refs/remotes/origin/dev", devTip)
-	bad := r.git("commit-tree", mainTip+"^{tree}", "-p", mainTip, "-p", devTip, "-m", "merge whose tree is main's")
-	r.git("update-ref", "refs/heads/main", bad)
+	bLog := r.hashBlob("# the log\n")
+	bMain := r.hashBlob("main\n")
+	bNew := r.hashBlob("package a\n\n// new: dev's test\n")
+
+	tBase := r.buildTree(map[string]string{deletedTestsLogPath: bLog})
+	base := r.commitObject(tBase, nil, "base")
+
+	tMain := r.buildTree(map[string]string{deletedTestsLogPath: bLog, "main.txt": bMain})
+	mainTip := r.commitObject(tMain, []string{base}, "main adds main.txt")
+
+	tDev := r.buildTree(map[string]string{deletedTestsLogPath: bLog, "new_test.go": bNew})
+	devTip := r.commitObject(tDev, []string{base}, "dev adds new_test.go")
+	r.updateRef("refs/heads/dev", devTip)
+	r.updateRef("refs/remotes/origin/dev", devTip)
+
+	bad := r.commitObject(tMain, []string{mainTip, devTip}, "merge whose tree is main's")
+	r.updateRef("refs/heads/main", bad)
 
 	got, _ := r.run(bad, "push", "refs/heads/main", "")
 	exactlyOne(t, "full history", got, "new_test.go")
 
 	shallow := filepath.Join(t.TempDir(), "shallow")
-	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "main", "file://"+r.root, shallow)
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "main", "--no-local", r.root, shallow)
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
 	if err != nil {
 		t.Fatal(err)
@@ -1042,24 +1350,32 @@ type scratchRepo struct {
 }
 
 func newScratchRepo(t *testing.T, branch string) *scratchRepo {
-	t.Helper()
+	if t != nil {
+		t.Helper()
+	}
 	r := &scratchRepo{t: t, root: t.TempDir()}
-	r.git("init", "-q", "-b", branch)
+	r.git("init", "-q", "--template=", "-b", branch)
 	return r
 }
 
 func (r *scratchRepo) git(args ...string) string {
-	r.t.Helper()
+	if r.t != nil {
+		r.t.Helper()
+	}
 	args = append([]string{
 		"-c", "user.name=ci", "-c", "user.email=ci@example.invalid",
-		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=always"}, args...)
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=always",
+		"-c", "core.fsync=none", "-c", "gc.auto=0"}, args...)
 	var env []string
 	if r.index != "" {
 		env = []string{"GIT_INDEX_FILE=" + r.index}
 	}
 	out, err := gitEnvOut(r.root, env, args...)
 	if err != nil {
-		r.t.Fatal(err)
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
 	}
 	return strings.TrimSpace(out)
 }
@@ -1069,7 +1385,7 @@ func gitEnvOut(root string, env []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(os.Environ(), append([]string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"}, env...)...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1077,6 +1393,198 @@ func gitEnvOut(root string, env []string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return string(out), nil
+}
+
+func (r *scratchRepo) hashBlob(text string) string {
+	if r.t != nil {
+		r.t.Helper()
+	}
+	gd := gitDir(r.root)
+	header := fmt.Sprintf("blob %d\x00", len(text))
+	h := sha1.New()
+	h.Write([]byte(header))
+	h.Write([]byte(text))
+	sha := hex.EncodeToString(h.Sum(nil))
+
+	objDir := filepath.Join(gd, "objects", sha[:2])
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
+	}
+	objPath := filepath.Join(objDir, sha[2:])
+	if _, err := os.Stat(objPath); os.IsNotExist(err) {
+		var buf bytes.Buffer
+		zw := zlib.NewWriter(&buf)
+		zw.Write([]byte(header))
+		zw.Write([]byte(text))
+		zw.Close()
+		if err := os.WriteFile(objPath, buf.Bytes(), 0o644); err != nil {
+			if r.t != nil {
+				r.t.Fatal(err)
+			}
+			panic(err)
+		}
+	}
+	return sha
+}
+
+func cloneMap[K comparable, V any](m map[K]V) map[K]V {
+	out := make(map[K]V, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func (r *scratchRepo) buildTree(files map[string]string) string {
+	type entry struct {
+		name  string
+		mode  string
+		sha   string
+		isDir bool
+	}
+	directFiles := make(map[string]string)
+	subDirs := make(map[string]map[string]string)
+
+	for p, sha := range files {
+		p = strings.TrimPrefix(filepath.ToSlash(p), "/")
+		if idx := strings.IndexByte(p, '/'); idx >= 0 {
+			dir := p[:idx]
+			rest := p[idx+1:]
+			if subDirs[dir] == nil {
+				subDirs[dir] = make(map[string]string)
+			}
+			subDirs[dir][rest] = sha
+		} else {
+			directFiles[p] = sha
+		}
+	}
+
+	var entries []entry
+	for name, sha := range directFiles {
+		entries = append(entries, entry{name: name, mode: "100644", sha: sha, isDir: false})
+	}
+	for dir, subMap := range subDirs {
+		subSha := r.buildTree(subMap)
+		entries = append(entries, entry{name: dir, mode: "40000", sha: subSha, isDir: true})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		nameI := entries[i].name
+		if entries[i].isDir {
+			nameI += "/"
+		}
+		nameJ := entries[j].name
+		if entries[j].isDir {
+			nameJ += "/"
+		}
+		return nameI < nameJ
+	})
+
+	var body bytes.Buffer
+	for _, e := range entries {
+		rawSha, err := hex.DecodeString(e.sha)
+		if err != nil {
+			if r.t != nil {
+				r.t.Fatal(err)
+			}
+			panic(err)
+		}
+		body.WriteString(fmt.Sprintf("%s %s\x00", e.mode, e.name))
+		body.Write(rawSha)
+	}
+
+	content := body.Bytes()
+	header := fmt.Sprintf("tree %d\x00", len(content))
+	h := sha1.New()
+	h.Write([]byte(header))
+	h.Write(content)
+	sha := hex.EncodeToString(h.Sum(nil))
+
+	gd := gitDir(r.root)
+	objDir := filepath.Join(gd, "objects", sha[:2])
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
+	}
+	objPath := filepath.Join(objDir, sha[2:])
+	if _, err := os.Stat(objPath); os.IsNotExist(err) {
+		var zbuf bytes.Buffer
+		zw := zlib.NewWriter(&zbuf)
+		zw.Write([]byte(header))
+		zw.Write(content)
+		zw.Close()
+		if err := os.WriteFile(objPath, zbuf.Bytes(), 0o644); err != nil {
+			if r.t != nil {
+				r.t.Fatal(err)
+			}
+			panic(err)
+		}
+	}
+	return sha
+}
+
+func (r *scratchRepo) commitObject(tree string, parents []string, msg string) string {
+	var body bytes.Buffer
+	body.WriteString("tree " + tree + "\n")
+	for _, p := range parents {
+		body.WriteString("parent " + p + "\n")
+	}
+	body.WriteString("author ci <ci@example.invalid> 1700000000 +0000\n")
+	body.WriteString("committer ci <ci@example.invalid> 1700000000 +0000\n\n")
+	body.WriteString(msg + "\n")
+
+	content := body.Bytes()
+	header := fmt.Sprintf("commit %d\x00", len(content))
+	h := sha1.New()
+	h.Write([]byte(header))
+	h.Write(content)
+	sha := hex.EncodeToString(h.Sum(nil))
+
+	gd := gitDir(r.root)
+	objDir := filepath.Join(gd, "objects", sha[:2])
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
+	}
+	objPath := filepath.Join(objDir, sha[2:])
+	if _, err := os.Stat(objPath); os.IsNotExist(err) {
+		var zbuf bytes.Buffer
+		zw := zlib.NewWriter(&zbuf)
+		zw.Write([]byte(header))
+		zw.Write(content)
+		zw.Close()
+		if err := os.WriteFile(objPath, zbuf.Bytes(), 0o644); err != nil {
+			if r.t != nil {
+				r.t.Fatal(err)
+			}
+			panic(err)
+		}
+	}
+	return sha
+}
+
+func (r *scratchRepo) updateRef(ref, sha string) {
+	gd := gitDir(r.root)
+	p := filepath.Join(gd, filepath.FromSlash(ref))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
+	}
+	if err := os.WriteFile(p, []byte(sha+"\n"), 0o644); err != nil {
+		if r.t != nil {
+			r.t.Fatal(err)
+		}
+		panic(err)
+	}
 }
 
 func (r *scratchRepo) write(rel, text string) {

@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -159,6 +160,9 @@ func TestOK8(t *testing.T) { _ = Opts{Deadline: time.Minute} }
 
 // isSlowTagged reports whether the file's build constraint names the slow tag.
 func isSlowTagged(src []byte) bool {
+	if !bytes.Contains(src, []byte("slow")) {
+		return false
+	}
 	for _, line := range strings.Split(string(src), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "package ") {

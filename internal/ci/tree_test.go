@@ -206,6 +206,37 @@ func init() {
 	walkSourceDir = treeWalkDir
 	readSourceFile = treeSourceFile
 	parseSource = treeParseSource
+	walkCITestFilesHook = treeWalkCITestFiles
+	treeFileASTHook = func(path string) *ast.File {
+		if idx, err := sharedRepoTree(); err == nil {
+			if f := idx.ByPath(path); f != nil {
+				return f.AST
+			}
+		}
+		return nil
+	}
+}
+
+func treeWalkCITestFiles(root string, fn func(rel string, src []byte) error) (bool, error) {
+	idx, err := sharedRepoTree()
+	if err != nil || root != idx.Root {
+		return false, nil
+	}
+	for _, f := range idx.Files {
+		if !f.Test {
+			continue
+		}
+		if !f.InAnyDir(checkWaitsDirs...) {
+			continue
+		}
+		if f.HasDirNamed("testdata") || f.HasDirNamed(".git") || f.HasDirNamed("vendor") {
+			continue
+		}
+		if err := fn(f.Rel, f.Src); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 // treeSourceFile answers a read of a file the shared tree holds bytes for from
@@ -238,6 +269,27 @@ func repoTreeLoads() int { return repoTreeCount }
 // not take a whole machine's cores to get there (Glenn 2026-09-26, #4328).
 func loadRepoTree(root string) (*repoTreeIndex, error) {
 	idx := &repoTreeIndex{Root: root, FSet: token.NewFileSet()}
+	jobs := make(chan *treeFile, 256)
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+
+	for w := 0; w < treeLoadWorkers(); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range jobs {
+				if err := loadTreeFile(idx.FSet, f); err != nil {
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					errMu.Unlock()
+				}
+			}
+		}()
+	}
+
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -267,38 +319,23 @@ func loadRepoTree(root string) (*repoTreeIndex, error) {
 			return relErr
 		}
 		rel = filepath.ToSlash(rel)
-		idx.Files = append(idx.Files, &treeFile{
+		f := &treeFile{
 			Path: path,
 			Rel:  rel,
 			Go:   strings.HasSuffix(rel, ".go"),
 			Test: strings.HasSuffix(rel, "_test.go"),
-		})
+		}
+		idx.Files = append(idx.Files, f)
+		jobs <- f
 		return nil
 	})
+	close(jobs)
+	wg.Wait()
 	if err != nil {
 		return nil, err
 	}
-	errs := make([]error, len(idx.Files))
-	next := make(chan int)
-	var wg sync.WaitGroup
-	for w := 0; w < treeLoadWorkers(); w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				errs[i] = loadTreeFile(idx.FSet, idx.Files[i])
-			}
-		}()
-	}
-	for i := range idx.Files {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
-	for _, e := range errs {
-		if e != nil {
-			return nil, e
-		}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return idx, nil
 }

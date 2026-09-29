@@ -99,6 +99,8 @@ func (r WaitsResult) ExitCode() int {
 // and cmd/.
 var checkWaitsDirs = []string{"internal", "cmd"}
 
+var walkCITestFilesHook func(root string, fn func(rel string, src []byte) error) (bool, error)
+
 // walkCITestFiles reads every _test.go under root/internal and root/cmd -- the
 // two trees checkWaitsDirs names -- and calls fn with the repo-relative slash
 // path and the file's bytes. testdata, .git and vendor are skipped so the
@@ -106,6 +108,11 @@ var checkWaitsDirs = []string{"internal", "cmd"}
 // that is not there is not an error: a checkout without cmd/ is still checked
 // for the part it has.
 func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
+	if walkCITestFilesHook != nil {
+		if handled, err := walkCITestFilesHook(root, fn); handled {
+			return err
+		}
+	}
 	for _, dir := range checkWaitsDirs {
 		base := filepath.Join(root, dir)
 		if _, statErr := os.Stat(base); statErr != nil {

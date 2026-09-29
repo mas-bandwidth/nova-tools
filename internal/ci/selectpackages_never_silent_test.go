@@ -149,12 +149,13 @@ func selectFixture(t *testing.T, script string) (string, string, []string) {
 		"HOME=" + home,
 		"TMPDIR=" + tmp,
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
 	}
 	git := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.Command("git", append([]string{"-c", "core.fsync=none", "-c", "gc.auto=0"}, args...)...)
 		cmd.Dir = repo
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()

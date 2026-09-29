@@ -64,6 +64,8 @@ func stepIndex(job ciJob, name string) int {
 	return -1
 }
 
+var reStepExpr = regexp.MustCompile(`\$\{\{[^}]*\}\}`)
+
 // runStep runs one step's script under bash with a scrubbed environment and
 // the extra variables given; ${{ }} expressions become x.
 func runStep(t *testing.T, script string, env ...string) string {
@@ -75,10 +77,11 @@ func runStep(t *testing.T, script string, env ...string) string {
 	if err != nil {
 		t.Skip("no bash")
 	}
-	script = regexp.MustCompile(`\$\{\{[^}]*\}\}`).ReplaceAllString(script, "x")
+	script = reStepExpr.ReplaceAllString(script, "x")
+	dir := t.TempDir()
 	cmd := exec.Command(bash, "-e", "-c", script)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + t.TempDir()}, env...)
+	cmd.Dir = dir
+	cmd.Env = append([]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + dir}, env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("the step failed: %v\n%s", err, out)

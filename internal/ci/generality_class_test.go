@@ -1,16 +1,17 @@
 package ci
 
 import (
-	"bytes"
 	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -137,10 +138,85 @@ var candidateTokens = []string{
 	"studio", "superman", "vision",
 }
 
+func containsFold(src []byte, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	if len(src) < len(sub) {
+		return false
+	}
+	firstLow := sub[0]
+	firstUp := firstLow
+	if firstLow >= 'a' && firstLow <= 'z' {
+		firstUp = firstLow - 32
+	}
+	subLen := len(sub)
+	maxI := len(src) - subLen
+	for i := 0; i <= maxI; i++ {
+		b := src[i]
+		if b != firstLow && b != firstUp {
+			continue
+		}
+		matched := true
+		for j := 1; j < subLen; j++ {
+			c := src[i+j]
+			target := sub[j]
+			if c >= 'A' && c <= 'Z' {
+				c += 32
+			}
+			if c != target {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func stringContainsFold(s string, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	if len(s) < len(sub) {
+		return false
+	}
+	firstLow := sub[0]
+	firstUp := firstLow
+	if firstLow >= 'a' && firstLow <= 'z' {
+		firstUp = firstLow - 32
+	}
+	subLen := len(sub)
+	maxI := len(s) - subLen
+	for i := 0; i <= maxI; i++ {
+		b := s[i]
+		if b != firstLow && b != firstUp {
+			continue
+		}
+		matched := true
+		for j := 1; j < subLen; j++ {
+			c := s[i+j]
+			target := sub[j]
+			if c >= 'A' && c <= 'Z' {
+				c += 32
+			}
+			if c != target {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
 func fileMayContainGenerality(cleanSrc []byte) bool {
-	lower := bytes.ToLower(cleanSrc)
 	for _, tok := range candidateTokens {
-		if bytes.Contains(lower, []byte(tok)) {
+		if containsFold(cleanSrc, tok) {
 			return true
 		}
 	}
@@ -148,9 +224,8 @@ func fileMayContainGenerality(cleanSrc []byte) bool {
 }
 
 func lineMayContainGenerality(line string) bool {
-	lower := strings.ToLower(line)
 	for _, tok := range candidateTokens {
-		if strings.Contains(lower, tok) {
+		if stringContainsFold(line, tok) {
 			return true
 		}
 	}
@@ -158,8 +233,7 @@ func lineMayContainGenerality(line string) bool {
 }
 
 func mayContainDocExample(src []byte) bool {
-	lower := bytes.ToLower(src)
-	return bytes.Contains(lower, []byte("example")) || bytes.Contains(lower, []byte("e.g."))
+	return containsFold(src, "example") || containsFold(src, "e.g.")
 }
 
 // cleanSourceForGenerality returns a copy of src where real AST import specs and
@@ -170,6 +244,39 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 	clean := make([]byte, len(src))
 	copy(clean, src)
 
+	hasDocExample := mayContainDocExample(src)
+
+	// If the file is in the shared repo tree,
+	// reuse its existing parsed AST and FileSet to blank out imports without re-parsing.
+	if idx, err := sharedRepoTree(); err == nil {
+		f := idx.ByRel(rel)
+		if f == nil {
+			f = idx.ByPath(rel)
+		}
+		if f != nil && f.AST != nil && len(f.Src) == len(src) && len(src) > 0 && &f.Src[0] == &src[0] {
+			for _, imp := range f.AST.Imports {
+				start := idx.FSet.Position(imp.Pos()).Offset
+				end := idx.FSet.Position(imp.End()).Offset
+				if start < 0 {
+					start = 0
+				}
+				if end > len(clean) {
+					end = len(clean)
+				}
+				if start < end {
+					for i := start; i < end; i++ {
+						if clean[i] != '\n' {
+							clean[i] = ' '
+						}
+					}
+				}
+			}
+			if !hasDocExample || !fileMayContainGenerality(clean) {
+				return clean
+			}
+		}
+	}
+
 	parseSrc := src
 	offsetShift := 0
 	if !strings.Contains(string(src), "package ") {
@@ -178,7 +285,6 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 	}
 
 	mode := parser.ImportsOnly
-	hasDocExample := mayContainDocExample(src)
 	if hasDocExample {
 		mode = parser.ParseComments
 	}
@@ -318,33 +424,89 @@ type allowlistDiscardReporter struct{}
 func (allowlistDiscardReporter) Helper()                           {}
 func (allowlistDiscardReporter) Errorf(format string, args ...any) {}
 
+type generalityScanResult struct {
+	counts     map[string]int
+	keys       map[string]bool
+	raw        []string
+	violations []string
+}
+
+func scanGeneralityFiles(files []GeneralitySourceFile, allow *allowlist.List) generalityScanResult {
+	if len(files) == 0 {
+		return generalityScanResult{counts: make(map[string]int), keys: make(map[string]bool)}
+	}
+	numWorkers := min(8, runtime.GOMAXPROCS(0))
+	if len(files) < 16 {
+		numWorkers = 1
+	}
+	results := make([]generalityScanResult, numWorkers)
+	var wg sync.WaitGroup
+	chunkSize := (len(files) + numWorkers - 1) / numWorkers
+	for w := 0; w < numWorkers; w++ {
+		start := w * chunkSize
+		end := min(start+chunkSize, len(files))
+		if start >= len(files) {
+			break
+		}
+		wg.Add(1)
+		go func(workerIdx int, chunk []GeneralitySourceFile) {
+			defer wg.Done()
+			mCounts := make(map[string]int)
+			mKeys := make(map[string]bool)
+			var raw []string
+			var wViolations []string
+			for _, f := range chunk {
+				if !fileMayContainGenerality(f.Src) {
+					continue
+				}
+				rel := f.Rel
+				cleanSrc := cleanSourceForGenerality(rel, f.Src)
+				if !fileMayContainGenerality(cleanSrc) {
+					continue
+				}
+				lines := strings.Split(string(cleanSrc), "\n")
+				for lineNum, line := range lines {
+					if !lineMayContainGenerality(line) {
+						continue
+					}
+					tokens := extractTokensFromText(line)
+					for _, tok := range tokens {
+						key := rel + ":" + tok
+						mKeys[key] = true
+						mCounts[key]++
+						raw = append(raw, fmt.Sprintf("%s:%d:%s", rel, lineNum+1, tok))
+						if allow != nil && !allow.Has(key) {
+							wViolations = append(wViolations, fmt.Sprintf(
+								"%s:%d: forbidden reference to %q (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality); no host, machine, tailnet, friend or person name in living code",
+								rel, lineNum+1, tok))
+						}
+					}
+				}
+			}
+			results[workerIdx] = generalityScanResult{counts: mCounts, keys: mKeys, raw: raw, violations: wViolations}
+		}(w, files[start:end])
+	}
+	wg.Wait()
+	totalCounts := make(map[string]int)
+	totalKeys := make(map[string]bool)
+	var totalRaw, totalViolations []string
+	for _, res := range results {
+		for k, v := range res.counts {
+			totalCounts[k] += v
+		}
+		for k := range res.keys {
+			totalKeys[k] = true
+		}
+		totalRaw = append(totalRaw, res.raw...)
+		totalViolations = append(totalViolations, res.violations...)
+	}
+	return generalityScanResult{counts: totalCounts, keys: totalKeys, raw: totalRaw, violations: totalViolations}
+}
+
 // measureGeneralityCounts scans files and returns per-key occurrence counts and keys.
 func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[string]bool, []string) {
-	measuredCounts := make(map[string]int)
-	measuredKeys := make(map[string]bool)
-	var rawViolations []string
-
-	for _, f := range files {
-		rel := f.Rel
-		cleanSrc := cleanSourceForGenerality(rel, f.Src)
-		if !fileMayContainGenerality(cleanSrc) {
-			continue
-		}
-		lines := strings.Split(string(cleanSrc), "\n")
-		for lineNum, line := range lines {
-			if !lineMayContainGenerality(line) {
-				continue
-			}
-			tokens := extractTokensFromText(line)
-			for _, tok := range tokens {
-				key := rel + ":" + tok
-				measuredKeys[key] = true
-				measuredCounts[key]++
-				rawViolations = append(rawViolations, fmt.Sprintf("%s:%d:%s", rel, lineNum+1, tok))
-			}
-		}
-	}
-	return measuredCounts, measuredKeys, rawViolations
+	res := scanGeneralityFiles(files, nil)
+	return res.counts, res.keys, res.raw
 }
 
 // checkGenerality scans the given source files against the allowlist and returns all violations.
@@ -373,34 +535,10 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 		}
 	}
 
-	measuredCounts := make(map[string]int)
-	measuredKeys := make(map[string]bool)
-
-	for _, f := range files {
-		rel := f.Rel
-		cleanSrc := cleanSourceForGenerality(rel, f.Src)
-		if !fileMayContainGenerality(cleanSrc) {
-			continue
-		}
-		lines := strings.Split(string(cleanSrc), "\n")
-		for lineNum, line := range lines {
-			if !lineMayContainGenerality(line) {
-				continue
-			}
-			tokens := extractTokensFromText(line)
-			for _, tok := range tokens {
-				key := rel + ":" + tok
-				measuredKeys[key] = true
-				measuredCounts[key]++
-
-				if !allow.Has(key) {
-					violations = append(violations, fmt.Sprintf(
-						"%s:%d: forbidden reference to %q (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality); no host, machine, tailnet, friend or person name in living code",
-						rel, lineNum+1, tok))
-				}
-			}
-		}
-	}
+	res := scanGeneralityFiles(files, allow)
+	measuredCounts := res.counts
+	measuredKeys := res.keys
+	violations = append(violations, res.violations...)
 
 	// Per-key count checks: shrink-only ceiling per file:token key.
 	for key, allowed := range allowedCounts {

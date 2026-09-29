@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"go/build/constraint"
 	"go/parser"
 	"go/token"
@@ -36,6 +37,11 @@ var redisHelpers = map[string][]string{
 
 // startsRedis reports whether src calls one of redisHelpers through its import.
 func startsRedis(src []byte) bool {
+	if !bytes.Contains(src, []byte("testredis")) &&
+		!bytes.Contains(src, []byte("testutil")) &&
+		!bytes.Contains(src, []byte("wstest")) {
+		return false
+	}
 	f, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ImportsOnly)
 	if err != nil {
 		return false
