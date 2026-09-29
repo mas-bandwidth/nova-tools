@@ -144,6 +144,9 @@ type Cell struct {
 	Count   int64
 	Members []Member
 	Unread  bool
+	// UnreadWhy says why the set did not come back: the key and the type found
+	// ("key K is string, expected zset"), or the store's error.
+	UnreadWhy string
 }
 
 // Row is one row: its key, its label (the row header; "" prints the key),

@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The table verbs: create, drop, list, clear, show, render.
@@ -291,6 +292,21 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 			b.WriteString(" " + col.Name + "=" + field(ntable.CellText(t.Columns, r, j)))
 		}
 		fmt.Fprintln(stdout, b.String())
+	}
+	// A cell that did not come back prints as ? above, never as a false 0; show is
+	// the record of the table, so it also says which cell and why, and exits 1.
+	unread := 0
+	for _, r := range t.Rows {
+		for j, col := range t.Columns {
+			if j < len(r.Cells) && r.Cells[j].Unread {
+				unread++
+				fmt.Fprintf(stderr, "nova-table show: warning: table %q row %q column %q cannot be read: %s\n", t.Name, oneline.Escape(r.Key), col.Name, oneline.Escape(r.Cells[j].UnreadWhy))
+			}
+		}
+	}
+	if unread > 0 {
+		fmt.Fprintf(stderr, "nova-table show: %d cell(s) printed as ? could not be read; run: nova-table check '%s'\n", unread, strings.ReplaceAll(t.Name, "'", `'\''`))
+		return 1
 	}
 	return 0
 }

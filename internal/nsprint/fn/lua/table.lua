@@ -1429,7 +1429,7 @@ do
             local bound = h['key:' .. col.name]
             local key = bound and bound ~= '' and bound or T.cellkey(d, row, col.name)
             local count = redis.pcall('ZCARD', key)
-            if type(count) == 'table' and count.err then value = {'UNREAD', count.err}
+            if type(count) == 'table' and count.err then value = {'UNREAD', count.err, key, string.find(count.err, 'WRONGTYPE') and T.kind(key) or ''}
             elseif col.projection == 'count' then
               if h.exclude and h.exclude ~= '' and redis.call('ZSCORE', key, h.exclude) then count = count - 1 end
               value = {'OK', count, {}}
