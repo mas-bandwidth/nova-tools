@@ -193,4 +193,3 @@ func TestCountsWithActiveDutyCards(t *testing.T) {
 		t.Fatalf("expected duty to be overdue, got %+v", gotOverdue.Duties)
 	}
 }
-

@@ -590,4 +590,3 @@ func pipeValue(v any) string {
 	}
 	return strings.TrimSpace(s)
 }
-
