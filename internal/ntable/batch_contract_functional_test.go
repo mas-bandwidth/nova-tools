@@ -17,7 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func boolPtr(b bool) *bool     { return &b }
+func boolPtr(b bool) *bool        { return &b }
 func floatPtr(f float64) *float64 { return &f }
 
 func TestBatchApplyAndReadSetContract(t *testing.T) {
@@ -958,6 +958,7 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 }
 
 func TestReviewWrongTypeDestinationPartialWrite(t *testing.T) {
+	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
 	if err := ntable.Create(ctx, c, demo(), now); err != nil {
@@ -1015,6 +1016,7 @@ func TestReviewWrongTypeDestinationPartialWrite(t *testing.T) {
 }
 
 func TestReviewBatchStreamWrongTypePartialWrite(t *testing.T) {
+	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
 	if err := ntable.Create(ctx, c, demo(), now); err != nil {
@@ -1070,6 +1072,7 @@ func TestReviewBatchStreamWrongTypePartialWrite(t *testing.T) {
 }
 
 func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
+	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
 	if err := ntable.Create(ctx, c, demo(), now); err != nil {
@@ -1094,6 +1097,7 @@ func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
 }
 
 func TestReviewHiddenDuplicatePlacementAccepted(t *testing.T) {
+	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
 	if err := ntable.Create(ctx, c, demo(), now); err != nil {
@@ -1151,6 +1155,7 @@ func TestReviewHiddenDuplicatePlacementAccepted(t *testing.T) {
 }
 
 func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
+	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
 	if err := ntable.Create(ctx, c, demo(), now); err != nil {
