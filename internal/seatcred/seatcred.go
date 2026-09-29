@@ -175,22 +175,17 @@ func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	return process.FromArgs(args, getenv)
 }
 
-// WithLookup records this process's seat selection environment lookup; see Selection.WithLookup.
-func WithLookup(getenv func(string) string) *Selection { return process.WithLookup(getenv) }
-
 // Anonymous returns an independent Selection for tests running in parallel with every other.
 func Anonymous() *Selection { return new(Selection) }
 
-// WithLookup records getenv as s's environment lookup and returns s.
-func (s *Selection) WithLookup(getenv func(string) string) *Selection {
+func (s *Selection) withLookup(getenv func(string) string) *Selection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.getenv = getenv
 	return s
 }
 
-// Getenv returns s's environment lookup, nil when none was recorded.
-func (s *Selection) Getenv() func(string) string {
+func (s *Selection) getenvLookup() func(string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.getenv
@@ -207,7 +202,7 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve, nil
 }
 
 // SelectProfile is SelectWith for a seats.tsv row: the row's seat, its Redis
@@ -273,10 +268,8 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 // "--", which ends a tool's own flags), selects that seat or else getenv's
 // NOVA_SEAT, and returns the rest. A --seat with no name is an error.
 func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]string, error) {
-	if getenv != nil {
-		s.WithLookup(getenv)
-	} else if s.Getenv() != nil {
-		getenv = s.Getenv()
+	if getenv == nil && s.getenvLookup() != nil {
+		getenv = s.getenvLookup()
 	}
 	seat, flagged := "", false
 	rest := make([]string, 0, len(args))
@@ -306,6 +299,9 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 		seat = getenv(SeatEnv)
 	}
 	s.Select(seat)
+	if getenv != nil {
+		s.withLookup(getenv)
+	}
 	return rest, nil
 }
 

@@ -136,24 +136,65 @@ func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
 	}
 }
 
-func TestSelectionWithLookupAndAnonymous(t *testing.T) {
+func TestDefaultResolverGuardsRealEnvironment(t *testing.T) {
 	t.Parallel()
 
-	home := seattest.Home(t, "air", map[string]string{"NOVA_REDIS_BENCH_PASSWORD": "air-bench-test-pw-11"})
-	mockEnv := map[string]string{
-		"HOME":           home,
-		seatcred.SopsEnv: seattest.Sops(t),
+	s := seatcred.Anonymous()
+	s.Select("nonexistent-seat-probe-4717")
+	_, ok, err := s.Active()
+	if !ok || err == nil {
+		t.Fatalf("Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
 	}
-	getenv := func(k string) string { return mockEnv[k] }
+	msg := err.Error()
+	if !strings.Contains(msg, "nonexistent-seat-probe-4717") || (!strings.Contains(msg, "store") && !strings.Contains(msg, ".yaml") && !strings.Contains(msg, "seat")) {
+		t.Fatalf("Active() error %q does not name nonexistent seat or store path", msg)
+	}
+}
 
-	s := seatcred.Anonymous().WithLookup(getenv)
-	if s.Getenv() == nil {
-		t.Fatal("Getenv returned nil")
+func TestSelectClearsLookupFromArgs(t *testing.T) {
+	t.Parallel()
+
+	s := seatcred.Anonymous()
+	called := false
+	customLookup := func(k string) string {
+		called = true
+		return ""
 	}
-	s.Select("air")
-	c, ok, err := s.Active()
-	if !ok || err != nil || c.User != "bench" || !same(c, "air-bench-test-pw-11") {
-		t.Fatalf("Active = %v %v %v; want air as bench", c, ok, err)
+	_, err := s.FromArgs([]string{"--seat=nonexistent-seat"}, customLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called = false
+	_, _, _ = s.Active()
+	if !called {
+		t.Fatal("Active did not use lookup recorded by FromArgs")
+	}
+
+	// Select must clear it:
+	s.Select("nonexistent-seat-2")
+	called = false
+	_, _, _ = s.Active()
+	if called {
+		t.Error("Select did not clear lookup recorded by FromArgs; custom lookup was still called")
+	}
+
+	// FromArgs records lookup again:
+	_, err = s.FromArgs([]string{"--seat=nonexistent-seat"}, customLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called = false
+	_, _, _ = s.Active()
+	if !called {
+		t.Fatal("Active did not use lookup recorded by FromArgs")
+	}
+
+	// SelectWith must clear it:
+	s.SelectWith("nonexistent-seat-3", "", nil)
+	called = false
+	_, _, _ = s.Active()
+	if called {
+		t.Error("SelectWith did not clear lookup recorded by FromArgs; custom lookup was still called")
 	}
 }
 
