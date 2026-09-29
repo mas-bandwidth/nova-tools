@@ -150,16 +150,19 @@ StreamAfter(s, q, st, was) ==
   ELSE IF \A p \in Primaries : StreamOf[p] = s => p \in merge[s]["merged"]
        THEN "landed" ELSE "waiting"
 
-\* Two-table verbs need the one operation slot; every other verb runs while an
-\* operation is pending unless the pendingblocks fix is applied.
-Free == op = None
-Quiet == op = None \/ ~Fix("pendingblocks")
 
 \* An operation record: the moves of primaries in the work table (to "off"
 \* for drop), the primaries whose attempt increments, new heads, the
 \* notifications opened, the primaries whose notifications close.
 Op(k, mv, at, hd, nt, cl) ==
   [kind |-> k, moves |-> mv, att |-> at, hd |-> hd, notes |-> nt, closes |-> cl]
+
+NoOp == Op("none", {}, {}, {}, {}, {})
+
+\* Two-table verbs need the one operation slot; every other verb runs while an
+\* operation is pending unless the pendingblocks fix is applied.
+Free == op = NoOp
+Quiet == op = NoOp \/ ~Fix("pendingblocks")
 
 Begin(o) == op' = o /\ crashed' = FALSE
 
@@ -197,7 +200,7 @@ Init ==
   /\ result = [c \in Cards |-> None]
   /\ made = {} /\ gone = {} /\ twice = FALSE
   /\ open = {}
-  /\ op = None /\ crashed = FALSE
+  /\ op = NoOp /\ crashed = FALSE
   /\ downs = 0 /\ ranks = 0
 
 \* ------------------------------------------------------------------ verbs
@@ -489,23 +492,23 @@ FleetUp(m) ==
 \* The second write of a two-table step: the same process (Continue), or
 \* repair after the process was cut (Crash).
 Continue ==
-  /\ op # None /\ ~crashed
+  /\ op # NoOp /\ ~crashed
   /\ ApplyWork(op)
-  /\ op' = None
+  /\ op' = NoOp
   /\ UNCHANGED <<added, fleet, readers, merge, sstate, mstatus, score, stuckN,
                  returnsN, result, made, gone, twice, crashed, downs, ranks>>
 
 Crash ==
-  /\ op # None /\ ~crashed
+  /\ op # NoOp /\ ~crashed
   /\ crashed' = TRUE
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, stuckN, returnsN, result, made, gone,
                  twice, open, op, downs, ranks>>
 
 Repair ==
-  /\ op # None /\ crashed /\ ~Br("norepair")
+  /\ op # NoOp /\ crashed /\ ~Br("norepair")
   /\ ApplyWork(op)
-  /\ op' = None /\ crashed' = FALSE
+  /\ op' = NoOp /\ crashed' = FALSE
   /\ UNCHANGED <<added, fleet, readers, merge, sstate, mstatus, score, stuckN,
                  returnsN, result, made, gone, twice, downs, ranks>>
 
@@ -565,9 +568,9 @@ FairSpec == Spec /\ Fairness
 
 TypeOK ==
   /\ added \subseteq Primaries /\ dropped \subseteq added
-  /\ \A s \in Streams, c \in WorkCells, p \in work[s][c] : StreamOf[p] = s
-  /\ \A s \in Streams, c \in MergeCells, p \in merge[s][c] : StreamOf[p] = s
-  /\ \A r \in Readers, c \in ReadCells, x \in readers[r][c] : x[4] = r
+  /\ \A s \in Streams, c \in WorkCells : \A p \in work[s][c] : StreamOf[p] = s
+  /\ \A s \in Streams, c \in MergeCells : \A p \in merge[s][c] : StreamOf[p] = s
+  /\ \A r \in Readers, c \in ReadCells : \A x \in readers[r][c] : x[4] = r
   /\ sstate \in [Streams -> {"waiting", "merging", "stopped", "landed"}]
   /\ mstatus \in [Members -> {"up", "down"}]
   /\ attempt \in [Primaries -> Attempts]
@@ -577,18 +580,18 @@ TypeOK ==
 \* 1. A card is in one place in each table it is in.
 OnePlace ==
   /\ \A p \in Primaries :
-       Cardinality({<<s, c>> \in Streams \X WorkCells : p \in work[s][c]}) <= 1
+       Cardinality({x \in Streams \X WorkCells : p \in work[x[1]][x[2]]}) <= 1
   /\ \A p \in Primaries :
-       Cardinality({<<s, c>> \in Streams \X MergeCells : p \in merge[s][c]}) <= 1
+       Cardinality({x \in Streams \X MergeCells : p \in merge[x[1]][x[2]]}) <= 1
   /\ \A w \in WorkCards :
-       Cardinality({<<m, c>> \in Members \X FleetCells : w \in fleet[m][c]}) <= 1
-  /\ \A x \in ReadCards :
-       Cardinality({<<r, c>> \in Readers \X ReadCells : x \in readers[r][c]}) <= 1
+       Cardinality({x \in Members \X FleetCells : w \in fleet[x[1]][x[2]]}) <= 1
+  /\ \A c \in ReadCards :
+       Cardinality({x \in Readers \X ReadCells : c \in readers[x[1]][x[2]]}) <= 1
 
 \* 2. Primaries in work working = primaries of work cards in fleet ready +
 \* working. Only when no operation is pending.
 WorkingMatchesFleet ==
-  op = None =>
+  op = NoOp =>
     {p \in Primaries : InWork(p, "working")} = {c[2] : c \in Unfinished}
 
 \* 3. Primaries with read cards in asked or reading are in review.
@@ -598,14 +601,14 @@ ReadsOnlyInReview ==
 \* 4. Primaries in merge queued + stuck = primaries in work merging.
 \* Only when no operation is pending.
 MergeMatchesWork ==
-  op = None =>
+  op = NoOp =>
     \A s \in Streams :
       merge[s]["queued"] \cup merge[s]["stuck"] = work[s]["merging"]
 
 \* 5. Primaries in merge merged = primaries in work landed.
 \* Only when no operation is pending.
 MergedIsLanded ==
-  op = None => \A s \in Streams : merge[s]["merged"] = work[s]["landed"]
+  op = NoOp => \A s \in Streams : merge[s]["merged"] = work[s]["landed"]
 
 \* 6. No primary enters merging without ok read cards from two different
 \* readers at its head (and they stay: landed keeps them).
@@ -642,7 +645,7 @@ MergeInWorkOrder ==
          score[b] < score[q]]_vars
 
 \* Section 10: a step cut short is finished.
-CutRepaired == (op # None) ~> (op = None)
+CutRepaired == (op # NoOp) ~> (op = NoOp)
 
 \* Every primary that is not dropped eventually lands.
 EveryPrimaryEnds ==
