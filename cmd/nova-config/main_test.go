@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -914,5 +915,30 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
 		}
+	}
+}
+
+func TestInventoryDocsCarryNoIssueNumbersOrHistory(t *testing.T) {
+	t.Parallel()
+
+	issue := regexp.MustCompile(`#[0-9]+|ideas#|\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
+	code, help, _ := newHarness().run(t, "inventory", "-h")
+	if code != 0 {
+		t.Fatalf("inventory -h exits %d", code)
+	}
+	if m := issue.FindString(help); m != "" {
+		t.Errorf("inventory -h carries %q", m)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "nova-config", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sec, ok := strings.Cut(string(raw), "## Ansible inventory")
+	if !ok {
+		t.Fatal("README has no Ansible inventory section")
+	}
+	sec, _, _ = strings.Cut(sec, "\n## ")
+	if m := issue.FindString(sec); m != "" {
+		t.Errorf("the README's inventory section carries %q", m)
 	}
 }
