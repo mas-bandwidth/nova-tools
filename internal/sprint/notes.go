@@ -113,6 +113,14 @@ type Note struct {
 	Marked    bool      `json:"marked,omitempty"`   // a repeat: sorts first
 	Answers   string    `json:"answers,omitempty"`  // a decided note: the judgment it answers
 	Suspects  []string  `json:"suspects,omitempty"` // a red branch: the cards of the batch the caller suspects
+	// Card and Other name the cards a judgment is about by what they are,
+	// for the commands the inbox prints: the card a stream stopped on (a
+	// conflict, a cross stop) or the sentinel reached, and for a cross stop
+	// the card it needs, of OtherStream. Primaries is a set: nothing reads a
+	// card from its position there.
+	Card        string `json:"card,omitempty"`
+	Other       string `json:"other,omitempty"`
+	OtherStream string `json:"other_stream,omitempty"`
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.
 	StreamLevel bool `json:"stream_level,omitempty"`

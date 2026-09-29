@@ -157,6 +157,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		pr := s.Work.Placed(r.Conflict)
 		ctlSet["card"] = r.Conflict
 		u := stop("conflict", NConflict, []string{r.Conflict}, pr.Int("stuck"), "other")
+		u.Notes[len(u.Notes)-1].Card = r.Conflict
 		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, nil)))
 		if pr != nil {
 			u.Changes = append(u.Changes, change(Work, setEntry(pr, map[string]string{"stuck": itoa(pr.Int("stuck") + 1)})))
@@ -180,7 +181,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		otherStream := s.Work.Placed(other).Row
 		ctlSet["card"], ctlSet["other"] = card, other
 		u := stop("cross", NCross, []string{card, other}, 0)
-		u.Notes[len(u.Notes)-1].What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
+		j := &u.Notes[len(u.Notes)-1]
+		j.What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
+		j.Card, j.Other, j.OtherStream = card, other, otherStream
 		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, map[string]string{"need_card": other, "need_stream": otherStream})))
 		u.Moved = fmt.Sprintf("stream %s stopped: %s queued -> stuck, needs %s (stream %s) landed first", r.Stream, card, other, orDash(otherStream))
 		p.Units = append(p.Units, u)

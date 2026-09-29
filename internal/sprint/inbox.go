@@ -278,9 +278,10 @@ const (
 )
 
 // commands is the group's decisions as commands, from its oldest note (a
-// stopped stream's card and the card it needs). A decision about cards takes
-// the group with its size and the notifications it answers; a decision about
-// a stopped stream names the cards and resumes the stream.
+// stopped stream's card and the card it needs, by their named fields). A
+// decision about cards takes the group with its size and the notifications it
+// answers; a decision about a stopped stream names the cards and resumes the
+// stream.
 func commands(g Group, first Note, prefix string) []Command {
 	const cmd = "nova-sprint "
 	grp := " --group " + g.ID + " --expect " + itoa(g.Size)
@@ -297,13 +298,10 @@ func commands(g Group, first Note, prefix string) []Command {
 		}
 		return out
 	}
-	card, other := "", ""
-	if len(first.Primaries) > 0 {
-		card = first.Primaries[0]
-	}
-	if len(first.Primaries) > 1 {
-		other = first.Primaries[1]
-	}
+	// The cards a decision names are the note's named ones (the card the
+	// stream stopped on, the card a cross stop needs), never positions in its
+	// set of primaries.
+	card, other := first.Card, first.Other
 	suspects, listBatch := "'<suspect>'", []string{cmd + "queue --stream " + s + " --max " + itoa(g.Size)}
 	if len(g.Suspects) > 0 {
 		suspects, listBatch = strings.Join(g.Suspects, " "), nil

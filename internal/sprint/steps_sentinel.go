@@ -182,7 +182,7 @@ func reachedNote(s *Snapshot, c *Card, landing map[string]bool, extra int, who s
 		}
 	}
 	n := judgment(NSentinelReached, c.Row, s.Now, 0, c.ID)
-	n.Who = who
+	n.Who, n.Card = who, c.ID
 	n.What = fmt.Sprintf("sentinel %s reached: %d cards of %s have landed; %d cards wait behind it", c.ID, landed, c.Row, behind)
 	return n
 }
