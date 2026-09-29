@@ -155,11 +155,22 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 	}
 }
 
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "nova-fuse-ambient-")
+	if err == nil {
+		decoy := filepath.Join(dir, "decoy-box.json")
+		_ = fuse.CreateBox(decoy)
+		_ = os.Setenv("NOVA_FUSE_BOX", decoy)
+		defer os.RemoveAll(dir)
+	}
+	os.Exit(m.Run())
+}
+
 // TestNoDefaultBoxRefusesToGuess: the destination law. Every verb that touches the box
 // takes it from --box; a missing flag is a refusal, never a fallback -- and NOVA_FUSE_BOX
 // or any other environment variable is NOT honoured as a substitute.
 func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
-	decoy := boxIn(t) // a clear, readable box the env var points at
+	t.Parallel()
 	mustRunnable := [][]string{
 		{"status"},
 		{"check"},
@@ -169,7 +180,6 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 		{"lift", "quarantine", "discord"},
 		{"path"},
 	}
-	t.Setenv("NOVA_FUSE_BOX", decoy)
 	for _, args := range mustRunnable {
 		code, out, errOut := capture(t, args, nowish())
 		if code != 2 {
