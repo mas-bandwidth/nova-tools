@@ -6,10 +6,12 @@ package ntable_test
 // table already over it can shrink.
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // A table already over the column bound (one written under an older rule, or by
@@ -45,4 +47,40 @@ func TestTableOverTheColumnBoundCanShrink(t *testing.T) {
 	// and at the bound it grows no more
 	_, err = ntable.Set(ctx, c, "wide", ntable.SetOpts{ColAdd: &ntable.Column{Name: "x3", Projection: "count", Fold: "sum"}})
 	requireLimit(t, "col add at the bound", err, "columns per table", ntable.LimitColumns, ntable.LimitColumns+1)
+}
+
+// A table over the row bound (100,001 rows, written by hand) stays and shrinks
+// and never grows: row add and rows add of a new row are refused, row del works,
+// and once a row is gone the bound still refuses the row that would put it back.
+func TestTableOverTheRowBoundStaysAndShrinks(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := t.Context()
+	cols, err := ntable.ParseColumns("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ntable.Create(ctx, c, ntable.Table{Name: "tall", Columns: cols}, now); err != nil {
+		t.Fatal(err)
+	}
+	rows := ntable.DefKey("tall") + ":rows"
+	pipe := c.Pipeline()
+	for i := 0; i <= ntable.LimitRows; i++ {
+		pipe.ZAdd(ctx, rows, redis.Z{Score: float64(i + 1), Member: fmt.Sprintf("r%d", i)})
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ntable.RowAdd(ctx, c, "tall", "new", ntable.RowSpec{})
+	requireLimit(t, "row add on 100,001 rows", err, "rows per table", ntable.LimitRows, ntable.LimitRows+2)
+	_, err = ntable.RowsAdd(ctx, c, "tall", []string{"new1", "new2"})
+	requireLimit(t, "rows add on 100,001 rows", err, "rows per table", ntable.LimitRows, ntable.LimitRows+3)
+	if ok, err := ntable.RowDel(ctx, c, "tall", "r0"); err != nil || !ok {
+		t.Fatalf("row del on a table over the bound: %v %v", ok, err)
+	}
+	if n := c.ZCard(ctx, rows).Val(); n != ntable.LimitRows {
+		t.Fatalf("%d rows after a delete", n)
+	}
+	_, err = ntable.RowAdd(ctx, c, "tall", "r0", ntable.RowSpec{})
+	requireLimit(t, "row add at the bound", err, "rows per table", ntable.LimitRows, ntable.LimitRows+1)
 }

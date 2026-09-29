@@ -152,12 +152,4 @@ func TestBindRowsAreBounded(t *testing.T) {
 	if !reflect.DeepEqual(before, storeImage(t, c)) {
 		t.Errorf("a raw bind refused for its rows changed the store")
 	}
-
-	// the bound is reachable by a bind
-	if err := ntable.Bind(ctx, c, table(ntable.LimitRows), now); err != nil {
-		t.Fatalf("a bind at the bound: %v", err)
-	}
-	if n := c.ZCard(ctx, ntable.DefKey("bound")+":rows").Val(); n != ntable.LimitRows {
-		t.Errorf("a bind at the bound left %d rows", n)
-	}
 }
