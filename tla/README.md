@@ -444,3 +444,31 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+
+## Atomic batches across tables
+
+`MCMultiTableBatch.tla` is a finite schema-2 model over three tables, two physical
+member identities, two scopes, one application field, bounded revisions and at
+most four scenario steps. `multitablebatch` declares 12 positive/refusal/replay
+scenarios and four deliberate faulty variants. The latter must fail exactly
+`RefusalFullImageUnchanged`, `AcceptedPrestateGuards`,
+`SharedMemberRevisionSemantics` and `ReplayIsIdentity`, respectively.
+
+The scenarios cover three-table commit, one shared record with two placements,
+no-op revisions, stale last-table guards, shared field/place guards, duplicate
+physical members, independent operation scopes, changed/reordered request bytes,
+receipt-bound refusal and historical replay after a table becomes unavailable.
+Normal scenario progress uses weak fairness; counterexamples exercise concrete
+incorrect transitions rather than weakening the correct operation.
+
+Physical member identities abstract prefix-plus-ID resolution. Request-byte
+identities are distinct symbolic values; receipt size is a separate bounded
+unit count, not an assertion about JSON encoding length. Drop/recreate abstract
+only table availability: lifecycle cleanup, revision/event increments, numeric
+scores, Redis types and ACLs are outside this model. Runtime functional tests
+cover those store concerns separately. These finite scenarios and named fault
+witnesses do not establish an implementation refinement proof.
+
+The repository runner records this group using `make tlc` with
+`TLC_GROUP=multitablebatch`, an explicit installed jar and an owned output path.

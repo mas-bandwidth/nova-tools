@@ -821,10 +821,13 @@ exit codes: 0 done, 1 refused, 2 usage
 
 ### Model
 
-No model of the batch action is in this tree. `tla/EpochMemberTable.tla` models the
-per-verb member/epoch table over the one-place and epoch definitions; it has no batch
-action, member revisions, field guards, operation records or receipts. What checks the
-batch here is the tests.
+`tla/MCMultiTableBatch.tla` models schema-2 atomic operations over finite table,
+physical-member and scope sets, with shared revision, pre-state guard, aggregate
+receipt and exact-request replay semantics. Its receipt-size units and table
+availability are abstractions; it does not model JSON encoding, scores, Redis
+command failures or complete drop/recreate effects. `tla/EpochMemberTable.tla`
+models the per-verb member/epoch table; the schema-1 batch action is not modeled
+in this tree.
 
 The tests: trip and commit tests with complete unchanged-store refusal tests; bounded
 randomized batches on owned Redis (16 fixed seeds, 128 steps each) with runtime checks;
