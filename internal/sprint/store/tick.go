@@ -75,6 +75,9 @@ type Heartbeat struct {
 	Ticks    int64     `json:"ticks"`
 	Error    string    `json:"error,omitempty"`
 	Failures int       `json:"failures,omitempty"`
+	// Due is how many moves and judgments the last tick left past its
+	// bounds: the next ticks catch up on them.
+	Due int `json:"due,omitempty"`
 	// What the last tick saw: the tables' revisions, the landed and all
 	// primaries, and when it last read the whole sprint. An idle tick reads
 	// the tables' shapes, finds them unchanged, and does nothing else.
@@ -134,7 +137,8 @@ func (m Machine) StoppedTotal(now time.Time) time.Duration {
 	return d
 }
 
-// MachineLine is the machine's part of the sprint line: running, STOPPED,
+// MachineLine is the machine's part of the sprint line: running, running
+// and catching up when the last tick left moves due past its bounds, STOPPED,
 // or STOPPED because a RUNNING machine has not ticked for MachineSilence; a
 // last tick that failed is shown with its error.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
@@ -148,6 +152,8 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	line := "machine: running"
 	if gap := now.Sub(last); gap > MachineSilence {
 		line = fmt.Sprintf("machine: STOPPED (no tick for %ds)", int(gap/time.Second))
+	} else if hb.Due > 0 && !hb.At.Before(m.Since) {
+		line = fmt.Sprintf("machine: running (catching up: %d moves due)", hb.Due)
 	}
 	if hb.Error != "" && !hb.At.Before(m.Since) {
 		line += "; last tick failed: " + hb.Error
@@ -266,14 +272,15 @@ type PartResult struct {
 
 // TickResult is what a tick did: the state it found, whether it was idle
 // (nothing changed since the last tick), the pending operation it finished,
-// its parts that wrote, and why it stopped short (the sprint's epoch changed
-// under it).
+// its parts that wrote, why it stopped short (the sprint's epoch changed
+// under it), and how many moves and judgments it left due past its bounds.
 type TickResult struct {
 	State    string         `json:"state"`
 	Idle     bool           `json:"idle,omitempty"`
 	Repaired []RepairResult `json:"repaired,omitempty"`
 	Parts    []PartResult   `json:"parts,omitempty"`
 	Stale    string         `json:"stale,omitempty"`
+	Due      int            `json:"due,omitempty"`
 }
 
 // Moved is every line the tick's parts moved.
@@ -303,8 +310,9 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 // TickPartStep is one part of the tick as a step of the engine: fenced,
 // replayable, planned again on a fresh read when it loses to another writer.
 // It holds the epoch the tick began at (nil is any): a clear since refuses it
-// as stale. guard refuses the part on any other ground.
-func TickPartStep(name string, fn func(*sprint.Snapshot, sprint.TickReq) sprint.Plan, r sprint.TickReq, epoch *uint64, guard func(*sprint.Snapshot) string) Step {
+// as stale. guard refuses the part on any other ground. due, when not nil, is
+// set to what the last plan left due past the part's bounds.
+func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *uint64, guard func(*sprint.Snapshot) string, due *int) Step {
 	return Step{Verb: "tick " + name, Load: All, Extras: tickExtras, Epoch: epoch,
 		Mirrors: name == "deal" || name == "level" || name == "resume",
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
@@ -313,7 +321,11 @@ func TickPartStep(name string, fn func(*sprint.Snapshot, sprint.TickReq) sprint.
 					return sprint.Plan{Refused: []sprint.Refusal{{Key: "tick", Why: why}}}
 				}
 			}
-			return fn(s, r)
+			p, d := fn(s, r)
+			if due != nil {
+				*due = d
+			}
+			return p
 		}}
 }
 
@@ -350,9 +362,12 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	hb.At, hb.Ticks = st.now(), hb.Ticks+1
 	hb.Error, hb.Failures = "", 0
 	if err != nil {
-		hb.Error, hb.Failures = err.Error(), hb.Failures+1
+		// A failed tick leaves a full read due: what it did not finish is
+		// read from the state by the next tick.
+		hb.Error, hb.Failures, hb.Full = err.Error(), hb.Failures+1, time.Time{}
 	} else {
 		hb.Revisions, hb.Landed, hb.All, hb.Full = seen.Revisions, seen.Landed, seen.All, seen.Full
+		hb.Due = res.Due
 	}
 	if werr := st.putJSON(ctx, keyHeartbeat, hb); werr != nil && err == nil {
 		err = werr
@@ -391,11 +406,14 @@ func (st *Store) look(ctx context.Context) (Heartbeat, error) {
 }
 
 // tick finishes a pending operation past its grace (T5), then, when a table
-// changed since the last tick, this is the first tick after start, or
-// TickFullEvery has passed, runs each part that has something to do as its
-// own operation on a fresh read. A part is skipped when it has nothing to do
-// on the tick's first read and nothing has moved before it in this tick. It
-// returns what it saw, for the heartbeat.
+// changed since the last tick, this is the first tick after start, a full
+// read is due, or TickFullEvery has passed, runs each part that has something
+// to do as its own operation on a fresh read. A part is skipped when it has
+// nothing to do on the tick's first read and nothing has moved before it in
+// this tick. It returns what it saw, for the heartbeat; a tick that did not
+// finish what was due (a part that lost to other writers, a stale epoch, or
+// moves due past a bound) leaves a full read due (Full zero), so the next
+// tick reads the state and does the rest.
 func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult) (Heartbeat, error) {
 	f, err := st.B.ReadFence(ctx)
 	if err != nil {
@@ -447,33 +465,46 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		return last, err
 	}
 	snap, _, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	unfinished := seen
+	unfinished.Full = time.Time{}
 	if errors.Is(err, errCleared) {
 		res.Stale = "the sprint was cleared as the tick read it: the tick stops here"
-		return last, nil
+		return unfinished, nil
 	}
 	if err != nil {
 		return last, err
 	}
 	at := snap.Epoch
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween,
-		Scan: first || seen.Landed != last.Landed || seen.All != last.All}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween}
 	dirty := false // something ran: every later part runs on a fresh read
 	for _, part := range sprint.TickParts {
-		if !dirty && part.Fn(snap, req).Empty() {
-			continue
+		if !dirty {
+			if p, due := part.Fn(snap, req); p.Empty() && due == 0 {
+				continue
+			}
 		}
-		r, err := st.Run(ctx, TickPartStep(part.Name, part.Fn, req, &at, nil))
+		due := 0
+		r, err := st.Run(ctx, TickPartStep(part.Name, part.Fn, req, &at, nil, &due))
 		dirty = true
 		if len(r.Moved) > 0 || len(r.Refused) > 0 || r.Notes > 0 || len(r.Repaired) > 0 {
 			res.Parts = append(res.Parts, PartResult{Name: part.Name, Result: r})
 		}
 		if err == nil && staleRefusal(r.Refused, at) {
 			res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d): the part %s was refused as stale and the tick stops here", at, part.Name)
-			return last, nil
+			return unfinished, nil
 		}
 		if err != nil {
 			return last, fmt.Errorf("tick %s: %w", part.Name, err)
 		}
+		res.Due += due
+		if r.Attempts >= st.attempts() {
+			// The part may have lost every attempt to other writers: what it
+			// had to do stays due, and the next tick reads it.
+			seen.Full = time.Time{}
+		}
+	}
+	if res.Due > 0 {
+		seen.Full = time.Time{}
 	}
 	// What it saw is the read before its own moves: a change by anyone after
 	// that read, its own moves included, makes the next tick read the whole
