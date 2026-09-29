@@ -55,6 +55,10 @@ type Plan struct {
 	Notes []Note
 	// Closes are open judgments the step answers as a whole (--answers).
 	Closes []Open
+	// Updates are open judgments the step rewrites in place with the latest
+	// facts (a lateness while its attempt lives): same id, new text, each a
+	// line of the log.
+	Updates []Note
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one

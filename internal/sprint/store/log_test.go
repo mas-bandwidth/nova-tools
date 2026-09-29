@@ -144,3 +144,78 @@ func TestAClearKeepsTheOldEpochsLog(t *testing.T) {
 		t.Fatalf("the old epoch's log: %d lines, want %d (%v)", len(old), before, err)
 	}
 }
+
+// Johnny's flapping judgment: a lateness raised on an attempt stays raised
+// until the attempt ends or the coordinator answers it. A card taken, its
+// member silent past the not-finished deadline (withdrawn), brought back and
+// taken three times more has one not-finished judgment, never closed by the
+// redeal or the return to ready, updated in place with where the card is;
+// each update is a line of the log.
+func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	take := func() {
+		c := h.snap().Fleet.Card("s1-1.w1")
+		h.must(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: "m1"}))
+	}
+	take()
+	h.live = nil // m1 silent two hours: withdrawn, late not finished
+	for i := 0; i < 125; i++ {
+		h.tick(time.Minute)
+		h.machine()
+	}
+	late := func() []sprint.Open {
+		var out []sprint.Open
+		for _, o := range h.openOf(sprint.NWorkLate) {
+			if strings.Contains(o.Note.What, "not finished") {
+				out = append(out, o)
+			}
+		}
+		return out
+	}
+	first := late()
+	if len(first) != 1 {
+		t.Fatalf("withdrawn two hours after its take: %d not-finished judgments", len(first))
+	}
+	for i := 0; i < 3; i++ {
+		h.live = []string{"m1"}
+		h.tick(time.Second)
+		h.machine() // back: redealt, ready
+		if l := late(); len(l) != 1 || l[0].Note.ID != first[0].Note.ID {
+			t.Fatalf("lap %d, redealt: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
+		}
+		take()
+		h.tick(time.Second)
+		h.machine()
+		if l := late(); len(l) != 1 || l[0].Note.ID != first[0].Note.ID {
+			t.Fatalf("lap %d, taken again: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
+		}
+		h.live = nil
+		for j := 0; j < 3; j++ {
+			h.tick(10 * time.Second)
+			h.machine()
+		}
+	}
+	written := 0
+	updates := 0
+	for _, l := range h.lines() {
+		if l.Note != nil && l.Note.Type == sprint.NWorkLate && strings.Contains(l.Note.What, "not finished") {
+			if l.Verb == "updated" {
+				updates++
+			} else {
+				written++
+			}
+		}
+	}
+	if written != 1 || updates == 0 {
+		t.Fatalf("the not-finished judgment written %d times, updated %d times", written, updates)
+	}
+	if w := late()[0].Note.What; !strings.Contains(w, "; at ") {
+		t.Fatalf("the open lateness does not say where the card is: %q", w)
+	}
+}

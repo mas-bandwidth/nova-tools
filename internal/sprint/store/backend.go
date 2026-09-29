@@ -127,6 +127,7 @@ type OpRecord struct {
 	Notes     []sprint.Note          `json:"notes,omitempty"`   // happened and judgment, ids assigned
 	Decided   []sprint.Note          `json:"decided,omitempty"` // answers to open judgments
 	Log       []sprint.Line          `json:"log,omitempty"`     // the log's move lines of the step's changes
+	Updates   []sprint.Note          `json:"updates,omitempty"` // open judgments rewritten in place
 	Closes    []string               `json:"closes,omitempty"`  // open keys the step closes
 	Streams   []string               `json:"streams,omitempty"` // streams whose progress it is
 	CallerOp  string                 `json:"caller_op,omitempty"`

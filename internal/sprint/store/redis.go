@@ -430,6 +430,20 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 			}
 		}
 	}
+	for _, n := range op.Updates {
+		body, err := json.Marshal(n.Bound())
+		if err != nil {
+			return err
+		}
+		line := sprint.NoteLine(n.Bound(), op.ID)
+		line.Verb = "updated"
+		lb, err := json.Marshal(line)
+		if err != nil {
+			return err
+		}
+		p.HSet(ctx, r.key(keyNotes), n.ID, string(body))
+		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(lb)}})
+	}
 	if len(op.Closes) > 0 {
 		p.HDel(ctx, r.key(keyOpen), op.Closes...)
 	}

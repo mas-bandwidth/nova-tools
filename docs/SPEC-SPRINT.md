@@ -751,7 +751,14 @@ taken, ready or withdrawn again before a take: 15 minutes from untaken_since,
 the first deal since its last take; not finished, working or withdrawn from a
 take: 2 hours from the attempt's first take; no redeal or withdrawal rewrites
 either, and the time a card spends withdrawn counts; the no-stall rule holds a
-card to the same deadline), a read card past its deadline (30
+card to the same deadline; a lateness is one judgment per card and kind, and
+once raised it stays raised while its cause stands, whether or not the card is
+late at that moment: not finished until the attempt's work card is finished,
+reworked or dropped, not taken until it is taken, not begun until the read
+begins, not reported until it reports; a redeal or a return to ready closes
+none of them; while raised it is updated in place with where the card is, each
+update a line of the log; no judgment is closed by a move that does not
+resolve its cause), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
 and the cards), stalled (rule 12: what nothing holds, and why). Deadlines count running time: time spent STOPPED does not

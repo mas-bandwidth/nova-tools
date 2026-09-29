@@ -728,6 +728,14 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 				}
 			}
 		}
+		for _, n := range op.Updates {
+			n = n.Bound()
+			l.notes[n.ID] = n
+			line := sprint.NoteLine(n, op.ID)
+			line.Verb = "updated"
+			m.seq++
+			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
+		}
 		for _, k := range op.Closes {
 			delete(l.open, k)
 		}

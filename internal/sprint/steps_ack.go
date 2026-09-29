@@ -238,7 +238,7 @@ func strandedNote(s *Snapshot, pr *Card, typ, why, who string) Note {
 // it closes: the judgment's type, stream and what, so the tick's condition
 // finds it.
 func acknowledged(n Note, entries []Open, who string, now time.Time) Note {
-	a := Note{Kind: Acknowledged, Type: n.Type, Stream: n.Stream, What: n.What, StreamLevel: n.StreamLevel, Who: who, At: now}
+	a := Note{Kind: Acknowledged, Type: n.Type, Stream: n.Stream, What: n.What, StreamLevel: n.StreamLevel, Who: who, At: now, Card: n.Card}
 	if !n.StreamLevel {
 		for _, o := range entries {
 			a.Primaries = append(a.Primaries, o.Subject())

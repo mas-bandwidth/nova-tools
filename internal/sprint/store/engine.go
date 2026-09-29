@@ -358,7 +358,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes) == 0 {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates) == 0 {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
@@ -914,6 +914,7 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 			}
 		}
 	}
+	op.Updates = plan.Updates
 	op.Notes = sprint.MergeNotes(kept)
 	for i := range op.Notes {
 		op.Notes[i].ID = fmt.Sprintf("%s.%d", id, i+1)
