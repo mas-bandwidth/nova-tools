@@ -1,0 +1,280 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+)
+
+var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+
+// testApp is the command over an in-memory store, its clock stepped by hand.
+type testApp struct {
+	t   *testing.T
+	a   *app
+	m   *store.Mem
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newTestApp(t *testing.T) *testApp {
+	ta := &testApp{t: t, m: store.NewMem(), now: t0}
+	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-"}
+	ta.a = newApp(func(k string) string { return env[k] })
+	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
+	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock() }
+	ta.a.backend = func(string, sprint.Names) (store.Backend, error) { return ta.m, nil }
+	return ta
+}
+
+// do runs a command line and returns its exit code, stdout and stderr.
+func (ta *testApp) do(line string) (int, string, string) {
+	var out, errb bytes.Buffer
+	code := ta.a.run(split(line), &out, &errb)
+	return code, out.String(), errb.String()
+}
+
+func (ta *testApp) ok(line string) string {
+	ta.t.Helper()
+	code, out, errs := ta.do(line)
+	if code != 0 {
+		ta.t.Fatalf("%s: exit %d\n%s%s", line, code, out, errs)
+	}
+	return out
+}
+
+// split is words, with '...' quoting one word.
+func split(line string) []string {
+	var out []string
+	var cur strings.Builder
+	quoted, in := false, false
+	for _, r := range line {
+		switch {
+		case r == '\'':
+			quoted, in = !quoted, true
+		case r == ' ' && !quoted:
+			if in {
+				out = append(out, cur.String())
+				cur.Reset()
+				in = false
+			}
+		default:
+			cur.WriteRune(r)
+			in = true
+		}
+	}
+	if in {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+func (ta *testApp) json(line string, v any) {
+	ta.t.Helper()
+	out := ta.ok(line + " --json")
+	if err := json.Unmarshal([]byte(out), v); err != nil {
+		ta.t.Fatalf("%s: %v\n%s", line, err, out)
+	}
+}
+
+func (ta *testApp) clean() {
+	ta.t.Helper()
+	if code, out, errs := ta.do("check"); code != 0 {
+		ta.t.Fatalf("check: %s%s", out, errs)
+	}
+}
+
+func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	out := ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	if !strings.Contains(out, "INIT OK tables=t-work,t-readers,t-merge,t-fleet view=t-sprint") {
+		t.Fatalf("init: %s", out)
+	}
+	out = ta.ok("add --stream s1 --count 4")
+	if !strings.Contains(out, "ADD OK moved=4") || !strings.Contains(out, "0/4 0.0% -> ETA") {
+		t.Fatalf("add: %s", out)
+	}
+	ta.clean()
+	ta.ok("start --limit 4")
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as m1", &q)
+	if len(q.Cards) != 2 || q.Cards[0].Gen != 1 {
+		t.Fatalf("m1's queue: %+v", q.Cards)
+	}
+	for _, m := range []string{"m1", "m2"} {
+		ta.ok("take --as " + m + " --limit 5")
+		ta.json("queue --as "+m, &q)
+		var words []string
+		for _, c := range q.Cards {
+			words = append(words, c.ID+"@1")
+		}
+		ta.ok("finish --as " + m + " " + strings.Join(words, " "))
+	}
+	ta.ok("ask")
+	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
+		ta.ok("read --as " + r + " --ok --limit 10")
+	}
+	ta.clean()
+	out = ta.ok("accept --read-ok")
+	if !strings.Contains(out, "ACCEPT OK moved=4") {
+		t.Fatalf("accept: %s", out)
+	}
+	ta.ok("merge --stream s1 --batch 10")
+	out = ta.ok("where")
+	for _, want := range []string{"SPRINT TABLE", "4/4 100.0% -> ETA", "work ", "merge ", "fleet "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("where lacks %q:\n%s", want, out)
+		}
+	}
+	var w whereView
+	ta.json("where", &w)
+	if w.Landed != 4 || w.All != 4 || w.Tables["merge"]["s1"]["state"] != "landed" {
+		t.Fatalf("where --json: %+v", w)
+	}
+	ta.clean()
+	out = ta.ok("inbox")
+	if !strings.Contains(out, "HAPPENED") || !strings.Contains(out, "stream landed") {
+		t.Fatalf("inbox: %s", out)
+	}
+	out = ta.ok("card s1-1")
+	if !strings.Contains(out, "PRIMARY s1-1 place=s1:landed") || !strings.Contains(out, "WORK s1-1.w1") || !strings.Contains(out, "MERGE s1-1") {
+		t.Fatalf("card: %s", out)
+	}
+}
+
+func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 3")
+	ta.ok("start --stream s1")
+	ta.ok("take --as m1 --limit 3")
+	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
+	code, _, errs := ta.do("finish --as m1 s1-3.w1@1 --failed --report 'tests red'")
+	if code != 0 {
+		t.Fatalf("finish failed: %s", errs)
+	}
+	out := ta.ok("inbox")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if !strings.HasPrefix(lines[0], "JUDGMENT 1") || !strings.Contains(lines[0], "work came back failed") || !strings.Contains(lines[0], "rework with a fix | drop") {
+		t.Fatalf("judgment first: %s", out)
+	}
+	// the inbox group is a set
+	out = ta.ok("rework --group 1 --fix 'handle the empty case'")
+	if !strings.Contains(out, "s1-3 review -> working (rework)") {
+		t.Fatalf("rework: %s", out)
+	}
+	out = ta.ok("inbox --read")
+	if strings.Contains(out, "JUDGMENT") {
+		t.Fatalf("an answered judgment is still open: %s", out)
+	}
+	out = ta.ok("inbox")
+	if strings.Contains(out, "HAPPENED") {
+		t.Fatalf("the cursor did not move: %s", out)
+	}
+	// accept refused without two readers: exit 1, the reason on stderr
+	ta.ok("ask")
+	code, _, errs = ta.do("accept s1-1")
+	if code != 1 || !strings.Contains(errs, "REFUSED s1-1: needs ok from two different readers") || !strings.Contains(errs, "ACCEPT FAIL") {
+		t.Fatalf("accept with no reads: %d %s", code, errs)
+	}
+	ta.clean()
+}
+
+func TestAStoppedStreamWaitsForResume(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("start --limit 2")
+	ta.ok("take --as m1 --limit 2")
+	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
+	ta.ok("ask")
+	ta.ok("read --as reader-a --ok --limit 5")
+	ta.ok("read --as reader-b --ok --limit 5")
+	ta.ok("accept --stream s1")
+	ta.ok("merge --stream s1 --conflict s1-2")
+	out := ta.ok("inbox")
+	if !strings.Contains(out, "stream stopped: conflict on a card") {
+		t.Fatalf("inbox: %s", out)
+	}
+	if code, _, errs := ta.do("merge --stream s1"); code != 1 || !strings.Contains(errs, "stopped") {
+		t.Fatalf("merge of a stopped stream: %s", errs)
+	}
+	ta.ok("resume --stream s1 --did 'rebased s1-2'")
+	ta.ok("merge --stream s1")
+	var w whereView
+	ta.json("where", &w)
+	if w.Landed != 2 {
+		t.Fatalf("landed %d", w.Landed)
+	}
+	ta.clean()
+}
+
+func TestAStaleFinishIsRefusedAndARetryReplays(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("start --limit 2")
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as m1", &q)
+	card := q.Cards[0].ID
+	ta.ok("take --as m1 " + card + "@1")
+	ta.ok("fleet down m1")
+	code, _, errs := ta.do("finish --as m1 " + card + "@1")
+	if code != 1 || !strings.Contains(errs, "stale") {
+		t.Fatalf("a stale finish: %d %s", code, errs)
+	}
+	ta.ok("take --as m2 --limit 5")
+	first := ta.ok("finish --as m2 " + card + "@2 --op w-1")
+	again := ta.ok("finish --as m2 " + card + "@2 --op w-1")
+	if !strings.Contains(again, "replay=yes") || strings.Count(first, "MOVED") != strings.Count(again, "MOVED") {
+		t.Fatalf("retry:\n%s\n%s", first, again)
+	}
+	if code, _, errs := ta.do("finish --as m2 " + card); code != 2 || !strings.Contains(errs, "<card>@<gen>") {
+		t.Fatalf("a finish without its generation: %d %s", code, errs)
+	}
+}
+
+func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	for _, v := range verbs {
+		code, out, errs := ta.do(v.name + " -h")
+		if code != 0 || !strings.Contains(out, "usage: nova-sprint "+v.name) || errs != "" {
+			t.Errorf("%s -h: %d %q %q", v.name, code, out, errs)
+		}
+	}
+	if code, out, _ := ta.do("help"); code != 0 || !strings.Contains(out, "nova-sprint play") {
+		t.Errorf("help: %d", code)
+	}
+	for _, line := range []string{"", "nosuch", "start", "take", "merge", "read --as reader-a", "rank x", "teardown", "add --stream s1"} {
+		if code, _, errs := ta.do(line); code != 2 || !strings.Contains(errs, "run: nova-sprint") {
+			t.Errorf("%q: exit %d %q", line, code, errs)
+		}
+	}
+	if len(ta.m.Calls) > 0 && ta.m.Calls["apply"] > 0 {
+		t.Errorf("a refused invocation wrote")
+	}
+}
+
+func TestTeardownWantsTheSamePrefix(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	if code, _, _ := ta.do("teardown --confirm other"); code != 2 {
+		t.Fatalf("teardown with another prefix: %d", code)
+	}
+	ta.ok("teardown --confirm t-")
+	if code, _, _ := ta.do("where"); code == 0 {
+		t.Fatalf("the tables are still there")
+	}
+}

@@ -1,0 +1,176 @@
+// nova-sprint: the sprint table (docs/SPEC-SPRINT.md). Four tables on
+// nova-table (work, readers, merge, fleet), the moves between them, and the
+// notifications that bring the coordinator its decisions. Every verb takes a
+// set and is one step; the command is a face over internal/sprint (the pure
+// core) and internal/sprint/store (the binding to the table layer).
+//
+// Exit 0 done, 1 refused (a card or the store said no), 2 usage or a store
+// that did not answer.
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+)
+
+const prog = "nova-sprint"
+
+// version is empty in every ordinary build; a release stamps it with
+// -ldflags "-X main.version=<tag>".
+var version string
+
+func main() {
+	a := newApp(os.Getenv)
+	defer a.close()
+	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// app is one process's view of the store: its connection, opened once and
+// shared by every verb it runs (the driver runs many), its clock, and how it
+// sleeps. Tests give it a backend of their own.
+type app struct {
+	getenv  func(string) string
+	now     func() time.Time
+	sleep   func(time.Duration)
+	backend func(addr string, names sprint.Names) (store.Backend, error)
+	conns   map[string]*redisconn.Conn
+	cached  map[string]store.Backend
+}
+
+func newApp(getenv func(string) string) *app {
+	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}}
+	a.backend = a.redisBackend
+	return a
+}
+
+func (a *app) close() {
+	for _, c := range a.conns {
+		_ = c.Close()
+	}
+}
+
+// redisBackend opens the store once per address, as nova-table dials it: the
+// address, then NOVA_SPRINT_REDIS_USER and the variable
+// NOVA_SPRINT_REDIS_PASSWORD_ENV names.
+func (a *app) redisBackend(addr string, names sprint.Names) (store.Backend, error) {
+	key := addr + "\x00" + names.Prefix
+	if b, ok := a.cached[key]; ok {
+		return b, nil
+	}
+	conn, ok := a.conns[addr]
+	if !ok {
+		o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+		if a.getenv(redisauth.UserEnv) != "" {
+			o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+			if a.getenv(redisauth.PasswordEnvEnv) == "" {
+				o.PasswordEnv = redisauth.DefaultPasswordEnv
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var err error
+		conn, err = redisconn.Open(ctx, o, a.getenv)
+		if err != nil {
+			return nil, err
+		}
+		a.conns[addr] = conn
+	}
+	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
+	a.cached[key] = b
+	return b, nil
+}
+
+// common is the flags every store verb takes.
+type common struct {
+	redis, prefix, actor, op string
+	json                     bool
+	max                      int
+}
+
+func (c *common) register(fs flagSet, getenv func(string) string) {
+	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	fs.StringVar(&c.prefix, "prefix", getenv("NOVA_SPRINT_PREFIX"), "the prefix of every table, view and key of this sprint (else NOVA_SPRINT_PREFIX; empty is none)")
+	fs.StringVar(&c.actor, "actor", "coordinator", "who is acting, recorded with every change")
+	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
+	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
+	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
+}
+
+func firstEnv(getenv func(string) string, names ...string) string {
+	for _, n := range names {
+		if v := getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (a *app) store(c common) (*store.Store, error) {
+	if strings.TrimSpace(c.redis) == "" {
+		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+	}
+	names := sprint.Names{Prefix: c.prefix}
+	b, err := a.backend(c.redis, names)
+	if err != nil {
+		return nil, err
+	}
+	return &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: newID, Sleep: a.sleep}, nil
+}
+
+func newID() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return time.Now().UTC().Format("150405") + hex.EncodeToString(b[:])
+}
+
+// run is the one entry point: the command line, and the driver, which runs
+// every verb it plays through it with an argument list.
+func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
+	defer verbflag.Recover(stdout, prog, banner(), &code)
+	if len(args) == 0 {
+		return refuse(stderr, "", "no verb; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
+	}
+	if args[0] == "help" || verbflag.IsHelp(args[0]) {
+		return helpCommand(args[1:], stdout, stderr)
+	}
+	if args[0] == "--version" || args[0] == "version" {
+		fmt.Fprintln(stdout, versionLine())
+		return 0
+	}
+	for _, v := range verbs {
+		words := strings.Fields(v.name)
+		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.name {
+			return v.run(a, args[len(words):], stdout, stderr)
+		}
+	}
+	if args[0] == "fleet" || args[0] == "reader" {
+		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
+	}
+	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
+}
+
+// refuse is a usage refusal: exit 2.
+func refuse(stderr io.Writer, verb, what string) int {
+	where := prog
+	if verb != "" {
+		where += " " + verb
+	}
+	if !strings.Contains(what, "; run: ") {
+		what += "; run: nova-sprint " + strings.TrimSpace(verb+" -h")
+	}
+	fmt.Fprintf(stderr, "%s: %s\n", where, oneline.Escape(what))
+	return 2
+}

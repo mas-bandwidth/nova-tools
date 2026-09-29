@@ -145,8 +145,12 @@ func (m *Mem) CellIDs(_ context.Context, shapes []ntable.Table) (map[string][]st
 		if err != nil {
 			return nil, err
 		}
+		rows := map[string]bool{}
+		for _, r := range s.Rows {
+			rows[r.Key] = true
+		}
 		for id, mm := range t.members {
-			if mm.placed {
+			if mm.placed && rows[mm.row] {
 				out[s.Name] = append(out[s.Name], id)
 			}
 		}
