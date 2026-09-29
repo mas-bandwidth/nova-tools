@@ -54,6 +54,11 @@ var swarmAudit = audit.Config{
 		// the harness's own capture -- a file a card can write -- so nothing but the empty
 		// string and an oneline.Field-escaped path can come back.
 		"fenceSuffix",
+		// doctorOther and doctorReported (doctor.go) render the two tails of a DOCTOR
+		// UNREADABLE line: the other binary's path through oneline.Field and its stamp
+		// through oneline.Escape inside themselves, beside literal words, so what comes back
+		// is one escaped token.
+		"doctorOther", "doctorReported",
 		// swarm.WallLine (issue #644's follow-up) builds the `WALL task=<id> path=<p>
 		// step=<n> [commits=<n> branch=<name>]` report line and puts every field through
 		// oneline.Field inside itself. The path and step come from the card's own log and
@@ -110,6 +115,10 @@ var swarmAudit = audit.Config{
 		// stream except through the fmt calls the classifier walks; os/exec starts children
 		// whose own output is the harness's, not this binary's line.
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"path/filepath"`, `"strings"`, `"time"`,
+		// doctor.go: errors builds and inspects the read error a version run returns, and
+		// io/fs supplies only the ErrNotExist sentinel that error is compared with; neither
+		// holds a writer, and the words the refusal prints from them pass through oneline.
+		`"errors"`, `"io/fs"`,
 		// native_proc_unix.go (issue #779) needs these two and neither writes a stream.
 		// os/signal only routes the manager's SIGTERM into a channel the run selects on;
 		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
