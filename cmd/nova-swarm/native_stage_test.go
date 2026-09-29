@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // captureStageLine redirects os.Stdout around fn and returns the first line fn prints that
@@ -354,8 +356,12 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	if head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD")); head != base {
 		t.Fatalf("<job>/repo HEAD = %s, want base-sha %s", head, base)
 	}
-	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != "rowan/s00-0302-quack-bench-flash" {
-		t.Fatalf("<job>/repo is on %q, want the card's branch rowan/s00-0302-quack-bench-flash", branch)
+	wantBranch := swarm.CardStageBranch(cardText)
+	if wantBranch == "" || wantBranch == swarm.CardStageBranch(nil) {
+		t.Fatalf("the card's branch is %q, want one derived from its label", wantBranch)
+	}
+	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != wantBranch {
+		t.Fatalf("<job>/repo is on %q, want the card's branch %q", branch, wantBranch)
 	}
 }
 

@@ -1,35 +1,33 @@
-// nova-swarm doctor: refuse to launch under a SHADOWED binary.
+// nova-swarm doctor: refuse to launch under a shadowed or unreadable binary.
 //
-// THE FAILURE THIS VERB IS (cairn b9395d11, 2026-09-17). PATH put ~/go/bin before
-// ~/.local/bin, ~/go/bin held a nova-swarm from an earlier build, and for 25 minutes every
-// card that a rebuilt swarm started silently ran the STALE binary -- with a private build
-// cache rather than the shared one, so nothing downstream could tell which build had run.
-// The mismatch was caught by hand, and the operator-run bench-standard.sh grew a check for
-// it. This verb folds that same comparison into `nova-swarm` itself so a launch refuses
-// before it starts rather than after somebody notices.
+// A card that a rebuilt swarm starts must run the build that was rebuilt. When PATH puts an
+// older nova-swarm before the one at ~/.local/bin, every card runs the older one and nothing
+// downstream can tell which build ran. The doctor reads the one `version` line the nova-swarm
+// first on PATH prints and the one the literal ~/.local/bin/nova-swarm prints, and if the two
+// differ it prints both in full and names the fix. `batch` and `native` run the same check
+// before they start anything, so a launch refuses before it spends rather than after
+// somebody notices. It invents no version of its own: internal/buildinfo produces the line
+// and this file only reads what a binary said.
 //
-// The comparison is deliberately narrow: read the one `version` line the nova-swarm found
-// first on PATH prints, read the one the literal ~/.local/bin/nova-swarm prints, and if the
-// two differ, print both in full and name the fix. It is not a general drift daemon, and it
-// invents no version of its own: internal/buildinfo produces the line and this file only
-// reads what a binary said.
+// `DOCTOR OK stamp=<line>` says the two agree, or that there is one binary to read. A
+// mismatch is exit 2 with both stamps and one remedy, because a refusal that does not say
+// which line is stale sends the reader back to run the check by hand.
 //
-// ONE LINE ON SUCCESS. `DOCTOR OK stamp=<line>` says the two agree (or that there is only
-// one of them to read). A mismatch is exit 2 with both stamps and one remedy, because a
-// refusal that does not say which line is stale sends the reader back to run the check by
-// hand -- which is the thing this verb removes.
+// A binary that cannot be read is a refusal, not a shrug. A `version` that hangs past the
+// deadline, exits non-zero, prints nothing, prints a first line past the limit, or names a
+// file that is not there is exit 2 with one DOCTOR UNREADABLE line: the binary's path, the
+// cause, what the other binary came to, and the next action. A stamp printed before the
+// failure is still compared. The one tolerated absence is the ~/.local/bin copy: with none
+// installed there is nothing to shadow with.
 //
-// A BINARY THAT CANNOT BE READ IS A REFUSAL, NOT A SHRUG. A `version` that hangs past the
-// deadline, exits non-zero, prints nothing, or names a file that is not there is exit 2 with
-// one DOCTOR UNREADABLE line: the binary's path, the cause, what the other binary reported
-// and the next action. A stamp printed before the failure is still compared, so a stale
-// binary that then hangs is refused as shadowing and as unreadable. The one tolerated absence
-// is the ~/.local/bin copy: with none installed there is nothing to shadow with.
+// Only the first line of a binary's output is kept, up to a fixed limit, and a stamp is
+// printed as a bounded, escaped excerpt, so a binary that streams forever costs the doctor
+// neither memory nor an unbounded line. The two binaries are read at the same time under one
+// deadline.
 //
-// THE TWO SEAMS ARE PACKAGE VARS. No unit test may execute a path it discovered: the PATH
-// resolver (doctorLookPath), the home directory (doctorHomeDir) and the version reader
-// (doctorReadVersion) are replaced by a test that hands over two fixed stamps. Production
-// uses the real LookPath, the real home, and `<path> version`.
+// The machine is a doctorEnv (the PATH lookup, the home directory and the version reader),
+// so the whole check is driven with fixed binaries and short deadlines; production uses the
+// real LookPath, the real home, and `<path> version`.
 package main
 
 import (
