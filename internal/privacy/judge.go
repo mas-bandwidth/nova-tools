@@ -49,6 +49,16 @@ type Flag struct {
 	Shared []string
 }
 
+// SilentEntry is a private entry that can never raise a flag: fewer than
+// FlagThreshold distinctive terms. It is named by source, index and title,
+// never by its words.
+type SilentEntry struct {
+	Source      string
+	Index       int
+	Title       string
+	Distinctive int
+}
+
 // Result is everything one screen measured and everything it could not.
 type Result struct {
 	Outcome Outcome
@@ -66,7 +76,9 @@ type Result struct {
 	PayloadChars int
 	PayloadTerms int
 	Flags        []Flag
-	Structure    []StructureHit
+	// Silent names the private entries no payload could be caught against.
+	Silent    []SilentEntry
+	Structure []StructureHit
 	// Reason and Remedy are empty only on UnprovenClean.
 	Reason   string
 	Remedy   string
@@ -171,6 +183,8 @@ func judge(c Corpus, payload string, withPayload bool) Result {
 		fingerprint := rules.Distinctive(p.Measured(), df, c.BackgroundFreq, r.Bounds)
 		if CanEverFire(fingerprint) {
 			r.Checkable++
+		} else {
+			r.Silent = append(r.Silent, SilentEntry{Source: p.Source, Index: p.Index, Title: p.Title, Distinctive: len(fingerprint)})
 		}
 		shared := SharedRareTerms(payloadTerms, fingerprint)
 		if MayStaySilent(shared) {

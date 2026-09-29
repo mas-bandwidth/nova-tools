@@ -279,6 +279,7 @@ CORPUS SOURCE path=<path> entries=<n> private=<n>
 CORPUS SOURCE path=<path> unreadable=<error>
 CORPUS BACKGROUND root=<dir> mode=<recursive|flat> pattern=<glob> found=<n> shared=<n> read=<n>
 CORPUS SAMPLE found=<n> read=<n> bytes=<n> rule=<all|lowest-path-hash> max-docs=<n> max-bytes=<n>
+CORPUS SILENT source=<path> entry=<n> distinctive=<n> title=<title>
 CORPUS OK sources=<n> entries=<n> private=<n> checkable=<n> background=<n> config=<path|->
 CORPUS <outcome> sources=<n> ...
 CORPUS REMEDY <reason>: <remedy>; then run: nova-privacy corpus <the same inputs>
@@ -293,6 +294,9 @@ configuration format) for a configuration that is missing or wrong.
 
 `checkable` is how many private entries could raise a flag at all; `private`
 minus `checkable` is the part of the corpus no payload could be caught against.
+`corpus` names each of those on a `CORPUS SILENT` line on standard error, by
+source, entry index and title, with the count of its distinctive terms (fewer
+than three); its words are never printed. `--json` carries them as `silent`.
 A flag prints at most twelve shared terms, and `shared=` is always the whole
 count. `--max` caps the flag lines (20 by default, 0 prints all).
 

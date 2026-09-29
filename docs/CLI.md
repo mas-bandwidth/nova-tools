@@ -2246,7 +2246,8 @@ nova-privacy screen --root ./example ./example/drafts/leak.md
 background root with the documents it read, `CORPUS SAMPLE` with how many
 background documents were found and read and by what rule (`all`, or
 `lowest-path-hash` when a bound bites), and `CORPUS OK` with `checkable=`,
-the number of private entries able to raise a flag at all. The letter prints
+the number of private entries able to raise a flag at all; any private entry
+that can never raise one is named on a `CORPUS SILENT` line. The letter prints
 `SCREEN UNPROVEN-CLEAN` and exits 0. The leak prints a `SCREEN FLAG` line on
 standard error naming `private/ideas.md`, the entry `The lantern ferry plan
 (private)` and the shared words, then `SCREEN FLAGGED`, and exits 1.

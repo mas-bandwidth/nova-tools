@@ -49,8 +49,9 @@ verdict. The best answer is UNPROVEN-CLEAN, never clean: the screen cannot see
 derivation that shares no vocabulary.
 
 corpus prints what a screen would load: each source with its entries and
-private entries, each background root with its documents, and every warning.
-Run it before trusting a screen.
+private entries, each background root with its documents, the sample, every
+private entry that can never raise a flag (by source, entry and title), and
+every warning. Run it before trusting a screen.
 
 corpus flags (name the corpus with --root, --config or --source):
   --root <dir>             read <dir>/.nova-privacy
@@ -512,6 +513,10 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "CORPUS SAMPLE found=%d read=%d bytes=%d rule=%s max-docs=%d max-bytes=%d\n",
 		corpus.BackgroundFound, corpus.BackgroundDocs, corpus.BackgroundBytes, corpus.SampleRule, corpus.MaxDocs, corpus.MaxBytes)
+	for _, e := range res.Silent {
+		fmt.Fprintf(stderr, "CORPUS SILENT source=%s entry=%d distinctive=%d title=%s\n",
+			oneline.Field(e.Source), e.Index, e.Distinctive, oneline.Escape(oneline.Cap(e.Title, oneline.TailBytes)))
+	}
 	for _, w := range res.Warnings {
 		fmt.Fprintf(stderr, "CORPUS WARN %s\n", oneline.Escape(w))
 	}
@@ -545,6 +550,7 @@ type report struct {
 	Sources    []jsonSource  `json:"sources"`
 	Roots      []jsonRoot    `json:"roots"`
 	Flags      []jsonFlag    `json:"flags,omitempty"`
+	Silent     []jsonSilent  `json:"silent,omitempty"`
 	Structure  []jsonHit     `json:"structure,omitempty"`
 	Warnings   []string      `json:"warnings,omitempty"`
 	Bounds     privacyBounds `json:"bounds"`
@@ -581,6 +587,13 @@ type jsonFlag struct {
 	Entry  int      `json:"entry"`
 	Title  string   `json:"title"`
 	Shared []string `json:"shared"`
+}
+
+type jsonSilent struct {
+	Source      string `json:"source"`
+	Entry       int    `json:"entry"`
+	Title       string `json:"title"`
+	Distinctive int    `json:"distinctive"`
 }
 
 type jsonHit struct {
@@ -633,6 +646,9 @@ func writeJSON(stdout, stderr io.Writer, verb string, code int, c privacy.Corpus
 	}
 	for _, f := range res.Flags {
 		rep.Flags = append(rep.Flags, jsonFlag{Source: f.Source, Entry: f.Index, Title: f.Title, Shared: f.Shared})
+	}
+	for _, e := range res.Silent {
+		rep.Silent = append(rep.Silent, jsonSilent{Source: e.Source, Entry: e.Index, Title: e.Title, Distinctive: e.Distinctive})
 	}
 	for _, h := range res.Structure {
 		rep.Structure = append(rep.Structure, jsonHit{Class: h.Class, Specimen: h.Specimen, Refuse: h.Refuse})

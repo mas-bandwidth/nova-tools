@@ -2,6 +2,7 @@ package privacy_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -342,5 +343,27 @@ func TestAPrivateSubHeadingPastTheOpeningIsFlagged(t *testing.T) {
 	r := privacy.Screen(f.spec, "thinking about the quillback flibberty wumpus again")
 	if r.Outcome != privacy.Flagged || r.Flags[0].Title != "Notes on the week" {
 		t.Errorf("outcome %s flags %+v", r.Outcome, r.Flags)
+	}
+}
+
+// The private entries that can never fire are named, by source, index and
+// title, never by their words.
+func TestTheEntriesThatCanNeverFireAreNamed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	f.write(t, "private/upkeep.md", "- a plain chore\n## A generic secret (private)\n"+commonWords+"\n")
+	r := privacy.JudgeCorpus(privacy.Load(f.spec))
+	var silent []string
+	for _, s := range r.Silent {
+		silent = append(silent, fmt.Sprintf("%s#%d %s", s.Source, s.Index, s.Title))
+	}
+	want := "private/upkeep.md#1 A generic secret (private)"
+	if r.Private-r.Checkable != len(r.Silent) || !strings.Contains(strings.Join(silent, "\n"), want) {
+		t.Errorf("private %d checkable %d silent %q, want %q among them", r.Private, r.Checkable, silent, want)
+	}
+	for _, s := range r.Silent {
+		if s.Distinctive >= privacy.FlagThreshold {
+			t.Errorf("an entry able to fire is named silent: %+v", s)
+		}
 	}
 }

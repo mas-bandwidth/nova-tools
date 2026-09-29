@@ -709,3 +709,22 @@ func TestABackgroundRootThatIsAFileIsRefused(t *testing.T) {
 		t.Errorf("exit %d stderr %q", code, errOut)
 	}
 }
+
+// corpus names every private entry that can never fire.
+func TestCorpusNamesTheEntriesThatCanNeverFire(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	tr.write(t, "private/upkeep.md", "- a plain chore\n## A generic secret (private)\n"+commonWords+"\n")
+	code, out, errOut := runTool("", "corpus", "--root", tr.root)
+	if code != exitClean || !strings.Contains(errOut, "CORPUS SILENT source=private/upkeep.md entry=1 distinctive=") || !strings.Contains(errOut, " title=A generic secret (private)\n") {
+		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, "garden") {
+		t.Error("a silent entry's words are printed")
+	}
+	_, out, _ = runTool("", "corpus", "--root", tr.root, "--json")
+	var rep report
+	if err := json.Unmarshal([]byte(out), &rep); err != nil || len(rep.Silent) != 1 || rep.Silent[0].Entry != 1 || rep.Silent[0].Source != "private/upkeep.md" {
+		t.Errorf("err %v silent %+v", err, rep.Silent)
+	}
+}
