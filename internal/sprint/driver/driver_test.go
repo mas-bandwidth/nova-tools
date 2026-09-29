@@ -99,7 +99,7 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 		bm := b.Merge("s1", []string{"x", "y", "z"}, others)
 		au := a.Up(i, []string{"m1", "m2"}, map[string]bool{"m1": true})
 		bu := b.Up(i, []string{"m1", "m2"}, map[string]bool{"m1": true})
-		if ao != bo || ar != br || am != bm || fmt.Sprint(au) != fmt.Sprint(bu) {
+		if ao != bo || ar != br || fmt.Sprint(am) != fmt.Sprint(bm) || fmt.Sprint(au) != fmt.Sprint(bu) {
 			t.Fatalf("draw %d differs", i)
 		}
 	}
@@ -224,5 +224,17 @@ func TestFlapIsTheSameChanceBothWays(t *testing.T) {
 	}
 	if d, u := float64(downs)/20000, float64(ups)/20000; d < 0.18 || d > 0.22 || u < 0.18 || u > 0.22 {
 		t.Fatalf("down %.3f up %.3f", d, u)
+	}
+}
+
+// On red the seeded facts name one suspect of the batch, and the driver passes
+// it to the merge step.
+func TestRedNamesASuspectOfTheBatch(t *testing.T) {
+	t.Parallel()
+	s := NewSeeded(3)
+	s.Red = 1
+	out := s.Merge("s1", []string{"a", "b", "c"}, func() []string { return nil })
+	if !out.Red || len(out.Suspects) != 1 || !strings.Contains("abc", out.Suspects[0]) {
+		t.Fatalf("red: %+v", out)
 	}
 }

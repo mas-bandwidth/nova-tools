@@ -42,7 +42,7 @@ func (s *Seeded) Merge(stream string, batch []string, others func() []string) Ou
 			return Outcome{Cross: batch[s.rng.IntN(len(batch))] + "=" + o[s.rng.IntN(len(o))]}
 		}
 	case r < s.Stuck+s.Cross+s.Red:
-		return Outcome{Red: true}
+		return Outcome{Red: true, Suspects: []string{batch[s.rng.IntN(len(batch))]}}
 	}
 	return Outcome{}
 }

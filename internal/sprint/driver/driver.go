@@ -43,6 +43,7 @@ type Outcome struct {
 	Conflict string // a card that did not merge
 	Cross    string // <card>=<other>: a card needs a card of another stream first
 	Red      bool
+	Suspects []string // on red, the cards the branch's failure points at
 }
 
 // Clock is the driver's time: read, and slept on between ticks.
@@ -408,6 +409,9 @@ func (d *Driver) tick(tick int, c Config, w where) {
 				args = append(args, "--cross", out.Cross)
 			case out.Red:
 				args = append(args, "--red")
+				for _, x := range out.Suspects {
+					args = append(args, "--suspect", x)
+				}
 			}
 		}
 		d.run(false, args...)
