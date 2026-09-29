@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"time"
 
@@ -54,7 +53,35 @@ type Options struct {
 	Exec   Executor         // Execute when nil
 	OnCase func(Record)     // called with each record as it is made
 
+	// Selection is how Cases was chosen from the plan. RunSuite chooses again
+	// from the plan its digest names, runs that, and refuses when it is not the
+	// caller's Cases. The zero value selects every case.
+	Selection Selection
+
 	beforeCopy func() // a test's seam: runs between the digest and the copy
+}
+
+// Selection is a choice of cases from the plan, as Select takes it.
+type Selection struct {
+	Group         string
+	Shards, Shard int
+}
+
+// selectionDiffers says how two selections differ, or "" when they are the
+// same cases in the same order with the same fields.
+func selectionDiffers(read, digested []Case) string {
+	for i := 0; i < len(read) && i < len(digested); i++ {
+		if read[i] != digested[i] {
+			if read[i].Config != digested[i].Config {
+				return "case " + strconv.Itoa(i+1) + " was " + read[i].Config + " and is " + digested[i].Config
+			}
+			return read[i].Config + " is not as it was"
+		}
+	}
+	if len(read) != len(digested) {
+		return "the selection was " + strconv.Itoa(len(read)) + " cases and is " + strconv.Itoa(len(digested))
+	}
+	return ""
 }
 
 // Result is what a suite did.
@@ -106,12 +133,18 @@ func RunSuite(o Options) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("the case plan is refused: %v", err)
 	}
-	for _, c := range o.Cases {
-		if !slices.Contains(current, c) {
-			res.Failed = true
-			res.Refused = "CASES.tsv changed after the cases were read (" + c.Config + " is not as it was)"
-			return res, nil
-		}
+	sel := o.Selection
+	if sel.Shards == 0 {
+		sel.Shards = 1
+	}
+	chosen, err := Select(current, sel.Group, sel.Shards, sel.Shard)
+	if err != nil {
+		return res, fmt.Errorf("the selection no longer fits the case plan: %v", err)
+	}
+	if why := selectionDiffers(o.Cases, chosen); why != "" {
+		res.Failed = true
+		res.Refused = "CASES.tsv changed after the cases were read (" + why + ")"
+		return res, nil
 	}
 	if o.beforeCopy != nil {
 		o.beforeCopy()
@@ -135,7 +168,8 @@ func RunSuite(o Options) (Result, error) {
 	if o.Manual {
 		mode = "manual"
 	}
-	for _, c := range o.Cases {
+	// What runs is the selection of the digested plan, never the caller's slice.
+	for _, c := range chosen {
 		started := clock()
 		log := filepath.Join(out, c.Config+".log")
 		code := ExitTimeout
@@ -217,7 +251,7 @@ func RunSuite(o Options) (Result, error) {
 	if err := f.Close(); err != nil {
 		return res, err
 	}
-	if len(res.Records) != len(o.Cases) {
+	if len(res.Records) != len(chosen) {
 		res.Failed = true
 	}
 	return res, nil

@@ -97,7 +97,8 @@ func cmdRun(e env, args []string) int {
 	}
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, Out: *dir,
-		Budget: *timeout, Workers: *workers, Manual: *manual, Host: host, Exec: e.exec,
+		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
+		Budget:    *timeout, Workers: *workers, Manual: *manual, Host: host, Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout
 			if r.Result != "PASS" {

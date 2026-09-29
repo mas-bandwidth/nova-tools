@@ -240,6 +240,7 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 	var seen []Run
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	o := suiteOptions(root, cases[:1], filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	o.Selection = Selection{Shards: 3, Shard: 0} // the first of three: MCA.cfg
 	o.Manual, o.Budget = true, 1500*time.Millisecond
 	res, err := RunSuite(o)
 	if err != nil || len(res.Records) != 1 || res.Records[0].Mode != "manual" || res.Records[0].Budget != "1.5" {
@@ -325,19 +326,132 @@ func TestRunSuiteRefusesACasePlanEditedAfterItWasRead(t *testing.T) {
 
 func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	// An edit that leaves the selected cases as they were is not a change to them.
-	plan := header +
-		row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-") +
-		row("MCABroken.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "ignore-terminal", "alpha", "required", "-") +
-		row("MCATerm.cfg", "MCA.tla", "temporal", "TermEnds", "check", "beta", "required", "-")
-	if err := os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(plan), 0o644); err != nil {
+	root, _ := suiteTree(t)
+	planWith := func(term string) string {
+		return header +
+			row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-") +
+			row("MCABroken.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "ignore-terminal", "alpha", "required", "-") +
+			row("MCATerm.cfg", "MCA.tla", "temporal", term, "check", "beta", "required", "-")
+	}
+	write := func(text string) {
+		if err := os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(planWith("TermEnds"))
+	all, err := LoadCases(root)
+	if err != nil {
 		t.Fatal(err)
 	}
+	selected, err := Select(all, "alpha", 1, 0)
+	if err != nil || len(selected) != 2 {
+		t.Fatalf("selected %v, %v", selected, err)
+	}
+	// An edit to a case outside the selection is not a change to the cases run.
+	write(planWith("Another"))
 	var seen []Run
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	res, err := RunSuite(suiteOptions(root, cases[:2], filepath.Join(t.TempDir(), "o"), script(t, &seen), clock))
-	if err != nil || res.Failed || len(res.Records) != 2 {
-		t.Fatalf("suite = %+v, %v", res, err)
+	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	o.Selection = Selection{Group: "alpha", Shards: 1}
+	res, err := RunSuite(o)
+	if err != nil || res.Failed || len(res.Records) != 2 || len(seen) != 2 {
+		t.Fatalf("suite = %+v, ran %d, %v", res, len(seen), err)
+	}
+}
+
+// What runs is the selection of the plan the digest names. A field of a
+// selected case that changed between the load and the run (the deadlock policy
+// is on the command line, the property is what the result is held to) makes the
+// suite refuse; the old fields are never executed.
+func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
+	t.Parallel()
+	// alphaTree is the suite tree with MCATerm in its own group, and the alpha
+	// group as a caller reads it: MCA and MCABroken.
+	alphaTree := func() (string, []Case) {
+		root, _ := suiteTree(t)
+		planPath := filepath.Join(root, "tla", CasesFile)
+		raw, _ := os.ReadFile(planPath)
+		text := strings.Replace(string(raw), "MCATerm.cfg\tMCA.tla\ttemporal\tTermEnds\tcheck\talpha", "MCATerm.cfg\tMCA.tla\ttemporal\tTermEnds\tcheck\tbeta", 1)
+		if err := os.WriteFile(planPath, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "tla", "MCB.tla"), []byte("other\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		all, err := LoadCases(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alpha, err := Select(all, "alpha", 1, 0)
+		if err != nil || len(alpha) != 2 {
+			t.Fatalf("alpha = %v, %v", alpha, err)
+		}
+		return root, alpha
+	}
+	runIn := func(root string, alpha []Case) (Result, []Run, error) {
+		var seen []Run
+		clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+		o := suiteOptions(root, alpha, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+		o.Selection = Selection{Group: "alpha", Shards: 1}
+		res, err := RunSuite(o)
+		return res, seen, err
+	}
+	// The control: with no edit the same call runs both cases.
+	if res, seen, err := runIn(alphaTree()); err != nil || res.Failed || len(seen) != 2 {
+		t.Fatalf("the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+	}
+	for name, edit := range map[string]func(string) string{
+		"the command-line field (deadlock policy)": func(p string) string {
+			return strings.Replace(p, "ignore-terminal", "check", 1)
+		},
+		"the configuration the result is held to (property)": func(p string) string {
+			return strings.Replace(p, "OnePlacePerTable", "SomethingElse", 1)
+		},
+		"the module the case instantiates": func(p string) string {
+			return strings.Replace(p, "MCABroken.cfg\tMCA.tla", "MCABroken.cfg\tMCB.tla", 1)
+		},
+		"a case dropped from the selection's group": func(p string) string {
+			return strings.Replace(p, "MCABroken.cfg\tMCA.tla\tinvariant\tOnePlacePerTable\tignore-terminal\talpha", "MCABroken.cfg\tMCA.tla\tinvariant\tOnePlacePerTable\tignore-terminal\tbeta", 1)
+		},
+	} {
+		root, alpha := alphaTree()
+		planPath := filepath.Join(root, "tla", CasesFile)
+		raw, _ := os.ReadFile(planPath)
+		edited := edit(string(raw))
+		if edited == string(raw) {
+			t.Fatalf("%s: the edit changed nothing", name)
+		}
+		if err := os.WriteFile(planPath, []byte(edited), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res, seen, err := runIn(root, alpha)
+		if err != nil || !res.Failed || !strings.HasPrefix(res.Refused, "CASES.tsv changed after the cases were read") || len(seen) != 0 || len(res.Records) != 0 {
+			t.Errorf("%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err)
+		}
+	}
+}
+
+// The cases that run are the digested plan's own: the fields TLC is started
+// with and the fields the result is held to equal the plan's, case by case.
+func TestRunSuiteRunsTheDigestedPlansCases(t *testing.T) {
+	t.Parallel()
+	root, cases := suiteTree(t)
+	var seen []Run
+	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	res, err := RunSuite(o)
+	if err != nil || res.Failed || len(seen) != len(cases) {
+		t.Fatalf("suite = %+v, ran %d, %v", res, len(seen), err)
+	}
+	plan, err := LoadCases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range seen {
+		c := plan[i]
+		if r.Config != c.Config || r.Module != c.Module || r.NoDeadlock != (c.Deadlock == "ignore-terminal") ||
+			res.Records[i].Expected != c.Expected || res.Records[i].Property != c.Property {
+			t.Errorf("case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c)
+		}
 	}
 }
