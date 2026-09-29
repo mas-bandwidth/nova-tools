@@ -179,3 +179,65 @@ func TestResultLintFlagsTemplateDone(t *testing.T) {
 		t.Errorf("ResultLintRemedies has %d checks, want 3", len(ResultLintRemedies))
 	}
 }
+
+// TestHoldWithZeroFindingsIsMalformed verifies the issue #80 verdict-versus-count rule:
+// a HOLD with findings: 0 (either in line 1/header verdict or line 2 disposition HOLD)
+// is ClassMalformed and not folded as clean, because a HOLD cannot have 0 findings.
+func TestHoldWithZeroFindingsIsMalformed(t *testing.T) {
+	t.Parallel()
+
+	// 1. Line 1 / header verdict HOLD with findings: 0 is ClassMalformed.
+	h1 := ParseReport([]byte("RESULT: read-pr sha=09fbedc90521 verdict=HOLD\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if h1.Class != ClassMalformed {
+		t.Errorf("line 1 verdict=HOLD with findings: 0 is malformed, got %s", h1.Class)
+	}
+	if h1.MalformedLine != 1 {
+		t.Errorf("line 1 verdict=HOLD names line 1, got %d", h1.MalformedLine)
+	}
+
+	// 2. Line 2 disposition HOLD with findings: 0 is ClassMalformed.
+	h2 := ParseReport([]byte("RESULT: read-pr sha=09fbedc90521\nHOLD: unit tests missing\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if h2.Class != ClassMalformed {
+		t.Errorf("line 2 disposition HOLD with findings: 0 is malformed, got %s", h2.Class)
+	}
+	if h2.MalformedLine != 2 {
+		t.Errorf("line 2 disposition HOLD names line 2, got %d", h2.MalformedLine)
+	}
+
+	// 3. Header title verdict=HOLD with findings: 0 is ClassMalformed.
+	h3 := ParseReport([]byte("# read-pr sha=09fbedc90521 (verdict=HOLD)\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if h3.Class != ClassMalformed {
+		t.Errorf("header verdict=HOLD with findings: 0 is malformed, got %s", h3.Class)
+	}
+	if h3.MalformedLine != 1 {
+		t.Errorf("header verdict=HOLD names line 1, got %d", h3.MalformedLine)
+	}
+
+	// 4. Header opening with HOLD with findings: 0 is ClassMalformed.
+	h4 := ParseReport([]byte("# HOLD: read-pr sha=09fbedc90521\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if h4.Class != ClassMalformed {
+		t.Errorf("header opening with HOLD with findings: 0 is malformed, got %s", h4.Class)
+	}
+	if h4.MalformedLine != 1 {
+		t.Errorf("header opening with HOLD names line 1, got %d", h4.MalformedLine)
+	}
+
+	// 5. Negative controls:
+	// A HOLD with findings: 1 is ClassOK, not malformed.
+	hOK := ParseReport([]byte("RESULT: read-pr sha=09fbedc90521\nHOLD: syntax error\n\n## Head\nfindings: 1\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n\n## Findings\n- bug `rule 1` main.go:10\n"))
+	if hOK.Class != ClassOK {
+		t.Errorf("HOLD with findings: 1 is ok, got %s", hOK.Class)
+	}
+
+	// A clean review with verdict=APPROVE and findings: 0 is ClassClean.
+	appClean := ParseReport([]byte("RESULT: read-pr sha=09fbedc90521 verdict=APPROVE\nDONE\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if appClean.Class != ClassClean {
+		t.Errorf("APPROVE with findings: 0 is clean, got %s", appClean.Class)
+	}
+
+	// A card whose line 1 describes answering a hold is NOT a HOLD verdict.
+	holdfix := ParseReport([]byte("RESULT: holdfix-2867-50366419 sha=09fbedc90521 -- answer the friend HOLD on PR #2867\nDONE\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if holdfix.Class != ClassClean {
+		t.Errorf("holdfix card with findings: 0 is clean, got %s", holdfix.Class)
+	}
+}
