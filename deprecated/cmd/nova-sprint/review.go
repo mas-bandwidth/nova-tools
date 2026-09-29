@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -36,13 +37,19 @@ import (
 var reviewForge = func(st *store.Store) reconcile.IssueCloser { return ghIssueCloser{verb: "review", rdb: st.Client()} }
 
 func init() {
-	register(Verb{Name: "review", Summary: "review post: the typed verdict that moves a failed card out of review (#4072)",
+	register(Verb{Name: "review", Summary: "review post: the typed verdict that moves a failed card out of review (#4072); review loop: automatically cuts fix cards from read findings (#4351)",
 		Run: runReview})
 }
 
 func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || args[0] != "post" {
-		return refuse(errOut, "review", "wants post: review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>")
+	if len(args) == 0 {
+		return refuse(errOut, "review", "wants post or loop: review post --id <primary> ... | review loop --stream <s> [--daemon]")
+	}
+	if args[0] == "loop" {
+		return runReviewLoop(ctx, args[1:], out, errOut)
+	}
+	if args[0] != "post" {
+		return refuse(errOut, "review", "wants post or loop: review post --id <primary> ... | review loop --stream <s> [--daemon]")
 	}
 	fs := verbflag.New("review post")
 	addr := fs.String("redis", redisDefault(), "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
@@ -162,4 +169,44 @@ func reviewIssue(origin, ref, repo string) (string, int, bool) {
 		owner = o
 	}
 	return reconcile.OriginIssue(owner + "/" + name + "#" + num)
+}
+
+func runReviewLoop(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := verbflag.New("review loop")
+	addr := fs.String("redis", redisDefault(), "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+	actor := fs.String("actor", "", "who runs the review loop (else seat, else nova-sprint)")
+	stream := fs.String("stream", "", "the stream to review")
+	daemon := fs.Bool("daemon", false, "run continuously as a review loop daemon")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "review loop", err.Error())
+	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, "review loop", "takes flags, not positional arguments")
+	}
+	if *stream == "" {
+		return refuse(errOut, "review loop", "wants --stream <s>")
+	}
+	if *actor == "" {
+		*actor = os.Getenv(seatEnv)
+	}
+	if *actor == "" {
+		*actor = "nova-sprint"
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	st, err := store.Open(ctx, taskAddr(*addr))
+	if err != nil {
+		return refuse(errOut, "review loop", err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	c := st.Client()
+	code, err := read.RunLoop(ctx, c, read.LoopOptions{
+		Stream: *stream,
+		Daemon: *daemon,
+		Actor:  *actor,
+	}, out, errOut)
+	if err != nil {
+		return refuse(errOut, "review loop", err.Error())
+	}
+	return code
 }
