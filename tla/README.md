@@ -20,8 +20,9 @@ Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) ru
 | Verb | What it runs |
 |---|---|
 | `run` | the declared cases of `CASES.tsv` (one group, or a shard), each held to the result the plan declares, under a 110 s budget, writing `RUNS.tsv` (`make tlc`) |
-| `groups` | the required groups of the plan, as JSON (`make tlc-groups`) |
-| `merge` | the `RUNS.tsv` of the group runs, joined in plan order into the committed `tla/RUNS.tsv` |
+| `groups` | the required groups of the plan, as JSON (`make tlc-groups`); with `--stale`, the groups that hold a case whose record is missing or no longer current |
+| `merge` | the `RUNS.tsv` of the group runs, joined in plan order into the committed `tla/RUNS.tsv`; with `--keep`, the current records of the cases no run measured again stay |
+| `inputs` | the files a case's TLC run reads and the hash of each, with the case's fingerprint |
 | `table` | the table model: contracts, the five findings, the cross-table scope control (`--mode`), 120 s |
 | `member` | the member and epoch protocol and its four mutation controls (`--suite`), 120 s |
 | `replay` | the execution replay of a `table.lua` against `EpochMemberTable`, 120 s |
@@ -29,6 +30,7 @@ Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) ru
 
 ```sh
 go run ./tools/tlacheck groups --root .
+go run ./tools/tlacheck inputs --root . --case MCEpochMemberFixedPoint
 go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
 go run ./tools/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
 go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
@@ -42,15 +44,28 @@ timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -confi
 
 `-deadlock` on the java commands turns TLC's deadlock check off: these models end in a terminal stutter by design, and the safety and liveness properties are what they check; the bare java commands carry no cap of their own, so they are wrapped in `timeout`. The runners live here and not in the self repo because the self repo is text only.
 
-`RUNS.tsv` holds one record per declared case, and its `input_sha256` is the fingerprint of the inputs the records were measured on: every module, every `MC*.cfg`, `CASES.tsv` and the Go files of `internal/tlc` (the runner's reading of TLC's results; its tests are not part of it). A change to any of them makes the records stale, and `TestTLCRecordsCoverCurrentModels` says so. To refresh them, run every group on a bench with a binary built from the committed files and join the group runs:
+`RUNS.tsv` holds one record per declared case. Its `input_sha256` is the fingerprint of the inputs that case was measured on, and its `input_files` is how many inputs that is. A case's inputs are exactly what its TLC run reads:
+
+- its configuration (`MCFoo.cfg`);
+- the module `CASES.tsv` names for it, and every module that one `EXTENDS` or `INSTANCE`s, transitively (`EXTENDS A, B`, `INSTANCE M`, `LOCAL INSTANCE M` and `F(x) == INSTANCE M WITH ...` are read from the module text, not from comments or strings). A name with no file under `tla/` must be a module TLC carries (`Naturals`, `Integers`, `Sequences`, `FiniteSets`, `TLC` and the rest of its standard set), which reads nothing from the tree; any other name refuses the case;
+- the case's own row of `CASES.tsv`, under the file's header, and no other row;
+- the Go files of `internal/tlc` (the runner's reading of TLC's results; its tests are not part of it), as the binary was built.
+
+The fingerprint is the SHA-256 over those inputs in path order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline. It holds no timestamp, no host and no absolute path. The jar is not an input: the record names it in `jar_sha256`, and `host` is the machine name the run reported.
+
+Editing one model therefore stales the records of the cases that read it and no other: a change to a module stales every case whose module extends or instantiates it, a change to a configuration or to a case's own row stales that case, and a change to the runner stales every case. `tlacheck inputs --case <config>` prints each input with its hash, then the fingerprint and the count; a record is current when its two columns equal them. `TestTLCRecordsCoverCurrentModels` refuses a stale record by naming its case and the files it reads, a configuration with no record, a record with no configuration, and a case whose module or extended modules cannot be found.
+
+To refresh the records after an edit, ask which groups hold a stale case, run those on a bench with a binary built from the committed files, and join the runs onto the committed records:
 
 ```sh
 go build -o /tmp/tlacheck ./tools/tlacheck
-for g in $(cut -f6 tla/CASES.tsv | sed 1d | sort -u); do
+for g in $(/tmp/tlacheck groups --root . --stale | tr -d '[]"' | tr ',' ' '); do
   /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-runs/$g --group $g
 done
-/tmp/tlacheck merge --root . --out tla/RUNS.tsv /tmp/tlc-runs/*/RUNS.tsv
+/tmp/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv /tmp/tlc-runs/*/RUNS.tsv
 ```
+
+`merge` keeps a record of `tla/RUNS.tsv` only when its case was not measured again and the record is current; it refuses a run whose record is not the fingerprint its case has at this checkout, so records of another runner or of a model edited since the run never join. To measure every case, run every group (`cut -f6 tla/CASES.tsv | sed 1d | sort -u`) and merge without `--keep`.
 
 (A group that ends over its budget exits 1 and still writes its records; the bench cases with declared debt are recorded as the failed measurements they are.)
 

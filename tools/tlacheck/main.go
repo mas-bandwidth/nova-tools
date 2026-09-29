@@ -60,6 +60,7 @@ func verbs() []verb {
 		{"run", "run the declared cases of tla/CASES.tsv and write the run records", helpRun, cmdRun},
 		{"groups", "print the required case groups as JSON", helpGroups, cmdGroups},
 		{"merge", "join the records of several runs into one records file", helpMerge, cmdMerge},
+		{"inputs", "print the files a case's TLC run reads, with their hashes", helpInputs, cmdInputs},
 		{"table", "check the table model: contracts, findings, controls", helpTable, cmdTable},
 		{"member", "check the member and epoch protocol and its mutation controls", helpMember, cmdMember},
 		{"replay", "replay table.lua receipts and check them against EpochMemberTable", helpReplay, cmdReplay},

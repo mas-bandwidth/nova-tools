@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
@@ -36,6 +38,7 @@ func loadCases(e env, verb, root string) ([]tlc.Case, int, bool) {
 func cmdGroups(e env, args []string) int {
 	fs := flags("groups")
 	root := fs.String("root", ".", "")
+	stale := fs.Bool("stale", false, "")
 	if done, code := parse(e, "groups", fs, args, helpGroups); done {
 		return code
 	}
@@ -44,6 +47,19 @@ func cmdGroups(e env, args []string) int {
 		return code
 	}
 	groups := tlc.RequiredGroups(cases)
+	if *stale {
+		src, err := tlc.SourceAt(*root)
+		if err != nil {
+			return refuse(e, "groups", err.Error(), tool+" groups -h")
+		}
+		records, err := tlc.ReadRecordsFile(filepath.Join(*root, "tla", tlc.RunsFile))
+		if err != nil {
+			return refuse(e, "groups", "cannot read the records: "+err.Error(), tool+" groups -h")
+		}
+		if groups, err = tlc.StaleGroups(src, cases, records); err != nil {
+			return refuse(e, "groups", err.Error(), tool+" groups -h")
+		}
+	}
 	raw, err := json.Marshal(groups)
 	if err != nil {
 		return refuse(e, "groups", err.Error(), tool+" groups -h")
@@ -131,18 +147,23 @@ func cmdMerge(e env, args []string) int {
 	fs := flags("merge")
 	root := fs.String("root", ".", "")
 	out := fs.String("out", "", "")
+	keep := fs.String("keep", "", "")
 	if done, code := parse(e, "merge", fs, args, helpMerge); done {
 		return code
 	}
 	if code, stop := missing(e, "merge", "out", *out); stop {
 		return code
 	}
-	if fs.NArg() == 0 {
+	if fs.NArg() == 0 && *keep == "" {
 		return refuse(e, "merge", "no records files named", tool+" merge --out "+*out+" <RUNS.tsv>...")
 	}
 	cases, code, stop := loadCases(e, "merge", *root)
 	if stop {
 		return code
+	}
+	src, err := tlc.SourceAt(*root)
+	if err != nil {
+		return refuse(e, "merge", err.Error(), tool+" merge --root <a nova-tools checkout> ...")
 	}
 	var runs [][]tlc.Record
 	for _, p := range fs.Args() {
@@ -152,9 +173,21 @@ func cmdMerge(e env, args []string) int {
 		}
 		runs = append(runs, recs)
 	}
-	merged, err := tlc.Merge(cases, runs...)
+	measured := len(runs)
+	if *keep != "" {
+		base, err := tlc.ReadRecordsFile(*keep)
+		if err != nil {
+			return refuse(e, "merge", "cannot read the records to keep: "+err.Error(), tool+" merge -h")
+		}
+		carried, err := tlc.Carry(src, cases, base, runs...)
+		if err != nil {
+			return refuse(e, "merge", err.Error(), tool+" merge -h")
+		}
+		runs = append(runs, carried)
+	}
+	merged, err := tlc.Merge(src, cases, runs...)
 	if err != nil {
-		eventWhy(e.stderr, "MERGE", "FAIL", err.Error(), "runs", fmt.Sprint(len(runs)))
+		eventWhy(e.stderr, "MERGE", "FAIL", err.Error(), "runs", fmt.Sprint(measured))
 		return 1
 	}
 	abs, err := filepath.Abs(*out)
@@ -168,6 +201,49 @@ func cmdMerge(e env, args []string) int {
 	if err := atomicfile.WriteFile(abs, b.Bytes(), 0o644); err != nil {
 		return refuse(e, "merge", "cannot write the records: "+err.Error(), tool+" merge --out <a file in an existing directory> ...")
 	}
-	event(e.stdout, "MERGE", "OK", "runs", fmt.Sprint(len(runs)), "records", fmt.Sprint(len(merged)), "out", abs)
+	event(e.stdout, "MERGE", "OK", "runs", fmt.Sprint(measured), "records", fmt.Sprint(len(merged)), "out", abs)
+	return 0
+}
+
+func cmdInputs(e env, args []string) int {
+	fs := flags("inputs")
+	root := fs.String("root", ".", "")
+	name := fs.String("case", "", "")
+	if done, code := parse(e, "inputs", fs, args, helpInputs); done {
+		return code
+	}
+	if code, stop := missing(e, "inputs", "case", *name); stop {
+		return code
+	}
+	if fs.NArg() != 0 {
+		return refuse(e, "inputs", "unexpected argument "+oneline.Quote(fs.Arg(0)), tool+" inputs -h")
+	}
+	cases, code, stop := loadCases(e, "inputs", *root)
+	if stop {
+		return code
+	}
+	config := *name
+	if !strings.HasSuffix(config, ".cfg") {
+		config += ".cfg"
+	}
+	known := false
+	for _, c := range cases {
+		known = known || c.Config == config
+	}
+	if !known {
+		return refuse(e, "inputs", "no case "+oneline.Quote(*name)+" in tla/CASES.tsv (the config column names them)", tool+" inputs -h")
+	}
+	src, err := tlc.SourceAt(*root)
+	if err != nil {
+		return refuse(e, "inputs", err.Error(), tool+" inputs -h")
+	}
+	inputs, err := src.Inputs(config)
+	if err != nil {
+		return refuse(e, "inputs", "the inputs of the case cannot be read: "+err.Error(), tool+" inputs -h")
+	}
+	for _, in := range inputs {
+		event(e.stdout, "INPUT", "OK", "path", in.Path, "sha256", in.SHA256)
+	}
+	event(e.stdout, "INPUTS", "OK", "case", config, "files", fmt.Sprint(len(inputs)), "fingerprint", tlc.Digest(inputs))
 	return 0
 }

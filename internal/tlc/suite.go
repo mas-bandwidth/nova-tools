@@ -97,8 +97,8 @@ const workDir = "work"
 // RunSuite runs the selected cases one after the other. Each runs in a private
 // copy of the models, with its own temporary directory for TLC's standard
 // modules and state files, and its log at Out/<config>.log. When the cases are
-// done the fingerprint is taken again and the records are written to
-// Out/RUNS.tsv only if it is unchanged; a suite whose inputs moved under it
+// done the fingerprint of each is taken again and the records are written to
+// Out/RUNS.tsv only if none changed; a suite whose inputs moved under it
 // writes nothing and says so. A budget that ends before the last case is a
 // failure, and the records of the cases that ran are still written.
 func RunSuite(o Options) (Result, error) {
@@ -118,18 +118,18 @@ func RunSuite(o Options) (Result, error) {
 		return res, fmt.Errorf("cannot create %s: %v", out, err)
 	}
 	res.Work = filepath.Join(out, workDir)
-	// The digest is taken first and the copy is checked against it: TLC checks
-	// the copy, the records name the digest, and a module edited between the two
-	// would make them different bytes. Then the suite refuses to run.
-	digest, plan, err := fingerprint(o.Root, filepath.Join(o.Root, "tla"))
+	// The fingerprints are taken first and the copy is checked against them:
+	// TLC checks the copy, the records name the fingerprints, and a module
+	// edited between the two would make them different bytes. Then the suite
+	// refuses to run.
+	src, err := SourceAt(o.Root)
 	if err != nil {
 		return res, err
 	}
-	// The cases to run were parsed before this digest. They are run only if the
-	// plan the digest names still holds each of them: an edit to CASES.tsv
-	// between the parse and the digest would otherwise run stale cases under a
-	// fresh digest.
-	current, err := ParseCases(bytes.NewReader(plan))
+	// The cases to run are the plan's own rows, parsed from the same bytes the
+	// fingerprints are taken from: an edit to CASES.tsv between the caller's
+	// parse and now would otherwise run stale cases under a fresh fingerprint.
+	current, err := ParseCases(bytes.NewReader(src.Plan))
 	if err != nil {
 		return res, fmt.Errorf("the case plan is refused: %v", err)
 	}
@@ -146,17 +146,21 @@ func RunSuite(o Options) (Result, error) {
 		res.Refused = "CASES.tsv changed after the cases were read (" + why + ")"
 		return res, nil
 	}
+	digests, err := fingerprints(src, chosen)
+	if err != nil {
+		return res, err
+	}
 	if o.beforeCopy != nil {
 		o.beforeCopy()
 	}
 	if err := CopyModels(filepath.Join(o.Root, "tla"), res.Work); err != nil {
 		return res, err
 	}
-	copied, _, err := fingerprint(o.Root, res.Work)
-	if err != nil {
+	copied := src
+	copied.TLADir = res.Work
+	if got, err := fingerprints(copied, chosen); err != nil {
 		return res, err
-	}
-	if copied != digest {
+	} else if !sameFingerprints(got, digests) {
 		res.Failed = true
 		res.Refused = "model inputs changed while the models were copied"
 		return res, nil
@@ -212,7 +216,7 @@ func RunSuite(o Options) (Result, error) {
 		outcome := Parse(string(raw))
 		ok := Accepts(c, code, string(raw), string(cfg)) && outcome.HasStats()
 		rec := Record{
-			Config: c.Config, Module: c.Module, InputSHA256: digest, JarSHA256: o.Jar.SHA256,
+			Config: c.Config, Module: c.Module, InputSHA256: digests[c.Config].fingerprint, InputFiles: digests[c.Config].files, JarSHA256: o.Jar.SHA256,
 			Host: o.Host, StartedUTC: started.UTC().Format("2006-01-02T15:04:05.000000-07:00"),
 			Generated: outcome.Generated, Distinct: outcome.Distinct,
 			Seconds: fmt.Sprintf("%.3f", clock().Sub(started).Seconds()),
@@ -231,11 +235,13 @@ func RunSuite(o Options) (Result, error) {
 			break
 		}
 	}
-	after, err := Fingerprint(o.Root)
+	after, err := SourceAt(o.Root)
 	if err != nil {
 		return res, err
 	}
-	if after != digest {
+	if got, err := fingerprints(after, chosen); err != nil {
+		return res, err
+	} else if !sameFingerprints(got, digests) {
 		res.Failed = true
 		res.Refused = "model inputs changed during execution"
 		return res, nil
@@ -255,6 +261,37 @@ func RunSuite(o Options) (Result, error) {
 		res.Failed = true
 	}
 	return res, nil
+}
+
+// fingerprint is the fingerprint of one case and the number of inputs under it.
+type fingerprint struct {
+	fingerprint string
+	files       int
+}
+
+// fingerprints takes the fingerprint of each case, by config.
+func fingerprints(src Source, cases []Case) (map[string]fingerprint, error) {
+	out := map[string]fingerprint{}
+	for _, c := range cases {
+		fp, n, err := src.Fingerprint(c.Config)
+		if err != nil {
+			return nil, err
+		}
+		out[c.Config] = fingerprint{fp, n}
+	}
+	return out, nil
+}
+
+func sameFingerprints(a, b map[string]fingerprint) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // CopyModels copies the TLA+ modules and configurations of src into dst,

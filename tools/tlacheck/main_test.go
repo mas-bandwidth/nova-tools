@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -136,7 +137,7 @@ func TestAnUnknownVerbIsNamedAndTheVerbsAreListed(t *testing.T) {
 	if r.code != 2 || r.stdout != "" || strings.Count(r.stderr, "\n") != 1 {
 		t.Fatalf("%+v", r)
 	}
-	for _, want := range []string{`unknown verb "bogus"`, "run, groups, merge, table, member, replay, witnesses", "run: tlacheck help"} {
+	for _, want := range []string{`unknown verb "bogus"`, "run, groups, merge, inputs, table, member, replay, witnesses", "run: tlacheck help"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("stderr %q lacks %q", r.stderr, want)
 		}
@@ -390,6 +391,205 @@ func TestMergeJoinsTheRecordsOfEveryGroup(t *testing.T) {
 	e, out, errs = testEnv(t, nil)
 	if r := do(e, out, errs, "merge", "--root", root, "--out", merged, junk); r.code != 2 || !strings.Contains(r.stderr, "cannot read records") {
 		t.Fatalf("junk: %+v", r)
+	}
+}
+
+// A merge holds every record to the fingerprint of its own case at this
+// checkout: a model edited since the runs refuses the records of the cases that
+// read it and only those.
+func TestMergeRefusesRecordsOfAModelEditedSinceTheRuns(t *testing.T) {
+	t.Parallel()
+	root, jar := checkout(t)
+	var runs []string
+	for _, group := range []string{"alpha", "beta", "gamma"} {
+		e, out, errs := testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil))
+		dir := filepath.Join(t.TempDir(), group)
+		if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
+			t.Fatalf("%s: %+v", group, r)
+		}
+		runs = append(runs, filepath.Join(dir, tlc.RunsFile))
+	}
+	if err := os.WriteFile(filepath.Join(root, "tla", "MCAStale.cfg"), []byte("edited since\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merged := filepath.Join(t.TempDir(), "RUNS.tsv")
+	e, out, errs := testEnv(t, nil)
+	r := do(e, out, errs, append([]string{"merge", "--root", root, "--out", merged}, runs...)...)
+	if r.code != 1 || !strings.Contains(r.stderr, "1 records were measured on other inputs than these: MCAStale.cfg (") || strings.Contains(r.stderr, "MCABroken") {
+		t.Fatalf("%+v", r)
+	}
+	if _, err := os.Stat(merged); err == nil {
+		t.Fatal("a refused merge wrote its output")
+	}
+}
+
+// After an edit only the groups that hold a case that reads it are run again,
+// and the merge keeps the current records of the others: the records file the
+// checkout commits is the same one a run of every group makes.
+func TestOnlyTheStaleGroupsAreRunAndMergedOntoTheCommittedRecords(t *testing.T) {
+	t.Parallel()
+	root, jar := checkout(t)
+	codes := map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}
+	runGroup := func(group string) string {
+		e, out, errs := testEnv(t, scriptedTLC(t, codes, nil))
+		dir := filepath.Join(t.TempDir(), group)
+		if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", group); r.code != 0 {
+			t.Fatalf("%s: %+v", group, r)
+		}
+		return filepath.Join(dir, tlc.RunsFile)
+	}
+	runs := filepath.Join(root, "tla", tlc.RunsFile)
+	first := filepath.Join(t.TempDir(), "first.tsv")
+	e, out, errs := testEnv(t, nil)
+	if r := do(e, out, errs, "merge", "--root", root, "--out", first, runGroup("alpha"), runGroup("beta"), runGroup("gamma")); r.code != 0 {
+		t.Fatalf("%+v", r)
+	}
+	raw, _ := os.ReadFile(first)
+	if err := os.WriteFile(runs, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	groups := func() string {
+		e, out, errs := testEnv(t, nil)
+		r := do(e, out, errs, "groups", "--root", root, "--stale")
+		if r.code != 0 || r.stderr != "" {
+			t.Fatalf("%+v", r)
+		}
+		return strings.TrimSpace(r.stdout)
+	}
+	if got := groups(); got != "[]" {
+		t.Fatalf("stale groups of current records = %s", got)
+	}
+	// MCAStale.cfg is the only case of group beta; MCABroken.cfg and MCA.cfg are alpha's.
+	if err := os.WriteFile(filepath.Join(root, "tla", "MCAStale.cfg"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := groups(); got != `["beta"]` {
+		t.Fatalf("stale groups after editing one configuration = %s", got)
+	}
+	// Without --keep the one group is an incomplete merge; with it, a complete one.
+	merged := filepath.Join(t.TempDir(), "merged.tsv")
+	beta := runGroup("beta")
+	e, out, errs = testEnv(t, nil)
+	if r := do(e, out, errs, "merge", "--root", root, "--out", merged, beta); r.code != 1 || !strings.Contains(r.stderr, "no record for 3 declared cases") {
+		t.Fatalf("no --keep: %+v", r)
+	}
+	e, out, errs = testEnv(t, nil)
+	if r := do(e, out, errs, "merge", "--root", root, "--keep", runs, "--out", merged, beta); r.code != 0 || !strings.Contains(r.stdout, "MERGE OK runs=1 records=4 ") {
+		t.Fatalf("--keep: %+v", r)
+	}
+	got, err := tlc.ReadRecordsFile(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := tlc.ReadRecordsFile(runs)
+	for i := range got {
+		same := got[i] == old[i]
+		if same == (got[i].Config == "MCAStale.cfg") {
+			t.Errorf("%s: kept=%v, want kept only for the cases that did not read the edit", got[i].Config, same)
+		}
+	}
+	if err := os.WriteFile(runs, mustRead(t, merged), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := groups(); got != "[]" {
+		t.Fatalf("stale groups after the merge = %s", got)
+	}
+	// A kept record that is not current is not carried.
+	if err := os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited model\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out, errs = testEnv(t, nil)
+	if r := do(e, out, errs, "merge", "--root", root, "--keep", runs, "--out", merged, runGroup("beta")); r.code != 1 || !strings.Contains(r.stderr, "no record for 3 declared cases") {
+		t.Fatalf("a stale kept record: %+v", r)
+	}
+	if got := groups(); got != `["alpha","beta","gamma"]` {
+		t.Fatalf("stale groups after editing the module every case reads = %s", got)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestInputsPrintsWhatACaseReadsAndItsFingerprint(t *testing.T) {
+	t.Parallel()
+	root, _ := checkout(t)
+	e, out, errs := testEnv(t, nil)
+	r := do(e, out, errs, "inputs", "--root", root, "--case", "MCA.cfg")
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("%+v", r)
+	}
+	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
+	last := lines[len(lines)-1]
+	src, err := tlc.SourceAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := src.Inputs("MCA.cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != len(inputs)+1 || last != "INPUTS OK case=MCA.cfg files="+fmt.Sprint(len(inputs))+" fingerprint="+tlc.Digest(inputs) {
+		t.Fatalf("output %q for %v", r.stdout, inputs)
+	}
+	for i, in := range inputs {
+		if lines[i] != "INPUT OK path="+in.Path+" sha256="+in.SHA256 || !eventRE.MatchString(lines[i]) {
+			t.Errorf("line %d: %q", i, lines[i])
+		}
+	}
+	if !strings.Contains(r.stdout, "path=tla/MCA.cfg ") || !strings.Contains(r.stdout, "path=tla/MCA.tla ") || !strings.Contains(r.stdout, "path=tla/CASES.tsv#MCA.cfg ") || strings.Contains(r.stdout, "MCAStale") {
+		t.Errorf("the case's own files are not the list: %q", r.stdout)
+	}
+	// The case is named as its plan names it, or without the extension.
+	e, out, errs = testEnv(t, nil)
+	if again := do(e, out, errs, "inputs", "--root", root, "--case", "MCA"); again.code != 0 || again.stdout != r.stdout {
+		t.Fatalf("MCA: %+v", again)
+	}
+	// It is the fingerprint a run records.
+	e, out, errs = testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13, "MCCard": 0}, nil))
+	dir := filepath.Join(t.TempDir(), "run")
+	_, jar := checkout(t)
+	if run := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha"); run.code != 0 {
+		t.Fatalf("%+v", run)
+	}
+	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
+	if err != nil || recs[0].InputSHA256 != tlc.Digest(inputs) || recs[0].InputFiles != len(inputs) {
+		t.Fatalf("records %+v (%v), inputs digest %s over %d", recs, err, tlc.Digest(inputs), len(inputs))
+	}
+}
+
+func TestInputsRefusesWhatItCannotAnswer(t *testing.T) {
+	t.Parallel()
+	root, _ := checkout(t)
+	for name, tc := range map[string]struct {
+		args []string
+		code int
+		want string
+	}{
+		"no case":         {[]string{"inputs", "--root", root}, 2, "missing required --case"},
+		"unknown case":    {[]string{"inputs", "--root", root, "--case", "MCNope.cfg"}, 2, `no case "MCNope.cfg"`},
+		"a positional":    {[]string{"inputs", "--root", root, "--case", "MCA.cfg", "extra"}, 2, "unexpected argument"},
+		"an unknown flag": {[]string{"inputs", "--all"}, 2, "unknown flag"},
+		"no plan":         {[]string{"inputs", "--root", t.TempDir(), "--case", "MCA.cfg"}, 2, "the case plan is refused"},
+	} {
+		e, out, errs := testEnv(t, nil)
+		r := do(e, out, errs, tc.args...)
+		if r.code != tc.code || r.stdout != "" || !strings.Contains(r.stderr, tc.want) || !strings.Contains(r.stderr, "; run: tlacheck ") {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+	// A module that names one that is nowhere is refused, naming it.
+	if err := os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("EXTENDS Nowhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out, errs := testEnv(t, nil)
+	if r := do(e, out, errs, "inputs", "--root", root, "--case", "MCA.cfg"); r.code != 2 || !strings.Contains(r.stderr, "names Nowhere") {
+		t.Errorf("an unresolved module: %+v", r)
 	}
 }
 
