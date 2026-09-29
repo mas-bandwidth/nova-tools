@@ -6,9 +6,12 @@
 # ==============================================================================
 
 # Runner user & permissions
-bench_wsl2_user: "nova"
-bench_wsl2_group: "nova"
-bench_wsl2_user_home: "/home/{{ bench_wsl2_user }}"
+bench_wsl2_runner_user: "nova"
+bench_wsl2_runner_group: "nova"
+bench_wsl2_runner_uid: 1000
+bench_wsl2_user: "{{ bench_wsl2_runner_user }}"
+bench_wsl2_group: "{{ bench_wsl2_runner_group }}"
+bench_wsl2_user_home: "/home/{{ bench_wsl2_runner_user }}"
 bench_wsl2_user_shell: "/bin/bash"
 bench_wsl2_user_sudo: true
 

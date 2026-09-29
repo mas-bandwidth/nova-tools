@@ -5,15 +5,24 @@
 # bench directories, and git commit identity without hardcoded user homes.
 # ==============================================================================
 
+- name: set user and group compatibility facts
+  ansible.builtin.set_fact:
+    bench_wsl2_runner_user: "{{ bench_wsl2_runner_user | default(bench_wsl2_user) }}"
+    bench_wsl2_runner_group: "{{ bench_wsl2_runner_group | default(bench_wsl2_group) }}"
+    bench_wsl2_runner_uid: "{{ bench_wsl2_runner_uid | default(1000) }}"
+    bench_wsl2_user: "{{ bench_wsl2_runner_user | default(bench_wsl2_user) }}"
+    bench_wsl2_group: "{{ bench_wsl2_runner_group | default(bench_wsl2_group) }}"
+
 - name: ensure runner user group exists
   ansible.builtin.group:
-    name: "{{ bench_wsl2_group }}"
+    name: "{{ bench_wsl2_runner_group }}"
     state: present
 
 - name: ensure runner user exists
   ansible.builtin.user:
-    name: "{{ bench_wsl2_user }}"
-    group: "{{ bench_wsl2_group }}"
+    name: "{{ bench_wsl2_runner_user }}"
+    group: "{{ bench_wsl2_runner_group }}"
+    uid: "{{ bench_wsl2_runner_uid }}"
     shell: "{{ bench_wsl2_user_shell }}"
     home: "{{ bench_wsl2_user_home }}"
     create_home: true
@@ -21,8 +30,8 @@
 
 - name: configure passwordless sudo for runner user
   ansible.builtin.copy:
-    content: "{{ bench_wsl2_user }} ALL=(ALL) NOPASSWD:ALL\n"
-    dest: "/etc/sudoers.d/{{ bench_wsl2_user }}"
+    content: "{{ bench_wsl2_runner_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    dest: "/etc/sudoers.d/{{ bench_wsl2_runner_user }}"
     owner: root
     group: root
     mode: "0440"
@@ -41,7 +50,7 @@
       [boot]
       systemd=true
       [user]
-      default={{ bench_wsl2_user }}
+      default={{ bench_wsl2_runner_user }}
       [interop]
       enabled=true
       appendWindowsPath=true
@@ -55,20 +64,29 @@
     group: root
     mode: "0644"
 
+- name: configure runner environment in .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ bench_wsl2_user_home }}/.bashrc"
+    regexp: '^export PATH=.*bench_wsl2'
+    line: 'export PATH="{{ bench_wsl2_system_path }}" # bench_wsl2'
+    owner: "{{ bench_wsl2_runner_user }}"
+    group: "{{ bench_wsl2_runner_group }}"
+    mode: "0644"
+
 - name: create standard bench and runner directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ bench_wsl2_user }}"
-    group: "{{ bench_wsl2_group }}"
+    owner: "{{ bench_wsl2_runner_user }}"
+    group: "{{ bench_wsl2_runner_group }}"
     mode: "0755"
   loop: "{{ bench_wsl2_standard_dirs }}"
 
 - name: configure runner git identity
   ansible.builtin.copy:
     dest: "{{ bench_wsl2_user_home }}/.gitconfig"
-    owner: "{{ bench_wsl2_user }}"
-    group: "{{ bench_wsl2_group }}"
+    owner: "{{ bench_wsl2_runner_user }}"
+    group: "{{ bench_wsl2_runner_group }}"
     mode: "0644"
     content: |
       [user]
