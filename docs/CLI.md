@@ -735,11 +735,15 @@ a missing flag, an unreadable pool or worker description, a key file that is
 absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
-default number of workers, no default deadline, no default file budget and no
-default token budget. --files is required because a budget this tool supplied
-would be a guess about somebody else's task; --tokens is required for the same
-reason, and --tokens unmetered is a caller's statement that this provider has
-no live accounting and the deadline is the only stop. Zero is refused for both.
+default number of workers, no default deadline, and no default token budget.
+batch takes --cards; native and route require --card; lint takes --card, or
+--fleet or --rules instead; verify takes --card as an option and reads it only
+when given (because a card this tool chose would be a guess about somebody
+else's task); the remaining verbs take no card flag. --tokens is required on
+batch and native because a budget this tool supplied would be a guess about
+somebody else's task, and --tokens unmetered is a caller's statement that this
+provider has no live accounting and the deadline is the only stop. Zero is
+refused for tokens.
 
 THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
 description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
@@ -778,7 +782,7 @@ read-pr — read one pull request against the rules
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
 3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+4. A FILE BUDGET: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop. Say in RESULT.md which files you
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
@@ -833,13 +837,11 @@ hundred lines of Go, and the whole test suite runs against it with no provider, 
 and no key worth anything. It is the shortest way to see the contract, and to test a pool
 of your own before a real model touches it.
 
-**`native` takes directory leases (`.lease`, `.slot-lease`), but no bench slot lease (#3877).** A bench's capacity is one number,
+**`native` takes directory leases (`.lease`, `.slot-lease`).** A bench's capacity is one number,
 `bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
 is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
 reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
-card. The file ledger it used to lease from was a second answer to the same question.
-`--slots-store` and `--owner` flags are accepted for compatibility with callers built before
-#3877, but are read by nothing in `native`.
+card. `--slots-store` and `--owner` flags are accepted and ignored by `native`.
 
 **The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
 own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
@@ -854,6 +856,35 @@ toolchain roots on the wall's argv, read-only and skipped when one is not there:
 **Deadline and process group.** The harness runs as the leader of its own process group. At
 `--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
 and records the outcome.
+
+### The doctor
+
+The doctor compares the `version` line of the `nova-swarm` first on PATH with the one at
+`~/.local/bin/nova-swarm`, and `batch` and `native` run the same check before they start
+anything (`-h` never does). Each binary is asked for `version` under a 5-second deadline,
+both at the same time; the first line it prints, at most 4096 bytes, is its stamp, and a
+stamp is printed as a bounded, escaped excerpt.
+
+| line | meaning | exit | next action |
+|---|---|---|---|
+| `DOCTOR OK stamp=<stamp>` | the two agree, or there is one binary to read | 0 | none |
+| `DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory` | no binary was read | 0 | none |
+| `DOCTOR DRIFT path=<binary> stamp=<stamp>` and `DOCTOR DRIFT local=<binary> stamp=<stamp>` | the two stamps differ; both are printed | 2 | see the next line |
+| `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
+| `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
+
+The cause is one of `timed out after <deadline>`, `exited <n>`, `was killed (<signal>)`
+(a run ended by a signal), `printed nothing`, `printed a line longer than <n> bytes`,
+`not found`, or the system's own words when the binary cannot be started, such as
+`fork/exec <path>: permission denied` for a file that is not executable. The other binary
+is described in one sentence: it reported a stamp, it could not be read either, it is not
+installed, or there is no other binary. A stamp printed before a failure is still compared, so a stale binary that then
+hangs is refused as shadowing and as unreadable.
+
+When the check itself is the problem, the refusal's own next action is the way out: run the
+named binary's `version` by hand to see what it does, then rebuild it or remove it.
+Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
+shadow with, and the check passes on the PATH binary alone. No flag skips the check.
 
 ## nova-sandbox
 
