@@ -488,10 +488,10 @@ type EndReadLowParams struct {
 
 // EndReadLowResult contains the output of EndReadLow.
 type EndReadLowResult struct {
-	Receipt     Receipt    `json:"receipt"`
+	Receipt     Receipt     `json:"receipt"`
 	Path        ReadLowPath `json:"path"`
-	FixCopy     *CopyID    `json:"fix_copy,omitempty"`
-	TargetState CardState  `json:"target_state"`
+	FixCopy     *CopyID     `json:"fix_copy,omitempty"`
+	TargetState CardState   `json:"target_state"`
 }
 
 // EndFixOKParams specifies parameters for Action 9 (EndFixOK).
@@ -641,8 +641,8 @@ const (
 	FnCardLandEvent = "ns_card_land_event"
 
 	// Query / Read-Only Redis Functions
-	FnCardGet             = "ns_card_get"
-	FnCardCopyGet         = "ns_card_copy_get"
+	FnCardGet              = "ns_card_get"
+	FnCardCopyGet          = "ns_card_copy_get"
 	FnCardConsumerCapacity = "ns_card_consumer_capacity"
 )
 

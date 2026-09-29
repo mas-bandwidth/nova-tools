@@ -430,7 +430,6 @@ func (w *JournalWriter) AppendWithSeq(seq uint64, ts time.Time, payload []byte) 
 	return frame, nil
 }
 
-
 // NextSeq returns the next sequence number that will be assigned.
 func (w *JournalWriter) NextSeq() uint64 {
 	w.mu.Lock()
@@ -780,4 +779,3 @@ func ApplyJournalEvent(ctx context.Context, cm *MemoryCardMachine, ev JournalMut
 func applyJournalEvent(ctx context.Context, cm *MemoryCardMachine, ev JournalMutationEvent) error {
 	return ApplyJournalEvent(ctx, cm, ev)
 }
-

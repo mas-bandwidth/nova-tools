@@ -684,6 +684,7 @@ func EndFixOK(card *CardRecord, opts ...ActionOption) error {
 //   - VerdictRedeal: moves primary to "ready" for fresh assignment
 //   - VerdictDrop: moves primary directly to "landed"
 //   - VerdictReassign: moves primary to "working" on the reassign consumer
+//
 // Leaving review retires any remaining open reads to "fail".
 func Verdict(card *CardRecord, opts ...ActionOption) error {
 	if card == nil {

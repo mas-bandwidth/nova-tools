@@ -859,4 +859,3 @@ func TestRatchet_VerifyFrame(t *testing.T) {
 		t.Errorf("Expected ErrClockRegression, got %v", err)
 	}
 }
-

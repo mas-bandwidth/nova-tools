@@ -27,11 +27,11 @@ func TestJournal_RoundTripWriteRead(t *testing.T) {
 	defer writer.Close()
 
 	testPayloads := [][]byte{
-		{},                           // Empty payload
-		[]byte("hello world"),        // Small ASCII
-		[]byte("🎉 Unicode test 🚀"), // UTF-8 text
-		bytes.Repeat([]byte{0xAB}, 1024),   // 1 KiB binary
-		bytes.Repeat([]byte{0x55}, 65536),  // 64 KiB binary
+		{},                                // Empty payload
+		[]byte("hello world"),             // Small ASCII
+		[]byte("🎉 Unicode test 🚀"),        // UTF-8 text
+		bytes.Repeat([]byte{0xAB}, 1024),  // 1 KiB binary
+		bytes.Repeat([]byte{0x55}, 65536), // 64 KiB binary
 	}
 
 	writtenFrames := make([]*Frame, len(testPayloads))
