@@ -10,7 +10,7 @@ import (
 // itself (D1) is the store binding's; here, what the core judges of it.
 
 // D1: while an operation is pending, the rules that hold only when none is
-// (2, 3, 4, 5, 7, 9) are not judged; the rules that always hold (1, 6, 8) are.
+// (2, 3, 4, 5, 9) are not judged; the rules that always hold (1, 6, 7, 8) are.
 func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
@@ -23,7 +23,7 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	if v := Check(w.s, nil); len(v) == 0 || v[0].Rule != 2 {
 		t.Fatalf("with no operation pending the partial state is a violation: %v", v)
 	}
-	v := Check(w.s, []string{"start-x-1"})
+	v := Check(w.s, &Pending{ID: "start-x-1", Verb: "start"})
 	if len(v) != 1 || v[0].Rule != 10 || !strings.Contains(v[0].Detail, "pending") {
 		t.Fatalf("with the start pending: %v", v)
 	}
@@ -31,7 +31,7 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	w.s.Fleet.Put(&Card{ID: "s1-2.w9", Row: "m2", Col: Ready, Score: pr.Score, Rev: 1,
 		Fields: map[string]string{"primary": "s1-2", "attempt": "9", "gen": "1"}})
 	found := false
-	for _, x := range Check(w.s, []string{"start-x-1"}) {
+	for _, x := range Check(w.s, &Pending{ID: "start-x-1", Verb: "start"}) {
 		found = found || x.Rule == 8
 	}
 	if !found {
@@ -455,4 +455,21 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 		t.Fatalf("a drop of the last open primary: %s", st)
 	}
 	w.clean("landed by a drop")
+}
+
+// Rule 7 is always judged: while a rank is between its tables, a copy may
+// carry the rank's new score, and any other difference is a violation.
+func TestRule7IsJudgedAgainstAPendingRank(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 1}}))
+	w.s.Fleet.Card("s1-1.w1").Score = -9 // the rank's fleet phase applied, its work phase not
+	if v := Check(w.s, &Pending{ID: "rank-1", Verb: "rank", Scores: map[string]float64{"s1-1": -9}}); len(v) != 1 || v[0].Rule != 10 {
+		t.Fatalf("a copy at the pending rank's score: %v", v)
+	}
+	w.s.Fleet.Card("s1-1.w1").Score = 42
+	v := Check(w.s, &Pending{ID: "start-1", Verb: "start"})
+	if len(v) != 2 || v[0].Rule != 7 {
+		t.Fatalf("a copy at another score while another operation is pending: %v", v)
+	}
 }

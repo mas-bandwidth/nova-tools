@@ -266,8 +266,10 @@ exactly, member by member, never by their counts.
    and a primary has at most one live work card.
 9. A stopped stream has an open judgment notification.
 
-Rules 2, 3, 4, 5, 7 and 9 hold whenever no operation is pending; 1, 6 and 8
-always. `check` reports a pending operation: in flight while it is younger than
+Rules 2, 3, 4, 5 and 9 hold whenever no operation is pending; 1, 6, 7 and 8
+always. A rank is the one step that changes scores: while a rank is pending, a
+copy may carry the rank's own new score, and any other difference breaks
+rule 7. `check` reports a pending operation: in flight while it is younger than
 the grace, cut after it.
 
 ## 10. Steps that touch more than one table

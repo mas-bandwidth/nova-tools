@@ -52,14 +52,32 @@ func sortedKeys(m primarySet) []string {
 	return out
 }
 
+// Pending is the operation the sprint's fence holds, as check judges it: a
+// rank's new scores, by primary, from its own manifest.
+type Pending struct {
+	ID, Verb string
+	Scores   map[string]float64
+}
+
+// ranking says a copy's score and its primary's differ only because the
+// pending rank is between its tables: one of them is the rank's new score.
+func (p *Pending) ranking(primary string, a, b float64) bool {
+	if p == nil {
+		return false
+	}
+	t, ok := p.Scores[primary]
+	return ok && (a == t || b == t)
+}
+
 // Check is what is always true, over an observed state with all four tables
 // loaded (docs/SPEC-SPRINT.md section 9). Sets of primaries are compared
 // exactly, member by member, never by their counts. pending is the operation
-// the sprint's fence holds, if any: rules 2, 3, 4, 5, 7 and 9 hold whenever no
-// operation is pending, and are not judged while one is; 1, 6 and 8 always.
-func Check(s *Snapshot, pending []string) []Violation {
+// the sprint's fence holds, if any: rules 2, 3, 4, 5 and 9 hold whenever no
+// operation is pending, and are not judged while one is; 1, 6, 7 and 8 always,
+// rule 7 against a pending rank's own new scores.
+func Check(s *Snapshot, pending *Pending) []Violation {
 	var out []Violation
-	quiet := len(pending) == 0
+	quiet := pending == nil
 	// 1. One place in each table: the loaded cards are keyed by id, so a card
 	// seen in two cells is caught by the loader; here, every placed card is on
 	// a declared row.
@@ -137,7 +155,7 @@ func Check(s *Snapshot, pending []string) []Violation {
 			if t == s.Merge {
 				pid = c.ID
 			}
-			if pr := s.Work.Card(pid); quiet && pr != nil && pr.Placed() && pr.Score != c.Score {
+			if pr := s.Work.Card(pid); pr != nil && pr.Placed() && pr.Score != c.Score && !pending.ranking(pid, pr.Score, c.Score) {
 				out = append(out, Violation{7, fmt.Sprintf("%s: %s has score %s and its primary %s has %s", t.Name, c.ID, fmtScore(c.Score), pid, fmtScore(pr.Score))})
 			}
 		}
@@ -176,8 +194,8 @@ func Check(s *Snapshot, pending []string) []Violation {
 		}
 	}
 	// 10. A step that did not finish: the fence holds it.
-	for _, op := range pending {
-		out = append(out, Violation{10, "operation " + op + " is pending; run: nova-sprint repair"})
+	if pending != nil {
+		out = append(out, Violation{10, "operation " + pending.ID + " (" + pending.Verb + ") is pending; run: nova-sprint repair"})
 	}
 	return out
 }

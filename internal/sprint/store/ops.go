@@ -78,12 +78,12 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 			st.backoff(i + 2) // another writer is at it: look again for a quiet moment
 			continue
 		}
-		var ops []string
+		var ops *sprint.Pending
 		rep.Pending, rep.InFlight = "", false
 		if pending != nil {
 			rep.Pending = pending.ID
 			rep.InFlight = s.Now.Sub(pending.At) < st.grace()
-			ops = []string{pending.ID}
+			ops = pendingOf(*pending, st.Names)
 		}
 		rep.Violations = sprint.Check(s, ops)
 		if rep.InFlight {
@@ -260,4 +260,21 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 func parseStamp(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
+}
+
+// pendingOf is a pending operation as check judges it: a rank's new scores of
+// its primaries, read from its work-table manifests.
+func pendingOf(op OpRecord, names sprint.Names) *sprint.Pending {
+	p := &sprint.Pending{ID: op.ID, Verb: op.Verb, Scores: map[string]float64{}}
+	for _, m := range op.Manifests {
+		if m.Table != names.Table(sprint.Work) {
+			continue
+		}
+		for _, e := range m.Members {
+			if e.Move != nil && e.Move.Score != nil {
+				p.Scores[e.ID] = *e.Move.Score
+			}
+		}
+	}
+	return p
 }
