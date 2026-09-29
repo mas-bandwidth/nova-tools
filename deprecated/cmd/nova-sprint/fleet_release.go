@@ -141,11 +141,6 @@ func runFleetRelease(ctx context.Context, args []string, out, errOut io.Writer) 
 	return runFleetReleaseWith(ctx, args, out, errOut, productionReleaseDeps())
 }
 
-// runFleetRoll is the retired spelling: one refusal naming the survivor.
-func runFleetRoll(_ context.Context, _ []string, _, errOut io.Writer) int {
-	return refuse(errOut, "fleet roll", "is retired into fleet release: nova-sprint fleet release <sha>|dev is the whole roll (build, fn, fn-check, the play, self update, the verify)")
-}
-
 func releaseRefused(errOut io.Writer, err error) int {
 	fmt.Fprintf(errOut, "FLEET RELEASE REFUSED: %s\n", oneline.Escape(strings.TrimPrefix(err.Error(), fleetbuild.ErrRefused.Error()+": ")))
 	return 1

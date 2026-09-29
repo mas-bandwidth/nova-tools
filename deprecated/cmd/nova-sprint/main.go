@@ -81,7 +81,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) (code int) {
 	// -h on any verb or subverb: its usage line and flags on stdout, exit 2 (#3254).
-	defer verbflag.Recover(stdout, "nova-sprint", &code)
+	defer verbflag.Recover(stdout, "nova-sprint", usage, &code)
 	// --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) anywhere before a
 	// "--": every verb reads its Redis login from that seat through
 	// nova-secrets' library (#4052), and its address and user from the seat's

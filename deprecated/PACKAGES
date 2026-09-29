@@ -21,6 +21,7 @@ keep internal/nsprint/fn
 keep internal/nsprint/testutil
 keep internal/nsprint/testutil/pg
 keep internal/nsprint/verbflag
+keep internal/nsprint/fleet
 
 # nova-decide (Glenn 2026-09-27: parked because it is not proven yet; the Jev
 # client, to return when its value is measured). cmd/nova-decide,
