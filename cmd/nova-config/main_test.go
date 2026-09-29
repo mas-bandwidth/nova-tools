@@ -1093,14 +1093,14 @@ func TestInventoryTimesOutWaitingForTheStore(t *testing.T) {
 	h := inventoryHarness(t, 2)
 	h.override = blockedStore{h.store}
 	code, out, errs := h.run(t, "inventory", "--pg", dsn, "--host", "bench-01", "--timeout", "50ms")
-	want := "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; run: nova-config inventory --pg " + dsn + " --host bench-01 --timeout 150ms\n"
+	want := "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --pg " + dsn + " --host bench-01 --timeout 150ms\n"
 	if code != 2 || out != "" || errs != want {
 		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out, errs, want)
 	}
 
 	// The printed remedy runs through the real CLI once the store answers.
 	h.override = nil
-	remedy := strings.Fields(strings.TrimPrefix(strings.TrimSuffix(errs, "\n"), "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; run: "))
+	remedy := strings.Fields(strings.TrimPrefix(strings.TrimSuffix(errs, "\n"), "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: "))
 	code, out, errs = h.run(t, remedy[1:]...)
 	if code != 0 || errs != "" || !strings.Contains(out, "ansible_host") {
 		t.Fatalf("remedy %v: exit %d stdout %q stderr %q", remedy, code, out, errs)
@@ -1142,5 +1142,15 @@ func TestInventoryOnAStoreNotMigratedOrOlderRefusesWithMigrate(t *testing.T) {
 				t.Fatalf("version %d: exit %d stdout %q stderr %q\nwant %q", have, code, out, errs, want)
 			}
 		}
+	}
+}
+
+func TestInventoryRefusedConnectionKeepsTheGenericRefusal(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 1)
+	code, out, errs := h.run(t, "inventory", "--pg", "postgres://nova_config@127.0.0.1:5432/closed")
+	if code != 2 || out != "" || !strings.Contains(errs, "connection refused") || strings.Contains(errs, "timed out") || !strings.HasSuffix(errs, "; run: nova-config help\n") {
+		t.Fatalf("exit %d stdout %q stderr %q", code, out, errs)
 	}
 }

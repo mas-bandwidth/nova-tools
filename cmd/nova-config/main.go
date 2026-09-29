@@ -966,12 +966,13 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	// stage is what the verb is waiting for, named in the timeout refusal.
-	stage := "connecting"
+	// stage is what the verb is waiting for, and check what to look at when it
+	// does not come; both are named in the timeout refusal.
+	stage, check := "connecting", "check that the store answers on its host and port"
 	// fail is a store failure: the deadline, or the store's own words.
 	fail := func(err error) int {
 		if ctx.Err() != nil {
-			fmt.Fprintf(stderr, "%s %s: timed out after %s waiting for the store while %s; run: %s\n", tool, verb, *timeout, stage, again("--timeout", (*timeout*3).String()))
+			fmt.Fprintf(stderr, "%s %s: timed out after %s waiting for the store while %s; %s; run: %s\n", tool, verb, *timeout, stage, check, again("--timeout", (*timeout*3).String()))
 			return 2
 		}
 		return refuse(stderr, verb, err.Error())
@@ -981,7 +982,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return fail(err)
 	}
 	defer st.Close()
-	stage = "checking the schema version"
+	stage, check = "checking the schema version", "check that nothing holds a lock on schema config"
 	have, err := st.Version(ctx)
 	if err != nil {
 		return fail(err)
@@ -993,7 +994,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 		return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), migrate)
 	}
-	stage = "reading the machines and the fleet row"
+	stage, check = "reading the machines and the fleet row", "check that nothing holds a lock on config.machines or config.fleet"
 	self, explicit := localHost(d.getenv, d.hostname)
 	inv, err := config.BuildInventory(ctx, st, self)
 	if err != nil {

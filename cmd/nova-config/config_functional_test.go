@@ -372,7 +372,7 @@ func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
 	}
 	out, errs := r.run(t, 2, "inventory", "--timeout", "300ms")
 	_ = tx.Rollback()
-	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store while reading the machines and the fleet row; run: nova-config inventory --timeout 900ms") {
+	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --timeout 900ms") {
 		t.Fatalf("stdout %q stderr %q", out, errs)
 	}
 	// Released, the same verb answers.
@@ -484,7 +484,7 @@ func TestInventoryTimeoutFlagGovernsTheConnectionNotAFixedBound(t *testing.T) {
 	start := time.Now()
 	code := run([]string{"inventory", "--timeout", "600ms"}, &out, &errb, d)
 	elapsed := time.Since(start)
-	want := "nova-config inventory: timed out after 600ms waiting for the store while connecting; run: nova-config inventory --timeout 1.8s\n"
+	want := "nova-config inventory: timed out after 600ms waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout 1.8s\n"
 	if code != 2 || out.String() != "" || errb.String() != want {
 		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out.String(), errb.String(), want)
 	}

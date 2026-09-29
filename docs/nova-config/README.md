@@ -300,9 +300,11 @@ ssh.
 <name>` prints one machine's variables; a name with no machine row exits 1 with
 the known names, and `--list` with `--host` is refused.
 `--timeout` (a Go duration, default `10s`) bounds the wait for the store, so an
-unattended ansible run never blocks on a locked table: on expiry the verb exits
-2 with `timed out after <d> waiting for the store` and the command to repeat
-with a longer timeout.
+unattended ansible run never blocks on a locked table: on expiry, at the connection,
+the schema check or the read, the verb exits 2 with `timed out after <d>
+waiting for the store while <stage>`, what to check, and the command to repeat
+with a longer timeout; a connection the store refuses outright keeps the
+generic refusal.
 
 Ansible's `-i` wants an executable file whose first line, `#!/bin/sh`, is at
 column one. These two commands write the two-line wrapper and make it
