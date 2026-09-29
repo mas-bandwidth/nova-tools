@@ -11,10 +11,11 @@ import (
 type MergeReq struct {
 	Stream   string
 	Batch    int
-	Conflict string // a card of the batch that did not merge
-	Cross    string // "<card>=<other>": a card that needs a card of another stream first
-	Red      bool   // the stream branch went red on the batch
-	Rejected bool   // the merge queue rejected the batch
+	Conflict string   // a card of the batch that did not merge
+	Cross    string   // "<card>=<other>": a card that needs a card of another stream first
+	Red      bool     // the stream branch went red on the batch
+	Suspects []string // with Red: the cards of the batch the caller suspects
+	Rejected bool     // the merge queue rejected the batch
 	Note     string
 	Who      string
 }
@@ -48,6 +49,17 @@ func crossRefusal(s *Snapshot, stream, card, other string) string {
 		return "the other card " + other + " (stream " + oc.Row + ") has landed already; nothing to wait for"
 	}
 	return ""
+}
+
+// span is a batch by its first and last card.
+func span(ids []string) string {
+	switch len(ids) {
+	case 0:
+		return "empty"
+	case 1:
+		return ids[0]
+	}
+	return ids[0] + " .. " + ids[len(ids)-1]
 }
 
 // MergeStep merges the head of the stream's queue, in work order, as one
@@ -154,9 +166,24 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		u.Moved = fmt.Sprintf("stream %s stopped: %s queued -> stuck, needs %s (stream %s) landed first", r.Stream, card, other, orDash(otherStream))
 		p.Units = append(p.Units, u)
 	case r.Red:
+		for _, x := range r.Suspects {
+			if !contains(ids, x) {
+				p.refuse(x, "a suspect is a card of the batch; the batch of "+itoa(len(ids))+" is "+span(ids)+"; list it: nova-sprint queue --stream "+r.Stream+" --max "+itoa(len(ids)))
+			}
+		}
+		if len(p.Refused) > 0 {
+			return p
+		}
 		ctlSet["ci"] = "red"
 		u := stop("red", NRed, ids, 0, "card", "other")
-		u.Notes[len(u.Notes)-1].What = "suspects: the batch of " + itoa(len(ids))
+		j := &u.Notes[len(u.Notes)-1]
+		j.Suspects = append([]string(nil), r.Suspects...)
+		if len(r.Suspects) > 0 {
+			ctlSet["suspects"] = strings.Join(r.Suspects, ",")
+			j.What = "suspects: " + strings.Join(r.Suspects, ", ") + " (of the batch of " + itoa(len(ids)) + ")"
+		} else {
+			j.What = "no suspect named; the batch of " + itoa(len(ids)) + " is " + span(ids) + "; list it: nova-sprint queue --stream " + r.Stream + " --max " + itoa(len(ids))
+		}
 		for _, c := range batch {
 			if pr := s.Work.Placed(c.ID); pr != nil {
 				u.Changes = append(u.Changes, change(Work, setEntry(pr, map[string]string{"ci": "red", "ci_at": now})))

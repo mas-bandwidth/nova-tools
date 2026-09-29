@@ -43,7 +43,7 @@ func init() {
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
-		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
+		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
 		{"fleet up", "<member>", "fleet up m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
@@ -173,6 +173,16 @@ func (s *sel) sel(ids []string) sprint.Sel {
 }
 
 func answers(s string) []string { return sprint.Split(s) }
+
+// listFlag is a flag given again or comma separated: every value, in order.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(v string) error {
+	*l = append(*l, sprint.Split(v)...)
+	return nil
+}
 
 // verbSetup is the flag set of a store verb with the common flags.
 func (a *app) verbSetup(name string) (flagSet, *common) {
@@ -807,9 +817,17 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
 	rejected := fs.Bool("rejected", false, "fact: the merge queue rejected the batch")
 	note := fs.String("note", "", "what the facts' source said")
+	var suspects listFlag
+	fs.Var(&suspects, "suspect", "with --red: a card of the batch suspected of turning it red; again, comma separated, or ids after it for more")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
+	}
+	if len(suspects) > 0 {
+		suspects, pos = append(suspects, pos...), nil
+		if !*red {
+			return refuse(stderr, "merge", "--suspect goes with --red")
+		}
 	}
 	facts := 0
 	for _, f := range []bool{*conflict != "", *cross != "", *red, *rejected} {
@@ -825,7 +843,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "merge", err.Error())
 	}
 	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Conflict: *conflict, Cross: *cross,
-		Red: *red, Rejected: *rejected, Note: *note, Who: c.actor}), stdout, stderr)
+		Red: *red, Suspects: suspects, Rejected: *rejected, Note: *note, Who: c.actor}), stdout, stderr)
 }
 
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {

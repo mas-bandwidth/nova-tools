@@ -55,6 +55,7 @@ type Group struct {
 	Decisions []string      `json:"decisions,omitempty"`
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
+	Suspects  []string      `json:"suspects,omitempty"` // a red branch: the suspects named
 	// Members is every subject a verb given --group acts on: the open
 	// subjects of its judgments (a stopped stream's: the cards it stopped
 	// on), or the primaries of its notifications; sorted, unbounded.
@@ -130,6 +131,11 @@ func Inbox(r InboxReq) []Group {
 		}
 		if !contains(g.Notes, n.ID) {
 			g.Notes = append(g.Notes, n.ID)
+		}
+		for _, x := range n.Suspects {
+			if !contains(g.Suspects, x) {
+				g.Suspects = append(g.Suspects, x)
+			}
 		}
 		if overdue && !contains(g.Decisions, "act") {
 			g.Decisions = append(append([]string{}, g.Decisions...), "act")

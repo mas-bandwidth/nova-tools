@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,55 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	}
 	if out := ta.ok("card s1-4"); !strings.Contains(out, `fix=handle\x20the\x20empty\x20case`) {
 		t.Fatalf("--fix for all: %s", out)
+	}
+	ta.clean()
+}
+
+// toMerging brings every primary of the streams to merging queued.
+func (ta *testApp) toMerging(streams ...string) {
+	ta.t.Helper()
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	for _, s := range streams {
+		ta.ok("add --stream " + s + " --count 3")
+	}
+	ta.ok("start --limit 100")
+	ta.ok("take --as m1 --limit 100")
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as m1", &q)
+	var words []string
+	for _, c := range q.Cards {
+		words = append(words, c.ID+"@"+strconv.Itoa(c.Gen))
+	}
+	ta.ok("finish --as m1 " + strings.Join(words, " "))
+	ta.ok("ask --limit 100")
+	ta.ok("read --as reader-a --ok --limit 100")
+	ta.ok("read --as reader-b --ok --limit 100")
+	ta.ok("accept --read-ok")
+}
+
+// I5: a red branch names the suspects given, or says none was and gives the
+// batch's first and last card and the command that lists it; a suspect is a
+// card of the batch.
+func TestRedNamesWhatItKnows(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.toMerging("s1", "s2")
+	code, _, errs := ta.do("merge --stream s1 --red --suspect s2-1")
+	if code != 1 || !strings.Contains(errs, "REFUSED s2-1: a suspect is a card of the batch; the batch of 3 is s1-1 .. s1-3") {
+		t.Fatalf("a suspect outside the batch: %d %s", code, errs)
+	}
+	if code, _, errs := ta.do("merge --stream s1 --suspect s1-2"); code != 2 || !strings.Contains(errs, "--suspect goes with --red") {
+		t.Fatalf("--suspect without --red: %d %s", code, errs)
+	}
+	ta.ok("merge --stream s1 --red --suspect s1-2 s1-3")
+	g := ta.group(sprint.NRed, "s1")
+	if strings.Join(g.Suspects, ",") != "s1-2,s1-3" || g.What != "suspects: s1-2, s1-3 (of the batch of 3)" {
+		t.Fatalf("named suspects: %+v", g)
+	}
+	ta.ok("merge --stream s2 --red")
+	g = ta.group(sprint.NRed, "s2")
+	if len(g.Suspects) != 0 || g.What != "no suspect named; the batch of 3 is s2-1 .. s2-3; list it: nova-sprint queue --stream s2 --max 3" {
+		t.Fatalf("no suspect: %+v", g)
 	}
 	ta.clean()
 }
