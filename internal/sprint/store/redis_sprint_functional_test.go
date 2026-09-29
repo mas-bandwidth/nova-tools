@@ -60,6 +60,9 @@ func liveHarnessOn(t *testing.T, c *redis.Client, prefix string) *harness {
 	if err := h.st.B.RowsAdd(h.ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.st.B.SetCoordinator(h.ctx, h.st.Actor); err != nil {
+		t.Fatal(err)
+	}
 	h.beat()
 	return h
 }
@@ -899,8 +902,9 @@ func TestRedisTicksRaceEachOther(t *testing.T) {
 func TestRedisTheCoordinatorsRecords(t *testing.T) {
 	t.Parallel()
 	h, _ := liveHarness(t)
-	if who, err := h.st.B.Coordinator(h.ctx); err != nil || who != "" {
-		t.Fatalf("a new sprint's coordinator: %q %v", who, err)
+	// the harness sets its actor as the coordinator; a sprint may change it
+	if who, err := h.st.B.Coordinator(h.ctx); err != nil || who != h.st.Actor {
+		t.Fatalf("the harness's coordinator: %q %v", who, err)
 	}
 	if err := h.st.B.SetCoordinator(h.ctx, "tester"); err != nil {
 		t.Fatal(err)
@@ -1073,10 +1077,11 @@ func TestRedisTheFenceRefusesWhatItShould(t *testing.T) {
 	if ok, err := h.st.B.AtEpoch(0, false).Acquire(ctx, f.Gen, op("op-3")); ok || err != nil {
 		t.Fatalf("acquire at epoch 0 after a clear: %v %v", ok, err)
 	}
-	// the fence is one per epoch: epoch 1 has its own, empty, at generation 0
+	// the fence is one per epoch: epoch 1 has its own, empty, at generation 1
+	// (clear's own line that the machine is STOPPED, written at epoch 1)
 	one := h.st.B.AtEpoch(1, false)
 	f1, err := one.ReadFence(ctx)
-	if err != nil || f1.Pending != nil || f1.Gen != 0 {
+	if err != nil || f1.Pending != nil || f1.Gen != 1 {
 		t.Fatalf("epoch 1's fence: %+v %v", f1, err)
 	}
 	if ok, err := one.Acquire(ctx, f1.Gen, op("op-3")); !ok || err != nil {

@@ -378,3 +378,28 @@ func TestASilenceStopsTheBeatsForAWhile(t *testing.T) {
 		t.Fatalf("m1 beat %d times in five ticks, two of them silent: %v", beats, w.ran)
 	}
 }
+
+// A --silent window ends: the member beats again, with the seeded facts too
+// (whose Up keeps a member as the driver gave it).
+func TestASilenceEndsWithTheSeededFacts(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
+	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{}, Out: io.Discard,
+		Config: Config{Every: time.Second, Ticks: 6, Silent: []Silence{{Member: "m1", From: time.Second, For: 2 * time.Second}}}}
+	if why, err := d.Loop(); err != nil || why != "ticks" {
+		t.Fatalf("%s %v", why, err)
+	}
+	var beats []int
+	tick := 0
+	for _, a := range w.ran {
+		if a[0] == "where" {
+			tick++
+		}
+		if strings.Join(a, " ") == "fleet beat m1 --load 0" {
+			beats = append(beats, tick)
+		}
+	}
+	if len(beats) != 4 {
+		t.Fatalf("m1 beat at ticks %v in six ticks, two of them silent: %v", beats, w.ran)
+	}
+}

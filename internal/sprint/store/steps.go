@@ -9,7 +9,7 @@ func tables(ts ...string) []string { return ts }
 
 // AddStep admits primaries; it reads the named needs as well, placed or not.
 func AddStep(r sprint.AddReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			ids := append([]string(nil), sprint.AddIDs(s, r)...)
 			return map[string][]string{sprint.Work: append(ids, r.Needs...)}
@@ -19,7 +19,7 @@ func AddStep(r sprint.AddReq) Step {
 
 // ResolveStep moves waiting primaries whose needs landed.
 func ResolveStep(r sprint.ResolveReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "resolve", Load: tables(sprint.Work),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "resolve", Load: tables(sprint.Work),
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
 		},
@@ -34,56 +34,67 @@ func DealStep(r sprint.DealReq) Step {
 
 // TakeStep is a worker taking work cards.
 func TakeStep(r sprint.TakeReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Take(s, r) }}
 }
 
 // FinishStep is a worker finishing work cards.
 func FinishStep(r sprint.FinishReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true,
 		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
 
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers),
+		// Every read card id each reader could get at the primaries' attempts,
+		// placed or retired: a reader who already has one is not free.
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			var ids []string
+			for _, c := range s.Work.Column(sprint.Review) {
+				for _, rd := range s.Readers.Rows {
+					ids = append(ids, sprint.ReadCardID(c.ID, c.Int("attempt"), rd))
+				}
+			}
+			return map[string][]string{sprint.Readers: ids}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ask(s, r) }}
 }
 
 // ReadStep is a reader recording its reads.
 func ReadStep(r sprint.ReadReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 }
 
 // AcceptStep is the coordinator accepting.
 func AcceptStep(r sprint.AcceptReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "accept", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "accept", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Accept(s, r) }}
 }
 
 // ReworkStep is the coordinator sending work back with a fix.
 func ReworkStep(r sprint.ReworkReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rework(s, r) }}
 }
 
 // ReturnStep is the coordinator sending merging primaries back to review.
 func ReturnStep(r sprint.ReturnReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "return", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "return", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Return(s, r) }}
 }
 
 // DropStep is the coordinator taking primaries off the table.
 func DropStep(r sprint.DropReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "drop", Load: All, Mirrors: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "drop", Load: All, Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
 }
 
 // RankStep is the coordinator changing scores.
 func RankStep(r sprint.RankReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "rank", Load: All,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rank", Load: All,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rank(s, r) }}
 }
 
@@ -107,13 +118,13 @@ func FleetStep(r sprint.FleetReq) Step {
 
 // CIStep records a CI observation.
 func CIStep(r sprint.CIReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "ci", Load: tables(sprint.Work, sprint.Readers),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ci", Load: tables(sprint.Work, sprint.Readers),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordCI(s, r) }}
 }
 
 // ReleaseStep is the coordinator releasing reached sentinels.
 func ReleaseStep(r sprint.ReleaseReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Release(s, r) }}
 }
 
@@ -125,10 +136,8 @@ func SentinelsDueStep(who string) Step {
 
 // AckStep is the coordinator closing judgments it looked at.
 func AckStep(r sprint.AckReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "ack", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
-		Extras: func(s *sprint.Snapshot) map[string][]string {
-			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
-		},
+	// every table: ack is judged by the no-stall rule on the state after it
+	return Step{Named: len(r.Notes) > 0, Args: ArgsOf(r), Verb: "ack", Load: All, Extras: tickExtras,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ack(s, r) }}
 }
 

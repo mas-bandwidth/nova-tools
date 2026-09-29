@@ -182,7 +182,7 @@ func reachedNote(s *Snapshot, c *Card, landing map[string]bool, extra int, who s
 		}
 	}
 	n := judgment(NSentinelReached, c.Row, s.Now, 0, c.ID)
-	n.Who = who
+	n.Who, n.Card = who, c.ID
 	n.What = fmt.Sprintf("sentinel %s reached: %d cards of %s have landed; %d cards wait behind it", c.ID, landed, c.Row, behind)
 	return n
 }
@@ -296,10 +296,10 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		return p
 	}
 	p.Units = append(p.Units, after...)
-	settle(&p, s, r.Who, nil, landing)
+	settle(&p, s, r.Who, nil, nil, landing)
 	if d, ok := sprintDone(s, landing, nil, r.Who); ok {
 		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
 	}
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }

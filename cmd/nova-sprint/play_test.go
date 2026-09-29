@@ -86,16 +86,22 @@ func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {
 		t.Fatalf("play:\n%s", out)
 	}
 	var in struct{ Groups []sprint.Group }
-	ta.json("inbox", &in)
-	if len(in.Groups) == 0 || in.Groups[0].Type != sprint.NWorkFailed {
+	failed := func() sprint.Group {
+		t.Helper()
+		ta.json("inbox", &in)
+		for _, g := range in.Groups {
+			if g.Type == sprint.NWorkFailed {
+				return g
+			}
+		}
 		t.Fatalf("inbox: %+v", in.Groups)
+		return sprint.Group{}
 	}
-	if b, _ := json.Marshal(in.Groups[0]); strings.Contains(string(b), `"overdue":true`) {
+	if b, _ := json.Marshal(failed()); strings.Contains(string(b), `"overdue":true`) {
 		t.Fatalf("overdue before its deadline: %s", b)
 	}
 	ta.a.sleep(20 * time.Minute)
-	ta.json("inbox", &in)
-	if b, _ := json.Marshal(in.Groups[0]); !strings.Contains(string(b), `"overdue":true`) {
+	if b, _ := json.Marshal(failed()); !strings.Contains(string(b), `"overdue":true`) {
 		t.Fatalf("not overdue at read time past its deadline: %s", b)
 	}
 }

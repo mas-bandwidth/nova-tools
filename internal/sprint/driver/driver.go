@@ -88,6 +88,7 @@ type Driver struct {
 	Config Config
 	downed map[string]bool // members this driver held down and has not released
 	silent map[string]bool // members whose machines the facts have silenced
+	quiet  map[string]bool // members not beating now (the facts or a --silent window)
 	start  time.Time
 	// held is the sprint's epoch the driver read at its start: every verb it
 	// runs that writes carries it. cleared says a verb was refused because
@@ -340,10 +341,11 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		d.start = d.Clock.Now()
 	}
 	since := d.Clock.Now().Sub(d.start)
-	for _, sl := range c.Silent {
-		if since >= sl.From && since < sl.From+sl.For {
-			next[sl.Member] = false
-		}
+	if d.silent == nil {
+		d.silent = map[string]bool{}
+	}
+	if d.quiet == nil {
+		d.quiet = map[string]bool{}
 	}
 	for _, m := range members {
 		switch {
@@ -359,19 +361,27 @@ func (d *Driver) tick(tick int, c Config, w where) {
 				d.downed[m] = true
 			}
 		case !c.Hold:
-			if d.silent == nil {
-				d.silent = map[string]bool{}
-			}
-			if !next[m] && !d.silent[m] {
-				fmt.Fprintf(d.Out, "  (%s falls silent: its machine stops beating)\n", m)
-			}
-			if next[m] && d.silent[m] {
-				fmt.Fprintf(d.Out, "  (%s beats again)\n", m)
-			}
-			d.silent[m] = !next[m]
+			d.silent[m] = !next[m] // the facts' own view, whatever --silent says
 		}
-		if c.Hold || next[m] {
+		// A member's machine beats while the facts have it up (or it is
+		// held, which beats on) and no --silent window covers it.
+		beats := c.Hold || next[m]
+		for _, sl := range c.Silent {
+			if sl.Member == m && since >= sl.From && since < sl.From+sl.For {
+				beats = false
+			}
+		}
+		if !beats && !d.quiet[m] {
+			fmt.Fprintf(d.Out, "  (%s falls silent: its machine stops beating)\n", m)
+		}
+		if beats && d.quiet[m] {
+			fmt.Fprintf(d.Out, "  (%s beats again)\n", m)
+		}
+		d.quiet[m] = !beats
+		if beats {
 			d.run(true, "fleet", "beat", m, "--load", "0")
+		} else {
+			next[m] = false // a silent machine's worker does no work
 		}
 	}
 	// Workers: finish what they took last tick, then take the oldest ready
@@ -465,10 +475,8 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		if atoi(merge[s]["queued"]) > 0 {
 			batch = queued(s)
 		}
-		work := w.Tables["work"][s]
-		open := atoi(work["waiting"]) + atoi(work["ready"]) + atoi(work["working"]) + atoi(work["review"]) + atoi(work["merging"])
-		if len(batch) == 0 && !(open == 0 && atoi(work["landed"]) > 0) && st != "merging" {
-			continue
+		if len(batch) == 0 {
+			continue // a merge step wants something queued
 		}
 		if len(batch) > c.Batch {
 			batch = batch[:c.Batch]

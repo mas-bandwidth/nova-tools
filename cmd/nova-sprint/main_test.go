@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +31,7 @@ type testApp struct {
 
 func newTestApp(t *testing.T) *testApp {
 	ta := &testApp{t: t, m: store.NewMem(), now: t0, live: []string{"m1", "m2"}}
-	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-"}
+	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-", "NOVA_SPRINT_ACTOR": "coordinator"}
 	ta.a = newApp(func(k string) string { return env[k] })
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
@@ -57,8 +58,35 @@ func (ta *testApp) beat() {
 func (ta *testApp) do(line string) (int, string, string) {
 	var out, errb bytes.Buffer
 	ta.beat()
-	code := ta.a.run(split(line), &out, &errb)
+	code := ta.a.run(ta.withEpoch(split(line)), &out, &errb)
 	return code, out.String(), errb.String()
+}
+
+// withEpoch is a report as an outside actor makes it: with the epoch its
+// cards were handed at (the sprint's now), unless the line names one.
+func (ta *testApp) withEpoch(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	switch args[0] {
+	case "finish", "read", "merge", "ci", "take":
+	default:
+		return args
+	}
+	for _, a := range args {
+		if a == "--epoch" || strings.HasPrefix(a, "--epoch=") || a == "--help" || a == "-h" {
+			return args
+		}
+	}
+	st, err := ta.a.store(common{redis: "mem:0", prefix: "t-", actor: "tester"})
+	if err != nil {
+		return args
+	}
+	es, err := st.EpochNow(context.Background())
+	if err != nil {
+		return args
+	}
+	return append(append([]string(nil), args...), "--epoch", strconv.FormatUint(es.N, 10))
 }
 
 func (ta *testApp) ok(line string) string {

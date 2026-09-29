@@ -93,6 +93,10 @@ type Step struct {
 	// request): a caller's operation id replays only for the same verb and
 	// the same arguments.
 	Args string
+	// Named says the step names its cards or notes (ids, a group's members,
+	// an ack's notes): it applies all or none, and one refusal refuses the
+	// whole step, naming every one.
+	Named bool
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -302,7 +306,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
-		plan := sprint.Lawful(step.Plan(snap))
+		plan := sprint.OnePerCause(snap, sprint.Lawful(step.Plan(snap)))
+		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
+			return allOrNone(res, plan), nil
+		}
 		// The fence is free: a stuck operation's judgment rides with this
 		// step, once.
 		stuck, isStuck, err := st.stuck(ctx)
@@ -320,6 +327,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		op, err := st.operation(step.Verb, sprint.OpFamily(family, st.epoch)+"-"+strconv.Itoa(res.Attempts), plan, snap)
+		var twice *twiceError
+		if errors.As(err, &twice) {
+			return refuseWhole(res, plan, twice.Error())
+		}
 		if err != nil {
 			return res, err
 		}
@@ -329,7 +340,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if why := unwritable(plan, op); why != "" {
 			return refuseWhole(res, plan, why)
 		}
-		if len(plan.Rows) > 0 && !rowsAdded {
+		// A step refused whole writes nothing: its rows are declared only
+		// with a unit to write.
+		if len(plan.Rows) > 0 && !rowsAdded && len(plan.Units) > 0 {
 			if err := st.addRows(ctx, plan.Rows); err != nil {
 				return res, err
 			}
@@ -577,6 +590,94 @@ func refuseWhole(res Result, plan sprint.Plan, why string) (Result, error) {
 	return res, nil
 }
 
+// allOrNone is a step that names its cards or notes with one of them
+// refused: nothing is written, and every one it would have changed is named.
+func allOrNone(res Result, plan sprint.Plan) Result {
+	res.Moved = nil
+	res.Refused = append([]sprint.Refusal(nil), plan.Refused...)
+	seen := map[string]bool{}
+	for _, r := range res.Refused {
+		seen[r.Key] = true
+	}
+	why := fmt.Sprintf("not written: the verb names several and applies all or none, and %d of them %s refused", len(plan.Refused), map[bool]string{true: "was", false: "were"}[len(plan.Refused) == 1])
+	for _, u := range plan.Units {
+		if u.Key != "" && !seen[u.Key] {
+			seen[u.Key] = true
+			res.Refused = append(res.Refused, sprint.Refusal{Key: u.Key, Why: why})
+		}
+	}
+	return res
+}
+
+// twiceError is a step whose plan changes one card twice in ways that do not
+// agree: the step is refused whole, naming both causes.
+type twiceError struct {
+	Card, Table, First, Second, Why string
+}
+
+func (e *twiceError) Error() string {
+	return fmt.Sprintf("card %s of %s is changed twice in one step, by %s and by %s, and the changes disagree (%s)", e.Card, e.Table, e.First, e.Second, e.Why)
+}
+
+func unitCause(u sprint.Unit) string {
+	if u.Moved != "" {
+		return u.Key + " (" + u.Moved + ")"
+	}
+	return u.Key
+}
+
+// mergeEntries is two changes of one card, planned on one pre-state, as one
+// entry: the same expectation, at most one place change, and fields that do
+// not disagree; else why not.
+func mergeEntries(a, b ntable.BatchMemberEntry) (ntable.BatchMemberEntry, string) {
+	ja, _ := json.Marshal(a.Expect)
+	jb, _ := json.Marshal(b.Expect)
+	switch {
+	case a.Create != nil || b.Create != nil:
+		return a, "a card is created once"
+	case string(ja) != string(jb):
+		return a, "they expect the card at different revisions or places"
+	case a.Remove && b.Move != nil || b.Remove && a.Move != nil:
+		return a, "one moves it and one takes it off the table"
+	}
+	out := a
+	if b.Move != nil {
+		if a.Move != nil {
+			mj, _ := json.Marshal(a.Move)
+			nj, _ := json.Marshal(b.Move)
+			if string(mj) != string(nj) {
+				return a, "they move it to different places"
+			}
+		}
+		out.Move = b.Move
+	}
+	out.Remove = a.Remove || b.Remove
+	if len(b.Set) > 0 {
+		out.Set = map[string]string{}
+		for k, v := range a.Set {
+			out.Set[k] = v
+		}
+		for k, v := range b.Set {
+			if w, ok := out.Set[k]; ok && w != v {
+				return a, "they set " + k + " to " + w + " and to " + v
+			}
+			out.Set[k] = v
+		}
+	}
+	out.Unset = append([]string(nil), a.Unset...)
+	for _, k := range b.Unset {
+		if !contains(out.Unset, k) {
+			out.Unset = append(out.Unset, k)
+		}
+	}
+	for _, k := range out.Unset {
+		if _, ok := out.Set[k]; ok {
+			return a, "one sets " + k + " and one unsets it"
+		}
+	}
+	return out, ""
+}
+
 func hasChanges(e ntable.BatchMemberEntry) bool {
 	return e.Create != nil || e.Move != nil || e.Remove || len(e.Set) > 0 || len(e.Unset) > 0
 }
@@ -591,6 +692,7 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 	op := OpRecord{ID: id, Verb: verb, At: snap.Now}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
+	cause := map[entryKey]string{}
 	bumps := map[entryKey]map[string]int{}
 	var bumpOrder []entryKey
 	streams := map[string]bool{}
@@ -601,15 +703,22 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 		for _, c := range u.Changes {
 			k := entryKey{c.Table, c.Entry.ID}
 			if i := seen[k]; i > 0 {
-				if hasChanges(c.Entry) || hasChanges(entries[c.Table][i-1]) {
-					return op, fmt.Errorf("card %s is changed twice in one step of %s", c.Entry.ID, c.Table)
+				// Two changes of one card in one step are one entry when they
+				// agree; else the step is refused, naming both.
+				e := c.Entry
+				e.ID = entries[c.Table][i-1].ID
+				merged, why := mergeEntries(entries[c.Table][i-1], e)
+				if why != "" {
+					return op, &twiceError{Card: c.Entry.ID, Table: c.Table, First: cause[k], Second: unitCause(u), Why: why}
 				}
+				entries[c.Table][i-1] = merged
 				continue
 			}
 			e := c.Entry
 			e.ID = sprint.StoredID(e.ID, snap.Epoch)
 			entries[c.Table] = append(entries[c.Table], e)
 			seen[k] = len(entries[c.Table])
+			cause[k] = unitCause(u)
 		}
 		for _, b := range u.Bumps {
 			k := entryKey{b.Table, b.ID}
@@ -1217,7 +1326,9 @@ func (st *Store) bars(man ntable.BatchManifest, barred map[string]string) bool {
 
 // skipOf describes a skipped entry: what it expected and what the store holds.
 func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Skip {
-	k := Skip{Card: e.ID, Primary: e.ID, Table: table, Expected: "the member present", Found: "no member"}
+	// The card and its primary are named by their card ids: a stored id of a
+	// later epoch (id~n) never leaks into a judgment or a command.
+	k := Skip{Card: sprint.CardID(e.ID), Primary: sprint.CardID(e.ID), Table: table, Expected: "the member present", Found: "no member"}
 	var m *ntable.ReadSetMember
 	for i := range rs.Members {
 		if rs.Members[i].ID == e.ID {
@@ -1225,9 +1336,9 @@ func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Sk
 		}
 	}
 	if p := e.Set["primary"]; p != "" {
-		k.Primary = p
+		k.Primary = sprint.CardID(p)
 	} else if m != nil && m.Fields["primary"] != "" {
-		k.Primary = m.Fields["primary"]
+		k.Primary = sprint.CardID(m.Fields["primary"])
 	}
 	if x := e.Expect; x != nil {
 		var want []string

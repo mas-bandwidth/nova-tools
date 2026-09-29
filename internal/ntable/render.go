@@ -257,7 +257,8 @@ func cellText(c Column, r Row, j int) string {
 // formulaValue is a pct cell's value over the row: the numerator as a share
 // of the denominator (the named count columns of pct(<col>/<a>+<b>), or every
 // count column of the row for pct(<col>)); ok is false when a count it reads
-// did not come back. A known zero denominator is zero percent.
+// did not come back, or when a column it names is missing or is no count
+// column. A known zero denominator is zero percent.
 func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 	part, total, ok := shareCounts(cols, c, r)
 	if !ok {
@@ -270,13 +271,18 @@ func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 }
 
 // shareCounts is a pct cell's numerator and denominator over one row; ok is
-// false when a count it reads did not come back.
+// false when a named source is no longer a count or a count it reads did not
+// come back.
 func shareCounts(cols []Column, c Column, r Row) (part, total int64, ok bool) {
 	f, err := ParseFormula(c.Projection)
 	if err != nil {
 		return 0, 0, false
 	}
 	if f.Over == nil {
+		part, ok = namedCount(cols, r, f.Part)
+		if !ok {
+			return 0, 0, false
+		}
 		for k, o := range cols {
 			if o.Projection != Count {
 				continue
@@ -285,9 +291,6 @@ func shareCounts(cols []Column, c Column, r Row) (part, total int64, ok bool) {
 				return 0, 0, false
 			}
 			total += r.Cells[k].Count
-			if o.Name == f.Part {
-				part = r.Cells[k].Count
-			}
 		}
 		return part, total, true
 	}

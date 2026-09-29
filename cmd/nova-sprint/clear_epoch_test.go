@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -194,5 +195,39 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	}
 	if got := ta.epochImage(0); got != img {
 		t.Fatalf("epoch 0 changed:\n%s\nwas\n%s", got, img)
+	}
+}
+
+// Every report names its epoch: a worker from before a clear, finishing the
+// card it holds, is refused, with no epoch and with its old one, and the new
+// epoch's card of the same name is untouched.
+func TestAnOldWorkersFinishIsRefusedAfterAClear(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 p1")
+	ta.deal(1)
+	ta.ok("take --as m1 p1.w1@1")
+	ta.ok("clear --confirm t-")
+	ta.ok("add --stream s1 p1")
+	ta.deal(1)
+	raw := func(line string) (int, string) {
+		var out, errb bytes.Buffer
+		code := ta.a.run(split(line), &out, &errb)
+		return code, out.String() + errb.String()
+	}
+	if code, out := raw("finish --as m1 p1.w1@1"); code == 0 || !strings.Contains(out, "--epoch") {
+		t.Fatalf("a finish naming no epoch: %d %s", code, out)
+	}
+	if code, out := raw("finish --as m1 p1.w1@1 --epoch 0"); code == 0 || !strings.Contains(out, "cleared") {
+		t.Fatalf("a finish of epoch 0: %d %s", code, out)
+	}
+	if code, out := raw("read --as reader-a --ok p1.r1.reader-a"); code == 0 || !strings.Contains(out, "--epoch") {
+		t.Fatalf("a read naming no epoch: %d %s", code, out)
+	}
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as m1", &q)
+	if len(q.Cards) != 1 || q.Cards[0].ID != "p1.w1" || q.Cards[0].Col != "ready" {
+		t.Fatalf("the new epoch's card: %+v", q.Cards)
 	}
 }

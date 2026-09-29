@@ -180,7 +180,15 @@ func closesFor(open []Open, types []string, subject string) []Open {
 // resolves some obligation of (it closes, or records a decided answer to it);
 // one it does not is refused by its id. Naming a notification closes nothing
 // by itself.
-func answered(p *Plan, s *Snapshot, ids []string) {
+func answered(p *Plan, s *Snapshot, ids []string, who string) {
+	// Judgments are the coordinator's: an answer by anyone else refuses the
+	// whole step.
+	if len(ids) > 0 {
+		if why := notCoordinator(s, who, "--answers"); why != "" {
+			*p = Plan{Refused: []Refusal{{Key: strings.Join(ids, ","), Why: why}}}
+			return
+		}
+	}
 	// An answer of another epoch refuses the whole step: nothing moves, and
 	// the refusal names the id's epoch and when the sprint was cleared.
 	var other []Refusal
@@ -193,6 +201,7 @@ func answered(p *Plan, s *Snapshot, ids []string) {
 		*p = Plan{Refused: other}
 		return
 	}
+	var bad []Refusal
 	for _, id := range ids {
 		known, resolved := false, false
 		for _, o := range s.Open {
@@ -216,10 +225,15 @@ func answered(p *Plan, s *Snapshot, ids []string) {
 		}
 		switch {
 		case !known:
-			p.refuse(id, noJudgment(s, id))
+			bad = append(bad, Refusal{Key: id, Why: noJudgment(s, id) + "; the whole step is refused and nothing was changed"})
 		case !resolved:
-			p.refuse(id, "this step resolves no obligation of "+id)
+			bad = append(bad, Refusal{Key: id, Why: "this step resolves no obligation of " + id + "; the whole step is refused and nothing was changed"})
 		}
+	}
+	// A verb refused has written nothing: one refused answer refuses the
+	// whole step.
+	if len(bad) > 0 {
+		*p = Plan{Refused: append(p.Refused, bad...)}
 	}
 }
 
@@ -312,4 +326,81 @@ func otherEpochAnswer(s *Snapshot, id string, e uint64) string {
 		when = s.Cleared.UTC().Format(time.RFC3339)
 	}
 	return fmt.Sprintf("--answers %s names a judgment of epoch %d; the sprint was cleared at %s and its epoch is now %d; the whole step is refused and nothing was changed; run: nova-sprint inbox", id, e, when, s.Epoch)
+}
+
+// OnePerCause keeps a judgment open once per card and cause: a note of a
+// plan that would open a judgment of a type already open on a subject (and
+// not closed by the plan) leaves that subject out; a note left with no
+// subject is not written. A stream's and the sprint's judgments are as they
+// are written.
+func OnePerCause(s *Snapshot, p Plan) Plan {
+	closing := map[string]bool{}
+	for _, u := range p.Units {
+		for _, o := range u.Closes {
+			closing[o.Key] = true
+		}
+	}
+	for _, o := range p.Closes {
+		closing[o.Key] = true
+	}
+	// A cause is the type, and for a judgment that names needs, the needs
+	// it names: a need dropped later is its own judgment; for one that names
+	// its card (a late read or work card), the card: each is its own.
+	cause := func(n Note, sub string) string {
+		return n.Type + "|" + strings.Join(n.Needs, ",") + "|" + n.Card + "|" + sub
+	}
+	open := map[string]bool{}
+	for _, o := range s.Open {
+		if o.Note.Kind == Judgment && !closing[o.Key] {
+			open[cause(o.Note, o.Subject())] = true
+		}
+	}
+	keep := func(notes []Note) []Note {
+		var out []Note
+		for _, n := range notes {
+			if n.Kind != Judgment || n.StreamLevel || n.SprintLevel || len(n.Primaries) == 0 {
+				out = append(out, n)
+				continue
+			}
+			var subs []string
+			for _, sub := range n.Primaries {
+				if !open[cause(n, sub)] {
+					subs = append(subs, sub)
+				}
+			}
+			if len(subs) == 0 {
+				continue
+			}
+			n.Primaries, n.Count = subs, len(subs)
+			out = append(out, n)
+		}
+		return out
+	}
+	for i := range p.Units {
+		p.Units[i].Notes = keep(p.Units[i].Notes)
+	}
+	p.Notes = keep(p.Notes)
+	return p
+}
+
+// notCoordinator is why who may not answer a judgment: judgments are the
+// sprint's coordinator's (init --coordinator), as release is. "" is may.
+func notCoordinator(s *Snapshot, who, verb string) string {
+	if who == "" {
+		who = s.Actor
+	}
+	return NotCoordinator(s.Coordinator, who, verb)
+}
+
+// NotCoordinator is why who may not answer a judgment of a sprint whose
+// coordinator is coordinator; "" is may.
+func NotCoordinator(coordinator, who, verb string) string {
+	s := struct{ Coordinator string }{coordinator}
+	switch {
+	case s.Coordinator == "":
+		return verb + " answers a judgment, and the sprint has no coordinator; judgments are the coordinator's (init --coordinator)"
+	case who != s.Coordinator:
+		return verb + " answers a judgment, which is the coordinator's alone: " + s.Coordinator + ", not " + orDash(who) + "; nothing was changed"
+	}
+	return ""
 }

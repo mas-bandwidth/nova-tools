@@ -76,6 +76,7 @@ var TickDecisions = map[string][]string{
 	NWorkLate:  {"fleet down <member>", "wait", "drop"},
 	NReadLate:  {"ask --another", "wait", "drop"},
 	NMergeLate: {"merge --stream <s>", "look", "wait"},
+	NStalled:   {"look at the card", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -174,26 +175,21 @@ func bound(p Plan) (Plan, int) {
 
 // T1. TickResolve scans every stream's waiting set in score order, from the
 // state, whenever the tick reads the whole sprint: a primary whose every need
-// has landed moves to ready; a need that was dropped is the blocked judgment,
-// once. A sentinel is never moved: when everything it needs has landed the
-// tick marks it reached and opens its judgment (SentinelsDue), and what waits
+// has landed moves to ready; a dropped or missing need is a blocked judgment,
+// once. A sentinel is never moved: when everything it needs has landed,
+// resolve marks it reached and opens its judgment, and what waits
 // behind it stays waiting until the coordinator releases it. No flag says a
 // scan is due: what is due is read from the state, so a tick that did not
 // finish leaves it due for the next.
 func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	for _, c := range s.Work.Column(Waiting) {
-		if !IsSentinel(c) {
-			ids = append(ids, c.ID)
-		}
+		ids = append(ids, c.ID)
 	}
 	var p Plan
 	if len(ids) > 0 {
 		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
-	due := SentinelsDue(s, r.who())
-	p.Units = append(p.Units, due.Units...)
-	p.Notes = append(p.Notes, due.Notes...)
 	return bound(p)
 }
 
@@ -313,7 +309,10 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 
 // T6. TickCheck holds the state to what is always true (section 9): each
 // violation is one judgment (N8), with the rule and the cards, closed by the
-// tick when the rule holds again.
+// tick when the rule holds again. Its duty is the no-stall rule too (rule 12):
+// each stall nothing holds is one judgment "stalled", with the decisions open
+// to it, not written again while it stays and closed when it clears; a stall
+// that waits behind another is told by the other's.
 func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
@@ -330,7 +329,19 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
-	due := notify(&p, s, conds, []string{NInvariant}, r)
+	for _, f := range Unheld(HeldState{Snap: s, Running: true, Stopped: r.Stopped}, s.Now) {
+		if f.Root != "" {
+			continue
+		}
+		c := cond{typ: NStalled, stream: f.Stream, what: f.What + ": " + f.Why, decisions: f.Decisions}
+		if strings.HasPrefix(f.Subject, "stream:") {
+			c.streamLevel = true
+		} else {
+			c.primaries = []string{f.Subject}
+		}
+		conds = append(conds, c)
+	}
+	due := notify(&p, s, conds, []string{NInvariant, NStalled}, r)
 	return p, due
 }
 
@@ -344,16 +355,24 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		d, ok := r.running(s.Now, c.F(stampField))
 		return c.F(stampField), ok && d > limit
 	}
-	// N4: work cards dealt and not taken, taken and not finished.
-	for _, c := range s.Fleet.Column(Ready, Working) {
-		field, limit, word := "dealt", DeadlineUntaken, "not taken"
-		if c.Col == Working {
-			field, limit, word = "taken", DeadlineUnfinished, "not finished"
-		}
+	// N4: work cards dealt and not taken, taken and not finished, by the
+	// card's state (WorkDeadline): not taken from the first deal since its
+	// last take, not finished from the attempt's first take. No redeal or
+	// withdrawal rewrites either: a member whose beat lapses again and again
+	// cannot reset them, and the time a card spends withdrawn counts.
+	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
+		field, limit, word, own := WorkDeadline(c)
 		if at, ok := late(field, c, limit); ok {
-			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
-				what:      fmt.Sprintf("%s@%s %s to %s at %s, %s", c.ID, c.F("gen"), field, c.Row, at, word),
-				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
+			// fleet down names the member only when it has had its own whole
+			// deadline: a card late at the moment it is redealt is not the
+			// new member's fault
+			decisions := []string{"wait", "drop"}
+			if _, mine := late(own, c, limit); own != "" && mine && s.MemberCtl(c.Row).F("status") == Up {
+				decisions = append([]string{"fleet down " + c.Row}, decisions...)
+			}
+			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
+				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word),
+				decisions: decisions})
 		}
 	}
 	// N5: read cards asked and not begun, begun and not reported.
@@ -363,7 +382,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 			field, limit, word = "begun", DeadlineUnreported, "not reported"
 		}
 		if at, ok := late(field, c, limit); ok {
-			conds = append(conds, cond{typ: NReadLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
+			conds = append(conds, cond{typ: NReadLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
 				what: fmt.Sprintf("%s %s of %s at %s, %s", c.ID, field, c.Row, at, word)})
 		}
 	}
@@ -407,8 +426,8 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 	var order []string
 	byID := map[string]*judg{}
 	for _, o := range s.Open {
-		if o.Note.Kind != Judgment {
-			continue
+		if o.Note.Kind != Judgment || o.Note.Type == NSprintDone {
+			continue // the sprint is done has no due time
 		}
 		j := byID[o.Note.ID]
 		if j == nil {
@@ -419,8 +438,12 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		j.subjects = append(j.subjects, o.Subject())
 	}
 	overdue := func(n Note) bool {
-		if !n.Review.IsZero() {
+		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
 			return s.Now.After(n.Review)
+		}
+		if !n.Review.IsZero() {
+			d, ok := r.running(s.Now, stamp(n.ReviewSet))
+			return ok && d >= n.Review.Sub(n.ReviewSet)
 		}
 		d, ok := r.running(s.Now, stamp(n.At))
 		return ok && d > DeadlineJudgment
@@ -483,6 +506,7 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 // condition with no stream is about the sprint).
 type cond struct {
 	typ, stream string
+	card        string // the consumer card a late judgment is of: its own cause
 	primaries   []string
 	streamLevel bool
 	what        string
@@ -555,17 +579,93 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		}
 		written++
 		n := Note{Kind: Judgment, Type: c.typ, Stream: c.stream, Primaries: c.primaries, Count: len(c.primaries), What: c.what,
-			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true}
+			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true, Card: c.card}
 		n.Decisions = append([]string(nil), c.decisions...)
 		if len(n.Decisions) == 0 {
 			n.Decisions = append([]string(nil), TickDecisions[c.typ]...)
 		}
 		p.Notes = append(p.Notes, n)
 	}
+	closing := map[string]bool{}
 	for _, o := range held {
 		if contains(types, o.Note.Type) && !holds[condKey(o.Note.Type, o.Subject(), o.Note.What)] {
 			p.Closes = append(p.Closes, o)
+			closing[o.Note.ID] = true
+		}
+	}
+	// A primary in review whose last judgment the tick closes (its late read
+	// reported, say) gets the judgment it needs after it, as every step that
+	// leaves a primary in review does.
+	seen := map[string]bool{}
+	for _, o := range p.Closes {
+		pr := s.Work.Placed(o.Subject())
+		if pr == nil || seen[pr.ID] {
+			continue
+		}
+		seen[pr.ID] = true
+		if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, writes: p.Notes, who: who}); ok {
+			p.Notes = append(p.Notes, j)
 		}
 	}
 	return due
+}
+
+// MovesDue is how many moves the tick would make on the snapshot's work and
+// fleet: primaries ready to deal, work cards withdrawn, waiting primaries
+// whose needs have all landed (a sentinel is the coordinator's release), and
+// primaries in review to ask (as TickAsk picks them).
+func MovesDue(s *Snapshot) int {
+	n := len(s.Fleet.Column(Withdrawn))
+	for _, c := range s.Work.Column(Review) {
+		if s.Readers != nil && c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+			n++
+		}
+	}
+	for _, c := range s.Work.Column(Ready) {
+		if !IsSentinel(c) {
+			n++
+		}
+	}
+	for _, c := range s.Work.Column(Waiting) {
+		if !IsSentinel(c) && len(WaitsFor(s, c, nil)) == 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// WorkDeadline is the deadline a work card is held to, by its state: a card
+// not taken since its last deal (ready, or withdrawn again before a take) is
+// late not taken 15 minutes from untaken_since, the first deal since its last
+// take, which no later redeal or withdrawal rewrites; a card working, or
+// withdrawn from a take, is late not finished 2 hours from first_taken, the
+// attempt's first take. The tick's deadline part and the no-stall rule both
+// call it, so they speak at the same moment. field is the stamp it counts
+// from; own is the stamp of the current member's own deal or take, which
+// says whether that member has had its whole deadline ("" when the card is
+// withdrawn: no member holds it).
+func WorkDeadline(c *Card) (field string, limit time.Duration, word, own string) {
+	first := func(fields ...string) string {
+		for _, f := range fields[:len(fields)-1] {
+			if c.F(f) != "" {
+				return f
+			}
+		}
+		return fields[len(fields)-1]
+	}
+	switch c.Col {
+	case Working:
+		own = "taken"
+	case Ready:
+		own = "dealt"
+	}
+	switch {
+	case c.Col == Working:
+		return first("first_taken", "taken"), DeadlineUnfinished, "not finished", own
+	case c.F("untaken_since") != "":
+		return "untaken_since", DeadlineUntaken, "not taken", own
+	case c.F("first_taken") != "":
+		return "first_taken", DeadlineUnfinished, "not finished", own
+	}
+	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken", own
 }

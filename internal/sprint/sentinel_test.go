@@ -186,7 +186,7 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	if len(blocked) != 1 || blocked[0].Note.Type != NBlocked || w.s.Work.Card("stop").F("reached") != "" {
 		t.Fatalf("blocked: %+v", blocked)
 	}
-	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed", Who: "coord"}))
+	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed", Who: "coordinator"}))
 	stop := w.s.Work.Card("stop")
 	if stop.F("waived") != "s1-2" || stop.F("reached") == "" || stop.Col != Waiting || len(notesIn(p, NSentinelReached)) != 1 {
 		t.Fatalf("ack: %v", stop.Fields)

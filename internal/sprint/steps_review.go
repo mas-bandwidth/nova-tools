@@ -64,7 +64,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		var free []string
 		for _, rd := range s.Readers.Rows {
-			if !have[rd] {
+			// a reader with a card at this attempt, even retired, has read it
+			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil {
 				free = append(free, rd)
 			}
 		}
@@ -93,7 +94,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			chosenReaders = append(chosenReaders, shortest(left, q))
 		}
 		if len(chosenReaders) < want {
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and has %d free; run: nova-sprint reader add <name>", want, len(chosenReaders)))
+			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; run: nova-sprint reader add <name>", want, len(chosenReaders), attempt, c.ID))
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}
@@ -103,12 +104,16 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)})))
 		}
 		all = append(all, chosenReaders...)
-		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
+		if !r.Another {
+			// the readers kept on the primary are the pair; --another's reader
+			// is for this attempt only
+			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
+		}
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
-			u.Closes = closesFor(s.Open, []string{NStranded}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
 		asked := map[string]string{}
 		for _, rd := range chosenReaders {
@@ -119,7 +124,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return p
 }
 
@@ -445,7 +450,7 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": stamp(s.Now)}, n)
 		}
 	}
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }
 
@@ -464,7 +469,13 @@ func unitStreams(p Plan) []string {
 // (offQueue) or the table (offTable): landed when every primary of the stream
 // left on the table has landed, else waiting when a merging stream has nothing
 // queued or stuck. A stopped stream stays stopped until it resumes.
-func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool) {
+func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool, landing ...map[string]bool) {
+	lands := map[string]bool{} // the cards this step lands: landed after it
+	for _, l := range landing {
+		for id := range l {
+			lands[id] = true
+		}
+	}
 	for _, st := range unitStreams(*p) {
 		ctl := s.StreamCtl(st)
 		state := ctl.F("state")
@@ -480,7 +491,10 @@ func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool
 		open, landed := 0, s.Work.Count(st, Landed)
 		for _, x := range []State{Waiting, Ready, Working, Review, Merging} {
 			for _, c := range s.Work.Cell(st, x) {
-				if !offTable[c.ID] {
+				switch {
+				case lands[c.ID]:
+					landed++
+				case !offTable[c.ID]:
 					open++
 				}
 			}
@@ -490,6 +504,9 @@ func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool
 			n := happened(NStreamLanded, st, s.Now)
 			n.Who = who
 			setStream(p, s, st, map[string]string{"state": StreamLanded, "since": stamp(s.Now)}, n)
+		case open == 0 && landed == 0 && (state != StreamWaiting || ctl.F("since") != ""):
+			// empty: nothing is on the table for it; waiting, with no since
+			setStream(p, s, st, map[string]string{"state": StreamWaiting, "since": ""})
 		case left == 0 && state == StreamMerging:
 			setStream(p, s, st, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})
 		}
@@ -507,7 +524,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -555,8 +572,10 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
+		// the readers kept are the pair the primary was asked of: an extra
+		// reader of ask --another is for its attempt only
 		askedField := c.F("asked")
-		if len(asked) > 0 {
+		if askedField == "" && len(asked) > 0 {
 			askedField = strings.Join(orderLike(s.Readers.Rows, asked, ""), ",")
 		}
 		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
@@ -580,7 +599,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
 		if m := orphanMerge(s, c); m != nil {
-			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil)))
+			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")))
 			u.Moved += "; its orphan merge card off " + m.Col
 			orphans[c.ID] = true
 		}
@@ -588,7 +607,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, orphans, nil)
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }
 
@@ -637,7 +656,7 @@ type ReturnReq struct {
 // ReturnResolves is the judgments a return is a decision for: a red CI on the
 // primary is discharged; a stream's red or rejected batch is answered and stays
 // open while the stream is stopped.
-var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped}
+var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped, NStalled}
 
 func answeredIn(notes []Note, id string) bool {
 	for _, n := range notes {
@@ -659,17 +678,17 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if why := inState(c, Merging); why != "" {
 			return why
 		}
-		if m := s.Merge.Placed(c.ID); m == nil || (m.Col != Queued && m.Col != Stuck) {
-			return "not queued or stuck in merge (it is " + placeWord(orEmpty(s.Merge.Card(c.ID), c.ID)) + ")"
+		if m := s.Merge.Placed(c.ID); m != nil && m.Col != Queued && m.Col != Stuck {
+			return "not queued or stuck in merge (it is " + placeWord(m) + ")"
 		}
-		return ""
+		return "" // queued, stuck, or no merge card at all: return takes it back
 	}, s.primaryCard)
 	leaving := map[string]bool{}
 	for _, c := range chosen {
 		m := s.Merge.Placed(c.ID)
 		if orphanMerge(s, c) != nil {
 			leaving[c.ID] = true
-			u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil))},
+			u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream"))},
 				Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s review: its orphan merge card off %s", c.ID, m.Col)}
 			if j, ok := reviewJudgment(s, c, reviewStep{closing: noteIDs(u.Closes), who: r.Who}); ok {
 				u.Notes = append(u.Notes, j)
@@ -681,10 +700,16 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}
-		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-			change(Merge, moveEntry(m, c.Row, Returned, nil)),
-			change(Work, moveEntry(c, c.Row, Review, set)),
-		}, Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)}
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Review, set))},
+			Closes: closesFor(s.Open, ReturnResolves, c.ID)}
+		if m != nil {
+			u.Changes = append([]Change{change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream"))}, u.Changes...)
+			u.Moved = fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)
+		} else {
+			// merging with no merge card (a repair skipped its create): back to
+			// review, where the coordinator decides again
+			u.Moved = fmt.Sprintf("%s merging -> review (it had no merge card)", c.ID)
+		}
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
 		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
@@ -705,7 +730,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, leaving, nil)
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }
 
@@ -787,7 +812,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 					gone = append(gone, need)
 				}
 			}
-			if gone = unblocked(s.Open, w.ID, gone); len(gone) > 0 {
+			if gone = unblocked(s.Open, w.ID, gone, NBlocked); len(gone) > 0 {
 				u.Notes = append(u.Notes, blockedNote(s, w.Row, w.ID, r.Who, gone))
 			}
 		}
@@ -810,7 +835,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
 		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
 	}
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }
 
@@ -878,7 +903,7 @@ func Rank(s *Snapshot, r RankReq) Plan {
 		p.Units = append(p.Units, u)
 		score++
 	}
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return p
 }
 
@@ -930,9 +955,12 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 			}
 		}
 		what := r.Note
+		if r.Run != "" {
+			what = strings.TrimSpace("run " + r.Run + ": " + r.Note)
+		}
 		old := head != c.F("head")
 		if old {
-			what = strings.TrimSpace("for an old head " + head + " (current " + orDash(c.F("head")) + "); " + r.Note)
+			what = strings.TrimSpace("for an old head " + head + " (current " + orDash(c.F("head")) + "); " + what)
 		}
 		var n Note
 		if r.Red {
@@ -945,6 +973,10 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 			Moved: fmt.Sprintf("%s ci %s (%s)", c.ID, result, c.Col)}
 		if old {
 			u.Moved += " for an old head"
+		}
+		if r.Red && !old {
+			// a second red takes the open one's place, with this run's text
+			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)
 		}
 		if !r.Red && !old {
 			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)

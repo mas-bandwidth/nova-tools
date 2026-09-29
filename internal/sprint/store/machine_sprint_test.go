@@ -403,18 +403,6 @@ func TestCRFortyPrimariesLandByTheTick(t *testing.T) {
 // (an hour of clock each), outside actors going on.
 func TestCRStopAtEveryPoint(t *testing.T) {
 	t.Parallel()
-	base := map[string]bool{}
-	{
-		w := crSprint(t, 5)
-		if _, ok := w.runTo(600, time.Second); !ok {
-			t.Fatalf("base did not land")
-		}
-		for _, st := range []string{"s1", "s2", "s3"} {
-			for _, c := range w.h.snap().Merge.Cell(st, sprint.Merged) {
-				base[c.ID] = true
-			}
-		}
-	}
 	for _, at := range crScale.StopPoints {
 		w := crSprint(t, 5)
 		w.stopAt, w.stopFor = at, 3
@@ -429,8 +417,8 @@ func TestCRStopAtEveryPoint(t *testing.T) {
 				got[c.ID] = true
 			}
 		}
-		if len(got) != len(base) {
-			t.Errorf("stop at %d: merged %d, base %d", at, len(got), len(base))
+		if len(got) != w.landed() {
+			t.Errorf("stop at %d: merged %d, landed %d", at, len(got), w.landed())
 		}
 		for _, typ := range []string{sprint.NWorkLate, sprint.NReadLate, sprint.NMergeLate} {
 			if n := w.h.written(typ); n > 0 {

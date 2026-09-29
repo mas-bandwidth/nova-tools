@@ -25,6 +25,12 @@ type AckReq struct {
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
 	p.on(s)
+	if why := notCoordinator(s, r.Who, "ack"); why != "" {
+		for _, id := range r.Notes {
+			p.refuse(id, why)
+		}
+		return p
+	}
 	closing := map[string]bool{} // every note id this call closes
 	named := map[string]bool{}
 	for _, id := range r.Notes {
@@ -60,18 +66,6 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			// kept on it, so the tick does not write it again until it has
 			// cleared and come back.
 			u.Notes = append(u.Notes, acknowledged(n, entries, r.Who, s.Now))
-		}
-		if n.Type == NBlocked {
-			for _, o := range entries {
-				if c, notes := waive(s, o.Subject(), r.Who, n.Needs); c.Entry.ID != "" {
-					u.Changes = append(u.Changes, c)
-					u.Notes = append(u.Notes, notes...)
-					u.Moved += "; " + o.Subject() + " waives " + c.Entry.Set["waived"]
-					if c.Entry.Move != nil {
-						u.Moved += " and is ready"
-					}
-				}
-			}
 		}
 		p.Units = append(p.Units, u)
 	}
@@ -110,6 +104,36 @@ func Ack(s *Snapshot, r AckReq) Plan {
 			}
 		}
 	}
+	waivers := map[string][]Note{}
+	for _, u := range p.Units {
+		for _, o := range u.Closes {
+			if o.Note.Type == NBlocked || o.Note.Type == NMissingNeed {
+				waivers[o.Subject()] = append(waivers[o.Subject()], o.Note)
+			}
+		}
+	}
+	// Several judgments can name the same primary. Apply their acknowledged
+	// needs together, once, while retaining each judgment's own answer.
+	waived := map[string]bool{}
+	for i := range p.Units {
+		u := &p.Units[i]
+		for _, o := range u.Closes {
+			id := o.Subject()
+			if waived[id] || len(waivers[id]) == 0 {
+				continue
+			}
+			waived[id] = true
+			if c, notes := waive(s, id, r.Who, waivers[id]); c.Entry.ID != "" {
+				u.Changes = append(u.Changes, c)
+				u.Notes = append(u.Notes, notes...)
+				u.Moved += "; " + id + " waives " + c.Entry.Set["waived"]
+				if c.Entry.Move != nil {
+					u.Moved += " and is ready"
+				}
+			}
+		}
+	}
+
 	written := map[string]bool{}
 	for i := range p.Units {
 		for _, o := range p.Units[i].Closes {
@@ -127,20 +151,27 @@ func Ack(s *Snapshot, r AckReq) Plan {
 }
 
 // waive is the change that records, on a waiting primary, that the
-// coordinator acknowledged its dropped needs: the ones the blocked judgment
-// names (only; every dropped one for a judgment that names none) are waived,
+// coordinator acknowledged its dropped or missing needs: the union named by
+// these judgments (every need of its kind for a legacy judgment naming none),
 // by whom and when, and count as satisfied. A need dropped after the judgment
 // was written has its own. A primary with nothing else to wait for moves to
 // ready in the same change; a sentinel is reached instead.
-func waive(s *Snapshot, id, who string, only []string) (Change, []Note) {
+func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 	c := s.Work.Placed(id)
 	if c == nil || c.Col != Waiting {
 		return Change{}, nil
 	}
 	var gone []string
-	for _, n := range droppedNeeds(s, WaitsFor(s, c, nil)) {
-		if len(only) == 0 || contains(only, n) {
-			gone = append(gone, n)
+	waits := WaitsFor(s, c, nil)
+	for _, n := range judgments {
+		needs := droppedNeeds(s, waits)
+		if n.Type == NMissingNeed {
+			needs = missingNeeds(s, waits)
+		}
+		for _, need := range needs {
+			if (len(n.Needs) == 0 || contains(n.Needs, need)) && !contains(gone, need) {
+				gone = append(gone, need)
+			}
 		}
 	}
 	if len(gone) == 0 {
@@ -167,13 +198,13 @@ func blockedNote(s *Snapshot, stream, id, who string, gone []string) Note {
 	return n
 }
 
-// unblocked is the dropped needs (gone) of a waiting primary that no blocked
-// judgment open on it names: a need dropped after the judgment was written is
+// unblocked is the needs (gone) of a waiting primary that no open judgment
+// of this type names: a need dropped after the judgment was written is
 // its own judgment. A blocked judgment that names none names every one.
-func unblocked(open []Open, id string, gone []string) []string {
+func unblocked(open []Open, id string, gone []string, typ string) []string {
 	named := map[string]bool{}
 	for _, o := range open {
-		if o.Note.Type != NBlocked || o.Subject() != id {
+		if o.Note.Type != typ || o.Subject() != id {
 			continue
 		}
 		if len(o.Note.Needs) == 0 {
@@ -217,31 +248,30 @@ func acknowledged(n Note, entries []Open, who string, now time.Time) Note {
 	return a
 }
 
-// heldAfterAck says a primary is still held by someone after an ack closes the
-// judgments in closing (of the types acked on it): any state but review is
-// held (by its worker, its needs, the tick, the merger or the coordinator's
-// release); in review, a read outstanding, a read the tick would ask for, or
-// another judgment open on it, or one the ack itself writes, holds it.
+// heldAfterAck says a primary is still held after an ack closes the
+// judgments in closing: the no-stall rule (Unheld, check's rule 12, the one
+// definition of held) judged on the state after the ack, the judgments it
+// closes gone and the one the primary would need next open.
 func heldAfterAck(s *Snapshot, pr *Card, closing map[string]bool, acked []string) bool {
-	if pr.Col != Review || s.Readers == nil {
-		return true
-	}
-	reads := readsAt(s, pr, pr.Int("attempt"))
-	for _, rc := range reads {
-		if rc.Col == Asked || rc.Col == Reading {
-			return true
-		}
-	}
-	if len(reads) == 0 && pr.F("result") != "failed" {
-		return true // the tick asks it
-	}
-	for _, o := range closesFor(s.Open, nil, pr.ID) {
+	after := *s
+	after.Open = nil
+	for _, o := range s.Open {
 		if !closing[o.Note.ID] {
-			return true
+			after.Open = append(after.Open, o)
 		}
 	}
-	j, ok := reviewJudgment(s, pr, reviewStep{closing: closing})
-	return ok && !contains(acked, j.Type)
+	if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, acked: acked}); ok {
+		j.ID = "after-ack"
+		for _, sub := range j.Subjects() {
+			after.Open = append(after.Open, Open{Key: OpenKey(j.ID, sub), Note: j})
+		}
+	}
+	for _, f := range Unheld(HeldState{Snap: &after, Running: true}, s.Now) {
+		if f.Subject == pr.ID {
+			return false
+		}
+	}
+	return true
 }
 
 // silenceRefusal is why an ack is refused: the primary it would leave held by
@@ -304,6 +334,10 @@ type WaitReq struct {
 // keep (its review time is set instead) and for one not open.
 func Wait(s *Snapshot, r WaitReq) Plan {
 	var p Plan
+	if why := notCoordinator(s, r.Who, "wait"); why != "" {
+		p.refuse(r.Note, why)
+		return p
+	}
 	var entries []Open
 	for _, o := range s.Open {
 		if o.Note.ID == r.Note {

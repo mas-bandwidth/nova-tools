@@ -140,10 +140,25 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	ta.ok("ask")
 	ta.ok("read --as reader-a --broken --finding 'the empty case is not handled' s1-1.r1.reader-a")
 	broken := ta.group(sprint.NReadBroken, "s1")
+	// all or nothing: s1-3 has no finding, report or --fix, so nothing moves
 	code, out, errs := ta.do("rework s1-1 s1-2 s1-3 --answers " + broken.ID)
 	if code != 1 || !strings.Contains(errs, "REFUSED s1-3: no --fix, and no finding of a broken read or report of failed work") ||
-		!strings.Contains(out, "MOVED s1-1 review -> working (rework)") || !strings.Contains(out, "MOVED s1-2 review -> working (rework)") {
-		t.Fatalf("rework with no --fix: %d\n%s%s", code, out, errs)
+		!strings.Contains(errs, "REFUSED s1-1: not written: the verb names several and applies all or none") ||
+		!strings.Contains(errs, "REFUSED s1-2: not written: the verb names several and applies all or none") ||
+		strings.Contains(out, "MOVED") {
+		t.Fatalf("rework with no --fix for one of three: %d\n%s%s", code, out, errs)
+	}
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		if out := ta.ok("card " + id); !strings.Contains(out, "place=s1:review ") {
+			t.Fatalf("%s moved by a refused rework:\n%s", id, out)
+		}
+	}
+	if g := ta.group(sprint.NReadBroken, "s1"); g.ID != broken.ID {
+		t.Fatalf("the refused rework answered the judgment: %+v", g)
+	}
+	out = ta.ok("rework s1-1 s1-2 --answers " + broken.ID)
+	if !strings.Contains(out, "MOVED s1-1 review -> working (rework)") || !strings.Contains(out, "MOVED s1-2 review -> working (rework)") {
+		t.Fatalf("rework with the finding and the report: %s", out)
 	}
 	for id, want := range map[string]string{"s1-1": `fix=the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {
 		if out := ta.ok("card " + id); !strings.Contains(out, want) {

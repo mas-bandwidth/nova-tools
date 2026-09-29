@@ -74,6 +74,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 		given = &v
 	}
+	c.orActor(pos[0])
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())

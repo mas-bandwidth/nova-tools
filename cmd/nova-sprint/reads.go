@@ -323,10 +323,25 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "inbox", err.Error())
 	}
+	ctx := context.Background()
+	if *read {
+		// the cursor is the coordinator's: anyone reads the inbox, and only
+		// the coordinator moves what it shows
+		rc := *c
+		rc.verb = "inbox --read"
+		if rc.actor == "" {
+			return refuse(stderr, "inbox", "--read moves the coordinator's cursor: --actor <name> is required (or NOVA_SPRINT_ACTOR); nothing was changed")
+		}
+		if why, err := coordinatorsAlone(ctx, st, rc); err != nil || why != "" {
+			if err != nil {
+				return a.readFailed("inbox", err, stderr)
+			}
+			return refuse(stderr, "inbox", why)
+		}
+	}
 	if isNumber(*open) {
 		return refuse(stderr, "inbox", "group numbers are not accepted: --open wants a group's id, as inbox prints it")
 	}
-	ctx := context.Background()
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
 	if err != nil {
 		return a.readFailed("inbox", err, stderr)
@@ -463,6 +478,7 @@ type cardView struct {
 	Open     []sprint.Open      `json:"open,omitempty"`
 	Needs    []sprint.NeedState `json:"needs,omitempty"`
 	NeededBy []string           `json:"needed_by,omitempty"`
+	Held     *sprint.Hold       `json:"held,omitempty"` // what holds it now (check rule 12)
 }
 
 func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
@@ -486,8 +502,16 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s card: no primary %s; run: nova-sprint where\n", prog, oneline.Escape(id))
 		return 1
 	}
+	// What holds it (the no-stall rule, check rule 12): an outside actor, the
+	// next tick, an open judgment, what it waits on, or the machine STOPPED.
+	var held *sprint.Hold
+	if *atEpoch < 0 {
+		if hd, err := st.Held(ctx, id); err == nil {
+			held = &hd
+		}
+	}
 	if c.json {
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy})
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -520,7 +544,14 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	for _, o := range v.Open {
 		fmt.Fprintf(stdout, "OPEN %s %s -> %s\n", oneline.Escape(o.Note.ID), oneline.Escape(o.Note.Type), oneline.Escape(strings.Join(o.Note.Decisions, " | ")))
 	}
-	fmt.Fprintf(stdout, "CARD OK id=%s work_cards=%d read_cards=%d open=%d\n", oneline.Escape(id), len(v.Work), len(v.Reads), len(v.Open))
+	if held != nil {
+		fmt.Fprintf(stdout, "HELD %s\n", oneline.Escape(held.String()))
+	}
+	epoch := uint64(0)
+	if pinned, err := st.Pinned(ctx); err == nil {
+		epoch = pinned.PinnedEpoch()
+	}
+	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open))
 	return 0
 }
 

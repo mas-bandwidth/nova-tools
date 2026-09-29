@@ -157,9 +157,13 @@ func SortCards(cs []*Card) {
 // runs at (given, never read), the tables it loaded, and the open judgment
 // notifications. A table the step did not load is nil.
 type Snapshot struct {
-	Now                         time.Time
-	Epoch                       uint64    // the sprint's epoch the tables were read at
-	Cleared                     time.Time // when that epoch began (the last clear); zero for the first
+	Now     time.Time
+	Epoch   uint64    // the sprint's epoch the tables were read at
+	Cleared time.Time // when that epoch began (the last clear); zero for the first
+	// Coordinator is the sprint's coordinator: judgments are theirs to
+	// answer. Actor is who runs the step (a request's Who, when it names
+	// none).
+	Coordinator, Actor          string
 	Work, Readers, Merge, Fleet *Table
 	Open                        []Open
 	// Acked is the tick's conditions the coordinator acknowledged, held

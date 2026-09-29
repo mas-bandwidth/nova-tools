@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,6 +14,8 @@ type StreamClock struct {
 	State    string
 	Since    time.Time
 	Progress time.Time
+	// Empty says nothing of the stream is on the table: never stale.
+	Empty bool `json:",omitempty"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer
@@ -59,7 +62,15 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	if !n.Review.IsZero() {
-		return n.Review, r.Now.After(n.Review)
+		if n.ReviewSet.IsZero() {
+			return n.Review, r.Now.After(n.Review)
+		}
+		// The review time counts running time from when wait set it.
+		due := n.Review
+		if r.Stopped != nil {
+			due = due.Add(r.Stopped(n.ReviewSet, r.Now))
+		}
+		return due, r.running(n.ReviewSet) >= n.Review.Sub(n.ReviewSet)
 	}
 	due := n.At.Add(r.Deadline)
 	if r.Stopped != nil {
@@ -194,7 +205,7 @@ func Inbox(r InboxReq) []Group {
 	})
 	out := judg
 	for _, st := range r.Streams {
-		if st.State == StreamLanded || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
+		if st.State == StreamLanded || st.Empty || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
 			continue
 		}
 		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
@@ -278,9 +289,10 @@ const (
 )
 
 // commands is the group's decisions as commands, from its oldest note (a
-// stopped stream's card and the card it needs). A decision about cards takes
-// the group with its size and the notifications it answers; a decision about
-// a stopped stream names the cards and resumes the stream.
+// stopped stream's card and the card it needs, by their named fields). A
+// decision about cards takes the group with its size and the notifications it
+// answers; a decision about a stopped stream names the cards and resumes the
+// stream.
 func commands(g Group, first Note, prefix string) []Command {
 	const cmd = "nova-sprint "
 	grp := " --group " + g.ID + " --expect " + itoa(g.Size)
@@ -300,13 +312,10 @@ func commands(g Group, first Note, prefix string) []Command {
 		}
 		return out
 	}
-	card, other := "", ""
-	if len(first.Primaries) > 0 {
-		card = first.Primaries[0]
-	}
-	if len(first.Primaries) > 1 {
-		other = first.Primaries[1]
-	}
+	// The cards a decision names are the note's named ones (the card the
+	// stream stopped on, the card a cross stop needs), never positions in its
+	// set of primaries.
+	card, other := first.Card, first.Other
 	suspects, listBatch := "'<suspect>'", []string{cmd + "queue --stream " + s + " --max " + itoa(g.Size)}
 	if len(g.Suspects) > 0 {
 		suspects, listBatch = strings.Join(g.Suspects, " "), nil
@@ -417,10 +426,17 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"fleet beat '<member>'")
 		case d == "ask --another":
 			add(d, cmd+"ask"+grp+" --another"+ans)
-		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "merge --stream ") || strings.HasPrefix(d, "goal "):
+		case strings.HasPrefix(d, "merge --stream "):
+			// a merge step is a report: it names its epoch, the judgment's
+			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
+		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
+		case d == "resume" && s != "":
+			add(d, resume(didText))
+		case d == "release":
+			add(d, cmd+"release "+strings.Join(g.Members, " ")+" --reason '<what you looked at and found>'"+ans)
 		}
 	}
 	if g.Type == NRed {

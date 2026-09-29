@@ -93,8 +93,14 @@ func banner() string {
 	b.WriteString(`
 Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
 NOVA_REDIS_ADDR), --prefix <p> (else NOVA_SPRINT_PREFIX: every table, view and
-key of this sprint carries it), --actor, --op <id> (the same id again returns
-the recorded result), --json and --max <n> (listed items; 0 is all). A set is
+key of this sprint carries it), --actor <name> (else NOVA_SPRINT_ACTOR; no
+default: a verb that writes wants one), --op <id> (the same id again returns
+the recorded result), --json and --max <n> (listed items; 0 is all). The
+coordinator's verbs are the coordinator's alone (the first init names it:
+--coordinator, else the actor); take, finish, read and fleet beat are the
+workers', whose actor is the member or reader named; merge and ci are
+reports; tick and run are the machine's; the reads need no actor (inbox
+--read, which moves the coordinator's cursor, is the coordinator's). A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
@@ -177,6 +183,7 @@ one answer to each judgment (every one prints its own, filled in):
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
+  blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
   reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
   repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
   an operation was stuck      check, then ack <note> --reason '<what you found>'
@@ -187,6 +194,7 @@ one answer to each judgment (every one prints its own, filled in):
   sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
+  stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
 `
 
 func versionLine() string { return buildinfo.Line(prog, version) }
@@ -284,7 +292,7 @@ func (l *listFlag) Set(v string) error {
 // verbSetup is the flag set of a store verb with the common flags.
 func (a *app) verbSetup(name string) (flagSet, *common) {
 	fs := verbflag.New(name)
-	c := &common{}
+	c := &common{verb: name}
 	c.register(fs, a.getenv)
 	return fs, c
 }
@@ -388,8 +396,21 @@ const (
 // runStep runs a step and reports it: exit 0 when everything named moved, 1
 // when a card was refused or the step was cut, 2 when the store did not
 // confirm.
+// reportVerbs are the outside actors' reports: each names the epoch it was
+// handed its cards at (--epoch, from queue), so a worker, reader or merger
+// from before a clear never reports on the new epoch's card of the same name.
+var reportVerbs = map[string]bool{"finish": true, "read": true, "merge": true, "ci": true, "take by id": true}
+
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
+	if reportVerbs[verbName] && c.epoch < 0 {
+		now := "the sprint's epoch"
+		if es, err := st.EpochNow(ctx); err == nil {
+			now = fmt.Sprintf("the sprint's epoch is %d", es.N)
+		}
+		name := strings.TrimSuffix(verbName, " by id")
+		return refuse(stderr, name, fmt.Sprintf("a report names the epoch its cards were handed at: --epoch <n> (queue and card print it); %s; nothing was changed", now))
+	}
 	step.CallerOp = c.op
 	if c.epoch >= 0 {
 		e := uint64(c.epoch)
@@ -548,6 +569,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	if len(pos) > 0 {
 		return refuse(stderr, "init", "takes no words, found "+pos[0])
 	}
+	c.coordinator = *coordinator
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
@@ -775,11 +797,16 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	if *as == "" || len(gens) != len(ids) {
 		return refuse(stderr, "take", "wants --as <member>, and every card named as <card>@<gen>, the generation from queue --as <member>")
 	}
+	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "take", err.Error())
 	}
-	return a.runStep("take", *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
+	name := "take"
+	if len(ids) > 0 {
+		name = "take by id" // a report on named cards
+	}
+	return a.runStep(name, *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
@@ -799,6 +826,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	if *as == "" || len(ids) == 0 || len(gens) != len(ids) {
 		return refuse(stderr, "finish", "wants --as <member> and every card as <card>@<gen>, the generation the worker holds")
 	}
+	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
@@ -843,6 +871,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if *broken {
 		verdict = "broken"
 	}
+	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "read", err.Error())

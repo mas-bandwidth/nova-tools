@@ -43,6 +43,10 @@ func newHarness(t *testing.T) *harness {
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	// the harness acts as the sprint's coordinator: judgments are theirs
+	if err := h.m.SetCoordinator(h.ctx, h.st.Actor); err != nil {
+		t.Fatal(err)
+	}
 	h.beat()
 	return h
 }
@@ -535,6 +539,7 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	}
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-2.w1"}}, Gens: map[string]int{"s1-2.w1": 1}}))
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // asked: no move is due while STOPPED
 	v, err := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +552,7 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 		t.Fatalf("after the cursor: %+v", v.Groups)
 	}
 	nid := v.Groups[0].Notes[0]
-	if err := h.m.SetReview(h.ctx, nid, t0.Add(3*time.Hour)); err != nil {
+	if err := h.m.SetReview(h.ctx, nid, t0.Add(3*time.Hour), h.now); err != nil {
 		t.Fatal(err)
 	}
 	h.tick(2 * time.Hour)

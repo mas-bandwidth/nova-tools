@@ -41,6 +41,12 @@ const (
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
+
+	// Computed by inbox from the machine's record, as the stale line is: no
+	// notification holds them.
+	NMachineSilent  = "the machine is not ticking"
+	NTickFailing    = "the tick keeps failing"
+	NStoppedWithDue = "the machine is STOPPED and moves are due"
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"
@@ -55,6 +61,7 @@ const (
 	NCross           = "stream stopped: needs a card of another stream first"
 	NRejected        = "stream stopped: the merge queue rejected"
 	NBlocked         = "a primary is blocked on something dropped"
+	NMissingNeed     = "a primary is blocked on something missing"
 	NCIRed           = "ci red"
 	NReadsExhausted  = "reads exhausted"
 	NStranded        = "stranded in review" // failed work acknowledged, or never asked, and nothing open
@@ -78,6 +85,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBlocked:         {"drop", "ack"},
+	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
 	NReadsExhausted:  {"ask another reader", "rework", "drop"},
 	NStranded:        {"ask", "rework", "drop"},
@@ -87,6 +95,7 @@ var Decisions = map[string][]string{
 	NStreamStale:     {"look"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
+	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second
@@ -113,6 +122,14 @@ type Note struct {
 	Marked    bool      `json:"marked,omitempty"`   // a repeat: sorts first
 	Answers   string    `json:"answers,omitempty"`  // a decided note: the judgment it answers
 	Suspects  []string  `json:"suspects,omitempty"` // a red branch: the cards of the batch the caller suspects
+	// Card and Other name the cards a judgment is about by what they are,
+	// for the commands the inbox prints: the card a stream stopped on (a
+	// conflict, a cross stop) or the sentinel reached, and for a cross stop
+	// the card it needs, of OtherStream. Primaries is a set: nothing reads a
+	// card from its position there.
+	Card        string `json:"card,omitempty"`
+	Other       string `json:"other,omitempty"`
+	OtherStream string `json:"other_stream,omitempty"`
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.
 	StreamLevel bool `json:"stream_level,omitempty"`
@@ -125,6 +142,9 @@ type Note struct {
 	// Review is the next review time the coordinator set with wait; the
 	// judgment stays open and shown, and is due then.
 	Review time.Time `json:"review,omitempty"`
+	// ReviewSet is when wait set Review: the review time counts running time
+	// from it, as every deadline does.
+	ReviewSet time.Time `json:"review_set,omitempty"`
 }
 
 // Due is when the judgment is overdue: its review time when one is set, else

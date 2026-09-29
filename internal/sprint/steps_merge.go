@@ -97,16 +97,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	now := stamp(s.Now)
 	if len(queued) == 0 {
-		switch {
-		case streamDone(s, r.Stream, 0):
-			n := happened(NStreamLanded, r.Stream, s.Now)
-			n.Who = r.Who
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamLanded, "since": now}))},
-				Notes: []Note{n}, Moved: "stream " + r.Stream + " " + state + " -> landed"})
-		case state == StreamMerging:
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": now}))},
-				Moved: "stream " + r.Stream + " merging -> waiting (nothing queued)"})
+		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
+		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
+			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
+		p.refuse(r.Stream, why)
 		return p
 	}
 	n := r.Batch
@@ -157,7 +152,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		pr := s.Work.Placed(r.Conflict)
 		ctlSet["card"] = r.Conflict
 		u := stop("conflict", NConflict, []string{r.Conflict}, pr.Int("stuck"), "other")
-		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, nil)))
+		u.Notes[len(u.Notes)-1].Card = r.Conflict
+		// a conflict stop has no cross need: whatever the card once needed
+		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, nil, "need_card", "need_stream")))
 		if pr != nil {
 			u.Changes = append(u.Changes, change(Work, setEntry(pr, map[string]string{"stuck": itoa(pr.Int("stuck") + 1)})))
 		}
@@ -180,7 +177,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		otherStream := s.Work.Placed(other).Row
 		ctlSet["card"], ctlSet["other"] = card, other
 		u := stop("cross", NCross, []string{card, other}, 0)
-		u.Notes[len(u.Notes)-1].What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
+		j := &u.Notes[len(u.Notes)-1]
+		j.What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
+		j.Card, j.Other, j.OtherStream = card, other, otherStream
 		u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Stuck, map[string]string{"need_card": other, "need_stream": otherStream})))
 		u.Moved = fmt.Sprintf("stream %s stopped: %s queued -> stuck, needs %s (stream %s) landed first", r.Stream, card, other, orDash(otherStream))
 		p.Units = append(p.Units, u)
@@ -337,14 +336,22 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	stuck := s.Merge.Cell(r.Stream, Stuck)
 	for _, c := range stuck {
+		if ctl.F("cause") != "cross" {
+			break // only a cross stop waits for a need
+		}
 		if need := c.F("need_card"); need != "" && s.StateOf(need) != Landed {
 			p.refuse(r.Stream, fmt.Sprintf("unresolved: %s needs %s (stream %s) landed first, and it is %s", c.ID, need, orDash(c.F("need_stream")), orDash(s.StateOf(need))))
 			return p
 		}
 	}
+	// settled as settle settles a stream: merging with cards to merge, landed
+	// when every card of it ended with one landed, else waiting
 	state := StreamWaiting
-	if len(stuck)+s.Merge.Count(r.Stream, Queued) > 0 {
+	switch {
+	case len(stuck)+s.Merge.Count(r.Stream, Queued) > 0:
 		state = StreamMerging
+	case streamDone(s, r.Stream, 0):
+		state = StreamLanded
 	}
 	set := map[string]string{"state": state, "since": stamp(s.Now)}
 	if r.Did != "" {
@@ -352,6 +359,11 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other"))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
+	if state == StreamLanded {
+		n := happened(NStreamLanded, r.Stream, s.Now)
+		n.Who = r.Who
+		u.Notes = append(u.Notes, n)
+	}
 	for _, o := range s.Open {
 		if o.Subject() == StreamSubject(r.Stream) {
 			u.Closes = append(u.Closes, o)
@@ -361,6 +373,6 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil, "need_card", "need_stream")))
 	}
 	p.Units = append(p.Units, u)
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return p
 }

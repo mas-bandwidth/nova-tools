@@ -755,7 +755,7 @@ func (m *Mem) DoneBefore(_ context.Context, callerOp string, before uint64) (uin
 	return 0, false, nil
 }
 
-func (m *Mem) SetReview(_ context.Context, noteID string, at time.Time) error {
+func (m *Mem) SetReview(_ context.Context, noteID string, at, set time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.log()
@@ -763,7 +763,7 @@ func (m *Mem) SetReview(_ context.Context, noteID string, at time.Time) error {
 	if !ok {
 		return fmt.Errorf("no judgment %s; run: nova-sprint inbox", noteID)
 	}
-	n.Review = at
+	n.Review, n.ReviewSet = at, set
 	l.notes[noteID] = n
 	return nil
 }

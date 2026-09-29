@@ -62,7 +62,9 @@ func (h *harness) readAll() {
 func (h *harness) landAll(stream string) {
 	h.t.Helper()
 	h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: stream}}))
-	h.must(MergeStep(sprint.MergeReq{Stream: stream, Batch: 100}))
+	if len(h.snap().Merge.Cell(stream, sprint.Queued)) > 0 { // a merge step wants something queued
+		h.must(MergeStep(sprint.MergeReq{Stream: stream, Batch: 100}))
+	}
 }
 
 func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
@@ -269,13 +271,20 @@ func TestTheInboxCountsRunningTimeOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, g := range v.Groups {
+		if strings.HasPrefix(g.ID, "machine:") {
+			continue // the harness moves the clock with no run loop ticking
+		}
 		if g.Kind == sprint.Judgment && (g.Overdue || g.Waited != time.Hour || !g.Due.Equal(t0.Add(5*time.Hour))) {
 			t.Fatalf("stopped hours counted: %+v", g)
 		}
 	}
 	h.tick(90 * time.Minute)
 	v, _ = h.st.Inbox(h.ctx, 2*time.Hour, 0, 1000)
-	if len(v.Groups) == 0 || !v.Groups[0].Overdue {
+	overdue := false
+	for _, g := range v.Groups {
+		overdue = overdue || g.Type == sprint.NWorkFailed && g.Overdue
+	}
+	if !overdue {
 		t.Fatalf("past the deadline in running time: %+v", v.Groups)
 	}
 }
@@ -461,5 +470,260 @@ func TestAStoppedTickSaysItLooked(t *testing.T) {
 	_, hb, err := h.st.Machine(h.ctx)
 	if err != nil || hb.Ticks != 0 || !hb.Alive().Equal(h.now) {
 		t.Fatalf("a stopped tick: %+v %v", hb, err)
+	}
+}
+
+// A member whose beat lapses again and again has its card dealt to another
+// and back each time, re-stamping dealt: the unfinished deadline counts from
+// the attempt's first deal, so three hours of it are late all the same.
+func TestAFlappingMemberCannotHideALateCard(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	first := h.snap().Fleet.Card("s1-1.w1").F("first_dealt")
+	if first == "" {
+		t.Fatalf("no first_dealt on the card")
+	}
+	// m1 beats for 10 s and falls silent for 20 s, over and over, for three
+	// hours; its card goes withdrawn and back
+	for elapsed := time.Duration(0); elapsed < 3*time.Hour; elapsed += 10 * time.Second {
+		if (elapsed/(30*time.Second))%3 == 0 {
+			h.live = []string{"m1"}
+		} else {
+			h.live = nil
+		}
+		h.tick(10 * time.Second)
+		h.machine()
+	}
+	h.live = []string{"m1"}
+	h.tick(time.Second)
+	h.machine()
+	if c := h.snap().Fleet.Card("s1-1.w1"); c.F("first_dealt") != first {
+		t.Fatalf("first_dealt moved: %s, was %s", c.F("first_dealt"), first)
+	}
+	if h.written(sprint.NWorkLate) == 0 {
+		t.Fatalf("three hours of a card dealt and never finished, and no deadline")
+	}
+}
+
+// The deadlines count from the attempt's first deal and first take: a member
+// whose beat lapses and returns four times, its card withdrawn and dealt
+// again each time, is late "not taken" once 15 minutes of running time have
+// passed since the first deal; taken, then lapsing three times, it is late
+// "not finished" 2 hours after the first take.
+func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	lap := func() {
+		h.live = nil // silent past the beat deadline: withdrawn
+		for i := 0; i < 3; i++ {
+			h.tick(10 * time.Second)
+			h.machine()
+		}
+		h.live = []string{"m1"} // back: dealt again
+		h.tick(time.Second)
+		h.machine()
+		h.tick(5 * time.Minute) // under the 15 minutes from any one deal
+		h.machine()
+	}
+	for i := 0; i < 4; i++ {
+		lap()
+	}
+	notTaken := func() int {
+		n := 0
+		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+		for _, x := range notes {
+			if x.Type == sprint.NWorkLate && x.Kind == sprint.Judgment && strings.Contains(x.What, "not taken") {
+				n++
+			}
+		}
+		return n
+	}
+	if n := notTaken(); n != 1 {
+		t.Fatalf("four laps, over 15 minutes of running time from the first deal: %d not-taken judgments", n)
+	}
+	// taken, then lapsing: late not finished two hours from the first take
+	h2 := newHarness(t)
+	h2.live = []string{"m1"}
+	h2.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h2.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h2.startMachine()
+	h2.machine()
+	h2.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+	for i := 0; i < 3; i++ {
+		h2.live = nil
+		for j := 0; j < 3; j++ {
+			h2.tick(10 * time.Second)
+			h2.machine()
+		}
+		h2.live = []string{"m1"}
+		h2.tick(time.Second)
+		h2.machine()
+		h2.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+		h2.tick(45 * time.Minute)
+		h2.machine()
+	}
+	notes, _, _ := h2.m.NotesSince(h2.ctx, "", 100000)
+	late := 0
+	for _, x := range notes {
+		if x.Type == sprint.NWorkLate && x.Kind == sprint.Judgment && strings.Contains(x.What, "not finished") {
+			late++
+		}
+	}
+	if late != 1 {
+		t.Fatalf("three laps after a take, past 2 hours from the first take: %d not-finished judgments", late)
+	}
+}
+
+// A card taken, its member silent, redealt to a member that is up and never
+// taken again: the clock follows the card's state. It is late not taken, 15
+// minutes from the redeal (the first deal since its last take), on the full
+// tick, and no stalled judgment speaks for it instead; the holder and the
+// deadline part end at the same moment.
+func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1", "m2"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	wc := h.snap().Fleet.Column(sprint.Ready)
+	if len(wc) != 1 {
+		t.Fatalf("one ready work card, got %d", len(wc))
+	}
+	card, first := wc[0].ID, wc[0].Row
+	other := "m2"
+	if first == "m2" {
+		other = "m1"
+	}
+	h.must(TakeStep(sprint.TakeReq{As: first, Sel: sprint.Sel{Limit: 1}, Who: first}))
+	for i := 0; i < 30; i++ { // half an hour of work, the machine ticking
+		h.tick(time.Minute)
+		h.machine()
+	}
+	h.live = []string{other} // the taker goes silent
+	for i := 0; i < 3; i++ {
+		h.tick(10 * time.Second)
+		h.machine()
+	}
+	c := h.snap().Fleet.Card(card)
+	if c == nil || c.Col != sprint.Ready || c.Row != other {
+		t.Fatalf("redealt to %s: %+v", other, c)
+	}
+	judged := func(typ, word string) int {
+		n := 0
+		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+		for _, x := range notes {
+			if x.Type == typ && x.Kind == sprint.Judgment && strings.Contains(x.What, card) && strings.Contains(x.What, word) {
+				n++
+			}
+		}
+		return n
+	}
+	h.tick(time.Minute) // a full tick just after the redeal: the new member has its 15 minutes
+	h.machine()
+	if n := judged(sprint.NWorkLate, ""); n != 0 {
+		t.Fatalf("late at once after the redeal, though its first deal was over 15 minutes ago: %d", n)
+	}
+	for i := 0; i < 16; i++ {
+		h.tick(time.Minute)
+		h.machine() // a full tick
+		h.machine() // an idle tick
+	}
+	if n := judged(sprint.NWorkLate, "not taken"); n != 1 {
+		t.Fatalf("16 minutes after the redeal after a take: %d not-taken judgments, want 1", n)
+	}
+	if n := judged(sprint.NWorkLate, "not finished"); n != 0 {
+		t.Fatalf("a ready card is never late not finished: %d", n)
+	}
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+	for _, x := range notes {
+		if x.Type == sprint.NStalled && x.Kind == sprint.Judgment {
+			t.Fatalf("a stalled judgment speaks for the late card: %s", x.What)
+		}
+	}
+}
+
+// A late read or work card is its own judgment (reader finding 6): a read
+// card late while another read of the same primary is judged late is a
+// second judgment, each naming its card and closing when its own card moves.
+func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p"}}))
+	h.startMachine()
+	h.machine()
+	h.takeAndFinish(false, "p")
+	h.machine() // asks two readers
+	cards := h.snap().Readers.Of("p")
+	if len(cards) != 2 {
+		t.Fatalf("asked: %d", len(cards))
+	}
+	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
+	h.tick(sprint.DeadlineUnbegun + time.Minute)
+	h.machine() // the unbegun read is late
+	late := h.openOf(sprint.NReadLate)
+	if len(late) != 1 || late[0].Note.Card != cards[1].ID {
+		t.Fatalf("the unbegun read late: %+v", late)
+	}
+	h.tick(sprint.DeadlineUnreported)
+	h.machine() // the begun read is late too, while the first is open
+	late = h.openOf(sprint.NReadLate)
+	if len(late) != 2 || late[0].Note.Card == late[1].Note.Card {
+		t.Fatalf("two late reads: %+v", late)
+	}
+	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
+	h.tick(time.Second)
+	h.machine()
+	late = h.openOf(sprint.NReadLate)
+	if len(late) != 1 || late[0].Note.Card != cards[0].ID {
+		t.Fatalf("after %s began: %+v", cards[1].ID, late)
+	}
+}
+
+// A card late at the moment it is redealt (withdrawn past its deadline with
+// no member up) does not name the member just handed it (reader finding 6):
+// its decisions are wait and drop, not fleet down of that member.
+func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine() // dealt to m1
+	h.live = nil
+	for i := 0; i < 25; i++ { // m1 silent 25 minutes: withdrawn, nobody to deal it to
+		h.tick(time.Minute)
+		h.machine()
+	}
+	if n := len(h.openOf(sprint.NWorkLate)); n != 1 {
+		t.Fatalf("late while withdrawn: %d", n)
+	}
+	h.live = []string{"m1"}
+	h.tick(time.Second)
+	h.machine() // m1 back: redealt to it
+	c := h.snap().Fleet.Card("s1-1.w1")
+	if c == nil || c.Col != sprint.Ready || c.Row != "m1" {
+		t.Fatalf("redealt: %+v", c)
+	}
+	h.tick(time.Minute)
+	h.machine()
+	for _, o := range h.openOf(sprint.NWorkLate) {
+		if contains(o.Note.Decisions, "fleet down m1") || !contains(o.Note.Decisions, "wait") {
+			t.Fatalf("late at its redeal, decisions %v", o.Note.Decisions)
+		}
 	}
 }

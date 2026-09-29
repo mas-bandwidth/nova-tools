@@ -155,7 +155,7 @@ func (st *Store) SetReview(ctx context.Context, noteID string, at time.Time) err
 	if e := sprint.IDEpoch(noteID); e != st.epoch {
 		return errors.New(sprint.OtherEpoch(noteID, e, st.epoch))
 	}
-	return st.B.SetReview(ctx, noteID, at)
+	return st.B.SetReview(ctx, noteID, at, st.now())
 }
 
 // Wait is the coordinator's wait on a judgment: for a condition the tick keeps
@@ -176,6 +176,13 @@ func (st *Store) Wait(ctx context.Context, noteID string, at time.Time) (res Res
 			res, err = st.Run(ctx, WaitStep(sprint.WaitReq{Note: noteID, Until: at, Who: st.Actor}))
 			return res, true, err
 		}
+	}
+	coordinator, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return res, false, err
+	}
+	if why := sprint.NotCoordinator(coordinator, st.Actor, "wait"); why != "" {
+		return res, false, errors.New(why)
 	}
 	return res, false, st.SetReview(ctx, noteID, at)
 }

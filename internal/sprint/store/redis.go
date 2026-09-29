@@ -462,7 +462,7 @@ func (r *Redis) DoneBefore(ctx context.Context, callerOp string, before uint64) 
 	return 0, false, nil
 }
 
-func (r *Redis) SetReview(ctx context.Context, noteID string, at time.Time) error {
+func (r *Redis) SetReview(ctx context.Context, noteID string, at, set time.Time) error {
 	raw, err := r.C.HGet(ctx, r.key(keyNotes), noteID).Result()
 	if errors.Is(err, redis.Nil) {
 		return fmt.Errorf("no judgment %s; run: nova-sprint inbox", noteID)
@@ -474,7 +474,7 @@ func (r *Redis) SetReview(ctx context.Context, noteID string, at time.Time) erro
 	if err := json.Unmarshal([]byte(raw), &n); err != nil {
 		return err
 	}
-	n.Review = at
+	n.Review, n.ReviewSet = at, set
 	body, err := json.Marshal(n)
 	if err != nil {
 		return err

@@ -121,9 +121,9 @@ func TestAWaivedNeedIsSatisfied(t *testing.T) {
 	if len(blocked) != 1 || blocked[0].Note.Type != NBlocked {
 		t.Fatalf("blocked: %v", blocked)
 	}
-	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed after all", Who: "coord"}))
+	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed after all", Who: "coordinator"}))
 	b := w.s.Work.Card("b")
-	if b.Col != Ready || b.F("waived") != "s1-1" || b.F("waived_by") != "coord" || b.F("waived_at") != stamp(w.s.Now) {
+	if b.Col != Ready || b.F("waived") != "s1-1" || b.F("waived_by") != "coordinator" || b.F("waived_at") != stamp(w.s.Now) {
 		t.Fatalf("ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
 	}
 	if p := Lawful(p); len(p.Refused) != 0 {

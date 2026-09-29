@@ -83,8 +83,8 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	if after.StreamCtl("s1").F("state") != sprint.StreamWaiting || after.MemberCtl("m1").F("status") != sprint.Up || after.Fleet.Count("m1", sprint.DoneOK) != 0 {
 		t.Fatalf("control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields)
 	}
-	if open, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(open.Groups) != 0 {
-		t.Fatalf("the new epoch's inbox is not empty: %+v", open.Groups)
+	if open, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(open.Groups) != 1 || open.Groups[0].Type != sprint.NMachineStopped {
+		t.Fatalf("the new epoch's inbox is not the one line that the machine is STOPPED: %+v", open.Groups)
 	}
 	h.clean("cleared")
 

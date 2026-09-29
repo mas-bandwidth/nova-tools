@@ -51,6 +51,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 			base = append(base, "--"+f.Name, f.Value.String())
 		}
 	})
+	base = append(base, "--actor", c.actor) // the driver plays the coordinator's part as this actor
 	facts := driver.NewSeeded(*seed)
 	facts.Fail, facts.Broken, facts.Stuck, facts.Cross, facts.Red, facts.Flap = *fail, *broken, *stuck, *cross, *red, *flap
 	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout,

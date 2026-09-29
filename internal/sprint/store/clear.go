@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -100,6 +101,16 @@ func (st *Store) Clear(ctx context.Context) (ClearResult, error) {
 	}
 	res.Held = map[string]int{"primaries": placed(snap.Work, ""), "work cards": placed(snap.Fleet, sprint.Ctl),
 		"read cards": placed(snap.Readers, ""), "merge cards": placed(snap.Merge, sprint.Ctl), "open judgments": len(snap.Open)}
+	// The new epoch's own record that the machine is STOPPED, and why.
+	if _, ok := st.B.(KV); ok {
+		at := res.To
+		if _, err := next.Run(ctx, Step{Verb: "clear", Epoch: &at, Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: sprint.NMachineStopped, Who: st.Actor, At: s.Now,
+				What: "the machine is STOPPED by the clear of epoch " + strconv.FormatUint(res.From, 10) + "; when the new sprint is ready: nova-sprint start"}}}
+		}}); err != nil {
+			return res, err
+		}
+	}
 	return res, nil
 }
 
