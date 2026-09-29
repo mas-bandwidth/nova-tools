@@ -1040,6 +1040,9 @@ func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...
 	if err != nil {
 		return err
 	}
+	if err := over(limitNameRows, LimitRows, len(t.Rows), ""); err != nil {
+		return err
+	}
 	type boundRow struct {
 		Key string `json:"key"`
 		RowSpec

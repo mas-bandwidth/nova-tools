@@ -1,12 +1,29 @@
 package ntable
 
 import (
+	"context"
+	"errors"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestBindRowsOverLimitRefusedBeforeStore(t *testing.T) {
+	t.Parallel()
+	cols, err := ParseColumns("a,b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A nil client proves this path refuses before making a store call.
+	err = Bind(context.Background(), nil, Table{Name: "bounded", Columns: cols, Rows: make([]Row, LimitRows+1)}, time.Unix(0, 0))
+	var limit *LimitError
+	if !errors.As(err, &limit) || limit.Name != limitNameRows || limit.Bound != LimitRows || limit.Observed != LimitRows+1 {
+		t.Fatalf("Bind over row limit: %v; want typed rows LIMIT %d/%d", err, LimitRows, LimitRows+1)
+	}
+}
 
 // luaLimits reads T.limits and T.limit_names from table.lua: name -> value.
 func luaLimits(t *testing.T) map[string]int {

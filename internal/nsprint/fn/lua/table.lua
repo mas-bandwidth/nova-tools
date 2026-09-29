@@ -1412,6 +1412,10 @@ do
   end))
   redis.register_function('ns_table_bind', T.write('bind', 3, function(d, args, spec)
     if type(spec.rows) ~= 'table' or not T.arrayfield(args[2], 'rows') then return nil, T.refuse('ROW') end
+    -- Bind replaces the row set: its final count is the manifest's row count,
+    -- not the old ZCARD plus additions counted by T.addrow.
+    local over = T.over('rows', #spec.rows)
+    if over then return nil, over end
     local old, keep = redis.call('ZRANGE', T.rowskey(d), 0, -1), {}
     d.touched, d.removed = {}, {}
     for i, row in ipairs(spec.rows) do

@@ -2,10 +2,11 @@
 
 package ntable_test
 
-// A table has at most LimitColumns columns and LimitRows rows: create, set and
-// row add refuse the one past the bound by name, and nothing is written.
+// A table has at most LimitColumns columns and LimitRows rows: create, set,
+// row add and bind refuse the one past the bound by name, and nothing is written.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -102,5 +103,64 @@ func TestTableRowsAreBounded(t *testing.T) {
 	requireLimit(t, "row add past the bound", err, "rows per table", ntable.LimitRows, ntable.LimitRows+1)
 	if _, err := ntable.RowAdd(ctx, c, "tall", "r7", ntable.RowSpec{}); err != nil {
 		t.Errorf("re-adding a row that exists at the bound: %v", err)
+	}
+}
+
+// Bind replaces the row set, so its limit is the number of requested rows.
+// Refuse an oversized raw call before staging any row, then show that exactly
+// the bound passes this limit without materialising an oversized table.
+func TestBindRowLimitPrecedesWrites(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := t.Context()
+	cols, err := ntable.ParseColumns("a,b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ntable.Create(ctx, c, ntable.Table{Name: "bind-bound", Columns: cols}, now); err != nil {
+		t.Fatal(err)
+	}
+	before := storeImage(t, c)
+	type bindRow struct {
+		Key string `json:"key"`
+	}
+	rows := make([]bindRow, ntable.LimitRows+1)
+	for i := range rows {
+		rows[i].Key = fmt.Sprintf("r%d", i)
+	}
+	fields := c.HGetAll(ctx, ntable.DefKey("bind-bound")).Val()
+	bind := func(selected []bindRow) []any {
+		t.Helper()
+		body, err := json.Marshal(struct {
+			Fields map[string]string `json:"fields"`
+			Rows   []bindRow         `json:"rows"`
+		}{Fields: fields, Rows: selected})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ans, err := c.FCall(ctx, ntable.FnBind, []string{ntable.DefKey("bind-bound")}, "bind-bound", string(body), `{"epoch":"0","actor":"","fence":"","idem":""}`).Slice()
+		if err != nil {
+			t.Fatalf("raw bind: %v", err)
+		}
+		return ans
+	}
+	ans := bind(rows)
+	if len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "rows per table" || fmt.Sprint(ans[3]) != "100000" || fmt.Sprint(ans[4]) != "100001" {
+		t.Errorf("raw bind past the bound: %v; want LIMIT rows per table 100000 100001", trunc(ans))
+	}
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Fatal("raw bind refusal changed the store")
+	}
+
+	// The 100000-row envelope passes the bound check; an invalid first row then
+	// refuses as ROW before any write. This checks the inclusive edge cheaply.
+	atBound := append([]bindRow(nil), rows[:ntable.LimitRows]...)
+	atBound[0].Key = ""
+	ans = bind(atBound)
+	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "ROW" {
+		t.Errorf("raw bind at the bound: %v; want ROW for the invalid first row, not LIMIT", trunc(ans))
+	}
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Error("boundary probe changed the store")
 	}
 }
