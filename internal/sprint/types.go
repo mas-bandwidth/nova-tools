@@ -2,8 +2,8 @@
 // domain models, and Redis function call wrappers for Layer 2 dual-table card
 // lifecycle operations on nova-table.
 //
-// In accordance with docs/LAYER-2-ROADMAP-SYNTHESIS.md and
-// docs/CARDMACHINE-LAYER2-MAPPING.md, Layer 2 elevates the card lifecycle from
+// In accordance with the Layer 2 Roadmap Synthesis and
+// Card Machine Layer 2 Mapping design specifications, Layer 2 elevates the card lifecycle from
 // ad-hoc monolithic Lua scripts (02_card_move.lua) to formal execution over
 // MemberTable / EpochMemberTable primitives across two synchronized tables:
 //  1. "streams" table: tracks primary cards across lifecycle columns (waiting,
@@ -336,13 +336,14 @@ type ConsumerCapacity struct {
 	Slots    int        `json:"slots"`   // Total permitted concurrent slots
 	Working  int        `json:"working"` // Live working copies
 	Ready    int        `json:"ready"`   // Queued ready copies
+	CI       int        `json:"ci"`      // CI legs running on the bench (nova-tools#4293)
 	Up       bool       `json:"up"`      // Whether consumer is online and heartbeating
 }
 
 // Room calculates available execution room on the consumer.
-// In TLA+: Room(k) == Slots[k] - Cardinality(Working(k)) - Cardinality(Ready(k)).
+// In TLA+: Room(k) == Slots[k] - Cardinality(Working(k)) - Cardinality(Ready(k)) - CI(k).
 func (c ConsumerCapacity) Room() int {
-	return c.Slots - c.Working - c.Ready
+	return c.Slots - c.Working - c.Ready - c.CI
 }
 
 // ============================================================================

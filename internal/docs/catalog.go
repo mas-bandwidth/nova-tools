@@ -98,6 +98,7 @@ var DefaultCatalog = []Entry{
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
 	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
+	E("internal/sprint", "card lifecycle actions, journal stream, monotone ratchet, Redis dual-table state machine, and types", "go test ./internal/sprint", "go test ./internal/sprint"),
 	E("internal/sprintline", "sprint x/y z% -> eta line", "go test ./internal/sprintline", "go test ./internal/sprintline"),
 	E("internal/sprinttable", "sprint table publish and restart behaviour", "go test ./internal/sprinttable", "go test ./internal/sprinttable"),
 	E("internal/swarm", "swarm worker pool and execution engine", "go test ./internal/swarm", "go test ./internal/swarm"),

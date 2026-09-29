@@ -56,6 +56,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `seatcred/` | a seat's Redis login read through the secrets library (--seat, NOVA_SEAT) | `go test ./internal/seatcred/...` | `go test ./internal/seatcred/...` |
 | `secrets/` | zero-leak memory and file vault | `go test ./internal/secrets` | `go test ./internal/secrets` |
 | `selftalk/` | agent self-talk journal stream | `go test ./internal/selftalk` | `go test ./internal/selftalk` |
+| `sprint/` | card lifecycle actions, journal stream, monotone ratchet, Redis dual-table state machine, and types | `go test ./internal/sprint` | `go test ./internal/sprint` |
 | `sprintline/` | sprint x/y z% -> eta line | `go test ./internal/sprintline` | `go test ./internal/sprintline` |
 | `sprinttable/` | sprint table publish and restart behaviour | `go test ./internal/sprinttable` | `go test ./internal/sprinttable` |
 | `swarm/` | swarm worker pool and execution engine | `go test ./internal/swarm` | `go test ./internal/swarm` |

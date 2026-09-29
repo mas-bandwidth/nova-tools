@@ -14,6 +14,7 @@ import (
 // ============================================================================
 
 func TestJournal_ReplayStateHashParity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "stress_replay.journal")

@@ -114,12 +114,13 @@ redis.register_function('ns_card_deal_work', function(keys, args)
   -- 3. Consumer Capacity Verification (Room(k) > 0)
   -- Default slots = 4 if not configured
   local slots = tonumber(redis.call('HGET', fleet_table .. ':consumer:' .. consumer, 'slots') or '4') or 4
+  local ci = tonumber(redis.call('HGET', fleet_table .. ':consumer:' .. consumer, 'ci') or '0') or 0
   local working_cell = cell_key('fleet', active_epoch, consumer, 'working')
   local ready_cell = cell_key('fleet', active_epoch, consumer, 'ready')
 
   local working_cnt = redis.call('ZCARD', working_cell)
   local ready_cnt = redis.call('ZCARD', ready_cell)
-  local room = slots - working_cnt - ready_cnt
+  local room = slots - working_cnt - ready_cnt - ci
 
   if room <= 0 then
     return refuse('NOROOM', consumer, tostring(room))

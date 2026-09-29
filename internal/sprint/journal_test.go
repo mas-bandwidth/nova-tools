@@ -17,6 +17,7 @@ import (
 // ============================================================================
 
 func TestJournal_RoundTripWriteRead(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "test.journal")
 
@@ -107,6 +108,7 @@ func TestJournal_RoundTripWriteRead(t *testing.T) {
 // ============================================================================
 
 func TestJournal_ReplayOrder(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "replay.journal")
 
@@ -161,6 +163,7 @@ func TestJournal_ReplayOrder(t *testing.T) {
 }
 
 func TestJournal_IteratorFromOffset(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "seek_replay.journal")
 
@@ -215,6 +218,7 @@ func TestJournal_IteratorFromOffset(t *testing.T) {
 // ============================================================================
 
 func TestJournal_CorruptFrameDetection_CRC32(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "corrupt_crc.journal")
 
@@ -256,6 +260,7 @@ func TestJournal_CorruptFrameDetection_CRC32(t *testing.T) {
 }
 
 func TestJournal_CorruptFrameDetection_SHA256(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "corrupt_sha.journal")
 
@@ -297,6 +302,7 @@ func TestJournal_CorruptFrameDetection_SHA256(t *testing.T) {
 }
 
 func TestJournal_InvalidMagic(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "bad_magic.journal")
 
@@ -342,6 +348,7 @@ func TestJournal_InvalidMagic(t *testing.T) {
 // ============================================================================
 
 func TestJournal_MidFileBitFlips(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "midfile_flips.journal")
 
@@ -404,6 +411,7 @@ func TestJournal_MidFileBitFlips(t *testing.T) {
 // ============================================================================
 
 func TestJournal_PartialFrameTruncation_AutoRepair(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "partial_trailing.journal")
 
@@ -477,6 +485,7 @@ func TestJournal_PartialFrameTruncation_AutoRepair(t *testing.T) {
 }
 
 func TestJournal_StandaloneRepairJournal(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "standalone_repair.journal")
 
@@ -535,6 +544,7 @@ func TestJournal_StandaloneRepairJournal(t *testing.T) {
 // ============================================================================
 
 func TestJournal_ConcurrentAppends(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "concurrent.journal")
 
@@ -600,6 +610,7 @@ func TestJournal_ConcurrentAppends(t *testing.T) {
 }
 
 func TestJournal_PayloadSizeLimits(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	journalPath := filepath.Join(tmpDir, "oversize.journal")
 
