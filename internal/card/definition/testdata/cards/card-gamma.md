@@ -1,4 +1,4 @@
-RESULT: card-gamma sha=abcdef0123456789 a read of the retry policy
+RESULT: card-gamma sha=abcdef0123456789abcdef0123456789abcdef01 a read of the retry policy
 SCHEMA: v2
 ID: card-gamma
 TITLE: Read the retry policy and report what it does

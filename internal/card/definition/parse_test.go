@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
 func TestParseBaseCard(t *testing.T) {
@@ -12,7 +14,7 @@ func TestParseBaseCard(t *testing.T) {
 	if d.ID != "card-alpha" || d.Schema != "v2" || d.Kind != "fix-red" || d.Tier != "flash" {
 		t.Fatalf("fields: %+v", d)
 	}
-	if d.ContractSHA != "0123456789ab" || d.File != "cards/base.md" {
+	if d.BaseCommit != "00112233445566778899aabbccddeeff00112233" || d.File != "cards/base.md" {
 		t.Fatalf("contract or file: %+v", d)
 	}
 	if len(d.Paths) != 2 || d.Paths[1] != "internal/queue/name_test.go" || d.DependsOn != nil {
@@ -43,8 +45,8 @@ func TestParseRefusals(t *testing.T) {
 		{"duplicate key", insertAfter(5, "KIND: read"), 6, "KIND", CauseDuplicateKey, "lines 5 and 6"},
 		{"schema v3 is refused by name", replaceLine(2, "SCHEMA: v3"), 2, "SCHEMA", CauseUnsupportedSchema, "v3"},
 		{"schema v1", replaceLine(2, "SCHEMA: v1"), 2, "SCHEMA", CauseUnsupportedSchema, `"v1"`},
-		{"required field missing", deleteLine(8), 0, "TIER", CauseRequiredMissing, ""},
-		{"required field missing, ID", deleteLine(3), 0, "ID", CauseRequiredMissing, ""},
+		{"required field missing", deleteLine(8), 0, "TIER", CauseRequired, ""},
+		{"required field missing, ID", deleteLine(3), 0, "ID", CauseRequired, ""},
 		{"stranded after the brief begins", join(append(baseLines()[:11], append(baseLines()[12:], "PROBES: none")...)), 16, "PROBES", CauseStranded, "line 16"},
 		{"stranded by a prose line ending the header", insertAfter(7, "Some words."), 9, "TIER", CauseStranded, ""},
 		{"case variant", replaceLine(5, "Kind: fix-red"), 5, "Kind", CauseAmbiguousSpelling, "KIND"},
@@ -58,7 +60,7 @@ func TestParseRefusals(t *testing.T) {
 		{"ID with a comma", replaceLine(3, "ID: card,alpha"), 3, "ID", CauseInvalidID, ""},
 		{"ID with non-ASCII", replaceLine(3, "ID: carté"), 3, "ID", CauseInvalidID, ""},
 		{"ID that is the none token", replaceLine(3, "ID: -"), 3, "ID", CauseInvalidID, ""},
-		{"ID over the bound", replaceLine(3, "ID: "+strings.Repeat("a", MaxIDBytes+1)), 3, "ID", CauseInvalidID, "128"},
+		{"ID over the bound", replaceLine(3, "ID: "+strings.Repeat("a", MaxIDBytes+1)), 3, "ID", CauseInvalidID, "64"},
 		{"ENTRY with a comma", insertAfter(3, "ENTRY: work/a,work/b"), 4, "ENTRY", CauseInvalidEntry, "comma"},
 		{"ENTRY with a control character", insertAfter(3, "ENTRY: work/a\x07b"), 4, "ENTRY", CauseInvalidValue, ""},
 		{"empty value", replaceLine(4, "TITLE:"), 4, "TITLE", CauseEmptyValue, ""},
@@ -69,12 +71,12 @@ func TestParseRefusals(t *testing.T) {
 		{"paths that match everything", replaceLine(6, "PATHS: **/*"), 6, "PATHS", CauseInvalidPaths, "every file"},
 		{"paths with an empty entry", replaceLine(6, "PATHS: a/b.go,,c/d.go"), 6, "PATHS", CauseInvalidPaths, "empty entry"},
 		{"paths over the bound", replaceLine(6, nineGlobs), 6, "PATHS", CauseInvalidPaths, "at most 8"},
-		{"paths repeated", replaceLine(6, "PATHS: a/b.go, a/b.go"), 6, "PATHS", CauseInvalidPaths, "twice"},
+		{"paths repeated", replaceLine(6, "PATHS: a/b.go, a/b.go"), 6, "PATHS", CauseInvalidPaths, "once"},
 		{"paths absolute", replaceLine(6, "PATHS: /etc/x"), 6, "PATHS", CauseInvalidPaths, "absolute"},
 		{"depends-on a Work path", replaceLine(7, "DEPENDS-ON: work/a/b"), 7, "DEPENDS-ON", CauseInvalidDependsOn, ""},
 		{"depends-on a reference", replaceLine(7, "DEPENDS-ON: owner/repo#4"), 7, "DEPENDS-ON", CauseInvalidDependsOn, ""},
 		{"depends-on with an empty entry", replaceLine(7, "DEPENDS-ON: a,,b"), 7, "DEPENDS-ON", CauseInvalidDependsOn, "empty entry"},
-		{"depends-on repeated", replaceLine(7, "DEPENDS-ON: a, a"), 7, "DEPENDS-ON", CauseInvalidDependsOn, "twice"},
+		{"depends-on repeated", replaceLine(7, "DEPENDS-ON: a, a"), 7, "DEPENDS-ON", CauseInvalidDependsOn, "once"},
 		{"depends-on mixes none and an ID", replaceLine(7, "DEPENDS-ON: -, a"), 7, "DEPENDS-ON", CauseInvalidDependsOn, ""},
 		{"tier that is not a route", replaceLine(8, "TIER: huge"), 8, "TIER", CauseInvalidTier, "huge"},
 		{"test that is not the grammar", replaceLine(9, "TEST: nonsense"), 9, "TEST", CauseInvalidTest, ""},
@@ -83,9 +85,13 @@ func TestParseRefusals(t *testing.T) {
 		{"test that names a package pattern", replaceLine(9, "TEST: ./... TestX"), 9, "TEST", CauseInvalidTest, ""},
 		{"test package that climbs", replaceLine(9, "TEST: ../x TestX"), 9, "TEST", CauseInvalidTest, ""},
 		{"contract line missing", replaceLine(1, "# a heading"), 1, "", CauseContractLine, ""},
-		{"contract line without an ID", replaceLine(1, "RESULT: sha=0123456789ab"), 1, "", CauseContractLine, "no card ID"},
+		{"contract line without the colon", replaceLine(1, "RESULT card-alpha sha=00112233445566778899aabbccddeeff00112233"), 1, "", CauseContractLine, "colon"},
+		{"contract sha that is 12 hex", replaceLine(1, "RESULT: card-alpha sha=0123456789ab"), 1, "", CauseContractSHA, "40 or 64"},
+		{"contract sha in upper case", replaceLine(1, "RESULT: card-alpha sha=0123456789ABCDEF0123456789ABCDEF01234567"), 1, "", CauseContractSHA, "lower-case"},
+		{"contract sha of 41 hex", replaceLine(1, "RESULT: card-alpha sha=00112233445566778899aabbccddeeff001122338"), 1, "", CauseContractSHA, ""},
+		{"contract line without an ID", replaceLine(1, "RESULT: sha=00112233445566778899aabbccddeeff00112233"), 1, "", CauseContractLine, "names a card ID"},
 		{"contract sha that is not hex", replaceLine(1, "RESULT: card-alpha sha=zz"), 1, "", CauseContractSHA, ""},
-		{"contract ID with a colon", replaceLine(1, "RESULT: card:alpha sha=0123456789ab"), 1, "", CauseContractLine, ""},
+		{"contract ID with a colon", replaceLine(1, "RESULT: card:alpha sha=00112233445566778899aabbccddeeff00112233"), 1, "", CauseContractLine, ""},
 		{"no brief", join(baseLines()[:12]), 12, "", CauseNoBrief, ""},
 		{"empty file", "", 1, "", CauseEmptyFile, ""},
 		{"byte-order mark", "\xef\xbb\xbf" + baseCard, 1, "", CauseBOM, ""},
@@ -93,13 +99,13 @@ func TestParseRefusals(t *testing.T) {
 		{"invalid UTF-8 in the brief", baseCard + "\xc3\x28\n", 17, "", CauseInvalidUTF8, ""},
 		{"CRLF line endings", strings.ReplaceAll(baseCard, "\n", "\r\n"), 1, "", CauseCarriageReturn, ""},
 		{"a bare carriage return", replaceLine(4, "TITLE: a\rb"), 4, "", CauseCarriageReturn, ""},
-		{"a NUL byte", baseCard + "a\x00b\n", 17, "", CauseNUL, ""},
-		{"file over the bound", baseCard + strings.Repeat("x", MaxCardBytes), 0, "", CauseFileTooLarge, "262144"},
+		{"a NUL byte", baseCard + "a\x00b\n", 17, "", CauseControlChar, ""},
+		{"file over the bound", baseCard + strings.Repeat("x", MaxCardBytes), 0, "", CauseTooLarge, "262144"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			defs, refs := Parse(one("cards/x.md", c.text))
+			defs, refs := parseL(one("cards/x.md", c.text))
 			if defs != nil {
 				t.Fatalf("Parse returned definitions beside refusals: %+v", defs)
 			}
@@ -107,8 +113,8 @@ func TestParseRefusals(t *testing.T) {
 			if !ok {
 				t.Fatalf("no refusal (file, line %d, key %q, cause %s) in %v", c.line, c.key, c.cause, Lines(refs))
 			}
-			if !strings.Contains(r.Found, c.found) {
-				t.Errorf("found %q does not name %q", r.Found, c.found)
+			if !strings.Contains(r.Found+" "+r.Limit, c.found) {
+				t.Errorf("found %q limit %q does not name %q", r.Found, r.Limit, c.found)
 			}
 			for _, r := range refs {
 				wellFormed(t, r)
@@ -124,8 +130,7 @@ func TestParseAcceptsWhatTheFormatAllows(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
 		"no sha on the contract line":      replaceLine(1, "RESULT: card-alpha"),
-		"the colon-less contract line":     replaceLine(1, "RESULT card-alpha sha=0123456789ab"),
-		"a note after the sha":             replaceLine(1, "RESULT: card-alpha sha=0123456789ab -- a note"),
+		"a note after the sha":             replaceLine(1, "RESULT: card-alpha sha=00112233445566778899aabbccddeeff00112233 -- a note"),
 		"blank lines inside the header":    insertAfter(7, ""),
 		"an ENTRY line":                    insertAfter(3, "ENTRY: work/queue/names"),
 		"an indented key line in the body": baseCard + "  KIND: indented text declares nothing\n",
@@ -141,14 +146,14 @@ func TestParseAcceptsWhatTheFormatAllows(t *testing.T) {
 	for name, text := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			defs, refs := Parse(one("x.md", text))
+			defs, refs := parseL(one("x.md", text))
 			if len(refs) > 0 || len(defs) != 1 {
 				t.Fatalf("refused: %v", Lines(refs))
 			}
 		})
 	}
 	// A fence that never closes hides everything below it.
-	if _, refs := Parse(one("x.md", baseCard+"```\nPROBES: never closed\n")); len(refs) > 0 {
+	if _, refs := parseL(one("x.md", baseCard+"```\nPROBES: never closed\n")); len(refs) > 0 {
 		t.Fatalf("an open fence is text to its end: %v", Lines(refs))
 	}
 }
@@ -158,7 +163,7 @@ func TestParseArrayIsAllOrNothing(t *testing.T) {
 	good := Source{Name: "good.md", Data: []byte(baseCard)}
 	bad := Source{Name: "bad.md", Data: []byte(replaceLine(5, "KIND: nonsense"))}
 	worse := Source{Name: "worse.md", Data: []byte(replaceLine(2, "SCHEMA: v3"))}
-	defs, refs := Parse([]Source{good, bad, worse})
+	defs, refs := parseL([]Source{good, bad, worse})
 	if defs != nil {
 		t.Fatalf("definitions beside refusals: %v", defs)
 	}
@@ -174,7 +179,7 @@ func TestParseArrayIsAllOrNothing(t *testing.T) {
 		}
 	}
 	// One file, or many, the same path.
-	if defs, refs := Parse([]Source{good}); len(refs) != 0 || len(defs) != 1 {
+	if defs, refs := parseL([]Source{good}); len(refs) != 0 || len(defs) != 1 {
 		t.Fatalf("an array of one: %v", Lines(refs))
 	}
 }
@@ -184,7 +189,7 @@ func TestParseArrayBounds(t *testing.T) {
 	good := []byte(baseCard)
 	t.Run("empty", func(t *testing.T) {
 		t.Parallel()
-		_, refs := Parse(nil)
+		_, refs := parseL(nil)
 		if len(refs) != 1 || refs[0].Cause != CauseEmptyArray {
 			t.Fatalf("%v", Lines(refs))
 		}
@@ -196,22 +201,22 @@ func TestParseArrayBounds(t *testing.T) {
 		for i := 0; i <= MaxFiles; i++ {
 			srcs = append(srcs, Source{Name: string(rune('a'+i%26)) + strings.Repeat("x", i), Data: good})
 		}
-		_, refs := Parse(srcs)
-		if len(refs) != 1 || refs[0].Cause != CauseTooManyFiles || !strings.Contains(refs[0].Found, "128") {
+		_, refs := parseL(srcs)
+		if len(refs) != 1 || refs[0].Cause != CauseTooMany || !strings.Contains(refs[0].Limit, "127") {
 			t.Fatalf("%v", Lines(refs))
 		}
 	})
 	t.Run("the same name twice", func(t *testing.T) {
 		t.Parallel()
-		_, refs := Parse([]Source{{Name: "a.md", Data: good}, {Name: "a.md", Data: good}})
+		_, refs := parseL([]Source{{Name: "a.md", Data: good}, {Name: "a.md", Data: good}})
 		if _, ok := hasRefusal(refs, "a.md", 0, "", CauseDuplicateFile); !ok {
 			t.Fatalf("%v", Lines(refs))
 		}
 	})
 	t.Run("no name", func(t *testing.T) {
 		t.Parallel()
-		_, refs := Parse([]Source{{Data: good}})
-		if _, ok := hasRefusal(refs, "#1", 0, "", CauseFileName); !ok {
+		_, refs := parseL([]Source{{Data: good}})
+		if _, ok := hasRefusal(refs, "#1", 0, "", CauseRequired); !ok {
 			t.Fatalf("%v", Lines(refs))
 		}
 	})
@@ -222,10 +227,10 @@ func TestParseArrayBounds(t *testing.T) {
 		for i := 0; i < MaxTotalBytes/len(big)+1; i++ {
 			srcs = append(srcs, Source{Name: strings.Repeat("f", i+1), Data: big})
 		}
-		_, refs := Parse(srcs)
+		_, refs := parseL(srcs)
 		found := false
 		for _, r := range refs {
-			found = found || r.Cause == CauseTotalTooLarge && strings.Contains(r.Found, "8388608")
+			found = found || r.Cause == CauseTooLarge && strings.Contains(r.Limit, "8388608")
 		}
 		if !found {
 			t.Fatalf("%v", Lines(refs))
@@ -235,13 +240,13 @@ func TestParseArrayBounds(t *testing.T) {
 
 func TestRefusalRendersOnOneLine(t *testing.T) {
 	t.Parallel()
-	r := Refusal{Operation: OpParse, File: "a b\n.md", Line: 3, Key: "KIND", Cause: CauseDuplicateKey,
-		Found: "two\nlines\rand \x1b[31mescapes", Next: "fix it", Also: []string{"other file.md"}}
+	r := Refusal{Operation: OpParse, Index: -1, File: "a b\n.md", Line: 3, Field: "KIND\nrefused parse: forged", Cause: CauseDuplicateKey,
+		Found: card.Value("two\nlines\rand \x1b[31mescapes"), Limit: "each key once", Next: "fix it"}
 	s := r.String()
 	if strings.ContainsAny(s, "\n\r\x1b") {
 		t.Fatalf("not one line: %q", s)
 	}
-	for _, want := range []string{"REFUSED parse", "line=3", "key=KIND", "cause=duplicate-key", "also=", "found=", "next="} {
+	for _, want := range []string{"refused parse", "line=3", "duplicate-key", "found ", "next: "} {
 		if !strings.Contains(s, want) {
 			t.Errorf("%q lacks %q", s, want)
 		}
@@ -256,11 +261,11 @@ func TestRenderRoundTripsGoldenCards(t *testing.T) {
 	for _, name := range []string{"card-alpha", "card-beta", "card-gamma", "card-old"} {
 		raw := readTestdata(t, "cards/"+name+".md")
 		d := mustParse(t, []Source{{Name: name + ".md", Data: raw}})[0]
-		again := mustParse(t, []Source{{Name: name + ".md", Data: Render(d)}})[0]
+		again := mustParse(t, []Source{{Name: name + ".md", Data: render(d)}})[0]
 		if !equalContent(d, again) {
-			t.Errorf("%s: Parse(Render(d)) != d:\n%+v\n%+v", name, d, again)
+			t.Errorf("%s: parseL(render(d)) != d:\n%+v\n%+v", name, d, again)
 		}
-		if !bytes.Equal(Render(again), Render(d)) {
+		if !bytes.Equal(render(again), render(d)) {
 			t.Errorf("%s: Render is not a fixed point", name)
 		}
 	}

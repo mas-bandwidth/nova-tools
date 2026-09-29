@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
@@ -15,9 +16,10 @@ import (
 type Completion string
 
 const (
-	// CompletionPR completes by a verified landing of a pull request.
+	// CompletionPR ends by a landing: its code reaches the development branch.
 	CompletionPR Completion = "pr"
-	// CompletionNoPR completes by a recorded outcome, with no pull request.
+	// CompletionNoPR has no code to land. Where such a card ends is an open
+	// question: the lifecycle names no state for it.
 	CompletionNoPR Completion = "non-pr"
 )
 
@@ -80,6 +82,10 @@ func parsePolicy(data string) (policy, error) {
 	return p, nil
 }
 
+// PolicyDigest is the SHA-256 of the embedded completion policy file, in lower-case
+// hexadecimal: the identity of the policy's content, which the version names.
+func PolicyDigest() string { return string(card.Sum([]byte(policyData))) }
+
 // PolicyVersion is the version of the embedded completion policy, 0 when the
 // embedded file cannot be read.
 func PolicyVersion() int {
@@ -137,13 +143,13 @@ func unclassified(declared []string, p policy) (missing, stale []string) {
 	return missing, stale
 }
 
-// kindWhyIn is kindWhy against a given policy.
-func kindWhyIn(p policy, kind string) (Cause, string) {
+// kindProblemIn is kindProblem against a given policy.
+func kindProblemIn(p policy, kind string) *problem {
 	if !hygiene.KindDeclared(kind) {
-		return CauseInvalidKind, fmt.Sprintf("KIND %q is not declared; one of: %s", kind, strings.Join(hygiene.Kinds(), ", "))
+		return bad(CauseInvalidKind, card.Value(kind), "KIND is one of internal/hygiene/kinds.txt: "+strings.Join(hygiene.Kinds(), ", "), "use a kind internal/hygiene/kinds.txt declares")
 	}
 	if _, ok := p.class[kind]; !ok {
-		return CauseUnclassifiedKind, fmt.Sprintf("KIND %q is declared but the completion policy (version %d) does not classify it", kind, p.version)
+		return bad(CauseUnclassifiedKind, card.Value(kind), fmt.Sprintf("the completion policy (version %d) classifies KIND", p.version), "classify the kind in internal/card/definition/completion.txt")
 	}
-	return "", ""
+	return nil
 }

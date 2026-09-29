@@ -1,152 +1,94 @@
 package definition
 
 import (
-	"strconv"
+	"fmt"
 	"strings"
+	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
-// Limits. Each is named in the refusal that enforces it.
+// Refusal is one refused input: the card layer's one refusal shape. File is the
+// file name (or, for a pin, the repository-relative path), Line is 1-based and
+// zero when the cause has no line, Field is the header key when one is involved,
+// Found is what was seen (a value from the input is quoted and bounded), Limit is
+// the rule or bound it broke and Next is the one action that fixes it.
+type Refusal = card.Refusal
+
+// Refusals is every refusal one call found, at most card.MaxRefusals of them,
+// and the count of the rest. It is what a call returns beside no result.
+type Refusals = card.Refusals
+
+// Cause is the stable name of why something was refused; the vocabulary is the
+// card layer's, in internal/card.
+type Cause = card.Cause
+
+// The operations a refusal names.
 const (
-	// MaxFiles bounds an array of card files or of paths to pin.
-	MaxFiles = 128
+	OpParse    card.Operation = "parse"
+	OpValidate card.Operation = "validate"
+	OpPin      card.Operation = "pin"
+	OpAdmit    card.Operation = "admit"
+)
+
+// Limits. Each is named in the refusal that enforces it. Those the card layer
+// shares with the request package are the card layer's constants.
+const (
+	// MaxFiles bounds an array of card files or of paths to pin: the most cards
+	// one admission request admits.
+	MaxFiles = card.MaxChangedEntries
 	// MaxCardBytes bounds one card file and one pinned blob.
 	MaxCardBytes = 256 << 10
 	// MaxTotalBytes bounds the bytes of one array.
 	MaxTotalBytes = 8 << 20
 	// MaxPathBytes bounds one repository-relative path to pin.
-	MaxPathBytes = 1024
+	MaxPathBytes = card.MaxPathBytes
 	// MaxIDBytes bounds a card ID.
-	MaxIDBytes = 128
+	MaxIDBytes = card.MaxIDBytes
 	// MaxEntryBytes bounds an ENTRY value.
-	MaxEntryBytes = 512
-	// MaxValueBytes bounds a single-line prose value (TITLE, DONE-WHEN, DOORS, PROBES).
-	MaxValueBytes = 2048
+	MaxEntryBytes = card.MaxEntryBytes
+	// MaxTitleBytes bounds a TITLE.
+	MaxTitleBytes = card.MaxTitleBytes
+	// MaxDoorsBytes bounds a DOORS value.
+	MaxDoorsBytes = card.MaxDoorsBytes
+	// MaxTestBytes bounds a TEST value.
+	MaxTestBytes = card.MaxTestBytes
+	// MaxGlobBytes bounds one PATHS glob.
+	MaxGlobBytes = card.MaxGlobBytes
+	// MaxProseBytes bounds DONE-WHEN and PROBES, which reach the record only
+	// through the definition digest.
+	MaxProseBytes = card.MaxProseBytes
 	// MaxDependsOn bounds the IDs one DEPENDS-ON line names.
-	MaxDependsOn = 64
+	MaxDependsOn = card.MaxDependsOn
+	// MaxContractNoteBytes bounds the note after a contract line's ID and sha.
+	MaxContractNoteBytes = 512
 )
 
-// Cause is the stable name of why something was refused.
-type Cause string
-
-// The operations a refusal names.
-const (
-	OpParse    = "parse"
-	OpValidate = "validate"
-	OpPin      = "pin"
-	OpAdmit    = "admit"
-)
-
-// Causes, by operation.
-const (
-	CauseEmptyArray        Cause = "empty-array"
-	CauseTooManyFiles      Cause = "too-many-files"
-	CauseTotalTooLarge     Cause = "total-too-large"
-	CauseDuplicateFile     Cause = "duplicate-file"
-	CauseFileName          Cause = "file-name"
-	CauseFileTooLarge      Cause = "file-too-large"
-	CauseEmptyFile         Cause = "empty-file"
-	CauseBOM               Cause = "byte-order-mark"
-	CauseInvalidUTF8       Cause = "invalid-utf8"
-	CauseCarriageReturn    Cause = "carriage-return"
-	CauseNUL               Cause = "nul-byte"
-	CauseContractLine      Cause = "contract-line"
-	CauseContractSHA       Cause = "contract-sha"
-	CauseDuplicateKey      Cause = "duplicate-key"
-	CauseUnknownKey        Cause = "unknown-key"
-	CauseAmbiguousSpelling Cause = "ambiguous-spelling"
-	CauseUnsupportedSchema Cause = "unsupported-schema"
-	CauseRequiredMissing   Cause = "required-missing"
-	CauseStranded          Cause = "stranded"
-	CauseIDMismatch        Cause = "id-mismatch"
-	CauseEmptyValue        Cause = "empty-value"
-	CauseInvalidValue      Cause = "invalid-value"
-	CauseInvalidID         Cause = "invalid-id"
-	CauseInvalidEntry      Cause = "invalid-entry"
-	CauseInvalidKind       Cause = "invalid-kind"
-	CauseUnclassifiedKind  Cause = "unclassified-kind"
-	CauseInvalidPaths      Cause = "invalid-paths"
-	CauseInvalidDependsOn  Cause = "invalid-depends-on"
-	CauseInvalidTier       Cause = "invalid-tier"
-	CauseInvalidTest       Cause = "invalid-test"
-	CauseNoBrief           Cause = "no-brief"
-
-	CauseDuplicateID   Cause = "duplicate-id"
-	CauseSelfDependent Cause = "self-dependency"
-	CauseCycle         Cause = "dependency-cycle"
-
-	CauseInvalidCommit   Cause = "invalid-commit"
-	CauseInvalidPath     Cause = "invalid-path"
-	CausePathEscapes     Cause = "path-escapes"
-	CauseDuplicatePath   Cause = "duplicate-path"
-	CauseNotRepository   Cause = "not-repository"
-	CauseGitUnavailable  Cause = "git-unavailable"
-	CauseGitFailed       Cause = "git-failed"
-	CauseTimeout         Cause = "timeout"
-	CauseUnknownCommit   Cause = "unknown-commit"
-	CauseNotCommit       Cause = "not-commit"
-	CauseMissingPath     Cause = "missing-path"
-	CauseSymlink         Cause = "symlink"
-	CauseNotBlob         Cause = "not-blob"
-	CauseBlobTooLarge    Cause = "blob-too-large"
-	CauseIdentityMissing Cause = "identity-missing"
-	CauseIdentityInvalid Cause = "identity-invalid"
-	CausePinMismatch     Cause = "pin-mismatch"
-)
-
-// Refusal is one refused input, as a value. Operation names the step; File is the
-// file name (or, for Pin, the repository-relative path); Line is 1-based and zero
-// when the cause has no line; Key is the header key when one is involved; Cause is
-// the stable code; Found is what was seen; Next is the one action that fixes it.
-// Also names the other files a refusal involves (the second file of a repeated ID,
-// the other members of a cycle).
-type Refusal struct {
-	Operation string
-	File      string
-	Line      int
-	Key       string
-	Cause     Cause
-	Found     string
-	Next      string
-	Also      []string
+// ref builds a refusal of an operation about a file, line and key.
+func ref(op card.Operation, c Cause, file string, line int, key, found, limit, next string) Refusal {
+	return Refusal{Operation: op, Index: -1, File: file, Line: line, Field: key, Cause: c, Found: found, Limit: limit, Next: next}
 }
 
-// String is the refusal on one line: REFUSED <operation> then the fields that are
-// set, then cause, found and next. Free text is quoted, so the line is one line.
-func (r Refusal) String() string {
-	var b strings.Builder
-	b.WriteString("REFUSED ")
-	b.WriteString(r.Operation)
-	if r.File != "" {
-		b.WriteString(" file=" + oneline.Field(r.File))
-	}
-	if r.Line > 0 {
-		b.WriteString(" line=" + strconv.Itoa(r.Line))
-	}
-	if r.Key != "" {
-		b.WriteString(" key=" + oneline.Field(r.Key))
-	}
-	b.WriteString(" cause=" + string(r.Cause))
-	if len(r.Also) > 0 {
-		b.WriteString(" also=")
-		for i, a := range r.Also {
-			if i > 0 {
-				b.WriteString(",")
-			}
-			b.WriteString(oneline.Field(a))
+// short bounds free explanatory text taken from a validator that quotes the
+// caller's value inside it: one line, at most 200 bytes.
+func short(s string) string {
+	s = strings.NewReplacer("\r", `\r`, "\n", `\n`, "\x00", `\0`).Replace(s)
+	if len(s) > 200 {
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
 		}
+		s = s[:cut] + "..."
 	}
-	b.WriteString(" found=" + oneline.Quote(oneline.Cap(r.Found, 200)))
-	b.WriteString(" next=" + oneline.Quote(r.Next))
-	return b.String()
+	return s
 }
 
-// Lines renders refusals one per line, in order.
-func Lines(rs []Refusal) []string {
-	out := make([]string, len(rs))
-	for i, r := range rs {
-		out[i] = r.String()
+// just is a refusal set of a single refusal.
+func just(r Refusal) *Refusals { return &Refusals{List: []Refusal{r}} }
+
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
 	}
-	return out
+	return fmt.Sprintf("%d %ss", n, unit)
 }

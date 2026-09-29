@@ -1,14 +1,13 @@
 package definition
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
@@ -21,10 +20,12 @@ type Source struct {
 
 // Definition is one card, read. It is plain data: the header fields, the brief,
 // the line each header key sits on, and the digests of the file and of the brief.
+// A Definition is made only by reading bytes; nothing in the package takes one
+// from a caller.
 type Definition struct {
 	File         string
-	ContractSHA  string // the sha= token of the contract line, "" when absent
-	ContractNote string // the text after it on the contract line
+	BaseCommit   string // the sha= token of the contract line: the commit the work starts from; "" when absent
+	ContractNote string // the text after the contract line's ID and sha= token
 	Schema       string
 	ID           string
 	Entry        string // "" when the card carries no ENTRY line
@@ -44,57 +45,50 @@ type Definition struct {
 	BriefDigest  string // hex SHA-256 of the brief's bytes
 }
 
-var contractShaRE = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
-
-// Parse reads an array of card files. It returns one Definition per file, in
-// order, and no refusals; or no definitions and every refusal the array drew.
-// A file is read by the rules in the package comment. Parse never panics and never
-// reads a file or the network: its input is the bytes it is given.
-func Parse(files []Source) ([]Definition, []Refusal) {
+// parse reads an array of card files. It returns one Definition per file, in
+// order, and no refusals; or no definitions and every refusal the array drew (at
+// most card.MaxRefusals, the rest counted). A file is read by the rules in the
+// package comment. parse never panics and never reads a file or the network: its
+// input is the bytes it is given.
+func parse(files []Source) ([]Definition, *Refusals) {
 	if len(files) == 0 {
-		return nil, []Refusal{{Operation: OpParse, Cause: CauseEmptyArray,
-			Found: "no card files", Next: "pass at least one card file; a single card is an array of one"}}
+		return nil, just(ref(OpParse, CauseEmptyArray, "", 0, "", "no card files", "at least 1", "pass at least one card file; a single card is an array of one"))
 	}
 	if len(files) > MaxFiles {
-		return nil, []Refusal{{Operation: OpParse, Cause: CauseTooManyFiles,
-			Found: fmt.Sprintf("%d card files, the limit is %d", len(files), MaxFiles),
-			Next:  fmt.Sprintf("narrow the request to at most %d files; nothing is chunked for you", MaxFiles)}}
+		return nil, just(ref(OpParse, CauseTooMany, "", 0, "", plural(len(files), "card file"), fmt.Sprintf("%d card files", MaxFiles),
+			fmt.Sprintf("narrow the request to at most %d files; nothing is chunked for you", MaxFiles)))
 	}
 	total := 0
 	for _, f := range files {
 		total += len(f.Data)
 	}
 	if total > MaxTotalBytes {
-		return nil, []Refusal{{Operation: OpParse, Cause: CauseTotalTooLarge,
-			Found: fmt.Sprintf("%d bytes across the array, the limit is %d", total, MaxTotalBytes),
-			Next:  "narrow the request to fewer or smaller files"}}
+		return nil, just(ref(OpParse, CauseTooLarge, "", 0, "", fmt.Sprintf("%d bytes across the array", total), fmt.Sprintf("%d bytes", MaxTotalBytes),
+			"narrow the request to fewer or smaller files"))
 	}
-	var refs []Refusal
+	c := &card.Collector{}
 	var defs []Definition
 	seen := map[string]int{}
 	for i, f := range files {
 		label := f.Name
 		if label == "" {
 			label = fmt.Sprintf("#%d", i+1)
-			refs = append(refs, Refusal{Operation: OpParse, File: label, Cause: CauseFileName,
-				Found: "the file has no name", Next: "give every card file a name (its path in the repository)"})
+			c.Add(ref(OpParse, CauseRequired, label, 0, "", "the file has no name", "a name", "give every card file a name (its path in the repository)"))
 			continue
 		}
 		if j, dup := seen[f.Name]; dup {
-			refs = append(refs, Refusal{Operation: OpParse, File: label, Cause: CauseDuplicateFile,
-				Found: fmt.Sprintf("file %q is entry %d and entry %d of the array", f.Name, j+1, i+1),
-				Next:  "pass each card file once"})
+			c.Add(ref(OpParse, CauseDuplicateFile, label, 0, "", fmt.Sprintf("entry %d and entry %d of the array", j+1, i+1), "each file once", "pass each card file once"))
 			continue
 		}
 		seen[f.Name] = i
-		d, rs := parseFile(label, f.Data)
-		refs = append(refs, rs...)
-		if len(rs) == 0 {
+		before := c.Len()
+		d := parseFile(c, label, f.Data)
+		if c.Len() == before {
 			defs = append(defs, d)
 		}
 	}
-	if len(refs) > 0 {
-		return nil, refs
+	if err := c.Err(); err != nil {
+		return nil, err
 	}
 	return defs, nil
 }
@@ -105,7 +99,7 @@ type fileLine struct {
 }
 
 func splitLines(s string) []fileLine {
-	var out []fileLine
+	out := make([]fileLine, 0, strings.Count(s, "\n")+1)
 	start := 0
 	for start < len(s) {
 		end := strings.IndexByte(s[start:], '\n')
@@ -121,77 +115,94 @@ func splitLines(s string) []fileLine {
 
 func lineAt(s string, off int) int { return 1 + strings.Count(s[:off], "\n") }
 
-// byteRefusals checks what the whole file must be before any line is read.
-func byteRefusals(name string, data []byte) []Refusal {
+// byteRefusals adds what the whole file must be before any line is read, and
+// reports whether the file may be read line by line.
+func byteRefusals(c *card.Collector, name string, data []byte) bool {
 	s := string(data)
-	var out []Refusal
-	add := func(line int, c Cause, found, next string) {
-		out = append(out, Refusal{Operation: OpParse, File: name, Line: line, Cause: c, Found: found, Next: next})
+	add := func(line int, cause Cause, found, limit, next string) {
+		c.Add(ref(OpParse, cause, name, line, "", found, limit, next))
 	}
 	switch {
 	case len(data) > MaxCardBytes:
-		add(0, CauseFileTooLarge, fmt.Sprintf("%d bytes, the limit is %d", len(data), MaxCardBytes), "shorten the card; a brief is a brief")
-		return out
+		add(0, CauseTooLarge, fmt.Sprintf("%d bytes", len(data)), fmt.Sprintf("%d bytes", MaxCardBytes), "shorten the card; a brief is a brief")
+		return false
 	case len(data) == 0:
-		add(1, CauseEmptyFile, "the file is empty", "write the contract line, the header and the brief")
-		return out
+		add(1, CauseEmptyFile, "the file is empty", "a contract line, a header and a brief", "write the contract line, the header and the brief")
+		return false
 	}
+	ok := true
 	if strings.HasPrefix(s, "\xef\xbb\xbf") {
-		add(1, CauseBOM, "the file starts with a byte-order mark", "save the file as UTF-8 without a byte-order mark")
+		add(1, CauseBOM, "the file starts with a byte-order mark", "no byte-order mark", "save the file as UTF-8 without a byte-order mark")
+		ok = false
 	}
 	for off := 0; off < len(s); {
 		r, size := utf8.DecodeRuneInString(s[off:])
 		if r == utf8.RuneError && size == 1 {
-			add(lineAt(s, off), CauseInvalidUTF8, fmt.Sprintf("byte 0x%02x at offset %d is not valid UTF-8", s[off], off), "save the file as UTF-8")
+			add(lineAt(s, off), CauseInvalidUTF8, fmt.Sprintf("byte 0x%02x at offset %d", s[off], off), "valid UTF-8", "save the file as UTF-8")
+			ok = false
 			break
 		}
 		off += size
 	}
 	if i := strings.IndexByte(s, '\r'); i >= 0 {
-		add(lineAt(s, i), CauseCarriageReturn, "a carriage return (CRLF or bare CR line ending)",
+		add(lineAt(s, i), CauseCarriageReturn, "a carriage return (CRLF or bare CR line ending)", "LF line endings only",
 			"save the file with LF line endings; the pinned bytes are the identity, so one card is one byte sequence")
+		ok = false
 	}
 	if i := strings.IndexByte(s, 0); i >= 0 {
-		add(lineAt(s, i), CauseNUL, "a NUL byte", "remove the NUL byte")
+		add(lineAt(s, i), CauseControlChar, "a NUL byte", "no NUL byte", "remove the NUL byte")
+		ok = false
 	}
-	return out
+	return ok
 }
 
-// parseContract reads line 1: `RESULT: <id> sha=<hex> <note>` or the colon-less
-// `RESULT <id> sha=<hex> <note>`. It returns the ID, the sha and the note.
-func parseContract(l string) (id, sha, note string, cause Cause, why string) {
-	var rest string
-	switch {
-	case strings.HasPrefix(l, "RESULT: "):
-		rest = l[len("RESULT: "):]
-	case strings.HasPrefix(l, "RESULT "):
-		rest = l[len("RESULT "):]
-	default:
-		return "", "", "", CauseContractLine, "line 1 is not a contract line: it is `RESULT: <id> sha=<hex>`"
+var baseCommitRE = regexp.MustCompile(`^[0-9a-f]{40}$|^[0-9a-f]{64}$`)
+
+// contract is a parsed contract line.
+type contract struct {
+	id, base, note string
+}
+
+// parseContract reads line 1: `RESULT: <id>`, then optionally ` sha=<hex>`, the
+// base commit the work starts from (40 or 64 lower-case hexadecimal characters),
+// then optionally a note. The colon is required.
+func parseContract(l string) (contract, *problem) {
+	const fix = "write line 1 as `RESULT: <id> sha=<base commit>`; the colon is required and sha= is optional"
+	if !strings.HasPrefix(l, "RESULT: ") {
+		return contract{}, bad(CauseContractLine, card.Value(l), "line 1 is `RESULT: <id>`, with the colon", fix)
 	}
+	rest := l[len("RESULT: "):]
 	if rest == "" || rest[0] == ' ' || rest[0] == '\t' {
-		return "", "", "", CauseContractLine, "the contract line names no card ID"
+		return contract{}, bad(CauseContractLine, card.Value(l), "the contract line names a card ID", fix)
 	}
 	end := strings.IndexAny(rest, " \t")
 	if end < 0 {
 		end = len(rest)
 	}
-	id, after := rest[:end], strings.TrimLeft(rest[end:], " \t")
-	if strings.HasPrefix(id, "sha=") {
-		return "", "", "", CauseContractLine, "the contract line names no card ID before its sha="
+	var k contract
+	k.id, rest = rest[:end], strings.TrimLeft(rest[end:], " \t")
+	if strings.HasPrefix(k.id, "sha=") {
+		return contract{}, bad(CauseContractLine, card.Value(l), "the contract line names a card ID before its sha=", fix)
 	}
-	if strings.HasPrefix(after, "sha=") {
-		tok := after
-		if k := strings.IndexAny(after, " \t"); k >= 0 {
-			tok = after[:k]
+	if c, why := card.IDFault(k.id); c != "" {
+		return contract{}, bad(CauseContractLine, card.Value(k.id), "the contract line's ID: "+why, "use an ID of ASCII letters, digits, underscore and hyphen")
+	}
+	if strings.HasPrefix(rest, "sha=") {
+		tok := rest
+		if i := strings.IndexAny(rest, " \t"); i >= 0 {
+			tok = rest[:i]
 		}
-		after = strings.TrimLeft(after[len(tok):], " \t")
-		sha = tok[len("sha="):]
-		if !contractShaRE.MatchString(sha) {
-			return id, "", "", CauseContractSHA, fmt.Sprintf("sha=%s is not 7 to 40 hexadecimal digits", sha)
+		rest = strings.TrimLeft(rest[len(tok):], " \t")
+		k.base = tok[len("sha="):]
+		if !baseCommitRE.MatchString(k.base) {
+			return contract{}, bad(CauseContractSHA, card.Value(k.base), "sha= is the base commit: 40 or 64 lower-case hexadecimal characters", fix)
 		}
 	}
-	return id, sha, strings.TrimRight(after, " \t"), "", ""
+	k.note = strings.TrimRight(rest, " \t")
+	if len(k.note) > MaxContractNoteBytes || card.TextFault(k.note, MaxContractNoteBytes) != "" {
+		return contract{}, bad(CauseContractLine, card.Value(k.note), fmt.Sprintf("the note is one clean line of at most %d bytes", MaxContractNoteBytes), fix)
+	}
+	return k, nil
 }
 
 // fenceOf reads a fence marker at the start of a line (up to three spaces, then
@@ -215,49 +226,30 @@ func fenceOf(l string) (ch byte, n int, rest string) {
 	return ch, j - i, l[j:]
 }
 
-// looseHeaderLine reports whether a line that is not a KEY: value line is a case
-// or spacing variant of a known key (`kind: x`, `KIND : x`, ` KIND: x`,
-// `DEPENDS_ON: x`), and which key it varies.
-func looseHeaderLine(t string) (string, bool) {
-	i := strings.IndexByte(t, ':')
-	if i <= 0 {
-		return "", false
-	}
-	k := t[:i]
-	for j := 0; j < len(k); j++ {
-		c := k[j]
-		ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == ' ' || c == '\t' || c == '_' || c == '-'
-		if !ok {
-			return "", false
-		}
-	}
-	canon, ok := looseKnown[looseKey(k)]
-	return canon, ok
-}
+func sum(b []byte) string { return string(card.Sum(b)) }
 
-func sum(b []byte) string {
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
-
-// parseFile reads one card file.
-func parseFile(name string, data []byte) (Definition, []Refusal) {
-	if rs := byteRefusals(name, data); len(rs) > 0 {
-		return Definition{}, rs
+// parseFile reads one card file, adding to c every refusal it draws.
+func parseFile(c *card.Collector, name string, data []byte) Definition {
+	if !byteRefusals(c, name, data) {
+		return Definition{}
 	}
 	s := string(data)
 	ls := splitLines(s)
-	var refs []Refusal
-	add := func(line int, key string, c Cause, found, next string) {
-		refs = append(refs, Refusal{Operation: OpParse, File: name, Line: line, Key: key, Cause: c, Found: found, Next: next})
+	add := func(line int, key string, cause Cause, found, limit, next string) {
+		if c.Full() {
+			c.Skip()
+			return
+		}
+		c.Add(ref(OpParse, cause, name, line, key, found, limit, next))
 	}
+	addp := func(line int, key string, p *problem) { add(line, key, p.cause, p.found, p.limit, p.next) }
 
 	d := Definition{File: name, Lines: map[string]int{}, Digest: sum(data)}
-	contractID, sha, note, cc, why := parseContract(ls[0].text)
-	if why != "" {
-		add(1, "", cc, why, "write line 1 as `RESULT: <id> sha=<hex>`, the contract line the swarm cards carry")
+	con, p := parseContract(ls[0].text)
+	if p != nil {
+		addp(1, "", p)
 	}
-	d.ContractSHA, d.ContractNote = sha, note
+	d.BaseCommit, d.ContractNote = con.base, con.note
 
 	raw := map[string]string{}
 	i := 1
@@ -266,131 +258,182 @@ func parseFile(name string, data []byte) (Definition, []Refusal) {
 		if strings.TrimSpace(t) == "" {
 			continue
 		}
-		key, val, ok := cardhdr.KeyValue(t)
-		if ok {
+		if key, val, ok := headerLine(t); ok {
 			if !knownKey[key] {
-				if canon, loose := looseKnown[looseKey(key)]; loose {
-					add(n, key, CauseAmbiguousSpelling, fmt.Sprintf("%q is a variant of %s", key, canon), "spell the key exactly "+canon)
-				} else {
-					add(n, key, CauseUnknownKey, fmt.Sprintf("%q is not a key of the v2 profile", key),
-						"remove the line, or start the brief with a line that is not KEY: value (a heading is one)")
+				if c.Full() {
+					c.Skip()
+					continue
 				}
+				if canon, loose := looseKnown[looseKey(key)]; loose {
+					add(n, key, CauseAmbiguousSpelling, "a variant of "+canon, "the exact spelling "+canon, "spell the key exactly "+canon)
+					continue
+				}
+				add(n, key, CauseUnknownKey, "", "a key of the v2 profile",
+					"remove the line, or start the brief with a line that is not an upper-case KEY: value line (a heading is one)")
 				continue
 			}
 			if first, dup := d.Lines[key]; dup {
-				add(n, key, CauseDuplicateKey, fmt.Sprintf("%s is declared on lines %d and %d", key, first, n), "keep one "+key+" line")
+				add(n, key, CauseDuplicateKey, fmt.Sprintf("lines %d and %d", first, n), "each key once", "keep one "+key+" line")
 				continue
 			}
 			d.Lines[key] = n
 			raw[key] = val
 			continue
 		}
-		if canon, loose := looseHeaderLine(t); loose {
-			add(n, strings.TrimSpace(t[:strings.IndexByte(t, ':')]), CauseAmbiguousSpelling,
-				fmt.Sprintf("this line is a variant of %s (case, spacing or a leading blank)", canon), "spell the key exactly "+canon+" at column zero, no blank before the colon")
+		if variant, canon, loose := looseHeaderLine(t); loose {
+			add(n, variant, CauseAmbiguousSpelling, "a variant of "+canon+" (case, spacing or a leading blank)", "the exact spelling "+canon+" at column zero, no blank before the colon",
+				"spell the key exactly "+canon)
 			continue
 		}
-		break // the first nonblank line that is not KEY: value ends the header
+		break // the first nonblank line that is not a header line ends the header
 	}
+
+	stranded := map[string]int{}
 	if i >= len(ls) {
-		add(len(ls), "", CauseNoBrief, "the header runs to the end of the file", "add the brief below the header")
+		add(len(ls), "", CauseNoBrief, "the header runs to the end of the file", "a brief below the header", "add the brief below the header")
 	} else {
 		d.Brief = s[ls[i].start:]
 		d.BriefLine = i + 1
 		d.BriefDigest = sum([]byte(d.Brief))
-		stranded := strandedKeys(ls[i:], i)
+		stranded = strandedKeys(ls[i:], i)
 		keys := make([]string, 0, len(stranded))
 		for k := range stranded {
 			keys = append(keys, k)
 		}
 		sort.Slice(keys, func(a, b int) bool { return stranded[keys[a]] < stranded[keys[b]] })
 		for _, k := range keys {
-			add(stranded[k], k, CauseStranded,
-				fmt.Sprintf("%s: is on line %d, below the header; the brief starts on line %d", k, stranded[k], d.BriefLine),
+			add(stranded[k], k, CauseStranded, fmt.Sprintf("%s: on line %d, below the header", k, stranded[k]), fmt.Sprintf("the header, which ends before line %d", d.BriefLine),
 				"move the line into the header block, directly under the contract line, or indent or fence it in the brief")
 		}
-		for _, k := range requiredKeys {
-			if _, in := raw[k]; !in && stranded[k] == 0 {
-				add(0, k, CauseRequiredMissing, "no "+k+": line in the header", "add `"+k+": <value>` to the header block")
-			}
+		if strings.TrimSpace(d.Brief) == "" {
+			add(d.BriefLine, "", CauseNoBrief, "the brief is empty", "a brief below the header", "add the brief below the header")
+		}
+	}
+	for _, key := range requiredKeys {
+		if _, in := raw[key]; !in && stranded[key] == 0 {
+			add(0, key, CauseRequired, "", "a "+key+": line in the header", "add `"+key+": <value>` to the header block")
 		}
 	}
 
-	skip := map[string]bool{keyBrief: true}
-	for _, k := range requiredKeys {
-		if _, in := raw[k]; !in {
-			skip[k] = true // named above as missing or stranded
-		}
+	failed := map[string]bool{}
+	fail := func(key string, p *problem) {
+		addp(d.Lines[key], key, p)
+		failed[key] = true
 	}
-	bad := func(key string, c Cause, found, next string) {
-		add(d.Lines[key], key, c, found, next)
-		skip[key] = true
-	}
-	for _, k := range append([]string{KeyEntry}, requiredKeys...) {
-		v, in := raw[k]
+	var class Completion
+	for _, key := range append([]string{KeyEntry}, requiredKeys...) {
+		v, in := raw[key]
 		if !in {
 			continue
 		}
-		switch {
-		case strings.TrimSpace(v) == "":
-			bad(k, CauseEmptyValue, k+" has no value", "write a value after "+k+":")
-		case hasControl(v):
-			bad(k, CauseInvalidValue, k+" holds a control character", "keep the value to printable text on one line")
+		switch key {
+		case KeySchema:
+			switch {
+			case v == "":
+				fail(key, bad(CauseEmptyValue, "", "SCHEMA has a value", "write SCHEMA: v2"))
+			case v == SchemaV2:
+				d.Schema = v
+			case v == "v3":
+				fail(key, bad(CauseUnsupportedSchema, card.Value(v), "v3 is refused by name: the Work-path profile is not implemented", "write SCHEMA: v2 and card IDs in DEPENDS-ON"))
+			default:
+				fail(key, bad(CauseUnsupportedSchema, card.Value(v), "SCHEMA is v2", "write SCHEMA: v2"))
+			}
+		case KeyID:
+			switch {
+			case v == "":
+				fail(key, bad(CauseEmptyValue, "", "ID has a value", "write the card ID after ID:"))
+			default:
+				if p := idProblem(key, v); p != nil {
+					fail(key, p)
+				} else if con.id != "" && v != con.id {
+					fail(key, bad(CauseIDMismatch, "ID "+card.Value(v)+" and the contract line "+card.Value(con.id), "the ID header and the contract line (line 1) name the same ID",
+						"make the ID header and the contract line name the same ID"))
+				} else {
+					d.ID = v
+				}
+			}
+		case KeyEntry:
+			if v == "" {
+				fail(key, bad(CauseEmptyValue, "", "ENTRY has a value", "write a value after ENTRY:, or leave the line out"))
+			} else if p := entryProblem(v); p != nil {
+				fail(key, p)
+			} else {
+				d.Entry = v
+			}
+		case KeyTitle:
+			if p := oneLineText(key, v, MaxTitleBytes); p != nil {
+				fail(key, p)
+			} else {
+				d.Title = v
+			}
+		case KeyKind:
+			if p := kindProblem(v); p != nil {
+				fail(key, p)
+			} else {
+				d.Kind = v
+				cs, _ := Classify([]string{v})
+				class = cs[0]
+			}
+		case KeyPaths:
+			if paths, p := parsePaths(v); p != nil {
+				fail(key, p)
+			} else {
+				d.Paths = paths
+			}
+		case KeyDependsOn:
+			if deps, p := parseDepends(v); p != nil {
+				fail(key, p)
+			} else {
+				d.DependsOn = deps
+			}
+		case KeyTier:
+			if p := tierProblem(v); p != nil {
+				fail(key, p)
+			} else {
+				d.Tier = v
+			}
+		case KeyTest:
+			tl, why := cardhdr.ParseTest(v)
+			if why != "" {
+				fail(key, bad(CauseInvalidTest, card.Value(v), short(why), "write `TEST: <package> <TestName>`, or `TEST: none <why>` for a kind that completes without a pull request"))
+			} else if class == "" {
+				d.Test = tl // the kind is refused already; its class decides `none`
+			} else if p := testProblem(v, tl, class); p != nil {
+				fail(key, p)
+			} else {
+				d.Test = tl
+			}
+		case KeyDoneWhen:
+			if p := oneLineText(key, v, MaxProseBytes); p != nil {
+				fail(key, p)
+			} else {
+				d.DoneWhen = v
+			}
+		case KeyDoors:
+			if p := oneLineText(key, v, MaxDoorsBytes); p != nil {
+				fail(key, p)
+			} else if p := noneWord(key, v); p != nil {
+				fail(key, p)
+			} else {
+				d.Doors = v
+			}
+		case KeyProbes:
+			if p := oneLineText(key, v, MaxProseBytes); p != nil {
+				fail(key, p)
+			} else if p := noneWord(key, v); p != nil {
+				fail(key, p)
+			} else {
+				d.Probes = v
+			}
 		}
 	}
-
-	setText := func(key string, dst *string) {
-		if v, in := raw[key]; in && !skip[key] {
-			*dst = v
-		}
-	}
-	setText(KeySchema, &d.Schema)
-	setText(KeyID, &d.ID)
-	setText(KeyEntry, &d.Entry)
-	setText(KeyTitle, &d.Title)
-	setText(KeyKind, &d.Kind)
-	setText(KeyTier, &d.Tier)
-	setText(KeyDoneWhen, &d.DoneWhen)
-	setText(KeyDoors, &d.Doors)
-	setText(KeyProbes, &d.Probes)
-	if v, in := raw[KeyPaths]; in && !skip[KeyPaths] {
-		p, w := parsePaths(v)
-		if w != "" {
-			bad(KeyPaths, CauseInvalidPaths, w, "write `PATHS: none` or up to eight repository-relative globs, comma-separated")
-		}
-		d.Paths = p
-	}
-	if v, in := raw[KeyDependsOn]; in && !skip[KeyDependsOn] {
-		p, w := parseDepends(v)
-		if w != "" {
-			bad(KeyDependsOn, CauseInvalidDependsOn, w, "write `DEPENDS-ON: -` or comma-separated card IDs")
-		}
-		d.DependsOn = p
-	}
-	if v, in := raw[KeyTest]; in && !skip[KeyTest] {
-		tl, w := cardhdr.ParseTest(v)
-		if w != "" {
-			bad(KeyTest, CauseInvalidTest, w, "write `TEST: <package> <TestName>`, or `TEST: none <why>` for a kind that completes without a pull request")
-		}
-		d.Test = tl
-	}
-	if d.ID != "" && contractID != "" && d.ID != contractID && idWhy(d.ID) == "" {
-		bad(KeyID, CauseIDMismatch, fmt.Sprintf("the ID header is %q and the contract line (line 1) names %q", d.ID, contractID),
-			"make the ID header and the contract line name the same ID")
-	}
-	if contractID != "" && idWhy(contractID) != "" {
-		add(1, "", CauseContractLine, "the contract line's ID: "+idWhy(contractID), "use an ID of ASCII letters, digits, underscore and hyphen")
-	}
-	refs = append(refs, checkDefinition(OpParse, d, skip, d.Lines, name)...)
-	if len(refs) > 0 {
-		return Definition{}, refs
-	}
-	return d, nil
+	return d
 }
 
 // strandedKeys finds the profile keys at column zero in the body, outside fenced
 // blocks: line numbers by key, the first of each. offset is the index of the first
-// body line in the file.
+// body line in the file. A fence closes only on a marker of the same character and
+// at least the opening length with no info string after it.
 func strandedKeys(body []fileLine, offset int) map[string]int {
 	out := map[string]int{}
 	var fenceCh byte
@@ -409,7 +452,7 @@ func strandedKeys(body []fileLine, offset int) map[string]int {
 		if fenceCh != 0 {
 			continue
 		}
-		if key, _, ok := cardhdr.KeyValue(l.text); ok && knownKey[key] {
+		if key, _, ok := headerLine(l.text); ok && knownKey[key] {
 			if _, seen := out[key]; !seen {
 				out[key] = offset + j + 1
 			}

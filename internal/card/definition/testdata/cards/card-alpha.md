@@ -1,4 +1,4 @@
-RESULT: card-alpha sha=0123456789ab
+RESULT: card-alpha sha=00112233445566778899aabbccddeeff00112233
 SCHEMA: v2
 ID: card-alpha
 TITLE: Reject an empty queue name

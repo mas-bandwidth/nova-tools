@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
@@ -49,7 +50,7 @@ func genID(r *rand.Rand) string {
 		for i := range b {
 			b[i] = idChars[r.IntN(len(idChars))]
 		}
-		if string(b) != "-" {
+		if !card.IsReserved(string(b)) {
 			return string(b)
 		}
 	}
@@ -65,7 +66,7 @@ func genDefinition(r *rand.Rand, id string) Definition {
 		Brief: "# " + words(r, 2) + "\n" + words(r, 6) + "\n\n" + words(r, 4) + "\n",
 	}
 	if r.IntN(2) == 0 {
-		d.ContractSHA = "0123456789abcdef"[:7+r.IntN(9)]
+		d.BaseCommit = strings.Repeat("0123456789abcdef", 4)[:40+24*r.IntN(2)]
 		if r.IntN(2) == 0 {
 			d.ContractNote = words(r, 3)
 		}
@@ -112,15 +113,15 @@ func TestPropertyRenderedDefinitionsRoundTrip(t *testing.T) {
 		r := rand.New(rand.NewPCG(seed, seed*7919))
 		for i := 0; i < 40; i++ {
 			d := genDefinition(r, genID(r))
-			text := Render(d)
-			defs, refs := Parse([]Source{{Name: "gen.md", Data: text}})
+			text := render(d)
+			defs, refs := parseL([]Source{{Name: "gen.md", Data: text}})
 			if len(refs) > 0 {
 				t.Fatalf("seed %d case %d: Parse refused a generated card: %v\n%s", seed, i, Lines(refs), text)
 			}
 			if !equalContent(d, defs[0]) {
 				t.Fatalf("seed %d case %d: round trip differs:\n%+v\n%+v\n%s", seed, i, d, defs[0], text)
 			}
-			if _, refs := Validate(defs); len(refs) > 0 {
+			if _, refs := validateL(defs); len(refs) > 0 {
 				t.Fatalf("seed %d case %d: Validate refused: %v", seed, i, Lines(refs))
 			}
 		}
@@ -178,16 +179,16 @@ func TestPropertyParseNeverPanicsAndAnswersOneWay(t *testing.T) {
 						t.Fatalf("seed %d case %d: Parse panicked: %v\ninput %q", seed, i, p, in)
 					}
 				}()
-				defs, refs := Parse([]Source{{Name: "m.md", Data: in}, {Name: "n.md", Data: pick(r, corpus)}})
+				defs, refs := parseL([]Source{{Name: "m.md", Data: in}, {Name: "n.md", Data: pick(r, corpus)}})
 				switch {
 				case len(refs) == 0 && len(defs) == 2:
 					accepted++
-					if _, vr := Validate(defs); len(vr) > 0 {
+					if _, vr := validateL(defs); len(vr) > 0 {
 						for _, x := range vr {
 							wellFormed(t, x)
 						}
 					}
-					again, refs := Parse([]Source{{Name: "m.md", Data: Render(defs[0])}})
+					again, refs := parseL([]Source{{Name: "m.md", Data: render(defs[0])}})
 					if len(refs) > 0 || !equalContent(defs[0], again[0]) {
 						t.Fatalf("seed %d case %d: an accepted card does not round-trip: %v\ninput %q", seed, i, Lines(refs), in)
 					}
@@ -208,7 +209,7 @@ func TestPropertyParseNeverPanicsAndAnswersOneWay(t *testing.T) {
 	}
 }
 
-func TestPropertyValidateAndAdmissionsNeverPanicOnHandBuiltInput(t *testing.T) {
+func TestPropertyValidateNeverPanicsOnHandBuiltInput(t *testing.T) {
 	t.Parallel()
 	for _, seed := range propertySeeds {
 		r := rand.New(rand.NewPCG(seed, seed*31))
@@ -234,15 +235,11 @@ func TestPropertyValidateAndAdmissionsNeverPanicOnHandBuiltInput(t *testing.T) {
 						t.Fatalf("seed %d case %d: panic: %v", seed, i, p)
 					}
 				}()
-				_, refs := Validate(defs)
+				_, refs := validateL(defs)
 				for _, x := range refs {
 					wellFormed(t, x)
 				}
-				_, arefs := Admissions(defs, make([]Pinned, len(defs)))
-				for _, x := range arefs {
-					wellFormed(t, x)
-				}
-				_, _ = EncodeAdmissions([]Admission{{}, {ID: "\xff"}})
+				_ = EncodeAdmissions([]Admission{{}, {ID: "\xff"}})
 			}()
 		}
 	}

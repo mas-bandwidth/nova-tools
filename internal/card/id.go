@@ -50,7 +50,7 @@ func ValidID(s string) bool { c, _ := IDFault(s); return c == "" }
 func (i ID) Valid() bool { return ValidID(string(i)) }
 
 // PrintableASCII reports whether s is nonempty printable ASCII: bytes 0x21 to
-// 0x7e, no space, no control character. It is the grammar of every reference
+// 0x7e, no blank, no control character. It is the grammar of every reference
 // (source, landing, evidence and operation IDs, issuer, actor).
 func PrintableASCII(s string) bool {
 	if s == "" {
@@ -96,7 +96,7 @@ func isHidden(r rune) bool {
 		return true
 	case r == 0x2028 || r == 0x2029:
 		return true
-	case r >= 0x200b && r <= 0x200f: // zero-width space, non-joiner, joiner, LRM, RLM
+	case r >= 0x200b && r <= 0x200f: // zero-width blank, non-joiner, joiner, LRM, RLM
 		return true
 	case r >= 0x202a && r <= 0x202e: // bidi embeddings and overrides
 		return true

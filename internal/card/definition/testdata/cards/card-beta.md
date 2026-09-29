@@ -1,4 +1,4 @@
-RESULT: card-beta sha=0123456789ab
+RESULT: card-beta sha=00112233445566778899aabbccddeeff00112233
 SCHEMA: v2
 ID: card-beta
 ENTRY: work/queue/refuse-empty-follow-up

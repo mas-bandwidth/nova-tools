@@ -301,6 +301,7 @@ func joinKeys(m map[string]bool) string {
 // when the model is in the tree. On this branch it is not (it is on the branch of
 // PR #4599, rowan/card-layer-model), so the test skips and says so: it does not pass.
 func TestLifecycleAgreesWithTheModel(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join("..", "..", "..", "tla", "CardManager.tla")
 	text, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

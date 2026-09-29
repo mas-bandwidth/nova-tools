@@ -90,7 +90,7 @@ func (v validator) name(index int, id, field, s string) {
 }
 
 // token checks a reference: an issuer, actor, operation ID, source artifact,
-// landing identity or verifier. It is printable ASCII with no space, comma or
+// landing identity or verifier. It is printable ASCII with no blank, comma or
 // quote (card.TokenChars).
 func (v validator) token(index int, id, field, s string, max int) {
 	v.text(index, id, field, s, max, func(s string) bool { return card.ValidToken(s, max) },

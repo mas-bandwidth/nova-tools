@@ -104,18 +104,18 @@ func TestPrintableASCIIAndTextFault(t *testing.T) {
 
 func TestNormalizeOrigin(t *testing.T) {
 	t.Parallel()
-	same := "github.com/Owner/repo"
+	same := "example.com/Owner/repo"
 	for _, raw := range []string{
-		"https://github.com/Owner/repo",
-		"https://GitHub.COM/Owner/repo.git",
-		"https://user:secret@github.com/Owner/repo.git",
-		"https://github.com:443/Owner/repo/",
-		"ssh://git@github.com:22/Owner/repo.git",
-		"ssh://GIT@GITHUB.com/Owner/repo",
-		"git@github.com:Owner/repo.git",
-		"github.com:Owner/repo",
-		"git+ssh://git@github.com/Owner/repo.git",
-		"  https://github.com/Owner/repo.git\n",
+		"https://example.com/Owner/repo",
+		"https://Example.COM/Owner/repo.git",
+		"https://user:secret@example.com/Owner/repo.git",
+		"https://example.com:443/Owner/repo/",
+		"ssh://git@example.com:22/Owner/repo.git",
+		"ssh://GIT@EXAMPLE.com/Owner/repo",
+		"git@example.com:Owner/repo.git",
+		"example.com:Owner/repo",
+		"git+ssh://git@example.com/Owner/repo.git",
+		"  https://example.com/Owner/repo.git\n",
 	} {
 		got, why := NormalizeOrigin(raw)
 		if why != "" || string(got) != same {
@@ -126,10 +126,10 @@ func TestNormalizeOrigin(t *testing.T) {
 	if got, why := NormalizeOrigin("https://Example.com:8443/a/B.git"); why != "" || got != "example.com:8443/a/B" {
 		t.Errorf("port kept: %q %q", got, why)
 	}
-	if a, _ := NormalizeOrigin("https://h.com/Owner/repo"); a == "h.com/owner/repo" {
+	if a, _ := NormalizeOrigin("https://example.com/Owner/repo"); a == "example.com/owner/repo" {
 		t.Error("path case folded")
 	}
-	if !Repository("github.com/Owner/repo").Valid() {
+	if !Repository("example.com/Owner/repo").Valid() {
 		t.Error("identity not valid")
 	}
 }
@@ -145,19 +145,19 @@ func TestOriginRefusalNeverEchoesTheOrigin(t *testing.T) {
 		"/srv/" + secret + "/repo",
 		"./" + secret,
 		"~/" + secret,
-		"https://x-access-token:" + secret + "@github.com/o/r?token=" + secret,
+		strings.ReplaceAll("https://x-access-token:TOKEN@example.com/o/r?token=TOKEN", "TOKEN", secret),
 		"https://" + secret + "@/o/r",
-		"https://github.com/o/r#" + secret,
+		"https://example.com/o/r#" + secret,
 		"ftp://" + secret + "@host/o/r",
-		"https://github.com/o/" + secret + "/../r",
-		"https://github.com/o/r/%zz" + secret,
-		"https://github.com/" + strings.Repeat("a", 200) + "/" + secret,
+		"https://example.com/o/" + secret + "/../r",
+		"https://example.com/o/r/%zz" + secret,
+		"https://example.com/" + strings.Repeat("a", 200) + "/" + secret,
 		"just-a-word-" + secret,
-		"https://github.com/o/r with space " + secret,
+		"https://example.com/o/r with space " + secret,
 		"https://[::1" + secret,
-		"https://github.com/o:" + secret + "/r",
-		"https://github.com:" + secret + "/o/r",
-		"https://github.com/o/r\x00" + secret,
+		"https://example.com/o:" + secret + "/r",
+		"https://example.com:" + secret + "/o/r",
+		"https://example.com/o/r\x00" + secret,
 		"\xff\xfe" + secret,
 	}
 	for _, raw := range bad {
@@ -184,16 +184,16 @@ func TestRepositoryWhy(t *testing.T) {
 	for s, want := range map[string]string{
 		"":                              RuleEmpty,
 		strings.Repeat("a", 129) + "/b": RuleTooLong,
-		"github.com":                    RuleGrammar,
-		"https://github.com/o/r":        RuleGrammar,
-		"user@github.com/o/r":           RuleGrammar,
-		"github.com/o/..":               RuleDotSegment,
+		"example.com":                   RuleGrammar,
+		"https://example.com/o/r":       RuleGrammar,
+		"user@example.com/o/r":          RuleGrammar,
+		"example.com/o/..":              RuleDotSegment,
 		"GitHub.com/o/r":                RuleNotCanonical,
-		"github.com:443/o/r":            RuleNotCanonical,
-		"github.com:22/o/r":             RuleNotCanonical,
-		"github.com/o/r.git":            RuleNotCanonical,
-		"github.com/o/r":                "",
-		"github.com:8443/o/r":           "",
+		"example.com:443/o/r":           RuleNotCanonical,
+		"example.com:22/o/r":            RuleNotCanonical,
+		"example.com/o/r.git":           RuleNotCanonical,
+		"example.com/o/r":               "",
+		"example.com:8443/o/r":          "",
 		"h.example/a/b/c":               "",
 	} {
 		if got := RepositoryWhy(s); got != want {

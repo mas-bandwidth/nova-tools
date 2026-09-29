@@ -13,7 +13,7 @@ var bg = context.Background()
 func TestPinReadsCommittedBlobs(t *testing.T) {
 	t.Parallel()
 	f := sharedRepo(t)
-	pins, refs := Pin(bg, f.dir, f.c1, []string{"dir/b.md", "a.md"}) // the identity is the origin's
+	pins, refs := pinL(bg, f.dir, f.c1, []string{"dir/b.md", "a.md"}) // the identity is the origin's
 	if len(refs) > 0 {
 		t.Fatalf("%v", Lines(refs))
 	}
@@ -37,7 +37,7 @@ func TestPinReadsCommittedBlobs(t *testing.T) {
 	if string(pins[0].Data) != "committed b\n" || string(pins[1].Data) != "committed a\n" {
 		t.Errorf("bytes %q %q", pins[0].Data, pins[1].Data)
 	}
-	if sources := Sources(pins); sources[1].Name != "a.md" || string(sources[1].Data) != "committed a\n" {
+	if sources := sources(pins); sources[1].Name != "a.md" || string(sources[1].Data) != "committed a\n" {
 		t.Errorf("sources %+v", sources)
 	}
 }
@@ -48,7 +48,7 @@ func TestPinReadsCommittedBytesNotWorkingFiles(t *testing.T) {
 	write(t, dir, "a.md", "modified but not committed\n")
 	write(t, dir, "dir/b.md", "staged but not committed\n")
 	testGit(t, dir, "add", "dir/b.md")
-	pins, refs := Pin(bg, dir, commit, []string{"a.md", "dir/b.md"})
+	pins, refs := pinL(bg, dir, commit, []string{"a.md", "dir/b.md"})
 	if len(refs) > 0 {
 		t.Fatalf("%v", Lines(refs))
 	}
@@ -59,12 +59,12 @@ func TestPinReadsCommittedBytesNotWorkingFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "a.md")); err != nil {
 		t.Fatal(err)
 	}
-	if pins, refs := Pin(bg, dir, commit, []string{"a.md"}); len(refs) > 0 || string(pins[0].Data) != "committed a\n" {
+	if pins, refs := pinL(bg, dir, commit, []string{"a.md"}); len(refs) > 0 || string(pins[0].Data) != "committed a\n" {
 		t.Fatalf("uncommitted delete: %v", Lines(refs))
 	}
 	// And a file that exists only in the working tree is not at the commit.
 	write(t, dir, "new.md", "untracked\n")
-	if _, refs := Pin(bg, dir, commit, []string{"new.md"}); len(refs) != 1 || refs[0].Cause != CauseMissingPath {
+	if _, refs := pinL(bg, dir, commit, []string{"new.md"}); len(refs) != 1 || refs[0].Cause != CauseMissingPath {
 		t.Fatalf("%v", Lines(refs))
 	}
 }
@@ -173,16 +173,16 @@ func TestPinRefusesBadInputBeforeAnyGit(t *testing.T) {
 		{"trailing slash", []string{"dir/"}, CauseInvalidPath, "dir/"},
 		{"git directory", []string{".git/config"}, CauseInvalidPath, ".git/config"},
 		{"backslash", []string{`dir\b.md`}, CauseInvalidPath, `dir\b.md`},
-		{"control character", []string{"a\n.md"}, CauseInvalidPath, "a\n.md"},
-		{"empty path", []string{""}, CauseInvalidPath, ""},
-		{"path over the bound", []string{strings.Repeat("d/", MaxPathBytes)}, CauseInvalidPath, strings.Repeat("d/", MaxPathBytes)},
+		{"control character", []string{"a\n.md"}, CauseControlChar, "a\n.md"},
+		{"empty path", []string{""}, CauseRequired, ""},
+		{"path over the bound", []string{strings.Repeat("d/", MaxPathBytes)}, CauseTooLong, strings.Repeat("d/", MaxPathBytes)},
 		{"a duplicate", []string{"a.md", "dir/b.md", "a.md"}, CauseDuplicatePath, "a.md"},
 	}
 	for _, c := range paths {
 		t.Run("path "+c.name, func(t *testing.T) {
 			t.Parallel()
 			g := &gitRun{dir: f.dir}
-			pins, refs := pin(bg, g, f.dir, commit, c.paths)
+			pins, refs := pinG(bg, g, f.dir, commit, c.paths)
 			if pins != nil {
 				t.Fatal("pins beside a refusal")
 			}
@@ -215,7 +215,7 @@ func TestPinRefusesWhatIsNotARepository(t *testing.T) {
 	for name, d := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			pins, refs := Pin(bg, d, f.c1, []string{"a.md"}, WithIdentity("example.com/o/r"))
+			pins, refs := pinL(bg, d, f.c1, []string{"a.md"}, WithIdentity("example.com/o/r"))
 			if pins != nil || len(refs) != 1 || refs[0].Cause != CauseNotRepository {
 				t.Fatalf("%v", Lines(refs))
 			}
@@ -228,58 +228,30 @@ func TestPinRepositoryIdentity(t *testing.T) {
 	t.Parallel()
 	dir, commit := newRepo(t)
 	// The caller's identity wins over the origin, and is validated.
-	pins, refs := Pin(bg, dir, commit, []string{"a.md"}, WithIdentity("example.com/x/y"))
+	pins, refs := pinL(bg, dir, commit, []string{"a.md"}, WithIdentity("example.com/x/y"))
 	if len(refs) > 0 || pins[0].Repository != "example.com/x/y" {
 		t.Fatalf("%v", Lines(refs))
 	}
 	for _, bad := range []string{"https://example.com/x/y", "user@example.com/x/y", "example.com", "example.com/../y", "a b/c", strings.Repeat("a", 300) + "/x"} {
-		if _, refs := Pin(bg, dir, commit, []string{"a.md"}, WithIdentity(bad)); len(refs) != 1 || refs[0].Cause != CauseIdentityInvalid {
+		if _, refs := pinL(bg, dir, commit, []string{"a.md"}, WithIdentity(bad)); len(refs) != 1 || refs[0].Cause != CauseInvalidRepository {
 			t.Errorf("%q: %v", bad, Lines(refs))
 		}
 	}
 	// A local-path origin gives no identity.
 	testGit(t, dir, "remote", "set-url", "origin", "/srv/git/repo.git")
-	if _, refs := Pin(bg, dir, commit, []string{"a.md"}); len(refs) != 1 || refs[0].Cause != CauseIdentityMissing {
+	if _, refs := pinL(bg, dir, commit, []string{"a.md"}); len(refs) != 1 || refs[0].Cause != CauseIdentityMissing {
 		t.Fatalf("%v", Lines(refs))
 	}
 	// No origin is refused unless the caller supplies an identity.
 	testGit(t, dir, "remote", "remove", "origin")
-	_, refs = Pin(bg, dir, commit, []string{"a.md"})
+	_, refs = pinL(bg, dir, commit, []string{"a.md"})
 	if len(refs) != 1 || refs[0].Cause != CauseIdentityMissing || !strings.Contains(refs[0].Next, "WithIdentity") {
 		t.Fatalf("%v", Lines(refs))
 	}
 	wellFormed(t, refs[0])
-	pins, refs = Pin(bg, dir, commit, []string{"a.md"}, WithIdentity("example.com/owner/name"))
+	pins, refs = pinL(bg, dir, commit, []string{"a.md"}, WithIdentity("example.com/owner/name"))
 	if len(refs) > 0 || pins[0].Repository != "example.com/owner/name" {
 		t.Fatalf("%v", Lines(refs))
-	}
-}
-
-func TestNormalizeOrigin(t *testing.T) {
-	t.Parallel()
-	good := map[string]string{
-		"https://example.com/owner/repo.git":           "example.com/owner/repo",
-		"https://example.com/owner/repo":               "example.com/owner/repo",
-		"https://example.com/owner/repo/":              "example.com/owner/repo",
-		"https://user:pass@EXAMPLE.com/Owner/Repo.git": "example.com/Owner/Repo",
-		"git@example.com:owner/repo.git":               "example.com/owner/repo",
-		"example.com:owner/repo":                       "example.com/owner/repo",
-		"ssh://git@example.com/owner/repo.git":         "example.com/owner/repo",
-		"ssh://git@git.example.com:2222/team/sub/repo": "git.example.com:2222/team/sub/repo",
-		"git@host.example:/owner/repo.git":             "host.example/owner/repo",
-		"http://example.com/a/b":                       "example.com/a/b",
-		"  https://example.com/a/b.git \n":             "example.com/a/b",
-	}
-	for in, want := range good {
-		if got, why := normalizeOrigin(in); got != want || why != "" {
-			t.Errorf("%q: got %q (%s), want %q", in, got, why, want)
-		}
-	}
-	for _, in := range []string{"", "/srv/repo.git", "./repo", "../repo", "~/repo", "file:///srv/repo.git", "https://example.com/a/b?x=1", "https://example.com/a/b#f",
-		"https://example.com", "https://example.com/", "ftp://example.com/a/b", "C:/repo", "nonsense", "https:///a/b", "https://example.com/a b/c"} {
-		if got, why := normalizeOrigin(in); got != "" || why == "" {
-			t.Errorf("%q: accepted as %q", in, got)
-		}
 	}
 }
 
@@ -299,15 +271,15 @@ func TestPinBounds(t *testing.T) {
 			paths = append(paths, "p"+strings.Repeat("x", i))
 		}
 		_, refs := f.pin(paths, f.c1)
-		if len(refs) != 1 || refs[0].Cause != CauseTooManyFiles || !strings.Contains(refs[0].Found, "128") {
+		if len(refs) != 1 || refs[0].Cause != CauseTooMany || !strings.Contains(refs[0].Found, "128") {
 			t.Fatalf("%v", Lines(refs))
 		}
 	})
 	t.Run("a blob over the bound names the limit", func(t *testing.T) {
 		t.Parallel()
 		_, refs := f.pin([]string{"exact.md", "big.md"}, f.c1)
-		r, ok := hasRefusal(refs, "big.md", 0, "", CauseBlobTooLarge)
-		if !ok || len(refs) != 1 || !strings.Contains(r.Found, "262144") {
+		r, ok := hasRefusal(refs, "big.md", 0, "", CauseTooLarge)
+		if !ok || len(refs) != 1 || !strings.Contains(r.Limit, "262144") {
 			t.Fatalf("%v", Lines(refs))
 		}
 		if pins, refs := f.pin([]string{"exact.md"}, f.c1); len(refs) > 0 || pins[0].Size != MaxCardBytes {
@@ -317,7 +289,7 @@ func TestPinBounds(t *testing.T) {
 	t.Run("the array over the byte bound", func(t *testing.T) {
 		t.Parallel()
 		_, refs := f.pin(f.huge, f.c1)
-		if len(refs) != 1 || refs[0].Cause != CauseTotalTooLarge || !strings.Contains(refs[0].Found, "8388608") {
+		if len(refs) != 1 || refs[0].Cause != CauseTooLarge || !strings.Contains(refs[0].Limit, "8388608") {
 			t.Fatalf("%v", Lines(refs))
 		}
 	})
@@ -329,7 +301,7 @@ func TestPinUsesAFixedNumberOfGitCalls(t *testing.T) {
 	counts := map[int]int{}
 	for _, n := range []int{1, 10, 100} {
 		g := &gitRun{dir: f.dir}
-		pins, refs := pin(bg, g, f.dir, f.c1, f.many[:n]) // no identity: the origin is read
+		pins, refs := pinG(bg, g, f.dir, f.c1, f.many[:n]) // no identity: the origin is read
 		if len(refs) > 0 || len(pins) != n {
 			t.Fatalf("n=%d: %v", n, Lines(refs))
 		}
@@ -339,7 +311,7 @@ func TestPinUsesAFixedNumberOfGitCalls(t *testing.T) {
 		t.Fatalf("git invocations grow with the array or pass the constant %d: %v", GitCalls, counts)
 	}
 	g := &gitRun{dir: f.dir}
-	if _, refs := pin(bg, g, f.dir, f.c1, f.many[:3], WithIdentity("example.com/o/r")); len(refs) > 0 || g.calls != counts[1]-1 {
+	if _, refs := pinG(bg, g, f.dir, f.c1, f.many[:3], WithIdentity("example.com/o/r")); len(refs) > 0 || g.calls != counts[1]-1 {
 		t.Fatalf("with an identity the origin lookup is skipped: %d calls, %v", g.calls, Lines(refs))
 	}
 }
@@ -349,7 +321,7 @@ func TestPinGitCallsRunUnderADeadline(t *testing.T) {
 	f := sharedRepo(t)
 	ctx, cancel := context.WithCancel(bg)
 	cancel()
-	pins, refs := Pin(ctx, f.dir, f.c1, []string{"a.md"})
+	pins, refs := pinL(ctx, f.dir, f.c1, []string{"a.md"})
 	if pins != nil || len(refs) != 1 || refs[0].Cause != CauseTimeout {
 		t.Fatalf("%v", Lines(refs))
 	}
@@ -400,28 +372,21 @@ func TestPinTwoPathsWithTheSameBytes(t *testing.T) {
 	}
 }
 
-func TestPinThenParseThenAdmitEndToEnd(t *testing.T) {
+func TestAdmissionsEndToEnd(t *testing.T) {
 	t.Parallel()
 	f := sharedRepo(t)
-	pins, refs := Pin(bg, f.dir, f.c1, f.cards) // the identity is the origin's
-	if len(refs) > 0 {
-		t.Fatalf("%v", Lines(refs))
+	as, refs := Admissions(bg, f.dir, f.c1, f.cards) // the identity is the origin's
+	if refs != nil {
+		t.Fatalf("%v", refs.Lines())
 	}
-	defs := mustParse(t, Sources(pins))
-	if _, refs := Validate(defs); len(refs) > 0 {
-		t.Fatalf("%v", Lines(refs))
-	}
-	as, refs := Admissions(defs, pins)
-	if len(refs) > 0 {
-		t.Fatalf("%v", Lines(refs))
-	}
+	pins, _ := pinDir(bg, f.dir, f.c1, f.cards)
 	for i, a := range as {
-		if a.Repository != "example.com/Owner/Repo" || a.Commit != f.c1 || a.ObjectID != pins[i].ObjectID || a.DefinitionDigest != pins[i].SHA256 {
+		if a.Repository != "example.com/Owner/Repo" || a.Commit != f.c1 || a.ObjectID != pins[i].ObjectID || a.Digest != pins[i].SHA256 || a.Path != f.cards[i] {
 			t.Errorf("%+v", a)
 		}
 	}
 	// The same record as the golden one, except the commit and repository, which are this fixture's.
-	enc, _ := EncodeAdmissions(as)
+	enc := EncodeAdmissions(as)
 	want := strings.TrimSuffix(string(readTestdata(t, "admissions/card-beta.json")), "\n")
 	want = strings.ReplaceAll(strings.ReplaceAll(want, fixtureCommit, f.c1), fixtureRepo, "example.com/Owner/Repo")
 	if string(enc[1]) != want {

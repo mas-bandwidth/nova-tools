@@ -1,66 +1,44 @@
 // Package definition is the card layer's definitions: what a card file is, how a
 // set of card files is read, checked and pinned to committed Git blobs, and the
-// canonical record an admission would carry. It holds no store, no network and no
-// verbs; nothing in it executes or interprets a card's prose.
+// canonical record an admission carries. It holds no store, no network and no
+// verbs; nothing in it executes or interprets a card's prose. The docs are
+// docs/SPEC-CARD.md. The identities, the refusal shape, the canonical encoder and
+// the bounds are internal/card's, shared with the request package.
 //
-// # Contract
+// # The one entry point
 //
-// A card is plain data: a UTF-8 text file committed in Git, made of a contract
-// line, an uninterrupted header block of KEY: value lines, and a prose brief.
-// Every function in this package takes and returns arrays. A single card is an
-// array of one; there is no per-card entry point.
-//
-// Every function that can refuse returns its refusals as values (Refusal). An
-// array that draws any refusal is refused whole: Parse, Validate, Pin and
-// Admissions return no definitions, no pins and no records beside a refusal, so
-// a caller cannot admit a prefix by accident.
+// Admissions takes a repository root, a full commit and paths, and returns one
+// admission record per card: it pins the committed blobs, parses the pinned bytes
+// itself and validates the array. It never takes a definition or a digest from its
+// caller. parse, validate and pin are the package's own steps and are not
+// exported. Every function takes and returns arrays; a single card is an array of
+// one. A refused array returns no records and every refusal of the stage that
+// refused (at most 64, the rest counted): a caller cannot admit a prefix.
 //
 // # The file
 //
-// Line 1 is the contract line, `RESULT: <id> sha=<hex>` in the shape the swarm
-// cards carry (`RESULT <id> sha=<hex>` is read too); the sha= token is optional
-// and any text after it is kept as the contract note. The header starts on line 2
-// and ends at the first nonblank line that is not a KEY: value line; blank lines
-// inside the header are allowed. The brief is every byte from that line to the
-// end of the file. A known key at column zero below the header, outside a fenced
-// block, is stranded and refused; quoted and fenced text declares no fields.
-//
-// The profile's keys are SCHEMA (v2), ID, ENTRY (optional), TITLE, KIND, PATHS,
-// DEPENDS-ON, TIER, TEST, DONE-WHEN, DOORS and PROBES. A key repeated, a key not
-// in the profile, a case or spacing variant of a known key, and a required key
-// missing are refused by line and key. SCHEMA v3 is refused by name.
-//
-// The file is refused when it is not valid UTF-8, starts with a byte-order mark,
-// holds a carriage return (CRLF and bare CR alike) or a NUL byte, or has no brief.
-//
-// # Values
-//
-// KIND is a name in internal/hygiene/kinds.txt and carries a completion class
-// (pr or non-pr) from the versioned completion policy embedded beside the code;
-// a kind the policy does not classify is refused. PATHS, TEST and TIER use the
-// shared grammars of internal/hygiene and internal/cardhdr. IDs are nonempty ASCII
-// letters, digits, underscore and hyphen; IDs and ENTRY exclude commas and control
-// characters. The ID header agrees with the contract line.
-//
-// # The array
-//
-// Validate refuses a repeated ID across the array (naming both files), a card
-// that depends on itself, and a dependency cycle inside the array. A dependency
-// on an ID that is not in the array is not an error; the result lists it as
-// external so the caller can guard it against what is already admitted.
+// A card is a UTF-8 text file: a contract line (`RESULT: <id>`, optionally
+// ` sha=<40 or 64 lower-case hex>` and a note), an uninterrupted header of upper
+// case `KEY: value` lines (a key outside the profile, and a variant of one that
+// folds to a known key, refuse; any other first nonblank line ends the header), and
+// a prose brief. The profile's keys are SCHEMA (v2), ID, ENTRY (optional), TITLE,
+// KIND, PATHS, DEPENDS-ON, TIER, TEST, DONE-WHEN, DOORS and PROBES. `-` is the
+// DEPENDS-ON none and `none` the PATHS, DOORS and PROBES one; neither is a card ID.
+// KIND carries a completion class (pr or non-pr) from the versioned completion
+// policy; a kind the policy does not classify is refused.
 //
 // # Pinning
 //
-// Pin reads committed blobs, never working files, for an array of repository-
-// relative paths at one full commit, in a fixed number of git invocations that
-// does not grow with the array, each under a deadline. It reports the repository
-// identity, commit, path, Git object id and the SHA-256 of the bytes. It runs no
-// fetch, no publication and no network call.
+// The pin reads committed blobs, never working files, in at most five git
+// invocations whatever the array's size, each under a deadline, with lazy fetching
+// off and every transport refused: in a partial clone a blob that was not fetched
+// is the refusal missing-object, and stays missing. The directory must be the root
+// of a repository. A commit that exists is accepted whether or not a ref reaches
+// it. A refusal about an origin names the rule it broke and never quotes the URL.
 //
 // # Admission records
 //
-// Admissions joins definitions to their pins and produces one record per card
-// with a canonical encoding (sorted keys, strings and string arrays only, no HTML
-// escaping) and a stable SHA-256 digest. The record holds identities, digests and
-// data fields; the brief, DONE-WHEN and PROBES appear only through their digests.
+// A record holds identities, digests and the data fields of the header; the brief,
+// DONE-WHEN and PROBES appear only through the definition digest. It is encoded by
+// the card layer's one encoder and is at most card.MaxAdmissionRecordBytes.
 package definition

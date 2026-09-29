@@ -198,6 +198,6 @@ func buildFixture() error {
 
 // pin pins paths at commit with the identity supplied, which skips the origin
 // lookup; the tests of the identity itself call Pin without it.
-func (f *fixture) pin(paths []string, commit string) ([]Pinned, []Refusal) {
-	return Pin(bg, f.dir, commit, paths, WithIdentity("example.com/Owner/Repo"))
+func (f *fixture) pin(paths []string, commit string) ([]pinned, []Refusal) {
+	return pinL(bg, f.dir, commit, paths, WithIdentity("example.com/Owner/Repo"))
 }

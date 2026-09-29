@@ -18,7 +18,7 @@ const TokenChars = "letters, digits and . : / @ + _ -"
 // ValidToken reports whether s is a token of at most max bytes: nonempty, drawn
 // from letters, digits and `. : / @ + _ -`. Every reference of the card layer
 // (an issuer, an actor, an operation ID, a source artifact, a landing identity, a
-// verifier) is a token, so it is printable ASCII, holds no space, comma or quote,
+// verifier) is a token, so it is printable ASCII, holds no blank, comma or quote,
 // and needs no escaping inside a JSON string or an evidence record line.
 func ValidToken(s string, max int) bool {
 	return s != "" && len(s) <= max && tokenRE.MatchString(s)

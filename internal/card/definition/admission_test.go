@@ -4,12 +4,20 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
+
+// update rewrites the golden admission records under testdata/admissions:
+//
+//	go test ./internal/card/definition -run Golden -update
+var update = flag.Bool("update", false, "rewrite the golden admission records")
 
 const (
 	fixtureCommit = "0123456789abcdef0123456789abcdef01234567"
@@ -26,12 +34,12 @@ func blobID(data []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func goldenPins(t *testing.T) []Pinned {
+func goldenPins(t *testing.T) []pinned {
 	t.Helper()
-	var pins []Pinned
+	var pins []pinned
 	for _, n := range goldenNames {
 		data := readTestdata(t, "cards/"+n+".md")
-		pins = append(pins, Pinned{Repository: fixtureRepo, Commit: fixtureCommit, Path: "cards/" + n + ".md",
+		pins = append(pins, pinned{Repository: fixtureRepo, Commit: fixtureCommit, Path: "cards/" + n + ".md",
 			ObjectID: blobID(data), SHA256: sum(data), Mode: "100644", Size: len(data), Data: data})
 	}
 	return pins
@@ -40,26 +48,22 @@ func goldenPins(t *testing.T) []Pinned {
 func TestGoldenCardsAdmitToGoldenRecords(t *testing.T) {
 	t.Parallel()
 	pins := goldenPins(t)
-	defs := mustParse(t, Sources(pins))
-	rep, refs := Validate(defs)
-	if len(refs) > 0 {
-		t.Fatalf("%v", Lines(refs))
+	as, refs := fromPins(pins)
+	if refs != nil {
+		t.Fatalf("%v", refs.Lines())
 	}
-	if len(rep.External) != 0 {
-		t.Fatalf("external %+v", rep.External)
-	}
-	as, refs := Admissions(defs, pins)
-	if len(refs) > 0 {
-		t.Fatalf("%v", Lines(refs))
-	}
-	enc, refs := EncodeAdmissions(as)
-	if len(refs) > 0 {
-		t.Fatalf("%v", Lines(refs))
-	}
+	enc := EncodeAdmissions(as)
 	for i, n := range goldenNames {
+		path := filepath.Join("testdata", "admissions", n+".json")
+		if *update {
+			if err := os.WriteFile(path, append(enc[i], '\n'), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		want := strings.TrimSuffix(string(readTestdata(t, "admissions/"+n+".json")), "\n")
 		if string(enc[i]) != want {
-			t.Errorf("%s: canonical record differs from testdata/admissions/%s.json:\n got %s\nwant %s", n, n, enc[i], want)
+			t.Errorf("%s: canonical record differs from testdata/admissions/%s.json (run with -update):\n got %s\nwant %s", n, n, enc[i], want)
 		}
 	}
 	// The classes the fixtures name: two pull-request cards and two that need none.
@@ -78,13 +82,9 @@ func TestGoldenCardsAdmitToGoldenRecords(t *testing.T) {
 func TestEncodingIsCanonical(t *testing.T) {
 	t.Parallel()
 	pins := goldenPins(t)
-	defs := mustParse(t, Sources(pins))
-	as, _ := Admissions(defs, pins)
-	enc, _ := EncodeAdmissions(as)
-	digests, refs := DigestAdmissions(as)
-	if len(refs) > 0 {
-		t.Fatal(Lines(refs))
-	}
+	as, _ := fromPins(pins)
+	enc := EncodeAdmissions(as)
+	digests := DigestAdmissions(as)
 	for i, b := range enc {
 		// It decodes as an object of strings and arrays of strings only: no number,
 		// no null, no nested object.
@@ -112,18 +112,17 @@ func TestEncodingIsCanonical(t *testing.T) {
 				t.Errorf("%s is %T, want string or array of strings", k, v)
 			}
 		}
-		// Go's own compact, sorted-key encoding of the decoded object is these bytes: the
-		// goldens carry nothing it would escape.
 		if std, err := json.Marshal(m); err != nil || string(std) != string(b) {
 			t.Errorf("not the compact sorted encoding:\n got %s\nwant %s", b, std)
 		}
 		if digests[i] != sum(b) {
 			t.Errorf("digest is not the SHA-256 of the encoding")
 		}
-		// Deterministic.
-		again, _ := EncodeAdmissions(as[i : i+1])
-		if string(again[0]) != string(b) {
+		if again := EncodeAdmissions(as[i : i+1]); string(again[0]) != string(b) {
 			t.Errorf("encoding is not deterministic")
+		}
+		if len(b) > card.MaxAdmissionRecordBytes {
+			t.Errorf("record of %d bytes exceeds %d", len(b), card.MaxAdmissionRecordBytes)
 		}
 	}
 	// The brief, DONE-WHEN and PROBES are not in the record.
@@ -159,108 +158,75 @@ func keysInOrder(t *testing.T, b []byte) []string {
 	return keys
 }
 
-func TestEncodingDoesNotEscapeHTMLAndEscapesControls(t *testing.T) {
+// The record is encoded by the card layer's one encoder: the same escape rule as a
+// request's, no HTML escape, arrays sorted, an empty optional field left out.
+func TestEncodingUsesTheSharedEncoder(t *testing.T) {
 	t.Parallel()
-	a := Admission{ID: "a", Title: "<b>&</b> \"q\" \\ \u2028 \x7f é 日", Doors: "tab\there"}
-	enc, refs := EncodeAdmissions([]Admission{a})
-	if len(refs) > 0 {
-		t.Fatal(Lines(refs))
-	}
+	a := Admission{ID: "a", Title: "<b>&</b> \"q\" \\   \x7f é 日", Doors: "tab\there", DependsOn: []string{"z", "b"}, Paths: []string{"y/*", "a/*"}}
+	enc := EncodeAdmissions([]Admission{a})
 	s := string(enc[0])
-	for _, want := range []string{"<b>&</b>", "\\\"q\\\"", "q\\\" \\\\ ", "\\u2028", "\\u007f", "tab\\u0009here", " é 日"} {
+	for _, want := range []string{"<b>&</b>", "\\\"q\\\"", "q\\\" \\\\ ", "\\u2028", "\\u007f", "tab\\u0009here", " é 日", `"depends_on":["b","z"]`, `"paths":["a/*","y/*"]`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("%s lacks %s", s, want)
 		}
 	}
-	// Two encodings of records that differ in one field differ.
+	if want := string(card.Encode(a.tree())); s != want {
+		t.Errorf("not the card encoder's bytes")
+	}
 	b := a
 	b.Title += "x"
-	e2, _ := EncodeAdmissions([]Admission{b})
-	if string(e2[0]) == s {
+	if e2 := EncodeAdmissions([]Admission{b}); string(e2[0]) == s {
 		t.Errorf("distinct records encode alike")
 	}
-	// An empty entry is omitted; a set one is written.
-	if strings.Contains(s, `"entry"`) {
-		t.Errorf("empty entry is written")
+	// An empty optional field is omitted, an absent list too; a set one is written.
+	for _, absent := range []string{`"entry"`, `"base_commit"`} {
+		if strings.Contains(s, absent) {
+			t.Errorf("empty %s is written", absent)
+		}
 	}
-	a.Entry = "work/x"
-	if e, _ := EncodeAdmissions([]Admission{a}); !strings.Contains(string(e[0]), `"entry":"work/x"`) {
-		t.Errorf("entry not written: %s", e[0])
+	c := Admission{ID: "a"}
+	if got := string(EncodeAdmissions([]Admission{c})[0]); strings.Contains(got, "depends_on") || strings.Contains(got, `"paths"`) {
+		t.Errorf("an empty list is written: %s", got)
 	}
-	// Invalid UTF-8 is refused, never repaired.
-	if _, refs := EncodeAdmissions([]Admission{{ID: "\xff"}}); len(refs) != 1 {
-		t.Errorf("invalid UTF-8 accepted")
+	a.Entry, a.BaseCommit = "work/x", strings.Repeat("a", 40)
+	if e := string(EncodeAdmissions([]Admission{a})[0]); !strings.Contains(e, `"entry":"work/x"`) || !strings.Contains(e, `"base_commit":"`+strings.Repeat("a", 40)+`"`) {
+		t.Errorf("entry or base commit not written: %s", e)
 	}
-	if _, refs := DigestAdmissions([]Admission{{DependsOn: []string{"\xff"}}}); len(refs) != 1 {
-		t.Errorf("invalid UTF-8 in a list accepted")
+	// Invalid UTF-8 is never carried through: the shared encoder writes it as one
+	// replacement escape (a record built by Admissions has none).
+	if got := string(EncodeAdmissions([]Admission{{ID: "\xff"}})[0]); !strings.Contains(got, `"id":"`+`\`+`ufffd"`) {
+		t.Errorf("invalid UTF-8 carried: %s", got)
 	}
 }
 
-func TestAdmissionsRefuseAPinThatIsNotTheDefinitionsBytes(t *testing.T) {
+// A record's shared fields are a request's admission under the same names: the
+// record, with the row and the review policy's identity a request adds, is an
+// admission the request package accepts.
+func TestRecordIsAnAdmissionOfTheRequestPackage(t *testing.T) {
 	t.Parallel()
 	pins := goldenPins(t)
-	defs := mustParse(t, Sources(pins))
-	t.Run("length", func(t *testing.T) {
-		t.Parallel()
-		as, refs := Admissions(defs, pins[:1])
-		if as != nil || len(refs) != 1 || refs[0].Cause != CausePinMismatch {
-			t.Fatalf("%v", Lines(refs))
-		}
-	})
-	t.Run("digest", func(t *testing.T) {
-		t.Parallel()
-		bad := append([]Pinned(nil), pins...)
-		bad[2].SHA256 = strings.Repeat("0", 64)
-		as, refs := Admissions(defs, bad)
-		if as != nil {
-			t.Fatal("records beside a refusal")
-		}
-		if _, ok := hasRefusal(refs, "cards/card-gamma.md", 0, "", CausePinMismatch); !ok {
-			t.Fatalf("%v", Lines(refs))
-		}
-	})
-	t.Run("path", func(t *testing.T) {
-		t.Parallel()
-		bad := append([]Pinned(nil), pins...)
-		bad[0].Path = "cards/other.md"
-		if _, refs := Admissions(defs, bad); len(refs) != 1 {
-			t.Fatalf("%v", Lines(refs))
-		}
-	})
-	t.Run("a definition that fails the field rules", func(t *testing.T) {
-		t.Parallel()
-		d := append([]Definition(nil), defs...)
-		d[1].Tier = "huge"
-		if _, refs := Admissions(d, pins); len(refs) != 1 || refs[0].Cause != CauseInvalidTier || refs[0].Operation != OpAdmit {
-			t.Fatalf("%v", Lines(refs))
-		}
-	})
-	t.Run("empty", func(t *testing.T) {
-		t.Parallel()
-		if _, refs := Admissions(nil, nil); len(refs) != 1 {
-			t.Fatalf("%v", Lines(refs))
-		}
-	})
-}
-
-// TestGoldenAdmissionFilesAreWritten regenerates the golden records when the
-// file named by NOVA_CARD_GOLDEN_DIR is set, so a deliberate change to the record
-// is one command; without it the test does nothing.
-func TestGoldenAdmissionFilesAreWritten(t *testing.T) {
-	t.Parallel()
-	dir := os.Getenv("NOVA_CARD_GOLDEN_DIR")
-	if dir == "" {
-		t.Skip("NOVA_CARD_GOLDEN_DIR is not set")
+	as, refs := fromPins(pins)
+	if refs != nil {
+		t.Fatal(refs.Lines())
 	}
-	pins := goldenPins(t)
-	as, refs := Admissions(mustParse(t, Sources(pins)), pins)
-	if len(refs) > 0 {
-		t.Fatal(Lines(refs))
-	}
-	enc, _ := EncodeAdmissions(as)
-	for i, n := range goldenNames {
-		if err := os.WriteFile(filepath.Join(dir, n+".json"), append(enc[i], '\n'), 0o644); err != nil {
+	for _, a := range as {
+		var rec map[string]any
+		if err := json.Unmarshal(EncodeAdmissions([]Admission{a})[0], &rec); err != nil {
 			t.Fatal(err)
+		}
+		shared := []string{"id", "digest", "object_id", "commit", "repository", "path", "kind", "depends_on", "entry", "title"}
+		adm := map[string]any{"row": "build", "policy_version": "1", "policy_digest": strings.Repeat("b", 64)}
+		for _, k := range shared {
+			if v, ok := rec[k]; ok {
+				adm[k] = v
+			}
+		}
+		doc, _ := json.Marshal(map[string]any{
+			"schema": 1, "operation": "admit", "table": "work", "epoch": "3", "expected_table_revision": "12", "actor": "coordinator",
+			"admissions": []any{adm},
+		})
+		if err := parseAsAdmit(doc); err != nil {
+			t.Errorf("%s: the record's shared fields are not an admission: %v", a.ID, err)
 		}
 	}
 }

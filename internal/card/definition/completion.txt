@@ -2,7 +2,9 @@
 # card of that kind completes with a landed pull request or without one.
 #
 # This file is DATA, embedded into the binary beside the code, for the same reason
-# kinds.txt is: a list a reader can open and diff is auditable. It is its own
+# kinds.txt is: a list a reader can open and diff is auditable. Its version is tied to its
+# content: policy_test.go holds the digest of this file beside the version, so a
+# classification cannot change without the version (and that test) changing. It is its own
 # lifecycle policy. It is NOT read off the gated/ungated column of kinds.txt, which
 # says whether a test gates the card; a kind the two files could disagree on is the
 # reason the classification is written out here, kind by kind.
@@ -11,8 +13,10 @@
 # test fails the day kinds.txt gains one.
 #
 # Format: one `version<TAB><n>` row, then <kind><TAB><pr|non-pr> rows.
-#   pr      the card completes by a verified landing of a pull request
-#   non-pr  the card completes by a recorded outcome with no pull request
+#   pr      the card ends by a landing: its code is on the development branch
+#   non-pr  the card has no code to land, so it cannot land; where such a card ends is
+#           an open question (the lifecycle names no state for it), and this class only
+#           says that a landing is not how it would end
 
 version	1
 

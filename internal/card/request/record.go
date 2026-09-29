@@ -25,8 +25,8 @@ type Record struct {
 	Artifact    string
 }
 
-// Line is the record's canonical text: seven space-separated tokens, none empty,
-// none holding a space or a control character:
+// Line is the record's canonical text: seven blank-separated tokens, none empty,
+// none holding a blank or a control character:
 //
 //	v1 <kind> <issuer> <disposition> <head> sha256:<def> <verifier> <artifact>
 //
@@ -120,7 +120,7 @@ func ParseRecord(line string) (Record, error) {
 	}
 	f := strings.Split(line, " ")
 	if len(f) != 8 {
-		return fail("", CauseInvalidValue, card.Value(line), "eight space-separated tokens")
+		return fail("", CauseInvalidValue, card.Value(line), "eight blank-separated tokens")
 	}
 	if f[0] != RecordVersion {
 		return fail("version", CauseInvalidValue, card.Value(f[0]), RecordVersion)

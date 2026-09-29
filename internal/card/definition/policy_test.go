@@ -1,6 +1,7 @@
 package definition
 
 import (
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"strings"
 	"testing"
 
@@ -71,18 +72,18 @@ func TestKindWithoutClassificationRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c, _ := kindWhyIn(p, "read"); c != "" {
-		t.Fatalf("read: %s", c)
+	if pr := kindProblemIn(p, "read"); pr != nil {
+		t.Fatalf("read: %+v", pr)
 	}
-	c, why := kindWhyIn(p, "fix-red")
-	if c != CauseUnclassifiedKind || !strings.Contains(why, "fix-red") {
-		t.Fatalf("declared but unclassified: %s %s", c, why)
+	pr := kindProblemIn(p, "fix-red")
+	if pr == nil || pr.cause != CauseUnclassifiedKind || !strings.Contains(pr.found, "fix-red") {
+		t.Fatalf("declared but unclassified: %+v", pr)
 	}
-	if c, _ := kindWhyIn(p, "nonsense"); c != CauseInvalidKind {
-		t.Fatalf("unknown: %s", c)
+	if pr := kindProblemIn(p, "nonsense"); pr == nil || pr.cause != CauseInvalidKind {
+		t.Fatalf("unknown: %+v", pr)
 	}
-	if c, _ := kindWhy("nonsense"); c != CauseInvalidKind {
-		t.Fatalf("unknown: %s", c)
+	if pr := kindProblem("nonsense"); pr == nil || pr.cause != CauseInvalidKind {
+		t.Fatalf("unknown: %+v", pr)
 	}
 }
 
@@ -109,5 +110,29 @@ func TestPolicyIsNotInferredFromTheGatedColumn(t *testing.T) {
 		if _, err := parsePolicy(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
+	}
+}
+
+// The completion policy's version is tied to its content: the digest of
+// completion.txt is held here beside the version, so a classification cannot change
+// without the version changing. When this fails, bump `version` in completion.txt,
+// then update both constants below.
+func TestPolicyVersionIsTiedToItsContent(t *testing.T) {
+	t.Parallel()
+	const (
+		version = 1
+		digest  = "43c072ba6665212ab480530128ee18401968ae7439eb7be624f3633a4e9f16f8"
+	)
+	if PolicyVersion() != version || PolicyDigest() != digest {
+		t.Fatalf("completion.txt is version %d with digest %s; this test holds version %d with digest %s: a change to a classification needs a new version", PolicyVersion(), PolicyDigest(), version, digest)
+	}
+	// The digest really is of the file's bytes, and a one-byte change to a
+	// classification changes it.
+	if got := card.Sum([]byte(policyData)); string(got) != PolicyDigest() {
+		t.Fatalf("PolicyDigest is not the digest of the embedded bytes")
+	}
+	changed := strings.Replace(policyData, "fix-red\tpr", "fix-red\tnon-pr", 1)
+	if changed == policyData || card.Sum([]byte(changed)) == card.Sum([]byte(policyData)) {
+		t.Fatal("a reclassification does not change the digest")
 	}
 }

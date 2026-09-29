@@ -10,7 +10,7 @@ import (
 // baseCard is a valid card whose lines the refusal table edits. Its line numbers:
 // 1 contract, 2 SCHEMA, 3 ID, 4 TITLE, 5 KIND, 6 PATHS, 7 DEPENDS-ON, 8 TIER,
 // 9 TEST, 10 DONE-WHEN, 11 DOORS, 12 PROBES, 13 blank, 14 heading, 15 blank, 16 text.
-const baseCard = `RESULT: card-alpha sha=0123456789ab
+const baseCard = `RESULT: card-alpha sha=00112233445566778899aabbccddeeff00112233
 SCHEMA: v2
 ID: card-alpha
 TITLE: Reject an empty queue name
@@ -53,7 +53,7 @@ func one(name, text string) []Source { return []Source{{Name: name, Data: []byte
 
 func mustParse(t *testing.T, srcs []Source) []Definition {
 	t.Helper()
-	defs, refs := Parse(srcs)
+	defs, refs := parseL(srcs)
 	if len(refs) > 0 {
 		t.Fatalf("Parse refused: %v", Lines(refs))
 	}
@@ -71,22 +71,22 @@ func readTestdata(t *testing.T, rel string) []byte {
 
 func hasRefusal(rs []Refusal, file string, line int, key string, cause Cause) (Refusal, bool) {
 	for _, r := range rs {
-		if r.File == file && r.Line == line && r.Key == key && r.Cause == cause {
+		if r.File == file && r.Line == line && r.Field == key && r.Cause == cause {
 			return r, true
 		}
 	}
 	return Refusal{}, false
 }
 
-// wellFormed checks the shape every refusal has: an operation, a cause, what was
-// found, a next action, and a rendering that is one line.
+// wellFormed checks the shape every refusal has: an operation, a cause of the closed
+// vocabulary, a next action, and a rendering that is one bounded line.
 func wellFormed(t *testing.T, r Refusal) {
 	t.Helper()
-	if r.Operation == "" || r.Cause == "" || r.Found == "" || r.Next == "" {
+	if r.Operation == "" || r.Cause == "" || r.Next == "" || !r.Cause.Known() {
 		t.Errorf("refusal is missing a field: %+v", r)
 	}
 	s := r.String()
-	if strings.ContainsAny(s, "\n\r") || !strings.HasPrefix(s, "REFUSED "+r.Operation) || !strings.Contains(s, "cause="+string(r.Cause)) {
+	if strings.ContainsAny(s, "\n\r") || !strings.HasPrefix(s, "refused "+string(r.Operation)) || !strings.Contains(s, ": "+string(r.Cause)) || len(s) > 2048 {
 		t.Errorf("refusal renders badly: %q", s)
 	}
 }

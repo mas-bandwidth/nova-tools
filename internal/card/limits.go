@@ -1,7 +1,7 @@
 package card
 
 // The table layer's bounds, as the table extension's manifest states them
-// (mas-bandwidth/ideas#825, "Manifest, identity and bounds"). The card layer's
+// (ideas#825, "Manifest, identity and bounds"). The card layer's
 // bounds below are derived from these so that any request the card layer
 // accepts fits one table manifest, and a request that would not fit is refused
 // here, whole, before a store call.
@@ -28,8 +28,7 @@ const CardOperationRecordEntries = 1
 
 // Count bounds of a request. Each names the limit a refusal cites; exceeding one
 // refuses the whole request and never splits it into several. They are the
-// bounds of the manager design (docs/SPEC-CARD-MANAGER.md, "Size arithmetic and
-// the card layer's bounds"), kept here so that a request valid at the card layer
+// bounds of the manager design's size arithmetic, kept here so that a request valid at the card layer
 // is never refused by the table for size.
 const (
 	// MaxChangedEntries bounds an array whose entries change cards: admissions,

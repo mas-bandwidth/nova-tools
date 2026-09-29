@@ -1,12 +1,11 @@
 package definition
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"fmt"
 	"sort"
-	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
 
 // AdmissionSchema names the shape of the canonical admission record.
@@ -14,198 +13,133 @@ const AdmissionSchema = "card-admission/1"
 
 // Admission is the record one admitted card carries: identities, digests and the
 // header fields that are data. It holds no brief, no DONE-WHEN and no PROBES:
-// their bytes are covered by DefinitionDigest, and the brief alone by BriefDigest.
+// their bytes are covered by Digest, and the brief alone by BriefDigest. Its
+// shared fields (ID, Digest, ObjectID, Commit, Repository, Path, Kind, DependsOn,
+// Entry, Title) are those of the request package's admission, under the same names
+// and the same grammar, so a record is what an admission request carries plus the
+// stream row and the review policy's identity.
 type Admission struct {
-	ID               string
-	DefinitionDigest string // hex SHA-256 of the card file
-	BriefDigest      string // hex SHA-256 of the brief
-	ObjectID         string // the Git object id of the committed blob
-	Commit           string // the full commit the blob was read at
-	Repository       string // the repository identity
-	Path             string // the repository-relative path of the card file
-	Kind             string
-	Completion       Completion
-	PolicyVersion    int
-	DependsOn        []string
-	Entry            string // "" when the card has none
-	Tier             string
-	CardSchema       string // the card's SCHEMA value
-	Title            string
-	Paths            []string
-	Test             string // the TEST value as the card writes it
-	Doors            string
+	ID            string
+	Digest        string // hex SHA-256 of the card file: the definition digest
+	BriefDigest   string // hex SHA-256 of the brief
+	ObjectID      string // the Git object id of the committed blob
+	Commit        string // the full commit the blob was read at
+	Repository    card.Repository
+	Path          string // the repository-relative path of the card file
+	Kind          string
+	Completion    Completion
+	PolicyVersion int      // the completion policy the kind was classified under
+	DependsOn     []string // sorted, unique, at most MaxDependsOn, never the card itself
+	Entry         string   // "" when the card has none
+	Tier          string
+	CardSchema    string // the card's SCHEMA value
+	Title         string
+	Paths         []string // sorted
+	Test          string   // the TEST value as the card writes it
+	Doors         string
+	BaseCommit    string // the contract line's sha=: the commit the work starts from; "" when absent
 }
 
-// Admissions joins an array of definitions to the pins they were read from,
-// position for position, and produces one record per card. It refuses a length
-// mismatch, a definition whose file is not its pin's path or whose digest is not
-// its pin's SHA-256 (the definition was not read from those bytes), and any
-// definition that Validate's field checks refuse. It returns no records beside a
-// refusal.
-func Admissions(defs []Definition, pins []Pinned) ([]Admission, []Refusal) {
-	if len(defs) == 0 || len(defs) != len(pins) {
-		return nil, []Refusal{{Operation: OpAdmit, Cause: CausePinMismatch,
-			Found: fmt.Sprintf("%d definitions and %d pins", len(defs), len(pins)),
-			Next:  "pass one pin per definition, in the same order: Parse(Sources(pins))"}}
+// Admissions is the one function from a repository to admission records: it pins
+// the committed blobs of the paths at the commit (never reading a working file and
+// never the network), parses the pinned bytes itself, validates the array and
+// produces one record per card, in the order of the paths. It never takes a
+// definition or a digest from its caller, so a record is always what the committed
+// bytes say. It returns no records beside a refusal: a refused array is refused
+// whole, at the first stage that refused (pin, then parse, then validate), and it
+// reports every refusal of that stage (at most card.MaxRefusals, the rest counted).
+//
+// repoDir is the root of a git repository, commit a full lower-case object id and
+// paths the repository-relative paths of the card files; see pinDir for what is
+// refused and what is accepted.
+func Admissions(ctx context.Context, repoDir, commit string, paths []string, opts ...PinOption) ([]Admission, *Refusals) {
+	pins, r := pinDir(ctx, repoDir, commit, paths, opts...)
+	if r != nil {
+		return nil, r
 	}
-	var refs []Refusal
-	out := make([]Admission, 0, len(defs))
+	return fromPins(pins)
+}
+
+// fromPins parses pinned bytes, validates the array and builds the records.
+func fromPins(pins []pinned) ([]Admission, *Refusals) {
+	defs, r := parse(sources(pins))
+	if r != nil {
+		return nil, r
+	}
+	if _, r := validate(defs); r != nil {
+		return nil, r
+	}
+	out := make([]Admission, len(defs))
+	var c card.Collector
 	for i, d := range defs {
 		p := pins[i]
-		file := fileLabel(i, d)
-		if d.File != p.Path || d.Digest != p.SHA256 || d.Digest == "" {
-			refs = append(refs, Refusal{Operation: OpAdmit, File: file, Cause: CausePinMismatch,
-				Found: fmt.Sprintf("definition %s (digest %.12s) does not match pin %s (sha256 %.12s)", d.File, d.Digest, p.Path, p.SHA256),
-				Next:  "parse the definitions from the pinned bytes: Parse(Sources(pins))"})
-			continue
-		}
-		if rs := checkDefinition(OpAdmit, d, nil, d.Lines, file); len(rs) > 0 {
-			refs = append(refs, rs...)
-			continue
-		}
 		cs, _ := Classify([]string{d.Kind})
 		deps := append([]string(nil), d.DependsOn...)
 		sort.Strings(deps)
 		paths := append([]string(nil), d.Paths...)
 		sort.Strings(paths)
-		out = append(out, Admission{
-			ID: d.ID, DefinitionDigest: d.Digest, BriefDigest: d.BriefDigest,
-			ObjectID: p.ObjectID, Commit: p.Commit, Repository: p.Repository, Path: p.Path,
-			Kind: d.Kind, Completion: cs[0], PolicyVersion: PolicyVersion(),
-			DependsOn: deps, Entry: d.Entry, Tier: d.Tier, CardSchema: d.Schema,
-			Title: d.Title, Paths: paths, Test: d.Test.String(), Doors: d.Doors,
-		})
+		out[i] = Admission{
+			ID: d.ID, Digest: d.Digest, BriefDigest: d.BriefDigest, ObjectID: p.ObjectID, Commit: p.Commit, Repository: p.Repository, Path: p.Path,
+			Kind: d.Kind, Completion: cs[0], PolicyVersion: PolicyVersion(), DependsOn: deps, Entry: d.Entry, Tier: d.Tier, CardSchema: d.Schema,
+			Title: d.Title, Paths: paths, Test: d.Test.String(), Doors: d.Doors, BaseCommit: d.BaseCommit,
+		}
+		if b, _ := encodeOne(out[i]); len(b) > card.MaxAdmissionRecordBytes {
+			c.Add(ref(OpAdmit, CauseTooLarge, p.Path, 0, "", fmt.Sprintf("a record of %d bytes", len(b)), fmt.Sprintf("%d bytes", card.MaxAdmissionRecordBytes),
+				"shorten the card's header values"))
+		}
 	}
-	if len(refs) > 0 {
-		return nil, refs
+	if err := c.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-// EncodeAdmissions writes each record in its canonical form: one JSON object, keys
-// in byte order, only strings and arrays of strings (no numbers, so no floats),
-// no insignificant whitespace, and no HTML escaping. The same record always
-// encodes to the same bytes. A field that is not valid UTF-8 is refused.
-func EncodeAdmissions(as []Admission) ([][]byte, []Refusal) {
+func (a Admission) tree() card.Obj {
+	m := card.Obj{}
+	m.Str("schema", AdmissionSchema)
+	m.Str("card_schema", a.CardSchema)
+	m.Str("id", a.ID)
+	m.Str("digest", a.Digest)
+	m.Str("brief_digest", a.BriefDigest)
+	m.Str("object_id", a.ObjectID)
+	m.Str("commit", a.Commit)
+	m.Str("repository", string(a.Repository))
+	m.Str("path", a.Path)
+	m.Str("kind", a.Kind)
+	m.Str("completion", string(a.Completion))
+	m.Str("completion_policy", fmt.Sprint(a.PolicyVersion))
+	m.OptSet("depends_on", card.Strings(a.DependsOn))
+	m.Str("entry", a.Entry)
+	m.Str("tier", a.Tier)
+	m.Str("title", a.Title)
+	m.OptSet("paths", card.Strings(a.Paths))
+	m.Str("test", a.Test)
+	m.Str("doors", a.Doors)
+	m.Str("base_commit", a.BaseCommit)
+	return m
+}
+
+func encodeOne(a Admission) ([]byte, *Refusals) { return card.Encode(a.tree()), nil }
+
+// EncodeAdmissions writes each record in its canonical form (card.Encode): one
+// JSON object, keys in byte order, only strings and arrays of strings (no numbers,
+// so no floats), no insignificant whitespace, no HTML escaping, the arrays sorted
+// by the encoder, an empty optional field left out. The same record always
+// encodes to the same bytes.
+func EncodeAdmissions(as []Admission) [][]byte {
 	out := make([][]byte, len(as))
-	var refs []Refusal
 	for i, a := range as {
-		b, why := canonical(a)
-		if why != "" {
-			refs = append(refs, Refusal{Operation: OpAdmit, File: a.Path, Cause: CauseInvalidValue,
-				Found: why, Next: "build the record with Admissions"})
-			continue
-		}
-		out[i] = b
+		out[i], _ = encodeOne(a)
 	}
-	if len(refs) > 0 {
-		return nil, refs
-	}
-	return out, nil
+	return out
 }
 
 // DigestAdmissions is the hex SHA-256 of each record's canonical encoding.
-func DigestAdmissions(as []Admission) ([]string, []Refusal) {
-	enc, refs := EncodeAdmissions(as)
-	if refs != nil {
-		return nil, refs
-	}
+func DigestAdmissions(as []Admission) []string {
+	enc := EncodeAdmissions(as)
 	out := make([]string, len(enc))
 	for i, b := range enc {
-		h := sha256.Sum256(b)
-		out[i] = hex.EncodeToString(h[:])
+		out[i] = string(card.Sum(b))
 	}
-	return out, nil
-}
-
-type kv struct {
-	key    string
-	str    string
-	list   []string
-	isList bool
-	omit   bool
-}
-
-func canonical(a Admission) ([]byte, string) {
-	fields := []kv{
-		{key: "schema", str: AdmissionSchema},
-		{key: "card_schema", str: a.CardSchema},
-		{key: "id", str: a.ID},
-		{key: "definition_digest", str: a.DefinitionDigest},
-		{key: "brief_digest", str: a.BriefDigest},
-		{key: "object_id", str: a.ObjectID},
-		{key: "commit", str: a.Commit},
-		{key: "repository", str: a.Repository},
-		{key: "path", str: a.Path},
-		{key: "kind", str: a.Kind},
-		{key: "completion", str: string(a.Completion)},
-		{key: "completion_policy", str: fmt.Sprint(a.PolicyVersion)},
-		{key: "depends_on", list: a.DependsOn, isList: true},
-		{key: "entry", str: a.Entry, omit: a.Entry == ""},
-		{key: "tier", str: a.Tier},
-		{key: "title", str: a.Title},
-		{key: "paths", list: a.Paths, isList: true},
-		{key: "test", str: a.Test},
-		{key: "doors", str: a.Doors},
-	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
-	var b bytes.Buffer
-	b.WriteByte('{')
-	first := true
-	for _, f := range fields {
-		if f.omit {
-			continue
-		}
-		if !first {
-			b.WriteByte(',')
-		}
-		first = false
-		writeJSONString(&b, f.key)
-		b.WriteByte(':')
-		if f.isList {
-			b.WriteByte('[')
-			for i, s := range f.list {
-				if !utf8.ValidString(s) {
-					return nil, fmt.Sprintf("%s holds invalid UTF-8", f.key)
-				}
-				if i > 0 {
-					b.WriteByte(',')
-				}
-				writeJSONString(&b, s)
-			}
-			b.WriteByte(']')
-			continue
-		}
-		if !utf8.ValidString(f.str) {
-			return nil, fmt.Sprintf("%s holds invalid UTF-8", f.key)
-		}
-		writeJSONString(&b, f.str)
-	}
-	b.WriteByte('}')
-	return b.Bytes(), ""
-}
-
-// writeJSONString writes s as a JSON string: quote and backslash escaped, every
-// control character and the Unicode line and paragraph separators as \u escapes,
-// everything else as its own UTF-8 (so <, > and & are never escaped).
-func writeJSONString(b *bytes.Buffer, s string) {
-	const hexd = "0123456789abcdef"
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"':
-			b.WriteString(`\"`)
-		case r == '\\':
-			b.WriteString(`\\`)
-		case r < 0x20 || r == 0x7f || r == 0x2028 || r == 0x2029:
-			b.WriteString(`\u`)
-			b.WriteByte(hexd[r>>12&0xf])
-			b.WriteByte(hexd[r>>8&0xf])
-			b.WriteByte(hexd[r>>4&0xf])
-			b.WriteByte(hexd[r&0xf])
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
+	return out
 }

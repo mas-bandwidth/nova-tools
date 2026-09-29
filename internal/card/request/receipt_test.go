@@ -352,7 +352,7 @@ func TestInspectResultRefusals(t *testing.T) {
 		{"a landed card is placed and has no outcome", func(r *InspectResult) { r.Cards[1].Place.Col = Landed }, nil},
 		{"there is no done state", func(r *InspectResult) { r.Cards[1].Place.Col = "done" }, wantTriples("1|place.col|invalid-value")},
 		{"pin digest", func(r *InspectResult) { r.Cards[0].Pin.Digest = "x" }, wantTriples("0|pin.digest|invalid-value")},
-		{"pin repository is a URL", func(r *InspectResult) { r.Cards[0].Pin.Repository = "https://u:secret@h/o/r" }, wantTriples("0|pin.repository|invalid-repository")},
+		{"pin repository is a URL", func(r *InspectResult) { r.Cards[0].Pin.Repository = "https://u:secret@example.com/o/r" }, wantTriples("0|pin.repository|invalid-repository")},
 		{"pin path", func(r *InspectResult) { r.Cards[0].Pin.Path = "../x" }, wantTriples("0|pin.path|path-escapes")},
 		{"head", func(r *InspectResult) { r.Cards[0].Head = "main" }, wantTriples("0|head|invalid-value")},
 		{"standing over the bound", func(r *InspectResult) { r.Cards[0].Standing = longString(MaxStandingBytes + 1) }, wantTriples("0|standing|too-long")},

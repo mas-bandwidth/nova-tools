@@ -3,75 +3,9 @@ package definition
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 )
-
-// keyBrief is the pseudo-key checkDefinition uses for the brief.
-const keyBrief = "BRIEF"
-
-// checkDefinition checks one definition's fields by the profile's rules. Parse
-// calls it after reading a file, and Validate calls it on every definition it is
-// given, so a definition built by hand meets the same rules a parsed one did.
-// skip names the keys already refused; lines gives the line of each key (nil for
-// a definition built by hand).
-func checkDefinition(op string, d Definition, skip map[string]bool, lines map[string]int, file string) []Refusal {
-	var out []Refusal
-	add := func(key string, c Cause, found, next string) {
-		if skip[key] {
-			return
-		}
-		out = append(out, Refusal{Operation: op, File: file, Line: lines[key], Key: key, Cause: c, Found: found, Next: next})
-	}
-	if d.Schema != SchemaV2 {
-		if d.Schema == "v3" {
-			add(KeySchema, CauseUnsupportedSchema, "SCHEMA v3 is refused by name: the Work-path profile is not implemented", "write SCHEMA: v2 and card IDs in DEPENDS-ON")
-		} else {
-			add(KeySchema, CauseUnsupportedSchema, fmt.Sprintf("SCHEMA %q is not a version this reader supports", d.Schema), "write SCHEMA: v2")
-		}
-	}
-	if w := idWhy(d.ID); w != "" {
-		add(KeyID, CauseInvalidID, w, "use an ID of ASCII letters, digits, underscore and hyphen")
-	}
-	if d.Entry != "" {
-		if w := entryWhy(d.Entry); w != "" {
-			add(KeyEntry, CauseInvalidEntry, w, "write one entry path with no comma and no control character")
-		}
-	}
-	if w := textWhy(KeyTitle, d.Title, MaxValueBytes); w != "" {
-		add(KeyTitle, CauseInvalidValue, w, "write a short one-line title")
-	}
-	class := Completion("")
-	if c, w := kindWhy(d.Kind); c != "" {
-		add(KeyKind, c, w, "use a kind internal/hygiene/kinds.txt declares and internal/card/definition/completion.txt classifies")
-	} else {
-		cs, _ := Classify([]string{d.Kind})
-		class = cs[0]
-	}
-	if len(d.Paths) > 0 {
-		if w := pathsWhy(d.Paths); w != "" {
-			add(KeyPaths, CauseInvalidPaths, w, "write `PATHS: none` or up to eight repository-relative globs")
-		}
-	}
-	if w := dependsWhy(d.DependsOn); w != "" {
-		add(KeyDependsOn, CauseInvalidDependsOn, w, "write `DEPENDS-ON: -` or comma-separated card IDs")
-	}
-	if w := tierWhy(d.Tier); w != "" {
-		add(KeyTier, CauseInvalidTier, w, "write one route: frontier, pro or flash")
-	}
-	if class != "" {
-		if w := testWhy(d.Test, class); w != "" {
-			add(KeyTest, CauseInvalidTest, w, "write `TEST: <package> <TestName>`, or `TEST: none <why>` for a kind that completes without a pull request")
-		}
-	}
-	for _, kv := range []struct{ k, v string }{{KeyDoneWhen, d.DoneWhen}, {KeyDoors, d.Doors}, {KeyProbes, d.Probes}} {
-		if w := textWhy(kv.k, kv.v, MaxValueBytes); w != "" {
-			add(kv.k, CauseInvalidValue, w, "write one line of text, or `none` for DOORS and PROBES")
-		}
-	}
-	if strings.TrimSpace(d.Brief) == "" {
-		add(keyBrief, CauseNoBrief, "the brief is empty", "add the brief below the header")
-	}
-	return out
-}
 
 // External is a dependency that names an ID outside the array: the card that
 // declares it, its file, and the ID. It is not an error here; the caller guards
@@ -97,32 +31,26 @@ func fileLabel(i int, d Definition) string {
 	return fmt.Sprintf("#%d", i+1)
 }
 
-// Validate checks an array of definitions: every definition's fields, repeated
-// IDs across the array (naming both files), a card that depends on itself, and a
-// dependency cycle inside the array (naming the cycle). It returns the report, or
-// no report and every refusal. A dependency on an ID that is not in the array is
-// reported as external, never refused.
-func Validate(defs []Definition) (Report, []Refusal) {
+// validate checks an array of definitions that parse read: repeated IDs across the
+// array (naming both files), a card that depends on itself, a dependency cycle
+// inside the array (naming the cycle) and more distinct outside dependencies than
+// the table can guard in one batch. It returns the report, or no report and every
+// refusal (at most card.MaxRefusals). A dependency on an ID that is not in the
+// array is reported as external, never refused.
+func validate(defs []Definition) (Report, *Refusals) {
 	if len(defs) == 0 {
-		return Report{}, []Refusal{{Operation: OpValidate, Cause: CauseEmptyArray,
-			Found: "no definitions", Next: "pass at least one definition; a single card is an array of one"}}
+		return Report{}, just(ref(OpValidate, CauseEmptyArray, "", 0, "", "no definitions", "at least 1", "pass at least one definition; a single card is an array of one"))
 	}
 	if len(defs) > MaxFiles {
-		return Report{}, []Refusal{{Operation: OpValidate, Cause: CauseTooManyFiles,
-			Found: fmt.Sprintf("%d definitions, the limit is %d", len(defs), MaxFiles),
-			Next:  fmt.Sprintf("narrow the request to at most %d; nothing is chunked for you", MaxFiles)}}
+		return Report{}, just(ref(OpValidate, CauseTooMany, "", 0, "", plural(len(defs), "definition"), fmt.Sprintf("%d definitions", MaxFiles),
+			fmt.Sprintf("narrow the request to at most %d; nothing is chunked for you", MaxFiles)))
 	}
-	var refs []Refusal
-	for i, d := range defs {
-		refs = append(refs, checkDefinition(OpValidate, d, nil, d.Lines, fileLabel(i, d))...)
-	}
+	c := &card.Collector{}
 	first := map[string]int{}
 	for i, d := range defs {
 		if j, dup := first[d.ID]; dup && d.ID != "" {
-			refs = append(refs, Refusal{Operation: OpValidate, File: fileLabel(i, d), Line: d.Lines[KeyID], Key: KeyID, Cause: CauseDuplicateID,
-				Found: fmt.Sprintf("ID %s is declared by %s and by %s", d.ID, fileLabel(j, defs[j]), fileLabel(i, d)),
-				Next:  "give each card its own ID; a replacement is a new card with a new ID",
-				Also:  []string{fileLabel(j, defs[j])}})
+			c.Add(ref(OpValidate, CauseRepeatedID, fileLabel(i, d), d.Lines[KeyID], KeyID, card.Value(d.ID), "first declared in "+card.Value(fileLabel(j, defs[j])),
+				"give each card its own ID; a replacement is a new card with a new ID"))
 			continue
 		}
 		first[d.ID] = i
@@ -130,14 +58,15 @@ func Validate(defs []Definition) (Report, []Refusal) {
 	for i, d := range defs {
 		for _, dep := range d.DependsOn {
 			if dep == d.ID && d.ID != "" {
-				refs = append(refs, Refusal{Operation: OpValidate, File: fileLabel(i, d), Line: d.Lines[KeyDependsOn], Key: KeyDependsOn, Cause: CauseSelfDependent,
-					Found: fmt.Sprintf("%s depends on itself", d.ID), Next: "remove the card's own ID from DEPENDS-ON"})
+				c.Add(ref(OpValidate, CauseSelfDependent, fileLabel(i, d), d.Lines[KeyDependsOn], KeyDependsOn, card.Value(d.ID)+" depends on itself", "a card that is not its own prerequisite",
+					"remove the card's own ID from DEPENDS-ON"))
 			}
 		}
 	}
-	refs = append(refs, cycles(defs, first)...)
-	if len(refs) > 0 {
-		return Report{}, refs
+	cycles(c, defs, first)
+	outsideDependencies(c, defs, first)
+	if err := c.Err(); err != nil {
+		return Report{}, err
 	}
 	rep := Report{}
 	for i, d := range defs {
@@ -151,14 +80,32 @@ func Validate(defs []Definition) (Report, []Refusal) {
 	return rep, nil
 }
 
-// cycles finds the dependency cycles among the array's own cards, by a depth-first
-// walk in array order. Each back edge names one cycle, rotated to start at the
-// member that comes first in the array. A self-dependency is refused separately.
-func cycles(defs []Definition, index map[string]int) []Refusal {
+// outsideDependencies refuses more distinct prerequisites outside the array than
+// the table guards in one batch (card.MaxOutsideDependencies): each is one
+// guard-only entry.
+func outsideDependencies(c *card.Collector, defs []Definition, index map[string]int) {
+	outside := map[string]bool{}
+	for _, d := range defs {
+		for _, dep := range d.DependsOn {
+			if _, in := index[dep]; !in {
+				outside[dep] = true
+			}
+		}
+	}
+	if len(outside) > card.MaxOutsideDependencies {
+		c.Add(ref(OpValidate, CauseTooManyExternal, "", 0, KeyDependsOn, plural(len(outside), "outside dependency"), fmt.Sprintf("%d outside dependencies", card.MaxOutsideDependencies),
+			"admit fewer cards, or cards with fewer prerequisites, in one request: each outside prerequisite is guarded by one table entry"))
+	}
+}
+
+// cycles adds the dependency cycles among the array's own cards, found by a
+// depth-first walk in array order. Each back edge names one cycle, rotated to
+// start at the member that comes first in the array. A self-dependency is refused
+// separately.
+func cycles(c *card.Collector, defs []Definition, index map[string]int) {
 	const white, grey, black = 0, 1, 2
 	color := make([]int, len(defs))
 	var stack []int
-	var out []Refusal
 	var visit func(int)
 	visit = func(u int) {
 		color[u] = grey
@@ -178,7 +125,7 @@ func cycles(defs []Definition, index map[string]int) []Refusal {
 						at = k
 					}
 				}
-				out = append(out, cycleRefusal(defs, stack[at:]))
+				c.Add(cycleRefusal(defs, stack[at:]))
 			}
 		}
 		stack = stack[:len(stack)-1]
@@ -189,7 +136,6 @@ func cycles(defs []Definition, index map[string]int) []Refusal {
 			visit(u)
 		}
 	}
-	return out
 }
 
 func cycleRefusal(defs []Definition, members []int) Refusal {
@@ -201,16 +147,13 @@ func cycleRefusal(defs []Definition, members []int) Refusal {
 	}
 	rot := append(append([]int(nil), members[lo:]...), members[:lo]...)
 	ids := make([]string, 0, len(rot)+1)
-	var also []string
+	var files []string
 	for _, m := range rot {
 		ids = append(ids, defs[m].ID)
-		if m != rot[0] {
-			also = append(also, fileLabel(m, defs[m]))
-		}
+		files = append(files, fileLabel(m, defs[m]))
 	}
 	ids = append(ids, defs[rot[0]].ID)
 	head := defs[rot[0]]
-	return Refusal{Operation: OpValidate, File: fileLabel(rot[0], head), Line: head.Lines[KeyDependsOn], Key: KeyDependsOn, Cause: CauseCycle,
-		Found: strings.Join(ids, " -> "), Also: also,
-		Next: "remove one DEPENDS-ON edge of the cycle"}
+	return ref(OpValidate, CauseCycle, fileLabel(rot[0], head), head.Lines[KeyDependsOn], KeyDependsOn, card.Value(strings.Join(ids, " -> ")),
+		fmt.Sprintf("no cycle: %s depend on each other, in %s", plural(len(rot), "card"), card.Value(strings.Join(files, ", "))), "remove one DEPENDS-ON edge of the cycle")
 }
