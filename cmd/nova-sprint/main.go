@@ -18,12 +18,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 const prog = "nova-sprint"
@@ -86,11 +88,36 @@ func (a *app) redisBackend(addr string, names sprint.Names) (store.Backend, erro
 		if err != nil {
 			return nil, err
 		}
+		if err := libraryMatches(ctx, conn.Client(), addr); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 		a.conns[addr] = conn
 	}
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
 	a.cached[key] = b
 	return b, nil
+}
+
+// libraryMatches refuses a store whose loaded table function library is not
+// this build's (one FUNCTION LIST, once per process and address): every write
+// through a library of another build would be refused or unreadable.
+func libraryMatches(ctx context.Context, c *redis.Client, addr string) error {
+	source, err := fn.Source()
+	if err != nil {
+		return err
+	}
+	code, found, err := fn.Loaded(ctx, c)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !found:
+		return fmt.Errorf("the store at %s holds no %s function library; run: nova-redis fn load --addr %s", addr, fn.Library, addr)
+	case fn.Sum(code) != fn.Sum(source):
+		return fmt.Errorf("the store at %s holds %s library %s, and this build is %s; run: nova-redis fn load --addr %s", addr, fn.Library, fn.Sum(code), fn.Sum(source), addr)
+	}
+	return nil
 }
 
 // common is the flags every store verb takes.

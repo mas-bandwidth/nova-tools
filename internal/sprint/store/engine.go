@@ -480,10 +480,9 @@ func (st *Store) apply(ctx context.Context, op OpRecord) (bool, error) {
 	return true, nil
 }
 
-// unreadableReceipt says the store answered with its RECEIPT and this build
-// could not read the receipt's delta (a store whose function library is of
-// another build): the batch committed. ntable.ApplyBatch parses the delta
-// only after it has seen the RECEIPT reply.
+// unreadableReceipt says the store answered with a receipt this build cannot
+// read: its table functions are not this build's. Nothing says whether the
+// batch applied.
 func unreadableReceipt(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "unmarshal batch delta")
 }
@@ -498,7 +497,7 @@ func (st *Store) send(ctx context.Context, man ntable.BatchManifest) (ntable.Rec
 			return rc, nil
 		}
 		if unreadableReceipt(err) {
-			return ntable.Receipt{Outcome: "committed; its delta unreadable by this build"}, nil
+			return ntable.Receipt{}, fmt.Errorf("%w: the store's receipt could not be read (%v): its table functions do not match this build; run: nova-redis fn load --addr <host:port>", ErrUnknown, err)
 		}
 		if ntable.IsRefusal(err) || errors.Is(err, ntable.ErrMalformedManifest) {
 			return rc, err

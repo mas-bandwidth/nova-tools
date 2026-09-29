@@ -529,15 +529,16 @@ func (u unreadable) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.R
 	return ntable.Receipt{}, errors.New(`table "t-fleet" batch "x": unmarshal batch delta: json: cannot unmarshal number into Go struct field rawMemberDelta.after_score of type string`)
 }
 
-func TestAReceiptThisBuildCannotReadIsACommit(t *testing.T) {
+func TestAReceiptThisBuildCannotReadIsUnknown(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	st := *h.st
 	st.B = unreadable{h.m}
-	if _, err := st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m1"})); err != nil {
-		t.Fatal(err)
+	_, err := st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	if !errors.Is(err, ErrUnknown) || !strings.Contains(err.Error(), "do not match this build") || !strings.Contains(err.Error(), "nova-redis fn load") {
+		t.Fatalf("an unreadable receipt: %v", err)
 	}
-	if h.m.Pending() != nil || h.snap().MemberCtl("m1").F("status") != sprint.Up {
-		t.Fatalf("not committed")
+	if h.m.Pending() == nil {
+		t.Fatalf("an unreadable receipt was counted as applied: the operation left the fence")
 	}
 }
