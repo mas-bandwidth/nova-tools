@@ -24,7 +24,7 @@ import (
 // MarkerNoResult written into reports/ that outlives the run.
 //
 // Asserted here with no Windows and no race. The collision is produced through the
-// FileRetry seam over a RESULT.md that is a DIRECTORY -- this package's portable
+// fileRetry seam over a RESULT.md that is a DIRECTORY -- this package's portable
 // stand-in for a pending replace -- and it lasts a few polls, far LESS than SteadyWindow.
 // The rule is that the job is still classified from the report's CONTENT.
 func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
@@ -71,7 +71,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 		}
 
 		hits, retry := collideUntilRead(t, ResultPath(jobDir), body)
-		p.Retry = retry
+		p.retry = retry
 		in := RunInput{Pool: p, Stdout: io.Discard, Stderr: io.Discard, Now: func() time.Time { return now }}
 		r := &running{sc: sc, slot: 1, nonce: "abc123", exitAttest: ExitAttestHash(fixtureAttest), jobDir: jobDir, started: now, deadline: 30 * time.Second}
 		line, end, dest := in.finish(r, map[int]bool{}, now)
@@ -109,7 +109,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 			t.Fatal(err)
 		}
 		hits, retry := collideUntilRead(t, ResultPath(jobDir), body)
-		p.Retry = retry
+		p.retry = retry
 		fin, err := p.Finalize(Ending{Sidecar: sc, JobDir: jobDir, Provider: "fake", Model: "fake-model",
 			End: EndDone, RC: 0, Started: now, Ended: now, Usage: ProviderUsage{Values: map[string]string{}}})
 		if err != nil {
@@ -162,7 +162,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 // caller ends with names the read it means rather than any failure that happened to land
 // while the seam was armed (#132). The narrowing stops at the count: what is transient stays
 // the seam's unnarrowed answer, for the bd6f3d7 reason above.
-func collideUntilRead(t *testing.T, path string, body string) (*atomic.Int64, FileRetry) {
+func collideUntilRead(t *testing.T, path string, body string) (*atomic.Int64, fileRetry) {
 	t.Helper()
 	// A path that is already a record is REPLACED by the stand-in, so a collision can be
 	// armed over a file a reader has read once already -- which is what a rehash meets.
@@ -172,8 +172,8 @@ func collideUntilRead(t *testing.T, path string, body string) (*atomic.Int64, Fi
 	}
 	var hits atomic.Int64
 	var restored atomic.Bool
-	retry := FileRetry{
-		Transient: func(err error) bool {
+	retry := fileRetry{
+		transient: func(err error) bool {
 			if err == nil || restored.Load() || errors.Is(err, fs.ErrNotExist) {
 				return transientIO(err)
 			}
@@ -237,7 +237,7 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 	// the armed seam is still waited out, to its caller's own bound and not this package's,
 	// so the test costs a tenth of a second rather than SteadyWindow.
 	started := time.Now()
-	if _, err := retry.ReadFileBy(other, time.Now().Add(20*steadyPoll)); err == nil {
+	if _, err := retry.readFileBy(other, time.Now().Add(20*steadyPoll)); err == nil {
 		t.Fatal("reading a directory answered no error at all; this fixture has nothing to arm on")
 	}
 	if waited := time.Since(started); waited < steadyPoll {
@@ -256,7 +256,7 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 
 	// And the seam still does its own job: a read of the armed path is counted, waited out,
 	// and answered with the record.
-	raw, err := retry.ReadFile(armed)
+	raw, err := retry.readFile(armed)
 	if err != nil {
 		t.Fatalf("the armed path never came back: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 		dir := t.TempDir()
 		p, id := revisionPool(t, dir)
 		hits, retry := collideUntilRead(t, filepath.Join(p.ReportsDir(id), CopiedResult), report())
-		p.Retry = retry
+		p.retry = retry
 
 		out := mustTriage(t, TriageInput{Pool: p})
 		if !strings.Contains(out, "TRIAGE REPORT id="+id) {
@@ -319,7 +319,7 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 		// A RUNNING job has no retained copy: that read answers ErrNotExist at once, which
 		// is an answer and not a collision, and the LIVE path is the one under the collision.
 		hits, retry := collideUntilRead(t, ResultPath(jobDir), report())
-		p.Retry = retry
+		p.retry = retry
 
 		out := mustTriage(t, TriageInput{Pool: p})
 		if !strings.Contains(out, "TRIAGE REPORT id="+sc.ID) {
@@ -345,9 +345,9 @@ func TestATriageWhoseReportReadsCollideStillFoldsTheReport(t *testing.T) {
 		// skipped, and the fixture is the same injected pause demanded test 16 uses.
 		var hits *atomic.Int64
 		out := mustTriage(t, TriageInput{Pool: p, pauseAfterFirstHash: func() {
-			var retry FileRetry
+			var retry fileRetry
 			hits, retry = collideUntilRead(t, copyPath, report())
-			p.Retry = retry
+			p.retry = retry
 		}})
 		if strings.Contains(out, "TRIAGE SKIPPED id="+id) {
 			t.Errorf("a rehash that COLLIDED was reported as a report that changed while it was read:\n%s", out)

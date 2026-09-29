@@ -110,22 +110,22 @@ func OwnedCards(benchDir, worker string) ([]string, error) {
 // one card cannot both take it: the loser sees the card gone and looks at the next
 // one. An empty queue is ("", false, nil), not an error.
 func TakeCard(benchDir, worker string) (string, bool, error) {
-	return TakeCardWith(benchDir, worker)
+	return takeCardWith(benchDir, worker)
 }
 
-// TakeCardWith is TakeCard with an optional FileRetry seam for tests.
-func TakeCardWith(queueDir, worker string, retry ...FileRetry) (string, bool, error) {
+// takeCardWith is TakeCard with an optional fileRetry seam for tests.
+func takeCardWith(benchDir, worker string, retry ...fileRetry) (string, bool, error) {
 	worker = strings.TrimSpace(worker)
 	if worker == "" {
 		return "", false, fmt.Errorf("worker name is empty")
 	}
-	var r FileRetry
+	var r fileRetry
 	if len(retry) > 0 {
 		r = retry[0]
 	}
-	taken := TakenDir(queueDir)
-	queue := QueueDir(queueDir)
-	names, err := QueueCards(queueDir)
+	taken := TakenDir(benchDir)
+	queue := QueueDir(benchDir)
+	names, err := QueueCards(benchDir)
 	if err != nil {
 		return "", false, err
 	}
@@ -137,7 +137,7 @@ func TakeCardWith(queueDir, worker string, retry ...FileRetry) (string, bool, er
 	}
 	for _, name := range names {
 		dst := filepath.Join(taken, worker+"-"+name+CardExt)
-		if err := r.Rename(filepath.Join(queue, name+CardExt), dst); err != nil {
+		if err := r.rename(filepath.Join(queue, name+CardExt), dst); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue // another worker took this card first
 			}
@@ -198,11 +198,11 @@ func FullestBench(benches []string) (name string, queued int, ok bool, err error
 // counted before it is renamed, and a victim at or below the line is left alone. A
 // negative capacity is an unbounded line and steals nothing.
 func Steal(victimDir, worker string, capacity int) ([]string, error) {
-	return StealWith(victimDir, worker, capacity)
+	return stealWith(victimDir, worker, capacity)
 }
 
-// StealWith is Steal with an optional FileRetry seam for tests.
-func StealWith(victimDir, worker string, capacity int, retry ...FileRetry) ([]string, error) {
+// stealWith is Steal with an optional fileRetry seam for tests.
+func stealWith(victimDir, worker string, capacity int, retry ...fileRetry) ([]string, error) {
 	worker = strings.TrimSpace(worker)
 	if worker == "" {
 		return nil, fmt.Errorf("worker name is empty")
@@ -210,7 +210,7 @@ func StealWith(victimDir, worker string, capacity int, retry ...FileRetry) ([]st
 	if capacity < 0 {
 		return nil, nil
 	}
-	var r FileRetry
+	var r fileRetry
 	if len(retry) > 0 {
 		r = retry[0]
 	}
@@ -230,7 +230,7 @@ func StealWith(victimDir, worker string, capacity int, retry ...FileRetry) ([]st
 		}
 		src := filepath.Join(queue, names[0]+CardExt)
 		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
-		if err := r.Rename(src, dst); err != nil {
+		if err := r.rename(src, dst); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue // another worker took this card first
 			}

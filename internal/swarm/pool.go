@@ -66,7 +66,7 @@ const (
 // structure inside one a person named, never the one a person forgot to name.
 type Pool struct {
 	Dir   string
-	Retry FileRetry
+	retry fileRetry
 }
 
 // OpenPool opens the pool at dir and makes sure its structure is there.
@@ -212,7 +212,7 @@ func (p *Pool) ReadSidecar(state, id string) (Sidecar, error) {
 	// Both files a task IS are written by writeAtomic, from this process and from `note`,
 	// `requeue` and `finalize` in others, while the dispatcher polls them. The read side
 	// waits out the same collision the write side already waits out (fileretry.go).
-	raw, err := p.Retry.ReadFile(p.sidecarFile(state, id))
+	raw, err := p.retry.readFile(p.sidecarFile(state, id))
 	if err != nil {
 		return sc, err
 	}
@@ -224,7 +224,7 @@ func (p *Pool) ReadSidecar(state, id string) (Sidecar, error) {
 
 // Text reads one task's text from a named state.
 func (p *Pool) Text(state, id string) ([]byte, error) {
-	return p.Retry.ReadFile(p.taskFile(state, id))
+	return p.retry.readFile(p.taskFile(state, id))
 }
 
 // List returns every task in a state, in id order -- which is time order, because the id

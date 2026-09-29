@@ -152,7 +152,7 @@ func (p *Pool) ReadSlot(n int) (SlotFile, error) { return p.ReadSlotBy(n, time.T
 // is "no bound of mine", and reads exactly like ReadSlot.
 func (p *Pool) ReadSlotBy(n int, budget time.Time) (SlotFile, error) {
 	var sf SlotFile
-	raw, err := p.Retry.ReadFileBy(p.slotPath(n), budget)
+	raw, err := p.retry.readFileBy(p.slotPath(n), budget)
 	if err != nil {
 		return sf, err
 	}
@@ -301,7 +301,7 @@ func (p *Pool) Free(n int) error {
 	defer release()
 	path := p.slotPath(n)
 	gone := path + ".freed"
-	if err := p.Retry.Rename(path, gone); err != nil {
+	if err := p.retry.rename(path, gone); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -330,7 +330,7 @@ func (p *Pool) FreeIf(n int, nonce string) error {
 		return fmt.Errorf("slot %d nonce changed under recovery", n)
 	}
 	gone := path + ".freed"
-	if err := p.Retry.Rename(path, gone); err != nil {
+	if err := p.retry.rename(path, gone); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
