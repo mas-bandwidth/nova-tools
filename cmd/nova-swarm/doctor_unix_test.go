@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -58,7 +60,7 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "children.pid")
 	env, _, _ := doctorStubs(t,
 		"echo 'nova-swarm good-stamp'; sleep 5 & echo $! >> "+pidFile,
-		"echo 'nova-swarm good-stamp'", "", 0)
+		"echo 'nova-swarm good-stamp'", "")
 	t.Cleanup(func() { reapRecordedChildren(t, pidFile) })
 	var errOut bytes.Buffer
 	if code, stop := env.preflight([]string{"native", "--card", "c"}, &errOut); stop || code != 0 {
@@ -70,5 +72,83 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(pidFile); err != nil || len(strings.Fields(string(raw))) != 2 {
 		t.Errorf("the stub ran twice and should have recorded two children, got %q (%v)", raw, err)
+	}
+}
+
+// A binary that prints its stamp and then hangs is read for the stamp and reported for the
+// hang. The stub tells the test over a pipe that it has printed, and the test cancels the read
+// then, so no wait pays the deadline and none depends on how fast the stub starts: the
+// comparison and the refusal are those of a run that was cut off at its deadline. The stub
+// runs once for the preflight and once for the doctor verb, and both are ended after both
+// have printed. A stub that fails to start ends its run with an error, so the test fails on
+// its assertions and closing the pipe at cleanup ends the goroutine that waits on it.
+func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
+	t.Parallel()
+	signal := filepath.Join(t.TempDir(), "printed")
+	if err := syscall.Mkfifo(signal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Opened for reading and writing, the pipe never ends and a stub's write never blocks.
+	pipe, err := os.OpenFile(signal, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pipe.Close() })
+
+	env, pathBin, _ := doctorStubs(t,
+		"echo 'nova-swarm stale-stamp'; echo printed >> '"+signal+"'; exec sleep 30",
+		"echo 'nova-swarm good-stamp'", "")
+	readDefault := env.read
+
+	var mu sync.Mutex
+	var cancels []context.CancelFunc
+	cancelAll := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
+	}
+	env.read = func(p string) (string, error) {
+		if p != pathBin {
+			return readDefault(p)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		mu.Lock()
+		cancels = append(cancels, cancel)
+		mu.Unlock()
+		return readVersionLineUnder(ctx, p, 2*time.Second, 50*time.Millisecond, doctorVersionLineMax)
+	}
+	go func() {
+		lines := bufio.NewReader(pipe)
+		for i := 0; i < 2; i++ {
+			if _, err := lines.ReadString('\n'); err != nil {
+				break
+			}
+		}
+		cancelAll()
+	}()
+
+	var out, derr, errOut bytes.Buffer
+	var dcode int
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		dcode = env.cmdDoctor(nil, &out, &derr)
+	}()
+	code, stop := env.preflight([]string{"batch", "--tokens", "unmetered"}, &errOut)
+	<-done
+	if code != 2 || !stop {
+		t.Fatalf("preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
+	}
+	got := errOut.String()
+	for _, want := range []string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 2s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, got)
+		}
+	}
+	if dcode != 2 || out.Len() != 0 || derr.String() != got {
+		t.Errorf("doctor exit %d, want 2 with the preflight's finding\nstdout: %q\nstderr: %q\nwant stderr: %q", dcode, out.String(), derr.String(), got)
 	}
 }

@@ -132,11 +132,11 @@ func readVersionLine(path string) (string, error) {
 	return readVersionLineWithin(path, doctorVersionDeadline, doctorVersionGrace, doctorVersionLineMax)
 }
 
-// runVersion runs `<path> version` under the deadline with its stdout going to a first-line
+// runVersion runs `<path> version` under the deadline (and the parent context) with its stdout going to a first-line
 // writer, and returns the writer (what was kept, and whether the line overflowed), whether the
 // deadline or the overflow ended the run, and the run's own error.
-func runVersion(path string, deadline, grace time.Duration, limit int) (out *firstLineWriter, ended bool, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+func runVersion(parent context.Context, path string, deadline, grace time.Duration, limit int) (out *firstLineWriter, ended bool, err error) {
+	ctx, cancel := context.WithTimeout(parent, deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "version")
 	out = &firstLineWriter{limit: limit, onOverflow: cancel}
@@ -156,7 +156,14 @@ func runVersion(path string, deadline, grace time.Duration, limit int) (out *fir
 // still holding the output pipe is given up on after the grace. Output after the first line
 // is discarded as it arrives, so memory is bounded by the limit whatever the binary prints.
 func readVersionLineWithin(path string, deadline, grace time.Duration, limit int) (string, error) {
-	out, timedOut, err := runVersion(path, deadline, grace, limit)
+	return readVersionLineUnder(context.Background(), path, deadline, grace, limit)
+}
+
+// readVersionLineUnder is readVersionLineWithin under a parent context: cancelling the parent
+// ends the run as the deadline does, and the refusal names the deadline. A test that has seen
+// the binary print cancels the parent instead of waiting the deadline out.
+func readVersionLineUnder(parent context.Context, path string, deadline, grace time.Duration, limit int) (string, error) {
+	out, timedOut, err := runVersion(parent, path, deadline, grace, limit)
 	line, overflowed := out.result()
 	switch {
 	case overflowed:

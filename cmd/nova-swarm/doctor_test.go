@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -353,8 +354,8 @@ const doctorHungDeadline = 100 * time.Millisecond
 //
 // A stub that answers is read under a generous deadline, so a loaded machine cannot turn a
 // good answer into a timeout; a stub that hangs (named in hung, "path" and/or "local") is
-// read under a short one, so the test does not wait for it.
-func doctorStubs(t *testing.T, pathScript, localScript, hung string, hungDeadline time.Duration) (env doctorEnv, pathBin, localBin string) {
+// read under the short doctorHungDeadline, so the test does not wait for it.
+func doctorStubs(t *testing.T, pathScript, localScript, hung string) (env doctorEnv, pathBin, localBin string) {
 	t.Helper()
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
@@ -371,17 +372,13 @@ func doctorStubs(t *testing.T, pathScript, localScript, hung string, hungDeadlin
 			t.Fatal(err)
 		}
 	}
-	hungFor := hungDeadline
-	if hungFor == 0 {
-		hungFor = doctorHungDeadline
-	}
 	env = doctorEnv{
 		lookPath: func(string) (string, error) { return pathBin, nil },
 		homeDir:  func() (string, error) { return home, nil },
 		read: func(p string) (string, error) {
 			deadline := doctorGoodDeadline
 			if (p == pathBin && strings.Contains(hung, "path")) || (p == localBin && strings.Contains(hung, "local")) {
-				deadline = hungFor
+				deadline = doctorHungDeadline
 			}
 			return readVersionLineWithin(p, deadline, 50*time.Millisecond, doctorVersionLineMax)
 		},
@@ -400,38 +397,35 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		name        string
 		pathScript  string
 		localScript string
-		hung        string        // which stubs hang: "path", "local"
-		deadline    time.Duration // the deadline a hung stub is read under; 0 is doctorHungDeadline
+		hung        string // which stubs hang: "path", "local"
 		wantExit    int
 		contains    []string
 		absent      []string
 	}{
-		{"hang", "exec sleep 30", good, "path", 0, 2,
+		{"hang", "exec sleep 30", good, "path", 2,
 			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 100ms", "the other binary, ", ", reported stamp=nova-swarm good-stamp;", "by hand"},
 			[]string{"DOCTOR DRIFT", "shadows"}},
-		{"print then hang: the stamp is compared and the hang reported", "echo 'nova-swarm stale-stamp'; exec sleep 30", good, "path", 2 * time.Second, 2,
-			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 2s"}, nil},
-		{"print then exit 3: the stamp is compared and the exit reported", "echo 'nova-swarm stale-stamp'; exit 3", good, "", 0, 2,
+		{"print then exit 3: the stamp is compared and the exit reported", "echo 'nova-swarm stale-stamp'; exit 3", good, "", 2,
 			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "exited 3"}, nil},
-		{"print then exit 3 with the same stamp", "echo 'nova-swarm good-stamp'; exit 3", good, "", 0, 2,
+		{"print then exit 3 with the same stamp", "echo 'nova-swarm good-stamp'; exit 3", good, "", 2,
 			[]string{"DOCTOR UNREADABLE", "exited 3"}, []string{"DOCTOR DRIFT"}},
-		{"printed nothing", "exit 0", good, "", 0, 2,
+		{"printed nothing", "exit 0", good, "", 2,
 			[]string{"DOCTOR UNREADABLE", "printed nothing", "stamp=nova-swarm good-stamp"}, nil},
-		{"missing where PATH names it", "", good, "", 0, 2,
+		{"missing where PATH names it", "", good, "", 2,
 			[]string{"DOCTOR UNREADABLE", "not found", "stamp=nova-swarm good-stamp"}, nil},
-		{"the local copy hangs", good, "exec sleep 30", "local", 0, 2,
+		{"the local copy hangs", good, "exec sleep 30", "local", 2,
 			[]string{"DOCTOR UNREADABLE", "local=", "timed out after 100ms", "stamp=nova-swarm good-stamp"}, []string{"DOCTOR DRIFT"}},
-		{"both hang: each is named", "exec sleep 30", "exec sleep 30", "path,local", 0, 2,
+		{"both hang: each is named", "exec sleep 30", "exec sleep 30", "path,local", 2,
 			[]string{"DOCTOR UNREADABLE reading the version of path=", "DOCTOR UNREADABLE reading the version of local=", "timed out after 100ms", "could not be read either: timed out after 100ms"}, []string{"DOCTOR DRIFT", "reported nothing", "no other binary"}},
-		{"the PATH binary hangs and no local copy is installed", "exec sleep 30", "", "path", 0, 2,
+		{"the PATH binary hangs and no local copy is installed", "exec sleep 30", "", "path", 2,
 			[]string{"DOCTOR UNREADABLE", "timed out after 100ms", "the other binary, ", "is not installed"}, []string{"reported nothing", "no other binary"}},
-		{"both answer and agree", good, good, "", 0, 0, nil, []string{"DOCTOR"}},
-		{"no local copy is tolerated", good, "", "", 0, 0, nil, []string{"DOCTOR"}},
+		{"both answer and agree", good, good, "", 0, nil, []string{"DOCTOR"}},
+		{"no local copy is tolerated", good, "", "", 0, nil, []string{"DOCTOR"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			env, _, _ := doctorStubs(t, c.pathScript, c.localScript, c.hung, c.deadline)
+			env, _, _ := doctorStubs(t, c.pathScript, c.localScript, c.hung)
 			// The launch and the doctor verb read the same stubs at the same time, so a hang
 			// is waited for once.
 			var out, derr, errOut bytes.Buffer
@@ -531,7 +525,7 @@ func TestReadVersionLineWithinBoundsWhatItKeeps(t *testing.T) {
 	// then a bounded stream and exits, and it is read under a generous deadline, so nothing
 	// here depends on how fast a shell starts. The bytes retained are the first line alone.
 	streams := write("streams", "echo y; yes | head -c 20000000")
-	out, timedOut, err := runVersion(streams, doctorGoodDeadline, 50*time.Millisecond, 4096)
+	out, timedOut, err := runVersion(context.Background(), streams, doctorGoodDeadline, 50*time.Millisecond, 4096)
 	if err != nil || timedOut || string(out.line) != "y" || len(out.line) != 1 || out.overflowed {
 		t.Errorf("a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
 	}
