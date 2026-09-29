@@ -6,11 +6,15 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
@@ -372,5 +376,44 @@ func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
 	out, _ = r.run(t, 0, "inventory", "--timeout", "5s")
 	if !strings.Contains(out, "bench-alpha") {
 		t.Fatalf("after the lock: %q", out)
+	}
+}
+
+// The wrapper the help prints, run with the built binary against the
+// throwaway Postgres, is a working inventory script.
+func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+
+	help, _ := r.run(t, 0, "inventory", "-h")
+	printf, chmod := helpCommands(t, help)
+
+	dir := t.TempDir()
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "nova-config"), ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	run := func(script string) string {
+		t.Helper()
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_PG_DSN="+r.env["NOVA_PG_DSN"])
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", script, err, out)
+		}
+		return string(out)
+	}
+	run(printf + "\n" + chmod)
+	for _, args := range []string{"--list", "--host bench-alpha"} {
+		out := run("./nova-inventory " + args)
+		var v map[string]any
+		if err := json.Unmarshal([]byte(out), &v); err != nil || !strings.Contains(out, `"ansible_host": "bench-alpha"`) || !strings.Contains(out, `"nova_seat": "seat-alpha"`) {
+			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
+		}
 	}
 }

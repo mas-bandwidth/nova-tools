@@ -68,9 +68,10 @@ usage:
   nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>]
       prints an Ansible dynamic JSON inventory from the machine and fleet rows: the groups benches, coordinator, store and runners, and every host's variables under _meta.hostvars
       first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
-      ansible's -i wants an executable: save these two lines as ./nova-inventory, chmod +x it, then ansible-inventory -i ./nova-inventory --list
-        #!/bin/sh
-        exec nova-config inventory "$@"
+      ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible:
+      printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
+      chmod +x nova-inventory
+      ansible-inventory -i ./nova-inventory --list
       env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on, matched by exact machine name and refused with the known names when it names no row; when it is unset the first label of the hostname is matched, and nothing is marked local when that matches no row
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>

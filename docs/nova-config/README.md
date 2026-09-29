@@ -298,15 +298,12 @@ unattended ansible run never blocks on a locked table: on expiry the verb exits
 2 with `timed out after <d> waiting for the store` and the command to repeat
 with a longer timeout.
 
-Ansible's `-i` wants an executable file, so save a two-line wrapper and point
-`-i` at it:
+Ansible's `-i` wants an executable file whose first line, `#!/bin/sh`, is at
+column one. These two commands write the two-line wrapper and make it
+executable, and the third lets ansible read the inventory:
 
 ```
-#!/bin/sh
-exec nova-config inventory "$@"
-```
-
-```
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
 chmod +x nova-inventory
 ansible-inventory -i ./nova-inventory --list
 ```

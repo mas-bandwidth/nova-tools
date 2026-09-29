@@ -1750,7 +1750,8 @@ nova-config apply --redis 127.0.0.1:6379 --as rowan
 ```sh
 export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
 nova-config inventory
-printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory && chmod +x nova-inventory
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
+chmod +x nova-inventory
 ansible-inventory -i ./nova-inventory --list
 ```
 

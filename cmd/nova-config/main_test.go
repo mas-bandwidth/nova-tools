@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -889,6 +890,25 @@ func TestInventoryIgnoresTheOldFleetSelfName(t *testing.T) {
 	}
 }
 
+// helpCommands returns the printf and chmod commands the inventory help
+// prints, each as printed (the help left-trims its lines).
+func helpCommands(t *testing.T, help string) (printf, chmod string) {
+	t.Helper()
+	for _, l := range strings.Split(help, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "printf "):
+			printf = l
+		case strings.HasPrefix(l, "chmod +x "):
+			chmod = l
+		}
+	}
+	if printf == "" || chmod == "" {
+		t.Fatalf("inventory -h prints no printf and chmod commands:\n%s", help)
+	}
+	return printf, chmod
+}
+
 func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 	t.Parallel()
 
@@ -898,10 +918,10 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		t.Fatalf("inventory -h: exit %d stderr %q", code, errs)
 	}
 	needs := []string{
-		"--list", "--host", "--pg", // every flag
+		"--list", "--host", "--pg", "--timeout", // every flag
 		"NOVA_PG_DSN", "NOVA_PG_PASSWORD_ENV", "NOVA_MACHINE", // every variable
 		"first run", "nova-config inventory", // a first example
-		"-i wants an executable", "#!/bin/sh", `exec nova-config inventory "$@"`, // the wrapper
+		"-i wants an executable", "column one", "ansible-inventory -i ./nova-inventory --list", // the wrapper
 		"_meta.hostvars", "ansible never calls --host", // why --host is not called
 		"the default when neither --list nor --host is given",                                     // what --list is
 		"matched by exact machine name", "first label of the hostname", "nothing is marked local", // how NOVA_MACHINE matches
@@ -911,17 +931,80 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 			t.Errorf("inventory -h lacks %q:\n%s", w, help)
 		}
 	}
+	printf, chmod := helpCommands(t, help)
+
+	// The printed commands are the ones the docs carry.
 	for _, doc := range []string{"docs/CLI.md", "docs/nova-config/README.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(doc)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, w := range []string{"#!/bin/sh", `exec nova-config inventory "$@"`, "NOVA_MACHINE", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
 			if !strings.Contains(string(raw), w) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
 		}
 	}
+
+	// Run the printed commands in a temp dir: the wrapper starts with
+	// #!/bin/sh at byte 0, is executable, and runs the tool with ansible's
+	// arguments. nova-config on the PATH is this test binary serving the
+	// inventory of an in-memory store (TestInventoryHelperProcess).
+	dir := t.TempDir()
+	sh := func(script string, env ...string) (string, error) {
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = append([]string{"PATH=" + dir + ":/usr/bin:/bin"}, env...)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := sh(printf + "\n" + chmod); err != nil {
+		t.Fatalf("the printed commands failed: %v\n%s", err, out)
+	}
+	wrapper, err := os.ReadFile(filepath.Join(dir, "nova-inventory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wrapper) != "#!/bin/sh\nexec nova-config inventory \"$@\"\n" {
+		t.Fatalf("the wrapper is %q", wrapper)
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "nova-inventory")); err != nil || fi.Mode()&0o111 == 0 {
+		t.Fatalf("the wrapper is not executable: %v %v", fi, err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim := "#!/bin/sh\nNOVA_CONFIG_TEST_HELPER=1 exec '" + self + "' -test.run='^TestInventoryHelperProcess$' -- \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "nova-config"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range []string{"--list", "--host bench-02"} {
+		out, err := sh("./nova-inventory " + args)
+		if err != nil || !strings.Contains(out, `"ansible_host": "bench-`) {
+			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// TestInventoryHelperProcess is the tool the wrapper test puts on the PATH:
+// the test binary, run with the wrapper's arguments against an in-memory
+// store. It does nothing in a normal test run.
+func TestInventoryHelperProcess(t *testing.T) {
+	t.Parallel()
+
+	if os.Getenv("NOVA_CONFIG_TEST_HELPER") != "1" {
+		return
+	}
+	var args []string
+	for i, a := range os.Args {
+		if a == "--" {
+			args = os.Args[i+1:]
+			break
+		}
+	}
+	h := inventoryHarness(t, 2)
+	os.Exit(run(args, os.Stdout, os.Stderr, h.deps()))
 }
 
 func TestInventoryDocsCarryNoIssueNumbersOrHistory(t *testing.T) {
