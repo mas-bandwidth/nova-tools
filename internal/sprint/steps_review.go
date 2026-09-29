@@ -240,7 +240,9 @@ func okReaders(s *Snapshot, pr *Card) []*Card {
 
 // Accept moves review -> merging and places the primary in merge queued with
 // its score. It is refused without ok reads from two different readers at the
-// primary's head, whoever the readers. Named ids are all or nothing under one
+// primary's head, whoever the readers. The primary's read cards still asked
+// or reading are retired in the same step, marked retired by accept, so no
+// read is outstanding on a primary that is not in review. Named ids are all or nothing under one
 // pre-state; a selection (a stream, the primaries with two ok reads, an inbox
 // group) moves the eligible and lists the rest with the reason.
 func Accept(s *Snapshot, r AcceptReq) Plan {
@@ -276,6 +278,13 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		for _, o := range oks {
 			u.Changes = append(u.Changes, change(Readers, guardEntry(o)))
 		}
+		retired := 0
+		for _, rc := range s.Readers.Of(c.ID) {
+			if rc.Col == Asked || rc.Col == Reading {
+				u.Changes = append(u.Changes, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "accept"})))
+				retired++
+			}
+		}
 		if m := s.Merge.Placed(c.ID); m != nil {
 			e := moveEntry(m, c.Row, Queued, nil)
 			sc := c.Score
@@ -288,6 +297,9 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		readers := oks[0].F("reader") + "," + oks[1].F("reader")
 		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, map[string]string{"readers": readers, "accepted": stamp(s.Now)})))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
+		if retired > 0 {
+			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
+		}
 		p.Units = append(p.Units, u)
 	}
 	answered(&p, s.Open, r.Answers)

@@ -138,7 +138,9 @@ id (`--op`) returns the original result, with no second counter or notification.
    coordinator is told. The coordinator may act on the card, the stream, or
    several streams together.
 
-accept places the primary in merge `queued` with its score. A batch moves
+accept places the primary in merge `queued` with its score, and retires, in
+the same step, every read card of the primary still asked or reading (marked
+retired by accept): a report against it is refused, naming the retirement. A batch moves
 queued -> merged only when it has landed; merged only grows and equals work
 landed. A card that cannot merge goes to stuck and its stream stops. A stuck
 card is a barrier: the merge step never passes an earlier stuck or queued card.
