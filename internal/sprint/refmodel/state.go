@@ -94,6 +94,10 @@ const (
 // section 5).
 const MaxReadyPerMember = 2
 
+// MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
+// is dealt again at most this many times after its member went down.
+const MaxRedeals = 3
+
 // Judgment types. The model's own (SprintTables.tla CardNoteTypes and
 // StopNote) are failed, broken, reads, blocked, ci, skipped and the stopped
 // notes; the rest are the spec's (section 8 and section 14).
@@ -115,6 +119,7 @@ const (
 	JReached   = "reached"          // sentinel reached
 	JNoMember  = "nomember"         // no fleet member is up (the tick's)
 	JCannotAsk = "cannotask"        // cannot ask (the tick's)
+	JBound     = "bound"            // a card reached its bound (the tick's)
 )
 
 // Subjects that are not a primary.
@@ -145,6 +150,10 @@ type WorkCard struct {
 	Place   string // FReady, FWorking, FDone, FWithdrawn, Gone
 	Gen     int
 	OK      string // "", "ok" or "failed"
+	// Redeals is how many times the attempt was dealt again after its
+	// member went down (spec section 2): at MaxRedeals the card stays
+	// withdrawn and the bound's judgment names its primary.
+	Redeals int
 }
 
 // ReadCard is one read card: <primary>.r<attempt>.<reader>.
@@ -547,3 +556,17 @@ func Keys[V any](m map[string]V) []string {
 
 // Join is a sorted list as one comma string, for printing.
 func Join(xs []string) string { return strings.Join(xs, ",") }
+
+// AtBound is the primary's withdrawn work card when it is at its redeal
+// bound, "" when it is not.
+func (s State) AtBound(p string) string {
+	pr, ok := s.Primaries[p]
+	if !ok || pr.State != Ready {
+		return ""
+	}
+	id := WC(p, pr.Attempt)
+	if w, ok := s.Work[id]; ok && w.Place == FWithdrawn && w.Redeals >= MaxRedeals {
+		return id
+	}
+	return ""
+}

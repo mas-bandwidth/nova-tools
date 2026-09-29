@@ -346,7 +346,10 @@ func Start(s State, p, m string, limit int) (State, error) {
 		if w.Place != FWithdrawn {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		w.Place, w.Member, w.Gen = FReady, m, w.Gen+1
+		if w.Redeals >= MaxRedeals {
+			return s, refuse("%s was redealt %d times, its bound", id, w.Redeals)
+		}
+		w.Place, w.Member, w.Gen, w.Redeals = FReady, m, w.Gen+1, w.Redeals+1
 		n.Work[id] = w
 	} else {
 		n.Work[id] = WorkCard{Primary: p, Attempt: pr.Attempt, Member: m, Place: FReady, Gen: 1}
@@ -633,11 +636,19 @@ func Rework(s State, p, m string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
-	if !s.InWork(p, Review) {
+	bound := s.AtBound(p)
+	if !s.InWork(p, Review) && bound == "" {
 		return s, refuse("%s is not in review", p)
 	}
 	up := s.Up()
 	n := s.Clone()
+	if bound != "" {
+		// a primary at its redeal bound: the withdrawn card is taken off and
+		// the rework is its next attempt
+		w := n.Work[bound]
+		w.Place = Gone
+		n.Work[bound] = w
+	}
 	for _, id := range n.LiveReadsOf(p) {
 		rc := n.Reads[id]
 		rc.Place = Retired
@@ -992,7 +1003,7 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 	others := n.Up()
 	for _, id := range cs {
 		w := n.Work[id]
-		if len(others) == 0 {
+		if len(others) == 0 || w.Redeals >= MaxRedeals {
 			w.Place, w.Gen = FWithdrawn, w.Gen+1
 			n.Work[id] = w
 			n.setPrimary(w.Primary, func(x *Primary) { x.State = Ready })
@@ -1002,7 +1013,7 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 		if !n.ShortestIn(t, others) {
 			return s, badChoice("%s dealt from %s to %s, whose ready queue (%d) is not the shortest of %v", id, m, t, n.RL(t), others)
 		}
-		w.Member, w.Place, w.Gen = t, FReady, w.Gen+1
+		w.Member, w.Place, w.Gen, w.Redeals = t, FReady, w.Gen+1, w.Redeals+1
 		n.Work[id] = w
 	}
 	return n, nil

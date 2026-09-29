@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
 
 // 1. A cross need is gone with a return: a later conflict stop resumes by
@@ -220,4 +221,12 @@ func TestResumeWaitsForANeedOnlyAfterACross(t *testing.T) {
 		t.Fatalf("resume after a conflict, a need persisted on its card: %+v", res)
 	}
 	h.clean("resumed")
+}
+
+// The reference model's redeal bound is the engine's.
+func TestTheModelsRedealBoundIsTheEngines(t *testing.T) {
+	t.Parallel()
+	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.MaxReadyPerMember != sprint.MaxReadyPerMember {
+		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.MaxReadyPerMember, sprint.MaxRedeals, sprint.MaxReadyPerMember)
+	}
 }

@@ -107,12 +107,34 @@ func (n *State) tickResume() {
 // judgment once, closed when the condition clears (section 14).
 func (n *State) tickDeal(choice map[string]string) error {
 	var ready []string
+	bound := map[string]bool{}
 	for id, p := range n.Primaries {
 		if p.State == Ready && p.Kind != KindSentinel {
+			if n.AtBound(id) != "" {
+				bound[id] = true
+				continue
+			}
 			ready = append(ready, id)
 		}
 	}
 	n.sortByScore(ready)
+	// the bound's judgment: once per primary at its bound, closed when it
+	// is no longer there (reworked, dropped)
+	for j := range n.Open {
+		if j.Type == JBound && !bound[j.Subject] {
+			delete(n.Open, j)
+		}
+	}
+	for j := range n.Acked {
+		if j.Type == JBound && !bound[j.Subject] {
+			delete(n.Acked, j)
+		}
+	}
+	for p := range bound {
+		if j := (Judgment{JBound, p}); !n.Acked[j] {
+			n.Open[j] = true
+		}
+	}
 	j := Judgment{JNoMember, "fleet"}
 	if len(n.Up()) == 0 && len(ready) > 0 {
 		if !n.Acked[j] {

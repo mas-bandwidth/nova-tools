@@ -176,6 +176,7 @@ var types = map[string]string{
 	sprint.NSentinelReached: JReached,
 	sprint.NNoMember:        JNoMember,
 	sprint.NCannotAsk:       JCannotAsk,
+	sprint.NBound:           JBound,
 }
 
 // JudgmentType is the model's name of an engine judgment type; a type the
