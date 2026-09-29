@@ -58,9 +58,9 @@ func reapRecordedChildren(t *testing.T, pidFile string) {
 func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	t.Parallel()
 	pidFile := filepath.Join(t.TempDir(), "children.pid")
-	env, _, _ := doctorStubs(t,
+	env, _, _ := doctorStubsGrace(t,
 		"echo 'nova-swarm good-stamp'; sleep 5 & echo $! >> "+pidFile,
-		"echo 'nova-swarm good-stamp'", "")
+		"echo 'nova-swarm good-stamp'", "", doctorPipeGrace)
 	t.Cleanup(func() { reapRecordedChildren(t, pidFile) })
 	var errOut bytes.Buffer
 	if code, stop := env.preflight([]string{"native", "--card", "c"}, &errOut); stop || code != 0 {
@@ -118,7 +118,7 @@ func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 		mu.Lock()
 		cancels = append(cancels, cancel)
 		mu.Unlock()
-		return readVersionLineUnder(ctx, p, 2*time.Second, 50*time.Millisecond, doctorVersionLineMax)
+		return readVersionLineUnder(ctx, p, 2*time.Second, doctorGoodGrace, doctorVersionLineMax)
 	}
 	go func() {
 		lines := bufio.NewReader(pipe)

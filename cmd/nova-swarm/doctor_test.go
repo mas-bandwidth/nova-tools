@@ -347,6 +347,15 @@ const doctorGoodDeadline = 5 * time.Second
 // doctorHungDeadline is the injected deadline a stub that hangs is read under.
 const doctorHungDeadline = 100 * time.Millisecond
 
+// doctorGoodGrace is the grace a stub that leaves no child behind is read under: the copy of
+// its output gets that long to finish after it exits, so a stall of the machine cannot drop a
+// stamp that was printed. doctorPipeGrace is the grace for the one stub that leaves a child
+// holding the output pipe, which the reader must wait out.
+const (
+	doctorGoodGrace = 5 * time.Second
+	doctorPipeGrace = 250 * time.Millisecond
+)
+
 // doctorStubs lays out a PATH binary and a ~/.local/bin copy as real scripts and returns an
 // environment that reads them with the real reader under a short injected deadline. An empty
 // script leaves that binary out: an empty pathScript makes PATH answer with a path that is
@@ -356,6 +365,11 @@ const doctorHungDeadline = 100 * time.Millisecond
 // good answer into a timeout; a stub that hangs (named in hung, "path" and/or "local") is
 // read under the short doctorHungDeadline, so the test does not wait for it.
 func doctorStubs(t *testing.T, pathScript, localScript, hung string) (env doctorEnv, pathBin, localBin string) {
+	return doctorStubsGrace(t, pathScript, localScript, hung, doctorGoodGrace)
+}
+
+// doctorStubsGrace is doctorStubs with the grace named.
+func doctorStubsGrace(t *testing.T, pathScript, localScript, hung string, grace time.Duration) (env doctorEnv, pathBin, localBin string) {
 	t.Helper()
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
@@ -380,7 +394,7 @@ func doctorStubs(t *testing.T, pathScript, localScript, hung string) (env doctor
 			if (p == pathBin && strings.Contains(hung, "path")) || (p == localBin && strings.Contains(hung, "local")) {
 				deadline = doctorHungDeadline
 			}
-			return readVersionLineWithin(p, deadline, 50*time.Millisecond, doctorVersionLineMax)
+			return readVersionLineWithin(p, deadline, grace, doctorVersionLineMax)
 		},
 	}
 	return env, pathBin, localBin
