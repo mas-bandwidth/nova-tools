@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
@@ -80,6 +82,9 @@ var unitPlatforms = [][2]string{{"linux", "amd64"}, {"darwin", "arm64"}, {"darwi
 // `//go:build` line holds on a unit platform with no custom tag set. A file
 // with no constraint is a unit file.
 func unitTierFile(src []byte) bool {
+	if !bytes.Contains(src, []byte("//go:build")) {
+		return true
+	}
 	var expr constraint.Expr
 	for _, line := range strings.Split(string(src), "\n") {
 		line = strings.TrimSpace(line)
@@ -228,37 +233,53 @@ func scanWallClockWaits(fset *token.FileSet, rel string, f *ast.File) []wallCloc
 	return out
 }
 
+var (
+	treeWallClockOnce     sync.Once
+	treeWallClockWaitsOut []wallClockWait
+	treeWallClockFiles    int
+
+	treeSleepsSkipsOnce sync.Once
+	treeSleepsSkipsOut  map[string]string
+)
+
 // treeWallClockWaits is every direct wall-clock wait in the unit tier's test
 // files, and how many files were read.
 func treeWallClockWaits(t *testing.T) ([]wallClockWait, int) {
 	t.Helper()
-	tree := repoTree(t)
-	var out []wallClockWait
-	files := 0
-	for _, f := range tree.GoFilesUnder(true, unitWaitDirs...) {
-		if f.HasDirNamed("testdata") || f.AST == nil || !unitTierFile(f.Src) {
-			continue
+	treeWallClockOnce.Do(func() {
+		tree := repoTree(t)
+		var out []wallClockWait
+		files := 0
+		for _, f := range tree.GoFilesUnder(true, unitWaitDirs...) {
+			if f.HasDirNamed("testdata") || f.AST == nil || !unitTierFile(f.Src) {
+				continue
+			}
+			files++
+			out = append(out, scanWallClockWaits(tree.FSet, f.Rel, f.AST)...)
 		}
-		files++
-		out = append(out, scanWallClockWaits(tree.FSet, f.Rel, f.AST)...)
-	}
-	return out, files
+		treeWallClockWaitsOut = out
+		treeWallClockFiles = files
+	})
+	return treeWallClockWaitsOut, treeWallClockFiles
 }
 
 // treeSleepsSkips is every SLEEPS skip in cmd/ and internal/, keyed like the
 // ledger, with the file it is in.
 func treeSleepsSkips(t *testing.T) map[string]string {
 	t.Helper()
-	tree := map[string]string{}
-	for _, f := range repoTree(t).GoFilesUnder(true, unitWaitDirs...) {
-		if f.HasDirNamed("testdata") || f.AST == nil {
-			continue
+	treeSleepsSkipsOnce.Do(func() {
+		tree := map[string]string{}
+		for _, f := range repoTree(t).GoFilesUnder(true, unitWaitDirs...) {
+			if f.HasDirNamed("testdata") || f.AST == nil {
+				continue
+			}
+			for _, name := range sleepsSkippers(f.AST) {
+				tree[sleepsLedgerKey(path.Dir(f.Rel), name)] = f.Rel
+			}
 		}
-		for _, name := range sleepsSkippers(f.AST) {
-			tree[sleepsLedgerKey(path.Dir(f.Rel), name)] = f.Rel
-		}
-	}
-	return tree
+		treeSleepsSkipsOut = tree
+	})
+	return treeSleepsSkipsOut
 }
 
 // readSleepsLedger reads the ledger at HEAD through the one reader.

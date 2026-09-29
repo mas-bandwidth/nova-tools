@@ -115,10 +115,35 @@ func luaTableWrites(name, src string) []tableWrite {
 	return out
 }
 
+func mayContainGoTableWrite(src string) bool {
+	return strings.Contains(src, "ZAdd") ||
+		strings.Contains(src, "ZRem") ||
+		strings.Contains(src, "ZIncrBy") ||
+		strings.Contains(src, "ZUnionStore") ||
+		strings.Contains(src, "ZInterStore") ||
+		strings.Contains(src, "ZPop") ||
+		strings.Contains(src, "SAdd") ||
+		strings.Contains(src, "SRem") ||
+		strings.Contains(src, "SMove") ||
+		strings.Contains(src, "Del") ||
+		strings.Contains(src, "Unlink") ||
+		strings.Contains(src, "Rename") ||
+		strings.Contains(src, "ZADD") ||
+		strings.Contains(src, "ZREM") ||
+		strings.Contains(src, "SADD") ||
+		strings.Contains(src, "SREM") ||
+		strings.Contains(src, "SMOVE") ||
+		strings.Contains(src, "DEL") ||
+		strings.Contains(src, "RENAME")
+}
+
 // goTableWrites is the Go half over one non-test file's source.
 func goTableWrites(rel, src string) []string {
 	base := rel[strings.LastIndex(rel, "/")+1:]
 	if strings.Contains(base, "fixture") || strings.HasPrefix(rel, "internal/nsprint/ws/wstest/") {
+		return nil
+	}
+	if !mayContainGoTableWrite(src) {
 		return nil
 	}
 	var out []string

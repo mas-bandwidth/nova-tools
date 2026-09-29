@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,32 @@ func redisServerGates(t *testing.T, root string) []string {
 	look := "LookPath(" + `"redis-server"` + ")"
 	spawn := "exec.Command(" + `"redis-server"`
 	var bad []string
+
+	if root == repoRoot(t) {
+		tree := repoTree(t)
+		for _, f := range tree.Files {
+			if !f.Go || f.HasDirNamed("vendor") || isDeprecatedDir(root, f.Path) {
+				continue
+			}
+			rel := f.Rel
+			if rel == helper || rel == lifted || rel == self {
+				continue
+			}
+			body := string(f.Src)
+			if !strings.Contains(body, "redis-server") {
+				continue
+			}
+			for i, line := range strings.Split(body, "\n") {
+				if strings.Contains(line, look) || strings.Contains(line, spawn) ||
+					(strings.Contains(line, "t.Skip") && strings.Contains(line, "redis-server")) {
+					bad = append(bad, rel+":"+itoa(i+1))
+				}
+			}
+		}
+		sort.Strings(bad)
+		return bad
+	}
+
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -157,7 +184,6 @@ func redisServerGates(t *testing.T, root string) []string {
 			if d.Name() == ".git" || d.Name() == "vendor" {
 				return filepath.SkipDir
 			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
 			if isDeprecatedDir(root, path) {
 				return filepath.SkipDir
 			}

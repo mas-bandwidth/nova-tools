@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -81,10 +82,27 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 	}
 }
 
+var (
+	repoHelperReadsOnce   sync.Once
+	repoHelperReadsLoaded map[string]bool
+	repoHelperReadsRaw    []string
+)
+
 // treeHelperReads walks every Go package under root (skipping .git, testdata and
 // vendor) and returns the list files a helper call loads and every raw read of
 // one, each read named by its path relative to root.
 func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[string]bool, []string) {
+	t.Helper()
+	if root == repoRoot(t) {
+		repoHelperReadsOnce.Do(func() {
+			repoHelperReadsLoaded, repoHelperReadsRaw = computeTreeHelperReads(t, root, lists)
+		})
+		return repoHelperReadsLoaded, repoHelperReadsRaw
+	}
+	return computeTreeHelperReads(t, root, lists)
+}
+
+func computeTreeHelperReads(t *testing.T, root string, lists map[string]bool) (map[string]bool, []string) {
 	t.Helper()
 	var tree *repoTreeIndex
 	if root == repoRoot(t) {
@@ -145,6 +163,7 @@ func helperReadsTree(t *testing.T, root string, fset *token.FileSet, files []*tr
 	t.Helper()
 	consts := map[string]string{}
 	funcs := map[string]*ast.FuncDecl{}
+	callSites := map[string][]callSite{}
 	for _, f := range files {
 		for _, decl := range f.AST.Decls {
 			switch d := decl.(type) {
@@ -167,12 +186,19 @@ func helperReadsTree(t *testing.T, root string, fset *token.FileSet, files []*tr
 			case *ast.FuncDecl:
 				if d.Recv == nil && d.Body != nil {
 					funcs[d.Name.Name] = d
+					ast.Inspect(d.Body, func(n ast.Node) bool {
+						if call, ok := n.(*ast.CallExpr); ok {
+							name := callName(call.Fun)
+							callSites[name] = append(callSites[name], callSite{fn: d, call: call})
+						}
+						return true
+					})
 				}
 			}
 		}
 	}
 
-	r := listResolver{lists: lists, consts: consts, funcs: funcs}
+	r := listResolver{lists: lists, consts: consts, funcs: funcs, callSites: callSites}
 	loaded := map[string]bool{}
 	var raw []string
 	for _, fn := range funcs {
@@ -226,6 +252,7 @@ func helperReads(t *testing.T, srcs map[string][]byte, lists map[string]bool) (m
 	}
 	consts := map[string]string{}
 	funcs := map[string]*ast.FuncDecl{}
+	callSites := map[string][]callSite{}
 	for _, f := range files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
@@ -248,12 +275,19 @@ func helperReads(t *testing.T, srcs map[string][]byte, lists map[string]bool) (m
 			case *ast.FuncDecl:
 				if d.Recv == nil && d.Body != nil {
 					funcs[d.Name.Name] = d
+					ast.Inspect(d.Body, func(n ast.Node) bool {
+						if call, ok := n.(*ast.CallExpr); ok {
+							name := callName(call.Fun)
+							callSites[name] = append(callSites[name], callSite{fn: d, call: call})
+						}
+						return true
+					})
 				}
 			}
 		}
 	}
 
-	r := listResolver{lists: lists, consts: consts, funcs: funcs}
+	r := listResolver{lists: lists, consts: consts, funcs: funcs, callSites: callSites}
 	loaded := map[string]bool{}
 	var raw []string
 	for _, fn := range funcs {
@@ -312,14 +346,23 @@ func callName(fun ast.Expr) string {
 	return ""
 }
 
+type callSite struct {
+	fn   *ast.FuncDecl
+	call *ast.CallExpr
+}
+
 // listResolver turns a path expression into the list files it names.
 type listResolver struct {
-	lists  map[string]bool
-	consts map[string]string
-	funcs  map[string]*ast.FuncDecl
+	lists     map[string]bool
+	consts    map[string]string
+	funcs     map[string]*ast.FuncDecl
+	callSites map[string][]callSite
 }
 
 func (r listResolver) resolve(fn *ast.FuncDecl, e ast.Expr, depth int) []string {
+	if depth > 2 {
+		return nil
+	}
 	var out []string
 	add := func(v string) {
 		if base := path.Base(filepath.ToSlash(v)); r.lists[base] {
@@ -339,7 +382,7 @@ func (r listResolver) resolve(fn *ast.FuncDecl, e ast.Expr, depth int) []string 
 				add(v)
 				return true
 			}
-			out = append(out, r.local(fn, x.Name, depth)...)
+			out = append(out, r.local(fn, x.Name, depth+1)...)
 		}
 		return true
 	})
@@ -349,6 +392,9 @@ func (r listResolver) resolve(fn *ast.FuncDecl, e ast.Expr, depth int) []string 
 // local resolves a name inside fn: a variable assigned there, or a parameter
 // through every call site of fn (one level).
 func (r listResolver) local(fn *ast.FuncDecl, name string, depth int) []string {
+	if depth > 2 {
+		return nil
+	}
 	var out []string
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
@@ -360,7 +406,7 @@ func (r listResolver) local(fn *ast.FuncDecl, name string, depth int) []string {
 				if rhs, ok := as.Rhs[i].(*ast.Ident); ok && rhs.Name == name {
 					continue
 				}
-				out = append(out, r.resolve(fn, as.Rhs[i], depth)...)
+				out = append(out, r.resolve(fn, as.Rhs[i], depth+1)...)
 			}
 		}
 		return true
@@ -380,14 +426,13 @@ func (r listResolver) local(fn *ast.FuncDecl, name string, depth int) []string {
 	if idx < 0 {
 		return out
 	}
-	for _, caller := range r.funcs {
-		ast.Inspect(caller.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if ok && callName(call.Fun) == fn.Name.Name && idx < len(call.Args) {
-				out = append(out, r.resolve(caller, call.Args[idx], depth+1)...)
-			}
-			return true
-		})
+	for _, site := range r.callSites[fn.Name.Name] {
+		if site.fn == fn {
+			continue
+		}
+		if idx < len(site.call.Args) {
+			out = append(out, r.resolve(site.fn, site.call.Args[idx], depth+1)...)
+		}
 	}
 	return out
 }

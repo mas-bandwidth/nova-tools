@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"go/ast"
 	"go/token"
 	"os"
@@ -207,8 +208,16 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 			src = raw
 		}
 		var goLines map[int]bool
-		if f.Go && f.AST != nil {
-			goLines = goSlotLines(tree.FSet, f.AST)
+		if f.Go {
+			if !bytes.Contains(src, []byte("slots")) && !bytes.Contains(src, []byte("Slots")) {
+				continue
+			}
+			if f.AST != nil {
+				goLines = goSlotLines(tree.FSet, f.AST)
+			}
+			if len(goLines) == 0 {
+				continue
+			}
 		}
 		for i, line := range strings.Split(string(src), "\n") {
 			code := strings.TrimSpace(line)

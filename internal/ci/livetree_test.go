@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -16,14 +17,32 @@ import (
 // selection's own reading; TestDeprecatedPackagesAreNeverSelected holds the
 // two to the same answer.
 type liveTree struct {
-	root string
-	drop []string
-	keep map[string]bool
+	root       string
+	drop       []string
+	keep       map[string]bool
+	hasGoCache map[string]bool
+	mu         sync.Mutex
 }
+
+var (
+	sharedLiveTreeOnce sync.Once
+	sharedLiveTree     *liveTree
+)
 
 func loadLiveTree(t *testing.T, root string) *liveTree {
 	t.Helper()
-	lt := &liveTree{root: root, keep: map[string]bool{}}
+	if root == repoRoot(t) {
+		sharedLiveTreeOnce.Do(func() {
+			sharedLiveTree = parseLiveTree(t, root)
+		})
+		return sharedLiveTree
+	}
+	return parseLiveTree(t, root)
+}
+
+func parseLiveTree(t *testing.T, root string) *liveTree {
+	t.Helper()
+	lt := &liveTree{root: root, keep: map[string]bool{}, hasGoCache: map[string]bool{}}
 	for _, line := range strings.Split(readFile(t, filepath.Join(root, "deprecated", "PACKAGES")), "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		line = strings.TrimSpace(line)
@@ -66,14 +85,26 @@ func (lt *liveTree) File(rel string) bool {
 }
 
 func (lt *liveTree) hasGo(dir string) bool {
-	entries, err := os.ReadDir(filepath.Join(lt.root, filepath.FromSlash(dir)))
-	if err != nil {
-		return false
+	lt.mu.Lock()
+	if v, ok := lt.hasGoCache[dir]; ok {
+		lt.mu.Unlock()
+		return v
 	}
-	for _, e := range entries {
-		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
-			return true
+	lt.mu.Unlock()
+
+	var has bool
+	entries, err := os.ReadDir(filepath.Join(lt.root, filepath.FromSlash(dir)))
+	if err == nil {
+		for _, e := range entries {
+			if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+				has = true
+				break
+			}
 		}
 	}
-	return false
+
+	lt.mu.Lock()
+	lt.hasGoCache[dir] = has
+	lt.mu.Unlock()
+	return has
 }

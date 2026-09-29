@@ -186,7 +186,8 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 		t.Helper()
 		out, err := gitOut(root, append([]string{
 			"-c", "user.name=ci", "-c", "user.email=ci@example.invalid",
-			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+			"-c", "core.fsync=none", "-c", "gc.auto=0"}, args...)...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,7 +269,8 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 		t.Helper()
 		out, err := gitOut(root, append([]string{
 			"-c", "user.name=ci", "-c", "user.email=ci@example.invalid",
-			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+			"-c", "core.fsync=none", "-c", "gc.auto=0"}, args...)...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,13 +303,10 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 	}
 
 	// CASE 2: missing origin/dev on merge commit refuses loudly (fail closed).
-	currentBranch := git("branch", "--show-current")
-	git("checkout", "-qb", "side")
-	write("SIDE", "side\n")
-	git("add", "-A")
-	git("commit", "-q", "-m", "side commit")
-	git("checkout", "-q", currentBranch)
-	git("merge", "-q", "--no-ff", "-m", "merge side", "side")
+	tBase := git("write-tree")
+	sideCommit := git("commit-tree", tBase, "-p", baseCommit, "-m", "side commit")
+	mergeCommit := git("commit-tree", tBase, "-p", baseCommit, "-p", sideCommit, "-m", "merge side")
+	git("update-ref", "HEAD", mergeCommit)
 	_, _, _, err = deprecatedImportsAllowlistGrowth(root)
 	if err == nil || !strings.Contains(err.Error(), "refs/remotes/origin/dev is missing") {
 		t.Fatalf("missing origin/dev on merge commit: got %v, want 'refs/remotes/origin/dev is missing'", err)

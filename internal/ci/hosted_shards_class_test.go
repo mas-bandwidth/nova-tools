@@ -1,12 +1,15 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -190,21 +193,41 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 	for runner, shards := range hostedWorkflowLegs(t) {
 		n := len(shards)
 		seen := make(map[string]int)
+		type shardResult struct {
+			shard int
+			line  string
+			err   error
+		}
+		res := make([]shardResult, n)
+		var wg sync.WaitGroup
 		for i := 1; i <= n; i++ {
-			script := job.Steps[deal].Run
-			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
-			script = strings.ReplaceAll(script, "go list ./...", fmt.Sprintf("seq -f 'p%%02g' 1 %d", packages))
-			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, script, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
-			if err != nil {
-				t.Fatal(err)
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				script := job.Steps[deal].Run
+				script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
+				script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
+				script = strings.ReplaceAll(script, "go list ./...", fmt.Sprintf("seq -f 'p%%02g' 1 %d", packages))
+				script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
+				env := filepath.Join(t.TempDir(), "env")
+				runStep(t, script, "GITHUB_ENV="+env)
+				b, err := os.ReadFile(env)
+				if err != nil {
+					res[i-1] = shardResult{shard: i, err: err}
+					return
+				}
+				res[i-1] = shardResult{shard: i, line: strings.TrimSpace(string(b))}
+			}()
+		}
+		wg.Wait()
+		for _, r := range res {
+			if r.err != nil {
+				t.Fatal(r.err)
 			}
-			line := strings.TrimSpace(string(b))
+			line := r.line
 			if !strings.HasPrefix(line, "HOSTED_PKGS=") || strings.Contains(line, "\n") {
-				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, i, line)
+				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, r.shard, line)
 			}
 			for _, p := range strings.Fields(strings.TrimPrefix(line, "HOSTED_PKGS=")) {
 				seen[p]++
@@ -243,25 +266,59 @@ func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 	if err := os.WriteFile(listFile, list, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	liveCmd := exec.Command("bash", liveScript(t))
+	liveCmd.Stdin = bytes.NewReader(list)
+	liveOut, err := liveCmd.Output()
+	if err != nil {
+		t.Fatalf("live-packages.sh: %v", err)
+	}
+	liveListFile := filepath.Join(t.TempDir(), "live_pkgs")
+	if err := os.WriteFile(liveListFile, liveOut, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for runner, shards := range hostedWorkflowLegs(t) {
 		n := len(shards)
 		home := map[string]int{}
+		type shardResult struct {
+			shard int
+			line  string
+			err   error
+		}
+		res := make([]shardResult, n)
+		var wg sync.WaitGroup
 		for i := 1; i <= n; i++ {
-			script := job.Steps[deal].Run
-			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
-			script = strings.ReplaceAll(script, "go list ./...", "cat "+listFile)
-			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, script, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
-			if err != nil {
-				t.Fatal(err)
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				script := job.Steps[deal].Run
+				script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
+				script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
+				if strings.Contains(script, "go list ./... | bash .github/scripts/live-packages.sh") {
+					script = strings.ReplaceAll(script, "go list ./... | bash .github/scripts/live-packages.sh", "cat "+liveListFile)
+				} else {
+					script = strings.ReplaceAll(script, "go list ./...", "cat "+listFile)
+					script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
+				}
+				env := filepath.Join(t.TempDir(), "env")
+				runStep(t, script, "GITHUB_ENV="+env)
+				b, err := os.ReadFile(env)
+				if err != nil {
+					res[i-1] = shardResult{shard: i, err: err}
+					return
+				}
+				res[i-1] = shardResult{shard: i, line: strings.TrimSpace(string(b))}
+			}()
+		}
+		wg.Wait()
+		for _, r := range res {
+			if r.err != nil {
+				t.Fatal(r.err)
 			}
-			for _, p := range strings.Fields(strings.TrimPrefix(strings.TrimSpace(string(b)), "HOSTED_PKGS=")) {
+			for _, p := range strings.Fields(strings.TrimPrefix(r.line, "HOSTED_PKGS=")) {
 				for _, h := range hostedHeavy {
 					if strings.HasSuffix(p, "/"+h) {
-						home[h] = i
+						home[h] = r.shard
 					}
 				}
 			}

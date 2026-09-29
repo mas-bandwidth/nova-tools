@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -478,17 +479,49 @@ func ListAtCommit(root, commit, rel string) (string, bool, error) {
 	return body, true, nil
 }
 
+var (
+	gitOutRepoCache sync.Map
+	repoRootStatic  string
+)
+
+func init() {
+	if r, err := filepath.Abs(filepath.Join("..", "..")); err == nil {
+		repoRootStatic = r
+	}
+}
+
+type gitOutCachedResult struct {
+	out string
+	err error
+}
+
 func gitOut(root string, args ...string) (string, error) {
+	isRepoRoot := repoRootStatic != "" && (root == repoRootStatic || filepath.Clean(root) == repoRootStatic)
+	var key string
+	if isRepoRoot {
+		key = strings.Join(args, "\x00")
+		if v, ok := gitOutRepoCache.Load(key); ok {
+			res := v.(gitOutCachedResult)
+			return res.out, res.err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root, "-c", "core.fsync=none", "-c", "gc.auto=0"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	var retErr error
 	if err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		retErr = fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return string(out), nil
+	resOut := string(out)
+	if isRepoRoot {
+		gitOutRepoCache.Store(key, gitOutCachedResult{out: resOut, err: retErr})
+	}
+	return resOut, retErr
 }
 
 // ComparedEntry is one entry of testdata/compared_examples.txt: the test that
@@ -509,24 +542,79 @@ type testReach struct {
 	transcripts [][2]string
 }
 
-func reachOf(pkgDir, test string) (testReach, bool, error) {
-	var r testReach
+type pkgFuncsResult struct {
+	funcs map[string]*ast.FuncDecl
+	err   error
+}
+
+var (
+	pkgFuncsCache   sync.Map
+	treeFileASTHook func(path string) *ast.File
+)
+
+func pkgTestFuncs(pkgDir string) (map[string]*ast.FuncDecl, error) {
+	if v, ok := pkgFuncsCache.Load(pkgDir); ok {
+		res := v.(pkgFuncsResult)
+		return res.funcs, res.err
+	}
 	files, err := filepath.Glob(filepath.Join(pkgDir, "*_test.go"))
 	if err != nil {
-		return r, false, err
+		pkgFuncsCache.Store(pkgDir, pkgFuncsResult{err: err})
+		return nil, err
 	}
 	funcs := make(map[string]*ast.FuncDecl)
 	fset := token.NewFileSet()
 	for _, f := range files {
-		file, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return r, false, err
+		var file *ast.File
+		if treeFileASTHook != nil {
+			file = treeFileASTHook(f)
+		}
+		if file == nil {
+			var err error
+			file, err = parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
+			if err != nil {
+				pkgFuncsCache.Store(pkgDir, pkgFuncsResult{err: err})
+				return nil, err
+			}
 		}
 		for _, d := range file.Decls {
 			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Body != nil {
 				funcs[fd.Name.Name] = fd
 			}
 		}
+	}
+	pkgFuncsCache.Store(pkgDir, pkgFuncsResult{funcs: funcs})
+	return funcs, nil
+}
+
+type reachKey struct {
+	pkgDir, test string
+}
+
+type reachResult struct {
+	r     testReach
+	found bool
+	err   error
+}
+
+var reachCache sync.Map
+
+func reachOf(pkgDir, test string) (testReach, bool, error) {
+	k := reachKey{pkgDir, test}
+	if v, ok := reachCache.Load(k); ok {
+		res := v.(reachResult)
+		return res.r, res.found, res.err
+	}
+	r, found, err := reachOfUncached(pkgDir, test)
+	reachCache.Store(k, reachResult{r, found, err})
+	return r, found, err
+}
+
+func reachOfUncached(pkgDir, test string) (testReach, bool, error) {
+	var r testReach
+	funcs, err := pkgTestFuncs(pkgDir)
+	if err != nil {
+		return r, false, err
 	}
 	if _, ok := funcs[test]; !ok {
 		return r, false, nil
