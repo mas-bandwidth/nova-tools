@@ -15,9 +15,11 @@ import (
 // 7 and 8 need a failure inside the write and are TestCostImportWriteOutcomes' cases.
 func TestCostImportExitCodes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // the any-seat check: nothing under HOME is read
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
 	mr := miniredis.RunT(t)
-	fixtures := filepath.Join("..", "..", "internal", "nsprint", "cost", "testdata")
+	fixtures := filepath.Join("..", "..", "..", "internal", "nsprint", "cost", "testdata")
+	if _, err := os.Stat(fixtures); err != nil {
+		fixtures = filepath.Join("..", "..", "internal", "nsprint", "cost", "testdata")
+	}
 	noCost := filepath.Join(t.TempDir(), "no-cost.csv")
 	if err := os.WriteFile(noCost, []byte("date,workspace,model\n2026-09-21,nova,claude-opus-5-5\n"), 0o644); err != nil {
 		t.Fatal(err)

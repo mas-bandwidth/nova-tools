@@ -56,7 +56,7 @@ import (
 
 // cardMoveVerbs are the table move subverbs no other card form has.
 var cardMoveVerbs = map[string]bool{"owner": true, "deal": true, "work": true, "land": true, "cancel": true, "expire": true,
-	"table": true, "consumers": true, "render": true, "assign": true, "session": true}
+	"table": true, "consumers": true, "render": true, "assign": true, "session": true, "tell": true, "report": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
 // the move form with --id, --ids or --as (the bench attempt form names a
@@ -85,6 +85,8 @@ func isCardMove(sub string, args []string) bool {
 	switch sub {
 	case "end", "beat":
 		return has("id", "ids", "as")
+	case "ls":
+		return has("as")
 	case "fsck":
 		return !has("sprint")
 	}
@@ -97,11 +99,13 @@ type moveCmd struct {
 	pr, head, doneAlready, score, gates, finding    *string
 	reader, fail, add, rm, token, wrapper           *string
 	harness, child, checkout, findingTest           *string
+	text                                            *string
 	// parent is the caller's context: the spec gate at card end --ok --pr
 	// runs under it, not under the store's 30 s
 	parent                                context.Context
 	n                                     *int
 	fill, ok, repair, revoke, brief, each *bool
+	live                                  *bool
 	result                                map[string]*string
 	consumers                             multiFlag
 }
@@ -141,6 +145,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.child = fs.String("child", "", "")
 	m.checkout = fs.String("repo", "", "")
 	m.findingTest = fs.String("test", "", "")
+	m.text = fs.String("text", "", "")
 	m.revoke = fs.Bool("revoke", false, "")
 	m.n = fs.Int("n", 0, "")
 	m.fill = fs.Bool("fill", false, "")
@@ -148,6 +153,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.repair = fs.Bool("repair", false, "")
 	m.brief = fs.Bool("brief", false, "")
 	m.each = fs.Bool("each", false, "")
+	m.live = fs.Bool("live", false, "")
 	if sub == "table" || sub == "expire" {
 		fs.Var(&m.consumers, "as", "")
 		m.as = new(string)
@@ -277,6 +283,18 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 	case "session":
 		if !strings.HasPrefix(*m.as, "bench:") {
 			return "session wants --as bench:<b> (a friend takes its copies through nova-friend pull)"
+		}
+	case "tell":
+		if len(ids) != 1 || *m.text == "" {
+			return "tell wants --id <copy> and --text <message>"
+		}
+	case "report":
+		if len(ids) != 1 {
+			return "report wants --id <copy>"
+		}
+	case "ls":
+		if *m.as == "" {
+			return "ls wants --as <consumer> [--live]"
 		}
 	}
 	return ""
@@ -647,6 +665,41 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			return refuse(errOut, "card render", "write card: "+err.Error())
 		}
 		fmt.Fprintf(errOut, "RENDERED card id=%s brief=%t bytes=%d ms=%d\n", ids[0], *m.brief, len(body), ms())
+		return 0
+	case "tell":
+		res, err := taskcard.Tell(ctx, c, taskcard.TellRequest{
+			CopyID: ids[0],
+			Text:   *m.text,
+			By:     *m.actor,
+		})
+		if err != nil {
+			return refused(err, "id="+ids[0])
+		}
+		fmt.Fprintf(out, "CARD TELL id=%s text=%q ms=%d\n", res.CopyID, res.Text, ms())
+		return 0
+	case "report":
+		rep, err := taskcard.Report(ctx, c, ids[0])
+		if err != nil {
+			return refused(err, "id="+ids[0])
+		}
+		fmt.Fprint(out, rep.Render())
+		return 0
+	case "ls":
+		as, err := consumerArg(*m.as)
+		if err != nil {
+			return refuse(errOut, "card ls", err.Error())
+		}
+		list, err := taskcard.ListCopies(ctx, c, taskcard.ListCopiesOptions{
+			Consumer: as.String(),
+			Live:     *m.live,
+		})
+		if err != nil {
+			return refused(err, "as="+as.String())
+		}
+		for _, item := range list {
+			fmt.Fprintln(out, item.Line())
+		}
+		fmt.Fprintf(out, "CARD LS as=%s n=%d live=%t ms=%d\n", as, len(list), *m.live, ms())
 		return 0
 	}
 	return refuse(errOut, "card "+sub, "unknown table move")
