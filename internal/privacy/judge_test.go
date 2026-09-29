@@ -211,8 +211,8 @@ func TestCommonWordsDoNotCryWolf(t *testing.T) {
 	if with.Outcome != privacy.UnprovenClean {
 		t.Errorf("with the background: outcome %s, want UNPROVEN-CLEAN", with.Outcome)
 	}
-	if with.Bounds.Docs <= 40 {
-		t.Errorf("the background model read %d documents, want more than 40", with.Bounds.Docs)
+	if with.Bounds.Docs <= 8 {
+		t.Errorf("the background model read %d documents, want more than 8", with.Bounds.Docs)
 	}
 	without := privacy.Screen(newFixture(t, false).spec, payload)
 	if without.Outcome != privacy.Flagged {

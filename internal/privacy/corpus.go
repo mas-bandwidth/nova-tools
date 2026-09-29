@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // The read bounds. Each refusal or warning that one of them causes names it.
@@ -233,3 +234,116 @@ func (c *Corpus) loadRoot(root RootSpec, maxDocs int) {
 
 // Screen loads the corpus a Spec names and judges one payload against it.
 func Screen(s Spec, payload string) Result { return Judge(Load(s), payload) }
+
+// Options name a corpus the way the command's flags do. Paths given here
+// resolve against the working directory; paths inside a configuration file
+// resolve against the file's own directory.
+type Options struct {
+	// Root is a directory whose ConfigName file is read.
+	Root string
+	// Config is a configuration file read instead.
+	Config string
+	// Sources replace the configuration's sources when any are given.
+	Sources []string
+	// Recursive and Flat replace the configuration's background roots when
+	// either is given; Pattern is their file pattern, DefaultPattern when
+	// empty.
+	Recursive []string
+	Flat      []string
+	Pattern   string
+	// Marker replaces the configuration's marker when set.
+	Marker string
+	// MaxDocs replaces the configuration's max-docs when above zero.
+	MaxDocs int
+}
+
+// ErrNoCorpus is a corpus nobody named: no root, no configuration, no source.
+var ErrNoCorpus = errors.New("name the corpus with --root <dir>, --config <file> or --source <file>; refusing to guess")
+
+// ConfigPath is the configuration file the options read, or "" for none.
+func (o Options) ConfigPath() string {
+	if o.Config != "" {
+		return o.Config
+	}
+	if o.Root != "" {
+		// Joined as typed rather than cleaned, so the path a line prints is
+		// the path the caller wrote.
+		if strings.HasSuffix(o.Root, string(filepath.Separator)) || strings.HasSuffix(o.Root, "/") {
+			return o.Root + ConfigName
+		}
+		return o.Root + string(filepath.Separator) + ConfigName
+	}
+	return ""
+}
+
+// Spec reads the configuration the options name, if any, applies the
+// options over it, and returns the corpus to load. A configuration named by
+// --config must exist; one found under --root may be absent only when
+// --source names the sources. A corpus with no source is refused.
+func (o Options) Spec() (Spec, error) {
+	if o.Root == "" && o.Config == "" && len(o.Sources) == 0 {
+		return Spec{}, ErrNoCorpus
+	}
+	if o.Root != "" && o.Config != "" {
+		return Spec{}, errors.New("--root and --config both name a configuration; give one")
+	}
+	if o.Pattern == "" {
+		o.Pattern = DefaultPattern
+	}
+	if _, err := filepath.Match(o.Pattern, ""); err != nil {
+		return Spec{}, fmt.Errorf("--pattern %q: %w", o.Pattern, err)
+	}
+	if o.MaxDocs < 0 {
+		return Spec{}, fmt.Errorf("--max-docs wants a whole number of one or more, got %d", o.MaxDocs)
+	}
+	var file File
+	cfg, base := o.ConfigPath(), ""
+	if cfg != "" {
+		raw, err := ReadBounded(cfg, MaxConfigBytes)
+		switch {
+		case err == nil:
+			f, perr := ParseConfig(string(raw))
+			if perr != nil {
+				return Spec{}, fmt.Errorf("%s: %w", cfg, perr)
+			}
+			file, base = f, filepath.Dir(cfg)
+		case o.Config == "" && len(o.Sources) > 0 && errors.Is(err, fs.ErrNotExist):
+			cfg = ""
+		case errors.Is(err, fs.ErrNotExist):
+			return Spec{}, fmt.Errorf("no configuration at %s; write one (nova-privacy help shows the format) or name sources with --source", cfg)
+		case errors.Is(err, ErrTooLarge):
+			return Spec{}, fmt.Errorf("%w (MaxConfigBytes)", err)
+		default:
+			return Spec{}, err
+		}
+	}
+	if o.Marker != "" {
+		file.Marker = o.Marker
+	}
+	if o.MaxDocs > 0 {
+		file.MaxDocs = o.MaxDocs
+	}
+	spec, err := file.Resolve(base, cfg)
+	if err != nil {
+		return Spec{}, err
+	}
+	if len(o.Sources) > 0 {
+		spec.Sources = nil
+		for _, p := range o.Sources {
+			spec.Sources = append(spec.Sources, SourceSpec{Path: p, Display: p, FromFlag: true})
+		}
+	}
+	if len(o.Recursive)+len(o.Flat) > 0 {
+		spec.Roots = nil
+		for _, d := range o.Recursive {
+			spec.Roots = append(spec.Roots, RootSpec{Root: Root{Dir: d, Recursive: true, Pattern: o.Pattern}, Display: d})
+		}
+		for _, d := range o.Flat {
+			spec.Roots = append(spec.Roots, RootSpec{Root: Root{Dir: d, Pattern: o.Pattern}, Display: d})
+		}
+	}
+	if len(spec.Sources) == 0 {
+		return Spec{}, fmt.Errorf("%s declares no source of private material; add a line `source <file>` to it, or name one with --source", cfg)
+	}
+	return spec, nil
+}

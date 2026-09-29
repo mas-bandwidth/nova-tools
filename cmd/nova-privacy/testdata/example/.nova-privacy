@@ -1,0 +1,6 @@
+# The corpus the example screens against. Paths are relative to this file.
+source private/ideas.md
+source private/later.md
+background recursive *.md notes
+background flat *.md journal
+refuse home-path /home/[a-z]+(/[A-Za-z0-9._-]+)*

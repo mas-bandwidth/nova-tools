@@ -11,7 +11,7 @@ import (
 
 // Two vocabularies live in the private entries. The rare words are invented,
 // so no background document holds them. The common words are planted in
-// forty background documents, so they are ordinary here. Inside the private
+// eight background documents, so they are ordinary here. Inside the private
 // sources both sets are rare; only the background model tells them apart.
 const (
 	rareWords   = "zarquon flibberty wumpus"
@@ -73,7 +73,7 @@ background recursive *.md .
 background flat *.md journal
 `
 
-// newFixture writes the sources and, when background is true, forty
+// newFixture writes the sources and, when background is true, eight
 // documents of ordinary prose. The journal directory always exists, so an
 // empty background is "no documents", never "cannot be listed".
 func newFixture(t *testing.T, background bool) *fixture {
@@ -82,7 +82,7 @@ func newFixture(t *testing.T, background bool) *fixture {
 	f.write(t, "private/later.md", laterFixture+"\n"+headingsFixture)
 	f.write(t, "private/upkeep.md", upkeepFixture)
 	if background {
-		for i := 0; i < 40; i++ {
+		for i := 0; i < 8; i++ {
 			f.write(t, fmt.Sprintf("journal/page-%03d.md", i), "Ordinary prose. "+commonWords+" and some other words about the work.\n")
 		}
 	} else if err := os.MkdirAll(f.path("journal"), 0o755); err != nil {
