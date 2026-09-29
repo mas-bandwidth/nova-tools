@@ -223,8 +223,18 @@ def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
     wire_receipt = op_result[1]
     if len(wire_receipt) < 7:
         raise RuntimeError(f"oprecord result wire receipt missing batch_delta at {op_key}")
+    expected_wire = ["RECEIPT", event_id, str(r_epoch), str(r_before), str(r_after), r_outcome]
+    if op_result[0] != "OK" or [str(v) for v in wire_receipt[:6]] != expected_wire:
+        raise RuntimeError(f"oprecord result receipt does not match committed receipt at {op_key}")
     delta_payload = wire_receipt[6]
     batch_delta = json.loads(delta_payload) if isinstance(delta_payload, str) else delta_payload
+    if not isinstance(batch_delta, dict):
+        raise RuntimeError(f"oprecord result batch_delta is not an object at {op_key}")
+    if batch_delta.get("operation_id") != op_id:
+        raise RuntimeError(f"batch_delta operation_id {batch_delta.get('operation_id')} != requested operation {op_id}")
+    digest = op_record.get("digest")
+    if not digest or batch_delta.get("digest") != digest:
+        raise RuntimeError(f"batch_delta digest does not match oprecord digest at {op_key}")
 
     # 2. Independent table revision in Redis
     current_rev = get_table_revision(table)
@@ -246,6 +256,12 @@ def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
         raise RuntimeError(f"stream entry revs {smap.get('rev_before')}->{smap.get('rev_after')} != {r_before}->{r_after}")
     if smap.get("outcome") != r_outcome:
         raise RuntimeError(f"stream entry outcome {smap.get('outcome')} != {r_outcome}")
+    stream_delta_raw = smap.get("batch_delta")
+    if not isinstance(stream_delta_raw, str):
+        raise RuntimeError(f"stream entry {event_id} missing batch_delta")
+    stream_delta = json.loads(stream_delta_raw)
+    if not isinstance(stream_delta, dict) or stream_delta != batch_delta:
+        raise RuntimeError(f"stream batch_delta does not match oprecord result at {op_key}")
 
     # 4. Retain complete committed receipt in Redis state
     redis_hset(f"receipt:{table}:{op_id}", {

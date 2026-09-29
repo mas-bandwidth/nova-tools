@@ -89,77 +89,50 @@ snapshot_store() {
   local redis_host="${REDIS_ADDR%:*}"
   local redis_port="${REDIS_ADDR##*:}"
   redis-cli -h "$redis_host" -p "$redis_port" --raw eval '
-    local tname = ARGV[1]
-    local patterns = {
-      "table:" .. tname .. ":*",
-      "card:*",
-      "receipt:" .. tname .. ":*",
-      "evidence:*"
-    }
-    local seen = {}
-    local keys = {}
-    for _, pat in ipairs(patterns) do
-      local matched = redis.call("KEYS", pat)
-      for _, k in ipairs(matched) do
-        if not seen[k] then
-          seen[k] = true
-          table.insert(keys, k)
-        end
-      end
+    local function hex(s)
+      return (string.gsub(s, ".", function(c) return string.format("%02x", string.byte(c)) end))
     end
+    local keys = redis.call("KEYS", "*")
     table.sort(keys)
-
     local out = {}
     for _, k in ipairs(keys) do
-      local kt = redis.call("TYPE", k)
-      kt = (type(kt) == "table" and kt.ok) and kt.ok or kt
-      local pttl = redis.call("PTTL", k)
-
-      if kt == "string" then
-        local v = redis.call("GET", k)
-        table.insert(out, k .. "|type=string|pttl=" .. pttl .. "|val=" .. v)
-      elseif kt == "hash" then
-        local h = redis.call("HGETALL", k)
-        local parts = {}
-        for i = 1, #h, 2 do
-          table.insert(parts, h[i] .. "=" .. h[i+1])
-        end
-        table.sort(parts)
-        table.insert(out, k .. "|type=hash|pttl=" .. pttl .. "|val={" .. table.concat(parts, ";") .. "}")
-      elseif kt == "zset" then
-        local z = redis.call("ZRANGE", k, 0, -1, "WITHSCORES")
-        local parts = {}
-        for i = 1, #z, 2 do
-          table.insert(parts, z[i] .. ":" .. z[i+1])
-        end
-        table.insert(out, k .. "|type=zset|pttl=" .. pttl .. "|val=[" .. table.concat(parts, ",") .. "]")
-      elseif kt == "set" then
-        local s = redis.call("SMEMBERS", k)
-        table.sort(s)
-        table.insert(out, k .. "|type=set|pttl=" .. pttl .. "|val=[" .. table.concat(s, ",") .. "]")
-      elseif kt == "list" then
-        local l = redis.call("LRANGE", k, 0, -1)
-        table.insert(out, k .. "|type=list|pttl=" .. pttl .. "|val=[" .. table.concat(l, ",") .. "]")
-      elseif kt == "stream" then
-        local entries = redis.call("XRANGE", k, "-", "+")
-        local stream_parts = {}
-        for _, e in ipairs(entries) do
-          local eid = e[1]
-          local fv = e[2]
-          local pairs_list = {}
-          for i = 1, #fv, 2 do
-            table.insert(pairs_list, fv[i] .. "=" .. fv[i+1])
-          end
-          table.sort(pairs_list)
-          table.insert(stream_parts, eid .. "={" .. table.concat(pairs_list, ",") .. "}")
-        end
-        table.insert(out, k .. "|type=stream|pttl=" .. pttl .. "|val=[" .. table.concat(stream_parts, ";") .. "]")
-      else
-        table.insert(out, k .. "|type=" .. kt .. "|pttl=" .. pttl)
-      end
+      local dump = redis.call("DUMP", k)
+      table.insert(out, hex(k) .. "|pexpiretime=" .. redis.call("PEXPIRETIME", k) .. "|dump=" .. hex(dump))
     end
     return table.concat(out, "\n")
-  ' 0 "$TABLE_NAME"
+  ' 0
+}
+
+snapshot_file() {
+  snapshot_store > "$1"
+}
+
+same_snapshot() {
+  cmp -s "$1" "$2"
+}
+
+restore_stream_snapshot() {
+  local snapshot="$1" stream_key="$2" key_hex line key_field expiry_field dump_field expiry dump_hex
+  key_hex=$(printf '%s' "$stream_key" | LC_ALL=C od -An -tx1 | tr -d ' \n')
+  line=$(awk -F'|' -v key="$key_hex" '$1 == key { print; exit }' "$snapshot")
+  if [ -z "$line" ]; then
+    echo "ERROR: baseline lacks stream $stream_key" >&2
+    exit 1
+  fi
+  IFS='|' read -r key_field expiry_field dump_field <<< "$line"
+  expiry=${expiry_field#pexpiretime=}
+  dump_hex=${dump_field#dump=}
+  redis-cli -h "${REDIS_ADDR%:*}" -p "${REDIS_ADDR##*:}" --raw EVAL '
+    local function unhex(h)
+      return (string.gsub(h, "..", function(pair) return string.char(tonumber(pair, 16)) end))
+    end
+    local ttl = tonumber(ARGV[1])
+    local dump = unhex(ARGV[2])
+    if ttl == -1 then
+      return redis.call("RESTORE", KEYS[1], 0, dump, "REPLACE")
+    end
+    return redis.call("RESTORE", KEYS[1], ttl, dump, "REPLACE", "ABSTTL")
+  ' 1 "$stream_key" "$expiry" "$dump_hex" >/dev/null
 }
 
 # 1. Setup isolated table
@@ -316,7 +289,8 @@ run_step "Inspect replaced card and its successor" \
 echo ""
 echo "=== EXERCISING REFUSAL GATES (ALL MUST REFUSE AND LEAVE STORE UNCHANGED) ==="
 
-BASELINE_IMAGE=$(snapshot_store)
+BASELINE_IMAGE="$MANIFEST_DIR/refusal-baseline.snapshot"
+snapshot_file "$BASELINE_IMAGE"
 
 # 6a. Stale table revision refusal (Actual Server Runtime FCALL Refusal Path)
 cat > "$MANIFEST_DIR/refuse-stale-table-rev.json" <<EOF
@@ -349,8 +323,9 @@ fi
 echo "$refuse_out"
 echo "PASSED: command refused with exit code 1 (server FCALL runtime refusal: REFUSED REVISION / table revision mismatch)"
 
-IMAGE_AFTER_6A=$(snapshot_store)
-if [ "$IMAGE_AFTER_6A" != "$BASELINE_IMAGE" ]; then
+IMAGE_AFTER_6A="$MANIFEST_DIR/refusal-after-6a.snapshot"
+snapshot_file "$IMAGE_AFTER_6A"
+if ! same_snapshot "$IMAGE_AFTER_6A" "$BASELINE_IMAGE"; then
   echo "ERROR: store image changed after runtime refusal 6a!" >&2
   exit 1
 fi
@@ -387,8 +362,9 @@ fi
 echo "$refuse_out"
 echo "PASSED: command refused with exit code 1 (preflight validation refusal)"
 
-IMAGE_AFTER_6B=$(snapshot_store)
-if [ "$IMAGE_AFTER_6B" != "$BASELINE_IMAGE" ]; then
+IMAGE_AFTER_6B="$MANIFEST_DIR/refusal-after-6b.snapshot"
+snapshot_file "$IMAGE_AFTER_6B"
+if ! same_snapshot "$IMAGE_AFTER_6B" "$BASELINE_IMAGE"; then
   echo "ERROR: store image changed after preflight refusal 6b!" >&2
   exit 1
 fi
@@ -429,8 +405,9 @@ fi
 echo "$refuse_out"
 echo "PASSED: command refused with exit code 1 (preflight validation refusal)"
 
-IMAGE_AFTER_6C=$(snapshot_store)
-if [ "$IMAGE_AFTER_6C" != "$BASELINE_IMAGE" ]; then
+IMAGE_AFTER_6C="$MANIFEST_DIR/refusal-after-6c.snapshot"
+snapshot_file "$IMAGE_AFTER_6C"
+if ! same_snapshot "$IMAGE_AFTER_6C" "$BASELINE_IMAGE"; then
   echo "ERROR: store image changed after preflight refusal 6c!" >&2
   exit 1
 fi
@@ -467,8 +444,9 @@ fi
 echo "$refuse_out"
 echo "PASSED: command refused with exit code 1 (preflight validation refusal)"
 
-IMAGE_AFTER_6D=$(snapshot_store)
-if [ "$IMAGE_AFTER_6D" != "$BASELINE_IMAGE" ]; then
+IMAGE_AFTER_6D="$MANIFEST_DIR/refusal-after-6d.snapshot"
+snapshot_file "$IMAGE_AFTER_6D"
+if ! same_snapshot "$IMAGE_AFTER_6D" "$BASELINE_IMAGE"; then
   echo "ERROR: store image changed after preflight refusal 6d!" >&2
   exit 1
 fi
@@ -515,8 +493,9 @@ fi
 echo "$refuse_out"
 echo "PASSED: command refused with exit code 1 (server FCALL runtime refusal: member revision mismatch 999)"
 
-IMAGE_AFTER_6E=$(snapshot_store)
-if [ "$IMAGE_AFTER_6E" != "$BASELINE_IMAGE" ]; then
+IMAGE_AFTER_6E="$MANIFEST_DIR/refusal-after-6e.snapshot"
+snapshot_file "$IMAGE_AFTER_6E"
+if ! same_snapshot "$IMAGE_AFTER_6E" "$BASELINE_IMAGE"; then
   echo "ERROR: store image changed after runtime refusal 6e!" >&2
   exit 1
 fi
@@ -526,22 +505,25 @@ echo "PASSED: store image bit-identical to baseline across all 5 refusal control
 echo ""
 echo "--- Testing Refusal Invariance Sensitivity: Stream-Only Mutation Control ---"
 STREAM_KEY="table:${TABLE_NAME}:changes"
-SNAPSHOT_BEFORE_STREAM_MUTATION=$(snapshot_store)
+SNAPSHOT_BEFORE_STREAM_MUTATION="$MANIFEST_DIR/stream-control-before.snapshot"
+snapshot_file "$SNAPSHOT_BEFORE_STREAM_MUTATION"
 
 # Inject synthetic entry into the table changes stream
-LEAKED_STREAM_ID=$(redis-cli -h "${REDIS_ADDR%:*}" -p "${REDIS_ADDR##*:}" XADD "$STREAM_KEY" "*" probe_field "stream_leak_probe")
+redis-cli -h "${REDIS_ADDR%:*}" -p "${REDIS_ADDR##*:}" XADD "$STREAM_KEY" "*" probe_field "stream_leak_probe" >/dev/null
 
-SNAPSHOT_AFTER_STREAM_MUTATION=$(snapshot_store)
-if [ "$SNAPSHOT_AFTER_STREAM_MUTATION" = "$SNAPSHOT_BEFORE_STREAM_MUTATION" ]; then
+SNAPSHOT_AFTER_STREAM_MUTATION="$MANIFEST_DIR/stream-control-after.snapshot"
+snapshot_file "$SNAPSHOT_AFTER_STREAM_MUTATION"
+if same_snapshot "$SNAPSHOT_AFTER_STREAM_MUTATION" "$SNAPSHOT_BEFORE_STREAM_MUTATION"; then
   echo "ERROR: refusal invariance checker failed to detect stream-only mutation!" >&2
   exit 1
 fi
 echo "PASSED: refusal invariance checker successfully detected stream-only mutation (checker rejected modified image)"
 
-# Clean up synthetic stream entry and verify exact baseline restoration
-redis-cli -h "${REDIS_ADDR%:*}" -p "${REDIS_ADDR##*:}" XDEL "$STREAM_KEY" "$LEAKED_STREAM_ID" >/dev/null
-SNAPSHOT_RESTORED=$(snapshot_store)
-if [ "$SNAPSHOT_RESTORED" != "$BASELINE_IMAGE" ]; then
+# Restore the exact pre-control stream image, including stream metadata, then verify the whole selected image.
+restore_stream_snapshot "$SNAPSHOT_BEFORE_STREAM_MUTATION" "$STREAM_KEY"
+SNAPSHOT_RESTORED="$MANIFEST_DIR/stream-control-restored.snapshot"
+snapshot_file "$SNAPSHOT_RESTORED"
+if ! same_snapshot "$SNAPSHOT_RESTORED" "$BASELINE_IMAGE"; then
   echo "ERROR: failed to restore baseline store image after stream sensitivity test!" >&2
   exit 1
 fi
