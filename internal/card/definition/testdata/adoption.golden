@@ -1,0 +1,7 @@
+# The files of the repository whose first line starts with RESULT, and what the v2 profile makes of each.
+# `parses` or `refused` with the sorted causes and the header keys named (unknown-key: LEGS MODE ...).
+cmd/nova-swarm/testdata/cards/queue-1282-bench-hygiene-home-guard.md	refused	contract-sha required unknown-key	unknown-key: BASE DEADLINE LEGS MODE ROUTE SOURCE SPEC TURNS	required: DEPENDS-ON DONE-WHEN DOORS ID PROBES SCHEMA TIER TITLE
+cmd/nova-swarm/testdata/cards/tools11-c1-links-specpulse.md	refused	contract-line invalid-kind required unknown-key	unknown-key: BASE DEADLINE LEGS MODE ROUTE SOURCE SPEC TURNS	required: DEPENDS-ON DONE-WHEN DOORS ID PROBES SCHEMA TIER TITLE
+cmd/nova-swarm/testdata/cards/tools11-c2-links-toplevel.md	refused	contract-line invalid-kind required unknown-key	unknown-key: BASE DEADLINE LEGS MODE ROUTE SOURCE SPEC TURNS	required: DEPENDS-ON DONE-WHEN DOORS ID PROBES SCHEMA TIER TITLE
+internal/swarm/testdata/card-contract-line.txt	refused	contract-line no-brief required	required: DEPENDS-ON DONE-WHEN DOORS ID KIND PATHS PROBES SCHEMA TEST TIER TITLE
+# 0 of 4 parse
