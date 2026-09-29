@@ -36,7 +36,61 @@ local function refuse(reason, ...)
   return res
 end
 
-redis.register_function('ns_card_push', function(keys, args)
+local function get_active_epoch(table_ref)
+  local table_key = table_ref
+  if not string.match(table_key, '^table:') then
+    table_key = 'table:' .. table_ref
+  end
+  local epoch_key = redis.call('HGET', table_key, 'epoch_key')
+  if not epoch_key or epoch_key == '' then
+    epoch_key = redis.call('HGET', table_key .. ':identity', 'epoch_key')
+  end
+  local epoch_field = redis.call('HGET', table_key, 'epoch_field')
+  if not epoch_field or epoch_field == '' then
+    epoch_field = redis.call('HGET', table_key .. ':identity', 'epoch_field')
+  end
+  if not epoch_field or epoch_field == '' then
+    epoch_field = 'n'
+  end
+
+  if epoch_key and epoch_key ~= '' then
+    local val = redis.call('HGET', epoch_key, epoch_field)
+    if val and val ~= '' then
+      return tostring(val), true
+    end
+    return '0', true
+  end
+
+  local id_epoch = redis.call('HGET', table_key .. ':identity', 'epoch')
+  if id_epoch and id_epoch ~= '' then
+    return tostring(id_epoch), true
+  end
+  local root_epoch = redis.call('HGET', table_key, 'epoch')
+  if root_epoch and root_epoch ~= '' then
+    return tostring(root_epoch), true
+  end
+
+  local exists = redis.call('EXISTS', table_key)
+  if exists == 0 then
+    exists = redis.call('EXISTS', table_key .. ':identity')
+  end
+  if exists == 1 then
+    return '0', true
+  end
+
+  return nil, false
+end
+
+local function ensure_type(key, expected)
+  local t = redis.call('TYPE', key)
+  local kind = (type(t) == 'table' and t.ok) or t
+  if kind ~= 'none' and kind ~= expected then
+    return false, 'WRONGTYPE Operation against a key holding the wrong kind of value: key ' .. key .. ' is ' .. tostring(kind) .. ', expected ' .. expected
+  end
+  return true, nil
+end
+
+redis.register_function('ns_sprint_card_push', function(keys, args)
   if #keys < 2 then
     return refuse('ARGS', 'insufficient keys: expected table:streams and member hash')
   end
@@ -66,17 +120,17 @@ redis.register_function('ns_card_push', function(keys, args)
   local epoch = tostring(opts.epoch or '0')
 
   -- 1. Consumer/Actor Verification
-  -- Verifies that an authorized consumer or actor identity is specified
   if actor == '' then
     return refuse('CONSUMER', 'actor/consumer identity required for push')
   end
 
   -- 2. Epoch Verification
-  local active_epoch = redis.call('HGET', streams_table .. ':identity', 'epoch')
-  if active_epoch and active_epoch ~= '' and epoch ~= '0' and epoch ~= active_epoch then
-    return refuse('STALE', epoch, active_epoch)
-  end
-  if not active_epoch or active_epoch == '' then
+  local active_epoch, configured = get_active_epoch(streams_table)
+  if configured then
+    if epoch ~= active_epoch then
+      return refuse('STALE', epoch, active_epoch)
+    end
+  else
     active_epoch = epoch
   end
 
@@ -88,11 +142,27 @@ redis.register_function('ns_card_push', function(keys, args)
     return refuse('DUPLICATEMEMBER', card)
   end
 
+  local waiting_cell = cell_key('streams', active_epoch, stream, 'waiting')
+  local rev_key = streams_table .. ':revision'
+  local changes_key = streams_table .. ':changes'
+
+  -- Preflight type checking before mutation
+  local ok_t, err_t = ensure_type(changes_key, 'stream')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(rev_key, 'hash')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(waiting_cell, 'zset')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(member_record_key, 'hash')
+  if not ok_t then return redis.error_reply(err_t) end
+
   local now_ms = cm_now()
   local now_str = tostring(now_ms)
 
   -- 4. Single-Table Placement in streams: Row = stream, Col = "waiting"
-  local waiting_cell = cell_key('streams', active_epoch, stream, 'waiting')
   redis.call('ZADD', waiting_cell, now_ms, card)
 
   -- 5. Write Member Record Hash (Double Link: place:streams = stream .. ":waiting")
@@ -119,12 +189,10 @@ redis.register_function('ns_card_push', function(keys, args)
   )
 
   -- 6. Sequence & Revision Advance
-  local rev_key = streams_table .. ':revision'
   local after = redis.call('HINCRBY', rev_key, 'n', 1)
   local before = after - 1
 
   -- 7. Durable Event Logging on table:streams:changes
-  local changes_key = streams_table .. ':changes'
   local event_id = redis.call('XADD', changes_key, '*',
     'verb', 'push',
     'card', card,

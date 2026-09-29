@@ -40,7 +40,61 @@ local function refuse(reason, ...)
   return res
 end
 
-redis.register_function('ns_card_deal_work', function(keys, args)
+local function get_active_epoch(table_ref)
+  local table_key = table_ref
+  if not string.match(table_key, '^table:') then
+    table_key = 'table:' .. table_ref
+  end
+  local epoch_key = redis.call('HGET', table_key, 'epoch_key')
+  if not epoch_key or epoch_key == '' then
+    epoch_key = redis.call('HGET', table_key .. ':identity', 'epoch_key')
+  end
+  local epoch_field = redis.call('HGET', table_key, 'epoch_field')
+  if not epoch_field or epoch_field == '' then
+    epoch_field = redis.call('HGET', table_key .. ':identity', 'epoch_field')
+  end
+  if not epoch_field or epoch_field == '' then
+    epoch_field = 'n'
+  end
+
+  if epoch_key and epoch_key ~= '' then
+    local val = redis.call('HGET', epoch_key, epoch_field)
+    if val and val ~= '' then
+      return tostring(val), true
+    end
+    return '0', true
+  end
+
+  local id_epoch = redis.call('HGET', table_key .. ':identity', 'epoch')
+  if id_epoch and id_epoch ~= '' then
+    return tostring(id_epoch), true
+  end
+  local root_epoch = redis.call('HGET', table_key, 'epoch')
+  if root_epoch and root_epoch ~= '' then
+    return tostring(root_epoch), true
+  end
+
+  local exists = redis.call('EXISTS', table_key)
+  if exists == 0 then
+    exists = redis.call('EXISTS', table_key .. ':identity')
+  end
+  if exists == 1 then
+    return '0', true
+  end
+
+  return nil, false
+end
+
+local function ensure_type(key, expected)
+  local t = redis.call('TYPE', key)
+  local kind = (type(t) == 'table' and t.ok) or t
+  if kind ~= 'none' and kind ~= expected then
+    return false, 'WRONGTYPE Operation against a key holding the wrong kind of value: key ' .. key .. ' is ' .. tostring(kind) .. ', expected ' .. expected
+  end
+  return true, nil
+end
+
+redis.register_function('ns_sprint_card_deal_work', function(keys, args)
   if #keys < 3 then
     return refuse('ARGS', 'insufficient keys: expected streams, fleet, and member hash')
   end
@@ -68,11 +122,12 @@ redis.register_function('ns_card_deal_work', function(keys, args)
   local epoch = tostring(opts.epoch or '0')
 
   -- 1. Epoch Fencing Check
-  local active_epoch = redis.call('HGET', streams_table .. ':identity', 'epoch')
-  if active_epoch and active_epoch ~= '' and epoch ~= '0' and epoch ~= active_epoch then
-    return refuse('STALE', epoch, active_epoch)
-  end
-  if not active_epoch or active_epoch == '' then
+  local active_epoch, configured = get_active_epoch(streams_table)
+  if configured then
+    if epoch ~= active_epoch then
+      return refuse('STALE', epoch, active_epoch)
+    end
+  else
     active_epoch = epoch
   end
 
@@ -131,15 +186,46 @@ redis.register_function('ns_card_deal_work', function(keys, args)
   local copy_id = card .. ':' .. tostring(attempt)
   local copy_record_key = 'table::member:' .. copy_id
 
+  local old_stream_cell = cell_key('streams', active_epoch, stream, where)
+  local new_stream_cell = cell_key('streams', active_epoch, stream, 'working')
+  local rev_streams_key = streams_table .. ':revision'
+  local rev_fleet_key = fleet_table .. ':revision'
+  local changes_key = streams_table .. ':changes'
+
+  -- Preflight type checking before mutation
+  local ok_t, err_t = ensure_type(changes_key, 'stream')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(rev_streams_key, 'hash')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(rev_fleet_key, 'hash')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(old_stream_cell, 'zset')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(new_stream_cell, 'zset')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(working_cell, 'zset')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(ready_cell, 'zset')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(member_record_key, 'hash')
+  if not ok_t then return redis.error_reply(err_t) end
+
+  ok_t, err_t = ensure_type(copy_record_key, 'hash')
+  if not ok_t then return redis.error_reply(err_t) end
+
   local now_ms = cm_now()
   local now_str = tostring(now_ms)
   local score = score_val ~= 0 and score_val or now_ms
 
   -- 5. Dual-Table Atomic State Transition
   -- 5a. streams table: move primary card where -> working
-  local old_stream_cell = cell_key('streams', active_epoch, stream, where)
-  local new_stream_cell = cell_key('streams', active_epoch, stream, 'working')
-
   redis.call('ZREM', old_stream_cell, card)
   redis.call('ZADD', new_stream_cell, score, card)
 

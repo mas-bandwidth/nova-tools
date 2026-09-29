@@ -506,6 +506,7 @@ func TestRatchet_ConcurrentLocklessReaders(t *testing.T) {
 
 	const totalSteps = 1000
 	done := make(chan struct{})
+	firstRead := make(chan struct{})
 
 	// 10 concurrent reader goroutines
 	var readCount int64
@@ -527,11 +528,16 @@ func TestRatchet_ConcurrentLocklessReaders(t *testing.T) {
 					prevSeq = seq
 					_ = ratchet.CurrentStateHash()
 					_ = ratchet.Snapshot()
-					atomic.AddInt64(&readCount, 1)
+					if atomic.AddInt64(&readCount, 1) == 1 {
+						close(firstRead)
+					}
 				}
 			}
 		}()
 	}
+
+	// Start writing only after a reader has observed the ratchet.
+	<-firstRead
 
 	// Writer goroutine
 	lastHash := h0

@@ -51,6 +51,78 @@ func NewMemoryCardMachine(epoch EpochID) *MemoryCardMachine {
 // Ensure CardMachine interface implementation.
 var _ CardMachine = (*MemoryCardMachine)(nil)
 
+// Clone creates an independent deep copy of the memory state machine.
+func (m *MemoryCardMachine) Clone() *MemoryCardMachine {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	clone := &MemoryCardMachine{
+		activeEpoch:  m.activeEpoch,
+		revision:     m.revision,
+		streamsCells: make(map[string]map[string]map[string]float64, len(m.streamsCells)),
+		fleetCells:   make(map[string]map[string]map[string]float64, len(m.fleetCells)),
+		cards:        make(map[CardID]*CardRecord, len(m.cards)),
+		copies:       make(map[string]*CopyRecord, len(m.copies)),
+		consumers:    make(map[ConsumerID]*ConsumerCapacity, len(m.consumers)),
+		cardDeps:     make(map[CardID][]CardID, len(m.cardDeps)),
+	}
+
+	for row, cols := range m.streamsCells {
+		clone.streamsCells[row] = make(map[string]map[string]float64, len(cols))
+		for col, members := range cols {
+			clone.streamsCells[row][col] = make(map[string]float64, len(members))
+			for mem, score := range members {
+				clone.streamsCells[row][col][mem] = score
+			}
+		}
+	}
+	for row, cols := range m.fleetCells {
+		clone.fleetCells[row] = make(map[string]map[string]float64, len(cols))
+		for col, members := range cols {
+			clone.fleetCells[row][col] = make(map[string]float64, len(members))
+			for mem, score := range members {
+				clone.fleetCells[row][col][mem] = score
+			}
+		}
+	}
+	for id, rec := range m.cards {
+		cp := *rec
+		clone.cards[id] = &cp
+	}
+	for id, rec := range m.copies {
+		cp := *rec
+		clone.copies[id] = &cp
+	}
+	for id, cap := range m.consumers {
+		cp := *cap
+		clone.consumers[id] = &cp
+	}
+	for id, deps := range m.cardDeps {
+		cp := make([]CardID, len(deps))
+		copy(cp, deps)
+		clone.cardDeps[id] = cp
+	}
+
+	return clone
+}
+
+// Restore replaces this state machine's internal state with that of other.
+func (m *MemoryCardMachine) Restore(other *MemoryCardMachine) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	other.mu.RLock()
+	defer other.mu.RUnlock()
+
+	m.activeEpoch = other.activeEpoch
+	m.revision = other.revision
+	m.streamsCells = other.streamsCells
+	m.fleetCells = other.fleetCells
+	m.cards = other.cards
+	m.copies = other.copies
+	m.consumers = other.consumers
+	m.cardDeps = other.cardDeps
+}
+
 func (m *MemoryCardMachine) SetConsumerCapacity(k ConsumerID, slots int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

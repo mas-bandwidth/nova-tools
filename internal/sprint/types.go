@@ -620,31 +620,31 @@ type CardMachine interface {
 
 const (
 	// The 12 Primary Action Redis Functions
-	FnCardPush          = "ns_card_push"
-	FnCardRelease       = "ns_card_release"
-	FnCardDealWork      = "ns_card_deal_work"
-	FnCardDealRead      = "ns_card_deal_read"
-	FnCardEndWorkPR     = "ns_card_end_work_pr"
-	FnCardEndWorkDone   = "ns_card_end_work_done"
-	FnCardEndReadHigh   = "ns_card_end_read_high"
-	FnCardEndReadLow    = "ns_card_end_read_low"
-	FnCardEndFixOK      = "ns_card_end_fix_ok"
-	FnCardVerdict       = "ns_card_verdict"
-	FnCardLand          = "ns_card_land"
-	FnCardCancelPrimary = "ns_card_cancel_primary"
+	FnCardPush          = "ns_sprint_card_push"
+	FnCardRelease       = "ns_sprint_card_release"
+	FnCardDealWork      = "ns_sprint_card_deal_work"
+	FnCardDealRead      = "ns_sprint_card_deal_read"
+	FnCardEndWorkPR     = "ns_sprint_card_end_work_pr"
+	FnCardEndWorkDone   = "ns_sprint_card_end_work_done"
+	FnCardEndReadHigh   = "ns_sprint_card_end_read_high"
+	FnCardEndReadLow    = "ns_sprint_card_end_read_low"
+	FnCardEndFixOK      = "ns_sprint_card_end_fix_ok"
+	FnCardVerdict       = "ns_sprint_card_verdict"
+	FnCardLand          = "ns_sprint_card_land"
+	FnCardCancelPrimary = "ns_sprint_card_cancel_primary"
 
 	// Auxiliary & Copy-Level Redis Functions
-	FnCardWork      = "ns_card_work"
-	FnCardBeat      = "ns_card_beat"
-	FnCardGiveBack  = "ns_card_give_back"
-	FnCardExpire    = "ns_card_expire"
-	FnCardEndFail   = "ns_card_end_fail"
-	FnCardLandEvent = "ns_card_land_event"
+	FnCardWork      = "ns_sprint_card_work"
+	FnCardBeat      = "ns_sprint_card_beat"
+	FnCardGiveBack  = "ns_sprint_card_give_back"
+	FnCardExpire    = "ns_sprint_card_expire"
+	FnCardEndFail   = "ns_sprint_card_end_fail"
+	FnCardLandEvent = "ns_sprint_card_land_event"
 
 	// Query / Read-Only Redis Functions
-	FnCardGet              = "ns_card_get"
-	FnCardCopyGet          = "ns_card_copy_get"
-	FnCardConsumerCapacity = "ns_card_consumer_capacity"
+	FnCardGet              = "ns_sprint_card_get"
+	FnCardCopyGet          = "ns_sprint_card_copy_get"
+	FnCardConsumerCapacity = "ns_sprint_card_consumer_capacity"
 )
 
 // ============================================================================

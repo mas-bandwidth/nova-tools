@@ -101,14 +101,14 @@ func TestRedis_FunctionLibraryPackaging(t *testing.T) {
 		t.Errorf("library payload missing #!lua name=ns_card header")
 	}
 
-	if !strings.Contains(payload, "redis.register_function('ns_card_push'") {
-		t.Errorf("library payload missing ns_card_push registration")
+	if !strings.Contains(payload, "redis.register_function('ns_sprint_card_push'") {
+		t.Errorf("library payload missing ns_sprint_card_push registration")
 	}
-	if !strings.Contains(payload, "redis.register_function('ns_card_deal_work'") {
-		t.Errorf("library payload missing ns_card_deal_work registration")
+	if !strings.Contains(payload, "redis.register_function('ns_sprint_card_deal_work'") {
+		t.Errorf("library payload missing ns_sprint_card_deal_work registration")
 	}
-	if !strings.Contains(payload, "redis.register_function('ns_card_land'") {
-		t.Errorf("library payload missing ns_card_land registration")
+	if !strings.Contains(payload, "redis.register_function('ns_sprint_card_land'") {
+		t.Errorf("library payload missing ns_sprint_card_land registration")
 	}
 
 	// Verify helper functions are present

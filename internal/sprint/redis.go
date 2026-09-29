@@ -85,6 +85,60 @@ local function refuse(reason, ...)
     res[#res + 1] = tostring(extra[i])
   end
   return res
+end
+
+local function get_active_epoch(table_ref)
+  local table_key = table_ref
+  if not string.match(table_key, '^table:') then
+    table_key = 'table:' .. table_ref
+  end
+  local epoch_key = redis.call('HGET', table_key, 'epoch_key')
+  if not epoch_key or epoch_key == '' then
+    epoch_key = redis.call('HGET', table_key .. ':identity', 'epoch_key')
+  end
+  local epoch_field = redis.call('HGET', table_key, 'epoch_field')
+  if not epoch_field or epoch_field == '' then
+    epoch_field = redis.call('HGET', table_key .. ':identity', 'epoch_field')
+  end
+  if not epoch_field or epoch_field == '' then
+    epoch_field = 'n'
+  end
+
+  if epoch_key and epoch_key ~= '' then
+    local val = redis.call('HGET', epoch_key, epoch_field)
+    if val and val ~= '' then
+      return tostring(val), true
+    end
+    return '0', true
+  end
+
+  local id_epoch = redis.call('HGET', table_key .. ':identity', 'epoch')
+  if id_epoch and id_epoch ~= '' then
+    return tostring(id_epoch), true
+  end
+  local root_epoch = redis.call('HGET', table_key, 'epoch')
+  if root_epoch and root_epoch ~= '' then
+    return tostring(root_epoch), true
+  end
+
+  local exists = redis.call('EXISTS', table_key)
+  if exists == 0 then
+    exists = redis.call('EXISTS', table_key .. ':identity')
+  end
+  if exists == 1 then
+    return '0', true
+  end
+
+  return nil, false
+end
+
+local function ensure_type(key, expected)
+  local t = redis.call('TYPE', key)
+  local kind = (type(t) == 'table' and t.ok) or t
+  if kind ~= 'none' and kind ~= expected then
+    return false, 'WRONGTYPE Operation against a key holding the wrong kind of value: key ' .. key .. ' is ' .. tostring(kind) .. ', expected ' .. expected
+  end
+  return true, nil
 end`
 
 // extractRegisterFunction locates and extracts the redis.register_function(...) block
@@ -108,9 +162,9 @@ func extractRegisterFunction(script string, name string) (string, error) {
 //
 //	#!lua name=ns_card
 //	<embedded helpers>
-//	redis.register_function('ns_card_push', ...)
-//	redis.register_function('ns_card_deal_work', ...)
-//	redis.register_function('ns_card_land', ...)
+//	redis.register_function('ns_sprint_card_push', ...)
+//	redis.register_function('ns_sprint_card_deal_work', ...)
+//	redis.register_function('ns_sprint_card_land', ...)
 func BuildLibraryPayload() (string, error) {
 	pushBlock, err := extractRegisterFunction(pushLuaScript, FnCardPush)
 	if err != nil {
@@ -157,8 +211,8 @@ func GetLibraryPayload() string {
 var ErrFunctionsUnsupported = errors.New("redis functions unsupported by server")
 
 // IsCompatibilityError checks whether an error returned by Redis indicates that
-// Redis Functions are unsupported or already compatible (e.g. unknown command on Redis < 7,
-// command disabled in managed environments, or library already exists).
+// Redis Functions are unsupported (e.g. unknown command on Redis < 7,
+// command disabled in managed environments).
 func IsCompatibilityError(err error) bool {
 	if err == nil {
 		return false
@@ -168,7 +222,6 @@ func IsCompatibilityError(err error) bool {
 		strings.Contains(msg, "disabled") ||
 		strings.Contains(msg, "unknown subcommand") ||
 		strings.Contains(msg, "not supported") ||
-		strings.Contains(msg, "already exists") ||
 		strings.Contains(msg, "noperm")
 }
 
@@ -415,19 +468,37 @@ func (sr *SequenceRatchet) Advance(ctx context.Context) (uint64, error) {
 
 const ratchetScript = `
 local key = KEYS[1]
-local target = tonumber(ARGV[1])
-local current = tonumber(redis.call('GET', key) or '0')
-if target <= current then
-    return { 'ERR', 'MONOTONIC_VIOLATION', tostring(current), tostring(target) }
+local target_raw = tostring(ARGV[1] or '0')
+local target_str = target_raw:match('^0*(%d+)$') or '0'
+
+local current_raw = redis.call('GET', key)
+local current_str = '0'
+if current_raw then
+    current_str = tostring(current_raw):match('^0*(%d+)$') or '0'
 end
-redis.call('SET', key, target)
-return { 'OK', tostring(target) }
+
+local function cmp_uint(a, b)
+    if #a ~= #b then
+        return #a > #b and 1 or -1
+    end
+    if a == b then
+        return 0
+    end
+    return a > b and 1 or -1
+end
+
+if cmp_uint(target_str, current_str) <= 0 then
+    return { 'ERR', 'MONOTONIC_VIOLATION', current_str, target_str }
+end
+
+redis.call('SET', key, target_str)
+return { 'OK', target_str }
 `
 
 // Ratchet atomically checks that targetSeq > currentSeq. If valid, it updates
 // the sequence to targetSeq. If targetSeq <= currentSeq, it returns ErrMonotonicSequenceViolation.
 func (sr *SequenceRatchet) Ratchet(ctx context.Context, targetSeq uint64) (uint64, error) {
-	cmd := sr.rdb.Eval(ctx, ratchetScript, []string{sr.key}, targetSeq)
+	cmd := sr.rdb.Eval(ctx, ratchetScript, []string{sr.key}, strconv.FormatUint(targetSeq, 10))
 	res, err := cmd.Slice()
 	if err != nil {
 		return 0, fmt.Errorf("ratchet script failed: %w", err)
@@ -487,11 +558,12 @@ type TransactionResult struct {
 }
 
 type keyBackup struct {
-	Exists     bool
-	KeyType    string
-	HashData   map[string]string
-	ZSetData   []redis.Z
-	StringData string
+	Exists       bool
+	KeyType      string
+	HashData     map[string]string
+	ZSetData     []redis.Z
+	StringData   string
+	StreamLastID string
 }
 
 type keySnapshot struct {
@@ -542,6 +614,16 @@ func captureKeySnapshot(ctx context.Context, rdb redis.Cmdable, sr *SequenceRatc
 				return nil, fmt.Errorf("snapshot zset for %s: %w", k, err)
 			}
 			snap.backups[k] = keyBackup{Exists: true, KeyType: "zset", ZSetData: zdata}
+		case "stream":
+			entries, err := rdb.XRevRangeN(ctx, k, "+", "-", 1).Result()
+			if err != nil {
+				return nil, fmt.Errorf("snapshot stream for %s: %w", k, err)
+			}
+			lastID := ""
+			if len(entries) > 0 {
+				lastID = entries[0].ID
+			}
+			snap.backups[k] = keyBackup{Exists: true, KeyType: "stream", StreamLastID: lastID}
 		default:
 			// If unsupported key type, preserve empty
 			snap.backups[k] = keyBackup{Exists: true, KeyType: t}
@@ -586,6 +668,19 @@ func restoreKeySnapshot(ctx context.Context, rdb redis.Cmdable, sr *SequenceRatc
 			_ = rdb.Del(ctx, k).Err()
 			if len(b.ZSetData) > 0 {
 				_ = rdb.ZAdd(ctx, k, b.ZSetData...).Err()
+			}
+		case "stream":
+			if b.StreamLastID == "" {
+				_ = rdb.Del(ctx, k).Err()
+			} else {
+				added, err := rdb.XRange(ctx, k, "("+b.StreamLastID, "+").Result()
+				if err == nil && len(added) > 0 {
+					ids := make([]string, len(added))
+					for i, entry := range added {
+						ids[i] = entry.ID
+					}
+					_ = rdb.XDel(ctx, k, ids...).Err()
+				}
 			}
 		}
 	}
@@ -778,14 +873,13 @@ func (c *RedisCardClient) ExecuteTransaction(ctx context.Context, tx *CardTransa
 		return nil, fmt.Errorf("%w: tx.Seq=%d <= currentSeq=%d", ErrMonotonicSequenceViolation, tx.Seq, currentSeq)
 	}
 
-	// 3. Deserialize Event if not present
+	// 3. Decode canonical event strictly from CRC-validated Payload
 	var ev JournalMutationEvent
+	if err := json.Unmarshal(tx.Payload, &ev); err != nil {
+		return nil, fmt.Errorf("unmarshal transaction payload: %w", err)
+	}
 	if tx.Event != nil {
-		ev = *tx.Event
-	} else {
-		if err := json.Unmarshal(tx.Payload, &ev); err != nil {
-			return nil, fmt.Errorf("unmarshal transaction event: %w", err)
-		}
+		*tx.Event = ev
 	}
 
 	// 4. Capture Pre-Transaction Key Snapshot for Rollback
@@ -795,8 +889,13 @@ func (c *RedisCardClient) ExecuteTransaction(ctx context.Context, tx *CardTransa
 		return nil, fmt.Errorf("capture transaction snapshot: %w", err)
 	}
 
+	var receipt *Receipt
+
 	// Helper to rollback state on any post-check violation
 	rollback := func(triggerErr error) error {
+		if receipt != nil && receipt.ID != "" {
+			_ = c.rdb.XDel(ctx, "table:streams:changes", receipt.ID).Err()
+		}
 		rbErr := restoreKeySnapshot(ctx, c.rdb, c.ratchet, snapshot)
 		if rbErr != nil {
 			return fmt.Errorf("%w (rollback failed: %v)", triggerErr, rbErr)
@@ -806,7 +905,6 @@ func (c *RedisCardClient) ExecuteTransaction(ctx context.Context, tx *CardTransa
 
 	// 5. Dispatch Action via Lua Script to Redis
 	opts := WriteOptions{Epoch: ev.Epoch, Actor: ev.Actor}
-	var receipt *Receipt
 
 	switch ev.Action {
 	case actSetCapacity:
@@ -843,12 +941,14 @@ func (c *RedisCardClient) ExecuteTransaction(ctx context.Context, tx *CardTransa
 
 	// 7. Post-Mutation State Hash Verification
 	var stateHash [32]byte
+	var stagedShadow *MemoryCardMachine
 	if c.verifier != nil {
-		// Update shadow state machine
-		if err := applyJournalEvent(ctx, c.verifier, ev); err != nil {
+		stagedShadow = c.verifier.Clone()
+		// Update staged shadow state machine
+		if err := applyJournalEvent(ctx, stagedShadow, ev); err != nil {
 			return nil, rollback(fmt.Errorf("shadow state apply failed: %w", err))
 		}
-		stateHash = c.verifier.StateHash()
+		stateHash = stagedShadow.StateHash()
 
 		// Verify against ExpectedStateHash if specified
 		var emptyHash [32]byte
@@ -889,12 +989,26 @@ func (c *RedisCardClient) ExecuteTransaction(ctx context.Context, tx *CardTransa
 		}
 	}
 
+	// Commit staged shadow state upon successful transaction execution
+	if stagedShadow != nil {
+		c.verifier.Restore(stagedShadow)
+	}
+
 	return &TransactionResult{
 		Seq:       tx.Seq,
 		Receipt:   receipt,
 		StateHash: stateHash,
 		Frame:     journalFrame,
 	}, nil
+}
+
+// cellKey formats the Redis key for a cell zset according to ntable convention.
+func cellKey(tableName string, epoch uint64, row, col string) string {
+	prefix := "table:" + tableName
+	if epoch != 0 {
+		prefix += ":" + strconv.FormatUint(epoch, 10)
+	}
+	return prefix + ":cell:" + row + ":" + col
 }
 
 // candidateKeysForEvent determines the set of Redis keys affected by an event.
@@ -909,31 +1023,31 @@ func candidateKeysForEvent(ev JournalMutationEvent) []string {
 
 	if ev.CardID != "" {
 		keys = append(keys, MemberKey(string(ev.CardID)))
-		epochStr := strconv.FormatUint(uint64(ev.Epoch), 10)
 		streamStr := ev.Stream
 		if streamStr == "" {
 			streamStr = "main"
 		}
+		ep := uint64(ev.Epoch)
 		keys = append(keys,
-			fmt.Sprintf("table:streams:%s:cell:%s:waiting", epochStr, streamStr),
-			fmt.Sprintf("table:streams:%s:cell:%s:ready", epochStr, streamStr),
-			fmt.Sprintf("table:streams:%s:cell:%s:working", epochStr, streamStr),
-			fmt.Sprintf("table:streams:%s:cell:%s:review", epochStr, streamStr),
-			fmt.Sprintf("table:streams:%s:cell:%s:merging", epochStr, streamStr),
-			fmt.Sprintf("table:streams:%s:cell:%s:landed", epochStr, streamStr),
+			cellKey("streams", ep, streamStr, "waiting"),
+			cellKey("streams", ep, streamStr, "ready"),
+			cellKey("streams", ep, streamStr, "working"),
+			cellKey("streams", ep, streamStr, "review"),
+			cellKey("streams", ep, streamStr, "merging"),
+			cellKey("streams", ep, streamStr, "landed"),
 		)
 	}
 
 	if ev.Consumer != "" {
 		keys = append(keys, "table:fleet:consumer:"+string(ev.Consumer))
-		epochStr := strconv.FormatUint(uint64(ev.Epoch), 10)
 		cStr := string(ev.Consumer)
+		ep := uint64(ev.Epoch)
 		keys = append(keys,
-			fmt.Sprintf("table:fleet:%s:cell:%s:working", epochStr, cStr),
-			fmt.Sprintf("table:fleet:%s:cell:%s:ready", epochStr, cStr),
-			fmt.Sprintf("table:fleet:%s:cell:%s:review", epochStr, cStr),
-			fmt.Sprintf("table:fleet:%s:cell:%s:ok", epochStr, cStr),
-			fmt.Sprintf("table:fleet:%s:cell:%s:fail", epochStr, cStr),
+			cellKey("fleet", ep, cStr, "working"),
+			cellKey("fleet", ep, cStr, "ready"),
+			cellKey("fleet", ep, cStr, "review"),
+			cellKey("fleet", ep, cStr, "ok"),
+			cellKey("fleet", ep, cStr, "fail"),
 		)
 	}
 
