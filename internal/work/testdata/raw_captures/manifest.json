@@ -1,0 +1,50 @@
+{
+  "repository": "mas-bandwidth/work-test",
+  "commit_sha": "f38fe9fe5b9e6d8abbf0a01fc4e7e330d856ec89",
+  "captured_at": "2026-09-28T21:04:44Z",
+  "schema_version": "nova-work/capture-manifest-v1",
+  "captures": [
+    {
+      "endpoint": "/repos/mas-bandwidth/work-test/issues",
+      "collection": "issues",
+      "status": "complete",
+      "file": "issues.json",
+      "bytes": 37274,
+      "sha256": "11307d78edf54b88d394ea5c8c428d4507c0a7b9274c5ee642e604807c84d827",
+      "items": 8,
+      "page": 1,
+      "observations": {
+        "null_body_issues": [4],
+        "all_assignees_empty": true
+      }
+    },
+    {
+      "endpoint": "/repos/mas-bandwidth/work-test/issues/2/comments",
+      "collection": "comments",
+      "status": "complete",
+      "file": "comments-2.json",
+      "bytes": 3487,
+      "sha256": "b3ac2c6407b04fe38b5158fd0f5914794bf0f12fc7a7822d68dd9eafcb3e481d",
+      "items": 2,
+      "page": 1,
+      "observations": {
+        "created_equals_updated": true,
+        "edit_history_exposed": false
+      }
+    },
+    {
+      "endpoint": "/repos/mas-bandwidth/work-test/issues/7/comments",
+      "collection": "comments",
+      "status": "complete",
+      "file": "comments-7.json",
+      "bytes": 3547,
+      "sha256": "8a9bd824af57f0c57bbef0e38326fa24f2e9b7e6927f5f296f0c44686b50535c",
+      "items": 2,
+      "page": 1,
+      "observations": {
+        "created_equals_updated": true,
+        "edit_history_exposed": false
+      }
+    }
+  ]
+}
