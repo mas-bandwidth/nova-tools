@@ -371,16 +371,17 @@ func doctorStubs(t *testing.T, pathScript, localScript, hung string, hungDeadlin
 			t.Fatal(err)
 		}
 	}
+	hungFor := hungDeadline
+	if hungFor == 0 {
+		hungFor = doctorHungDeadline
+	}
 	env = doctorEnv{
 		lookPath: func(string) (string, error) { return pathBin, nil },
 		homeDir:  func() (string, error) { return home, nil },
 		read: func(p string) (string, error) {
 			deadline := 5 * time.Second
-			if hungDeadline == 0 {
-				hungDeadline = doctorHungDeadline
-			}
 			if (p == pathBin && strings.Contains(hung, "path")) || (p == localBin && strings.Contains(hung, "local")) {
-				deadline = hungDeadline
+				deadline = hungFor
 			}
 			return readVersionLineWithin(p, deadline, 50*time.Millisecond, doctorVersionLineMax)
 		},
@@ -420,6 +421,8 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 			[]string{"DOCTOR UNREADABLE", "not found", "stamp=nova-swarm good-stamp"}, nil},
 		{"the local copy hangs", good, "exec sleep 30", "local", 0, 2,
 			[]string{"DOCTOR UNREADABLE", "local=", "timed out after 100ms", "stamp=nova-swarm good-stamp"}, []string{"DOCTOR DRIFT"}},
+		{"both hang: each is named", "exec sleep 30", "exec sleep 30", "path,local", 0, 2,
+			[]string{"DOCTOR UNREADABLE reading the version of path=", "DOCTOR UNREADABLE reading the version of local=", "timed out after 100ms"}, []string{"DOCTOR DRIFT"}},
 		{"both answer and agree", good, good, "", 0, 0, nil, []string{"DOCTOR"}},
 		{"no local copy is tolerated", good, "", "", 0, 0, nil, []string{"DOCTOR"}},
 	}
@@ -615,5 +618,29 @@ func TestDoctorPrintsABoundedExcerptOfAStamp(t *testing.T) {
 	env = doctorFake(map[string]string{"/opt/nova-swarm": long}, noPath, "/home/me")
 	if code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut); code != 0 || out.Len() > doctorStampExcerpt+100 {
 		t.Errorf("OK line: exit %d, %d bytes", code, out.Len())
+	}
+}
+
+// The two binaries are read at the same time: each read waits until the other has started,
+// so a comparison that read them one after the other never gets past the first (the run
+// ends at the test timeout, which is the failure). Two hung
+// binaries therefore cost one deadline, not two.
+func TestCompareBinariesReadsTheTwoAtTheSameTime(t *testing.T) {
+	t.Parallel()
+	started := map[string]chan struct{}{"/a/nova-swarm": make(chan struct{}), "/b/nova-swarm": make(chan struct{})}
+	other := map[string]string{"/a/nova-swarm": "/b/nova-swarm", "/b/nova-swarm": "/a/nova-swarm"}
+	env := doctorEnv{
+		read: func(path string) (string, error) {
+			close(started[path])
+			<-started[other[path]] // a sequential comparison waits here for good
+			return "nova-swarm " + path, nil
+		},
+	}
+	r := env.compareBinaries("/a/nova-swarm", "/b/nova-swarm")
+	if len(r.unreadable) != 0 {
+		t.Fatalf("the reads were not concurrent: %+v", r.unreadable)
+	}
+	if !r.shadowed || r.pathLine != "nova-swarm /a/nova-swarm" || r.localLine != "nova-swarm /b/nova-swarm" {
+		t.Errorf("the comparison lost a stamp: %+v", r)
 	}
 }

@@ -250,22 +250,39 @@ func (e doctorEnv) readOne(binary string) doctorRead {
 // and it answers, when no nova-swarm is on PATH, or when ~/.local/bin has no copy to shadow
 // with (the one absence that is tolerated): there is no second stamp to disagree with. Every
 // other binary the comparison reads must answer, and one that does not is named in the
-// report; a stamp it printed first is still compared.
+// report; a stamp it printed first is still compared. The two are read at the same time, so
+// two hung binaries cost one deadline plus the pipe grace, not two deadlines.
 func (e doctorEnv) compareBinaries(pathBinary, localBinary string) doctorReport {
 	r := doctorReport{pathBinary: pathBinary, localBinary: localBinary}
+	readPath := pathBinary != ""
+	readLocal := localBinary != "" && !doctorSameFile(pathBinary, localBinary)
 	var pathRead, localRead doctorRead
-	if pathBinary != "" {
-		pathRead = e.readOne(pathBinary)
+	var wg sync.WaitGroup
+	if readPath {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pathRead = e.readOne(pathBinary)
+		}()
+	}
+	if readLocal {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			localRead = e.readOne(localBinary)
+		}()
+	}
+	wg.Wait()
+	if readPath {
 		r.pathLine = pathRead.line
 		if pathRead.cause != "" {
 			r.unreadable = append(r.unreadable, pathRead)
 		}
 	}
-	if doctorSameFile(pathBinary, localBinary) || localBinary == "" {
+	if !readLocal {
 		r.stamp = r.pathLine
 		return r
 	}
-	localRead = e.readOne(localBinary)
 	r.localLine = localRead.line
 	if localRead.cause != "" && localRead.cause != errDoctorNotFound.Error() {
 		r.unreadable = append(r.unreadable, localRead)
