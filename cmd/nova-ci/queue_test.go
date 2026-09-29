@@ -74,7 +74,11 @@ func TestQueueFlagsAndRefusals(t *testing.T) {
 		{"positional arg", []string{"--repo", "mas-bandwidth/nova-tools", "bogus"}, "nothing positional"},
 		{"invalid format", []string{"--repo", "mas-bandwidth/nova-tools", "--format", "xml"}, "--format wants receipt, table, or json"},
 		{"negative pr", []string{"--repo", "mas-bandwidth/nova-tools", "--pr", "-1"}, "--pr must be a positive integer"},
+		{"zero pr", []string{"--repo", "mas-bandwidth/nova-tools", "--pr", "0"}, "--pr must be a positive integer, got 0"},
+		{"zero pr equals", []string{"--repo", "mas-bandwidth/nova-tools", "--pr=0"}, "--pr must be a positive integer, got 0"},
 		{"negative run", []string{"--repo", "mas-bandwidth/nova-tools", "--run", "-1"}, "--run must be a positive integer"},
+		{"zero run", []string{"--repo", "mas-bandwidth/nova-tools", "--run", "0"}, "--run must be a positive integer, got 0"},
+		{"zero run equals", []string{"--repo", "mas-bandwidth/nova-tools", "--run=0"}, "--run must be a positive integer, got 0"},
 		{"pr and run together", []string{"--repo", "mas-bandwidth/nova-tools", "--pr", "1", "--run", "2"}, "pass at most one of --pr or --run"},
 		{"invalid fail-lines zero", []string{"--repo", "mas-bandwidth/nova-tools", "--fail-lines", "0"}, "--fail-lines must be greater than zero"},
 		{"invalid fail-lines negative", []string{"--repo", "mas-bandwidth/nova-tools", "--fail-lines", "-5"}, "--fail-lines must be greater than zero"},
@@ -438,6 +442,45 @@ FAIL
 	}
 	if !strings.Contains(stdout, "standard_test.go:123") || !strings.Contains(stdout, "TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue") {
 		t.Errorf("stdout = %q, expected subtest failure line and _test.go:123", stdout)
+	}
+}
+
+func TestQueuePrecedingDiagnosticFailureExtraction(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeQueueForge{
+		nodes: []ci.QueueNode{
+			{PR: 4605, Position: 0, State: "AWAITING_CHECKS", HeadSHA: "abc1234"},
+		},
+		runs: []ci.MergeGroupRun{
+			{
+				ID:         777,
+				HeadBranch: "gh-readonly-queue/dev/pr-4605-abc1234",
+				HeadSHA:    "abc1234",
+				Status:     "completed",
+				Conclusion: "failure",
+			},
+		},
+		jobs: map[int64][]ci.FailedJob{
+			777: {{ID: 88, Name: "test (linux)", Conclusion: "failure"}},
+		},
+		logs: map[int64]string{
+			88: `
+{"Time":"2026-09-29T03:00:00Z","Action":"run","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel"}
+{"Time":"2026-09-29T03:00:00Z","Action":"output","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Output":"=== RUN   TestEveryTestOpensWithTParallel\n"}
+{"Time":"2026-09-29T03:00:00Z","Action":"output","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Output":"    parallel_class_test.go:97: internal/ci/queue_test.go:123: TestFoo does not open with t.Parallel()\n"}
+{"Time":"2026-09-29T03:00:00Z","Action":"output","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Output":"--- FAIL: TestEveryTestOpensWithTParallel (0.01s)\n"}
+{"Time":"2026-09-29T03:00:00Z","Action":"fail","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Elapsed":0.01}
+`,
+		},
+	}
+
+	code, stdout, stderr := runQueue([]string{"--repo", "mas-bandwidth/nova-tools", "--branch", "dev"}, fake)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "parallel_class_test.go:97") || !strings.Contains(stdout, "TestEveryTestOpensWithTParallel") {
+		t.Errorf("stdout = %q, expected diagnostic line parallel_class_test.go:97 and TestEveryTestOpensWithTParallel", stdout)
 	}
 }
 

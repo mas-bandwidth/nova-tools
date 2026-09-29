@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,6 +129,28 @@ func (r *QueueReport) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+var diagPositionRE = regexp.MustCompile(`(?:^|[\s(])[A-Za-z0-9_./+-]+\.go:\d+:`)
+
+func mergeDiagnosticLines(preceding, following []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, l := range preceding {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			out = append(out, trimmed)
+		}
+	}
+	for _, l := range following {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 // ExtractFailLines extracts the first failing test lines or error lines from
 // a job log. If maxLines <= 0, DefaultFailLines is used.
 func ExtractFailLines(jobName, logText string, maxLines int) []string {
@@ -135,83 +158,116 @@ func ExtractFailLines(jobName, logText string, maxLines int) []string {
 		maxLines = DefaultFailLines
 	}
 
-	// Clean lines (handling JSON frames if present, stripping ANSI and stamps).
 	rawLines := strings.Split(logText, "\n")
-	cleaned := make([]string, 0, len(rawLines))
+	type parsedLine struct {
+		testName string
+		text     string
+	}
+	var parsed []parsedLine
+	var currentTest string
+
 	for _, raw := range rawLines {
 		clean := StripLogLine(raw)
 		if ev, ok := decodeEvent(clean); ok {
 			if ev.Action == "output" {
-				out := strings.TrimSpace(StripLogLine(ev.Output))
-				if out != "" {
-					cleaned = append(cleaned, out)
+				for _, subline := range strings.Split(strings.TrimSuffix(ev.Output, "\n"), "\n") {
+					trimmed := strings.TrimSpace(StripLogLine(subline))
+					if trimmed != "" {
+						parsed = append(parsed, parsedLine{testName: ev.Test, text: trimmed})
+					}
 				}
 			}
 		} else {
 			trimmed := strings.TrimSpace(clean)
 			if trimmed != "" {
-				cleaned = append(cleaned, trimmed)
+				if strings.HasPrefix(trimmed, "=== RUN") || strings.HasPrefix(trimmed, "=== CONT") {
+					fields := strings.Fields(trimmed)
+					if len(fields) >= 3 {
+						currentTest = fields[2]
+					}
+				} else if strings.HasPrefix(trimmed, "=== PAUSE") {
+					currentTest = ""
+				}
+				parsed = append(parsed, parsedLine{testName: currentTest, text: trimmed})
 			}
 		}
 	}
 
-	// 1. Look for go test failure header: read through subtest headers to the first _test.go: line and lines after it.
-	for i, line := range cleaned {
-		if strings.HasPrefix(line, "--- FAIL:") {
-			testName := ""
-			fields := strings.Fields(strings.TrimPrefix(line, "--- FAIL:"))
+	precedingByTest := make(map[string][]string)
+
+	// 1. Look for go test failure header: track preceding diagnostics per test,
+	// read through subtest headers, and merge preceding diagnostics with following lines.
+	for i, item := range parsed {
+		if strings.HasPrefix(item.text, "--- FAIL:") {
+			fields := strings.Fields(strings.TrimPrefix(item.text, "--- FAIL:"))
+			failTestName := ""
 			if len(fields) > 0 {
-				testName = fields[0]
+				failTestName = fields[0]
 			}
-			lastFailHeader := line
+			failHeader := item.text
 			lastFailIdx := i
-			foundTestGo := false
-			var testGoLines []string
-			for j := i + 1; j < len(cleaned); j++ {
-				nxt := cleaned[j]
+
+			// Check for subtest failure headers following this header
+			for j := i + 1; j < len(parsed); j++ {
+				nxt := parsed[j].text
 				if strings.HasPrefix(nxt, "--- FAIL:") {
 					subFields := strings.Fields(strings.TrimPrefix(nxt, "--- FAIL:"))
-					if len(subFields) > 0 && testName != "" && strings.HasPrefix(subFields[0], testName+"/") {
-						lastFailHeader = nxt
+					if len(subFields) > 0 && failTestName != "" && strings.HasPrefix(subFields[0], failTestName+"/") {
+						failTestName = subFields[0]
+						failHeader = nxt
 						lastFailIdx = j
 						continue
 					}
 					break
 				}
-				if strings.HasPrefix(nxt, "=== ") || nxt == "FAIL" {
-					break
-				}
-				if strings.Contains(nxt, "_test.go:") {
-					foundTestGo = true
-					testGoLines = append(testGoLines, nxt)
-					for k := j + 1; k < len(cleaned) && len(testGoLines)+1 < maxLines; k++ {
-						after := cleaned[k]
-						if strings.HasPrefix(after, "--- ") || strings.HasPrefix(after, "=== ") || after == "FAIL" {
-							break
-						}
-						testGoLines = append(testGoLines, after)
-					}
+				if strings.HasPrefix(nxt, "=== ") || nxt == "FAIL" || strings.HasPrefix(nxt, "FAIL\t") || nxt == "PASS" || strings.HasPrefix(nxt, "--- PASS:") {
 					break
 				}
 			}
-			if foundTestGo {
-				lines := append([]string{lastFailHeader}, testGoLines...)
-				if len(lines) > maxLines {
-					lines = lines[:maxLines]
-				}
-				return lines
-			}
-			// Fall back to collecting lines under lastFailHeader if no _test.go: was found
-			lines := []string{lastFailHeader}
-			for j := lastFailIdx + 1; j < len(cleaned) && len(lines) < maxLines; j++ {
-				nxt := cleaned[j]
-				if strings.HasPrefix(nxt, "--- ") || strings.HasPrefix(nxt, "=== ") || nxt == "FAIL" {
+
+			// Collect following lines under lastFailIdx
+			var following []string
+			for j := lastFailIdx + 1; j < len(parsed); j++ {
+				nxt := parsed[j].text
+				if strings.HasPrefix(nxt, "--- ") || strings.HasPrefix(nxt, "=== ") || nxt == "FAIL" || strings.HasPrefix(nxt, "FAIL\t") || nxt == "PASS" || strings.HasPrefix(nxt, "ok \t") {
 					break
 				}
-				lines = append(lines, nxt)
+				following = append(following, nxt)
 			}
-			return lines
+
+			preceding := precedingByTest[failTestName]
+			if len(preceding) == 0 && strings.Contains(failTestName, "/") {
+				parent := failTestName[:strings.LastIndex(failTestName, "/")]
+				preceding = precedingByTest[parent]
+			}
+
+			merged := mergeDiagnosticLines(preceding, following)
+
+			startIdx := -1
+			for k, l := range merged {
+				if diagPositionRE.MatchString(l) || strings.Contains(l, "_test.go:") {
+					startIdx = k
+					break
+				}
+			}
+			if startIdx != -1 {
+				merged = merged[startIdx:]
+			}
+
+			if len(merged) > maxLines-1 {
+				merged = merged[:maxLines-1]
+			}
+			return append([]string{failHeader}, merged...)
 		}
+
+		if !isFrameLine(item.text) && item.testName != "" {
+			precedingByTest[item.testName] = append(precedingByTest[item.testName], item.text)
+		}
+	}
+
+	cleaned := make([]string, 0, len(parsed))
+	for _, p := range parsed {
+		cleaned = append(cleaned, p.text)
 	}
 
 	// 2. Look for panic / timeout line
@@ -334,6 +390,16 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 	var filter QueueFilter
 	if len(filters) > 0 {
 		filter = filters[0]
+	}
+
+	if filter.PR < 0 {
+		return QueueReport{}, fmt.Errorf("inspect queue of %s: filter PR must be positive, got %d", repo, filter.PR)
+	}
+	if filter.RunID < 0 {
+		return QueueReport{}, fmt.Errorf("inspect queue of %s: filter run must be positive, got %d", repo, filter.RunID)
+	}
+	if filter.PR > 0 && filter.RunID > 0 {
+		return QueueReport{}, fmt.Errorf("inspect queue of %s: pass at most one of filter PR or run", repo)
 	}
 
 	report := QueueReport{

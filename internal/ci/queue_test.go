@@ -32,6 +32,9 @@ func TestExtractFailLinesWithRealFixtures(t *testing.T) {
 	if !strings.Contains(lines[0], "TestMutateRemovesItsWorktreeOnBothPaths") {
 		t.Errorf("got %q, want TestMutateRemovesItsWorktreeOnBothPaths in head", lines[0])
 	}
+	if len(lines) < 2 || !strings.Contains(lines[1], "mutate_test.go:326") {
+		t.Errorf("lines = %v, want mutate_test.go:326 in diagnostic line", lines)
+	}
 
 	// 3. merge-darwin-timeout.log (panic: test timed out)
 	lines = ExtractFailLines("test-hosted-merge (darwin, 1)", failedFixture(t, "merge-darwin-timeout.log"), 3)
@@ -408,6 +411,52 @@ FAIL
 	}
 	if !strings.Contains(lines[2], "standard_test.go:124") {
 		t.Errorf("lines[2] = %q, want standard_test.go:124", lines[2])
+	}
+}
+
+func TestExtractFailLinesPrecedingDiagnosticJSON(t *testing.T) {
+	t.Parallel()
+
+	// Actual hosted JSON events for TestEveryTestOpensWithTParallel where
+	// diagnostic precedes the --- FAIL: header.
+	log := `
+{"Time":"2026-09-29T03:00:00Z","Action":"run","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel"}
+{"Time":"2026-09-29T03:00:00Z","Action":"output","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Output":"=== RUN   TestEveryTestOpensWithTParallel\n"}
+{"Time":"2026-09-29T03:00:00Z","Action":"output","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Output":"    parallel_class_test.go:97: internal/ci/queue_test.go:123: TestFoo does not open with t.Parallel()\n"}
+{"Time":"2026-09-29T03:00:00Z","Action":"output","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Output":"--- FAIL: TestEveryTestOpensWithTParallel (0.01s)\n"}
+{"Time":"2026-09-29T03:00:00Z","Action":"fail","Package":"github.com/mas-bandwidth/nova-tools/internal/ci","Test":"TestEveryTestOpensWithTParallel","Elapsed":0.01}
+`
+	lines := ExtractFailLines("test", log, 3)
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %v", len(lines), lines)
+	}
+	if lines[0] != "--- FAIL: TestEveryTestOpensWithTParallel (0.01s)" {
+		t.Errorf("lines[0] = %q, want failure header", lines[0])
+	}
+	if !strings.Contains(lines[1], "parallel_class_test.go:97") || !strings.Contains(lines[1], "TestFoo does not open with t.Parallel()") {
+		t.Errorf("lines[1] = %q, want preceding diagnostic line", lines[1])
+	}
+}
+
+func TestExtractFailLinesPrecedingDiagnosticPlain(t *testing.T) {
+	t.Parallel()
+
+	// Real-world plain Go test output order where diagnostic precedes the --- FAIL: header.
+	log := `
+=== RUN   TestEveryTestOpensWithTParallel
+    parallel_class_test.go:97: internal/ci/queue_test.go:123: TestFoo does not open with t.Parallel()
+--- FAIL: TestEveryTestOpensWithTParallel (0.01s)
+FAIL
+`
+	lines := ExtractFailLines("test", log, 3)
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %v", len(lines), lines)
+	}
+	if lines[0] != "--- FAIL: TestEveryTestOpensWithTParallel (0.01s)" {
+		t.Errorf("lines[0] = %q, want failure header", lines[0])
+	}
+	if !strings.Contains(lines[1], "parallel_class_test.go:97") || !strings.Contains(lines[1], "TestFoo does not open with t.Parallel()") {
+		t.Errorf("lines[1] = %q, want preceding diagnostic line", lines[1])
 	}
 }
 

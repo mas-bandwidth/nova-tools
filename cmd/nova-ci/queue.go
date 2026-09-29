@@ -53,10 +53,19 @@ func cmdQueue(ctx context.Context, args []string, stdout, stderr io.Writer, newF
 	if *branch == "" {
 		return refuse(stderr, where, "--branch must not be empty")
 	}
-	if *pr < 0 {
+	var prGiven, runGiven bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "pr":
+			prGiven = true
+		case "run":
+			runGiven = true
+		}
+	})
+	if prGiven && *pr <= 0 {
 		return refuse(stderr, where, fmt.Sprintf("--pr must be a positive integer, got %d", *pr))
 	}
-	if *runID < 0 {
+	if runGiven && *runID <= 0 {
 		return refuse(stderr, where, fmt.Sprintf("--run must be a positive integer, got %d", *runID))
 	}
 	if *pr > 0 && *runID > 0 {
