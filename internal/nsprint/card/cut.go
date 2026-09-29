@@ -15,6 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
@@ -340,6 +341,9 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 		return c, VerbResult{}, fmt.Errorf("store body: %v", err)
 	}
 	res := PushBatch(ctx, client, in.Sprint, []CardFile{{Name: c.Label, Body: c.Body}}, PushOptions{Join: in.Join})[0]
+	if c.Stream != "" && res.Code == 0 {
+		_ = ws.OrderStream(ctx, client, c.Stream)
+	}
 	return c, res, nil
 }
 

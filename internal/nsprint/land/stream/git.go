@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // Build is one stream branch build in a scratch clone: a shallow
@@ -51,18 +53,29 @@ type Conflict struct {
 	Files  []string
 }
 
+// OrderMiss is a member built on a base that lacks an earlier card in the stream work order.
+type OrderMiss struct {
+	Member       Member
+	Missing      string
+	MissingPaths []string
+	Base         string
+	Why          string
+}
+
 // Result is what the build did.
 type Result struct {
-	BaseSHA  string
-	Head     string
-	Kept     []Member
-	Parked   []Parked
-	Moved    []Parked // head on GitHub differs from the record: not merged
-	Conflict *Conflict
-	BaseRed  bool
-	Tests    int
-	TestCmd  string
-	RedLine  string
+	BaseSHA     string
+	Head        string
+	Kept        []Member
+	Parked      []Parked
+	Moved       []Parked // head on GitHub differs from the record: not merged
+	Skipped     []Parked // dependencies not yet in stream branch: not merged
+	OrderMisses []OrderMiss
+	Conflict    *Conflict
+	BaseRed     bool
+	Tests       int
+	TestCmd     string
+	RedLine     string
 }
 
 func (b Build) logf(format string, a ...any) {
@@ -160,7 +173,63 @@ func (b Build) Run(ctx context.Context, members []Member) (Result, error) {
 	// Batch merge, oldest first. A conflict stops the build (Rowan
 	// resolves), or with ParkConflicts parks that member and goes on.
 	merged := todo[:0:0]
-	for _, m := range todo {
+	mergedTasks := map[string]bool{}
+	mergedPRs := map[int]bool{}
+
+	for idx, m := range todo {
+		depMissing := ""
+		for _, dep := range m.Deps {
+			did := ws.DepID(dep)
+			n := ws.ParseIssueNumber(dep, "", "")
+			inStreamBranch := false
+			if did != "" && mergedTasks[did] {
+				inStreamBranch = true
+			} else if n > 0 && mergedPRs[n] {
+				inStreamBranch = true
+			} else if b.inBase(ctx, res.BaseSHA, dep) {
+				inStreamBranch = true
+			}
+			if !inStreamBranch {
+				depMissing = dep
+				break
+			}
+		}
+		if depMissing != "" {
+			res.Skipped = append(res.Skipped, Parked{Member: m, Why: "dep:" + depMissing + ":not-in-branch"})
+			b.logf("SKIP #%d dependency %s not in stream branch", m.N, depMissing)
+			continue
+		}
+
+		var miss *OrderMiss
+		for k := 0; k < idx; k++ {
+			prev := todo[k]
+			hasOverlap := len(ws.OverlappingPaths(m.Paths, prev.Paths)) > 0
+			isDep := false
+			for _, d := range m.Deps {
+				if d == prev.Task || (prev.N > 0 && ws.ParseIssueNumber(d, "", "") == prev.N) {
+					isDep = true
+					break
+				}
+			}
+			if hasOverlap || isDep {
+				if m.BaseSHA != "" && prev.Head != "" && !b.isAncestor(ctx, prev.Head, m.BaseSHA) {
+					miss = &OrderMiss{
+						Member:       m,
+						Missing:      prev.Task,
+						MissingPaths: prev.Paths,
+						Base:         short(m.BaseSHA),
+						Why:          fmt.Sprintf("ORDER: built on %s, missing %s", short(m.BaseSHA), prev.Task),
+					}
+					break
+				}
+			}
+		}
+		if miss != nil {
+			res.OrderMisses = append(res.OrderMisses, *miss)
+			b.logf("ORDER MISS #%d built on %s, missing %s", m.N, short(m.BaseSHA), miss.Missing)
+			continue
+		}
+
 		files, err := b.merge(ctx, m)
 		if err != nil {
 			return res, err
@@ -175,6 +244,10 @@ func (b Build) Run(ctx context.Context, members []Member) (Result, error) {
 			continue
 		}
 		merged = append(merged, m)
+		mergedTasks[m.Task] = true
+		if m.N > 0 {
+			mergedPRs[m.N] = true
+		}
 		// The member is on the stream head in work order (the act is a
 		// --no-ff merge; the step's word is REBASED).
 		if b.Steps != nil {
@@ -379,4 +452,27 @@ func (b Build) CommitCloses(ctx context.Context, base string, members []Member) 
 		out[m.N] = ParseCloses(msgs)
 	}
 	return out
+}
+
+func (b Build) inBase(ctx context.Context, base, dep string) bool {
+	if dep == "" || base == "" {
+		return false
+	}
+	n := ws.ParseIssueNumber(dep, "", "")
+	var grepPattern string
+	if n > 0 {
+		grepPattern = fmt.Sprintf("#%d", n)
+	} else {
+		grepPattern = dep
+	}
+	out, err := b.git(ctx, "log", "-n", "1", "--grep="+grepPattern, base)
+	return err == nil && len(strings.TrimSpace(out)) > 0
+}
+
+func (b Build) isAncestor(ctx context.Context, ancestor, commit string) bool {
+	if ancestor == "" || commit == "" {
+		return false
+	}
+	_, err := b.git(ctx, "merge-base", "--is-ancestor", ancestor, commit)
+	return err == nil
 }

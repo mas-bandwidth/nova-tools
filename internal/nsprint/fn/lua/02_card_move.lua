@@ -1596,7 +1596,7 @@ local TK = {
     -- A score leaves it for merging, a low read cuts a fix copy and stays,
     -- a verdict goes to waiting | ready | working (reassign) | landed (drop).
     review = { merging = true, working = true, waiting = true, ready = true, done = true, landed = true, review = true },
-    merging = { landed = true, done = true },
+    merging = { landed = true, done = true, review = true },
     parked = { waiting = true, ready = true, done = true },
     landed = { done = true },
     done = { merging = true, landed = true },
@@ -1999,7 +1999,7 @@ function TK.edge(id, cur, nxt, ok, o)
   if from == 'review' and to ~= 'review' and not o.verdict and not o.clear and TK.str(o.copy) == '' and TK.pending(id) then
     return 'REVIEW task:' .. id .. ' waits for its verdict: nova-sprint review post --verdict recut|redeal|reassign:<consumer>|drop'
   end
-  if to == 'review' and from ~= 'review' and not o.review and o.copy == nil then
+  if to == 'review' and from ~= 'review' and not o.review and o.copy == nil and from ~= 'merging' then
     return 'OFFGRAPH ' .. (from == '' and 'null' or from) .. ' -> review is a copy\'s end (card end --ok --pr, or --fail)'
   end
   -- a plan (nova-tools#4317) is never ready: it waits on its stitch and
@@ -4107,7 +4107,7 @@ function TM.after_move(id, cur, to, o)
     TM.retire_reads(id, o.reads_why or ('primary moved to ' .. to), o.by)
   end
   -- a copy's fail enters review for a verdict (o.review): no reads to cut
-  if to == 'review' and cur.where ~= 'review' and not o.review then
+  if to == 'review' and cur.where ~= 'review' and not o.review and cur.where ~= 'merging' then
     if NS.tref then NS.tref.index(id) end
     return TM.cut_reads(id, o.by, o.why)
   end

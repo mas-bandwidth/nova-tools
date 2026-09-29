@@ -103,6 +103,8 @@ type SprintCounts struct {
 	Epoch uint64
 	// At is the instant the read was made for: the ETA is measured from it.
 	At time.Time
+	// OrderMisses is the count of order misses recorded in ws:order:misses.
+	OrderMisses int64
 }
 
 // Sum builds the counts of streams with their total, the one place a total
@@ -181,7 +183,11 @@ func (c SprintCounts) Header() string {
 	if c.Unread() {
 		return "?/? done ?%, left ?, eta ?"
 	}
-	return fmt.Sprintf("%d/%d done %d%%, left %d, eta %s", c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
+	base := fmt.Sprintf("%d/%d done %d%%, left %d, eta %s", c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
+	if c.OrderMisses > 0 {
+		base += fmt.Sprintf(", order-miss %d", c.OrderMisses)
+	}
+	return base
 }
 
 // Receipt is the same numbers as one key=value line (ws counts).
@@ -278,6 +284,7 @@ type CountsCmd struct {
 	states  []*redis.StringCmd // HGET s:<S> status per cached sprint
 	log     *redis.XMessageSliceCmd
 	cells   CellsCmd // the cells of every cached stream
+	misses  *redis.IntCmd
 	// epochQ is sprint:epoch read after every cell (#4238): a clear that
 	// lands before or between the cells shows as another epoch
 	epochQ *redis.StringCmd
@@ -300,6 +307,7 @@ func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time
 		cells = defaultCells{}
 	}
 	q.cells = cells.Queue(ctx, pipe, r.epoch, r.streams)
+	q.misses = pipe.XLen(ctx, "ws:order:misses")
 	q.epochQ = pipe.HGet(ctx, EpochKey, EpochField)
 	return q
 }
@@ -425,6 +433,9 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 	}
 	c := Sum(rows)
 	c.Sprint, c.Status, c.At, c.Epoch = r.SprintName(), status, q.at, epoch
+	if q.misses != nil {
+		c.OrderMisses = q.misses.Val()
+	}
 	if msgs, err := q.log.Result(); err != nil && !errors.Is(err, redis.Nil) {
 		c.LogErr = err
 	} else {

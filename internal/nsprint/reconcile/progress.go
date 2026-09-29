@@ -169,6 +169,7 @@ type State struct {
 	AskedAt      int64 // the BlockedSince already asked for
 	Status       string
 	At           int64
+	OrderMiss    int64
 }
 
 // Delta is left now minus left at the window's start.
@@ -530,8 +531,17 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", progressLogMax)
+	missesCmd := pipe.XRange(ctx, "ws:order:misses", "-", "+")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return ProgressRun{}, fmt.Errorf("progress: measure: %w", err)
+	}
+	missesByStream := map[string]int64{}
+	if msgs, err := missesCmd.Result(); err == nil {
+		for _, m := range msgs {
+			if st, ok := m.Values["stream"].(string); ok && st != "" {
+				missesByStream[st]++
+			}
+		}
 	}
 	run := ProgressRun{States: map[string]State{}}
 	for i, s := range sprints {
@@ -598,7 +608,9 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 		_, smp.Held = holds.Stream(s)
 		smp.LandStalled = scs[i].stalled.Val() == "1"
 		run.Samples = append(run.Samples, smp)
-		run.States[s] = Step(stateFromHash(scs[i].state.Val()), smp, run.Room, now, cfg.Window)
+		st := Step(stateFromHash(scs[i].state.Val()), smp, run.Room, now, cfg.Window)
+		st.OrderMiss = missesByStream[s]
+		run.States[s] = st
 	}
 	return run, nil
 }
@@ -616,12 +628,14 @@ func valueAt(v []any, i int) any {
 func stateFromHash(h map[string]string) State {
 	n := func(f string) int64 { v, _ := strconv.ParseInt(h[f], 10, 64); return v }
 	return State{Left: n("left"), RefLeft: n("ref_left"), RefAt: n("ref_at"), FellAt: n("fell_at"),
-		BlockedSince: n("blocked_since"), AskedAt: n("asked_at"), Status: h["status"], At: n("at")}
+		BlockedSince: n("blocked_since"), AskedAt: n("asked_at"), Status: h["status"], At: n("at"),
+		OrderMiss: n("order_miss")}
 }
 
 func (st State) fields() []any {
 	return []any{"left", st.Left, "ref_left", st.RefLeft, "ref_at", st.RefAt, "fell_at", st.FellAt,
-		"blocked_since", st.BlockedSince, "asked_at", st.AskedAt, "status", st.Status, "at", st.At}
+		"blocked_since", st.BlockedSince, "asked_at", st.AskedAt, "status", st.Status, "at", st.At,
+		"order_miss", st.OrderMiss}
 }
 
 // act takes every ask (the stop, the EVENT line, the wake notes), then

@@ -39,6 +39,7 @@ type ShowDep struct {
 	Known  bool
 	Where  string
 	Landed bool
+	Reason string // reason per edge (depends-on, paths overlap, learned miss)
 }
 
 // ShowCard is one card of a stream.
@@ -200,20 +201,35 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		})
 	}
 
-	// Round 3: every member's blocked_on and where_ok.
+	// Round 3: every member's blocked_on, where_ok and paths.
 	pipe = c.Pipeline()
 	recCmds := make([]*redis.SliceCmd, len(members))
 	for i, id := range members {
-		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok")
+		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok", "paths", "stream_paths")
 	}
 	if err := showExec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("ws show: records: %w", err)
 	}
 	blockedOn, okOf := map[string]string{}, map[string]string{}
+	pathsOf := map[string][]string{}
 	for i, id := range members {
 		v := recCmds[i].Val()
 		blockedOn[id] = showStr(v, 0)
 		okOf[id] = showStr(v, 1)
+		p := showStr(v, 2)
+		if p == "" {
+			p = showStr(v, 3)
+		}
+		pathsOf[id] = SplitPaths(p)
+	}
+
+	misses, _ := ReadOrderMisses(ctx, c, "")
+	missMap := map[string]map[string]bool{}
+	for _, m := range misses {
+		if missMap[m.Card] == nil {
+			missMap[m.Card] = map[string]bool{}
+		}
+		missMap[m.Card][m.Missing] = true
 	}
 
 	// The edges, in two passes: the entries first, then (round 4) the
@@ -225,7 +241,7 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		for j := range out[i].Cards {
 			card := &out[i].Cards[j]
 			for _, raw := range SplitDeps(blockedOn[card.ID]) {
-				dep := ShowDep{Raw: raw, ID: DepID(raw)}
+				dep := ShowDep{Raw: raw, ID: DepID(raw), Reason: "depends-on"}
 				dep.Ref = dep.ID == ""
 				if _, known := whereOf[dep.ID]; !dep.Ref && !known && !strayRead[dep.ID] {
 					strayRead[dep.ID] = true
@@ -257,6 +273,50 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 			for k := range deps {
 				if w, ok := whereOf[deps[k].ID]; ok && !deps[k].Ref {
 					deps[k].Known, deps[k].Where, deps[k].Landed = true, w, showLanded(w, okOf[deps[k].ID], deps[k].ID)
+				}
+			}
+		}
+		// In addition to explicit DEPENDS-ON, show edges for learned misses and PATHS overlaps
+		// between cards in the stream.
+		for j := range out[i].Cards {
+			card := &out[i].Cards[j]
+			if card.Sentinel {
+				continue
+			}
+			hasEdge := map[string]bool{}
+			for _, d := range card.Deps {
+				if d.ID != "" {
+					hasEdge[d.ID] = true
+				}
+			}
+			for k := 0; k < j; k++ {
+				prev := &out[i].Cards[k]
+				if prev.Sentinel || hasEdge[prev.ID] {
+					continue
+				}
+				if missMap[card.ID] != nil && missMap[card.ID][prev.ID] {
+					card.Deps = append(card.Deps, ShowDep{
+						Raw:    prev.ID,
+						ID:     prev.ID,
+						Reason: "learned miss",
+						Known:  true,
+						Where:  prev.Where,
+						Landed: showLanded(prev.Where, okOf[prev.ID], prev.ID),
+					})
+					hasEdge[prev.ID] = true
+					continue
+				}
+				if ol := OverlappingPaths(pathsOf[card.ID], pathsOf[prev.ID]); len(ol) > 0 {
+					reason := "paths overlap " + strings.Join(ol, ",")
+					card.Deps = append(card.Deps, ShowDep{
+						Raw:    prev.ID,
+						ID:     prev.ID,
+						Reason: reason,
+						Known:  true,
+						Where:  prev.Where,
+						Landed: showLanded(prev.Where, okOf[prev.ID], prev.ID),
+					})
+					hasEdge[prev.ID] = true
 				}
 			}
 		}
@@ -298,6 +358,9 @@ func (c ShowCard) Line(live int) string {
 			b.WriteString("(no record)")
 		case !d.Landed:
 			b.WriteString("(" + d.Where + ")")
+		}
+		if d.Reason != "" {
+			b.WriteString(" (" + d.Reason + ")")
 		}
 	}
 	return b.String()

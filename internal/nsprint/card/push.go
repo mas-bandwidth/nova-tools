@@ -168,6 +168,15 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			}
 		}
 	}
+	streamsToOrder := map[string]bool{}
+	for i, doc := range docs {
+		if out[i].Code == exitOK && doc.Stream != "" {
+			streamsToOrder[doc.Stream] = true
+		}
+	}
+	for st := range streamsToOrder {
+		_ = ws.OrderStream(ctx, client, st)
+	}
 	return out
 }
 

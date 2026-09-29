@@ -365,10 +365,13 @@ func parseScore(s string) int {
 
 // Member is one PR of the stream that lands.
 type Member struct {
-	Task   string
-	Stream string
-	N      int
-	Head   string
+	Task    string
+	Stream  string
+	N       int
+	Head    string
+	BaseSHA string
+	Paths   []string
+	Deps    []string
 	// ReadyAt is the member's score in ws:<stream>:merging: the stream's
 	// work order. Today the move writes the task's created_at there; #4342
 	// writes the computed order (DEPENDS-ON, then PATHS overlap, then issue
@@ -503,20 +506,40 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 		return nil, nil, nil
 	}
 	pipe = c.Pipeline()
-	tc := make([]*redis.StringCmd, len(cands))
+	tc := make([]*redis.SliceCmd, len(cands))
 	for i, cd := range cands {
-		tc[i] = pipe.HGet(ctx, "task:"+cd.task, "pr")
+		tc[i] = pipe.HMGet(ctx, "task:"+cd.task, "pr", "blocked_on", "paths", "stream_paths")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, nil, err
 	}
 	var skips []Skip
 	ns := make([]int, len(cands))
+	pathsOf := make([][]string, len(cands))
+	depsOf := make([][]string, len(cands))
 	var want []int
 	for i, cd := range cands {
-		n, ok := prNumber(tc[i].Val(), repo)
+		vals := tc[i].Val()
+		prVal := ""
+		if len(vals) > 0 && vals[0] != nil {
+			prVal, _ = vals[0].(string)
+		}
+		blockedOn := ""
+		if len(vals) > 1 && vals[1] != nil {
+			blockedOn, _ = vals[1].(string)
+		}
+		pathsVal := ""
+		if len(vals) > 2 && vals[2] != nil {
+			pathsVal, _ = vals[2].(string)
+		}
+		if pathsVal == "" && len(vals) > 3 && vals[3] != nil {
+			pathsVal, _ = vals[3].(string)
+		}
+		pathsOf[i] = ws.SplitPaths(pathsVal)
+		depsOf[i] = ws.SplitDeps(blockedOn)
+		n, ok := prNumber(prVal, repo)
 		if !ok {
-			if tc[i].Val() == "" {
+			if prVal == "" {
 				skips = append(skips, Skip{Task: cd.task, Why: "no-pr"})
 			}
 			continue // another repo's PR is not a skip here
@@ -564,7 +587,18 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 			skips = append(skips, Skip{Task: cd.task, N: n, Why: why})
 			continue
 		}
-		out = append(out, Member{Task: cd.task, Stream: cd.stream, N: n, Head: r.Head, ReadyAt: cd.at, Who: read.Who, Score: read.Score})
+		out = append(out, Member{
+			Task:    cd.task,
+			Stream:  cd.stream,
+			N:       n,
+			Head:    r.Head,
+			BaseSHA: r.BaseSHA,
+			Paths:   pathsOf[i],
+			Deps:    depsOf[i],
+			ReadyAt: cd.at,
+			Who:     read.Who,
+			Score:   read.Score,
+		})
 	}
 	// Streams in the order named, the ws ZSET score first within each (the
 	// work order, #4342), equal scores by PR number.

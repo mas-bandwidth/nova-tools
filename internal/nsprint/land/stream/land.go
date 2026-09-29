@@ -15,6 +15,7 @@ import (
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -189,6 +190,39 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	for _, m := range res.Moved {
 		rep.Skips = append(rep.Skips, Skip{Task: m.Task, N: m.N, Why: m.Why})
 	}
+	for _, m := range res.Skipped {
+		rep.Skips = append(rep.Skips, Skip{Task: m.Task, N: m.N, Why: m.Why})
+	}
+	by := o.By
+	if by == "" {
+		by = "stream-lander"
+	}
+	for _, miss := range res.OrderMisses {
+		_, _ = ws.Move(ctx, c, miss.Member.Task, "review", by, miss.Why)
+		_ = c.RPush(ctx, LinesKey(o.Repo, miss.Member.N), miss.Why).Err()
+		_ = c.XAdd(ctx, &redis.XAddArgs{
+			Stream: "ws:order:misses",
+			Values: map[string]any{
+				"stream":        miss.Member.Stream,
+				"card":          miss.Member.Task,
+				"missing":       miss.Missing,
+				"why":           miss.Why,
+				"paths":         strings.Join(miss.Member.Paths, ","),
+				"missing_paths": strings.Join(miss.MissingPaths, ","),
+			},
+		}).Err()
+		_ = jevledger.Record(ctx, c, jevledger.Decision{
+			Type:    jevledger.TypeOrder,
+			Subject: miss.Member.Task + ":" + miss.Missing,
+			State:   miss.Why,
+			Fields: map[string]string{
+				"stream":  miss.Member.Stream,
+				"card":    miss.Member.Task,
+				"missing": miss.Missing,
+			},
+		})
+		rep.Skips = append(rep.Skips, Skip{Task: miss.Member.Task, N: miss.Member.N, Why: miss.Why})
+	}
 	l := Landing{Repo: o.Repo, Slug: slug, Streams: strings.Join(o.Streams, ","), Base: o.Base, BaseSHA: res.BaseSHA,
 		Branch: rep.Branch, Head: res.Head, Members: res.Kept, Parked: res.Parked, Tests: res.Tests, Workdir: o.Workdir}
 	// The build can drop members too (a conflict parked, a red bisected
@@ -205,6 +239,12 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	for _, m := range res.Moved {
 		dropped = append(dropped, Skip{Task: m.Task, N: m.N, Why: m.Why})
+	}
+	for _, m := range res.Skipped {
+		dropped = append(dropped, Skip{Task: m.Task, N: m.N, Why: m.Why})
+	}
+	for _, miss := range res.OrderMisses {
+		dropped = append(dropped, Skip{Task: miss.Member.Task, N: miss.Member.N, Why: miss.Why})
 	}
 	if len(dropped) > 0 && res.Conflict == nil && !res.BaseRed && len(res.Kept) > 0 {
 		rep.LeftOut = LeftOut(append(append([]Skip(nil), rep.LeftOut...), dropped...))

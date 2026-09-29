@@ -367,3 +367,58 @@ func TestProgressLeftIsTheOneCount(t *testing.T) {
 		t.Fatalf("progress:\n%s\nwant %q", out.String(), want)
 	}
 }
+
+// TestProgressCountsOrderMissesPerStream (#4342): reconciler counts order misses
+// per stream from ws:order:misses and writes them to proc:progress:<stream> as order_miss.
+func TestProgressCountsOrderMissesPerStream(t *testing.T) {
+	t.Parallel()
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load fn: %v", err)
+	}
+	l, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "ctl-4342"})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Release(ctx) })
+
+	now := time.Date(2026, 9, 26, 18, 0, 0, 0, time.UTC)
+	const S = "sprint-4342"
+	sA, sB := "stream-a", "stream-b"
+	pipe := c.Pipeline()
+	pipe.HSet(ctx, "s:"+S, "status", "open")
+	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
+	pipe.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: sA}, redis.Z{Score: 2, Member: sB})
+	pipe.ZAdd(ctx, ws.KeyAt(0, sA, ws.Ready), redis.Z{Score: float64(now.UnixMilli()), Member: "a1"})
+	pipe.ZAdd(ctx, ws.KeyAt(0, sB, ws.Ready), redis.Z{Score: float64(now.UnixMilli()), Member: "b1"})
+	// Two misses on stream-a, one on stream-b
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:order:misses", Values: []any{"stream", sA, "card", "task:2", "missing", "task:1"}})
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:order:misses", Values: []any{"stream", sA, "card", "task:3", "missing", "task:2"}})
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:order:misses", Values: []any{"stream", sB, "card", "task:5", "missing", "task:4"}})
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	p := &reconcile.Progress{Client: c, Out: &out, Now: func() time.Time { return now }}
+	if _, err := p.Run(ctx, l); err != nil {
+		t.Fatalf("progress run: %v", err)
+	}
+
+	missA, err := c.HGet(ctx, reconcile.ProgressStreamKey(sA), "order_miss").Result()
+	if err != nil {
+		t.Fatalf("get order_miss for %s: %v", sA, err)
+	}
+	if missA != "2" {
+		t.Fatalf("stream-a order_miss = %q, want 2", missA)
+	}
+
+	missB, err := c.HGet(ctx, reconcile.ProgressStreamKey(sB), "order_miss").Result()
+	if err != nil {
+		t.Fatalf("get order_miss for %s: %v", sB, err)
+	}
+	if missB != "1" {
+		t.Fatalf("stream-b order_miss = %q, want 1", missB)
+	}
+}
