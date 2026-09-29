@@ -14,7 +14,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	bus := []string{"--bus", "{dir}/bus"}
 	var cases []testverbhelp.Case
-	for _, v := range []string{"draft", "prepare", "send", "reply", "inbox", "wait", "receipt", "close", "check", "names"} {
+	for _, v := range []string{"draft", "prepare", "send", "reply", "inbox", "wait", "receipt", "close", "check", "names", "archive"} {
 		cases = append(cases, testverbhelp.Case{Verb: v, Flags: bus})
 	}
 	cases = append(cases, testverbhelp.Case{Verb: "version"})

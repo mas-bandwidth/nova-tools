@@ -40,6 +40,9 @@ type Bus struct {
 	byPath   map[string]*Note
 	laneDirs []string
 	strays   []string
+
+	archivedByID   map[string]*Note
+	archivedByPath map[string]*Note
 }
 
 // When is the note's moment, for ordering. The Date line is preferred because it is what
@@ -137,7 +140,87 @@ func ReadBus(root string, c *Config) (*Bus, error) {
 			}
 		}
 	}
+	if err := t.readArchive(); err != nil {
+		return nil, err
+	}
 	return t, nil
+}
+
+func (t *Bus) readArchive() error {
+	t.archivedByID = make(map[string]*Note)
+	t.archivedByPath = make(map[string]*Note)
+
+	archiveDir := filepath.Join(t.Root, "archive")
+	if info, err := os.Stat(archiveDir); err != nil || !info.IsDir() {
+		return nil
+	}
+
+	// 1. If archive/INDEX exists, read it into archivedByID and archivedByPath
+	indexPath := filepath.Join(archiveDir, IndexName)
+	if raw, err := os.ReadFile(indexPath); err == nil {
+		for _, r := range records(string(raw)) {
+			fields := strings.Split(r.text, "\t")
+			if len(fields) >= indexFields {
+				id := undash(fields[0])
+				path := undash(fields[1])
+				date := undash(fields[2])
+				toStr := fields[3]
+				re := splitList(fields[4])
+				n := &Note{
+					Path: path,
+					Header: Header{
+						ID:   id,
+						Date: date,
+						To:   toStr,
+						Re:   re,
+					},
+				}
+				if id != "" {
+					t.archivedByID[id] = n
+				}
+				if path != "" {
+					t.archivedByPath[path] = n
+					if !strings.HasPrefix(path, "archive/") {
+						t.archivedByPath["archive/"+path] = n
+					} else {
+						t.archivedByPath[strings.TrimPrefix(path, "archive/")] = n
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Walk archive directory to find any note files
+	_ = filepath.Walk(archiveDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(info.Name(), ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(t.Root, path)
+		if err != nil {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		note, perr := ParseNote(relSlash, string(raw))
+		if perr == nil {
+			n := &note
+			origPath := strings.TrimPrefix(relSlash, "archive/")
+			if n.Header.ID != "" {
+				t.archivedByID[n.Header.ID] = n
+			}
+			t.archivedByPath[relSlash] = n
+			t.archivedByPath[origPath] = n
+		}
+		return nil
+	})
+
+	return nil
 }
 
 // ParseError is set on a note whose header would not parse. Its body and header are then
@@ -228,8 +311,29 @@ func (t *Bus) readReceipts(lane, path string) error {
 // NoteByID and NoteByPath are the two ways a Re line or a receipt can name a note: by the
 // id assigned at send, or by the repo-relative path, which is how every note written
 // before this tool existed is named and stays named.
-func (t *Bus) NoteByID(id string) (*Note, bool)     { n, ok := t.byID[id]; return n, ok }
-func (t *Bus) NoteByPath(path string) (*Note, bool) { n, ok := t.byPath[path]; return n, ok }
+func (t *Bus) NoteByID(id string) (*Note, bool) {
+	if n, ok := t.byID[id]; ok {
+		return n, true
+	}
+	if t.archivedByID != nil {
+		if n, ok := t.archivedByID[id]; ok {
+			return n, true
+		}
+	}
+	return nil, false
+}
+
+func (t *Bus) NoteByPath(path string) (*Note, bool) {
+	if n, ok := t.byPath[path]; ok {
+		return n, true
+	}
+	if t.archivedByPath != nil {
+		if n, ok := t.archivedByPath[path]; ok {
+			return n, true
+		}
+	}
+	return nil, false
+}
 
 // Resolve turns one Re or receipt target into the note it names.
 func (t *Bus) Resolve(target string) (*Note, bool) {
@@ -238,6 +342,16 @@ func (t *Bus) Resolve(target string) (*Note, bool) {
 	}
 	if n, ok := t.byPath[target]; ok {
 		return n, true
+	}
+	if t.archivedByID != nil {
+		if n, ok := t.archivedByID[target]; ok {
+			return n, true
+		}
+	}
+	if t.archivedByPath != nil {
+		if n, ok := t.archivedByPath[target]; ok {
+			return n, true
+		}
 	}
 	return nil, false
 }

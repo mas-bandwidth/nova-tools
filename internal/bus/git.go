@@ -343,6 +343,8 @@ const (
 	TrailerReceipt = "receipt"
 	TrailerCursor  = "cursor"
 	TrailerClose   = "close"
+	// TrailerArchive is an archive operation's commit.
+	TrailerArchive = "archive"
 	// TrailerBeat is a wait's liveness beat commit, "beat <name>".
 	TrailerBeat = "beat"
 	// TrailerCommit is what stageAndCommit stamps a message that arrived without one, so

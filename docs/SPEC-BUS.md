@@ -218,3 +218,36 @@ test is proven able to fail before it is trusted. The verb groups are
 32. `TestReplyRefusesAHandShapedHeader` — a draft carrying a header `reply` fills is exit 2 with one remedy line.
 33. `TestReplyAdvanceMovesTheCursorInTheReplyCommit` — `--advance` moves and pushes the cursor in the same commit as the reply.
 34. `TestReplyAdvanceWithDryRunIsRefused` — `reply --advance` with `--dry-run` is exit 2 and neither cursor nor note moves.
+
+## `archive --before`
+
+**The verb line, as help prints it.**
+
+```
+nova-bus archive --bus <dir> --before <RFC3339> --as <name> [--out <path>] [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
+```
+
+**What it reads and writes.** `archive --before` reads all active lanes in `--bus` and selects all notes whose date is strictly before the given RFC 3339 instant. It copies or packages selected notes into the archive destination:
+- If `--out` is unspecified, notes are moved into `<bus>/archive/<path>` and catalogued in `<bus>/archive/INDEX`.
+- If `--out` names a tarball (`*.tar.gz` or `*.tgz`), notes are archived into the compressed tar archive and `<bus>/archive/INDEX` is created or updated to track them.
+
+Archived notes are removed from their original lane directories and removed from active `from-<lane>/INDEX` files. Any reader whose `OPEN` list references archived notes has those paths updated to `archive/<path>`, and `CURSOR` positions are preserved so that reader state remains intact without spurious re-reads or broken file references. References (`Re:`) and receipts resolving archived notes continue to resolve successfully via `archive/INDEX`.
+
+When pushing to `--remote` and `--branch`, the changes are committed with trailer `archive: <instant>` and pushed with retries.
+
+**What `archive` prints.** On success:
+```
+ARCHIVE OK archived=<n> kept=<m> target=<target> [commit=<sha>]
+```
+In `--dry-run` mode, it prints:
+```
+ARCHIVE OK archived=<n> kept=<m> target=<target> (dry run)
+```
+
+**The refusals.**
+- Missing `--bus` or `--before`: exit 2 with state and next action.
+- Missing or empty `--as`: exit 2 with `want --as <name>; state: identity unset; next: supply --as <name>`.
+- Malformed `--before` (not valid RFC 3339): exit 2 with `nova-bus archive: --before "<value>" is not an RFC 3339 instant; refusing to guess; run: nova-bus help`.
+- Nonexistent bus directory or not a repo root: exit 2 naming the problem.
+- Unrecognized arguments: exit 2 with remedy.
+

@@ -83,6 +83,7 @@ usage:
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
+  nova-bus archive --bus <dir> --before <RFC3339> --as <name> [--out <path>] [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit-or-date>) [--max <n>] [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
 
@@ -283,6 +284,11 @@ docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 // bare invocation, the unknown verb, and the flag parse error. Everything else nova-bus
 // prints is another line's work.
 func refuse(stderr io.Writer, where, what string) int {
+	if strings.HasPrefix(where, "cmd") {
+		where = " " + strings.ToLower(strings.TrimPrefix(where, "cmd"))
+	} else if where != "" && !strings.HasPrefix(where, " ") {
+		where = " " + where
+	}
 	fmt.Fprintf(stderr, "nova-bus%s: %s; run: nova-bus help\n", oneline.Escape(where), oneline.Escape(what))
 	return 2
 }
@@ -321,6 +327,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdReceipt(rest, stdout, stderr, now)
 	case "close":
 		return cmdClose(rest, stdout, stderr, now)
+	case "archive":
+		return cmdArchive(rest, stdout, stderr, now)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, now)
 	case "check":
@@ -1275,6 +1283,137 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// many notes it took to close them -- one per sender lane. A reader who wants to know
 	// whether a close collapsed 2964 files into a handful reads it here.
 	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d receipts=%d commit=%s\n", plan.Closed, plan.Kept, len(plan.Prepared), oneline.Field(sha8))
+	return 0
+}
+
+func cmdArchive(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("archive")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	beforeFlag := f.fs.String("before", "", "every note dated before this RFC 3339 instant is moved to the archive (required)")
+	as := f.fs.String("as", "", "which participant you are committing as (required)")
+	out := f.fs.String("out", "", "archive destination directory or tarball (.tar.gz / .tgz); defaults to <bus>/archive")
+	dryRun := f.fs.Bool("dry-run", false, "report what would be archived and write nothing")
+	remote := f.fs.String("remote", "", "the git remote to push to")
+	branch := f.fs.String("branch", "", "the branch the bus lives on")
+	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
+	noPush := f.fs.Bool("no-push", false, "commit but do not push")
+
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "before": beforeFlag}) {
+		return 2
+	}
+	if strings.TrimSpace(*as) == "" {
+		return refuse(stderr, "cmdArchive", "want --as <name>; state: identity unset; next: supply --as <name>")
+	}
+	if !f.attempts(*attempts, stderr) {
+		return 2
+	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
+		return 2
+	}
+	before, err := time.Parse(time.RFC3339, *beforeFlag)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-bus archive: --before %q is not an RFC 3339 instant; refusing to guess; run: nova-bus help\n", *beforeFlag)
+		return 2
+	}
+
+	hasRemote := strings.TrimSpace(*remote) != ""
+	hasBranch := strings.TrimSpace(*branch) != ""
+	if hasRemote != hasBranch {
+		fmt.Fprint(stderr, "nova-bus archive: --remote and --branch must be specified together; run: nova-bus help\n")
+		return 2
+	}
+	if hasRemote && hasBranch {
+		if !f.gitArgs(*remote, *branch, stderr) {
+			return 2
+		}
+	}
+
+	if err := bus.IsRepoRoot(*busDir); err != nil {
+		fmt.Fprintf(stderr, "nova-bus archive: %s\n", oneline.Err(err))
+		return 2
+	}
+
+	t, ok := openBus("archive", *busDir, stderr)
+	if !ok {
+		return 2
+	}
+
+	me, found := t.Config.Lookup(*as)
+	if !found {
+		fmt.Fprintf(stderr, "nova-bus archive: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
+		return 2
+	}
+	who := me
+	if who.GitName == "" {
+		who.GitName = who.Name
+		who.GitEmail = who.Name + "@bus.local"
+	}
+
+	targetPath := *out
+	if targetPath == "" {
+		targetPath = filepath.Join(*busDir, "archive")
+	}
+
+	displayTarget := targetPath
+	if rel, err := filepath.Rel(*busDir, targetPath); err == nil && !strings.HasPrefix(rel, "..") {
+		displayTarget = rel
+	}
+
+	plan, err := bus.PlanArchive(t, before, targetPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "ARCHIVE FAIL: %s\n", oneline.Err(err))
+		return 1
+	}
+
+	if *dryRun {
+		fmt.Fprintf(stdout, "ARCHIVE OK archived=%d kept=%d target=%s (dry run)\n", plan.ArchivedCount, plan.KeptCount, oneline.Field(displayTarget))
+		return 0
+	}
+
+	if plan.ArchivedCount == 0 {
+		fmt.Fprintf(stdout, "ARCHIVE OK archived=0 kept=%d target=%s commit=-\n", plan.KeptCount, oneline.Field(displayTarget))
+		return 0
+	}
+
+	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+	if lockErr != nil {
+		fmt.Fprintf(stderr, "ARCHIVE REFUSED: %s\n", oneline.Err(lockErr))
+		return 1
+	}
+	defer release()
+
+	if hasRemote && hasBranch {
+		if err := checkoutReady(*busDir, *branch, nil); err != nil {
+			fmt.Fprintf(stderr, "ARCHIVE FAIL: %s\n", oneline.Err(err))
+			return 1
+		}
+		if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
+			fmt.Fprintf(stderr, "ARCHIVE REFUSED: %s\n", oneline.Err(err))
+			return 1
+		}
+	}
+
+	res, err := plan.Execute(*busDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "ARCHIVE FAIL: %s\n", oneline.Err(err))
+		return 1
+	}
+
+	commitRes, err := commit(*busDir, who, res.TouchedPaths,
+		bus.WithTrailer(fmt.Sprintf("archive: %d notes before %s", res.Archived, oneline.Field(before.UTC().Format(time.RFC3339))), bus.TrailerArchive),
+		*remote, *branch, *attempts, *noPush || !hasRemote)
+	if err != nil {
+		fmt.Fprintf(stderr, "ARCHIVE FAIL: %s\n", oneline.Err(err))
+		printTranscript(stderr, err)
+		return 1
+	}
+
+	sha8 := commitRes.Commit
+	if len(sha8) > 8 {
+		sha8 = sha8[:8]
+	}
+	fmt.Fprintf(stdout, "ARCHIVE OK archived=%d kept=%d target=%s commit=%s\n", res.Archived, res.Kept, oneline.Field(displayTarget), oneline.Field(sha8))
 	return 0
 }
 
