@@ -228,7 +228,7 @@ func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
 			t.Errorf("%v gave %q", bad, got)
 		}
 	}
-	for _, name := range []string{"spacegame.losangeles", "bench", "linux", "linux-", "Linux-amd64", "linux-amd64 ", "-amd64", ""} {
+	for _, name := range []string{"build-host-7.example", "bench", "linux", "linux-", "Linux-amd64", "linux-amd64 ", "-amd64", ""} {
 		if ValidPlatform(name) {
 			t.Errorf("%q is a platform label", name)
 		}

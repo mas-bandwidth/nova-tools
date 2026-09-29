@@ -535,7 +535,7 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 		t.Fatalf("a suite with no java version: %v", err)
 	}
 	for name, mutate := range map[string]func(*Options){
-		"a machine name": func(o *Options) { o.Platform = "spacegame.losangeles" },
+		"a machine name": func(o *Options) { o.Platform = "build-host-7.example" },
 		"no platform":    func(o *Options) { o.Platform = "" },
 		"no CPU count":   func(o *Options) { o.CPUs = 0 },
 	} {

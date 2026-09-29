@@ -634,7 +634,7 @@ func TestTLCRecordHostIsAPlatformLabel(t *testing.T) {
 		ok            bool
 	}{
 		"a platform":           {"host", "linux-arm64", true},
-		"a machine name":       {"host", "spacegame.losangeles", false},
+		"a machine name":       {"host", "build-host-7.example", false},
 		"a short host name":    {"host", "bench", false},
 		"an operating system":  {"host", "linux", false},
 		"another OS":           {"host", "darwin-arm64", false},
