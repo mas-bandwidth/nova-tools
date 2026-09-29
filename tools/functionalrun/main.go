@@ -48,7 +48,13 @@ usage:
       --context <dir>         the image build context, holding Containerfile
                               (default: <src>/infra/functional-image)
       --image <ref>           run this image instead of building one
-      --deadline <duration>   the whole run's bound, at least 30s (default 10m)
+      --deadline <duration>   the bound of the test container, from its start to
+                              its end, at least 30s (default 10m); the runtime
+                              enforces it with --timeout. It does not cover the
+                              steps before and after, which have their own
+                              bounds: the image build 30m, the module cache
+                              step 5m, each runtime listing or removal 30 to
+                              60s, the leftover check 30s in all
       --grace <duration>      how long past its deadline a container is left
                               before the reaper removes it (default 30s)
       --cpus <n>              CPUs for the container, and go test -p (default 4)
