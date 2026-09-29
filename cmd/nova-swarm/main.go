@@ -846,6 +846,7 @@ func cmdNativeWith(args []string, stdout, stderr io.Writer, hooks nativeHooks) i
 		launchArgv:     hooks.launchArgv,
 		persistUnknown: hooks.persistUnknown,
 		sqliteCmd:      hooks.sqliteCmd,
+		environ:        hooks.environ,
 	}
 	if workerGiven {
 		cfg.worker = &w

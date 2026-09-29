@@ -2061,9 +2061,11 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "secret")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	rc := runWith([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now(), nativeHooks{
+		environ: append(os.Environ(), "FAKE_KEY="+fakeKey),
+	})
 	if rc != 0 {
 		t.Fatalf("a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}

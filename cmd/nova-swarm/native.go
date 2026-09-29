@@ -131,6 +131,7 @@ type nativeRunConfig struct {
 	persistUnknown func(string) error
 	sqliteCmd      string
 	sandboxLook    func(string) (string, error)
+	environ        []string
 }
 
 // nativeHooks packages the seams for the native run lifecycle.
@@ -143,6 +144,7 @@ type nativeHooks struct {
 	persistUnknown func(string) error
 	sqliteCmd      string
 	cardOut        string
+	environ        []string
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -346,7 +348,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// absent or empty variable is refused HERE, before anything runs, the way run and
 		// supervise refuse it.
 		if cfg.worker.Secret != "" {
-			if _, err := swarm.SecretFromEnv(cfg.worker.Secret); err != nil {
+			sec := cfg.worker.Secret
+			var err error
+			if cfg.environ != nil {
+				_, err = swarm.SecretFromSlice(cfg.environ, sec)
+			} else {
+				_, err = swarm.SecretFromEnv(sec)
+			}
+			if err != nil {
 				refuseNative(errOut, oneline.Escape(err.Error()))
 				return nativeRunResult{}, 2
 			}
@@ -765,7 +774,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+	envSource := os.Environ()
+	if cfg.environ != nil {
+		envSource = cfg.environ
+	}
+	childEnv := nativeChildEnvFrom(envSource, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
 		id, err := swarm.LoadPoolIdentity(cfg.root)
 		if err != nil {
