@@ -10,85 +10,95 @@ func TestBuildInventoryStructure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st := seed(t)
-
-	// In seed(t):
-	// studio: user=glenn, seat=studio, slots=64, runners=1
-	// hulk:   user=gaffer, seat=swarm-hulk, slots=64
-	// fleet:  coordinator=studio
-	// Let's also set fleet store = hulk
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk"}, "rowan"); err != nil {
+	st := NewMem()
+	machine, _ := Lookup(KindMachine)
+	for _, r := range []struct {
+		n   string
+		raw map[string]string
+	}{
+		{"bench-alpha", map[string]string{"user": "user-a", "seat": "seat-alpha", "slots": "64", "runners": "1"}},
+		{"bench-beta", map[string]string{"user": "user-b", "seat": "seat-beta", "slots": "64"}},
+	} {
+		row, err := machine.NewRow(r.n, r.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Insert(ctx, KindMachine, row, "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "bench-alpha", "store": "bench-beta"}, "operator"); err != nil {
 		t.Fatal(err)
 	}
 
-	inv, err := BuildInventory(ctx, st, "studio")
+	inv, err := BuildInventory(ctx, st, "bench-alpha")
 	if err != nil {
 		t.Fatalf("BuildInventory: %v", err)
 	}
 
 	// Verify groups
-	if len(inv.All.Hosts) != 2 || inv.All.Hosts[0] != "hulk" || inv.All.Hosts[1] != "studio" {
-		t.Errorf("all hosts: got %v, want [hulk studio]", inv.All.Hosts)
+	if len(inv.All.Hosts) != 2 || inv.All.Hosts[0] != "bench-alpha" || inv.All.Hosts[1] != "bench-beta" {
+		t.Errorf("all hosts: got %v, want [bench-alpha bench-beta]", inv.All.Hosts)
 	}
-	if len(inv.Benches.Hosts) != 2 || inv.Benches.Hosts[0] != "hulk" || inv.Benches.Hosts[1] != "studio" {
-		t.Errorf("benches hosts: got %v, want [hulk studio]", inv.Benches.Hosts)
+	if len(inv.Benches.Hosts) != 2 || inv.Benches.Hosts[0] != "bench-alpha" || inv.Benches.Hosts[1] != "bench-beta" {
+		t.Errorf("benches hosts: got %v, want [bench-alpha bench-beta]", inv.Benches.Hosts)
 	}
-	if len(inv.Coordinator.Hosts) != 1 || inv.Coordinator.Hosts[0] != "studio" {
-		t.Errorf("coordinator hosts: got %v, want [studio]", inv.Coordinator.Hosts)
+	if len(inv.Coordinator.Hosts) != 1 || inv.Coordinator.Hosts[0] != "bench-alpha" {
+		t.Errorf("coordinator hosts: got %v, want [bench-alpha]", inv.Coordinator.Hosts)
 	}
-	if len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "hulk" {
-		t.Errorf("store hosts: got %v, want [hulk]", inv.Store.Hosts)
+	if len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "bench-beta" {
+		t.Errorf("store hosts: got %v, want [bench-beta]", inv.Store.Hosts)
 	}
-	if len(inv.Runners.Hosts) != 1 || inv.Runners.Hosts[0] != "studio" {
-		t.Errorf("runners hosts: got %v, want [studio]", inv.Runners.Hosts)
-	}
-
-	// Verify hostvars for studio (local host)
-	studioHV, ok := inv.Meta.Hostvars["studio"]
-	if !ok {
-		t.Fatal("hostvars missing studio")
-	}
-	if studioHV["ansible_host"] != "studio" {
-		t.Errorf("studio ansible_host: got %v, want studio", studioHV["ansible_host"])
-	}
-	if studioHV["ansible_user"] != "glenn" || studioHV["user"] != "glenn" {
-		t.Errorf("studio user: got %v / %v, want glenn", studioHV["ansible_user"], studioHV["user"])
-	}
-	if studioHV["seat"] != "studio" || studioHV["registry_seat"] != "studio" {
-		t.Errorf("studio seat: got %v / %v, want studio", studioHV["seat"], studioHV["registry_seat"])
-	}
-	if studioHV["slots"] != 64 {
-		t.Errorf("studio slots: got %v, want 64", studioHV["slots"])
-	}
-	if studioHV["runners"] != 1 {
-		t.Errorf("studio runners: got %v, want 1", studioHV["runners"])
-	}
-	if studioHV["kind"] != "machine" {
-		t.Errorf("studio kind: got %v, want machine", studioHV["kind"])
-	}
-	if studioHV["ansible_connection"] != "local" {
-		t.Errorf("studio ansible_connection: got %v, want local", studioHV["ansible_connection"])
+	if len(inv.Runners.Hosts) != 1 || inv.Runners.Hosts[0] != "bench-alpha" {
+		t.Errorf("runners hosts: got %v, want [bench-alpha]", inv.Runners.Hosts)
 	}
 
-	// Verify hostvars for hulk (remote host)
-	hulkHV, ok := inv.Meta.Hostvars["hulk"]
+	// Verify hostvars for bench-alpha (local host)
+	alphaHV, ok := inv.Meta.Hostvars["bench-alpha"]
 	if !ok {
-		t.Fatal("hostvars missing hulk")
+		t.Fatal("hostvars missing bench-alpha")
 	}
-	if hulkHV["ansible_host"] != "hulk" {
-		t.Errorf("hulk ansible_host: got %v, want hulk", hulkHV["ansible_host"])
+	if alphaHV["ansible_host"] != "bench-alpha" {
+		t.Errorf("bench-alpha ansible_host: got %v, want bench-alpha", alphaHV["ansible_host"])
 	}
-	if hulkHV["ansible_user"] != "gaffer" || hulkHV["user"] != "gaffer" {
-		t.Errorf("hulk user: got %v, want gaffer", hulkHV["user"])
+	if alphaHV["ansible_user"] != "user-a" || alphaHV["user"] != "user-a" {
+		t.Errorf("bench-alpha user: got %v / %v, want user-a", alphaHV["ansible_user"], alphaHV["user"])
 	}
-	if hulkHV["slots"] != 64 {
-		t.Errorf("hulk slots: got %v, want 64", hulkHV["slots"])
+	if alphaHV["seat"] != "seat-alpha" || alphaHV["registry_seat"] != "seat-alpha" {
+		t.Errorf("bench-alpha seat: got %v / %v, want seat-alpha", alphaHV["seat"], alphaHV["registry_seat"])
 	}
-	if hulkHV["runners"] != 0 {
-		t.Errorf("hulk runners: got %v, want 0", hulkHV["runners"])
+	if alphaHV["slots"] != 64 {
+		t.Errorf("bench-alpha slots: got %v, want 64", alphaHV["slots"])
 	}
-	if _, hasConn := hulkHV["ansible_connection"]; hasConn {
-		t.Errorf("hulk should not have ansible_connection, got %v", hulkHV["ansible_connection"])
+	if alphaHV["runners"] != 1 {
+		t.Errorf("bench-alpha runners: got %v, want 1", alphaHV["runners"])
+	}
+	if alphaHV["kind"] != "machine" {
+		t.Errorf("bench-alpha kind: got %v, want machine", alphaHV["kind"])
+	}
+	if alphaHV["ansible_connection"] != "local" {
+		t.Errorf("bench-alpha ansible_connection: got %v, want local", alphaHV["ansible_connection"])
+	}
+
+	// Verify hostvars for bench-beta (remote host)
+	betaHV, ok := inv.Meta.Hostvars["bench-beta"]
+	if !ok {
+		t.Fatal("hostvars missing bench-beta")
+	}
+	if betaHV["ansible_host"] != "bench-beta" {
+		t.Errorf("bench-beta ansible_host: got %v, want bench-beta", betaHV["ansible_host"])
+	}
+	if betaHV["ansible_user"] != "user-b" || betaHV["user"] != "user-b" {
+		t.Errorf("bench-beta user: got %v, want user-b", betaHV["user"])
+	}
+	if betaHV["slots"] != 64 {
+		t.Errorf("bench-beta slots: got %v, want 64", betaHV["slots"])
+	}
+	if betaHV["runners"] != 0 {
+		t.Errorf("bench-beta runners: got %v, want 0", betaHV["runners"])
+	}
+	if _, hasConn := betaHV["ansible_connection"]; hasConn {
+		t.Errorf("bench-beta should not have ansible_connection, got %v", betaHV["ansible_connection"])
 	}
 
 	// Verify JSON output parses into standard map
@@ -105,7 +115,7 @@ func TestBuildInventoryStructure(t *testing.T) {
 	}
 
 	// Verify HostJSON
-	hostRaw, err := inv.HostJSON("studio")
+	hostRaw, err := inv.HostJSON("bench-alpha")
 	if err != nil {
 		t.Fatalf("HostJSON: %v", err)
 	}
@@ -113,7 +123,7 @@ func TestBuildInventoryStructure(t *testing.T) {
 	if err := json.Unmarshal(hostRaw, &parsedHost); err != nil {
 		t.Fatalf("Unmarshal HostJSON: %v", err)
 	}
-	if parsedHost["ansible_host"] != "studio" {
+	if parsedHost["ansible_host"] != "bench-alpha" {
 		t.Errorf("HostJSON ansible_host: got %v", parsedHost["ansible_host"])
 	}
 
