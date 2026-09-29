@@ -6,7 +6,7 @@
 // package's 71 s.
 //
 // These tests are behind the `slow` build tag: the PR test jobs do not build them and
-// .github/workflows/nightly-slow.yml does (#516, Glenn's two-minute rule -- a package's
+// .github/workflows/nightly-slow.yml does (#516, the two-minute rule -- a package's
 // tests answer in a minute). Nothing here is skipped or weakened; it runs nightly, whole.
 
 package main
@@ -245,7 +245,7 @@ func TestAKilledWorkerLeavesItsUnpublishedRevisionAlone(t *testing.T) {
 	}
 }
 
-// SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
+// SLOW: 1.0 s on bench-tier at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 // TestNativeRunKillsAtDeadline: a child that sleeps past the wall is killed by it, and the
 // run records a non-zero exit rather than hanging.
 func TestNativeRunKillsAtDeadline(t *testing.T) {
@@ -272,7 +272,7 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 	}
 }
 
-// SLOW: 25.2 s on hetzner at dev 64b9bec48, over the five-second line.
+// SLOW: 25.2 s on bench-tier at dev 64b9bec48, over the five-second line.
 // TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline: rule 13d, "no sample starts while
 // one is unanswered", and "a usage reader that never returns does not move the deadline, and
 // the run still ends inside the bound the deadline's own test holds (issue #779)".
@@ -332,7 +332,7 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 	}
 }
 
-// SLOW: 11.1 s on hetzner at dev 64b9bec48, over the five-second line.
+// SLOW: 11.1 s on bench-tier at dev 64b9bec48, over the five-second line.
 // TestNativeThreeFailedReadsEndTheCardUnverifiable, and two then an answer end nothing.
 //
 // A READ THAT FAILS IS NOT A SOURCE THAT REPORTED NOTHING: the first ends a card, because a

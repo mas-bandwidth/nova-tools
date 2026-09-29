@@ -146,7 +146,7 @@ func TestLintCardPausedKindNamesTheTrialRemedy(t *testing.T) {
 	t.Parallel()
 
 	trust := lintTrustFixture(t, strings.Join([]string{
-		"TRUST kind=fix-red area=- state=paused cards=3/10 pass=0.33 need=0.80 run_of_fails=3/3 since=2026-09-19T14:00:00Z by=rowan",
+		"TRUST kind=fix-red area=- state=paused cards=3/10 pass=0.33 need=0.80 run_of_fails=3/3 since=2026-09-19T14:00:00Z by=worker",
 		"TRUST OK kinds=1 trial=0 trusted=0 paused=1",
 		"",
 	}, "\n"))
@@ -246,7 +246,7 @@ func TestLintRulesNamesTheFourNewTokens(t *testing.T) {
 	}
 }
 
-// THREE GRAMMAR FACTS THE CARDS LANE FOUND, 2026-09-19 (Rowan's read of this PR).
+// THREE GRAMMAR FACTS THE CARDS LANE FOUND.
 
 // `clone-step` READS THE STEP, NOT ONLY ITS FIRST LINE. The check matched the STEP 1
 // line's own text, so a card whose STEP 1 reads "Get the tree" and whose body is a
