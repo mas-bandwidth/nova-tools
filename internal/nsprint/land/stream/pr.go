@@ -74,11 +74,20 @@ func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROpti
 		log = io.Discard
 	}
 	defer func() {
-		if o.Cost && rdb != nil && rep.Head != "" {
-			if entry, costErr := cicost.ReadHead(ctx, rdb, o.Repo, rep.Head); costErr == nil && entry != nil {
-				fmt.Fprintln(log, entry.Line())
-			} else if entry, costErr := cicost.ReadPR(ctx, rdb, o.Repo, o.N); costErr == nil && entry != nil {
-				fmt.Fprintln(log, entry.Line())
+		if rdb != nil && rep.Head != "" {
+			var entry *cicost.Entry
+			if e, costErr := cicost.ReadHead(ctx, rdb, o.Repo, rep.Head); costErr == nil && e != nil {
+				entry = e
+			} else if e, costErr := cicost.ReadPR(ctx, rdb, o.Repo, o.N); costErr == nil && e != nil {
+				entry = e
+			}
+			if entry != nil {
+				rep.CostTotal = entry.Cost.Total
+				rep.CostSpin = entry.Cost.Spin
+				rep.CostKnown = true
+				if o.Cost {
+					fmt.Fprintln(log, entry.Line())
+				}
 			}
 		}
 	}()
@@ -190,13 +199,45 @@ type LandPRReport struct {
 	Card     string
 	CardMove string
 	Pitstop  string
+
+	// Cost from ci:cost stream (#4328):
+	CostTotal int64
+	CostSpin  int64
+	CostKnown bool
+}
+
+// ReceiptLine formats the LAND PR receipt line. When CI cost is known from
+// ci:cost stream, total_s and spin_s are appended (#4328).
+func (r LandPRReport) ReceiptLine(repo string, n, restCalls int) string {
+	token := func(s string) string { return orDash(strings.Join(strings.Fields(s), "_")) }
+	line := fmt.Sprintf("LAND PR repo=%s pr=#%d state=%s head=%s ci=%s merge=%s failed=%s record=%s card=%s card_move=%s rest_calls=%d",
+		repo, n, r.State, orDash(Short(r.Head)), orDash(r.CI), orDash(Short(r.MergeSHA)),
+		orDash(strings.Join(r.Failed, ",")), token(r.Record), token(r.Card), token(r.CardMove), restCalls)
+	if r.CostKnown {
+		line += fmt.Sprintf(" total_s=%d spin_s=%d", r.CostTotal, r.CostSpin)
+	}
+	return line
 }
 
 // LandPR runs the pass. The error is a *Refusal for a refused input, else
 // the API or store error that stopped it; a pass that ended failed, closed,
 // in conflict or waiting returns its report with a nil error.
-func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (LandPRReport, error) {
-	var rep LandPRReport
+func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (rep LandPRReport, err error) {
+	defer func() {
+		if rdb != nil && rep.Head != "" && !rep.CostKnown {
+			var entry *cicost.Entry
+			if e, costErr := cicost.ReadHead(ctx, rdb, o.Repo, rep.Head); costErr == nil && e != nil {
+				entry = e
+			} else if e, costErr := cicost.ReadPR(ctx, rdb, o.Repo, o.N); costErr == nil && e != nil {
+				entry = e
+			}
+			if entry != nil {
+				rep.CostTotal = entry.Cost.Total
+				rep.CostSpin = entry.Cost.Spin
+				rep.CostKnown = true
+			}
+		}
+	}()
 	if gh == nil || gh.Token == "" {
 		return rep, ErrNoToken
 	}

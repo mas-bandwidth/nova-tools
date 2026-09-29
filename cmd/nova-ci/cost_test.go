@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,12 +48,14 @@ func costReceiptArgs(extra ...string) []string {
 // fakeCostStore is the seam's fake: it records the address opened and the
 // entry written, and answers with a fixed id.
 type fakeCostStore struct {
-	addr    string
-	stream  string
-	values  []string
-	closed  bool
-	openErr error
-	addErr  error
+	addr     string
+	stream   string
+	values   []string
+	closed   bool
+	openErr  error
+	addErr   error
+	revErr   error
+	messages []redis.XMessage
 }
 
 func (f *fakeCostStore) XAdd(_ context.Context, a *redis.XAddArgs) *redis.StringCmd {
@@ -63,7 +67,21 @@ func (f *fakeCostStore) XAdd(_ context.Context, a *redis.XAddArgs) *redis.String
 	return redis.NewStringResult("1700000000000-0", nil)
 }
 
-func (f *fakeCostStore) open(_ context.Context, addr string) (cicost.Writer, func() error, error) {
+func (f *fakeCostStore) XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+	if f.revErr != nil {
+		cmd.SetErr(f.revErr)
+		return cmd
+	}
+	n := int(count)
+	if n > len(f.messages) {
+		n = len(f.messages)
+	}
+	cmd.SetVal(f.messages[:n])
+	return cmd
+}
+
+func (f *fakeCostStore) open(_ context.Context, addr string) (Store, func() error, error) {
 	f.addr = addr
 	if f.openErr != nil {
 		return nil, nil, f.openErr
@@ -71,15 +89,22 @@ func (f *fakeCostStore) open(_ context.Context, addr string) (cicost.Writer, fun
 	return f, func() error { f.closed = true; return nil }, nil
 }
 
-func runCost(t *testing.T, f *fakeCostStore, stdin string, args ...string) (int, string, string) {
+func runCostWith(t *testing.T, f *fakeCostStore, stdin string, getenv func(string) string, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	var open costOpener
 	if f != nil {
 		open = f.open
 	}
-	code := cmdCost(args[1:], strings.NewReader(stdin), &out, &errb, open)
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	code := cmdCostWith(args[1:], strings.NewReader(stdin), &out, &errb, open, getenv)
 	return code, out.String(), errb.String()
+}
+
+func runCost(t *testing.T, f *fakeCostStore, stdin string, args ...string) (int, string, string) {
+	return runCostWith(t, f, stdin, nil, args...)
 }
 
 // costWantLine is the fixture's line, as docs/CLI.md pastes it.
@@ -195,7 +220,7 @@ func TestCostCloseFailureAfterSuccessfulWrite(t *testing.T) {
 
 	f := &fakeCostStore{}
 	var out, errb bytes.Buffer
-	open := func(context.Context, string) (cicost.Writer, func() error, error) {
+	open := func(context.Context, string) (Store, func() error, error) {
 		return f, func() error { return errors.New("close failed") }, nil
 	}
 	code := cmdCost(costReceiptArgs("--redis", testverbhelp.RefusedAddr)[1:], strings.NewReader(costListing(t)), &out, &errb, open)
@@ -238,7 +263,7 @@ func TestCostPaginationAndCloseFailureControls(t *testing.T) {
 	t.Run("close-after-write", func(t *testing.T) {
 		f := &fakeCostStore{}
 		var out, err bytes.Buffer
-		open := func(context.Context, string) (cicost.Writer, func() error, error) {
+		open := func(context.Context, string) (Store, func() error, error) {
 			return f, func() error { return errors.New("close failed") }, nil
 		}
 		code := cmdCost(costReceiptArgs("--redis", "127.0.0.1:1")[1:], strings.NewReader(costListing(t)), &out, &err, open)
@@ -333,5 +358,142 @@ func TestTheCommandReferenceCostIsWhatTheToolPrints(t *testing.T) {
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
 		t.Error(p)
+	}
+}
+
+func makeTestCostMessage(id, repo, sha, runID, pr string, spin, total int64) redis.XMessage {
+	return redis.XMessage{
+		ID: id,
+		Values: map[string]any{
+			"repo":       repo,
+			"sha":        sha,
+			"run_id":     runID,
+			"workflow":   "ci",
+			"conclusion": "success",
+			"pr":         pr,
+			"at":         "2026-09-29T10:00:00Z",
+			"jobs":       "2",
+			"total":      fmt.Sprint(total),
+			"spin":       fmt.Sprint(spin),
+			"unknown":    "0",
+			"job:lint:1": "lint:15:success:1:ok",
+			"job:test:1": "test:50:success:1:ok",
+		},
+	}
+}
+
+func TestCostDisplayTable(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeCostStore{
+		messages: []redis.XMessage{
+			makeTestCostMessage("1002-0", "mas-bandwidth/nova-tools", "head22222222", "2002", "4328", 0, 65),
+			makeTestCostMessage("1001-0", "mas-bandwidth/nova-tools", "head11111111", "2001", "", 10, 80),
+		},
+	}
+
+	code, stdout, stderr := runCost(t, f, "", "cost", "--redis", testverbhelp.RefusedAddr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3:\n%s", len(lines), stdout)
+	}
+	for _, col := range []string{"RUN", "PR", "HEAD", "JOBS", "TOTAL_S", "SPIN_S", "BREAKDOWN"} {
+		if !strings.Contains(lines[0], col) {
+			t.Errorf("header missing %q: %s", col, lines[0])
+		}
+	}
+	if !strings.Contains(lines[1], "2002") || !strings.Contains(lines[1], "4328") || !strings.Contains(lines[1], "65") {
+		t.Errorf("row 1 unexpected: %s", lines[1])
+	}
+	if !strings.Contains(lines[2], "2001") || !strings.Contains(lines[2], "80") || !strings.Contains(lines[2], "10") {
+		t.Errorf("row 2 unexpected: %s", lines[2])
+	}
+}
+
+func TestCostDisplayFilterByPR(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeCostStore{
+		messages: []redis.XMessage{
+			makeTestCostMessage("1002-0", "mas-bandwidth/nova-tools", "head22222222", "2002", "4328", 0, 65),
+			makeTestCostMessage("1001-0", "mas-bandwidth/nova-tools", "head11111111", "2001", "4300", 10, 80),
+		},
+	}
+
+	code, stdout, stderr := runCost(t, f, "", "cost", "--redis", testverbhelp.RefusedAddr, "--pr", "4328")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2 (header + 1 row):\n%s", len(lines), stdout)
+	}
+	if !strings.Contains(lines[1], "2002") || !strings.Contains(lines[1], "4328") {
+		t.Errorf("unexpected row: %s", lines[1])
+	}
+}
+
+func TestCostDisplayFilterByHead(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeCostStore{
+		messages: []redis.XMessage{
+			makeTestCostMessage("1002-0", "mas-bandwidth/nova-tools", "aaaa11112222", "2002", "4328", 0, 65),
+			makeTestCostMessage("1001-0", "mas-bandwidth/nova-tools", "bbbb11112222", "2001", "4300", 10, 80),
+		},
+	}
+
+	code, stdout, stderr := runCost(t, f, "", "cost", "--redis", testverbhelp.RefusedAddr, "--head", "aaaa")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2:\n%s", len(lines), stdout)
+	}
+	if !strings.Contains(lines[1], "2002") {
+		t.Errorf("unexpected row: %s", lines[1])
+	}
+}
+
+func TestCostDisplayJSON(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeCostStore{
+		messages: []redis.XMessage{
+			makeTestCostMessage("1002-0", "mas-bandwidth/nova-tools", "head22222222", "2002", "4328", 0, 65),
+		},
+	}
+
+	code, stdout, stderr := runCost(t, f, "", "cost", "--redis", testverbhelp.RefusedAddr, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	var entries []cicost.JSONEntry
+	if err := json.Unmarshal([]byte(stdout), &entries); err != nil {
+		t.Fatalf("invalid json: %v\noutput: %s", err, stdout)
+	}
+	if len(entries) != 1 || entries[0].RunID != "2002" || entries[0].PR != "4328" || entries[0].TotalSeconds != 65 {
+		t.Errorf("json entries mismatch: %+v", entries)
+	}
+}
+
+func TestCostDisplayNoRedisRefusal(t *testing.T) {
+	t.Parallel()
+
+	// With no --redis and no env vars, display mode refuses with code 2
+	noEnv := func(string) string { return "" }
+	code, stdout, stderr := runCostWith(t, nil, "", noEnv, "cost", "--limit", "5")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "needs --redis") {
+		t.Errorf("stderr %q does not name --redis", stderr)
 	}
 }

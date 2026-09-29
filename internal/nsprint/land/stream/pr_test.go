@@ -444,6 +444,13 @@ func TestLandPRCostOptionPrintsCostLine(t *testing.T) {
 	if strings.Contains(logNoCost.String(), "COST ") {
 		t.Fatalf("unexpected cost line when Cost=false:\n%s", logNoCost.String())
 	}
+	if !rep.CostKnown || rep.CostTotal != 125 || rep.CostSpin != 0 {
+		t.Fatalf("expected cost in rep: known=%v, total=%d, spin=%d", rep.CostKnown, rep.CostTotal, rep.CostSpin)
+	}
+	receipt := rep.ReceiptLine("o/r", f.n, 2)
+	if !strings.Contains(receipt, "total_s=125 spin_s=0") {
+		t.Fatalf("receipt line missing cost: %s", receipt)
+	}
 
 	// Now run with Cost: true -> logs COST line
 	f2 := newFakeForge()
@@ -455,6 +462,9 @@ func TestLandPRCostOptionPrintsCostLine(t *testing.T) {
 	rep2, err := LandPRWait(ctx, gh2, c, LandPROptions{Repo: "o/r", N: f2.n, Log: &logCost, Cost: true})
 	if err != nil || rep2.State != "merged" {
 		t.Fatalf("cost land: %v, %+v", err, rep2)
+	}
+	if !rep2.CostKnown || rep2.CostTotal != 125 || rep2.CostSpin != 0 {
+		t.Fatalf("expected cost in rep2: known=%v, total=%d, spin=%d", rep2.CostKnown, rep2.CostTotal, rep2.CostSpin)
 	}
 	wantCostLine := cost.Line(rec, id)
 	if !strings.Contains(logCost.String(), wantCostLine) {

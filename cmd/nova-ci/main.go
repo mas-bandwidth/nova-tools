@@ -87,6 +87,11 @@ usage:
                       environment's seat (NOVA_SPRINT_REDIS_USER). One CI
                       RECEIPT line;
                       exit 0 written, 1 the store refused it, 2 usage.
+  nova-ci cost [--pr <n>] [--head <sha>] [--limit <n>] [--json] [--repo owner/name]
+               [--redis <addr>]
+                      displays table of recent CI runs with: RUN, PR, HEAD,
+                      JOBS, TOTAL_S, SPIN_S, and per-job cost breakdown from
+                      ci:cost stream; --json outputs JSON array of run costs.
   nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
                --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
                [--redis <addr>] < jobs.json

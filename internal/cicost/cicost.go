@@ -26,10 +26,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cireceipt"
@@ -508,4 +510,178 @@ func CheckDevSpin(entries []Entry, ceiling int64, devRunsCount int) error {
 		}
 	}
 	return nil
+}
+
+// QueryFilter specifies criteria for selecting cost entries from ci:cost.
+type QueryFilter struct {
+	Repo  string
+	PR    int
+	Head  string
+	Limit int
+}
+
+// Query reads recent cost entries and applies filtering (repo, PR, head) and limit.
+func Query(ctx context.Context, r Reader, filter QueryFilter) ([]Entry, error) {
+	fetchCount := filter.Limit
+	if fetchCount <= 0 {
+		fetchCount = 20
+	}
+	if filter.PR > 0 || filter.Head != "" {
+		if fetchCount < 200 {
+			fetchCount = 200
+		}
+	}
+	entries, err := ReadRecent(ctx, r, fetchCount)
+	if err != nil {
+		return nil, err
+	}
+	prStr := ""
+	if filter.PR > 0 {
+		prStr = strconv.Itoa(filter.PR)
+	}
+	var out []Entry
+	for _, e := range entries {
+		if filter.Repo != "" && e.Receipt.Repo != filter.Repo {
+			continue
+		}
+		if prStr != "" && e.Receipt.PR != prStr && e.Receipt.PR != "#"+prStr {
+			continue
+		}
+		if filter.Head != "" && !strings.HasPrefix(e.Receipt.SHA, filter.Head) {
+			continue
+		}
+		out = append(out, e)
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// FormatJobBreakdown formats one job for tabular display: name:seconds[s][(spin)].
+func FormatJobBreakdown(j CostJob) string {
+	if !j.Known {
+		return j.Name + ":-"
+	}
+	if j.Spin != "" && j.Spin != "ok" {
+		return fmt.Sprintf("%s:%ds(%s)", j.Name, j.Seconds, j.Spin)
+	}
+	return fmt.Sprintf("%s:%ds", j.Name, j.Seconds)
+}
+
+// RenderTable outputs a tabular representation of CI cost entries:
+// RUN, PR, HEAD, JOBS, TOTAL_S, SPIN_S, and per-job cost breakdown if available.
+func RenderTable(w io.Writer, entries []Entry) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "RUN\tPR\tHEAD\tJOBS\tTOTAL_S\tSPIN_S\tBREAKDOWN")
+	for _, e := range entries {
+		run := e.Receipt.RunID
+		if run == "" {
+			run = "-"
+		}
+		pr := e.Receipt.PR
+		if pr == "" {
+			pr = "-"
+		}
+		head := e.Receipt.SHA
+		if len(head) > 8 {
+			head = head[:8]
+		}
+		if head == "" {
+			head = "-"
+		}
+		jobsCount := len(e.Cost.Jobs)
+		if jobsCount == 0 && e.Cost.Unknown > 0 {
+			jobsCount = e.Cost.Unknown
+		}
+		breakdown := "-"
+		if len(e.Cost.Jobs) > 0 {
+			var parts []string
+			for _, j := range e.Cost.Jobs {
+				parts = append(parts, FormatJobBreakdown(j))
+			}
+			breakdown = strings.Join(parts, " ")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
+			run, pr, head, jobsCount, e.Cost.Total, e.Cost.Spin, breakdown)
+	}
+	return tw.Flush()
+}
+
+// JSONEntry represents one cost entry in JSON format.
+type JSONEntry struct {
+	ID           string        `json:"id,omitempty"`
+	RunID        string        `json:"run_id"`
+	PR           string        `json:"pr,omitempty"`
+	Head         string        `json:"head"`
+	Repo         string        `json:"repo"`
+	Workflow     string        `json:"workflow"`
+	Conclusion   string        `json:"conclusion"`
+	At           string        `json:"at,omitempty"`
+	JobsCount    int           `json:"jobs_count"`
+	TotalSeconds int64         `json:"total_seconds"`
+	SpinSeconds  int64         `json:"spin_seconds"`
+	TotalS       int64         `json:"total_s"`
+	SpinS        int64         `json:"spin_s"`
+	Jobs         []JSONCostJob `json:"jobs,omitempty"`
+}
+
+// JSONCostJob represents a job in JSON format.
+type JSONCostJob struct {
+	Name       string `json:"name"`
+	Seconds    int64  `json:"seconds"`
+	Known      bool   `json:"known"`
+	Conclusion string `json:"conclusion"`
+	Attempt    int    `json:"attempt"`
+	Spin       string `json:"spin,omitempty"`
+}
+
+// RenderJSON serializes entries as a JSON array to w.
+func RenderJSON(w io.Writer, entries []Entry) error {
+	jsonEntries := make([]JSONEntry, 0, len(entries))
+	for _, e := range entries {
+		var jobs []JSONCostJob
+		for _, j := range e.Cost.Jobs {
+			jobs = append(jobs, JSONCostJob{
+				Name:       j.Name,
+				Seconds:    j.Seconds,
+				Known:      j.Known,
+				Conclusion: j.Conclusion,
+				Attempt:    j.Attempt,
+				Spin:       j.Spin,
+			})
+		}
+		jobsCount := len(e.Cost.Jobs)
+		if jobsCount == 0 && e.Cost.Unknown > 0 {
+			jobsCount = e.Cost.Unknown
+		}
+		jsonEntries = append(jsonEntries, JSONEntry{
+			ID:           e.ID,
+			RunID:        e.Receipt.RunID,
+			PR:           e.Receipt.PR,
+			Head:         e.Receipt.SHA,
+			Repo:         e.Receipt.Repo,
+			Workflow:     e.Receipt.Workflow,
+			Conclusion:   e.Receipt.Conclusion,
+			At:           e.Receipt.At,
+			JobsCount:    jobsCount,
+			TotalSeconds: e.Cost.Total,
+			SpinSeconds:  e.Cost.Spin,
+			TotalS:       e.Cost.Total,
+			SpinS:        e.Cost.Spin,
+			Jobs:         jobs,
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(jsonEntries)
+}
+
+// SumCost computes the total job seconds and spin seconds across entries.
+func SumCost(entries []Entry) (totalS, spinS int64) {
+	for _, e := range entries {
+		totalS += e.Cost.Total
+		spinS += e.Cost.Spin
+	}
+	return totalS, spinS
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cicost"
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -81,6 +82,23 @@ type Report struct {
 	// goes on; without it the run refuses with it.
 	LeftOut []Skip
 	Serial  string
+
+	// Cost summarizes the CI cost of kept members from ci:cost stream (#4328).
+	CostTotal int64
+	CostSpin  int64
+	CostKnown bool
+}
+
+// ReceiptLine formats the LAND STREAM receipt line. When CI cost is known from
+// ci:cost stream, total_s and spin_s are appended (#4328).
+func (r Report) ReceiptLine(repo, base string, head string, baseSHA string, members, parked []string) string {
+	line := fmt.Sprintf("LAND STREAM repo=%s stream=%s branch=%s head=%s base=%s@%s members=%s parked=%s moved=%d tests=%d pr=#%d reused=%t state=%s",
+		repo, r.Slug, r.Branch, Short(head), base, Short(baseSHA), orDash(strings.Join(members, ",")),
+		orDash(strings.Join(parked, ",")), r.ParkedMoved, r.Build.Tests, r.PR, r.Reused, r.State)
+	if r.CostKnown {
+		line += fmt.Sprintf(" total_s=%d spin_s=%d", r.CostTotal, r.CostSpin)
+	}
+	return line
 }
 
 // DefaultBranch is the stream branch for the slug.
@@ -278,6 +296,29 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	l.PR = rep.PR
 	l.State = "open"
 	rep.State = l.State
+	if c != nil && len(res.Kept) > 0 {
+		var totalS, spinS int64
+		hasAny := false
+		for _, m := range res.Kept {
+			var entry *cicost.Entry
+			if m.Head != "" {
+				entry, _ = cicost.ReadHead(ctx, c, o.Repo, m.Head)
+			}
+			if entry == nil && m.N > 0 {
+				entry, _ = cicost.ReadPR(ctx, c, o.Repo, m.N)
+			}
+			if entry != nil {
+				totalS += entry.Cost.Total
+				spinS += entry.Cost.Spin
+				hasAny = true
+			}
+		}
+		if hasAny {
+			rep.CostTotal = totalS
+			rep.CostSpin = spinS
+			rep.CostKnown = true
+		}
+	}
 	rep.ParkedMoved, err = SaveBuilt(ctx, c, l, o.By)
 	if err == nil {
 		removeWorkdir(o.Workdir)

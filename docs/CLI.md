@@ -1649,6 +1649,10 @@ nova-ci github receipt: --conclusion wants success, failure or cancelled (job.st
 
 ### cost
 
+`nova-ci cost [--pr <n>] [--head <sha>] [--limit <n>] [--json] [--repo owner/name] [--redis <addr>]`
+displays recent CI runs from the `ci:cost` stream as a table (or JSON with `--json`),
+summarizing RUN, PR, HEAD, JOBS, TOTAL_S, SPIN_S, and per-job cost breakdown.
+
 `nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
 --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>] [--redis <addr>]
 < jobs.json` is the one COST line of a CI run: where the run's job-seconds went.

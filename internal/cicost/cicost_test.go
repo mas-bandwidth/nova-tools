@@ -1,7 +1,9 @@
 package cicost
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -460,5 +462,200 @@ func TestSpinCeilingChecks(t *testing.T) {
 	}
 	if err := CheckDevSpin(badDevEntries, 0, 5); err == nil {
 		t.Error("CheckDevSpin should fail when dev run spin > ceiling")
+	}
+}
+
+func TestQueryFiltering(t *testing.T) {
+	t.Parallel()
+
+	rdb := &fakeReader{
+		msgs: []redis.XMessage{
+			makeFakeMessage("1003-0", "mas-bandwidth/nova-tools", "head33333333", "3003", "4328", 0, 120),
+			makeFakeMessage("1002-0", "mas-bandwidth/nova-tools", "head22222222", "3002", "4300", 15, 80),
+			makeFakeMessage("1001-0", "other/repo", "head11111111", "3001", "", 0, 50),
+		},
+	}
+
+	// 1. Filter by repo
+	entries, err := Query(context.Background(), rdb, QueryFilter{Repo: "other/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Receipt.RunID != "3001" {
+		t.Fatalf("Query by repo got %d entries, want run 3001", len(entries))
+	}
+
+	// 2. Filter by PR
+	entries, err = Query(context.Background(), rdb, QueryFilter{PR: 4328})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Receipt.RunID != "3003" {
+		t.Fatalf("Query by PR got %d entries, want run 3003", len(entries))
+	}
+
+	// 3. Filter by Head
+	entries, err = Query(context.Background(), rdb, QueryFilter{Head: "head2222"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Receipt.RunID != "3002" {
+		t.Fatalf("Query by head got %d entries, want run 3002", len(entries))
+	}
+
+	// 4. Limit
+	entries, err = Query(context.Background(), rdb, QueryFilter{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("Query with limit 2 got %d entries", len(entries))
+	}
+}
+
+func TestRenderTable(t *testing.T) {
+	t.Parallel()
+
+	entries := []Entry{
+		{
+			ID: "100-0",
+			Receipt: cireceipt.Receipt{
+				RunID: "777",
+				PR:    "4328",
+				SHA:   "0123456789abcdef",
+			},
+			Cost: Cost{
+				Total: 150,
+				Spin:  75,
+				Jobs: []CostJob{
+					{Name: "lint", Seconds: 15, Known: true, Conclusion: "success", Attempt: 1},
+					{Name: "test (linux)", Seconds: 42, Known: true, Conclusion: "failure", Attempt: 1, Spin: "failed"},
+					{Name: "functional", Seconds: 33, Known: true, Conclusion: "success", Attempt: 2, Spin: "rerun"},
+					{Name: "docs", Seconds: 0, Known: true, Conclusion: "skipped", Attempt: 1},
+					{Name: "pending", Known: false},
+				},
+			},
+		},
+		{
+			ID: "101-0",
+			Receipt: cireceipt.Receipt{
+				RunID: "778",
+				SHA:   "abcdef12",
+			},
+			Cost: Cost{
+				Total: 60,
+				Spin:  0,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderTable(&buf, entries); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3:\n%s", len(lines), out)
+	}
+	header := lines[0]
+	for _, col := range []string{"RUN", "PR", "HEAD", "JOBS", "TOTAL_S", "SPIN_S", "BREAKDOWN"} {
+		if !strings.Contains(header, col) {
+			t.Errorf("header missing column %q: %s", col, header)
+		}
+	}
+	row1 := lines[1]
+	if !strings.Contains(row1, "777") || !strings.Contains(row1, "4328") || !strings.Contains(row1, "01234567") || !strings.Contains(row1, "150") || !strings.Contains(row1, "75") {
+		t.Errorf("row1 unexpected: %s", row1)
+	}
+	if !strings.Contains(row1, "lint:15s") || !strings.Contains(row1, "test (linux):42s(failed)") || !strings.Contains(row1, "functional:33s(rerun)") || !strings.Contains(row1, "pending:-") {
+		t.Errorf("row1 breakdown unexpected: %s", row1)
+	}
+	row2 := lines[2]
+	if !strings.Contains(row2, "778") || !strings.Contains(row2, "-") || !strings.Contains(row2, "60") || !strings.Contains(row2, "0") {
+		t.Errorf("row2 unexpected: %s", row2)
+	}
+
+	// Empty table
+	var emptyBuf bytes.Buffer
+	if err := RenderTable(&emptyBuf, nil); err != nil {
+		t.Fatal(err)
+	}
+	emptyLines := strings.Split(strings.TrimSpace(emptyBuf.String()), "\n")
+	if len(emptyLines) != 1 {
+		t.Fatalf("empty table should only have header line, got: %v", emptyLines)
+	}
+}
+
+func TestRenderJSON(t *testing.T) {
+	t.Parallel()
+
+	entries := []Entry{
+		{
+			ID: "100-0",
+			Receipt: cireceipt.Receipt{
+				RunID:      "777",
+				PR:         "4328",
+				SHA:        "0123456789abcdef",
+				Repo:       "mas-bandwidth/nova-tools",
+				Workflow:   "ci",
+				Conclusion: "failure",
+			},
+			Cost: Cost{
+				Total: 150,
+				Spin:  75,
+				Jobs: []CostJob{
+					{Name: "lint", Seconds: 15, Known: true, Conclusion: "success", Attempt: 1},
+					{Name: "test", Seconds: 42, Known: true, Conclusion: "failure", Attempt: 1, Spin: "failed"},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderJSON(&buf, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed []JSONEntry
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v\noutput:\n%s", err, buf.String())
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("parsed %d entries, want 1", len(parsed))
+	}
+	p := parsed[0]
+	if p.RunID != "777" || p.PR != "4328" || p.TotalSeconds != 150 || p.SpinSeconds != 75 || p.TotalS != 150 || p.SpinS != 75 {
+		t.Errorf("parsed mismatch: %+v", p)
+	}
+	if len(p.Jobs) != 2 || p.Jobs[0].Name != "lint" || p.Jobs[1].Spin != "failed" {
+		t.Errorf("jobs mismatch: %+v", p.Jobs)
+	}
+
+	// Empty entries produces []
+	var emptyBuf bytes.Buffer
+	if err := RenderJSON(&emptyBuf, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(emptyBuf.String()) != "[]" {
+		t.Errorf("empty JSON output = %q, want []", emptyBuf.String())
+	}
+}
+
+func TestSumCost(t *testing.T) {
+	t.Parallel()
+
+	entries := []Entry{
+		{Cost: Cost{Total: 100, Spin: 10}},
+		{Cost: Cost{Total: 250, Spin: 50}},
+	}
+	tot, spin := SumCost(entries)
+	if tot != 350 || spin != 60 {
+		t.Errorf("SumCost = (%d, %d), want (350, 60)", tot, spin)
+	}
+
+	emptyTot, emptySpin := SumCost(nil)
+	if emptyTot != 0 || emptySpin != 0 {
+		t.Errorf("SumCost(nil) = (%d, %d), want (0, 0)", emptyTot, emptySpin)
 	}
 }
