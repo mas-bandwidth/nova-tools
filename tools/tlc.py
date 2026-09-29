@@ -65,8 +65,31 @@ def accepted(case, code, output):
                 and property_line is not None and property_line[1].strip() == case['property'])
     prefix = 'Invariant' if case['expected'] == 'invariant' else 'Action property'
     expected_code = 12 if case['expected'] == 'invariant' else 13
-    return code == expected_code and any(
-        f'{prefix} {name} is violated.' in output for name in case['property'].split('|'))
+    if code != expected_code:
+        return False
+    return (any(f'{prefix} {name} is violated.' in output
+                for name in case['property'].split('|'))
+            or initial_state_invariant(case, code, output))
+
+
+def initial_state_invariant(case, code, output):
+    if case['expected'] != 'invariant' or code != 12:
+        return False
+    lines = output.splitlines()
+    return any(f'Error: Invariant {name} is violated by the initial state:' in lines
+               for name in case['property'].split('|'))
+
+
+def state_counts(case, code, output):
+    stats = re.findall(r'([\d,]+) states generated, ([\d,]+) distinct states found', output)
+    if stats:
+        generated, distinct = stats[-1]
+        return generated.replace(',', ''), distinct.replace(',', '')
+    if initial_state_invariant(case, code, output):
+        # TLC stops at the initial violation without printing totals. Normalize
+        # its single reported initial counterexample state to 1/1 in RUNS.tsv.
+        return '1', '1'
+    return '-', '-'
 
 
 def main():
@@ -149,13 +172,13 @@ def main():
                     output.write(str(error) + '\n')
                     code = 127
         output = log.read_text()
-        stats = re.search(r'([\d,]+) states generated, ([\d,]+) distinct states found', output)
-        ok = accepted(case, code, output) and stats is not None
+        generated, distinct = state_counts(case, code, output)
+        has_stats = generated != '-' and distinct != '-'
+        ok = accepted(case, code, output) and has_stats
         failed = failed or not ok
         row = dict(config=case['config'], module=case['module'], input_sha256=digest,
                    jar_sha256=jar_digest, host=platform.node(), started_utc=started,
-                   generated=stats[1].replace(',', '') if stats else '-',
-                   distinct=stats[2].replace(',', '') if stats else '-',
+                   generated=generated, distinct=distinct,
                    seconds=f'{time.monotonic() - start:.3f}', exit=code,
                    result='PASS' if ok else 'FAIL', expected=case['expected'], property=case['property'],
                    budget=f'{args.budget:g}', mode='manual' if args.manual else 'bounded')

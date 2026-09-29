@@ -8,6 +8,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `LandWatch.tla` | `MCLandWatch` | the land watch's watcher (land_watch.lua): stamps, slow and wall, one note per stay (findings L1 to L3) |
 | `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
+| `BatchMemberTable.tla` | `MCBatchMemberTable`, `MCBatchSecondEpoch`, `MCBatchBroken*` | atomic member batches over the existing placement/epoch model, shared revisions, guards, operation replay and complete receipts |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
 | `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, Ensure, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library, a LoadMissing that never replaces |
@@ -391,3 +392,45 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+
+## Atomic member batches
+
+`BatchMemberTable` extends `EpochMemberTable`; existing per-verb configurations
+remain separate. The required `batchmembertable` group contains two positive
+configurations and fifteen deliberately faulty variants. Both positive instances
+retain three members, two rows, two columns and two epochs. The primary instance
+explores request lengths one through three, a guard-only request, and interacting
+cross-row changes for up to three actions. The second instance retains an old-epoch
+member while advancing, refreshing, binding and accepting a new-epoch create in
+four actions. Separate immutable member-epoch assignments make both paths explicit.
+
+The model represents field equality, absence and membership guards, including the
+difference between an absent field and an empty string. Ordinary field/add/remove/
+move actions share member and table revision increments. Request bytes are abstract
+identities; byte equality, rather than digest equality, controls replay. Accepted
+batches produce one complete receipt and one table revision; refusals and replay
+leave the modeled store unchanged.
+
+The negative configurations cover late guard/type/permission failure after an
+initial write, post-write guard evaluation, duplicate placement, stale epoch/table/
+member expectations, stale member expectations after an ordinary move, omitted
+ordinary field/move revision increments, lost-reply double effects, digest collision,
+incomplete receipt effects and stale replay reported as a new acceptance. `CASES.tsv`
+names each exact expected property. `BATCH-SOURCES.tsv` records the batch model,
+configuration, inherited model and runner hashes. `RUNS.tsv` records measured results,
+combined input hashes and the TLC executable hash;
+timeouts and unexpected diagnostics are failures.
+
+This is a finite request-template model, not a JSON parser, Redis rollback proof or
+implementation refinement proof. Its three-action main bound is explicit; the
+second positive trace separately exercises successful new-epoch mutation and old
+image preservation. The remaining runtime, replay, real-use and interactive gates
+in `docs/SPEC-NOVA-TABLE.md` still apply after the model checks pass.
+
+When TLC reports an invariant violation in the initial state without aggregate
+statistics, the runner records the single reported counterexample state as 1/1.
+That normalization requires the exact expected invariant and exit 12; it does not
+turn parse failures or unexpected outcomes into passing records. Raw bench logs
+retain the original diagnostic. Printed aggregate counts, when available, use the
+last pair TLC reports.

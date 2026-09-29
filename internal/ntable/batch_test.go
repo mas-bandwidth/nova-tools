@@ -12,6 +12,7 @@ import (
 func strPtr(s string) *string { return &s }
 
 func TestBatchManifestSerialization(t *testing.T) {
+	t.Parallel()
 	manifest := ntable.BatchManifest{
 		Schema:                1,
 		Table:                 "work",
@@ -71,6 +72,7 @@ func TestBatchManifestSerialization(t *testing.T) {
 }
 
 func TestBatchDeltaRobustUnmarshal(t *testing.T) {
+	t.Parallel()
 	// Lua cjson can encode empty arrays as `{}` or `[]`. BatchDelta unmarshaler must handle all variants cleanly.
 	rawJSON := `{
 		"operation_id": "op-test",
@@ -122,6 +124,7 @@ func TestBatchDeltaRobustUnmarshal(t *testing.T) {
 }
 
 func TestBatchInvalidTableName(t *testing.T) {
+	t.Parallel()
 	_, err := ntable.ApplyBatch(context.Background(), nil, ntable.BatchManifest{
 		Table: "invalid table name!",
 	})
