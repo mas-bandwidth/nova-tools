@@ -50,7 +50,7 @@ func liveClient(t *testing.T) *redis.Client {
 // Redis, with a clock the test moves (h.tick), initialised, readers added.
 func liveHarnessOn(t *testing.T, c *redis.Client, prefix string) *harness {
 	t.Helper()
-	h := &harness{t: t, ctx: context.Background(), now: time.Now().UTC().Truncate(time.Second)}
+	h := &harness{t: t, ctx: context.Background(), now: time.Now().UTC().Truncate(time.Second), live: []string{"m1", "m2"}}
 	now := func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now }
 	names := sprint.Names{Prefix: prefix}
 	h.st = &Store{B: &Redis{C: c, Names: names, Now: now}, Names: names, Actor: "tester", Now: now}
@@ -60,6 +60,7 @@ func liveHarnessOn(t *testing.T, c *redis.Client, prefix string) *harness {
 	if err := h.st.B.RowsAdd(h.ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	return h
 }
 
