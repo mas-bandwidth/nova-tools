@@ -16,8 +16,9 @@ const (
 	LimitFieldGuards      = 1000 // guards per member
 	LimitOneOfOptions     = 1000 // options in one guard
 	LimitReadSetMembers   = 1024
-	LimitColumns          = 1000   // columns per table
-	LimitRows             = 100000 // rows per table
+	LimitColumns          = 1000               // columns per table
+	LimitRows             = 100000             // rows per table
+	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"
@@ -30,11 +31,14 @@ const (
 	limitNameReadSet      = "read set members"
 	limitNameColumns      = "columns per table"
 	limitNameRows         = "rows per table"
+	limitNameReceipt      = "receipt bytes"
 )
 
-// ReceiptValueBytes is the longest field value a receipt records in full; a longer
-// one is recorded as its length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1).
-const ReceiptValueBytes = 256
+// ReceiptValueBytes is the longest field value a receipt, the change event and
+// the operation record hold in full; a longer one is recorded as its length and
+// SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). table.lua holds the same number
+// (T.receipt_value_bytes); a test compares them.
+const ReceiptValueBytes = 64
 
 // LimitError is a named LIMIT refusal: the bound and the count found, and the
 // member at fault when one is. It wraps ErrLimit.
@@ -129,6 +133,8 @@ func (e *LimitError) Advice() string {
 		return fmt.Sprintf("a table holds at most %d columns; remove one first or use another table", e.Bound)
 	case limitNameRows:
 		return fmt.Sprintf("a table holds at most %d rows; delete a row first or use another table", e.Bound)
+	case limitNameReceipt:
+		return fmt.Sprintf("the receipt of one batch is at most %d bytes and records every changed field; change fewer members or fewer fields in one manifest, split across manifests with their own operation ids", e.Bound)
 	}
 	return "narrow the request"
 }

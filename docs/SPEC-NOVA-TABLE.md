@@ -393,6 +393,7 @@ compares them with this table:
 | read set members | 1024 |
 | columns per table | 1000 |
 | rows per table | 100000 |
+| receipt bytes | 1048576 |
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row
@@ -476,13 +477,26 @@ For each affected application field it holds the before and after values, absenc
 distinguished from a present empty string. An absent placement has no score.
 Set/unset instructions alone do not supply the before values. The receipt carries
 explicit guard and selection counts; a missing member is not silently omitted.
-A receipt is bounded by its manifest, not by the values the manifest replaces: a
-field value of at most 256 bytes (`ReceiptValueBytes`) is recorded in full, and a
-longer one is recorded as its length and its SHA-1 (`before_bytes`, `before_sha1`,
-`after_bytes`, `after_sha1`, with the value's own side null; a null side with no
-length is an absent field). The digest is SHA-1 because it is the only digest a
-script has natively (`sha1hex`; a SHA-256 in script code would cost seconds on a
-few megabytes); it identifies a value for evidence, it is not a security boundary.
+A receipt is bounded by two rules that hold for every batch, whatever the store holds.
+A field value of at most 64 bytes (`ReceiptValueBytes`; `T.receipt_value_bytes` in the
+server) is recorded in full; a longer one, whether it is a before-value read from the
+store or a value the manifest sets, is recorded as its length and its SHA-1
+(`before_bytes`, `before_sha1`, `after_bytes`, `after_sha1`, with the value's own side
+null; a null side with no length is an absent field), in the receipt, in the change
+event's `batch_delta` and in the operation record alike, never in full. And the
+receipt's size, the byte length of its encoded batch delta, is at most `receipt bytes`,
+which is the manifest bound, 1 MiB. The size is computed before the first write, with
+each score the call reads back after its writes counted at its longest form (24 bytes),
+so it is never less than the size the receipt has. A batch whose receipt would exceed the
+bound is refused as `LIMIT` before anything changes: the refusal names `receipt bytes`,
+the bound and the computed size, and says `changed=no`; the caller changes fewer members
+or fewer fields in one manifest and sends the rest as another transaction with its own
+operation id. Because every changed field is in the receipt, a manifest under 1 MiB can
+still be refused for its receipt. The digest is SHA-1 because it is the only digest a
+script has natively (`sha1hex`; a SHA-256 in script code would cost seconds on a few
+megabytes); it identifies a value for evidence, it is not a security boundary, and no
+program decides that two values are equal from it: the server compares bytes, and the CLI
+lists two long values with their digests instead of judging them equal.
 `fields_set` lists only the set instructions whose values are recorded in full;
 every changed field is in `fields`. A batch that unsets 128 fields of 64 KiB leaves
 a receipt of tens of kilobytes, and a replay returns it unchanged.

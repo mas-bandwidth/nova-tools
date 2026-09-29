@@ -139,6 +139,7 @@ do
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
     columns = 1000, rows = 100000,
+    receipt_bytes = 1048576,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
@@ -146,6 +147,7 @@ do
     set_fields = 'set fields per member', unset_fields = 'unset fields per member',
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
     columns = 'columns per table', rows = 'rows per table',
+    receipt_bytes = 'receipt bytes',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -159,11 +161,14 @@ do
     if type(s) ~= 'string' or #s <= 64 then return s end
     return string.sub(s, 1, 32) .. '...(' .. #s .. ' bytes)'
   end
-  -- A receipt records a field value in full when it is at most this many bytes;
-  -- a longer one is its length and its SHA-1 (sha1hex is the digest the script
-  -- API has). A receipt is then bounded by its manifest, not by the values the
-  -- manifest replaces.
-  T.receipt_value_bytes = 256
+  -- A receipt, the change event and the operation record hold a field value in
+  -- full when it is at most this many bytes; a longer one is its length and its
+  -- SHA-1 (sha1hex is the digest the script API has). internal/ntable/limits.go
+  -- holds the same number (ReceiptValueBytes); a test compares them.
+  T.receipt_value_bytes = 64
+  -- The longest text of a score read back from the store: a double as the store
+  -- prints it ("-1.7976931348623157e+308").
+  T.score_text_bytes = 24
   -- T.fieldchange(before, after): the change of one field as a receipt records it.
   -- Absent is null with no bytes; a value too long to record is null with its
   -- bytes and sha1.
@@ -2447,7 +2452,20 @@ do
     end
 
     local outcome = real_changes == 0 and 'noop' or 'changed'
-    local function encode_delta()
+    local encode_delta
+    -- The receipt's size is known before the first write: the delta as it will be
+    -- encoded, each score read back after the writes counted at its longest.
+    local function delta_size()
+      local held = {}
+      for i, l in ipairs(late) do
+        held[i] = l.delta.after_score
+        l.delta.after_score = string.rep('9', T.score_text_bytes)
+      end
+      local size = #encode_delta()
+      for i, l in ipairs(late) do l.delta.after_score = held[i] end
+      return size
+    end
+    function encode_delta()
       return cjson.encode({
         operation_id = manifest.operation_id,
         digest = digest,
@@ -2458,6 +2476,9 @@ do
         members = delta_members,
       })
     end
+
+    local receipt_over = T.over('receipt_bytes', delta_size())
+    if receipt_over then return receipt_over end
 
     -- The operation record is the last write, after the commit; its
     -- permission and type are settled before the first write.

@@ -2045,8 +2045,13 @@ The summary line carries the table revision before and after (`table_revision=<b
 the selected, guard-only and changed entry counts, `replay=yes` when the receipt is the one recorded for an
 operation already applied, and the trips; then the commit receipt; then one `MEMBER` line per member with its
 place, score and `member_revision` before and after and its changed application fields as one JSON object of
-`[before, after]` pairs (`null` is absent; `-` is an unplaced member or an absent score). A score is the exact
-decimal string the store holds. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes
+`[before, after]` pairs (`null` is absent; `-` is an unplaced member or an absent score). A value of more than
+64 bytes is not printed: it is `{"bytes":<length>,"sha1":"<digest>"}`, in a before-value as in an after-value,
+and a field whose two sides are both such values is always listed, its two digests side by side, because a
+digest identifies a value and does not prove two values equal. A score is the exact decimal string the store
+holds. A batch whose receipt would exceed 1 MiB (`receipt bytes`, the manifest bound) is refused with
+`code=LIMIT` and `changed=no`, naming the bound and the computed size; change fewer members or fields in one
+manifest. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes
 nothing prints `outcome=noop` and, like any accepted batch, advances the table revision by one. Running the same
 manifest again applies nothing and prints the original receipt with `replay=yes`.
 
