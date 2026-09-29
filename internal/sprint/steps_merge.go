@@ -53,7 +53,9 @@ func crossRefusal(s *Snapshot, stream, card, other string) string {
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
 // coordinator why. A stopped stream moves only after resume.
-func MergeStep(s *Snapshot, r MergeReq) Plan {
+func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
+
+func mergeStep(s *Snapshot, r MergeReq) Plan {
 	var p Plan
 	ctl := s.StreamCtl(r.Stream)
 	if ctl == nil {
