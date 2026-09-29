@@ -142,6 +142,7 @@ func ParseReport(data []byte) Report {
 	inHead := false
 	headSeen := false
 	headLine := 0
+	headingLine := 0
 	for i, raw := range lines {
 		n := i + 1
 		line := strings.TrimRight(raw, " \t")
@@ -149,6 +150,7 @@ func ParseReport(data []byte) Report {
 		case strings.HasPrefix(line, "# "):
 			if r.Heading == "" {
 				r.Heading = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+				headingLine = n
 			}
 			section, inHead = "", false
 			continue
@@ -289,6 +291,11 @@ func ParseReport(data []byte) Report {
 	// section holds no findings whatever it says in words: a complete review that wrote
 	// `- none` ended `result=clean findings=1` and put "none" in a coordinator's page.
 	if r.HasHead && r.Findings == 0 {
+		// Issue #80: a report with findings: 0 whose verdict is HOLD (either in line 1/header
+		// verdict or line 2 disposition HOLD) is malformed: a HOLD cannot have 0 findings.
+		if hold, holdLine := isHoldReport(lines, r.Heading, headingLine); hold {
+			return malformed(r, holdLine)
+		}
 		r.FindingLines = nil
 	}
 	if r.HasHead && r.Class == ClassPlanOnly {
@@ -297,6 +304,78 @@ func ParseReport(data []byte) Report {
 		return malformed(r, headLine)
 	}
 	return r
+}
+
+// isHoldReport reports whether the report specifies a HOLD verdict on line 1, in its
+// header, or as its line-2 disposition, and the 1-based line number where it was found.
+func isHoldReport(lines []string, heading string, headingLine int) (bool, int) {
+	// Check line 2 disposition.
+	if len(lines) > 1 {
+		line2 := strings.TrimSpace(lines[1])
+		if isHoldVerdictText(line2) {
+			return true, 2
+		}
+	}
+
+	// Check line 1.
+	if len(lines) > 0 {
+		line1 := strings.TrimSpace(lines[0])
+		if isHoldVerdictText(line1) {
+			return true, 1
+		}
+	}
+
+	// Check heading (if on a different line than line 1).
+	if heading != "" && isHoldVerdictText(heading) {
+		line := headingLine
+		if line <= 0 {
+			line = 1
+		}
+		return true, line
+	}
+
+	return false, 0
+}
+
+func isHoldVerdictText(s string) bool {
+	s = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(s), "#"))
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return false
+	}
+	token0 := strings.Trim(f[0], `"'(),;`)
+	if strings.EqualFold(strings.TrimSuffix(token0, ":"), "hold") {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSuffix(token0, ":"), "result") && len(f) > 1 {
+		token1 := strings.Trim(f[1], `"'(),;`)
+		if strings.EqualFold(strings.TrimSuffix(token1, ":"), "hold") {
+			return true
+		}
+	}
+	for i := 0; i < len(f); i++ {
+		token := strings.Trim(f[i], `"'(),;`)
+		lower := strings.ToLower(token)
+		if strings.HasPrefix(lower, "verdict=") {
+			val := strings.Trim(strings.TrimPrefix(lower, "verdict="), `"'(),;`)
+			if strings.EqualFold(val, "hold") {
+				return true
+			}
+		}
+		if strings.HasPrefix(lower, "verdict:") {
+			val := strings.Trim(strings.TrimPrefix(lower, "verdict:"), `"'(),;`)
+			if strings.EqualFold(val, "hold") {
+				return true
+			}
+		}
+		if lower == "verdict:" && i+1 < len(f) {
+			next := strings.Trim(strings.ToLower(f[i+1]), `"'(),;`)
+			if next == "hold" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // malformed drops every finding the parser had collected. This is the quarantine, and it is

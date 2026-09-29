@@ -97,6 +97,30 @@ func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
 	if got := ParseReport([]byte("# t\n\n## Head\nrepo: o/n\n")); got.Class != ClassMalformed {
 		t.Errorf("a head with no findings: line is malformed, got %s", got.Class)
 	}
+
+	// Issue #80: a HOLD with findings: 0 (either in line 1/header verdict or line 2
+	// disposition HOLD) is malformed, not clean, because a HOLD cannot have 0 findings.
+	for _, report := range []string{
+		"# t verdict=HOLD\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n",
+		"# t\nHOLD\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n",
+		"# HOLD: cannot proceed\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n",
+		"RESULT: read-pr sha=abc verdict=HOLD\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n",
+		"RESULT: read-pr sha=abc\nHOLD: missing checks\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n",
+	} {
+		if got := ParseReport([]byte(report)); got.Class != ClassMalformed {
+			t.Errorf("a HOLD report with findings: 0 is malformed, got %s", got.Class)
+		}
+	}
+	// A HOLD with findings: 1 is ok.
+	holdOK := ParseReport([]byte("# t verdict=HOLD\n\n## Head\nfindings: 1\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n\n## Findings\n" + finding))
+	if holdOK.Class != ClassOK {
+		t.Errorf("a HOLD report with findings: 1 is ok, got %s", holdOK.Class)
+	}
+	// An APPROVE with findings: 0 is clean.
+	approveClean := ParseReport([]byte("# t verdict=APPROVE\n\n## Head\nfindings: 0\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"))
+	if approveClean.Class != ClassClean {
+		t.Errorf("an APPROVE report with findings: 0 is clean, got %s", approveClean.Class)
+	}
 }
 
 // RULE 8, VERBATIM (SPEC-SWARM.md:117): the evidence of completion is "the report's `##
