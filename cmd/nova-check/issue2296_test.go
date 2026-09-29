@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -58,15 +59,72 @@ func stGit(t *testing.T, dir string, args ...string) string {
 	return out
 }
 
+var (
+	stLabGoldenDir  string
+	stLabGoldenOnce sync.Once
+)
+
+func initStLabGolden() {
+	dir, err := os.MkdirTemp("", "stlab-golden-*")
+	if err != nil {
+		panic(err)
+	}
+	if out, err := stGitOut(dir, "init", "-q", "-b", "main"); err != nil {
+		panic(fmt.Sprintf("git init: %v\n%s", err, out))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.md"), []byte("prose base\n"), 0o644); err != nil {
+		panic(err)
+	}
+	if out, err := stGitOut(dir, "add", "f.md"); err != nil {
+		panic(fmt.Sprintf("git add: %v\n%s", err, out))
+	}
+	if out, err := stGitOut(dir, "commit", "-q", "-m", "base"); err != nil {
+		panic(fmt.Sprintf("git commit: %v\n%s", err, out))
+	}
+	stLabGoldenDir = dir
+}
+
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDir(s, d); err != nil {
+				return err
+			}
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(s)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(d, data, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // stLab is a committed prose repository: one tracked f.md and a clean index,
 // the smallest tree every case below can stage into.
 func stLab(t *testing.T) string {
 	t.Helper()
+	stLabGoldenOnce.Do(initStLabGolden)
 	dir := t.TempDir()
-	stGit(t, dir, "init", "-q", "-b", "main")
-	mustWrite(t, dir, "f.md", "prose base\n")
-	stGit(t, dir, "add", "f.md")
-	stGit(t, dir, "commit", "-q", "-m", "base")
+	if err := copyDir(stLabGoldenDir, dir); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -373,8 +431,8 @@ esac
 `, tc.record, real))
 			orig := os.Getenv("PATH")
 			os.Setenv("PATH", bin+string(os.PathListSeparator)+orig)
-			t.Cleanup(func() { os.Setenv("PATH", orig) })
 			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
+			os.Setenv("PATH", orig)
 			refused(t, tc.name, exit, stderr, tc.want)
 			if stdout != "" {
 				t.Errorf("%s printed to stdout: %q", tc.name, stdout)
