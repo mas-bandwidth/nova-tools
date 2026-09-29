@@ -378,28 +378,37 @@ func (r *Redis) SetCursor(ctx context.Context, id string) error {
 	return r.C.Set(ctx, r.key(keyCursor), id, 0).Err()
 }
 
-// DropKeys scans the deployment's sprint: namespace and deletes it.
+// DropKeys scans the deployment's sprint: namespace and deletes it, and any
+// key left under its four tables' names after their drop (a store whose
+// function library is of another build keeps operation records as keys of
+// their own, table:<t>:op:<id>, which its drop leaves).
 func (r *Redis) DropKeys(ctx context.Context) (int, error) {
-	pattern := globEscape(r.Names.Key("")) + "*"
-	var cursor uint64
+	patterns := []string{globEscape(r.Names.Key("")) + "*"}
+	for _, t := range []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet} {
+		patterns = append(patterns, globEscape("table:"+r.Names.Table(t)+":")+"*")
+	}
 	n := 0
-	for {
-		keys, next, err := r.C.Scan(ctx, cursor, pattern, 1000).Result()
-		if err != nil {
-			return n, err
-		}
-		if len(keys) > 0 {
-			d, err := r.C.Del(ctx, keys...).Result()
+	for _, pattern := range patterns {
+		var cursor uint64
+		for {
+			keys, next, err := r.C.Scan(ctx, cursor, pattern, 1000).Result()
 			if err != nil {
 				return n, err
 			}
-			n += int(d)
+			if len(keys) > 0 {
+				d, err := r.C.Del(ctx, keys...).Result()
+				if err != nil {
+					return n, err
+				}
+				n += int(d)
+			}
+			if next == 0 {
+				break
+			}
+			cursor = next
 		}
-		if next == 0 {
-			return n, nil
-		}
-		cursor = next
 	}
+	return n, nil
 }
 
 func globEscape(s string) string {
