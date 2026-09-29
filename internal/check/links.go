@@ -199,19 +199,26 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 	inFence := false
 	for i, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
-		if m := fenceRE.FindStringSubmatch(trimmed); m != nil {
-			delim := m[1]
-			if !inFence {
-				inFence, fenceChar, fenceLen = true, delim[0], len(delim)
-			} else if delim[0] == fenceChar && len(delim) >= fenceLen && strings.TrimSpace(m[2]) == "" {
-				inFence = false
+		if trimmed != "" && (trimmed[0] == '`' || trimmed[0] == '~') {
+			if m := fenceRE.FindStringSubmatch(trimmed); m != nil {
+				delim := m[1]
+				if !inFence {
+					inFence, fenceChar, fenceLen = true, delim[0], len(delim)
+				} else if delim[0] == fenceChar && len(delim) >= fenceLen && strings.TrimSpace(m[2]) == "" {
+					inFence = false
+				}
+				continue
 			}
-			continue
 		}
 		if inFence {
 			continue
 		}
-		line = codeSpanRE.ReplaceAllString(line, "")
+		if strings.IndexByte(line, '`') >= 0 {
+			line = codeSpanRE.ReplaceAllString(line, "")
+		}
+		if strings.IndexByte(line, '[') < 0 {
+			continue
+		}
 		for _, target := range extractLinkTargets(line) {
 			resolved, skip, reason := resolveTarget(root, mdPath, target, exclude)
 			if skip {
@@ -256,6 +263,9 @@ func readCause(err error) error {
 // form. What it does not handle is listed in SPEC.md as deliberately
 // not checked.
 func extractLinkTargets(line string) []string {
+	if strings.IndexByte(line, '[') < 0 {
+		return nil
+	}
 	var targets []string
 	for i := 0; i < len(line); i++ {
 		if line[i] != '[' {
@@ -352,7 +362,10 @@ func skipSpaces(s string, i int) int {
 // scope (external, fragment-only). A non-empty reason means it is broken
 // before ever touching the disk (it escapes the tree).
 func resolveTarget(root, mdPath, target string, exclude []string) (resolved string, skip bool, reason string) {
-	if strings.HasPrefix(target, "#") || strings.HasPrefix(target, "//") || schemeRE.MatchString(target) {
+	if strings.HasPrefix(target, "#") || strings.HasPrefix(target, "//") {
+		return "", true, ""
+	}
+	if strings.IndexByte(target, ':') >= 0 && schemeRE.MatchString(target) {
 		return "", true, ""
 	}
 	if i := strings.Index(target, "#"); i >= 0 {
