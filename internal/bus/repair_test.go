@@ -196,7 +196,10 @@ func scanUnknownElsewhere(t *testing.T, err error, lock string) bool {
 // Age alone must not be why a later assertion keeps or removes it.
 func oldIndexLock(t *testing.T) (dir, lock string) {
 	t.Helper()
-	dir = cloneBus(t, bareBus(t))
+	dir = t.TempDir()
+	if _, err := git(dir, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
 	var err error
 	lock, err = indexLockPath(dir)
 	if err != nil {
