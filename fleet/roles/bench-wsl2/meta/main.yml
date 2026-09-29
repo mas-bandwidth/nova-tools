@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  author: Emma Antigravity <emma@mas-bandwidth.com>
+  description: WSL2 Linux bench role for Windows runner machines
+  license: proprietary
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - "24.04"
+        - "22.04"
+    - name: Debian
+      versions:
+        - "12"
+dependencies: []

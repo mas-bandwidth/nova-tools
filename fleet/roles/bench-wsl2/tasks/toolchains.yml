@@ -1,0 +1,105 @@
+---
+# tasks/toolchains.yml for bench-wsl2 role
+# ==============================================================================
+# Configures Go and .NET toolchains for the runner user.
+# ==============================================================================
+
+# ---- Go Toolchain -----------------------------------------------------------
+
+- name: check existing Go binary in sdk
+  ansible.builtin.stat:
+    path: "{{ bench_wsl2_go_sdk_root }}/{{ bench_wsl2_go_version }}/bin/go"
+  register: go_bin_stat
+  check_mode: false
+
+- name: download Go SDK archive
+  ansible.builtin.get_url:
+    url: "https://go.dev/dl/{{ bench_wsl2_go_version }}.linux-{{ bench_wsl2_go_arch }}.tar.gz"
+    dest: "/tmp/{{ bench_wsl2_go_version }}.tar.gz"
+    mode: "0644"
+  when: not go_bin_stat.stat.exists and not ansible_check_mode
+
+- name: extract Go SDK archive
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ bench_wsl2_go_version }}.tar.gz"
+    dest: "{{ bench_wsl2_go_sdk_root }}"
+    remote_src: true
+    owner: "{{ bench_wsl2_user }}"
+    group: "{{ bench_wsl2_group }}"
+  when: not go_bin_stat.stat.exists and not ansible_check_mode
+
+- name: rename extracted go directory to versioned path
+  ansible.builtin.command:
+    cmd: "mv {{ bench_wsl2_go_sdk_root }}/go {{ bench_wsl2_go_sdk_root }}/{{ bench_wsl2_go_version }}"
+    creates: "{{ bench_wsl2_go_sdk_root }}/{{ bench_wsl2_go_version }}"
+  when: not go_bin_stat.stat.exists and not ansible_check_mode
+
+- name: remove temporary Go archive
+  ansible.builtin.file:
+    path: "/tmp/{{ bench_wsl2_go_version }}.tar.gz"
+    state: absent
+  when: not ansible_check_mode
+
+- name: link Go binary into runner go/bin
+  ansible.builtin.file:
+    src: "{{ bench_wsl2_go_sdk_root }}/{{ bench_wsl2_go_version }}/bin/go"
+    dest: "{{ bench_wsl2_user_home }}/go/bin/go"
+    state: link
+    owner: "{{ bench_wsl2_user }}"
+    group: "{{ bench_wsl2_group }}"
+    force: true
+  when: not ansible_check_mode
+
+- name: link Go binary into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ bench_wsl2_go_sdk_root }}/{{ bench_wsl2_go_version }}/bin/go"
+    dest: "/usr/local/bin/go"
+    state: link
+    force: true
+  when: not ansible_check_mode
+
+# ---- .NET Toolchain ---------------------------------------------------------
+
+- name: check if dotnet command exists
+  ansible.builtin.command: "command -v dotnet"
+  register: dotnet_cmd_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: attempt .NET SDK installation via apt packages (dotnet-sdk)
+  ansible.builtin.apt:
+    name: "{{ bench_wsl2_dotnet_packages }}"
+    state: present
+  register: dotnet_apt_result
+  failed_when: false
+  when: dotnet_cmd_check.rc != 0 and ansible_pkg_mgr == 'apt' and not ansible_check_mode
+
+- name: download dotnet-install script fallback if package not available
+  ansible.builtin.get_url:
+    url: "{{ bench_wsl2_dotnet_install_script }}"
+    dest: "/tmp/dotnet-install.sh"
+    mode: "0755"
+  when: dotnet_cmd_check.rc != 0 and (dotnet_apt_result is skipped or dotnet_apt_result.failed | default(false)) and not ansible_check_mode
+
+- name: install .NET SDK via official dotnet-install.sh fallback
+  ansible.builtin.shell: >-
+    bash /tmp/dotnet-install.sh --channel {{ bench_wsl2_dotnet_channel }} --install-dir {{ bench_wsl2_dotnet_install_dir }}
+  args:
+    creates: "{{ bench_wsl2_dotnet_install_dir }}/dotnet"
+  become_user: "{{ bench_wsl2_user }}"
+  when: dotnet_cmd_check.rc != 0 and (dotnet_apt_result is skipped or dotnet_apt_result.failed | default(false)) and not ansible_check_mode
+
+- name: link fallback dotnet binary into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ bench_wsl2_dotnet_install_dir }}/dotnet"
+    dest: "/usr/local/bin/dotnet"
+    state: link
+    force: true
+  when: dotnet_cmd_check.rc != 0 and (dotnet_apt_result is skipped or dotnet_apt_result.failed | default(false)) and not ansible_check_mode
+
+- name: remove temporary dotnet-install script
+  ansible.builtin.file:
+    path: "/tmp/dotnet-install.sh"
+    state: absent
+  when: not ansible_check_mode

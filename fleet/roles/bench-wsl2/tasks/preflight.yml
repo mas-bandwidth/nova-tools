@@ -1,0 +1,19 @@
+---
+# tasks/preflight.yml for bench-wsl2 role
+# ==============================================================================
+
+- name: assert target platform is linux
+  ansible.builtin.assert:
+    that:
+      - ansible_system == 'Linux'
+    fail_msg: "bench-wsl2 role requires Linux (running under WSL2), but host is {{ ansible_system }}"
+    quiet: true
+
+- name: detect WSL2 kernel characteristics
+  ansible.builtin.set_fact:
+    bench_wsl2_detected: >-
+      {{ 'microsoft' in (ansible_kernel | lower) or 'wsl' in (ansible_kernel | lower) }}
+
+- name: log platform detection in check or live run
+  ansible.builtin.debug:
+    msg: "Target host {{ inventory_hostname }}: Linux kernel {{ ansible_kernel }} (WSL2 detected: {{ bench_wsl2_detected }})"

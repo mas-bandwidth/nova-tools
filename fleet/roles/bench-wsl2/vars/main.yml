@@ -1,0 +1,20 @@
+---
+# vars/main.yml for bench-wsl2 role
+# ==============================================================================
+# Internal variables and path configurations for bench-wsl2 role.
+# ==============================================================================
+
+bench_wsl2_standard_dirs:
+  - "{{ bench_wsl2_user_home }}/sdk"
+  - "{{ bench_wsl2_user_home }}/go/bin"
+  - "{{ bench_wsl2_user_home }}/.local/bin"
+  - "{{ bench_wsl2_user_home }}/.ssh"
+  - "{{ bench_wsl2_user_home }}/nova-bench"
+  - "{{ bench_wsl2_user_home }}/nova-bench/slots"
+  - "{{ bench_wsl2_user_home }}/nova-bench/run"
+  - "{{ bench_wsl2_user_home }}/nova-bench/cache"
+  - "{{ bench_wsl2_user_home }}/rowan-working/tmp"
+  - "/etc/nova-bench"
+
+bench_wsl2_system_path: >-
+  {{ bench_wsl2_user_home }}/.local/bin:{{ bench_wsl2_user_home }}/go/bin:{{ bench_wsl2_user_home }}/.dotnet:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

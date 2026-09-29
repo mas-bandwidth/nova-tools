@@ -1,0 +1,34 @@
+---
+# tasks/main.yml for bench-wsl2 role
+# ==============================================================================
+# bench-wsl2: Configures Windows machine running WSL2 as a Linux bench.
+# Order: preflight -> runner -> packages -> toolchains -> redis -> tailnet -> check
+# ==============================================================================
+
+- name: preflight platform validation
+  ansible.builtin.include_tasks: preflight.yml
+  tags: [preflight, check]
+
+- name: runner user and environment setup
+  ansible.builtin.include_tasks: runner.yml
+  tags: [runner]
+
+- name: system package dependencies
+  ansible.builtin.include_tasks: packages.yml
+  tags: [packages]
+
+- name: toolchains installation (Go and .NET)
+  ansible.builtin.include_tasks: toolchains.yml
+  tags: [toolchains]
+
+- name: redis service configuration
+  ansible.builtin.include_tasks: redis.yml
+  tags: [redis]
+
+- name: tailnet resolution and machine identity
+  ansible.builtin.include_tasks: tailnet.yml
+  tags: [tailnet, identity]
+
+- name: check mode receipt and status verification
+  ansible.builtin.include_tasks: check_mode.yml
+  tags: [always]

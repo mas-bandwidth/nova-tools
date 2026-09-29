@@ -75,3 +75,22 @@ From there the bench is a Linux bench, reached over ssh on the tailnet: its
 machine row goes in with `nova-config machine add`, its tools arrive with
 `nova-update release adopt --platform linux-amd64`, and `tools/bench-standard.sh`
 is its standard.
+
+## Ansible provisioning: `fleet/roles/bench-wsl2`
+
+Once the host bootstrap completes and sshd is answering on the tailnet, the bench
+is managed through the Ansible role `bench-wsl2` (`fleet/bench-wsl2.yml`).
+The role provisions:
+- the runner user (`nova`), sudoers privileges, `/etc/wsl.conf`, and git identity;
+- toolchains: Go SDK under `~/sdk` and .NET SDK (`dotnet`);
+- `redis-server` and `redis-tools` under systemd;
+- machine identity resolution via Tailscale, creating `~/nova-bench/identity.tsv`
+  and `/etc/nova-bench/identity.env`.
+
+Check mode validates configuration without applying changes:
+```
+ansible-playbook --syntax-check fleet/bench-wsl2.yml
+ansible-playbook -i inventory.py fleet/bench-wsl2.yml --check --diff
+```
+The role is converged on a Windows WSL2 machine when Glenn names it.
+

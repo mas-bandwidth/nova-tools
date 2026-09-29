@@ -1,0 +1,20 @@
+---
+# handlers/main.yml for bench-wsl2 role
+# ==============================================================================
+
+- name: restart redis
+  ansible.builtin.service:
+    name: "{{ bench_wsl2_redis_service }}"
+    state: restarted
+  when: not ansible_check_mode
+
+- name: restart sshd
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+  when: not ansible_check_mode
+
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not ansible_check_mode

@@ -1,0 +1,59 @@
+---
+# defaults/main.yml for bench-wsl2 role
+# ==============================================================================
+# bench-wsl2: Ansible role configuring Windows WSL2 machines as Linux benches.
+# Aligns with docs/BENCH-STANDARD-WINDOWS.md and tools/bench-wsl2.ps1.
+# ==============================================================================
+
+# Runner user & permissions
+bench_wsl2_user: "nova"
+bench_wsl2_group: "nova"
+bench_wsl2_user_home: "/home/nova"
+bench_wsl2_user_shell: "/bin/bash"
+bench_wsl2_user_sudo: true
+
+# Git identity for runner commits
+bench_wsl2_git_user_name: "Rowan Claude"
+bench_wsl2_git_user_email: "rowan@mas-bandwidth.com"
+
+# Toolchains: Go
+bench_wsl2_go_version: "go1.27.1"
+bench_wsl2_go_arch: "amd64"
+bench_wsl2_go_sdk_root: "{{ bench_wsl2_user_home }}/sdk"
+
+# Toolchains: .NET
+bench_wsl2_dotnet_channel: "8.0"
+bench_wsl2_dotnet_packages:
+  - dotnet-sdk-8.0
+bench_wsl2_dotnet_install_script: "https://dot.net/v1/dotnet-install.sh"
+bench_wsl2_dotnet_install_dir: "{{ bench_wsl2_user_home }}/.dotnet"
+
+# System Packages (Ubuntu/Debian)
+bench_wsl2_packages:
+  - openssh-server
+  - build-essential
+  - ca-certificates
+  - curl
+  - git
+  - sbcl
+  - gh
+  - redis-server
+  - redis-tools
+  - tar
+  - gzip
+  - jq
+
+# Redis Configuration & Service
+bench_wsl2_redis_service: "redis-server"
+bench_wsl2_redis_port: 6379
+bench_wsl2_redis_bind: "127.0.0.1 ::1"
+bench_wsl2_redis_protected_mode: "yes"
+
+# Tailnet & Machine Identity
+bench_wsl2_tailscale_bin: "tailscale"
+bench_wsl2_identity_file: "{{ bench_wsl2_user_home }}/nova-bench/identity.tsv"
+bench_wsl2_env_file: "/etc/nova-bench/identity.env"
+bench_wsl2_labels: "linux,X64,threadripper"
+
+# Bench directory layout
+bench_wsl2_bench_root: "{{ bench_wsl2_user_home }}/nova-bench"

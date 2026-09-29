@@ -1,0 +1,73 @@
+---
+# tasks/runner.yml for bench-wsl2 role
+# ==============================================================================
+# Provisions runner user, passwordless sudo, wsl.conf, system environment,
+# bench directories, and git commit identity.
+# ==============================================================================
+
+- name: ensure runner user group exists
+  ansible.builtin.group:
+    name: "{{ bench_wsl2_group }}"
+    state: present
+
+- name: ensure runner user exists
+  ansible.builtin.user:
+    name: "{{ bench_wsl2_user }}"
+    group: "{{ bench_wsl2_group }}"
+    shell: "{{ bench_wsl2_user_shell }}"
+    home: "{{ bench_wsl2_user_home }}"
+    create_home: true
+    state: present
+
+- name: configure passwordless sudo for runner user
+  ansible.builtin.copy:
+    content: "{{ bench_wsl2_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    dest: "/etc/sudoers.d/{{ bench_wsl2_user }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+  when: bench_wsl2_user_sudo | bool
+
+- name: configure /etc/wsl.conf for systemd boot and default user
+  ansible.builtin.blockinfile:
+    path: /etc/wsl.conf
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: WSL2 BENCH CONFIG"
+    block: |
+      [boot]
+      systemd=true
+      [user]
+      default={{ bench_wsl2_user }}
+
+- name: configure system PATH in /etc/environment
+  ansible.builtin.lineinfile:
+    path: /etc/environment
+    regexp: '^PATH='
+    line: 'PATH="{{ bench_wsl2_system_path }}"'
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: create standard bench and runner directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ bench_wsl2_user }}"
+    group: "{{ bench_wsl2_group }}"
+    mode: "0755"
+  loop: "{{ bench_wsl2_standard_dirs }}"
+
+- name: configure runner git identity
+  ansible.builtin.copy:
+    dest: "{{ bench_wsl2_user_home }}/.gitconfig"
+    owner: "{{ bench_wsl2_user }}"
+    group: "{{ bench_wsl2_group }}"
+    mode: "0644"
+    content: |
+      [user]
+      	name = {{ bench_wsl2_git_user_name }}
+      	email = {{ bench_wsl2_git_user_email }}

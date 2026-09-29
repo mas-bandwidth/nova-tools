@@ -1,0 +1,41 @@
+---
+# tasks/check_mode.yml for bench-wsl2 role
+# ==============================================================================
+# Validates check mode and provides status receipt matching fleet standards.
+# ==============================================================================
+
+- name: observe Go toolchain version
+  ansible.builtin.shell: "PATH={{ bench_wsl2_system_path }} go version 2>/dev/null || echo 'go: uninstalled'"
+  register: observed_go_version
+  changed_when: false
+  check_mode: false
+
+- name: observe .NET toolchain version
+  ansible.builtin.shell: "PATH={{ bench_wsl2_system_path }} dotnet --version 2>/dev/null || echo 'dotnet: uninstalled'"
+  register: observed_dotnet_version
+  changed_when: false
+  check_mode: false
+
+- name: observe redis-server status
+  ansible.builtin.shell: "systemctl is-active {{ bench_wsl2_redis_service }} 2>/dev/null || echo 'inactive'"
+  register: observed_redis_status
+  changed_when: false
+  check_mode: false
+
+- name: print check mode dry-run receipt
+  ansible.builtin.debug:
+    msg: >-
+      BENCH-WSL2 CHECK host={{ inventory_hostname }} user={{ bench_wsl2_user }}
+      tailnet={{ bench_wsl2_tailnet_name }} ip={{ bench_wsl2_tailnet_ip }}
+      go={{ observed_go_version.stdout | trim }} dotnet={{ observed_dotnet_version.stdout | trim }}
+      redis={{ observed_redis_status.stdout | trim }} labels={{ bench_wsl2_labels }} mode=dry-run
+  when: ansible_check_mode
+
+- name: print converged execution receipt
+  ansible.builtin.debug:
+    msg: >-
+      BENCH-WSL2 OK host={{ inventory_hostname }} user={{ bench_wsl2_user }}
+      tailnet={{ bench_wsl2_tailnet_name }} ip={{ bench_wsl2_tailnet_ip }}
+      go={{ observed_go_version.stdout | trim }} dotnet={{ observed_dotnet_version.stdout | trim }}
+      redis={{ observed_redis_status.stdout | trim }} labels={{ bench_wsl2_labels }} mode=converged
+  when: not ansible_check_mode
