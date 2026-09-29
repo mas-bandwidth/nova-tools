@@ -36,6 +36,7 @@ const (
 	NBlocked        = "a primary is blocked on something dropped"
 	NCIRed          = "ci red"
 	NReadsExhausted = "reads exhausted"
+	NRepairSkipped  = "repair skipped changes the store refused as recorded"
 	NOverdue        = "a judgment notification has waited past its deadline"
 	NStreamStale    = "a stream has not changed state or count past its deadline"
 	NRepeatSuffix   = "; a second time for the same cause"
@@ -52,6 +53,7 @@ var Decisions = map[string][]string{
 	NBlocked:        {"replace", "drop"},
 	NCIRed:          {"rework with a fix", "return", "drop", "look"},
 	NReadsExhausted: {"ask another reader", "rework", "drop"},
+	NRepairSkipped:  {"look at the card", "return", "drop", "rework", "ack"},
 	NOverdue:        {"act"},
 	NStreamStale:    {"look"},
 }

@@ -606,7 +606,6 @@ func TestAnsweringOneCardOfAGroup(t *testing.T) {
 
 func TestALargeFailedGroupKeepsEverySubject(t *testing.T) {
 	t.Parallel()
-	t.Skip("F6: the in-memory store reads the subjects before bounding")
 	p := newProbe(t)
 	p.setup(60)
 	p.do("start 60", StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 60}}))

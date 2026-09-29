@@ -403,7 +403,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -476,7 +476,7 @@ type ReturnReq struct {
 // ReturnResolves is the judgments a return is a decision for: a red CI on the
 // primary is discharged; a stream's red or rejected batch is answered and stays
 // open while the stream is stopped.
-var ReturnResolves = []string{NCIRed, NRed, NRejected}
+var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped}
 
 func answeredIn(notes []Note, id string) bool {
 	for _, n := range notes {

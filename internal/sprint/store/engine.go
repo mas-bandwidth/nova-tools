@@ -578,8 +578,19 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 	}
 	all = append(all, plan.Notes...)
 	closes = append(closes, plan.Closes...)
+	// A step's own answer to a judgment it closes (ack's reason) is the one
+	// decided note of that judgment, not a second one beside it.
+	closing := map[string]bool{}
+	for _, o := range closes {
+		closing[o.Note.ID] = true
+	}
+	answers := map[string]string{}
 	var kept []sprint.Note
 	for _, n := range all {
+		if n.Kind == sprint.Decided && closing[n.Answers] {
+			answers[n.Answers] = n.What
+			continue
+		}
 		if n.Type != "" {
 			kept = append(kept, n)
 			if n.Stream != "" {
@@ -602,8 +613,12 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 		op.Closes = append(op.Closes, o.Key)
 		d := byNote[o.Note.ID]
 		if d == nil {
+			what := "answered by " + verb
+			if a, ok := answers[o.Note.ID]; ok {
+				what = a
+			}
 			d = &sprint.Note{Kind: sprint.Decided, Type: o.Note.Type, Stream: o.Note.Stream, Answers: o.Note.ID,
-				What: "answered by " + verb, Who: st.Actor, At: snap.Now}
+				What: what, Who: st.Actor, At: snap.Now}
 			byNote[o.Note.ID] = d
 			order = append(order, o.Note.ID)
 		}
@@ -791,10 +806,10 @@ const (
 // cut operation: their expectations no longer held (a writer outside the
 // fence changed those members), or the store refused them on a bound or a
 // rule. It lists each skipped entry.
-const NRepairSkipped = "repair skipped changes the store refused as recorded"
+const NRepairSkipped = sprint.NRepairSkipped
 
 // RepairSkippedDecisions are the decisions open on a repair's skips.
-var RepairSkippedDecisions = []string{"look at the card", "return", "drop", "rework"}
+var RepairSkippedDecisions = sprint.Decisions[sprint.NRepairSkipped]
 
 // Skip is one entry of a cut operation that repair did not apply because its
 // expectation no longer held.

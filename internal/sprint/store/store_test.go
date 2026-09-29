@@ -556,3 +556,23 @@ func TestAReceiptThisBuildCannotReadIsUnknown(t *testing.T) {
 		t.Fatalf("an unreadable receipt was counted as applied: the operation left the fence")
 	}
 }
+
+// ack answers a judgment with one decided note: the coordinator's reason.
+func TestAckWritesOneDecidedNote(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
+	open, _ := h.m.OpenNotes(h.ctx)
+	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "a flaky runner"}))
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
+	var decided []sprint.Note
+	for _, n := range notes {
+		if n.Kind == sprint.Decided {
+			decided = append(decided, n)
+		}
+	}
+	if len(decided) != 1 || decided[0].What != "ack: a flaky runner" || decided[0].Answers != open[0].Note.ID {
+		t.Fatalf("decided notes: %+v", decided)
+	}
+}

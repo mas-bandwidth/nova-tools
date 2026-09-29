@@ -375,7 +375,7 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2"}))
 	ci := w.openOn("s1-1")[0].Note.ID
 	p = w.must(Ack(w.s, AckReq{Notes: []string{ci}, Reason: "a flaky runner"}))
-	if len(w.openOn("s1-1")) != 0 || p.Units[0].Notes[0].What != "ack: a flaky runner" {
+	if len(w.openOn("s1-1")) != 0 || p.Units[0].Notes[0].What != "ack: a flaky runner" || p.Units[0].Notes[0].Answers != ci {
 		t.Fatalf("ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
 	}
 }

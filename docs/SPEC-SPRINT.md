@@ -211,6 +211,7 @@ operation was abandoned.
 | a primary came back a second time for the same cause | stop and look |
 | a primary is blocked on something dropped | replace, drop |
 | reads exhausted | ask another reader, rework, drop |
+| repair skipped changes the store refused as recorded | look at the card, return, drop, rework, ack |
 | a judgment notification has waited past its due time | act |
 | a stream has made no progress past its deadline | look |
 
@@ -301,6 +302,12 @@ streams' progress and the caller's result, and empties the fence.
 `nova-sprint repair` finishes a pending operation from its record: it applies
 only the phases not yet applied (an applied phase replays its receipt), each
 still guarded by its own expectations, so it can never overwrite newer work.
+An entry whose expectation no longer holds (a writer outside the fence changed
+its member), or that the store refuses on a bound or a rule, is skipped; the
+rest applies, the fence is released, and one judgment, "repair skipped changes
+the store refused as recorded", lists every skipped entry and why. No pending
+operation blocks the sprint for good. rework, return, drop and ack of the
+primary close that judgment.
 An operation whose first phase never applied is abandoned after the grace:
 nothing of it happened, and a notification says so (happened: an operation was
 abandoned, which verb, by whom, how old). Nothing is abandoned silently. `check` and `where` show a pending operation. The model
@@ -313,7 +320,14 @@ Each takes a set and is one step. A set is ids, a stream, a column, `--limit n`,
 or an inbox group (`--group n`). Each prints what moved, what did not and why,
 and the summary line. Every judgment verb takes `--answers <notification>`.
 Every store verb takes `--redis`, `--prefix`, `--actor`, `--op <id>` (the same
-id again returns the recorded result), `--json` and `--max`.
+id again, for the same verb with the same arguments, returns the recorded
+result; recorded for another verb or other arguments it is a conflict and is
+refused), `--json` and `--max`. A card's text fields (brief, fix, finding,
+report, reason, note) are at most 8 KiB, and every manifest is checked against
+the table layer's bounds before anything is written, split by entries and by
+bytes, so no step can wedge the sprint. Every command checks first that the
+store's table function library is this build's, and refuses (exit 2) with the
+command that loads it.
 
 | verb | does |
 |---|---|
