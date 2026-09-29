@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE RED TESTS FOR `nova-swarm doctor` (2026-09-17 shadowed-binary incident).
@@ -259,5 +261,42 @@ func TestPreflightDoctorStandsAsideForHelp(t *testing.T) {
 	}
 	if code, stop := preflightDoctor([]string{"native", "--card", "-h", "-h"}, &errOut); stop || code != 0 {
 		t.Errorf("native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	}
+}
+
+// The version reader answers under a deadline: a binary that answers is read, and one that
+// hangs is killed and named, so the doctor never hangs the launch it guards. The deadline is
+// injected, so the hung case ends at a fraction of a second.
+func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	answers := filepath.Join(dir, "answers")
+	if err := testbin.WriteExecutable(answers, []byte("#!/bin/sh\necho 'nova-swarm v1 stamp'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line, err := readVersionLineWithin(answers, 30*time.Second)
+	if err != nil || line != "nova-swarm v1 stamp" {
+		t.Fatalf("a binary that answers: got (%q, %v)", line, err)
+	}
+
+	hangs := filepath.Join(dir, "hangs")
+	if err := testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line, err = readVersionLineWithin(hangs, 200*time.Millisecond)
+	if err == nil {
+		t.Fatalf("a hung binary answered %q, want an error", line)
+	}
+	if !strings.Contains(err.Error(), "did not answer within 200ms") {
+		t.Errorf("the error does not name the deadline: %v", err)
+	}
+}
+
+// Production's reader carries a bounded deadline.
+func TestDoctorVersionDeadlineIsBounded(t *testing.T) {
+	t.Parallel()
+	if doctorVersionDeadline <= 0 || doctorVersionDeadline > 30*time.Second {
+		t.Errorf("doctorVersionDeadline = %s, want a few seconds", doctorVersionDeadline)
 	}
 }

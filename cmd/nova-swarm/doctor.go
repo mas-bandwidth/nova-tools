@@ -27,6 +27,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -51,14 +53,33 @@ var doctorHomeDir = os.UserHomeDir
 // never runs a binary it went looking for.
 var doctorReadVersion = readVersionLine
 
-// readVersionLine runs `<path> version` and returns its first line, without its newline.
-// It is production's reader only: every test replaces doctorReadVersion.
+// doctorVersionDeadline bounds one `<binary> version` run. A version line is instant, so a
+// binary that has not answered by then is hung, and the doctor names it unreadable rather
+// than hanging the launch it guards.
+const doctorVersionDeadline = 5 * time.Second
+
+// readVersionLine runs `<path> version` under the deadline and returns its first line,
+// without its newline. It is production's reader only: every test replaces doctorReadVersion.
 func readVersionLine(path string) (string, error) {
-	cmd := exec.Command(path, "version")
+	return readVersionLineWithin(path, doctorVersionDeadline)
+}
+
+// readVersionLineWithin is readVersionLine with the deadline named. A run that outlives it
+// is killed, and so is anything still holding its output, and the error says the deadline.
+func readVersionLineWithin(path string, deadline time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "version")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
+	// A child the binary started can hold the output pipe open after the binary is killed;
+	// the wait gives up on it after one more second.
+	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("%s version did not answer within %s", path, deadline)
+		}
 		return "", err
 	}
 	line, _, _ := strings.Cut(out.String(), "\n")
