@@ -52,7 +52,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"watch", "--redis", addr}, "wants the tables to watch, comma-separated"},
 		{[]string{"watch", "demo", "--every", "0s", "--redis", addr}, "--every wants a duration between 1ms and 1h"},
 		{[]string{"list", "demo", "--redis", addr}, "takes no table name: list"},
-		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; show flags: --at-epoch, --redis"},
+		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; show flags: --at-epoch, --max, --redis"},
 	} {
 		code, stdout, stderr := runTable(c.args...)
 		if code != 2 || stdout != "" {

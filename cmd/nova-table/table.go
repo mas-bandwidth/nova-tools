@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
@@ -190,12 +191,16 @@ func (app *application) cmdList(args []string, stdout, stderr io.Writer) int {
 	const verb = "list"
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
+	max := fs.Int("max", bounded.Default, "table lines to print before one summary line stands for the rest; 0 prints all")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	if len(pos) != 0 {
 		return refuse(stderr, verb, "takes no table name: list")
+	}
+	if *max < 0 {
+		return refuse(stderr, verb, "--max must be zero or more; 0 means all")
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -209,8 +214,12 @@ func (app *application) cmdList(args []string, stdout, stderr io.Writer) int {
 		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE LIST tables=%d trips=%d\n", len(summaries), trips.N())
+	list := bounded.Capped(stdout, *max, "TABLE", "table", "use --max 0 to see all")
 	for _, row := range summaries {
-		fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d\n", row.Name, row.Columns, row.Rows)
+		list.Line(fmt.Sprintf("TABLE table=%s columns=%d rows=%d", row.Name, row.Columns, row.Rows))
+	}
+	if list.Elided() > 0 {
+		fmt.Fprintf(stdout, "... and %d more (use --max 0 to see all)\n", list.Elided())
 	}
 	return 0
 }
@@ -249,12 +258,16 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
+	max := fs.Int("max", bounded.Default, "row lines to print before one summary line stands for the rest; 0 prints all")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: show <table>")
+	}
+	if *max < 0 {
+		return refuse(stderr, verb, "--max must be zero or more; 0 means all")
 	}
 	var epoch uint64
 	if *atEpoch != "" {
@@ -284,13 +297,17 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, " sort=%s", t.Sort)
 	}
 	fmt.Fprintln(stdout)
+	list := bounded.Capped(stdout, *max, "TABLE", "row", "use --max 0 to see all")
 	for _, r := range t.Rows {
 		var b strings.Builder
 		fmt.Fprintf(&b, "TABLE ROW table=%s row=%s", t.Name, field(r.Key))
 		for j, col := range t.Columns {
 			b.WriteString(" " + col.Name + "=" + field(ntable.CellText(t.Columns, r, j)))
 		}
-		fmt.Fprintln(stdout, b.String())
+		list.Line(b.String())
+	}
+	if list.Elided() > 0 {
+		fmt.Fprintf(stdout, "... and %d more (use --max 0 to see all)\n", list.Elided())
 	}
 	return 0
 }

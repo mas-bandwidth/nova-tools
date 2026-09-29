@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
@@ -144,12 +145,16 @@ func (app *application) cmdCellMembers(args []string, stdout, stderr io.Writer) 
 	const verb = "cell members"
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
+	max := fs.Int("max", bounded.Default, "member lines to print before one summary line stands for the rest; 0 prints all")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	if len(pos) != 3 {
 		return refuse(stderr, verb, "wants a table, a row and a column: cell members <table> <row> <col>")
+	}
+	if *max < 0 {
+		return refuse(stderr, verb, "--max must be zero or more; 0 means all")
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -163,8 +168,12 @@ func (app *application) cmdCellMembers(args []string, stdout, stderr io.Writer) 
 		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], len(ms), trips.N())
+	list := bounded.Capped(stdout, *max, "TABLE", "member", "use --max 0 to see all")
 	for _, m := range ms {
-		fmt.Fprintf(stdout, "TABLE MEMBER table=%s row=%s col=%s member=%s score=%s\n", pos[0], field(pos[1]), pos[2], field(m.Member), strconv.FormatFloat(m.Score, 'f', -1, 64))
+		list.Line(fmt.Sprintf("TABLE MEMBER table=%s row=%s col=%s member=%s score=%s", pos[0], field(pos[1]), pos[2], field(m.Member), strconv.FormatFloat(m.Score, 'f', -1, 64)))
+	}
+	if list.Elided() > 0 {
+		fmt.Fprintf(stdout, "... and %d more (use --max 0 to see all)\n", list.Elided())
 	}
 	return 0
 }

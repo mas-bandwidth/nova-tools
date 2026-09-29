@@ -101,7 +101,7 @@ management, member placement, view assembly, and display:
 nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
 nova-table set    <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]
 nova-table drop   <table> [--definition]
-nova-table list
+nova-table list   [--max <n>]
 nova-table row add    <table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
 nova-table row set    <table> <row> <col>=<value>...
 nova-table row hide   <table> <row>...
@@ -116,12 +116,12 @@ nova-table col move   <table> <col> --first | --last | --before <col> | --after 
 nova-table cell add      <table> <row> <col> <member>... [--score <n>]
 nova-table cell remove   <table> <row> <col> <member>...
 nova-table cell move     <table> <row> <from-col> <to-col> <member>...
-nova-table cell members  <table> <row> <col>
+nova-table cell members  <table> <row> <col> [--max <n>]
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
 nova-table check  <table>
 nova-table clear  <table>
-nova-table show   <table> [--at-epoch <n>]
+nova-table show   <table> [--at-epoch <n>] [--max <n>]
 nova-table render <table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
 nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]

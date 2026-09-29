@@ -1910,7 +1910,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `create <table> --columns <spec>` | Creates a definition; repeated identical creates are accepted; another shape points to `set --columns` |
 | `set <table>` | Edits footer, columns, visibility or name; see `help set` |
 | `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition; snapshots from earlier epochs stay |
-| `list` | Lists active tables with row and column counts |
+| `list [--max <n>]` | Lists active tables with row and column counts; capped by --max (default 20, 0 for all) |
 | `row add <table> <row>...` | Adds one or many rows; optional label, exclusion, owner and bound cells |
 | `row set <table> <row> <col>=<value>...` | Writes text values; `col=` clears one |
 | `row hide/show <table> <row>...` | Changes visibility; data and fold contributions stay |
@@ -1923,12 +1923,12 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `col move <table> <col> --first/--last/--before/--after` | Moves one column |
 | `cell add/remove <table> <row> <col> <member>...` | Adds or removes a batch; add takes `--score` |
 | `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
-| `cell members <table> <row> <col>` | Lists member IDs and scores in order |
+| `cell members <table> <row> <col> [--max <n>]` | Lists member IDs and scores in order; capped by --max (default 20, 0 for all) |
 | `member create <table> <id>` | Allocates an unplaced identity |
 | `member find <table> <id>` | Reports its owned location or `state=missing/unplaced`, with epoch and revision |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
-| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages |
+| `show <table> [--at-epoch <n>] [--max <n>]` | Prints complete projected values as typed lines, including text and percentages; capped by --max (default 20, 0 for all) |
 | `render <table>` | Prints a text table; an empty table prints nothing |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
@@ -2023,7 +2023,9 @@ prints the table alone. A stored view adds timestamp, title and optional pooled
 summary from the same snapshot. ETA has no value until rate sampling is added.
 `view show` is configuration; `render --view <name>` prints the rendered view,
 as does `watch --view <name> --once`. Stored views use active epochs;
-`--at-epoch` applies only to table targets.
+`--at-epoch` applies only to table targets. `show`, `list`, and `cell members`
+bound output with `--max <n>` (default 20, 0 for unlimited); when items exceed
+`--max`, a summary line `... and <N> more (use --max 0 to see all)` is printed.
 
 ### Connection and exit codes
 
