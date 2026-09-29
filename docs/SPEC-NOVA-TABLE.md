@@ -331,14 +331,17 @@ in validation but not the changed count. All references, including guard-only
 dependencies, are explicit.
 
 The member `revision` is a table-owned counter. A legacy existing member with no
-record revision reads as zero. A newly created member starts at one; any accepted
-change to its placement or application fields increments it once, irrespective of
-how many fields changed. Ordinary table member writers use the same revision
-helper so they cannot bypass a prepared batch's guard. Epoch, placement/index fields
-and revision cannot be set/unset through application metadata. Counter overflow
-refuses before any write. Table revision remains the existing table-wide counter;
-its expected value rejects changes to the complete observed scope between read and
-write, including insertion/deletion not named by the caller.
+record revision reads as zero. A newly created member starts at one; any
+accepted batch change to its placement, score or application fields increments
+it once, irrespective of how many fields changed. Table cell add/remove/move use
+the member revision helper. Direct application-field `HSET` outside the batch
+protocol does not advance table or member revisions; callers relying on those
+fields as prerequisites must include explicit field guards. Epoch,
+placement/index fields and revision cannot be set/unset through application
+metadata. Counter overflow refuses before any write. Table revision remains the
+existing table-wide counter; its expected value rejects intervening
+revision-advancing table changes between read and write, including
+insertion/deletion not named by the caller.
 
 Field guards are data: exactly one of equals, absent or one_of (a nonempty string
 array). Present empty string differs from absent. Values match exact bytes. No Lua,
@@ -349,13 +352,39 @@ its verified immutable identity must be represented in a member field, or a late
 explicit table extension must provide its guard. A prior unguarded client read is
 not an atomic prerequisite proof.
 
-Initial proposed bounds: 128 entries with changes, 1,024 guard-only entries and
-1 MiB canonical encoded request. IDs/field counts and value byte limits must also
-be explicitly bounded by the implementation's reviewed manifest schema. Candidate
-limits are measured on supported benches before acceptance. Exceeding a limit
-refuses the whole request with the limit and remedy; no automatic chunking turns
-one requested transaction into several. A caller can explicitly narrow its next
-request, accepting the separately identified transaction scope.
+The server (`ns_table_apply`, `ns_table_read_set`) enforces the following bounds.
+The Go manifest validator and `ApplyBatch` enforce the batch bounds; the read-set
+member limit is enforced by `ns_table_read_set`. A test compares the Lua and Go
+constants with this table:
+
+| Bound | Value |
+| --- | --- |
+| entries with changes | 128 |
+| guard-only entries | 1024 |
+| manifest bytes | 1048576 |
+| member id bytes | 256 |
+| field value bytes | 65536 |
+| set fields per member | 128 |
+| unset fields per member | 1000 |
+| guards per member | 1000 |
+| one_of options | 1000 |
+| read set members | 1024 |
+
+The 128 set-fields and 1000 unset-fields limits are intentionally different.
+The field-value byte limit applies to each value in `set`. The read-set member
+limit counts unique member IDs in the selection.
+
+Manifest size counts the encoded request bytes supplied to the server, including
+whitespace and JSON escaping. ID and field-value sizes count decoded UTF-8 bytes.
+
+An entry has changes when it holds a create, a move, a remove, a nonempty set or
+a nonempty unset; otherwise it is guard-only. An otherwise valid manifest at a
+bound is accepted; one over it refuses the whole request as `LIMIT`, before any
+read of the store or write, naming the bound, its value and the count found (and
+the member at fault for a per-member bound), without echoing field values or the
+whole manifest. No automatic chunking turns one requested transaction into
+several. A caller can explicitly narrow its next request, accepting the
+separately identified transaction scope.
 
 ### Validation, atomicity and replay
 
