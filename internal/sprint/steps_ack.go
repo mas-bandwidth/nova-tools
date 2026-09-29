@@ -248,31 +248,30 @@ func acknowledged(n Note, entries []Open, who string, now time.Time) Note {
 	return a
 }
 
-// heldAfterAck says a primary is still held by someone after an ack closes the
-// judgments in closing (of the types acked on it): any state but review is
-// held (by its worker, its needs, the tick, the merger or the coordinator's
-// release); in review, a read outstanding, a read the tick would ask for, or
-// another judgment open on it, or one the ack itself writes, holds it.
+// heldAfterAck says a primary is still held after an ack closes the
+// judgments in closing: the no-stall rule (Unheld, check's rule 12, the one
+// definition of held) judged on the state after the ack, the judgments it
+// closes gone and the one the primary would need next open.
 func heldAfterAck(s *Snapshot, pr *Card, closing map[string]bool, acked []string) bool {
-	if pr.Col != Review || s.Readers == nil {
-		return true
-	}
-	reads := readsAt(s, pr, pr.Int("attempt"))
-	for _, rc := range reads {
-		if rc.Col == Asked || rc.Col == Reading {
-			return true
-		}
-	}
-	if len(reads) == 0 && pr.F("result") != "failed" {
-		return true // the tick asks it
-	}
-	for _, o := range closesFor(s.Open, nil, pr.ID) {
+	after := *s
+	after.Open = nil
+	for _, o := range s.Open {
 		if !closing[o.Note.ID] {
-			return true
+			after.Open = append(after.Open, o)
 		}
 	}
-	j, ok := reviewJudgment(s, pr, reviewStep{closing: closing})
-	return ok && !contains(acked, j.Type)
+	if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, acked: acked}); ok {
+		j.ID = "after-ack"
+		for _, sub := range j.Subjects() {
+			after.Open = append(after.Open, Open{Key: OpenKey(j.ID, sub), Note: j})
+		}
+	}
+	for _, f := range Unheld(HeldState{Snap: &after, Running: true}, s.Now) {
+		if f.Subject == pr.ID {
+			return false
+		}
+	}
+	return true
 }
 
 // silenceRefusal is why an ack is refused: the primary it would leave held by

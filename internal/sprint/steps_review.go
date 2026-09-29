@@ -678,10 +678,10 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if why := inState(c, Merging); why != "" {
 			return why
 		}
-		if m := s.Merge.Placed(c.ID); m == nil || (m.Col != Queued && m.Col != Stuck) {
-			return "not queued or stuck in merge (it is " + placeWord(orEmpty(s.Merge.Card(c.ID), c.ID)) + ")"
+		if m := s.Merge.Placed(c.ID); m != nil && m.Col != Queued && m.Col != Stuck {
+			return "not queued or stuck in merge (it is " + placeWord(m) + ")"
 		}
-		return ""
+		return "" // queued, stuck, or no merge card at all: return takes it back
 	}, s.primaryCard)
 	leaving := map[string]bool{}
 	for _, c := range chosen {
@@ -700,10 +700,16 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}
-		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-			change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")),
-			change(Work, moveEntry(c, c.Row, Review, set)),
-		}, Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)}
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Review, set))},
+			Closes: closesFor(s.Open, ReturnResolves, c.ID)}
+		if m != nil {
+			u.Changes = append([]Change{change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream"))}, u.Changes...)
+			u.Moved = fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)
+		} else {
+			// merging with no merge card (a repair skipped its create): back to
+			// review, where the coordinator decides again
+			u.Moved = fmt.Sprintf("%s merging -> review (it had no merge card)", c.ID)
+		}
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
 		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)

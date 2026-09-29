@@ -4,10 +4,12 @@ package store
 // the model's trace run through the store.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -194,4 +196,54 @@ func TestModelAskAnotherBeforeTheFirstAsk(t *testing.T) {
 	if n := len(h.snap().Readers.Of("s1-1")); n != 0 {
 		t.Fatalf("asked of %d readers", n)
 	}
+}
+
+// orphanInMerging is s1-1 merging with no merge card (a repair skipped the
+// merge table's create while the work move applied) and the repair's skip
+// judgment open on it.
+func orphanInMerging(t *testing.T) (*harness, string) {
+	h := newHarness(t)
+	h.setup(1)
+	h.through("s1-1")
+	s := h.snap()
+	m := s.Merge.Card("s1-1")
+	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-merge", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Merge.Revision),
+		OperationID: "outside-remove", Members: []ntable.BatchMemberEntry{{ID: m.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(m.Rev)}, Remove: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.must(Step{Verb: "repair", Plan: func(s *sprint.Snapshot) sprint.Plan {
+		n := sprint.Note{Kind: sprint.Judgment, Type: sprint.NRepairSkipped, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, At: s.Now,
+			What: "the merge card of s1-1 was skipped", Decisions: append([]string(nil), sprint.Decisions[sprint.NRepairSkipped]...)}
+		return sprint.Plan{Notes: []sprint.Note{n}}
+	}})
+	open := h.openOf(sprint.NRepairSkipped)
+	if len(open) != 1 || h.state("s1-1") != sprint.Merging || h.snap().Merge.Card("s1-1").Placed() {
+		t.Fatalf("the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
+	}
+	return h, open[0].Note.ID
+}
+
+// Model read 2: ack is judged by the one no-stall rule on the state after
+// it: the skip judgment is what holds an orphan in merging, so its ack is
+// refused; return takes the orphan back to review; rework is refused with
+// the card still judged; drop ends it.
+func TestAnOrphanInMergingIsNeverSilent(t *testing.T) {
+	t.Parallel()
+	h, id := orphanInMerging(t)
+	if res := h.run(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "looked"})); len(res.Refused) != 1 || len(h.openOf(sprint.NRepairSkipped)) != 1 {
+		t.Fatalf("the ack that silences the orphan: %+v", res)
+	}
+	if res := h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "f", Answers: []string{id}})); len(res.Refused) == 0 || len(h.openOf(sprint.NRepairSkipped)) != 1 {
+		t.Fatalf("rework of the orphan: %+v", res)
+	}
+	res := h.run(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "no merge card", Answers: []string{id}}))
+	if len(res.Refused) != 0 || h.state("s1-1") != sprint.Review {
+		t.Fatalf("return of the orphan: %+v, s1-1 %s", res, h.state("s1-1"))
+	}
+	h.clean("returned")
+	h2, id2 := orphanInMerging(t)
+	if res := h2.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone", Answers: []string{id2}})); len(res.Refused) != 0 {
+		t.Fatalf("drop of the orphan: %+v", res)
+	}
+	h2.clean("dropped")
 }

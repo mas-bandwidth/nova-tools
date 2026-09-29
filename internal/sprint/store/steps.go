@@ -136,10 +136,8 @@ func SentinelsDueStep(who string) Step {
 
 // AckStep is the coordinator closing judgments it looked at.
 func AckStep(r sprint.AckReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "ack", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
-		Extras: func(s *sprint.Snapshot) map[string][]string {
-			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
-		},
+	// every table: ack is judged by the no-stall rule on the state after it
+	return Step{Args: ArgsOf(r), Verb: "ack", Load: All, Extras: tickExtras,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ack(s, r) }}
 }
 
