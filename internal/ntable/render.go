@@ -257,7 +257,8 @@ func cellText(c Column, r Row, j int) string {
 // formulaValue is a pct cell's value over the row: the numerator as a share
 // of the denominator (the named count columns of pct(<col>/<a>+<b>), or every
 // count column of the row for pct(<col>)); ok is false when a count it reads
-// did not come back. A known zero denominator is zero percent.
+// did not come back, or when a column it names is missing or is no count
+// column. A known zero denominator is zero percent.
 func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 	part, total, ok := shareCounts(cols, c, r)
 	if !ok {
