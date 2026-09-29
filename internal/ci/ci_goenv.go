@@ -107,11 +107,11 @@ func (r GoEnvResult) ExitCode() int {
 // caller, never from a walk of the repository; testdata directories and
 // internal/goenv itself are skipped.
 func CheckGoEnv(root, allowlistPath string) (GoEnvResult, error) {
-	return CheckGoEnvWith(root, allowlistPath, defaultSourceSeams())
+	return checkGoEnvWith(root, allowlistPath, defaultSourceSeams())
 }
 
-// CheckGoEnvWith is CheckGoEnv reading the tree through seams.
-func CheckGoEnvWith(root, allowlistPath string, seams SourceSeams) (GoEnvResult, error) {
+// checkGoEnvWith is CheckGoEnv reading the tree through seams.
+func checkGoEnvWith(root, allowlistPath string, seams SourceSeams) (GoEnvResult, error) {
 	var res GoEnvResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {

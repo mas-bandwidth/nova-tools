@@ -97,18 +97,13 @@ func (r NetResult) ExitCode() int {
 // names no offender. The tree comes from the caller, never from a walk of the
 // repository; it reuses the waits checker's file walk (testdata directories are
 // skipped so the fixtures are never read as offenders) and its allowlist
-// CheckNet reads every _test.go under root/internal and root/cmd and returns
-// the real hosts, the allowlist entries honored, and any allowlist entry that
-// names no offender. The tree comes from the caller, never from a walk of the
-// repository; it reuses the waits checker's file walk (testdata directories are
-// skipped so the fixtures are never read as offenders) and its allowlist
 // reader, whose `file:line kind date reason` rows are general enough for both.
 func CheckNet(root, allowlistPath string) (NetResult, error) {
-	return CheckNetWith(root, allowlistPath, defaultSourceSeams())
+	return checkNetWith(root, allowlistPath, defaultSourceSeams())
 }
 
-// CheckNetWith is CheckNet reading the tree through seams.
-func CheckNetWith(root, allowlistPath string, seams SourceSeams) (NetResult, error) {
+// checkNetWith is CheckNet reading the tree through seams.
+func checkNetWith(root, allowlistPath string, seams SourceSeams) (NetResult, error) {
 	var res NetResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {

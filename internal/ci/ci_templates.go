@@ -94,11 +94,11 @@ func (r TemplatesResult) ExitCode() int {
 // repository; testdata directories are skipped so the fixtures are never read
 // as offenders.
 func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
-	return CheckTemplatesWith(root, allowlistPath, defaultSourceSeams())
+	return checkTemplatesWith(root, allowlistPath, defaultSourceSeams())
 }
 
-// CheckTemplatesWith is CheckTemplates reading the tree through seams.
-func CheckTemplatesWith(root, allowlistPath string, seams SourceSeams) (TemplatesResult, error) {
+// checkTemplatesWith is CheckTemplates reading the tree through seams.
+func checkTemplatesWith(root, allowlistPath string, seams SourceSeams) (TemplatesResult, error) {
 	var res TemplatesResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {

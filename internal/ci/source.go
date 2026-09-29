@@ -25,7 +25,7 @@ func defaultSourceSeams() SourceSeams {
 	}
 }
 
-func DiskSourceSeams() SourceSeams {
+func diskSourceSeams() SourceSeams {
 	return SourceSeams{
 		WalkDir:   filepath.WalkDir,
 		ReadFile:  os.ReadFile,

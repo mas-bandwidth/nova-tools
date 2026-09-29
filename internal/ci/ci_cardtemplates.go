@@ -300,15 +300,12 @@ const maxCardTemplateLine = 160
 // offender. The directories come from the caller, never from a walk of the
 // repository, so a test drives it with a fixture tree. A directory that does
 // not exist is skipped.
-// CheckCardTemplates reads every card template under the given directories and
-// returns the offenders, the allowlist entries honored, and any allowlist entry
-// that names no offender.
 func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardTemplatesResult, error) {
-	return CheckCardTemplatesWith(root, dirs, allowlistPath, defaultSourceSeams())
+	return checkCardTemplatesWith(root, dirs, allowlistPath, defaultSourceSeams())
 }
 
-// CheckCardTemplatesWith is CheckCardTemplates reading the tree through seams.
-func CheckCardTemplatesWith(root string, dirs []string, allowlistPath string, seams SourceSeams) (CardTemplatesResult, error) {
+// checkCardTemplatesWith is CheckCardTemplates reading the tree through seams.
+func checkCardTemplatesWith(root string, dirs []string, allowlistPath string, seams SourceSeams) (CardTemplatesResult, error) {
 	var res CardTemplatesResult
 	entries, err := readCardTemplateAllowlist(allowlistPath)
 	if err != nil {

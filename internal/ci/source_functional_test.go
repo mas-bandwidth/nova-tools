@@ -3,9 +3,37 @@
 package ci
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"reflect"
 	"testing"
 )
+
+type seamCalls struct {
+	walks  int
+	reads  int
+	parses int
+}
+
+func countedDiskSeams(calls *seamCalls) SourceSeams {
+	base := diskSourceSeams()
+	return SourceSeams{
+		WalkDir: func(root string, fn fs.WalkDirFunc) error {
+			calls.walks++
+			return base.WalkDir(root, fn)
+		},
+		ReadFile: func(name string) ([]byte, error) {
+			calls.reads++
+			return base.ReadFile(name)
+		},
+		ParseFile: func(name string, src []byte, mode parser.Mode) (*token.FileSet, *ast.File, error) {
+			calls.parses++
+			return base.ParseFile(name, src, mode)
+		},
+	}
+}
 
 // TestTheSourceSeamsAnswerAsTheDiskDoes holds the unit tier's shortcut to the
 // disk: every production checker run over this repository through the shared
@@ -17,22 +45,26 @@ func TestTheSourceSeamsAnswerAsTheDiskDoes(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 	checks := map[string]func(SourceSeams) (any, error){
-		"CheckNet":         func(s SourceSeams) (any, error) { return CheckNetWith(root, "", s) },
-		"CheckWaits":       func(s SourceSeams) (any, error) { return CheckWaitsWith(root, "", s) },
-		"CheckTestbins":    func(s SourceSeams) (any, error) { return CheckTestbinsWith(root, "", s) },
-		"CheckTemplates":   func(s SourceSeams) (any, error) { return CheckTemplatesWith(root, "", s) },
-		"CheckGoEnv":       func(s SourceSeams) (any, error) { return CheckGoEnvWith(root, "", s) },
-		"FindBenchRunners": func(s SourceSeams) (any, error) { return FindBenchRunnersWith(root, s) },
+		"CheckNet":         func(s SourceSeams) (any, error) { return checkNetWith(root, "", s) },
+		"CheckWaits":       func(s SourceSeams) (any, error) { return checkWaitsWith(root, "", s) },
+		"CheckTestbins":    func(s SourceSeams) (any, error) { return checkTestbinsWith(root, "", s) },
+		"CheckTemplates":   func(s SourceSeams) (any, error) { return checkTemplatesWith(root, "", s) },
+		"CheckGoEnv":       func(s SourceSeams) (any, error) { return checkGoEnvWith(root, "", s) },
+		"FindBenchRunners": func(s SourceSeams) (any, error) { return findBenchRunnersWith(root, s) },
 		"CheckCardTemplates": func(s SourceSeams) (any, error) {
-			return CheckCardTemplatesWith(root, []string{"docs", "tools", "cmd", "internal"}, "", s)
+			return checkCardTemplatesWith(root, []string{"docs", "tools", "cmd", "internal"}, "", s)
 		},
-		"HelpBannerExamples": func(s SourceSeams) (any, error) { return HelpBannerExamplesWith(root, s) },
+		"HelpBannerExamples": func(s SourceSeams) (any, error) { return helpBannerExamplesWith(root, s) },
 	}
 	for name, check := range checks {
 		viaTree, treeErr := check(defaultSourceSeams())
-		viaDisk, diskErr := check(DiskSourceSeams())
+		var calls seamCalls
+		viaDisk, diskErr := check(countedDiskSeams(&calls))
 		if (treeErr == nil) != (diskErr == nil) || !reflect.DeepEqual(viaTree, viaDisk) {
 			t.Errorf("%s through the shared tree differs from the disk:\n tree %+v (%v)\n disk %+v (%v)", name, viaTree, treeErr, viaDisk, diskErr)
+		}
+		if calls.reads == 0 {
+			t.Errorf("%s made no disk reads through its seam (%+v); injected seam bypass would not be caught", name, calls)
 		}
 	}
 }

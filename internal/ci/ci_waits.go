@@ -155,11 +155,11 @@ func walkCITestFilesWith(root string, seams SourceSeams, fn func(rel string, src
 // repository; testdata directories are skipped so the fixtures are never read
 // as offenders.
 func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
-	return CheckWaitsWith(root, allowlistPath, defaultSourceSeams())
+	return checkWaitsWith(root, allowlistPath, defaultSourceSeams())
 }
 
-// CheckWaitsWith is CheckWaits reading the tree through seams.
-func CheckWaitsWith(root, allowlistPath string, seams SourceSeams) (WaitsResult, error) {
+// checkWaitsWith is CheckWaits reading the tree through seams.
+func checkWaitsWith(root, allowlistPath string, seams SourceSeams) (WaitsResult, error) {
 	var res WaitsResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {

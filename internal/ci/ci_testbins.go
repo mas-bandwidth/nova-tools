@@ -104,11 +104,11 @@ var checkTestbinDirs = []string{"internal", "cmd"}
 // never from a walk of the repository; testdata directories are skipped so the
 // fixtures are never read as offenders.
 func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
-	return CheckTestbinsWith(root, allowlistPath, defaultSourceSeams())
+	return checkTestbinsWith(root, allowlistPath, defaultSourceSeams())
 }
 
-// CheckTestbinsWith is CheckTestbins reading the tree through seams.
-func CheckTestbinsWith(root, allowlistPath string, seams SourceSeams) (TestbinsResult, error) {
+// checkTestbinsWith is CheckTestbins reading the tree through seams.
+func checkTestbinsWith(root, allowlistPath string, seams SourceSeams) (TestbinsResult, error) {
 	var res TestbinsResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {

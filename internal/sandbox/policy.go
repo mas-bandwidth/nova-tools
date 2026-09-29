@@ -82,6 +82,7 @@ type Input struct {
 	Argv        []string // the command and its arguments, everything after --
 	Home        string   // the caller's HOME as the child will see it (rule 9)
 	LookAt      string   // PATH to resolve the command on; empty means the process's own
+	CallerHomes []string // homes to check against; empty uses callerHomes()
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
@@ -103,6 +104,14 @@ type Policy struct {
 	GPUMode     GPUMode
 	Command     string   // the resolved absolute path of the executable
 	Argv        []string // Command followed by its arguments, verbatim
+
+	// Available is an optional seam for tests checking rule 1's refusal when the backend is absent.
+	// When nil, package Available() is called.
+	Available func() (string, bool)
+
+	// LandlockABI is an optional seam for tests checking Linux Landlock ABI behavior.
+	// When nil, package landlockABI is called.
+	LandlockABI func() (int, bool)
 
 	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
 	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
@@ -259,9 +268,10 @@ func xcodeSelectDeveloperDirs() []string {
 }
 
 // callerHomes is every directory that is a HOME of the person running the tool: the
-// passwd home and $HOME as THIS PROCESS inherited it. It is a var so that a test can
-// stand a temporary home in front of it without touching the machine's.
-var callerHomes = defaultCallerHomes
+// passwd home and $HOME as THIS PROCESS inherited it.
+func callerHomes() []string {
+	return defaultCallerHomes()
+}
 
 func defaultCallerHomes() []string {
 	var out []string
@@ -302,7 +312,7 @@ func defaultCallerHomes() []string {
 // run that dies at exec with no reason given. Rule 3's "a caller that adds one back has
 // done so in its own argv" is the one exemption, so a directory the caller already named
 // in --read or --write is not refused: nothing new is granted there.
-func commandDirRefusal(command string, named []string) *Refusal {
+func commandDirRefusal(command string, named []string, homes []string) *Refusal {
 	dir := filepath.Dir(command)
 	if got, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = got
@@ -310,7 +320,7 @@ func commandDirRefusal(command string, named []string) *Refusal {
 	if insideAny(dir, named) {
 		return nil
 	}
-	for _, home := range callerHomes() {
+	for _, home := range homes {
 		// A home the caller pointed INTO the job is not the home this guard is about:
 		// rule 9 makes the tool's own $HOME the job's data home, which is inside a
 		// --write by construction, so guarding it would refuse every command installed
@@ -527,6 +537,10 @@ func ResolveCallerFile(flag, raw string) (string, *Refusal) {
 // Build turns an Input into a Policy, or into every independent refusal it holds. It
 // creates exactly one directory, rule 8's, and only when the rest of the input is sound.
 func Build(in Input) (*Policy, []Refusal) {
+	return build(in, callerHomes)
+}
+
+func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	var bad []Refusal
 	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
 
@@ -685,6 +699,11 @@ func Build(in Input) (*Policy, []Refusal) {
 		}
 	}
 
+	homes := in.CallerHomes
+	if len(homes) == 0 && homesFn != nil {
+		homes = homesFn()
+	}
+
 	// rule 5: the command is resolved on the CALLER's PATH, here, outside the wall.
 	if len(in.Argv) > 0 {
 		cmd, r := resolveCommand(in.Argv[0], in.LookAt)
@@ -693,7 +712,7 @@ func Build(in Input) (*Policy, []Refusal) {
 		} else {
 			p.Command = cmd
 			p.Argv = append([]string{cmd}, in.Argv[1:]...)
-			if hr := commandDirRefusal(cmd, append(append([]string{}, p.Reads...), p.Writes...)); hr != nil {
+			if hr := commandDirRefusal(cmd, append(append([]string{}, p.Reads...), p.Writes...), homes); hr != nil {
 				bad = append(bad, *hr)
 			}
 		}
@@ -722,7 +741,7 @@ func Build(in Input) (*Policy, []Refusal) {
 	if lookIn == "" {
 		lookIn = os.Getenv("PATH")
 	}
-	p.PathDirs = PathDirectories(lookIn, p.Reads, p.Writes, p.OptRoots)
+	p.PathDirs = PathDirectoriesWith(lookIn, p.Reads, p.Writes, p.OptRoots, homes)
 	return p, nil
 }
 
@@ -732,6 +751,12 @@ func Build(in Input) (*Policy, []Refusal) {
 // on PATH (e.g. ~/.local/bin) can be resolved and executed by name, while keeping
 // their file contents uninspectable (issue #3501).
 func PathDirectories(lookIn string, reads, writes, optRoots []string) []string {
+	return PathDirectoriesWith(lookIn, reads, writes, optRoots, callerHomes())
+}
+
+// PathDirectoriesWith extracts existing directories from lookIn (PATH) with an explicit
+// list of homes to skip.
+func PathDirectoriesWith(lookIn string, reads, writes, optRoots, homes []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, raw := range filepath.SplitList(lookIn) {
@@ -753,7 +778,7 @@ func PathDirectories(lookIn string, reads, writes, optRoots []string) []string {
 		}
 		// Skip if it is a caller home directory itself
 		isHome := false
-		for _, h := range callerHomes() {
+		for _, h := range homes {
 			if resolved == h || abs == h {
 				isHome = true
 				break
