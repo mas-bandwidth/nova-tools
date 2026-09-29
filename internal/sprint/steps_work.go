@@ -24,8 +24,14 @@ type AddReq struct {
 	Needs  []string
 	Brief  string
 	Score  *float64 // the first primary's score; the rest follow it
-	Only   []string
-	Who    string
+	// Sentinel admits one sentinel (IDs names it): a stop in the stream that
+	// the coordinator releases (docs/SPEC-SPRINT.md, sentinel cards).
+	Sentinel bool
+	// Before or After places the cards in line, in front of or after this
+	// card of the stream: their scores lie between its and its neighbour's.
+	Before, After string
+	Only          []string
+	Who           string
 }
 
 // AddIDs is the ids an add admits: the named ones, or Count generated ones
@@ -51,16 +57,35 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 	return out
 }
 
-// Add admits primaries: waiting if they need something not landed, else ready.
-// A need names a primary on the table (placed or kept) or one of this add.
+// Add admits primaries: waiting if they need something not landed, else
+// ready. A need names a primary on the table (placed or kept) or one of this
+// add. A stream's sentinels stop it by position: a card placed after an
+// unlanded sentinel of its stream waits on the latest such sentinel, and a
+// card placed in front of one is a need of it. A sentinel waits for every
+// primary of its stream that sorts before it and has not landed; inserted in
+// front of cards already in line, those waiting wait on it too, those ready go
+// back to waiting, and those in flight are past the stop: it waits for them as
+// well. It is one step: a cycle of needs refuses the whole add.
 func Add(s *Snapshot, r AddReq) Plan {
 	var p Plan
 	p.on(s)
-	if !ValidID(r.Stream) {
-		for _, id := range AddIDs(s, r) {
-			p.refuse(id, fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
+	ids := AddIDs(s, r)
+	refuseAll := func(why string) Plan {
+		var q Plan
+		for _, id := range ids {
+			q.refuse(id, why)
 		}
-		return p
+		return q
+	}
+	if !ValidID(r.Stream) {
+		return refuseAll(fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
+	}
+	if r.Sentinel && len(ids) != 1 {
+		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
+	}
+	scores, why := addScores(s, r, len(ids))
+	if why != "" {
+		return refuseAll(why)
 	}
 	for _, t := range []string{Work, Merge} {
 		if !s.T(t).HasRow(r.Stream) {
@@ -76,18 +101,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 	case ctl.F("state") == StreamLanded:
 		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
 	}
-	score := 1.0
-	for _, c := range s.Work.Cards {
-		if c.Score >= score {
-			score = c.Score + 1
-		}
-	}
-	if r.Score != nil {
-		score = *r.Score
-	}
-	needs := strings.Join(r.Needs, ",")
 	adding := map[string]bool{}
-	for _, id := range AddIDs(s, r) {
+	for _, id := range ids {
 		adding[id] = true
 	}
 	var missing []string
@@ -96,18 +111,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 			missing = append(missing, n)
 		}
 	}
-	edges := map[string][]string{}
-	for _, id := range AddIDs(s, r) {
-		edges[id] = r.Needs
+	// The cards admitted, each with its score and needs.
+	type admit struct {
+		id     string
+		score  float64
+		needs  []string
+		behind string // the sentinel it waits behind by position
 	}
-	if cycle := NeedsCycle(s, edges); cycle != nil && len(missing) == 0 {
-		for _, id := range AddIDs(s, r) {
-			p.refuse(id, "the needs would make a cycle: "+strings.Join(cycle, " needs ")+"; nothing is written")
-		}
-		return p
-	}
+	var in []admit
 	seen := map[string]bool{}
-	for _, id := range AddIDs(s, r) {
+	for i, id := range ids {
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -123,29 +136,137 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
+		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...)}
+		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel && !contains(a.needs, st.ID) {
+			a.behind = st.ID
+			a.needs = append(a.needs, st.ID)
+		}
+		in = append(in, a)
+	}
+	// What the admitted change in the cards already in line.
+	mods := map[string]*mod{}
+	var past, pulled []string
+	if r.Sentinel && len(in) == 1 {
+		st := &in[0]
+		for _, c := range streamLine(s, r.Stream) {
+			switch {
+			case c.Col == Landed:
+			case c.Score < st.score:
+				if !contains(st.needs, c.ID) {
+					st.needs = append(st.needs, c.ID)
+				}
+				if c.Col != Waiting && (c.Col != Ready || withdrawnCard(s, c)) {
+					past = append(past, c.ID) // in flight: it waits for it
+				}
+			case c.Col == Waiting || c.Col == Ready && !withdrawnCard(s, c):
+				m := modOf(mods, c)
+				m.addNeed(st.id)
+				if c.Col == Ready {
+					m.to = Waiting
+					pulled = append(pulled, c.ID)
+				}
+				if c.F("reached") != "" {
+					m.unreach = st.id
+				}
+			default: // in flight: past the stop, and the sentinel waits for it
+				past = append(past, c.ID)
+				if !contains(st.needs, c.ID) {
+					st.needs = append(st.needs, c.ID)
+				}
+			}
+		}
+	} else if len(in) > 0 {
+		// A card placed in front of an unlanded sentinel is a need of it.
+		if st := sentinelAfter(s, r.Stream, in[0].score); st != nil {
+			m := modOf(mods, st)
+			for _, a := range in {
+				m.addNeed(a.id)
+			}
+			if st.F("reached") != "" {
+				m.unreach = in[0].id
+			}
+		}
+	}
+	edges := map[string][]string{}
+	for _, a := range in {
+		edges[a.id] = a.needs
+	}
+	for id, m := range mods {
+		edges[id] = m.needs
+	}
+	if cycle := NeedsCycle(s, edges); cycle != nil {
+		return refuseAll("the needs would make a cycle: " + strings.Join(cycle, " needs ") + "; nothing is written")
+	}
+	if len(pulled) > 0 {
+		p.inserting = true
+	}
+	for _, a := range in {
 		col := Ready
-		for _, n := range r.Needs {
+		for _, n := range a.needs {
 			if s.StateOf(n) != Landed {
 				col = Waiting
 			}
 		}
-		fields := map[string]string{"kind": "primary", "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		kind := "primary"
+		if r.Sentinel {
+			kind, col = "sentinel", Waiting
+		}
+		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
 		if r.Brief != "" {
 			fields["brief"] = r.Brief
 		}
-		if needs != "" {
-			fields["needs"] = needs
+		if len(a.needs) > 0 {
+			fields["needs"] = strings.Join(a.needs, ",")
 		}
-		u := Unit{Key: id, Stream: r.Stream, Changes: append(head, change(Work, createEntry(id, r.Stream, col, score, fields))),
-			Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", id, col, r.Stream, fmtScore(score))}
-		if gone := droppedNeeds(s, r.Needs); len(gone) > 0 {
-			n := judgment(NBlocked, r.Stream, s.Now, 0, id)
-			n.What, n.Who = id+" needs "+strings.Join(gone, ",")+", dropped", r.Who
+		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
+		if r.Sentinel {
+			u.Moved = "sentinel " + u.Moved
+			var open []string
+			for _, n := range a.needs {
+				if s.StateOf(n) != Landed {
+					open = append(open, n)
+				}
+			}
+			if len(open) == 0 {
+				fields["reached"] = stamp(s.Now)
+				u.Notes = append(u.Notes, reachedNote(s, &Card{ID: a.id, Row: r.Stream}, nil, len(pulled), r.Who))
+				u.Moved += "; reached"
+			}
+			if len(pulled) > 0 {
+				u.Moved += "; " + strings.Join(pulled, ",") + " ready -> waiting behind it"
+			}
+			if len(past) > 0 {
+				u.Moved += "; already past the stop: " + strings.Join(past, ",")
+			}
+		}
+		if a.behind != "" {
+			u.Moved += "; waits behind sentinel " + a.behind
+		}
+		u.Changes = append(head, change(Work, createEntry(a.id, r.Stream, col, a.score, fields)))
+		if gone := droppedNeeds(s, a.needs); len(gone) > 0 {
+			n := judgment(NBlocked, r.Stream, s.Now, 0, a.id)
+			n.What, n.Who = a.id+" needs "+strings.Join(gone, ",")+", dropped", r.Who
 			u.Notes = append(u.Notes, n)
 		}
 		head = nil
 		p.Units = append(p.Units, u)
-		score++
+	}
+	if len(p.Units) > 0 {
+		last := &p.Units[len(p.Units)-1]
+		for _, c := range streamLine(s, r.Stream) {
+			if m := mods[c.ID]; m != nil {
+				last.Changes = append(last.Changes, m.change(c))
+				if m.unreach != "" {
+					for _, o := range closesFor(s.Open, []string{NSentinelReached}, c.ID) {
+						last.Closes = append(last.Closes, o)
+						last.Notes = append(last.Notes, decided(o, "no longer reached: "+m.unreach+" was placed before it", r.Who, s.Now, c.ID))
+					}
+					last.Moved += "; sentinel " + c.ID + " is no longer reached"
+				} else if !r.Sentinel {
+					last.Moved += "; sentinel " + c.ID + " waits for it too"
+				}
+			}
+		}
 	}
 	if head != nil && len(p.Units) == 0 && len(p.Refused) == 0 {
 		p.Units = append(p.Units, Unit{Key: CtlID(r.Stream), Changes: head, Moved: "stream " + r.Stream + " open"})
@@ -328,6 +449,14 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		if IsSentinel(c) { // reached, never ready: the coordinator releases it
+			if c.F("reached") == "" {
+				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
+			} else if len(r.IDs) > 0 {
+				p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+			}
+			continue
+		}
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
 			Moved: c.ID + " waiting -> ready"})
 	}
@@ -336,14 +465,22 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 
 // resolveAfter is resolve as a trigger of a step that lands primaries
 // (landing, by id): every waiting primary whose needs have all landed, with
-// this step's, moves to ready in the same step.
-func resolveAfter(s *Snapshot, landing map[string]bool) []Unit {
+// this step's, moves to ready in the same step; a sentinel is marked reached
+// instead, and waits for the coordinator's release.
+func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if len(WaitsFor(s, c, landing)) == 0 {
-			out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
-				Moved: c.ID + " waiting -> ready (its needs landed)"})
+		if landing[c.ID] || len(WaitsFor(s, c, landing)) > 0 {
+			continue
 		}
+		if IsSentinel(c) {
+			if c.F("reached") == "" {
+				out = append(out, reachUnit(s, c, landing, who))
+			}
+			continue
+		}
+		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+			Moved: c.ID + " waiting -> ready (its needs landed)"})
 	}
 	return out
 }

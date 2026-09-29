@@ -59,6 +59,10 @@ type Plan struct {
 	// lifecycle judges a primary's needs against it, and a plan without one
 	// moves no primary into ready.
 	pre *Snapshot
+	// releasing says release built the plan: the one step that may land a
+	// sentinel. inserting says add inserts a sentinel in front of ready
+	// primaries: the one step that may move a primary ready -> waiting.
+	releasing, inserting bool
 }
 
 // on records the pre-state the plan was built on (see Plan.pre).

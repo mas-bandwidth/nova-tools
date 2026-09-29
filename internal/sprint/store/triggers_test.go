@@ -89,3 +89,25 @@ func TestTheEngineRefusesAMovePastANeed(t *testing.T) {
 	}
 	h.clean("still waiting")
 }
+
+// A mutated step that lands a sentinel is refused by the engine: only
+// release lands one.
+func TestTheEngineRefusesASentinelLandedByAnotherStep(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(0)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
+	mutant := Step{Verb: "mutant", Load: []string{sprint.Work}, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		p := sprint.SentinelsDue(s, "")
+		c := s.Work.Card("stop")
+		p.Units = append(p.Units, sprint.Unit{Key: c.ID, Stream: c.Row, Changes: []sprint.Change{{Table: sprint.Work, Entry: ntable.BatchMemberEntry{ID: c.ID,
+			Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}},
+			Move:   &ntable.MemberMoveOp{Row: c.Row, Col: sprint.Landed}}}}})
+		return p
+	}}
+	res := h.run(mutant)
+	if len(res.Refused) == 0 || h.state("stop") != sprint.Waiting {
+		t.Fatalf("a sentinel landed by another step: %+v; stop is %s", res, h.state("stop"))
+	}
+	h.clean("still waiting")
+}

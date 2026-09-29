@@ -273,7 +273,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		if d, ok := sprintDone(s, lands, nil, r.Who); ok {
 			last.Notes = append(last.Notes, d)
 		}
-		p.Units = append(p.Units, resolveAfter(s, lands)...)
+		p.Units = append(p.Units, resolveAfter(s, lands, r.Who)...)
 	}
 	return p
 }

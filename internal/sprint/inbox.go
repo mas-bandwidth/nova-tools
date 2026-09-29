@@ -297,6 +297,16 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "add":
 				add(d, cmd+"add --stream '<stream>' --count '<n>' --brief '<brief>'")
 			}
+		case g.Type == NSentinelReached:
+			ids := strings.Join(g.Members, " ")
+			switch d {
+			case "release":
+				add(d, cmd+"release "+ids+" --reason '<what you looked at and found>'"+ans)
+			case "do more before going on":
+				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief '<brief>'")
+			case "drop":
+				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
+			}
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
 		case g.Type == NConflict:

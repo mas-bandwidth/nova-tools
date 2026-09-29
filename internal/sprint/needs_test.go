@@ -44,7 +44,7 @@ func TestNoPlanMovesAPrimaryPastItsNeeds(t *testing.T) {
 	if p := Resolve(w.s, ResolveReq{Sel: Sel{IDs: []string{"b"}}}); len(p.Units) != 0 {
 		t.Fatalf("resolve moved b: %+v", p)
 	}
-	if u := resolveAfter(w.s, nil); len(u) != 0 {
+	if u := resolveAfter(w.s, nil, ""); len(u) != 0 {
 		t.Fatalf("the trigger moved b: %+v", u)
 	}
 	// Rule 11: a primary past waiting with a need not landed is a violation.

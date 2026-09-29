@@ -9,7 +9,7 @@ func tables(ts ...string) []string { return ts }
 
 // AddStep admits primaries; it reads the named needs as well, placed or not.
 func AddStep(r sprint.AddReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
+	return Step{Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			ids := append([]string(nil), sprint.AddIDs(s, r)...)
 			return map[string][]string{sprint.Work: append(ids, r.Needs...)}
@@ -109,6 +109,18 @@ func FleetStep(r sprint.FleetReq) Step {
 func CIStep(r sprint.CIReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "ci", Load: tables(sprint.Work, sprint.Readers),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordCI(s, r) }}
+}
+
+// ReleaseStep is the coordinator releasing reached sentinels.
+func ReleaseStep(r sprint.ReleaseReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Release(s, r) }}
+}
+
+// SentinelsDueStep marks reached every sentinel whose needs have all landed.
+func SentinelsDueStep(who string) Step {
+	return Step{Args: ArgsOf(who), Verb: "sentinels", Load: tables(sprint.Work),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SentinelsDue(s, who) }}
 }
 
 // AckStep is the coordinator closing judgments it looked at.

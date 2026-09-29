@@ -49,8 +49,9 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		u.Notes = append(u.Notes, decided(entries[0], "ack: "+r.Reason, r.Who, s.Now))
 		if n.Type == NBlocked {
 			for _, o := range entries {
-				if c := waive(s, o.Subject(), r.Who); c.Entry.ID != "" {
+				if c, notes := waive(s, o.Subject(), r.Who); c.Entry.ID != "" {
 					u.Changes = append(u.Changes, c)
+					u.Notes = append(u.Notes, notes...)
 					u.Moved += "; " + o.Subject() + " waives " + c.Entry.Set["waived"]
 					if c.Entry.Move != nil {
 						u.Moved += " and is ready"
@@ -81,22 +82,27 @@ func Ack(s *Snapshot, r AckReq) Plan {
 // waive is the change that records, on a waiting primary, that the
 // coordinator acknowledged its dropped needs: they are waived, by whom and
 // when, and count as satisfied. A primary with nothing else to wait for moves
-// to ready in the same change.
-func waive(s *Snapshot, id, who string) Change {
+// to ready in the same change; a sentinel is reached instead.
+func waive(s *Snapshot, id, who string) (Change, []Note) {
 	c := s.Work.Placed(id)
 	if c == nil || c.Col != Waiting {
-		return Change{}
+		return Change{}, nil
 	}
 	gone := droppedNeeds(s, WaitsFor(s, c, nil))
 	if len(gone) == 0 {
-		return Change{}
+		return Change{}, nil
 	}
 	set := map[string]string{"waived": strings.Join(append(Split(c.F("waived")), gone...), ","), "waived_by": who, "waived_at": stamp(s.Now)}
 	after := &Card{ID: c.ID, Fields: map[string]string{"needs": c.F("needs"), "waived": set["waived"]}}
-	if len(WaitsFor(s, after, nil)) == 0 {
-		return change(Work, moveEntry(c, c.Row, Ready, set))
+	switch {
+	case len(WaitsFor(s, after, nil)) > 0:
+	case IsSentinel(c):
+		set["reached"] = stamp(s.Now)
+		return change(Work, setEntry(c, set)), []Note{reachedNote(s, c, nil, 0, who)}
+	default:
+		return change(Work, moveEntry(c, c.Row, Ready, set)), nil
 	}
-	return change(Work, setEntry(c, set))
+	return change(Work, setEntry(c, set)), nil
 }
 
 // exhaustedAfter is the reads exhausted judgment of a primary in review whose

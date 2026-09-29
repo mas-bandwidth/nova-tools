@@ -29,8 +29,9 @@ var verbs []verb
 
 func init() {
 	verbs = []verb{
-		{"init", "[--readers <a,b,...>] [--members <m1,m2,...>]", "init --readers reader-a,reader-b,reader-c --members m1,m2", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n>) [--needs <a,b>] [--brief <text>] [--score <n>]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"init", "[--readers <a,b,...>] [--members <m1,m2,...>] [--coordinator <name>]", "init --readers reader-a,reader-b,reader-c --members m1,m2", (*app).cmdInit},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text>]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
 		{"start", "(<id>... | --stream <s> | --limit <n> | --group <id> [--expect <n>])", "start --limit 10", (*app).cmdStart},
 		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
@@ -152,6 +153,7 @@ one answer to each judgment (every one prints its own, filled in):
   overdue: act                a decision above, or wait <note> --for 30m
   a stream not moving: look   where, then queue --stream <s>
   the sprint is done          clear --confirm <prefix>, or add --stream <s> for more work
+  sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
 `
 
 func versionLine() string { return buildinfo.Line(prog, version) }
@@ -491,6 +493,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
 	members := fs.String("members", "", "fleet members to bring up, comma separated")
+	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
@@ -504,6 +507,13 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	if err := st.Init(ctx); err != nil {
+		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	if *coordinator == "" {
+		*coordinator = c.actor
+	}
+	if err := st.B.SetCoordinator(ctx, *coordinator); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
@@ -534,14 +544,24 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
 	brief := fs.String("brief", "", "the brief")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
+	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
+	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
+	after := fs.String("after", "", "place the cards in line after this primary of the stream")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
 	}
-	if *stream == "" || (len(ids) == 0) == (*count == 0) {
-		return refuse(stderr, "add", "wants --stream and either ids or --count <n>")
+	if *sentinel != "" {
+		if len(ids) > 0 || *count != 0 {
+			return refuse(stderr, "add", "--sentinel <id> admits one sentinel, with no other ids or --count")
+		}
+		ids = []string{*sentinel}
 	}
-	r := sprint.AddReq{Stream: *stream, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor}
+	if *stream == "" || (len(ids) == 0) == (*count == 0) {
+		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id>")
+	}
+	r := sprint.AddReq{Stream: *stream, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
+		Sentinel: *sentinel != "", Before: *before, After: *after}
 	if *score != "" {
 		f, err := strconv.ParseFloat(*score, 64)
 		if err != nil {
@@ -554,6 +574,29 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "add", err.Error())
 	}
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
+}
+
+func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("release")
+	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel and in its notification")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ids, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "release", err.Error())
+	}
+	if len(ids) == 0 {
+		return refuse(stderr, "release", "wants the sentinels it releases and --reason <text>")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "release", err.Error())
+	}
+	coordinator, err := st.B.Coordinator(context.Background())
+	if err != nil {
+		return a.readFailed("release", err, stderr)
+	}
+	return a.runStep("release", *c, st, store.ReleaseStep(sprint.ReleaseReq{IDs: ids, Reason: *reason, Coordinator: coordinator,
+		Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // withGroup resolves --group into ids: the group of the id, checked against

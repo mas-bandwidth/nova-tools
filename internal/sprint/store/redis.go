@@ -426,3 +426,19 @@ func (r *Redis) Cursor(ctx context.Context) (string, error) {
 func (r *Redis) SetCursor(ctx context.Context, id string) error {
 	return r.C.Set(ctx, r.key(keyCursor), id, 0).Err()
 }
+
+// coordinatorField is the notes hash field that holds the coordinator's name:
+// no note id has a colon.
+const coordinatorField = "sprint:coordinator"
+
+func (r *Redis) Coordinator(ctx context.Context) (string, error) {
+	v, err := r.C.HGet(ctx, r.key(keyNotes), coordinatorField).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return v, err
+}
+
+func (r *Redis) SetCoordinator(ctx context.Context, name string) error {
+	return r.C.HSet(ctx, r.key(keyNotes), coordinatorField, name).Err()
+}

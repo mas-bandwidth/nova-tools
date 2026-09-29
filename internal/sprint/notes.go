@@ -25,40 +25,43 @@ const (
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"
+	NSentinelLanded = "sentinel landed" // released by the coordinator
 
-	NReadyToAccept  = "ready to accept" // two different readers said ok at its head
-	NWorkFailed     = "work came back failed"
-	NReadBroken     = "a reader found it broken"
-	NConflict       = "stream stopped: conflict on a card"
-	NRed            = "stream stopped: stream branch red"
-	NCross          = "stream stopped: needs a card of another stream first"
-	NRejected       = "stream stopped: the merge queue rejected"
-	NBlocked        = "a primary is blocked on something dropped"
-	NCIRed          = "ci red"
-	NReadsExhausted = "reads exhausted"
-	NRepairSkipped  = "repair skipped changes the store refused as recorded"
-	NOverdue        = "a judgment notification has waited past its deadline"
-	NStreamStale    = "a stream has not changed state or count past its deadline"
-	NSprintDone     = "the sprint is done"
-	NRepeatSuffix   = "; a second time for the same cause"
+	NReadyToAccept   = "ready to accept" // two different readers said ok at its head
+	NWorkFailed      = "work came back failed"
+	NReadBroken      = "a reader found it broken"
+	NConflict        = "stream stopped: conflict on a card"
+	NRed             = "stream stopped: stream branch red"
+	NCross           = "stream stopped: needs a card of another stream first"
+	NRejected        = "stream stopped: the merge queue rejected"
+	NBlocked         = "a primary is blocked on something dropped"
+	NCIRed           = "ci red"
+	NReadsExhausted  = "reads exhausted"
+	NRepairSkipped   = "repair skipped changes the store refused as recorded"
+	NOverdue         = "a judgment notification has waited past its deadline"
+	NStreamStale     = "a stream has not changed state or count past its deadline"
+	NSprintDone      = "the sprint is done"
+	NSentinelReached = "sentinel reached" // a stop: the coordinator decides before going on
+	NRepeatSuffix    = "; a second time for the same cause"
 )
 
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
-	NReadyToAccept:  {"accept", "rework", "drop"},
-	NWorkFailed:     {"rework with a fix", "drop"},
-	NReadBroken:     {"rework with the finding", "ask another reader", "drop"},
-	NConflict:       {"resolve and resume", "rework", "drop"},
-	NRed:            {"take the suspect off and resume", "rework the suspect"},
-	NCross:          {"rank that card first", "wait", "look at both", "return", "drop"},
-	NRejected:       {"resume", "return", "drop"},
-	NBlocked:        {"drop", "ack"},
-	NCIRed:          {"rework with a fix", "return", "drop", "look"},
-	NReadsExhausted: {"ask another reader", "rework", "drop"},
-	NRepairSkipped:  {"look at the card", "return", "drop", "rework", "ack"},
-	NOverdue:        {"act"},
-	NStreamStale:    {"look"},
-	NSprintDone:     {"clear", "add"},
+	NReadyToAccept:   {"accept", "rework", "drop"},
+	NWorkFailed:      {"rework with a fix", "drop"},
+	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
+	NConflict:        {"resolve and resume", "rework", "drop"},
+	NRed:             {"take the suspect off and resume", "rework the suspect"},
+	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
+	NRejected:        {"resume", "return", "drop"},
+	NBlocked:         {"drop", "ack"},
+	NCIRed:           {"rework with a fix", "return", "drop", "look"},
+	NReadsExhausted:  {"ask another reader", "rework", "drop"},
+	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
+	NOverdue:         {"act"},
+	NStreamStale:     {"look"},
+	NSprintDone:      {"clear", "add"},
+	NSentinelReached: {"release", "do more before going on", "drop"},
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second

@@ -165,14 +165,15 @@ func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
 
 // whereView is the view, for a program.
 type whereView struct {
-	At      time.Time                               `json:"at"`
-	Landed  int64                                   `json:"landed"`
-	All     int64                                   `json:"all"`
-	Summary string                                  `json:"summary"`
-	Tables  map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
-	Streams []sprint.StreamClock                    `json:"streams"`
-	Stalled []string                                `json:"stalled,omitempty"`
-	Pending string                                  `json:"pending,omitempty"`
+	At          time.Time                               `json:"at"`
+	Landed      int64                                   `json:"landed"`
+	All         int64                                   `json:"all"`
+	Summary     string                                  `json:"summary"`
+	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
+	Streams     []sprint.StreamClock                    `json:"streams"`
+	Stalled     []string                                `json:"stalled,omitempty"`
+	Coordinator string                                  `json:"coordinator,omitempty"`
+	Pending     string                                  `json:"pending,omitempty"`
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -226,15 +227,23 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if err != nil {
 		return whereView{}, "", err
 	}
+	coordinator, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
 	now := a.now()
-	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks}
+	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Coordinator: coordinator}
 	v.Landed, v.All = counts(shapes[0])
 	v.Summary = summary(shapes[0])
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
 	var b strings.Builder
-	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + v.Summary + "\n\n")
+	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + v.Summary + "\n")
+	if coordinator != "" {
+		b.WriteString("coordinator: " + coordinator + "\n")
+	}
+	b.WriteString("\n")
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]

@@ -137,7 +137,9 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	// 5. Merge merged = work landed.
 	landed, merged := primarySet{}, primarySet{}
 	for _, c := range s.Work.Column(Landed) {
-		landed.add(c.ID, c.ID)
+		if !IsSentinel(c) { // a sentinel lands by release, never merged
+			landed.add(c.ID, c.ID)
+		}
 	}
 	for _, c := range s.Merge.Column(Merged) {
 		merged.add(c.ID, c.Col)
@@ -147,6 +149,9 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	}
 	// 6. Nothing enters merging without ok reads from two different readers at its head.
 	for _, c := range s.Work.Column(Merging, Landed) {
+		if IsSentinel(c) {
+			continue // never read
+		}
 		readers := map[string]bool{}
 		for _, rc := range s.Readers.Of(c.ID) {
 			if rc.Col == OK && rc.F("head") == c.F("head") && ReadCardAgrees(rc) {

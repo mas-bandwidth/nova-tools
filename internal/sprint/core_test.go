@@ -11,6 +11,7 @@ func TestLifecycleIsTheSpecTable(t *testing.T) {
 	legal := map[[2]State]bool{
 		{Waiting, Ready}: true, {Ready, Working}: true, {Working, Review}: true, {Working, Ready}: true,
 		{Review, Merging}: true, {Review, Working}: true, {Review, Ready}: true, {Merging, Review}: true, {Merging, Landed}: true,
+		{Waiting, Landed}: true, {Ready, Waiting}: true, // a sentinel released; a sentinel inserted in front
 	}
 	for _, a := range States {
 		for _, b := range States {

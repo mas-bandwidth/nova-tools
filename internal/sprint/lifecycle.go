@@ -54,6 +54,8 @@ var Moves = []Move{
 	{Review, Ready, "rework", Coordinator, "rework with a fix when no fleet member is up: start delegates it later"},
 	{Merging, Review, "return", Coordinator, "the stream's CI went red and the coordinator sent it back, or return"},
 	{Merging, Landed, "merge", Mechanical, "its batch, green on the stream branch, merged to the development branch"},
+	{Waiting, Landed, "release", Coordinator, "a sentinel reached, released by the coordinator (kind sentinel only)"},
+	{Ready, Waiting, "add", Mechanical, "a sentinel inserted in front of it (only as the effect of inserting a sentinel)"},
 }
 
 // Legal says from -> to is a move of the lifecycle.
@@ -105,7 +107,7 @@ func Lawful(p Plan) Plan {
 	}
 	var kept []Unit
 	for _, u := range p.Units {
-		why := unlawful(u)
+		why := unlawful(u, &p)
 		if why == "" {
 			why = unmet(u, p.pre, landing)
 		}
@@ -154,16 +156,32 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 	return ""
 }
 
-func unlawful(u Unit) string {
+func unlawful(u Unit, p *Plan) string {
 	for _, c := range u.Changes {
 		e := c.Entry
 		if c.Table == Work && e.Create != nil && e.Create.Col != Waiting && e.Create.Col != Ready {
 			return "the lifecycle admits a primary waiting or ready, not " + e.Create.Col
 		}
+		if c.Table == Work && e.Create != nil && e.Set["kind"] == "sentinel" && e.Create.Col != Waiting {
+			return "the lifecycle admits a sentinel waiting"
+		}
 		if c.Table != Work || e.Expect == nil || e.Expect.Place == nil {
 			continue
 		}
 		from := e.Expect.Place.Col
+		sentinel := p.pre != nil && IsSentinel(p.pre.Work.Card(e.ID))
+		to := ""
+		if e.Move != nil && e.Move.Col != from {
+			to = e.Move.Col
+		}
+		switch {
+		case from == Waiting && to == Landed && !(p.releasing && sentinel):
+			return "the lifecycle lands from waiting only a sentinel, and only by release"
+		case from == Ready && to == Waiting && !p.inserting:
+			return "the lifecycle moves ready -> waiting only as the effect of inserting a sentinel"
+		case sentinel && to != "" && to != Landed:
+			return "a sentinel moves only waiting -> landed, by release"
+		}
 		switch {
 		case e.Remove && !IsOpen(from):
 			return "the lifecycle has no move off the table from " + from
