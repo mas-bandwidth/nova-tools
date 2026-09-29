@@ -268,9 +268,10 @@ func xcodeSelectDeveloperDirs() []string {
 }
 
 // callerHomes is every directory that is a HOME of the person running the tool: the
-// passwd home and $HOME as THIS PROCESS inherited it. It is a var so that a test can
-// stand a temporary home in front of it without touching the machine's.
-var callerHomes = defaultCallerHomes
+// passwd home and $HOME as THIS PROCESS inherited it.
+func callerHomes() []string {
+	return defaultCallerHomes()
+}
 
 func defaultCallerHomes() []string {
 	var out []string
@@ -536,6 +537,10 @@ func ResolveCallerFile(flag, raw string) (string, *Refusal) {
 // Build turns an Input into a Policy, or into every independent refusal it holds. It
 // creates exactly one directory, rule 8's, and only when the rest of the input is sound.
 func Build(in Input) (*Policy, []Refusal) {
+	return build(in, callerHomes)
+}
+
+func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	var bad []Refusal
 	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
 
@@ -696,7 +701,11 @@ func Build(in Input) (*Policy, []Refusal) {
 
 	homes := in.CallerHomes
 	if len(homes) == 0 {
-		homes = callerHomes()
+		if homesFn != nil {
+			homes = homesFn()
+		} else {
+			homes = callerHomes()
+		}
 	}
 
 	// rule 5: the command is resolved on the CALLER's PATH, here, outside the wall.

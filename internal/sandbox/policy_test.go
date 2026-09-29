@@ -441,6 +441,84 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 	}
 }
 
+// TestBuildDefaultWiringPassesCallerHomes asserts that Build uses callerHomes() when
+// CallerHomes is unset, guarding the default wiring without mutating package variables.
+func TestBuildDefaultWiringPassesCallerHomes(t *testing.T) {
+	t.Parallel()
+
+	write, read, home, _ := scratch(t)
+	base := t.TempDir()
+	if got, err := filepath.EvalSymlinks(base); err == nil {
+		base = got
+	}
+	fakeHome := filepath.Join(base, "home")
+	if err := os.MkdirAll(fakeHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	name, body := "tool.sh", "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		name, body = "tool.cmd", "@exit /b 0\r\n"
+	}
+	script := filepath.Join(fakeHome, name)
+	if err := testbin.WriteExecutable(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	iv := in(t, write, read, home, script)
+	// CallerHomes is empty on iv.
+	// 1. build(iv, customHomes) uses the custom homesFn when CallerHomes is unset.
+	_, badCustom := build(iv, func() []string { return []string{fakeHome} })
+	var refusedCustom bool
+	for _, r := range badCustom {
+		if strings.Contains(r.Text, "a home directory, and the home directory is never a root") {
+			refusedCustom = true
+			break
+		}
+	}
+	if !refusedCustom {
+		t.Fatalf("build(iv, homesFn) did not refuse command in custom home: %v", badCustom)
+	}
+
+	// 2. build(iv, nilHomes) does NOT refuse when homesFn returns nil.
+	_, badNil := build(iv, func() []string { return nil })
+	for _, r := range badNil {
+		if strings.Contains(r.Text, "a home directory, and the home directory is never a root") {
+			t.Fatalf("build(iv, nil) unexpectedly refused: %v", r)
+		}
+	}
+
+	// 3. Build(iv) uses callerHomes() by default. If a command lives in the real caller's home,
+	// Build must refuse it.
+	realHomes := callerHomes()
+	if len(realHomes) == 0 {
+		return
+	}
+	realHome := realHomes[0]
+	f, err := os.CreateTemp(realHome, ".sandbox-probe-*")
+	if err != nil {
+		return
+	}
+	realScript := f.Name()
+	f.WriteString(body)
+	f.Chmod(0o755)
+	f.Close()
+	t.Cleanup(func() { os.Remove(realScript) })
+
+	ivReal := in(t, write, read, home, realScript)
+	_, badReal := Build(ivReal)
+	var refusedReal bool
+	for _, r := range badReal {
+		if strings.Contains(r.Text, "a home directory, and the home directory is never a root") {
+			refusedReal = true
+			break
+		}
+	}
+	if !refusedReal {
+		t.Errorf("Build(ivReal) did not refuse command in real home %s: %v", realHome, badReal)
+	}
+}
+
 // The edges of the ancestor walk, which TestAncestors above does not reach: a path with a
 // trailing separator was its OWN first ancestor (Ancestors("/a/b/") was "/a /a/b") against
 // this function's word "every proper ancestor", and nothing covered a relative or an empty
