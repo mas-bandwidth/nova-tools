@@ -274,7 +274,7 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
+		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw), Duplicate: true}, nil
 	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
@@ -288,7 +288,9 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	if err := appendBytes(path, b.String()); err != nil {
 		return res, err
 	}
-	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish}, nil
+	// A bench section stores no pointer of its own, so what is reported is the
+	// session's, read from the header open wrote.
+	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish, Source: benchHeaderSource(raw)}, nil
 }
 
 // appendBytes adds content to an existing file and fsyncs before return, so a
@@ -359,12 +361,13 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
 }
 
-// SessionSource reads back the --source the session was opened with, from
-// the open record in log.jsonl. The session file's header is convention only
-// and is never parsed, so the log is where the pointer is read from.
+// SessionSource reads back the --source the session was opened with. In the
+// tool's own shape it is read from the open record in log.jsonl (the session
+// file's header is convention only and is never parsed there); in a bench store
+// it is read from the header open wrote, and a hand-kept record has none.
 //
 // CORRUPT PROVENANCE NEVER READS AS NONE. An absent log is a store with no
-// open records in it (a bench store, or one opened before the log carried a
+// open records in it (one opened before the log carried a
 // source) and answers "" with no error, as does an open record with no source
 // key. A log that exists and cannot be read is an error, and so is a line
 // that may be this session's open record and does not decode as one: a line
@@ -372,6 +375,18 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 // fields are not strings. Answering "" for either would let an append file
 // source=- over a pointer that open recorded.
 func SessionSource(store, session string) (string, error) {
+	sh, err := storeShape("open", store)
+	if err != nil {
+		return "", err
+	}
+	if sh == shapeBench {
+		// A bench record keeps its pointer in the header open wrote.
+		raw, err := os.ReadFile(benchFile(store, session))
+		if err != nil {
+			return "", nil
+		}
+		return benchHeaderSource(raw), nil
+	}
 	name := filepath.Join(store, "log.jsonl")
 	raw, err := os.ReadFile(name)
 	if os.IsNotExist(err) {

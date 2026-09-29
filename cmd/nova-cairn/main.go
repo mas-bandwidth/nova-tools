@@ -78,7 +78,9 @@ flags:
                     bench/session pointer). Recorded, never opened. On open it
                     is the session's pointer; an append with no --source
                     carries it. Every line prints source=, and source=- is an
-                    entry with no pointer.
+                    entry with no pointer. A bench record keeps the session's
+                    pointer in the header open writes and no pointer of its own
+                    per entry, so its lines print the session's.
   --publish <pol>   caller-chosen publication policy, one of never, manual,
                     deferred, immediate. Required on open and append. This slice
                     implements no transport: every success reports

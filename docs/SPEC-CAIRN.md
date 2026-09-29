@@ -82,8 +82,12 @@ conflict rules below read the section instead of an entry file. `index` and
 `receipt` read the dated sections; they see a session as soon as `open` has
 made its file. Their byte counts measure the whitespace-trimmed section body,
 matching duplicate detection; they do not reconstruct the original append's
-trailing newlines. The flat format stores no source or publication policy:
-receipts print `source=-` and `publish=unknown`. Ordinary prose without
+trailing newlines. The flat format stores no publication policy, so receipts
+print `publish=unknown`, and it stores a source only in the header `open` writes:
+`open --source <ptr>` prints the pointer it recorded, an `append` with no
+`--source` carries it, and `receipt` and `index` report it. A section stores no
+pointer of its own, so what an `append` and its receipt print is the session's
+(`source=-` for a hand-kept record with no header pointer). Ordinary prose without
 machine-form entry headings is not an indexed entry. Invalid stamps, invalid
 entry identifiers and duplicate entry headings refuse rather than produce an
 ambiguous receipt. The coverage ledger counts the session files of the store's
@@ -107,7 +111,7 @@ chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an
 RFC 3339 UTC replay for tests), the stable entry/session identifiers and
 the source pointers, which are recorded and never opened. An append with no
 `--source` carries the session's `open --source`, read back from the open
-record in `log.jsonl`; a log that exists and cannot be read, or an open record
+record in `log.jsonl` (in a bench store, from the header `open` wrote); a log that exists and cannot be read, or an open record
 for the session that does not decode, refuses at exit 2 naming the log before
 anything is written, because corrupt provenance never reads as none. So the entry, its index row and its receipt name where
 it came from; every line prints `source=<ptr>`, and `source=-` is an entry with
@@ -194,3 +198,4 @@ New regression cases must demonstrate the defect before the repair.
 40. `TestBenchStoreOpenRemedyKeepsTheBenchShape` and `TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb` — the same behaviour at the command line: exit codes, one-line refusals, the listing after each verb. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` runs the printed remedy on a bench store in the functional tier.
 41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.
 42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkToARegularFileIsARecord`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory, a symlink to a directory and a dangling symlink at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlink to a regular file is a record; a symlinked own-shape marker is a marker.
+43. `TestBenchSourceIsRecordedInheritedAndReported` — on a bench store `open --source` prints the pointer it recorded, an `append` with no `--source` carries it, and `receipt` and `index` report it; a hand-kept record reports `source=-`; a source never forms a section.

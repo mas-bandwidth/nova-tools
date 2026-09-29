@@ -74,7 +74,7 @@ func benchReceipts(path, session string) ([]ReceiptInfo, error) {
 			end++
 		}
 		body := strings.TrimSpace(strings.Join(lines[i+1:end], "\n"))
-		rows = append(rows, ReceiptInfo{Session: session, ID: m[2], Stamp: stamp, Bytes: len(body), Policy: "unknown", Persisted: true})
+		rows = append(rows, ReceiptInfo{Session: session, ID: m[2], Stamp: stamp, Bytes: len(body), Source: benchHeaderSource(raw), Policy: "unknown", Persisted: true})
 		i = end
 	}
 	return rows, nil
@@ -105,7 +105,7 @@ func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
 		}
 		flat[id] = true
 		for _, rc := range receipts {
-			rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Bytes: rc.Bytes})
+			rows = append(rows, IndexRow{Session: rc.Session, ID: rc.ID, Stamp: rc.Stamp, Source: rc.Source, Bytes: rc.Bytes})
 		}
 	}
 	return rows, flat, nil

@@ -112,6 +112,27 @@ func benchHeader(session, source, stamp string) string {
 // directory or to nothing, a device) is refused, naming the path and what is
 // there: open reporting success over it would leave every later verb unable to
 // find the record.
+// benchHeaderSource reads the source pointer back out of a header this tool
+// wrote: line one `# Cairn ...`, a blank line, `Session <id> opened <stamp>`,
+// then `Source: <ptr>`. A file with any other opening, a hand-kept record
+// included, has no session source. The pointer is the escaped single line open
+// wrote.
+func benchHeaderSource(raw []byte) string {
+	lines := strings.SplitN(string(raw), "\n", 5)
+	if len(lines) < 4 || !strings.HasPrefix(lines[0], "# Cairn ") || lines[1] != "" ||
+		!strings.HasPrefix(lines[2], "Session ") || !strings.Contains(lines[2], " opened ") {
+		return ""
+	}
+	return sourceLine(lines[3])
+}
+
+func sourceLine(line string) string {
+	if !strings.HasPrefix(line, "Source: ") {
+		return ""
+	}
+	return strings.TrimPrefix(line, "Source: ")
+}
+
 func openBench(store, session, source, stamp string) error {
 	name := benchFile(store, session)
 	exists, err := recordState("open", name)

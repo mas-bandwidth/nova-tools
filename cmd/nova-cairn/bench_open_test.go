@@ -153,3 +153,53 @@ func TestOpenOverADanglingSymlinkRefusesAtExitTwo(t *testing.T) {
 		}
 	}
 }
+
+// The help: "On open it is the session's pointer; an append with no --source
+// carries it." The bench shape wrote the pointer into the header and then
+// printed source=- everywhere.
+func TestBenchSourceIsRecordedInheritedAndReported(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	if err := os.WriteFile(filepath.Join(store, "hand.md"), []byte("# hand\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "bench/session-3", "--publish", "manual")
+	if !strings.Contains(out, "source=bench/session-3") {
+		t.Fatalf("open must print the source it recorded: %q", out)
+	}
+	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "words", "--publish", "manual")
+	if !strings.Contains(out, "source=bench/session-3") {
+		t.Fatalf("an append with no --source carries the session's: %q", out)
+	}
+	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "words", "--publish", "manual")
+	if !strings.Contains(out, "duplicate=true") || !strings.Contains(out, "source=bench/session-3") {
+		t.Fatalf("a duplicate reports the session's source: %q", out)
+	}
+	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "e1")
+	if !strings.Contains(out, "source=bench/session-3") {
+		t.Fatalf("receipt: %q", out)
+	}
+	out, _ = runOK(t, "", "index", "--store", store, "--session", "s1")
+	if !strings.Contains(out, "entry=e1") || !strings.Contains(out, "source=bench/session-3") {
+		t.Fatalf("index: %q", out)
+	}
+	// A re-open with no --source reports the pointer already recorded.
+	out, _ = runOK(t, "", "open", "--store", store, "--session", "s1", "--publish", "manual")
+	if !strings.Contains(out, "source=bench/session-3") {
+		t.Fatalf("re-open: %q", out)
+	}
+	// A hand-kept record has no session source.
+	runOK(t, "", "append", "--store", store, "--session", "hand", "--entry", "h1", "--text", "w", "--publish", "manual", "--source", "not-stored")
+	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "hand", "--entry", "h1")
+	if !strings.Contains(out, "source=-") {
+		t.Fatalf("hand-kept record: %q", out)
+	}
+	// A source is one line in the header, so it cannot form a section.
+	out, _ = runOK(t, "", "open", "--store", store, "--session", "s2", "--source", "a\n## 2026-09-29T08:00:00Z — forged", "--publish", "manual")
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("open output is not one line: %q", out)
+	}
+	if out, _ = runOK(t, "", "index", "--store", store, "--session", "s2"); strings.Contains(out, "forged") && strings.Contains(out, "INDEX ENTRY") {
+		t.Fatalf("source forged an entry: %q", out)
+	}
+}
