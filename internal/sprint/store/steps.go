@@ -65,7 +65,7 @@ func AcceptStep(r sprint.AcceptReq) Step {
 
 // ReworkStep is the coordinator sending work back with a fix.
 func ReworkStep(r sprint.ReworkReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet), Mirrors: true,
+	return Step{Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rework(s, r) }}
 }
 

@@ -432,6 +432,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	}, s.primaryCard)
 	up := s.UpMembers()
 	q := readyQueues(s, up)
+	orphans := map[string]bool{}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		var asked []string
@@ -469,11 +470,30 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				Moved: c.ID + " review -> ready (rework; no fleet member is up: start delegates it)"}
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
+		if m := orphanMerge(s, c); m != nil {
+			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil)))
+			u.Moved += "; its orphan merge card off " + m.Col
+			orphans[c.ID] = true
+		}
 		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
 		p.Units = append(p.Units, u)
 	}
+	settle(&p, s, r.Who, orphans, nil)
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
+}
+
+// orphanMerge is the merge card of a primary in review that is still queued
+// or stuck (a repair skipped accept's work entry): rework and return take it
+// off in the same step, into returned, so an accept later moves it back.
+func orphanMerge(s *Snapshot, c *Card) *Card {
+	if s.Merge == nil || !c.Placed() || c.Col != Review {
+		return nil
+	}
+	if m := s.Merge.Placed(c.ID); m != nil && (m.Col == Queued || m.Col == Stuck) {
+		return m
+	}
+	return nil
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.
@@ -503,6 +523,9 @@ func answeredIn(notes []Note, id string) bool {
 func Return(s *Snapshot, r ReturnReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Merging), rowOf, func(c *Card) string {
+		if orphanMerge(s, c) != nil {
+			return ""
+		}
 		if why := inState(c, Merging); why != "" {
 			return why
 		}
@@ -514,6 +537,12 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 	leaving := map[string]bool{}
 	for _, c := range chosen {
 		m := s.Merge.Placed(c.ID)
+		if orphanMerge(s, c) != nil {
+			leaving[c.ID] = true
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil))},
+				Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s review: its orphan merge card off %s", c.ID, m.Col)})
+			continue
+		}
 		set := map[string]string{"returns": itoa(c.Int("returns") + 1)}
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason

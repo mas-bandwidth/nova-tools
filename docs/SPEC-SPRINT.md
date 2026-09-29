@@ -319,7 +319,10 @@ its member), or that the store refuses on a bound or a rule, is skipped; the
 rest applies, the fence is released, and one judgment, "repair skipped changes
 the store refused as recorded", lists every skipped entry and why. No pending
 operation blocks the sprint for good. rework, return, drop and ack of the
-primary close that judgment.
+primary close that judgment. When the skipped entry was accept's work entry,
+the primary is in review with its merge card still queued: rework and return
+take that orphan card off (into returned) in the same step, so rule 4 holds
+again and a later accept moves it back.
 An operation whose first phase never applied is abandoned after the grace:
 nothing of it happened, and a notification says so (happened: an operation was
 abandoned, which verb, by whom, how old). Nothing is abandoned silently. `check` and `where` show a pending operation. The model

@@ -4,10 +4,13 @@ package store
 // section 9 check after every step.
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -194,5 +197,68 @@ func TestAskAnotherAnswersReadsExhausted(t *testing.T) {
 	r := p.do("ask another --answers RE", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{re}}))
 	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadsExhausted) != "" {
 		t.Errorf("ask --another --answers <reads exhausted>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
+	}
+}
+
+// A repair that skipped accept's work entry leaves the merge card queued and
+// the primary in review (rule 4 broken, and said so). rework, or return, takes
+// the orphan off in the same step, rule 4 holds again, and accept works after.
+func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
+	t.Parallel()
+	for _, verb := range []string{"rework", "return"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			p := newProbe(t)
+			p.setup(1)
+			p.toReview("h", "s1-1")
+			p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+			for _, rc := range p.snap().Readers.Of("s1-1") {
+				p.read(rc.F("reader"), rc.ID, "ok")
+			}
+			p.m.Fail = func(pt string) error {
+				if pt == "apply t-work before" {
+					return errors.New("cut")
+				}
+				return nil
+			}
+			if _, err := p.st.Run(p.ctx, AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")})); err == nil {
+				t.Fatalf("not cut")
+			}
+			p.m.Fail = nil
+			s := p.snap()
+			pr := s.Work.Card("s1-1")
+			if _, err := p.m.Apply(p.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "0", ExpectedTableRevision: strconv.FormatUint(s.Work.Revision, 10),
+				OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: "s1-1", Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: pr.Row, Col: pr.Col}}, Set: map[string]string{"outside": "1"}}}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.st.Repair(p.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if rep, _, _ := p.st.Check(p.ctx, 1); len(rep.Violations) == 0 {
+				t.Fatalf("the orphan is not reported")
+			}
+			var res Result
+			if verb == "rework" {
+				res = p.do(verb, ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "g"}))
+			} else {
+				res = p.do(verb, ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")}))
+			}
+			if len(res.Moved) != 1 || p.snap().Merge.Card("s1-1").Col != sprint.Returned {
+				t.Fatalf("%s: %+v, merge card %s", verb, res, p.snap().Merge.Card("s1-1").Col)
+			}
+			if verb == "rework" {
+				c := p.snap().Fleet.Card("s1-1.w2")
+				p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
+				p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
+				for _, rc := range p.snap().Readers.Of("s1-1") {
+					if rc.Col == sprint.Asked {
+						p.read(rc.F("reader"), rc.ID, "ok")
+					}
+				}
+			}
+			if res := p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")})); len(res.Moved) != 1 || p.state("s1-1") != sprint.Merging {
+				t.Fatalf("accept after %s: %+v", verb, res)
+			}
+		})
 	}
 }
