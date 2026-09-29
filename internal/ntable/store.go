@@ -1056,22 +1056,24 @@ type MemberMoveOp struct {
 
 // BatchDelta records the applied batch outcome for change stream and receipts.
 type BatchDelta struct {
-	OperationID  string             `json:"operation_id"`
-	Digest       string             `json:"digest"`
-	Actor        string             `json:"actor"`
-	GuardCount   int                `json:"guard_count"`
-	ChangedCount int                `json:"changed_count"`
-	Members      []BatchMemberDelta `json:"members"`
+	OperationID   string             `json:"operation_id"`
+	Digest        string             `json:"digest"`
+	Actor         string             `json:"actor"`
+	SelectedCount int                `json:"selected_count"`
+	GuardCount    int                `json:"guard_count"`
+	ChangedCount  int                `json:"changed_count"`
+	Members       []BatchMemberDelta `json:"members"`
 }
 
 func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	type rawBatchDelta struct {
-		OperationID  string          `json:"operation_id"`
-		Digest       string          `json:"digest"`
-		Actor        string          `json:"actor"`
-		GuardCount   int             `json:"guard_count"`
-		ChangedCount int             `json:"changed_count"`
-		Members      json.RawMessage `json:"members"`
+		OperationID   string          `json:"operation_id"`
+		Digest        string          `json:"digest"`
+		Actor         string          `json:"actor"`
+		SelectedCount int             `json:"selected_count"`
+		GuardCount    int             `json:"guard_count"`
+		ChangedCount  int             `json:"changed_count"`
+		Members       json.RawMessage `json:"members"`
 	}
 	var raw rawBatchDelta
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1080,6 +1082,7 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	b.OperationID = raw.OperationID
 	b.Digest = raw.Digest
 	b.Actor = raw.Actor
+	b.SelectedCount = raw.SelectedCount
 	b.GuardCount = raw.GuardCount
 	b.ChangedCount = raw.ChangedCount
 	if len(raw.Members) > 0 && string(raw.Members) != "{}" && string(raw.Members) != "null" {
@@ -1094,15 +1097,25 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// FieldChange records before and after values for an application field.
+// Absence is represented by nil, distinguished from a present empty string.
+type FieldChange struct {
+	Before *string `json:"before"`
+	After  *string `json:"after"`
+}
+
 // BatchMemberDelta records before and after state for a member affected by a batch.
 type BatchMemberDelta struct {
-	ID          string            `json:"id"`
-	BeforePlace string            `json:"before_place"`
-	AfterPlace  string            `json:"after_place"`
-	BeforeRev   string            `json:"before_rev"`
-	AfterRev    string            `json:"after_rev"`
-	FieldsSet   map[string]string `json:"fields_set"`
-	FieldsUnset []string          `json:"fields_unset"`
+	ID          string                 `json:"id"`
+	BeforePlace string                 `json:"before_place"`
+	AfterPlace  string                 `json:"after_place"`
+	BeforeScore *float64               `json:"before_score"`
+	AfterScore  *float64               `json:"after_score"`
+	BeforeRev   string                 `json:"before_rev"`
+	AfterRev    string                 `json:"after_rev"`
+	FieldsSet   map[string]string      `json:"fields_set"`
+	FieldsUnset []string               `json:"fields_unset"`
+	Fields      map[string]FieldChange `json:"fields"`
 }
 
 func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
@@ -1110,10 +1123,13 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 		ID          string          `json:"id"`
 		BeforePlace string          `json:"before_place"`
 		AfterPlace  string          `json:"after_place"`
+		BeforeScore *float64        `json:"before_score"`
+		AfterScore  *float64        `json:"after_score"`
 		BeforeRev   string          `json:"before_rev"`
 		AfterRev    string          `json:"after_rev"`
 		FieldsSet   json.RawMessage `json:"fields_set"`
 		FieldsUnset json.RawMessage `json:"fields_unset"`
+		Fields      json.RawMessage `json:"fields"`
 	}
 	var raw rawMemberDelta
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1122,6 +1138,8 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 	b.ID = raw.ID
 	b.BeforePlace = raw.BeforePlace
 	b.AfterPlace = raw.AfterPlace
+	b.BeforeScore = raw.BeforeScore
+	b.AfterScore = raw.AfterScore
 	b.BeforeRev = raw.BeforeRev
 	b.AfterRev = raw.AfterRev
 
@@ -1143,6 +1161,16 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 		b.FieldsUnset = fu
 	} else {
 		b.FieldsUnset = []string{}
+	}
+
+	if len(raw.Fields) > 0 && string(raw.Fields) != "[]" && string(raw.Fields) != "null" {
+		var flds map[string]FieldChange
+		if err := json.Unmarshal(raw.Fields, &flds); err != nil {
+			return err
+		}
+		b.Fields = flds
+	} else {
+		b.Fields = map[string]FieldChange{}
 	}
 	return nil
 }

@@ -44,6 +44,7 @@ func init() {
 			return app.cmdMember(append([]string{"create"}, a...), o, e)
 		}},
 		{"member find", "<table> <id>", "member find demo b1", (*application).cmdMemberFind},
+		{"batch", "<manifest>", "batch manifest.json", (*application).cmdBatch},
 		{"check", "<table>", "check demo", (*application).cmdCheck},
 		{"clear", "<table>", "clear demo", (*application).cmdClear},
 		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},

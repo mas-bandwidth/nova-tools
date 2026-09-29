@@ -1213,3 +1213,736 @@ func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
 		t.Fatalf("expected REFUSED MANIFEST for nested duplicate key, got: %v", ans)
 	}
 }
+
+func TestBatchContractWrongTypeMemberRefusal(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Pre-populate member key as a Redis string instead of hash
+	mkey := ntable.MemberKey("m_bad")
+	if err := c.Set(ctx, mkey, "string-not-hash", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	before := storeImage(t, c)
+	manifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-bad-mkey-type",
+		Actor:                 "tester",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m_bad",
+				Expect: &ntable.MemberExpect{
+					Absent: true,
+				},
+				Create: &ntable.MemberCreateOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: 10,
+				},
+			},
+		},
+	}
+	_, err := ntable.ApplyBatch(ctx, c, manifest)
+	after := storeImage(t, c)
+	if err == nil {
+		t.Fatal("expected ApplyBatch to fail on wrong type member key")
+	}
+	if !errors.Is(err, ntable.ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("store changed on wrong type member key refusal")
+	}
+}
+
+func TestBatchContractRemoveAndOverlapValidation(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// 1. remove: false in raw JSON refuses before writes
+	before1 := storeImage(t, c)
+	rawRemoveFalse := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"op-rem-false","actor":"test","members":[{"id":"m1","expect":{"revision":"0"},"remove":false}]}`, rev)
+	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawRemoveFalse).Slice()
+	after1 := storeImage(t, c)
+	if err != nil {
+		t.Fatalf("FCall err: %v", err)
+	}
+	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "ARGS" {
+		t.Fatalf("expected REFUSED ARGS for remove:false, got: %v", ans)
+	}
+	if !reflect.DeepEqual(before1, after1) {
+		t.Fatal("store changed on remove:false refusal")
+	}
+
+	// 2. remove: true on unplaced member refuses NOTMEMBER
+	before2 := storeImage(t, c)
+	manifestUnplacedRemove := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-rem-unplaced",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m_unplaced",
+				Expect: &ntable.MemberExpect{Absent: false},
+				Remove: true,
+			},
+		},
+	}
+	_, err = ntable.ApplyBatch(ctx, c, manifestUnplacedRemove)
+	after2 := storeImage(t, c)
+	if err == nil {
+		t.Fatal("expected failure on unplaced member remove")
+	}
+	if !errors.Is(err, ntable.ErrNotMember) {
+		t.Fatalf("expected ErrNotMember, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if !reflect.DeepEqual(before2, after2) {
+		t.Fatal("store changed on unplaced member remove refusal")
+	}
+
+	// 3. Set + Unset overlap on same field refuses MUTATION
+	before3 := storeImage(t, c)
+	manifestOverlap := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-overlap",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: false},
+				Set:    map[string]string{"role": "worker"},
+				Unset:  []string{"role"},
+			},
+		},
+	}
+	_, err = ntable.ApplyBatch(ctx, c, manifestOverlap)
+	after3 := storeImage(t, c)
+	if err == nil {
+		t.Fatal("expected failure on set/unset overlap")
+	}
+	if !errors.Is(err, ntable.ErrMutation) {
+		t.Fatalf("expected ErrMutation, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if !reflect.DeepEqual(before3, after3) {
+		t.Fatal("store changed on set/unset overlap refusal")
+	}
+}
+
+func TestBatchContractMoveNoopAndScoreSemantics(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Initial create of m1 at build:ready with score 10
+	createManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-create-m1",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: 10,
+				},
+				Set: map[string]string{"env": "prod"},
+			},
+		},
+	}
+	rcptCreate, err := ntable.ApplyBatch(ctx, c, createManifest)
+	if err != nil {
+		t.Fatalf("create m1: %v", err)
+	}
+	if rcptCreate.Outcome != "changed" {
+		t.Fatalf("expected outcome changed, got %q", rcptCreate.Outcome)
+	}
+
+	// 1. Move to same cell with same score and no field changes is a NO-OP
+	revAfterCreate := strconv.FormatUint(rcptCreate.After, 10)
+	score10 := float64(10)
+	noopManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revAfterCreate,
+		OperationID:           "op-move-noop",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: &score10,
+				},
+			},
+		},
+	}
+	rcptNoop, err := ntable.ApplyBatch(ctx, c, noopManifest)
+	if err != nil {
+		t.Fatalf("apply noop move: %v", err)
+	}
+	if rcptNoop.Outcome != "noop" {
+		t.Fatalf("expected outcome noop, got %q", rcptNoop.Outcome)
+	}
+	if rcptNoop.BatchDelta.ChangedCount != 0 {
+		t.Fatalf("expected changed_count=0 for noop move, got %d", rcptNoop.BatchDelta.ChangedCount)
+	}
+	// Entire batch of no-ops increments table revision once and records receipt
+	if rcptNoop.After != rcptCreate.After+1 {
+		t.Fatalf("expected table revision to increment to %d, got %d", rcptCreate.After+1, rcptNoop.After)
+	}
+	// Verify member revision was NOT incremented
+	rsNoop, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err != nil {
+		t.Fatalf("ReadSet: %v", err)
+	}
+	m1Noop, ok := rsNoop.Member("m1")
+	if !ok || m1Noop.Revision != 1 {
+		t.Fatalf("expected m1 revision to remain 1 after no-op move, got %d", m1Noop.Revision)
+	}
+
+	// 2. Score-only change increments member revision once
+	revAfterNoop := strconv.FormatUint(rcptNoop.After, 10)
+	score25 := float64(25)
+	scoreChangeManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revAfterNoop,
+		OperationID:           "op-move-score-only",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: &score25,
+				},
+			},
+		},
+	}
+	rcptScore, err := ntable.ApplyBatch(ctx, c, scoreChangeManifest)
+	if err != nil {
+		t.Fatalf("apply score change: %v", err)
+	}
+	if rcptScore.Outcome != "changed" {
+		t.Fatalf("expected outcome changed, got %q", rcptScore.Outcome)
+	}
+	if rcptScore.BatchDelta.ChangedCount != 1 {
+		t.Fatalf("expected changed_count=1 for score change, got %d", rcptScore.BatchDelta.ChangedCount)
+	}
+	rsScore, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err != nil {
+		t.Fatalf("ReadSet: %v", err)
+	}
+	m1Score, ok := rsScore.Member("m1")
+	if !ok || m1Score.Revision != 2 || m1Score.Score != 25 {
+		t.Fatalf("expected m1 revision 2 and score 25, got rev=%d score=%g", m1Score.Revision, m1Score.Score)
+	}
+}
+
+func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Initial batch: create m1 with fields and m3 placed
+	initManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-init-delta",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 10},
+				Set:    map[string]string{"role": "dev", "notes": ""},
+			},
+			{
+				ID:     "m3",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 30},
+			},
+		},
+	}
+	rcptInit, err := ntable.ApplyBatch(ctx, c, initManifest)
+	if err != nil {
+		t.Fatalf("init batch: %v", err)
+	}
+
+	// Mixed batch:
+	// - m1: move to build:done with score 15, set {"role":"lead", "team":"core"}, unset ["notes"]
+	// - m2: create at build:ready with score 5, set {"role":"intern"}
+	// - m3: remove from table
+	score15 := float64(15)
+	mixedManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: strconv.FormatUint(rcptInit.After, 10),
+		OperationID:           "op-mixed-deltas",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move:  &ntable.MemberMoveOp{Row: "build", Col: "done", Score: &score15},
+				Set:   map[string]string{"role": "lead", "team": "core"},
+				Unset: []string{"notes"},
+			},
+			{
+				ID:     "m2",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 5},
+				Set:    map[string]string{"role": "intern"},
+			},
+			{
+				ID:     "m3",
+				Expect: &ntable.MemberExpect{Revision: "1", Place: &ntable.PlaceExpect{Row: "build", Col: "ready"}},
+				Remove: true,
+			},
+		},
+	}
+
+	rcptMixed, err := ntable.ApplyBatch(ctx, c, mixedManifest)
+	if err != nil {
+		t.Fatalf("apply mixed batch: %v", err)
+	}
+
+	deltas := make(map[string]ntable.BatchMemberDelta)
+	for _, m := range rcptMixed.BatchDelta.Members {
+		deltas[m.ID] = m
+	}
+
+	// Verify m1 deltas
+	d1, ok := deltas["m1"]
+	if !ok {
+		t.Fatal("missing m1 delta")
+	}
+	if d1.BeforePlace != "build:ready" || d1.AfterPlace != "build:done" {
+		t.Fatalf("m1 place before=%q after=%q", d1.BeforePlace, d1.AfterPlace)
+	}
+	if d1.BeforeScore == nil || *d1.BeforeScore != 10 {
+		t.Fatalf("m1 before_score want 10, got %v", d1.BeforeScore)
+	}
+	if d1.AfterScore == nil || *d1.AfterScore != 15 {
+		t.Fatalf("m1 after_score want 15, got %v", d1.AfterScore)
+	}
+	// m1 fields: role before="dev" after="lead"
+	if fRole, ok := d1.Fields["role"]; !ok || fRole.Before == nil || *fRole.Before != "dev" || fRole.After == nil || *fRole.After != "lead" {
+		t.Fatalf("m1 role field delta mismatch: %+v", fRole)
+	}
+	// m1 fields: team before=nil after="core"
+	if fTeam, ok := d1.Fields["team"]; !ok || fTeam.Before != nil || fTeam.After == nil || *fTeam.After != "core" {
+		t.Fatalf("m1 team field delta mismatch (want nil before): %+v", fTeam)
+	}
+	// m1 fields: notes before="" after=nil (empty string distinct from absent!)
+	if fNotes, ok := d1.Fields["notes"]; !ok || fNotes.Before == nil || *fNotes.Before != "" || fNotes.After != nil {
+		t.Fatalf("m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
+	}
+
+	// Verify m2 deltas (create)
+	d2, ok := deltas["m2"]
+	if !ok {
+		t.Fatal("missing m2 delta")
+	}
+	if d2.BeforePlace != "" || d2.AfterPlace != "build:ready" {
+		t.Fatalf("m2 place before=%q after=%q", d2.BeforePlace, d2.AfterPlace)
+	}
+	if d2.BeforeScore != nil {
+		t.Fatalf("m2 created before_score should be nil, got %v", d2.BeforeScore)
+	}
+	if d2.AfterScore == nil || *d2.AfterScore != 5 {
+		t.Fatalf("m2 after_score want 5, got %v", d2.AfterScore)
+	}
+	if fRole, ok := d2.Fields["role"]; !ok || fRole.Before != nil || fRole.After == nil || *fRole.After != "intern" {
+		t.Fatalf("m2 role field delta mismatch (want nil before): %+v", fRole)
+	}
+
+	// Verify m3 deltas (remove)
+	d3, ok := deltas["m3"]
+	if !ok {
+		t.Fatal("missing m3 delta")
+	}
+	if d3.BeforePlace != "build:ready" || d3.AfterPlace != "" {
+		t.Fatalf("m3 place before=%q after=%q", d3.BeforePlace, d3.AfterPlace)
+	}
+	if d3.BeforeScore == nil || *d3.BeforeScore != 30 {
+		t.Fatalf("m3 before_score want 30, got %v", d3.BeforeScore)
+	}
+	if d3.AfterScore != nil {
+		t.Fatalf("m3 removed after_score should be nil, got %v", d3.AfterScore)
+	}
+}
+
+func TestBatchContractRefusalStoreImagePreserved(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	if err := ntable.Create(ctx, c, demo(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Initial setup: place m1 at build:ready with field role=worker
+	initManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-store-img-init",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 10},
+				Set:    map[string]string{"role": "worker"},
+			},
+		},
+	}
+	rcptInit, err := ntable.ApplyBatch(ctx, c, initManifest)
+	if err != nil {
+		t.Fatalf("init batch: %v", err)
+	}
+	curRev := strconv.FormatUint(rcptInit.After, 10)
+
+	valWrong := "manager"
+	valCorrect := "worker"
+
+	cases := []struct {
+		name     string
+		manifest ntable.BatchManifest
+	}{
+		{
+			name: "stale table revision",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: "9999",
+				OperationID:           "op-ref-stale-rev",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "1"}},
+				},
+			},
+		},
+		{
+			name: "stale table epoch",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "999",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-stale-epoch",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "1"}},
+				},
+			},
+		},
+		{
+			name: "member revision mismatch",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-mem-rev",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "99"}},
+				},
+			},
+		},
+		{
+			name: "field guard equals mismatch",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-fg-equals",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID: "m1",
+						Expect: &ntable.MemberExpect{
+							Revision: "1",
+							Fields:   map[string]ntable.FieldGuard{"role": {Equals: &valWrong}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "field guard absent mismatch",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-fg-absent",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID: "m1",
+						Expect: &ntable.MemberExpect{
+							Revision: "1",
+							Fields:   map[string]ntable.FieldGuard{"role": {Absent: boolPtr(true)}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "field guard one_of mismatch",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-fg-oneof",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID: "m1",
+						Expect: &ntable.MemberExpect{
+							Revision: "1",
+							Fields:   map[string]ntable.FieldGuard{"role": {OneOf: []string{"lead", "director"}}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "duplicate member ID (TWICE)",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-twice",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "1"}},
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "1"}},
+				},
+			},
+		},
+		{
+			name: "reserved field revision",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-res-rev",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "1"}, Set: map[string]string{"revision": "100"}},
+				},
+			},
+		},
+		{
+			name: "reserved field place prefix",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-res-place",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{ID: "m1", Expect: &ntable.MemberExpect{Revision: "1"}, Set: map[string]string{"place:demo": "fake"}},
+				},
+			},
+		},
+		{
+			name: "mutation combine create and move",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-create-move",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID:     "m_new",
+						Expect: &ntable.MemberExpect{Absent: true},
+						Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 5},
+						Move:   &ntable.MemberMoveOp{Row: "build", Col: "done"},
+					},
+				},
+			},
+		},
+		{
+			name: "mutation combine move and remove",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-move-rem",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID:     "m1",
+						Expect: &ntable.MemberExpect{Revision: "1"},
+						Move:   &ntable.MemberMoveOp{Row: "build", Col: "done"},
+						Remove: true,
+					},
+				},
+			},
+		},
+		{
+			name: "mutation create expecting existing record",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-create-existing",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID:     "m_new",
+						Expect: &ntable.MemberExpect{Revision: "1"},
+						Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 5},
+					},
+				},
+			},
+		},
+		{
+			name: "set and unset overlap",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-set-unset",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					{
+						ID:     "m1",
+						Expect: &ntable.MemberExpect{Revision: "1"},
+						Set:    map[string]string{"env": "staging"},
+						Unset:  []string{"env"},
+					},
+				},
+			},
+		},
+		{
+			name: "late invalid entry",
+			manifest: ntable.BatchManifest{
+				Schema:                1,
+				Table:                 "demo",
+				Epoch:                 "0",
+				ExpectedTableRevision: curRev,
+				OperationID:           "op-ref-late-invalid",
+				Actor:                 "test",
+				Members: []ntable.BatchMemberEntry{
+					// Valid first entry
+					{
+						ID:     "m1",
+						Expect: &ntable.MemberExpect{Revision: "1", Fields: map[string]ntable.FieldGuard{"role": {Equals: &valCorrect}}},
+						Set:    map[string]string{"role": "architect"},
+					},
+					// Invalid second entry: unplaced member remove
+					{
+						ID:     "m_missing",
+						Expect: &ntable.MemberExpect{Absent: false},
+						Remove: true,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			before := storeImage(t, c)
+			_, err := ntable.ApplyBatch(ctx, c, tc.manifest)
+			after := storeImage(t, c)
+			if err == nil {
+				t.Fatalf("%s: expected ApplyBatch to refuse, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "changed=no") {
+				t.Fatalf("%s: expected changed=no, got: %v", tc.name, err)
+			}
+			if !reflect.DeepEqual(before, after) {
+				t.Fatalf("%s: store was modified despite refusal: before != after", tc.name)
+			}
+		})
+	}
+}
