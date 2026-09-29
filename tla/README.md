@@ -70,7 +70,7 @@ go build -o /tmp/tlacheck ./tools/tlacheck
 
 `[]` means the edit staled nothing: `tla/RUNS.tsv` is already current, and steps 2 and 3 have nothing to do. Otherwise the output lists the groups to run.
 
-2. On a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sort -u | sed 1d`): one jar measures the whole file, and `merge` refuses a set of records with more than one:
+2. On a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sed 1d | sort -u`): one jar measures the whole file, and `merge` refuses a set of records with more than one:
 
 ```sh
 runs=$(mktemp -d)
