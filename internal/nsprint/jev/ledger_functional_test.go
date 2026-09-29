@@ -219,4 +219,16 @@ func TestLedgerFromTheMoveLogToTheReport(t *testing.T) {
 	if n := c.XLen(ctx, jev.KeyDecisions).Val(); n < 9 {
 		t.Errorf("jev:decisions has %d entries; every decision, answer and outcome is one", n)
 	}
+	foundDecision := false
+	for _, m := range c.XRange(ctx, jev.KeyDecisions, "-", "+").Val() {
+		if m.Values["event"] == "decision" {
+			foundDecision = true
+			if m.Values["prompt_version"] == "" || m.Values["cost"] != "-" || m.Values["ms"] != "-" {
+				t.Errorf("decision entry lacks expected stream fields: %v", m.Values)
+			}
+		}
+	}
+	if !foundDecision {
+		t.Error("found no decision event in jev:decisions")
+	}
 }

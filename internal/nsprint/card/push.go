@@ -136,6 +136,9 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		// stored from this payload; after EXISTS it writes nothing, after
 		// CONFLICT it refuses.
 		headers[i] = pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen, doc.Task)
+		if doc.TierJev != "" {
+			pipe.HSetNX(ctx, keys[0], "tier_jev", doc.TierJev)
+		}
 	}
 	_, _ = pipe.Exec(ctx) // each reply is read, with its own error, below
 	out := make([]VerbResult, len(docs))

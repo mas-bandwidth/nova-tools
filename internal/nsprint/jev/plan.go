@@ -448,13 +448,17 @@ func ReadFinding(rec map[string]string) string {
 }
 
 // DeclaredTier is the tier the card declares (its tier, else its ROUTE when
-// that is a model type), else flash: a card with no ROUTE line is flash.
+// that is a model type), else its TIER-JEV tier, else flash: a card with no
+// ROUTE line and no TIER-JEV is flash.
 func DeclaredTier(rec map[string]string) string {
 	if IsTier(rec["tier"]) {
 		return rec["tier"]
 	}
 	if IsTier(rec["route"]) {
 		return rec["route"]
+	}
+	if tj, ok := ParseTierJev(rec["tier_jev"]); ok && IsTier(tj.Tier) {
+		return tj.Tier
 	}
 	return "flash"
 }
@@ -470,13 +474,17 @@ func RanTier(rec map[string]string) string {
 	return ""
 }
 
-// DeclaredType is the card's TYPE when it is one of Jev's work types.
+// DeclaredType is the card's TYPE when it is one of Jev's work types, or its
+// TIER-JEV work type.
 func DeclaredType(rec map[string]string) string {
 	p, _ := PromptFor(TypeWorkType)
 	for _, k := range []string{"type", "card_type"} {
 		if t := strings.ToLower(strings.TrimSpace(rec[k])); p.Has(t) {
 			return t
 		}
+	}
+	if tj, ok := ParseTierJev(rec["tier_jev"]); ok && p.Has(tj.Type) {
+		return tj.Type
 	}
 	return ""
 }
@@ -517,7 +525,8 @@ func CutState(id string, rec map[string]string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "CARD %s: %s\n", id, rec["title"])
 	for _, kv := range [][2]string{{"KIND", "kind"}, {"ROUTE", "route"}, {"TIER", "tier"}, {"TYPE", "type"},
-		{"REPO", "repo"}, {"PATHS", "paths"}, {"DONE-WHEN", "done_when"}, {"STREAM", "stream"}} {
+		{"REPO", "repo"}, {"PATHS", "paths"}, {"DONE-WHEN", "done_when"}, {"STREAM", "stream"},
+		{"TIER-JEV", "tier_jev"}} {
 		if v := strings.TrimSpace(rec[kv[1]]); v != "" {
 			fmt.Fprintf(&b, "%s: %s\n", kv[0], v)
 		}

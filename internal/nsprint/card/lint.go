@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -119,6 +120,7 @@ type cardDoc struct {
 	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
 	StreamPaths    string // PATHS as the stream holds them (ws.SplitPaths, comma-joined), set by push's gate (#4322)
 	Payload        string
+	TierJev        string // TIER-JEV line (#4316)
 }
 
 func refused(reason string) VerbResult {
@@ -198,6 +200,13 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		kind = KindModel
 	}
 	sum := sha256.Sum256(body)
+	cardType := header["TYPE"]
+	tierJev := strings.TrimSpace(header["TIER-JEV"])
+	if cardType == "" && tierJev != "" {
+		if tj, ok := jev.ParseTierJev(tierJev); ok {
+			cardType = tj.Type
+		}
+	}
 	return cardDoc{
 		Label:          label,
 		Base:           header["BASE"],
@@ -208,7 +217,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		TypedDependsOn: typedDependencies(deps),
 		Repo:           repo,
 		Kind:           kind,
-		Type:           header["TYPE"],
+		Type:           cardType,
 		Route:          route,
 		Priority:       priority,
 		Bench:          bench,
@@ -220,6 +229,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Task:           strings.TrimSpace(header["TASK"]),
 		Leg:            leg,
 		Payload:        hex.EncodeToString(sum[:]),
+		TierJev:        tierJev,
 	}, nil
 }
 

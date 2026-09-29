@@ -83,3 +83,25 @@ func TestRenderCutRefusesADoneWhenNoTestCanFail(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderCutWritesTierJev (#4316): card cut classifies the card into a work
+// type and model tier with confidence and why, and writes it as the TIER-JEV
+// header line.
+func TestRenderCutWritesTierJev(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	src := cutIssues{
+		10: {
+			Title: "add nova-sprint jev report",
+			Body:  "STREAM: s\nPATHS: cmd/nova-sprint/jev.go\nDEPENDS-ON: none\nBASE: dev\nTEST: ./internal/nsprint/jev TestX\nDONE-WHEN: report prints table\n",
+		},
+	}
+	c, err := RenderCut(ctx, src, CutInput{Sprint: "s", Repo: "acme/repo", Issue: 10})
+	if err != nil {
+		t.Fatalf("RenderCut: %v", err)
+	}
+	body := string(c.Body)
+	if !strings.Contains(body, "\nTIER-JEV: tier=pro type=verb conf=") || !strings.Contains(body, "why=") {
+		t.Errorf("RenderCut body lacks expected TIER-JEV line:\n%s", body)
+	}
+}

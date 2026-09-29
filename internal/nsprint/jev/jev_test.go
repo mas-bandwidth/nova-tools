@@ -174,6 +174,32 @@ func TestPlanCutIsTierAndWorkType(t *testing.T) {
 	}
 }
 
+func TestDeclaredTierAndTypeFromTierJev(t *testing.T) {
+	t.Parallel()
+
+	rec := map[string]string{
+		"tier_jev": "TIER-JEV tier=frontier type=spec conf=0.90 why=specification across packages",
+	}
+	if got := DeclaredTier(rec); got != "frontier" {
+		t.Errorf("DeclaredTier = %q, want frontier", got)
+	}
+	if got := DeclaredType(rec); got != "spec" {
+		t.Errorf("DeclaredType = %q, want spec", got)
+	}
+
+	// Explicit route overrides tier_jev
+	rec["route"] = "pro"
+	if got := DeclaredTier(rec); got != "pro" {
+		t.Errorf("DeclaredTier with route = %q, want pro", got)
+	}
+
+	// Explicit type overrides tier_jev
+	rec["type"] = "verb"
+	if got := DeclaredType(rec); got != "verb" {
+		t.Errorf("DeclaredType with type = %q, want verb", got)
+	}
+}
+
 // TestPlanReviewSuggestThenVerdict: a failed copy's primary in review is a
 // review decision (rules: the REVIEW-JEV suggest) keyed by the move's own at,
 // which is the review_at the same call wrote; the posted verdict joins the

@@ -298,8 +298,15 @@ func recordCmds(ctx context.Context, p redis.Pipeliner, d Decision, at int64) {
 	if d.Ask {
 		p.SAdd(ctx, KeyPending, pendingMember(d.Type, d.Subject))
 	}
+	version := "-"
+	if d.Prompt != nil {
+		version = d.Prompt.Version
+	} else if pr, ok := PromptFor(d.Type); ok {
+		version = pr.Version
+	}
 	p.XAdd(ctx, &redis.XAddArgs{Stream: KeyDecisions, MaxLen: LogMax, Approx: true, Values: []any{
-		"event", "decision", "type", d.Type, "subject", d.Subject, "answer", d.Rules, "input_sha", InputSHA(state),
+		"event", "decision", "type", d.Type, "subject", d.Subject, "prompt_version", version,
+		"input_sha", InputSHA(state), "answer", d.Rules, "cost", "-", "ms", "-",
 		"at", strconv.FormatInt(at, 10)}})
 }
 

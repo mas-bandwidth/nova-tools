@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -156,6 +157,7 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 	}
 	title := oneline.Escape(strings.TrimSpace(issue.Title))
 	origin := IssueURL(in.Repo, in.Issue)
+	tierJev := jev.ClassifyCut(title, fields["PATHS"], fields["DONE-WHEN"], issue.Body)
 	var b strings.Builder
 	fmt.Fprintf(&b, "RESULT: %s sha=<sha12> %s #%d fixed with its red test first: %s\n", label, in.Repo, in.Issue, title)
 	head := [][2]string{
@@ -176,9 +178,16 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		{"STREAM", stream},
 		{"EST", fields["EST"]},
 		{"ORIGIN", origin},
+		{"TIER-JEV", tierJev.Format()},
 	}
 	if in.Spec > 0 {
 		head = append(head, [2]string{"SPEC", fmt.Sprintf("%s#%d", in.Repo, in.Spec)})
+	}
+	if fields["TYPE"] != "" {
+		head = append(head, [2]string{"TYPE", fields["TYPE"]})
+	}
+	if fields["ROUTE"] != "" {
+		head = append(head, [2]string{"ROUTE", fields["ROUTE"]})
 	}
 	for _, kv := range head {
 		if kv[1] != "" {
@@ -234,7 +243,7 @@ func sealContract(card string) string {
 
 // cutKeys are the issue lines a cut reads, first occurrence wins.
 var cutKeys = []string{"STREAM", "PATHS", "TEST", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO",
-	"INVARIANT", "CLASS-TEST", "PLATFORMS"}
+	"INVARIANT", "CLASS-TEST", "PLATFORMS", "TYPE", "ROUTE", "TIER"}
 
 // contractSHA is the base-sha: line of a rendered card ("" when none).
 func contractSHA(body []byte) string {
