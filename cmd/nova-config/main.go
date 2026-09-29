@@ -66,7 +66,12 @@ usage:
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
   nova-config inventory [--pg <dsn>] [--list | --host <name>]
-      env NOVA_MACHINE is the machine row this process runs on (the short hostname when unset); that host gets ansible_connection=local
+      prints an Ansible dynamic JSON inventory from the machine and fleet rows: the groups benches, coordinator, store and runners, and every host's variables under _meta.hostvars
+      first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
+      ansible's -i wants an executable: save these two lines as ./nova-inventory, chmod +x it, then ansible-inventory -i ./nova-inventory --list
+        #!/bin/sh
+        exec nova-config inventory "$@"
+      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb (ansible passes its own environment to the script); NOVA_MACHINE is the machine row this process runs on, the short hostname when unset, and that host gets ansible_connection=local
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -100,9 +105,8 @@ migrate creates or upgrades schema config from the migrations in this binary
 and applies nothing twice. apply reads Postgres and writes Redis, one kind at
 a time, through the runtime's own Redis Functions, and refuses CONFLICT when
 Redis holds a newer revision; --check prints the ADD, SET and REMOVE lines
-and writes nothing. inventory prints an Ansible dynamic JSON inventory
-(_meta.hostvars and groups benches, coordinator, store, runners) from the
-machine rows. Lose Redis: run nova-config apply.
+and writes nothing. inventory prints an Ansible dynamic JSON inventory from
+the machine rows and reads only Postgres. Lose Redis: run nova-config apply.
 
 exit codes: 0 done, 1 refused, 2 usage
 

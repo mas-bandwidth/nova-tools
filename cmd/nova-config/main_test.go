@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -878,5 +880,39 @@ func TestInventoryIgnoresTheOldFleetSelfName(t *testing.T) {
 	_, out, _ := h.run(t, "inventory")
 	if got := localMachines(t, out); len(got) != 0 {
 		t.Fatalf("FLEET_SELF still marks %v local", got)
+	}
+}
+
+func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	code, help, errs := h.run(t, "inventory", "-h")
+	if code != 0 || errs != "" {
+		t.Fatalf("inventory -h: exit %d stderr %q", code, errs)
+	}
+	needs := []string{
+		"--list", "--host", "--pg", // every flag
+		"NOVA_PG_DSN", "NOVA_PG_PASSWORD_ENV", "NOVA_MACHINE", // every variable
+		"first run", "nova-config inventory", // a first example
+		"-i wants an executable", "#!/bin/sh", `exec nova-config inventory "$@"`, // the wrapper
+		"_meta.hostvars", "ansible never calls --host", // why --host is not called
+		"the default when neither --list nor --host is given", // what --list is
+	}
+	for _, w := range needs {
+		if !strings.Contains(help, w) {
+			t.Errorf("inventory -h lacks %q:\n%s", w, help)
+		}
+	}
+	for _, doc := range []string{"docs/CLI.md", "docs/nova-config/README.md"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(doc)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range []string{"#!/bin/sh", `exec nova-config inventory "$@"`, "NOVA_MACHINE", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+			if !strings.Contains(string(raw), w) {
+				t.Errorf("%s lacks %q", doc, w)
+			}
+		}
 	}
 }

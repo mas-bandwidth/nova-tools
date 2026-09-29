@@ -284,6 +284,27 @@ machine (named by `NOVA_MACHINE`, else matching the short hostname), that host r
 `ansible_connection=local` so the control machine connects to itself locally without
 ssh. Pass `--host <name>` for single-host inspection or `--list` for all hosts.
 
+Ansible's `-i` wants an executable file, so save a two-line wrapper and point
+`-i` at it:
+
+```
+#!/bin/sh
+exec nova-config inventory "$@"
+```
+
+```
+export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
+chmod +x nova-inventory
+ansible-inventory -i ./nova-inventory --list
+```
+
+Ansible starts the script with `--list`. Every host's variables are in the
+`_meta.hostvars` of that output, so ansible does not call `--host <name>`; run
+it by hand to read one machine, and a name with no machine row exits 1 with the
+known names. The script reads `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` from the
+environment ansible passes it, and `NOVA_MACHINE` (the machine row this process
+runs on; the short hostname when unset) to mark that host local.
+
 ## What is deliberately not here
 
 Runtime state (beats, states, copies, leases, the table), what a friend
