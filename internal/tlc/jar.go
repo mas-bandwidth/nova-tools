@@ -84,16 +84,25 @@ func FindHelper(name, override string, lookPath func(string) (string, error)) (s
 var LookPath = exec.LookPath
 
 // JavaVersion reads the version out of what `java -version` prints (it goes to
-// standard error): the quoted token of its first line, for example 21.0.12.1.
-// It is an error when there is none, so a record never names a java of no
-// version.
+// standard error): the quoted token of the first line that has `version "`, for
+// example 21.0.12.1. Lines before it are skipped: a JVM prints a line such as
+// "Picked up JAVA_TOOL_OPTIONS: ..." first when that variable is set, and the
+// bench must still run. It is an error when no line has one, so a record never
+// names a java of no version.
 func JavaVersion(output string) (string, error) {
-	line, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
-	first := strings.Index(line, `"`)
-	if first < 0 {
-		return "", fmt.Errorf("java -version printed no quoted version: %q", strings.TrimSpace(line))
+	trimmed := strings.TrimSpace(output)
+	first, _, _ := strings.Cut(trimmed, "\n")
+	line := ""
+	for _, l := range strings.Split(trimmed, "\n") {
+		if strings.Contains(l, `version "`) {
+			line = l
+			break
+		}
 	}
-	rest := line[first+1:]
+	if line == "" {
+		return "", fmt.Errorf("java -version printed no quoted version: %q", strings.TrimSpace(first))
+	}
+	rest := line[strings.Index(line, `version "`)+len(`version "`):]
 	last := strings.Index(rest, `"`)
 	if last <= 0 || strings.ContainsAny(rest[:last], " \t") {
 		return "", fmt.Errorf("java -version printed no usable version: %q", strings.TrimSpace(line))

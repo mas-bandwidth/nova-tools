@@ -80,11 +80,13 @@ func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	}
 }
 
-func TestJavaVersionReadsTheQuotedTokenOfTheFirstLine(t *testing.T) {
+func TestJavaVersionReadsTheQuotedTokenOfTheVersionLine(t *testing.T) {
 	t.Parallel()
 	ok := map[string]string{
 		"openjdk version \"21.0.12.1\" 2026-08-18 LTS\nOpenJDK Runtime Environment Temurin-21.0.12.1+1 (build 21.0.12.1+1-LTS)\n": "21.0.12.1",
 		"java version \"1.8.0_402\"\nJava(TM) SE Runtime Environment\n":                                                           "1.8.0_402",
+		"Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nopenjdk version \"21.0.12.1\" 2026-08-18\n":                                         "21.0.12.1",
+		"Picked up JAVA_TOOL_OPTIONS: -Dsome=\"quoted\"\nPicked up _JAVA_OPTIONS: -Xmx1g\njava version \"1.8.0_402\"\n":           "1.8.0_402",
 		"  openjdk version \"17\" 2021-09-14\n":                                                                                   "17",
 	}
 	for out, want := range ok {
@@ -92,7 +94,7 @@ func TestJavaVersionReadsTheQuotedTokenOfTheFirstLine(t *testing.T) {
 			t.Errorf("%q: %q, %v; want %q", out, got, err, want)
 		}
 	}
-	for _, out := range []string{"", "no version here\n", "openjdk version \"\"\n", "openjdk version \"21 x\"\n", "openjdk version 21\nsecond \"22\"\n"} {
+	for _, out := range []string{"", "no version here\n", "openjdk version \"\"\n", "openjdk version \"21 x\"\n", "openjdk version 21\nsecond \"22\"\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nno version line\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nopenjdk version \"\"\n"} {
 		if got, err := JavaVersion(out); err == nil {
 			t.Errorf("%q gave version %q", out, got)
 		}
