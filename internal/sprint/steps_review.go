@@ -104,7 +104,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)})))
 		}
 		all = append(all, chosenReaders...)
-		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
+		if !r.Another {
+			// the readers kept on the primary are the pair; --another's reader
+			// is for this attempt only
+			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
+		}
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
 			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded}, c.ID)
@@ -568,8 +572,10 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
+		// the readers kept are the pair the primary was asked of: an extra
+		// reader of ask --another is for its attempt only
 		askedField := c.F("asked")
-		if len(asked) > 0 {
+		if askedField == "" && len(asked) > 0 {
 			askedField = strings.Join(orderLike(s.Readers.Rows, asked, ""), ",")
 		}
 		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}

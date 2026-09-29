@@ -49,14 +49,6 @@ func onlyOpen(verb string, types ...string) func(dFinding) bool {
 }
 
 var dKnown = []dKnownDiff{
-	// ENGINE. D2 and section 6: the readers kept on a primary are two and
-	// "both readers are asked again"; ask --another appends its reader to
-	// the primary's asked field (steps_review.go:106), finish asks every
-	// reader named there (steps_work.go:754), and rework keeps the two it
-	// was accepted on when it has them.
-	{"ENGINE ask --another widens the kept readers beyond the pair", func(f dFinding) bool {
-		return (sigHas("another", "primary.pair")(f) || sigHas("rework", "primary.pair")(f))
-	}},
 	// ENGINE or SPEC. Section 16: a sentinel inserted in line sends the
 	// ready cards behind it back to waiting; the engine treats a ready
 	// primary whose card was withdrawn (no member up) as in flight: it

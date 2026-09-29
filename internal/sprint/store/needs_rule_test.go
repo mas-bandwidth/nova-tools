@@ -202,7 +202,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 			}
 		}
 	}
-	if again != 3 {
+	if again != 2 { // the pair kept; ask --another's reader was for attempt 1 only
 		t.Fatalf("re-asked %d", again)
 	}
 }
