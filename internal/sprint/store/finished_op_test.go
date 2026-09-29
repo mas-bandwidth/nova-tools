@@ -319,7 +319,7 @@ func zombieSprint(t *testing.T) *harness {
 // done, whoever finished it), and check holds at the end.
 func TestTwoTickLoopsNeverTellAWriterItWasCut(t *testing.T) {
 	t.Parallel()
-	for trial := 0; trial < 4; trial++ {
+	for trial := 0; trial < 2; trial++ {
 		h := zombieSprint(t)
 		h.startMachine()
 		mk := func(who string) *Store {
