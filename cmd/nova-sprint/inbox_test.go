@@ -122,3 +122,38 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	}
 	ta.clean()
 }
+
+// I4: rework with no --fix takes each primary's own: the finding of its
+// broken read, the report of its failed work; a primary with neither is
+// refused by name; --fix is for all.
+func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 4")
+	ta.ok("start --limit 4")
+	ta.ok("take --as m1 --limit 4")
+	ta.ok("finish --as m1 s1-1.w1@1 s1-3.w1@1 s1-4.w1@1")
+	ta.ok("finish --as m1 s1-2.w1@1 --failed --report 'the tests went red'")
+	ta.ok("ask")
+	ta.ok("read --as reader-a --broken --finding 'the empty case is not handled' s1-1.r1.reader-a")
+	broken := ta.group(sprint.NReadBroken, "s1")
+	code, out, errs := ta.do("rework s1-1 s1-2 s1-3 --answers " + broken.ID)
+	if code != 1 || !strings.Contains(errs, "REFUSED s1-3: no --fix, and no finding of a broken read or report of failed work") ||
+		!strings.Contains(out, "MOVED s1-1 review -> working (rework)") || !strings.Contains(out, "MOVED s1-2 review -> working (rework)") {
+		t.Fatalf("rework with no --fix: %d\n%s%s", code, out, errs)
+	}
+	for id, want := range map[string]string{"s1-1": `fix=the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {
+		if out := ta.ok("card " + id); !strings.Contains(out, want) {
+			t.Fatalf("%s: no %s in\n%s", id, want, out)
+		}
+	}
+	out = ta.ok("rework s1-3 s1-4 --fix 'handle the empty case'")
+	if !strings.Contains(out, "moved=2") {
+		t.Fatalf("rework --fix: %s", out)
+	}
+	if out := ta.ok("card s1-4"); !strings.Contains(out, `fix=handle\x20the\x20empty\x20case`) {
+		t.Fatalf("--fix for all: %s", out)
+	}
+	ta.clean()
+}
