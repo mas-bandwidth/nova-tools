@@ -153,7 +153,11 @@ and an `append` take it). A store kept in git lists it in its ignore file with
 the one line `.cairn.lock`. When the store directory cannot be written the lock
 file cannot be made, and `append` refuses at exit 2 naming the cause ("cannot
 create the lock file ...: permission denied on <dir>") and the next action (make
-the directory writable, or write from an account that can). The lock serialises
+the directory writable, or write from an account that can). The lock has a
+cost: taking and releasing it writes and syncs its holder note twice, so an
+append takes about twice as long as it would with no lock on a disk whose sync
+is slow, and appends to one store take turns whichever sessions they name, so a
+burst of concurrent appends takes several times as long. The lock serialises
 writers on ONE machine. Two machines writing one store synced through git are
 outside it: each appends to its own session file, and concurrent appends to the
 same session from two machines conflict in git, which is visible. `index` and
