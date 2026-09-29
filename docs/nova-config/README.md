@@ -277,8 +277,11 @@ nova-config inventory
 ```
 
 `inventory` reads Postgres and prints an Ansible dynamic JSON inventory: the
-groups `benches`, `coordinator`, `store` and `runners` and every host's
-variables under `_meta.hostvars`. The machine rows are the one machine list;
+groups `all` and `benches` (every machine row), `coordinator` and `store`
+(the machines the fleet row names; empty when it names none) and `runners`
+(every machine with at least one runner), and every host's variables under
+`_meta.hostvars`. On a store that is not migrated, or is at an older schema,
+the verb exits 1 with `run: nova-config migrate`. The machine rows are the one machine list;
 there is no second one. Each host's variables are `ansible_host`,
 `ansible_user` (the row's user, the name ansible reads for the login),
 `nova_seat` (the row's seat), `slots`, `runners` and `kind=machine`; each value
@@ -286,9 +289,12 @@ has one name, and a user or seat that is empty is left out. A deployment maps
 `nova_seat` to its own variable name in its `group_vars`. The machine rows and
 the fleet row are read in one transaction.
 
-The machine the command runs on is named by the env `NOVA_MACHINE`, else it is
-the short hostname; a machine row of that name gets `ansible_connection=local`,
-so ansible reaches it without ssh.
+The machine the command runs on is named by the env `NOVA_MACHINE`, matched by
+exact machine name; when no machine row has that name the verb exits 1 with
+the known names. When `NOVA_MACHINE` is unset, the first label of the hostname
+is matched the same way, and nothing is marked local when no row has it. The
+matched row gets `ansible_connection=local`, so ansible reaches it without
+ssh.
 
 `--list` prints all of it and is the default when no flag is given. `--host
 <name>` prints one machine's variables; a name with no machine row exits 1 with

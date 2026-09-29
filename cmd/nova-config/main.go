@@ -66,7 +66,7 @@ usage:
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
   nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>]
-      prints an Ansible dynamic JSON inventory from the machine and fleet rows: the groups benches, coordinator, store and runners, and every host's variables under _meta.hostvars
+      prints an Ansible dynamic JSON inventory from the store; groups: all and benches are every machine row, coordinator and store come from the fleet row, runners is every machine with at least one runner; every host's variables are under _meta.hostvars
       first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
       ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible:
       printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
@@ -979,6 +979,17 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return fail(err)
 	}
 	defer st.Close()
+	have, err := st.Version(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	if all, err := config.Migrations(); err == nil && have < len(all) {
+		migrate := tool + " migrate"
+		if *pg != "" {
+			migrate += " --pg " + shq(*pg)
+		}
+		return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), migrate)
+	}
 	self, explicit := localHost(d.getenv, d.hostname)
 	inv, err := config.BuildInventory(ctx, st, self)
 	if err != nil {

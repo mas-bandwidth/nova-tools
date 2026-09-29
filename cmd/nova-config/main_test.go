@@ -923,7 +923,8 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"first run", "nova-config inventory", // a first example
 		"-i wants an executable", "column one", "ansible-inventory -i ./nova-inventory --list", // the wrapper
 		"_meta.hostvars", "ansible never calls --host", // why --host is not called
-		"the default when neither --list nor --host is given",                                     // what --list is
+		"the default when neither --list nor --host is given",                                                                                         // what --list is
+		"all and benches are every machine row", "coordinator and store come from the fleet row", "runners is every machine with at least one runner", // the groups
 		"matched by exact machine name", "first label of the hostname", "nothing is marked local", // how NOVA_MACHINE matches
 	}
 	for _, w := range needs {
@@ -939,7 +940,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "exact machine name", "first label of the hostname", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
 			if !strings.Contains(string(raw), w) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
@@ -1114,6 +1115,32 @@ func TestInventoryTimeoutMustBePositive(t *testing.T) {
 		code, out, errs := h.run(t, "inventory", "--timeout", v)
 		if code != 2 || out != "" || !strings.Contains(errs, "timeout") || h.opens != 0 {
 			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q opens %d", v, code, out, errs, h.opens)
+		}
+	}
+}
+
+func TestInventoryOnAStoreNotMigratedOrOlderRefusesWithMigrate(t *testing.T) {
+	t.Parallel()
+
+	all, err := config.Migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, have := range []int{0, len(all) - 1} {
+		for _, pgFlag := range []bool{false, true} {
+			h := inventoryHarness(t, 1)
+			h.store.version = have
+			args := []string{"inventory"}
+			next := "nova-config migrate"
+			if pgFlag {
+				args = append(args, "--pg", dsn)
+				next += " --pg " + dsn
+			}
+			code, out, errs := h.run(t, args...)
+			want := fmt.Sprintf("nova-config inventory: schema config is at version %d and this binary carries %d; run: %s\n", have, len(all), next)
+			if code != 1 || out != "" || errs != want {
+				t.Fatalf("version %d: exit %d stdout %q stderr %q\nwant %q", have, code, out, errs, want)
+			}
 		}
 	}
 }

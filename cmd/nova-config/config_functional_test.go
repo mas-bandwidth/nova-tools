@@ -417,3 +417,17 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 		}
 	}
 }
+
+// A database nothing has migrated has no config schema: inventory names the
+// migrate command instead of the raw SQL error.
+func TestInventoryOnAnUnmigratedDatabaseRefusesWithMigrate(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	out, errs := r.run(t, 1, "inventory")
+	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: schema config is at version 0 and this binary carries ") || !strings.HasSuffix(errs, "; run: nova-config migrate\n") {
+		t.Fatalf("stdout %q stderr %q", out, errs)
+	}
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "inventory")
+}
