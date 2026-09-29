@@ -2,12 +2,15 @@
 
 package ntable_test
 
-// Operation identity is table, epoch and operation id, and a drop ends the
-// table's incarnation: after drop and create, the operation records written
-// before the drop neither replay nor conflict.
+// Operation identity is table, epoch and operation id. A drop removes the
+// operation records of every epoch of the table, in the same call; a table
+// created again under the name is a new table. A clear (the epoch advance)
+// removes none: an operation recorded in an earlier epoch replays with its
+// original receipt.
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -18,56 +21,133 @@ func asReplayed(ans []any) []any {
 	return got
 }
 
-func TestBatchOperationRecordsDoNotSurviveADrop(t *testing.T) {
+func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) {
 	t.Parallel()
-	c, ctx := probeTable(t)
-	member := `{"id":"a","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`
-	old := manifestWith(probeRev(ctx, c), "op-1", member)
-	first, err := rawApply(ctx, c, old)
-	if err != nil || first[0] != "OK" {
-		t.Fatalf("first apply: %v %v", trunc(first), err)
+	for _, verb := range []string{"drop", "drop --definition"} {
+		verb := verb
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			c, ctx := probeTable(t)
+			member := `{"id":"a","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`
+			old := manifestWith(probeRev(ctx, c), "op-1", member)
+			first, err := rawApply(ctx, c, old)
+			if err != nil || first[0] != "OK" {
+				t.Fatalf("first apply: %v %v", trunc(first), err)
+			}
+			// within the table's life the replay returns the original receipt
+			if again, err := rawApply(ctx, c, old); err != nil || !reflect.DeepEqual(asReplayed(again), first) {
+				t.Fatalf("replay: %v %v", trunc(again), err)
+			}
+
+			var derr error
+			if verb == "drop" {
+				_, derr = ntable.Drop(ctx, c, "demo")
+			} else {
+				_, derr = ntable.DropDefinition(ctx, c, "demo")
+			}
+			if derr != nil {
+				t.Fatal(derr)
+			}
+			for _, k := range c.Keys(ctx, "*").Val() {
+				if strings.Contains(k, ":op:") || strings.HasSuffix(k, ":ops") {
+					t.Errorf("after %s the store holds the operation key %s", verb, k)
+				}
+			}
+			if err := ntable.Create(ctx, c, demo(), now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+				t.Fatal(err)
+			}
+
+			// the old bytes are a new request of a new table: judged on their merits, never answered from the old receipt
+			ans, err := rawApply(ctx, c, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reflect.DeepEqual(asReplayed(ans), first) {
+				t.Fatalf("a request after drop and create returned the old receipt: %v", trunc(ans))
+			}
+			if _, marked := asReplay(ans); marked {
+				t.Errorf("a request after drop and create is marked a replay: %v", trunc(ans))
+			}
+			if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "REVISION" {
+				t.Errorf("the old bytes against the new table: %v; want a refusal on the table revision", trunc(ans))
+			}
+
+			// the same operation id with a request that fits applies freshly
+			fresh := manifestWith(probeRev(ctx, c), "op-1", `{"id":"b","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
+			ans, err = rawApply(ctx, c, fresh)
+			if err != nil || ans[0] != "OK" || reflect.DeepEqual(asReplayed(ans), first) {
+				t.Fatalf("a fresh request under a reused operation id: %v %v", trunc(ans), err)
+			}
+			if _, marked := asReplay(ans); marked {
+				t.Errorf("a fresh application is marked a replay")
+			}
+			if again, err := rawApply(ctx, c, fresh); err != nil || !reflect.DeepEqual(asReplayed(again), ans) {
+				t.Errorf("replay of the fresh request: %v %v", trunc(again), err)
+			}
+		})
 	}
-	// within one incarnation the replay returns the original receipt
-	if again, err := rawApply(ctx, c, old); err != nil || !reflect.DeepEqual(asReplayed(again), first) {
-		t.Fatalf("replay: %v %v", trunc(again), err)
+}
+
+// A clear, and the epoch advance it belongs to, keep the operation records: an
+// operation of an earlier epoch replays with its original epoch and revisions;
+// a drop then removes the records of every epoch in one call.
+func TestBatchOperationsOfEarlierEpochsReplayAndAllGoWithTheDrop(t *testing.T) {
+	t.Parallel()
+	c, tb := epochFixture(t)
+	ctx := t.Context()
+	raw := func(epoch, op string) string {
+		rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
+		return `{"schema":1,"table":"epoch-test","epoch":"` + epoch + `","expected_table_revision":"` + rev + `","operation_id":"` + op + `","actor":"p","members":[{"id":"g-` + op + `","expect":{"absent":true}}]}`
+	}
+	call := func(r string) []any {
+		ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, r).Slice()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ans
+	}
+	zero := raw("0", "op-e0")
+	first := call(zero)
+	if first[0] != "OK" {
+		t.Fatalf("epoch 0: %v", trunc(first))
+	}
+	if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil { // the epoch advances
+		t.Fatal(err)
+	}
+	if _, err := ntable.Clear(ctx, c, tb.Name, ntable.WriteOptions{Epoch: 1}); err != nil {
+		t.Fatal(err)
+	}
+	one := raw("1", "op-e1")
+	if second := call(one); second[0] != "OK" {
+		t.Fatalf("epoch 1: %v", trunc(second))
 	}
 
-	if _, err := ntable.Drop(ctx, c, "demo"); err != nil {
-		t.Fatal(err)
+	// the operation of epoch 0 replays: its epoch and revisions are unchanged
+	again := call(zero)
+	if got, marked := asReplay(again); !marked || !reflect.DeepEqual(got, first) {
+		t.Errorf("replay of an earlier epoch's operation: %v; want the original receipt %v", trunc(again), trunc(first))
 	}
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-
-	// the same bytes: the table never saw this change, so it is not replayed
-	ans, err := rawApply(ctx, c, old)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reflect.DeepEqual(first, ans) {
-		t.Fatalf("a replay after drop and create returned the old receipt: %v", trunc(ans))
-	}
-	if len(ans) < 2 || ans[0] != "REFUSED" {
-		t.Errorf("the old request against the new table: %v; want a refusal on its stale revision", trunc(ans))
-	}
-	if score := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "a"); score.Err() == nil {
-		t.Errorf("the refused replay placed a member")
+	if receipt := first[1].([]any); receipt[2] != "0" {
+		t.Errorf("the original receipt names epoch %v, want 0", receipt[2])
 	}
 
-	// the same operation id with a request that fits applies freshly, without a conflict
-	fresh := manifestWith(probeRev(ctx, c), "op-1", `{"id":"b","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
-	ans, err = rawApply(ctx, c, fresh)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("a fresh request under a reused operation id: %v %v", trunc(ans), err)
+	// every epoch's records are one key, and the drop removes it
+	if n := c.HLen(ctx, ntable.DefKey(tb.Name)+":ops").Val(); n != 2 {
+		t.Errorf("the table's operation records: %d, want 2 (epochs 0 and 1)", n)
 	}
-	if reflect.DeepEqual(first, ans) {
-		t.Errorf("the fresh request returned the old receipt")
+	if _, err := ntable.Drop(ctx, c, tb.Name, ntable.WriteOptions{Epoch: 1}); err != nil {
+		t.Fatal(err)
 	}
-	// and now it is recorded: its own replay returns its own receipt
-	if again, err := rawApply(ctx, c, fresh); err != nil || !reflect.DeepEqual(ans, asReplayed(again)) {
-		t.Errorf("replay of the fresh request: %v %v", trunc(again), err)
+	for _, k := range c.Keys(ctx, "*").Val() {
+		if strings.Contains(k, ":op:") || strings.HasSuffix(k, ":ops") {
+			t.Errorf("after drop the store holds the operation key %s", k)
+		}
+	}
+	// the epoch snapshots stay readable
+	if !(c.Exists(ctx, "table:"+tb.Name+":1:definition").Val() == 1) && !(c.Exists(ctx, "table:"+tb.Name+":definition").Val() == 1) {
+		t.Errorf("a drop removed the epoch snapshots")
 	}
 }

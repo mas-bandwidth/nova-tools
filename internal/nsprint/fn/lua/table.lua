@@ -418,6 +418,10 @@ do
     flat[#flat + 1] = 'read_revision'; flat[#flat + 1] = d.revision
     return flat
   end
+  -- T.opskey(name): the hash of a table's operation records, every epoch in one
+  -- key so that a drop removes them all in one bounded step. Its fields are
+  -- <epoch>:<operation id>, its values the records (JSON).
+  function T.opskey(name) return 'table:' .. name .. ':ops' end
   function T.rowkey(d, row) return d.prefix .. ':row:' .. row end
   function T.cellkey(d, row, col) return d.prefix .. ':cell:' .. row .. ':' .. col end
   function T.rowskey(d) return d.prefix .. ':rows' end
@@ -1201,11 +1205,10 @@ do
     T.stage(d, 'DEL', T.rowskey(d))
     if op == 'drop' or op == 'drop_definition' then
       d.present = false
-      -- A drop ends the table's incarnation: the operation records written
-      -- before it name an earlier one, and no replay reaches them.
-      local incarnation = T.next(redis.call('HGET', d.key .. ':revision', 'inc') or '0')
-      if not incarnation then return nil, T.refuse('OVERFLOW', d.name) end
-      T.stage(d, 'HSET', d.key .. ':revision', 'inc', incarnation)
+      -- The table's operation records, of every epoch, are one key (T.opskey):
+      -- a table created again under the name is a new table, and no operation
+      -- of the old one replays against it.
+      T.stage(d, 'DEL', T.opskey(d.name))
     end
     if op == 'drop_definition' then
       redis.call('SCARD', 'tables')
@@ -2037,24 +2040,18 @@ do
     -- as far as the table, the epoch and the operation id, and find the record. An
     -- identical recorded request returns its original result whatever rule a
     -- newer server applies to it; a different one under the same id is a conflict.
-    local op_key, incarnation
+    local ops_key, op_field = T.opskey(table_name), nil
     local peek = T.decode(raw_json)
     if peek and peek.table == table_name and T.word(peek.operation_id) and T.uint(peek.epoch) then
-      op_key = T.prefix(table_name, peek.epoch) .. ':op:' .. peek.operation_id
-      local op_kind = T.kind(op_key)
-      if op_kind ~= 'none' and op_kind ~= 'hash' then
-        return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
-      end
-      local op_record = T.hash(op_key)
-      -- A record written under an earlier incarnation of the table (before a drop)
-      -- is not this table's history: it neither replays nor conflicts.
-      incarnation = redis.call('HGET', 'table:' .. table_name .. ':revision', 'inc') or '0'
-      if next(op_record) and (op_record.incarnation or '0') == incarnation then
-        if op_record.request ~= raw_json then
+      op_field = peek.epoch .. ':' .. peek.operation_id
+      local recorded = redis.call('HGET', ops_key, op_field)
+      if recorded then
+        local record = cjson.decode(recorded)
+        if record.request ~= raw_json then
           return T.refuse('OPCONFLICT', peek.operation_id)
         end
         -- the original result, and a third element saying it is a replay
-        local original = cjson.decode(op_record.result)
+        local original = cjson.decode(record.result)
         original[3] = 'REPLAY'
         return original
       end
@@ -2077,10 +2074,7 @@ do
     if not T.arrayfield(raw_json, 'members') then return T.refuse('MANIFEST', 'members must be json array') end
     local static_err, changed_count, guard_count = T.static_entries(manifest)
     if static_err then return static_err end
-    if not op_key then
-      op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
-      incarnation = redis.call('HGET', 'table:' .. table_name .. ':revision', 'inc') or '0'
-    end
+    op_field = manifest.epoch .. ':' .. manifest.operation_id
 
     -- Open the table exactly as every ordinary write does; the batch commits
     -- through T.finish, so the definition snapshot, the immutable identity,
@@ -2430,10 +2424,10 @@ do
 
     -- The operation record is the last write, after the commit; its
     -- permission and type are settled before the first write.
-    if not redis.acl_check_cmd('HSET', op_key, 'operation_id', manifest.operation_id) then
-      return T.refuse('NOPERM', 'HSET', op_key)
+    if not redis.acl_check_cmd('HSET', ops_key, op_field, '{}') then
+      return T.refuse('NOPERM', 'HSET', ops_key)
     end
-    local op_type_err = T.check_types({{'HSET', op_key, 'operation_id', manifest.operation_id}})
+    local op_type_err = T.check_types({{'HSET', ops_key, op_field, '{}'}})
     if op_type_err then return op_type_err end
 
     return T.finish(d, 'apply', args, {
@@ -2453,17 +2447,17 @@ do
         return encode_delta()
       end,
       record = function(reply, stream_id, before, after)
-        redis.call('HSET', op_key,
-          'operation_id', manifest.operation_id,
-          'incarnation', incarnation,
-          'digest', digest,
-          'request', raw_json,
-          'stream_id', stream_id,
-          'epoch', d.epoch,
-          'rev_before', before,
-          'rev_after', after,
-          'outcome', outcome,
-          'result', cjson.encode(reply))
+        redis.call('HSET', ops_key, op_field, cjson.encode({
+          operation_id = manifest.operation_id,
+          digest = digest,
+          request = raw_json,
+          stream_id = stream_id,
+          epoch = d.epoch,
+          rev_before = before,
+          rev_after = after,
+          outcome = outcome,
+          result = cjson.encode(reply),
+        }))
       end,
     }, {'OK'})
   end

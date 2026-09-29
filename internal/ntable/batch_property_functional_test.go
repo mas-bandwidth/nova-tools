@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -741,7 +742,7 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 			if _, ok := o.table.cells[cell]; !ok {
 				t.Fatalf("verifyPhysical: unexpected cell key %s in store", k)
 			}
-		case strings.HasPrefix(suffix, "op:"):
+		case suffix == "ops":
 		default:
 			t.Fatalf("verifyPhysical: unexpected table key in store: %s", k)
 		}
@@ -754,22 +755,37 @@ func dumpStore(ctx context.Context, c *redis.Client) (map[string]string, error) 
 		return nil, err
 	}
 	keys = append(keys, ntable.Registry, extKey)
-	pipe := c.Pipeline()
-	cmds := make([]*redis.StringCmd, len(keys))
-	for i, k := range keys {
-		cmds[i] = pipe.Dump(ctx, k)
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
 	out := make(map[string]string)
-	for i, k := range keys {
-		v, err := cmds[i].Result()
+	for _, k := range keys {
+		v, err := imageOf(ctx, c, k)
 		if err == nil {
 			out[k] = v
 		}
 	}
 	return out, nil
+}
+
+// imageOf is a key's content in a form a read cannot change: a hash's fields
+// sorted (a large hash is rehashed a step by every read, which reorders DUMP),
+// anything else dumped.
+func imageOf(ctx context.Context, c *redis.Client, key string) (string, error) {
+	kind, err := c.Type(ctx, key).Result()
+	if err != nil {
+		return "", err
+	}
+	if kind == "hash" {
+		h, err := c.HGetAll(ctx, key).Result()
+		if err != nil {
+			return "", err
+		}
+		fields := make([]string, 0, len(h))
+		for f, v := range h {
+			fields = append(fields, f+"\x00"+v)
+		}
+		sort.Strings(fields)
+		return "hash\x01" + strings.Join(fields, "\x01"), nil
+	}
+	return c.Dump(ctx, key).Result()
 }
 
 func generateExpect(memState *batchMemberState, rnd *rand.Rand, fieldsPool, valuesPool []string) *ntable.MemberExpect {

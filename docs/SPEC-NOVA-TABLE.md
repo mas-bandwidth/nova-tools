@@ -450,26 +450,18 @@ a stale epoch refuses. Original result epoch/revisions remain visible, so retry
 cannot masquerade as a new current-epoch action. No retry loop in transport may
 silently invent a new operation ID.
 
-Operation records do not expire. Each accepted operation leaves one record under
-`table:<t>[:<epoch>]:op:<id>` holding its request bytes (at most 1 MiB) and its
-receipt, and it stays for the life of the table's incarnation. A `drop` ends the
-incarnation: the `inc` counter in the table's revision hash advances in the same
-atomic call, and a record written under an earlier incarnation is unreachable,
-so after drop and create a request is never answered from, or refused as a
-conflict with, a receipt for a table that never saw the change. The unreachable
-records remain in the store until an operator deletes the keys; nothing else
-removes a record. A replay is guaranteed only while its record exists, and the
-record of a reused operation id is replaced by the newer request's.
-
-A request is evaluated in this order, and stops at the first refusal: (1) its size
-is at most the manifest bound; (2) the table, epoch and operation id are read and
-the operation is looked up, so an identical recorded request returns its original
-result and a different request under a recorded id refuses `OPCONFLICT`, whatever
-a current rule says about either; (3) the manifest's own rules (UTF-8, schema,
-types, bounds, combinations); (4) the table exists and the epoch is the active
-one; (5) the expected table revision, then every member's state and guards; (6)
-the writes. The Go library and the CLI validate the manifest before they send it,
-so a replay through them is guaranteed only for a request the current rules accept.
+Operation records do not expire. A table's operation records, of every epoch, are
+one hash, `table:<t>:ops`, whose fields are `<epoch>:<operation id>` and whose values
+are the records (the request bytes, at most 1 MiB, and the receipt). One key keeps the
+work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
+them alike: each removes the whole hash in the same atomic call as the drop, so a table
+created again under the name is a new table and no operation of the old one replays
+against it; the two verbs differ only in what they always differed in, the saved
+column definition. `clear <table>`, the epoch advance, removes no record: an operation
+recorded in an earlier epoch replays with its original receipt, epoch and revisions.
+Epoch snapshots that a drop keeps readable are not operation records and stay. A
+replay is guaranteed for as long as the table exists; nothing else removes a record.
+The layout is new with the batch, so there is no earlier layout to migrate or to sweep.
 
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.

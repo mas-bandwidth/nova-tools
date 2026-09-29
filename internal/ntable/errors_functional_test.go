@@ -20,7 +20,7 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 	perms := []string{"--user", "default", "on", "nopass", "~*", "&*", "+@all",
 		"--user", "nc", "on", ">pw", "resetkeys", "resetchannels", "-@all", "+@all",
 		"~table:demo", "~table:demo:rows", "~table:demo:row:*", "~table:demo:definition", "~table:demo:revision",
-		"~table:demo:identity", "~table:demo:changes", "~table:demo:op:*", "~table::member:*", "~tables"}
+		"~table:demo:identity", "~table:demo:changes", "~table:demo:ops", "~table::member:*", "~tables"}
 	addr, admin := live(t, perms...)
 	ctx := context.Background()
 	if err := ntable.Create(ctx, admin, demo(), now); err != nil {

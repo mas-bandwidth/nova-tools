@@ -878,7 +878,7 @@ func (h *harness) before(want verdict) map[string]string {
 func (h *harness) userSnapshot() map[string]string {
 	out := h.snapshot()
 	for key := range out {
-		if strings.HasSuffix(key, ":revision") || strings.HasSuffix(key, ":changes") || strings.Contains(key, ":op:") {
+		if strings.HasSuffix(key, ":revision") || strings.HasSuffix(key, ":changes") || strings.HasSuffix(key, ":ops") {
 			delete(out, key)
 		} else if strings.HasSuffix(key, ":definition") {
 			fields, err := h.c.HGetAll(h.ctx, key).Result()
@@ -1125,8 +1125,8 @@ func (h *harness) verifyPhysical() {
 			if h.m.live[tn] == nil || h.m.live[tn].rows[parts[3]] == nil {
 				h.fail("key %s is in the store; the %s has no row %s in table %s", k, h.oracle(), parts[3], tn)
 			}
-		case len(parts) == 4 && parts[2] == "op":
-			// batch operation receipt record: table:<tn>:op:<op_id>
+		case len(parts) == 3 && parts[2] == "ops":
+			// batch operation records: table:<tn>:ops
 		default:
 			h.fail("key %s is in the store and is no table key", k)
 		}

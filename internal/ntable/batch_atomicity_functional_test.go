@@ -8,6 +8,7 @@ package ntable_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -32,6 +33,21 @@ func probeTable(t *testing.T) (*redis.Client, context.Context) {
 		}
 	}
 	return c, ctx
+}
+
+// operationRecord reads the record of an operation: a table's records are one
+// hash, epoch:operation id to JSON.
+func operationRecord(t *testing.T, c *redis.Client, table, epoch, opID string) map[string]string {
+	t.Helper()
+	raw, err := c.HGet(context.Background(), ntable.DefKey(table)+":ops", epoch+":"+opID).Result()
+	if err != nil {
+		t.Fatalf("operation record %s:%s of %s: %v", epoch, opID, table, err)
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		t.Fatalf("operation record %s: %v", raw, err)
+	}
+	return rec
 }
 
 func probeRev(ctx context.Context, c *redis.Client) string {

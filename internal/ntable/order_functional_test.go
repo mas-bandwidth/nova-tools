@@ -97,7 +97,7 @@ func storeImage(t *testing.T, c *redis.Client) map[string]string {
 	}
 	out := map[string]string{}
 	for _, key := range keys {
-		out[key] = c.Dump(ctx, key).Val()
+		out[key], _ = imageOf(ctx, c, key)
 	}
 	return out
 }

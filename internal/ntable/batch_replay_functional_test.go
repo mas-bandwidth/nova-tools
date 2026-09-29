@@ -7,6 +7,7 @@ package ntable_test
 // current rules say about either.
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -19,7 +20,6 @@ func asReplay(ans []any) ([]any, bool) {
 	return ans, false
 }
 
-
 func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
@@ -27,8 +27,12 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	// (a score given as a string).
 	recorded := manifestWith(probeRev(ctx, c), "old", `{"id":"h","expect":{"absent":true},"create":{"row":"build","col":"ready","score":"0x10"}}`)
 	result := `["OK",["RECEIPT","1-0","0","3","4","changed","{}"]]`
-	if err := c.HSet(ctx, "table:demo:op:old", "operation_id", "old", "digest", "x", "request", recorded, "stream_id", "1-0",
-		"epoch", "0", "rev_before", "3", "rev_after", "4", "outcome", "changed", "result", result).Err(); err != nil {
+	record, err := json.Marshal(map[string]string{"operation_id": "old", "digest": "x", "request": recorded, "stream_id": "1-0",
+		"epoch": "0", "rev_before": "3", "rev_after": "4", "outcome": "changed", "result": result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, "table:demo:ops", "0:old", string(record)).Err(); err != nil {
 		t.Fatal(err)
 	}
 
