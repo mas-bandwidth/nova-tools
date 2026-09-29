@@ -394,6 +394,59 @@ func TestTerms(t *testing.T) {
 	}
 }
 
+// Both sides are normalised the same way before words are counted, so a
+// private word in another spelling is the same term.
+func TestTermsAreNormalisedOnBothSides(t *testing.T) {
+	t.Parallel()
+	r := privacy.DefaultRules()
+	for in, want := range map[string][]string{
+		"zarquon":            {"zarquon"},
+		"Zarquon's":          {"zarquon"},
+		"zarquon\u2019s":     {"zarquon"},
+		"zarquons":           {"zarquon"},
+		"wumpuses":           {"wumpus"},
+		"wumpuses'":          {"wumpus"},
+		"zarqu\u00f3n":       {"zarquon"},
+		"zarquo\u0301n":      {"zarquon"},
+		"zar-quon":           {"zarquon", "quon"},
+		"zar\u2011quon":      {"zarquon", "quon"},
+		"zarquon--flibberty": {"zarquon", "flibberty"},
+		"zar\u200bquon":      {"zarquon"},
+		"zar\u00adquon":      {"zarquon"},
+		"\uff5a\uff41\uff52\uff51\uff55\uff4f\uff4e": {"zarquon"},
+		"flibberty-wumpus":                           {"flibbertywumpus", "flibberty", "wumpus"},
+		"houses house":                               {"hous"},
+		"cities city":                                {"city"},
+		"boxes":                                      {"box"},
+		"glasses glass":                              {"glass"},
+		"stra\u00dfe strasse":                        {"strass"},
+		"\ufb01ddlestick":                            {"fiddlestick"},
+		"\u03b6\u03ce\u03bd\u03b7":                   {"\u03b6\u03ce\u03bd\u03b7"},
+	} {
+		got := r.Terms(in)
+		if len(got) != len(want) {
+			t.Errorf("Terms(%q) = %v, want %v", in, got, want)
+			continue
+		}
+		for _, w := range want {
+			if !got[w] {
+				t.Errorf("Terms(%q) = %v, want %v", in, got, want)
+			}
+		}
+	}
+}
+
+// The length floors are counted on the word as written, before its plural is
+// folded, so folding never pushes a word under them.
+func TestTheLengthFloorsCountTheWordAsWritten(t *testing.T) {
+	t.Parallel()
+	b := privacy.Bounds{Rare: 2, Background: 3}
+	got := privacy.DefaultRules().Distinctive("houses", map[string]int{}, map[string]int{}, b)
+	if !got["hous"] {
+		t.Errorf("houses (six letters) folds to hous and stays distinctive: %v", got)
+	}
+}
+
 func TestConfiguredStopWordsAreNotTerms(t *testing.T) {
 	t.Parallel()
 	r, err := privacy.NewRules("", nil, []string{"Lantern", "harbour"}, nil, nil, nil)

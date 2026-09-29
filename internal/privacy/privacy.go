@@ -36,9 +36,12 @@ var DefaultEntryTokens = []string{"##", "-"}
 // where unrelated prose brushes a private entry by accident.
 const FlagThreshold = 3
 
-// MinTermLen is the shortest distinctive term, in bytes. Terms are ASCII by
-// construction, so bytes and runes agree.
+// MinTermLen is the shortest distinctive term, in runes, counted on the word
+// as written before its plural is folded.
 const MinTermLen = 5
+
+// MinWordLen is the shortest word that is a term at all, in runes.
+const MinWordLen = 4
 
 // The rarity bounds, in integer arithmetic so every threshold can be
 // reproduced by hand. A term is rare in the private corpus when at most
@@ -63,9 +66,6 @@ should will shall may might must do does did done get got go goes going day toda
 works working write writes writing read reads reading time first last next here there what
 when where which who whom how why because while after before again still even much many
 private status idea ideas note file line entry`)
-
-// termRE is a lowercase ASCII letter and at least three more word characters.
-var termRE = regexp.MustCompile(`[a-z][a-z0-9'-]{3,}`)
 
 // Pattern is one structure shape: a class name and the expression that
 // matches it.
@@ -133,14 +133,15 @@ func NewRules(marker string, entryTokens, stop []string, refuse, warn []Pattern,
 		allowSet:    map[string]bool{},
 		markerKey:   foldSpace(marker),
 	}
+	addStop := func(text string) {
+		words(normalise(text), func(w word) { r.stop[w.key] = true })
+	}
 	for _, w := range baseStopWords {
-		r.stop[w] = true
+		addStop(w)
 	}
-	for _, w := range termRE.FindAllString(strings.ToLower(marker), -1) {
-		r.stop[w] = true
-	}
+	addStop(marker)
 	for _, w := range stop {
-		r.stop[strings.ToLower(w)] = true
+		addStop(w)
 	}
 	for _, a := range allow {
 		r.allowSet[strings.ToLower(a)] = true
@@ -310,15 +311,30 @@ func (r Rules) opensEntry(ln string) bool {
 	return false
 }
 
-// Terms is the set of words in text that could matter: lowercased, four
-// characters or more, not stop words. A set, so repetition adds nothing.
+// Terms is the set of words in text that could matter, each by its key:
+// normalised (see normalise), split into words and keys (see words), at
+// least MinWordLen runes as written, and not a stop word. A set, so
+// repetition adds nothing.
 func (r Rules) Terms(text string) map[string]bool {
 	out := map[string]bool{}
-	for _, w := range termRE.FindAllString(strings.ToLower(text), -1) {
-		if !r.stop[w] {
-			out[w] = true
-		}
+	for k := range r.termLengths(text) {
+		out[k] = true
 	}
+	return out
+}
+
+// termLengths maps every term of text to the longest word, in runes as
+// written, that reached it.
+func (r Rules) termLengths(text string) map[string]int {
+	out := map[string]int{}
+	words(normalise(text), func(w word) {
+		if w.runes < MinWordLen || r.stop[w.key] {
+			return
+		}
+		if w.runes > out[w.key] {
+			out[w.key] = w.runes
+		}
+	})
 	return out
 }
 
@@ -368,8 +384,8 @@ func (r Rules) DocFrequency(blocks []Block) map[string]int {
 // the private corpus, rare in the background, and at least MinTermLen long.
 func (r Rules) Distinctive(text string, df, bg map[string]int, b Bounds) map[string]bool {
 	out := map[string]bool{}
-	for w := range r.Terms(text) {
-		if df[w] <= b.Rare && bg[w] <= b.Background && len(w) >= MinTermLen {
+	for w, n := range r.termLengths(text) {
+		if df[w] <= b.Rare && bg[w] <= b.Background && n >= MinTermLen {
 			out[w] = true
 		}
 	}

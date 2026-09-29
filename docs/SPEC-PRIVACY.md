@@ -52,13 +52,45 @@ A private heading's entry is measured with the words of the entries under it,
 so an idea written as a heading and its bullets is compared as one. Rarity
 still counts each entry once, by its own title and body.
 
-A **term** is a lowercase ASCII word of four or more characters that is not a
-stop word. The marker's own words are stop words. A term is **distinctive** for
-a private entry when all three hold:
+Words are taken the same way from the payload, the entries and the
+background, after the text is **normalised**:
+
+- invisible formatting characters (Unicode category Cf: the zero-width space
+  and joiners, the soft hyphen, the byte-order mark) and variation selectors
+  are dropped, so they join rather than split a word;
+- Unicode NFKC is applied (`golang.org/x/text/unicode/norm`), so fullwidth
+  letters, ligatures and other compatibility forms read as plain letters;
+- case is folded;
+- accents are removed from Latin letters: a combining mark after a Latin
+  letter is dropped (`é` reads `e`), and `ß æ œ ø ł đ ð þ ı` are spelt
+  `ss ae oe o l d d th i`; marks on other scripts are kept;
+- curly and modifier apostrophes read as `'`, and the Unicode hyphens U+2010
+  and U+2011 as `-`.
+
+A **word** is then a run of letters and digits in any script, starting with a
+letter, that may hold a single `-` or `'` between two of its characters (`--`
+and a dash split words). A trailing `'s` or `'` is stripped. A hyphenated word
+is taken whole, with its hyphens removed, and as each of its parts:
+`flibberty-wumpus` gives `flibbertywumpus`, `flibberty` and `wumpus`, and
+`zar-quon` gives `zarquon`. Each key has simple English plurals folded: `-ies`
+becomes `-y`; `-es` is dropped after `s`, `x`, `z`, `ch` or `sh`, and a
+singular ending `-se`, `-xe`, `-ze`, `-che` or `-she` drops its `e` so that
+`house` and `houses` meet as `wumpus` and `wumpuses` do; otherwise a final `s`
+is dropped unless the word ends `-ss`, `-us` or `-is`. Irregular plurals,
+`-oes`, `-ves` and the plural of an `-ie` noun (`movies`) are not folded.
+
+A **term** is a key whose word, as written before its plural was folded, is
+four or more runes long, and that is not a stop word. Stop words and the
+marker's own words go through the same normalisation. A term is
+**distinctive** for a private entry when all three hold:
 
 - at most 4% of all entries hold it (never fewer than 2);
 - at most 3% of the background documents hold it (never fewer than 3);
-- it is at least five characters long.
+- its word, as written, is at least five runes long.
+
+A hyphenated compound shared whole counts as three terms (the whole and its
+two parts), so one private compound of two rare words, named in a payload,
+reaches the threshold alone.
 
 The **background** is a set of directories of the author's ordinary writing,
 each read recursively or flat, keeping the files whose names a pattern matches

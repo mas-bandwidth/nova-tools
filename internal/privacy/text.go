@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ErrNotText marks bytes the screen cannot read as text: a NUL byte, invalid
@@ -107,10 +109,11 @@ func CountWords(text string) int {
 // every other character of Unicode category Cf.
 func isInvisible(c rune) bool { return unicode.Is(unicode.Cf, c) }
 
-// foldSpace is how the marker is compared: invisible formatting characters
-// dropped, any Unicode space read as one space with runs collapsed, the ends
-// trimmed, and the case folded.
+// foldSpace is how the marker is compared: the text normalised as words are
+// (see normalise), any Unicode space read as one space with runs collapsed,
+// and the ends trimmed.
 func foldSpace(s string) string {
+	s = normalise(s)
 	var b strings.Builder
 	space := false
 	for _, c := range s {
@@ -126,5 +129,136 @@ func foldSpace(s string) string {
 			b.WriteRune(c)
 		}
 	}
-	return strings.ToLower(b.String())
+	return b.String()
+}
+
+// normalise is what both sides of a comparison go through before words are
+// taken from them: invisible formatting characters and variation selectors
+// dropped; Unicode NFKC, so fullwidth letters, ligatures and compatibility
+// forms read as their plain letters; case folded; accents removed from
+// Latin letters (a combining mark after a Latin letter is dropped, and ß, æ,
+// œ, ø, ł, đ, ð, þ, ı are spelt out); curly and modifier apostrophes read as
+// ', and the Unicode hyphens as -.
+func normalise(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return strings.ToLower(s)
+	}
+	var b strings.Builder
+	for _, c := range s {
+		if !isInvisible(c) && !unicode.Is(unicode.Variation_Selector, c) {
+			b.WriteRune(c)
+		}
+	}
+	s = strings.ToLower(norm.NFKC.String(b.String()))
+	b.Reset()
+	latin := false
+	for _, c := range norm.NFD.String(s) {
+		if unicode.Is(unicode.Mn, c) {
+			if !latin {
+				b.WriteRune(c)
+			}
+			continue
+		}
+		latin = unicode.Is(unicode.Latin, c)
+		if r, ok := spelled[c]; ok {
+			b.WriteString(r)
+			continue
+		}
+		switch c {
+		case '\u2018', '\u2019', '\u02bc', '\u2032':
+			c = '\''
+		case '\u2010', '\u2011':
+			c = '-'
+		}
+		b.WriteRune(c)
+	}
+	return norm.NFC.String(b.String())
+}
+
+// spelled are the Latin letters with no decomposition, written out.
+var spelled = map[rune]string{'ß': "ss", 'æ': "ae", 'œ': "oe", 'ø': "o", 'ł': "l", 'đ': "d", 'ð': "d", 'þ': "th", 'ı': "i"}
+
+// word is one key taken from normalised text: the key the term is counted
+// by, and how many runes long the word was as written, before a plural was
+// folded.
+type word struct {
+	key   string
+	runes int
+}
+
+// words splits normalised text into keys. A word is a run of letters and
+// digits in any script, which may hold a single - or ' between two of them.
+// A trailing 's or ' is stripped. A hyphenated word is taken whole, with the
+// hyphens removed, and as each of its parts. Every key has its plural folded
+// (foldPlural). Leading digits are skipped; a run with no letter is no word.
+func words(text string, emit func(word)) {
+	isWord := func(c rune) bool { return unicode.IsLetter(c) || unicode.IsDigit(c) || unicode.Is(unicode.Mn, c) }
+	runes := []rune(text)
+	for i := 0; i < len(runes); {
+		for i < len(runes) && !unicode.IsLetter(runes[i]) {
+			i++
+		}
+		start := i
+		for i < len(runes) {
+			c := runes[i]
+			if isWord(c) {
+				i++
+				continue
+			}
+			if (c == '-' || c == '\'') && i > start && i+1 < len(runes) && isWord(runes[i+1]) {
+				i++
+				continue
+			}
+			break
+		}
+		if i == start {
+			continue
+		}
+		tok := string(runes[start:i])
+		if strings.HasSuffix(tok, "'s") {
+			tok = tok[:len(tok)-2]
+		}
+		tok = strings.TrimRight(tok, "'")
+		parts := strings.Split(tok, "-")
+		if len(parts) > 1 {
+			whole := strings.Join(parts, "")
+			emit(word{key: foldPlural(whole), runes: utf8.RuneCountInString(whole)})
+		}
+		for _, p := range parts {
+			if p != "" {
+				emit(word{key: foldPlural(p), runes: utf8.RuneCountInString(p)})
+			}
+		}
+	}
+}
+
+// foldPlural folds a simple English plural into its singular, so both reach
+// one key: -ies becomes -y; -es is dropped after s, x, z, ch or sh (and a
+// singular ending -se, -xe, -ze, -che or -she drops its e, so house and
+// houses meet as wumpus and wumpuses do); otherwise a final s is dropped
+// unless the word ends -ss, -us or -is. Irregular plurals, -oes, -ves and
+// the plural of an -ie noun are not folded.
+func foldPlural(w string) string {
+	sibilant := func(s string) bool {
+		return strings.HasSuffix(s, "s") || strings.HasSuffix(s, "x") || strings.HasSuffix(s, "z") ||
+			strings.HasSuffix(s, "ch") || strings.HasSuffix(s, "sh")
+	}
+	switch {
+	case len(w) >= 5 && strings.HasSuffix(w, "ies"):
+		return w[:len(w)-3] + "y"
+	case len(w) >= 4 && strings.HasSuffix(w, "es") && sibilant(w[:len(w)-2]):
+		return w[:len(w)-2]
+	case len(w) >= 4 && strings.HasSuffix(w, "s") && !strings.HasSuffix(w, "ss") && !strings.HasSuffix(w, "us") && !strings.HasSuffix(w, "is"):
+		return w[:len(w)-1]
+	case len(w) >= 4 && strings.HasSuffix(w, "e") && sibilant(w[:len(w)-1]):
+		return w[:len(w)-1]
+	}
+	return w
 }

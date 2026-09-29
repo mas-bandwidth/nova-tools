@@ -114,12 +114,15 @@ func TestUnderTheBoundsEveryDocumentIsRead(t *testing.T) {
 func TestADocumentUnderTwoRootsIsCountedOnce(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, true)
+	for i := 0; i < 8; i++ {
+		f.write(t, fmt.Sprintf("journal/page-%03d.md", i), "Ordinary prose and a journalword.\n")
+	}
 	c := privacy.Load(f.spec)
 	if c.BackgroundDocs != 10 || c.Roots[0].Read != 10 || c.Roots[1].Found != 8 || c.Roots[1].Shared != 8 || c.Roots[1].Read != 0 {
 		t.Errorf("docs %d roots %+v, want the journal counted once, under the first root", c.BackgroundDocs, c.Roots)
 	}
-	if c.BackgroundFreq["prose"] != 8 {
-		t.Errorf("a journal word is in %d documents, want 8", c.BackgroundFreq["prose"])
+	if n := c.BackgroundFreq["journalword"]; n != 8 {
+		t.Errorf("a journal word is in %d documents, want 8", n)
 	}
 }
 
