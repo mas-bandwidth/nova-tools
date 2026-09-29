@@ -65,7 +65,7 @@ usage:
   nova-config migrate [--pg <dsn>] [--print]
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
-  nova-config inventory [--pg <dsn>] [--list | --host <name>]
+  nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>]
       prints an Ansible dynamic JSON inventory from the machine and fleet rows: the groups benches, coordinator, store and runners, and every host's variables under _meta.hostvars
       first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
       ansible's -i wants an executable: save these two lines as ./nova-inventory, chmod +x it, then ansible-inventory -i ./nova-inventory --list
@@ -923,6 +923,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	pg, _, _ := connFlags(fs, false, false)
 	list := fs.Bool("list", false, "print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host")
 	host := fs.String("host", "", "print the variables of one machine as a JSON object; exits 1 when no machine row has that name")
+	timeout := fs.Duration("timeout", inventoryTimeout, "a Go duration, above 0: how long to wait for the store before refusing; ansible runs the verb unattended, so it never waits forever")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -941,19 +942,46 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if *list && hostGiven {
 		return refuse(stderr, verb, "--list and --host are exclusive: --list prints every host, --host prints one")
 	}
+	if *timeout <= 0 {
+		return refuse(stderr, verb, "--timeout wants a Go duration above 0, like 10s")
+	}
 	dsn, err := pgDSN(*pg, d.getenv)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	// again is the command that repeats this run with every input kept.
+	again := func(extra ...string) string {
+		parts := []string{tool, verb}
+		if *pg != "" {
+			parts = append(parts, "--pg", shq(*pg))
+		}
+		if *list {
+			parts = append(parts, "--list")
+		}
+		if hostGiven {
+			parts = append(parts, "--host", shq(*host))
+		}
+		return strings.Join(append(parts, extra...), " ")
+	}
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+	// fail is a store failure: the deadline, or the store's own words.
+	fail := func(err error) int {
+		if ctx.Err() != nil {
+			fmt.Fprintf(stderr, "%s %s: timed out after %s waiting for the store; run: %s\n", tool, verb, *timeout, again("--timeout", (*timeout*3).String()))
+			return 2
+		}
+		return refuse(stderr, verb, err.Error())
+	}
 	st, err := d.openStore(ctx, dsn)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return fail(err)
 	}
 	defer st.Close()
 	self, explicit := localHost(d.getenv, d.hostname)
 	inv, err := config.BuildInventory(ctx, st, self)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return fail(err)
 	}
 	if explicit && !inv.Has(self) {
 		next := tool + " machine list"

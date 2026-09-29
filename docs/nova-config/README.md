@@ -293,6 +293,10 @@ so ansible reaches it without ssh.
 `--list` prints all of it and is the default when no flag is given. `--host
 <name>` prints one machine's variables; a name with no machine row exits 1 with
 the known names, and `--list` with `--host` is refused.
+`--timeout` (a Go duration, default `10s`) bounds the wait for the store, so an
+unattended ansible run never blocks on a locked table: on expiry the verb exits
+2 with `timed out after <d> waiting for the store` and the command to repeat
+with a longer timeout.
 
 Ansible's `-i` wants an executable file, so save a two-line wrapper and point
 `-i` at it:

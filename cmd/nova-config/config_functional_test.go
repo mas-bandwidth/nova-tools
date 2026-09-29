@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"strings"
 	"testing"
@@ -337,5 +338,39 @@ func TestApplyEndToEnd(t *testing.T) {
 	}
 	if r.client.Exists(ctx, "machine:hulk:ceiling", "machine:hulk", config.FleetKey("store")).Val() != 0 || r.client.Get(ctx, config.FleetKey("coordinator")).Val() != "studio" {
 		t.Fatal("hulk's keys or fleet:store survived, or the coordinator went with them")
+	}
+}
+
+// A lock held on the machines table blocks the inventory read; the verb gives
+// up at its --timeout with a refusal instead of waiting for ever.
+func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	r.run(t, 0, "migrate")
+	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+
+	ctx := context.Background()
+	db, err := sql.Open("pgx", r.env["NOVA_PG_DSN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE config.machines IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	out, errs := r.run(t, 2, "inventory", "--timeout", "300ms")
+	_ = tx.Rollback()
+	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store; run: nova-config inventory --timeout 900ms") {
+		t.Fatalf("stdout %q stderr %q", out, errs)
+	}
+	// Released, the same verb answers.
+	out, _ = r.run(t, 0, "inventory", "--timeout", "5s")
+	if !strings.Contains(out, "bench-alpha") {
+		t.Fatalf("after the lock: %q", out)
 	}
 }

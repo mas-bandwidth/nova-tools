@@ -107,6 +107,8 @@ type harness struct {
 	opens int
 	// hostname is what the machine reports as its own name.
 	hostname string
+	// override, when set, is the store openStore hands out instead of store.
+	override pgStore
 }
 
 func newHarness() *harness {
@@ -120,6 +122,9 @@ func (h *harness) deps() deps {
 			h.opens++
 			if strings.Contains(dsn, "closed") {
 				return nil, fmt.Errorf("postgres at %s: connection refused", config.Redact(dsn))
+			}
+			if h.override != nil {
+				return h.override, nil
 			}
 			return h.store, nil
 		},
@@ -982,6 +987,47 @@ func TestInventoryUnsetNovaMachineAndNoHostnameMatchMarksNothing(t *testing.T) {
 		}
 		if got := localMachines(t, out); len(got) != 0 {
 			t.Fatalf("hostname %q marks %v local", hostname, got)
+		}
+	}
+}
+
+// blockedStore never answers the inventory read until its context ends,
+// like a store holding a lock on the machines table.
+type blockedStore struct{ *memStore }
+
+func (b blockedStore) MachinesAndFleet(ctx context.Context) ([]config.Row, config.Row, error) {
+	<-ctx.Done()
+	return nil, config.Row{}, ctx.Err()
+}
+
+func TestInventoryTimesOutWaitingForTheStore(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.override = blockedStore{h.store}
+	code, out, errs := h.run(t, "inventory", "--pg", dsn, "--host", "bench-01", "--timeout", "50ms")
+	want := "nova-config inventory: timed out after 50ms waiting for the store; run: nova-config inventory --pg " + dsn + " --host bench-01 --timeout 150ms\n"
+	if code != 2 || out != "" || errs != want {
+		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out, errs, want)
+	}
+
+	// The printed remedy runs through the real CLI once the store answers.
+	h.override = nil
+	remedy := strings.Fields(strings.TrimPrefix(strings.TrimSuffix(errs, "\n"), "nova-config inventory: timed out after 50ms waiting for the store; run: "))
+	code, out, errs = h.run(t, remedy[1:]...)
+	if code != 0 || errs != "" || !strings.Contains(out, "ansible_host") {
+		t.Fatalf("remedy %v: exit %d stdout %q stderr %q", remedy, code, out, errs)
+	}
+}
+
+func TestInventoryTimeoutMustBePositive(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{"0", "0s", "-1s", "soon"} {
+		h := inventoryHarness(t, 1)
+		code, out, errs := h.run(t, "inventory", "--timeout", v)
+		if code != 2 || out != "" || !strings.Contains(errs, "timeout") || h.opens != 0 {
+			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q opens %d", v, code, out, errs, h.opens)
 		}
 	}
 }
