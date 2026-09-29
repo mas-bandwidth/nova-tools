@@ -54,6 +54,9 @@ type Records struct {
 	// test that must run a contended lock to its end advances them with no wall time.
 	Now   func() time.Time
 	Sleep func(time.Duration)
+	// NewReportFetchNonce draws a private ref suffix for WithFetchedReportTip.
+	// Defaults to newReportFetchNonce (crypto/rand hex).
+	NewReportFetchNonce func() (string, error)
 }
 
 // NewRecords returns the record layer for a lane.
@@ -582,7 +585,11 @@ func (r *Records) WithFetchedReportTip(callback func(fullSHA string) error) (err
 	if err != nil {
 		return err
 	}
-	nonce, err := newReportFetchNonce()
+	nonceFn := newReportFetchNonce
+	if r != nil && r.NewReportFetchNonce != nil {
+		nonceFn = r.NewReportFetchNonce
+	}
+	nonce, err := nonceFn()
 	if err != nil {
 		return fmt.Errorf("could not draw a private report-fetch name: %w", err)
 	}

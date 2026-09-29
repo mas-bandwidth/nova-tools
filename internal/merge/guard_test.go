@@ -136,18 +136,28 @@ func (repeatByte) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// mergeHelperArg reports whether arg is present in os.Args.
+func mergeHelperArg(arg string) bool {
+	for _, a := range os.Args {
+		if a == arg {
+			return true
+		}
+	}
+	return false
+}
+
 // security#30 L8c, Alex's anchor: "gh/git output buffered unbounded." Exec.Run used
 // cmd.CombinedOutput() with no cap, so a hostile or runaway gh/git filled memory. The
 // capture is bounded and the result says it was cut.
 func TestExecRunCapsRunawayOutputAndMarksIt(t *testing.T) {
-	if os.Getenv("NOVA_MERGE_EXEC_CAP_HELPER") == "1" {
+	t.Parallel()
+	if mergeHelperArg("nova-merge-cap-helper") || os.Getenv("NOVA_MERGE_EXEC_CAP_HELPER") == "1" {
 		_, _ = io.Copy(os.Stdout, io.LimitReader(repeatByte{}, 1<<20))
 		os.Exit(0)
 	}
-	t.Setenv("NOVA_MERGE_EXEC_CAP_HELPER", "1")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, _ := (Exec{}).Run(ctx, "", os.Args[0], "-test.run=TestExecRunCapsRunawayOutputAndMarksIt")
+	out, _ := (Exec{}).Run(ctx, "", os.Args[0], "-test.run=TestExecRunCapsRunawayOutputAndMarksIt", "--", "nova-merge-cap-helper")
 	if len(out) >= 1<<19 {
 		t.Fatalf("a runaway child produced %d bytes of captured output: the cap did not hold at its named line", len(out))
 	}
@@ -157,12 +167,12 @@ func TestExecRunCapsRunawayOutputAndMarksIt(t *testing.T) {
 }
 
 func TestExecRunLeavesBelowCapSuccess(t *testing.T) {
-	if os.Getenv("NOVA_MERGE_EXEC_SMALL_HELPER") == "1" {
+	t.Parallel()
+	if mergeHelperArg("nova-merge-small-helper") || os.Getenv("NOVA_MERGE_EXEC_SMALL_HELPER") == "1" {
 		_, _ = io.WriteString(os.Stdout, "small output\n")
 		os.Exit(0)
 	}
-	t.Setenv("NOVA_MERGE_EXEC_SMALL_HELPER", "1")
-	out, err := (Exec{}).Run(context.Background(), "", os.Args[0], "-test.run=TestExecRunLeavesBelowCapSuccess")
+	out, err := (Exec{}).Run(context.Background(), "", os.Args[0], "-test.run=TestExecRunLeavesBelowCapSuccess", "--", "nova-merge-small-helper")
 	if err != nil || out != "small output\n" {
 		t.Fatalf("below-cap command returned out=%q err=%v", out, err)
 	}
@@ -172,14 +182,14 @@ func TestExecRunLeavesBelowCapSuccess(t *testing.T) {
 // it. The cap is still a refusal: a nil child status must never turn a capped
 // prefix into an apparently complete command result.
 func TestExecRunReturnsErrorWhenChildEndsAtCaptureCap(t *testing.T) {
-	if os.Getenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER") == "1" {
+	t.Parallel()
+	if mergeHelperArg("nova-merge-exact-helper") || os.Getenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER") == "1" {
 		_, _ = io.CopyN(os.Stdout, repeatByte{}, execOutputCap)
 		os.Exit(0)
 	}
-	t.Setenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER", "1")
 	for i := 0; i < 100; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		out, err := (Exec{}).Run(ctx, "", os.Args[0], "-test.run=TestExecRunReturnsErrorWhenChildEndsAtCaptureCap")
+		out, err := (Exec{}).Run(ctx, "", os.Args[0], "-test.run=TestExecRunReturnsErrorWhenChildEndsAtCaptureCap", "--", "nova-merge-exact-helper")
 		cancel()
 		if !strings.Contains(out, "truncated") {
 			t.Fatalf("iteration %d: capped child output was not marked truncated", i)

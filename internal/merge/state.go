@@ -482,11 +482,18 @@ func replaceState(tmp, path string) error {
 // retry to its end advances the injected clock through sleep, so the window is exercised in
 // full with no wall time and no assertion against elapsed seconds.
 func replaceStateWait(tmp, path string, now func() time.Time, sleep func(time.Duration)) error {
+	return replaceStateWaitRefusal(tmp, path, now, sleep, replaceRefusal)
+}
+
+func replaceStateWaitRefusal(tmp, path string, now func() time.Time, sleep func(time.Duration), refusal func(error) bool) error {
+	if refusal == nil {
+		refusal = replaceRefusal
+	}
 	deadline := now().Add(replaceWriteWindow)
 	poll := replaceWritePoll
 	for {
 		err := os.Rename(tmp, path)
-		if err == nil || errors.Is(err, fs.ErrNotExist) || !replaceRefusal(err) || !now().Before(deadline) {
+		if err == nil || errors.Is(err, fs.ErrNotExist) || !refusal(err) || !now().Before(deadline) {
 			return err
 		}
 		sleep(poll)
@@ -546,6 +553,10 @@ func (s *State) SaveTo(lane string) error {
 
 // saveToWait is SaveTo with its clock injected, so the replace retry is the caller's seam.
 func (s *State) saveToWait(lane string, now func() time.Time, sleep func(time.Duration)) error {
+	return s.saveToWaitRefusal(lane, now, sleep, replaceRefusal)
+}
+
+func (s *State) saveToWaitRefusal(lane string, now func() time.Time, sleep func(time.Duration), refusal func(error) bool) error {
 	raw, err := s.Encode()
 	if err != nil {
 		return err
@@ -557,7 +568,7 @@ func (s *State) saveToWait(lane string, now func() time.Time, sleep func(time.Du
 	if err := writeWhole(tmp, raw, 0o644); err != nil {
 		return err
 	}
-	if err := replaceStateWait(tmp, StatePath(lane), now, sleep); err != nil {
+	if err := replaceStateWaitRefusal(tmp, StatePath(lane), now, sleep, refusal); err != nil {
 		os.Remove(tmp)
 		return err
 	}

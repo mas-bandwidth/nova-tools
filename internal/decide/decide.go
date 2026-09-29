@@ -115,25 +115,46 @@ type Client struct {
 // client forwarding the provider's answer, which is every ordinary question.
 func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)) { c.constrain = fn }
 
-// New reads the key from the environment variable keyEnv (DefaultKeyEnv when
-// empty, with FallbackKeyEnv also accepted) and refuses with an error naming
-// the variable when it is unset. baseURL empty means DefaultBaseURL. The key
-// is never printed.
-func New(baseURL, keyEnv string) (*Client, error) {
+// NewWithKey builds a Client with an explicit API key rather than reading it from
+// the environment, for callers and tests that already have the key.
+func NewWithKey(baseURL, key string) (*Client, error) {
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	if key == "" {
+		return nil, fmt.Errorf("decide: key is empty; refusing to guess")
+	}
+	return &Client{baseURL: baseURL, key: key, http: &http.Client{Timeout: deadline}}, nil
+}
+
+// NewWithLookup reads the key using lookup (DefaultKeyEnv when empty, with
+// FallbackKeyEnv also accepted) and refuses when unset.
+func NewWithLookup(baseURL, keyEnv string, lookup func(string) string) (*Client, error) {
+	if lookup == nil {
+		lookup = os.Getenv
+	}
 	if keyEnv == "" {
 		keyEnv = DefaultKeyEnv
 	}
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	key := os.Getenv(keyEnv)
+	key := lookup(keyEnv)
 	if key == "" && keyEnv != FallbackKeyEnv {
-		key = os.Getenv(FallbackKeyEnv)
+		key = lookup(FallbackKeyEnv)
 	}
 	if key == "" {
 		return nil, fmt.Errorf("decide: %s is not set; refusing to guess", keyEnv)
 	}
-	return &Client{baseURL: baseURL, key: key, http: &http.Client{Timeout: deadline}}, nil
+	return NewWithKey(baseURL, key)
+}
+
+// New reads the key from the environment variable keyEnv (DefaultKeyEnv when
+// empty, with FallbackKeyEnv also accepted) and refuses with an error naming
+// the variable when it is unset. baseURL empty means DefaultBaseURL. The key
+// is never printed.
+func New(baseURL, keyEnv string) (*Client, error) {
+	return NewWithLookup(baseURL, keyEnv, os.Getenv)
 }
 
 // questionWire is the documented question shape.

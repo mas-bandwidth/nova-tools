@@ -202,11 +202,12 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 // the caller's statement, not the environment's -- an env lever that could redirect the
 // check to a decoy would be a lift by another name.
 func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
+	t.Parallel()
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
 
-	t.Setenv("NOVA_FUSE_BOX", boxIn(t)) // absent, i.e. clear
+	// TestMain sets NOVA_FUSE_BOX ambiently to a clear decoy box for the whole process.
 	code, _, errOut := capture(t, []string{"check", "--box", box}, now)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 -- the env var must not redirect the check to a clear box", code)
