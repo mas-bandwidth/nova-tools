@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # revert-on-red.sh: the mechanical revert of the push that turned main red.
 #
-# Run by revert-on-red.yml on the checked-out head_sha of a failed `ci`
-# workflow_run on main. One of three guards stops it with a notice and exit 0
+# Run by revert-on-red.yml on the checked-out head_sha of a failed or cancelled
+# `ci` workflow_run on main. One of three guards stops it with a notice and exit 0
 # (never a failure -- a skip is not a red):
 #   * the head commit is itself a revert        -> no revert loops
 #   * the parent commit's ci run was not green  -> the red predates this push
@@ -19,9 +19,16 @@ export GH_TOKEN="${GITHUB_TOKEN}"
 repo="${GITHUB_REPOSITORY}"
 head_sha="${HEAD_SHA}"
 run_id="${RUN_ID}"
+run_attempt="${RUN_ATTEMPT:-2}"
 
 short() { printf '%s' "${1:0:12}"; }
 notice() { echo "::notice::$*"; }
+
+# --- guard 0: attempt 1 is a rerun trigger only (flake guard) ---
+if [ "$run_attempt" = "1" ]; then
+  notice "run $run_id is on attempt 1; flake guard re-run must execute before revert, skipping."
+  exit 0
+fi
 
 # --- guard 1: never revert a revert (no revert loops) ---
 subject="$(git log -1 --format=%s "$head_sha")"
