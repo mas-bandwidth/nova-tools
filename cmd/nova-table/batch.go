@@ -72,13 +72,13 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 			if limit.Member != "" {
 				what += fmt.Sprintf(" (member %q)", limit.Member)
 			}
-			return refused(stderr, verb, what+"; "+limit.Advice()+"; code=LIMIT; changed=no; run: nova-table batch -h")
+			return refused(stderr, verb, what+"; "+limit.Advice()+"; "+ntable.CheckedBeforeSending+"; code=LIMIT; changed=no; run: nova-table batch -h")
 		case errors.As(err, &rule):
 			// a manifest that reads as one and breaks a rule is refused, as the store refuses
-			return refused(stderr, verb, fmt.Sprintf("%s; code=%s; changed=no; run: nova-table batch -h", rule.Msg, rule.Code))
+			return refused(stderr, verb, fmt.Sprintf("%s; %s; code=%s; changed=no; run: nova-table batch -h", rule.Msg, ntable.CheckedBeforeSending, rule.Code))
 		}
 		// a manifest that cannot be read as one is a usage error
-		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v; changed=no; run: nova-table batch -h", err))
+		return refuse(stderr, verb, fmt.Sprintf("invalid batch manifest: %v; %s; changed=no; run: nova-table batch -h", err, ntable.CheckedBeforeSending))
 	}
 
 	actorSet, epochSet := false, false
