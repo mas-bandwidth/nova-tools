@@ -237,3 +237,47 @@ func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
 		t.Error("linux-amd64 is not a platform label")
 	}
 }
+
+// A record's module, expected and property cells are copies of the case's
+// declaration that the fingerprint does not hash (it hashes the plan's row):
+// editing one leaves a valid fingerprint, and the record must still be refused
+// by a merge, counted stale by StaleGroups and dropped by Carry.
+func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testing.T) {
+	t.Parallel()
+	src, cases, recs := mergeTree(t)
+	for i := range cases {
+		cases[i].Group = []string{"alpha", "beta", "gamma"}[i]
+	}
+	a, b, c := recs["MCA.cfg"], recs["MCB.cfg"], recs["MCC.cfg"]
+	if _, err := Merge(src, cases, []Record{a, b, c}); err != nil {
+		t.Fatalf("the unchanged control is refused: %v", err)
+	}
+	if got, err := StaleGroups(src, cases, []Record{a, b, c}); err != nil || len(got) != 0 {
+		t.Fatalf("the control has stale groups %v, %v", got, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		edit   func(*Record)
+		phrase string
+	}{
+		{"module", func(r *Record) { r.Module = "MCB.tla" }, `module is "MCB.tla" and the plan declares "MCA.tla"`},
+		{"expected", func(r *Record) { r.Expected = "invariant" }, `expected is "invariant" and the plan declares "pass"`},
+		{"property", func(r *Record) { r.Property = "BogusGuard" }, `property is "BogusGuard" and the plan declares "-"`},
+	} {
+		tampered := a
+		tc.edit(&tampered)
+		if tampered.InputSHA256 != a.InputSHA256 || tampered.InputFiles != a.InputFiles {
+			t.Fatalf("%s: the probe changed the fingerprint columns", tc.name)
+		}
+		if _, err := Merge(src, cases, []Record{tampered, b, c}); err == nil || !strings.Contains(err.Error(), "record for MCA.cfg does not match the plan") || !strings.Contains(err.Error(), tc.phrase) {
+			t.Errorf("%s: merge accepted or misnamed the record: %v", tc.name, err)
+		}
+		if got, err := StaleGroups(src, cases, []Record{tampered, b, c}); err != nil || !reflect.DeepEqual(got, []string{"alpha"}) {
+			t.Errorf("%s: StaleGroups = %v, %v, want [alpha]", tc.name, got, err)
+		}
+		kept, dropped, err := Carry(src, cases, []Record{tampered, b}, []Record{c})
+		if err != nil || len(kept) != 1 || kept[0].Config != "MCB.cfg" || !reflect.DeepEqual(dropped, []Dropped{{Config: "MCA.cfg", Group: "alpha", Why: DroppedStale}}) {
+			t.Errorf("%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err)
+		}
+	}
+}

@@ -193,7 +193,10 @@ func Merge(src Source, cases []Case, runs ...[]Record) ([]Record, error) {
 		if !ok {
 			continue
 		}
-		fresh, err := current(src, r)
+		if why := declaredMismatch(c, r); why != "" {
+			return nil, fmt.Errorf("record for %s does not match the plan: %s; a record names the case it measures, so run the case again and merge without editing the row", c.Config, why)
+		}
+		fresh, err := current(src, c, r)
 		if err != nil {
 			return nil, err
 		}
@@ -273,14 +276,34 @@ func OneJar(cases []Case, records []Record) error {
 
 func short(h string) string { return h[:min(12, len(h))] }
 
-// current reports whether r names the fingerprint and the count of files that
-// src gives its case now.
-func current(src Source, r Record) (bool, error) {
-	fp, files, err := src.Fingerprint(r.Config)
+// declaredMismatch says how a record's copy of its case's declaration (module,
+// expected outcome, property) differs from the case the plan declares, or ""
+// when they are the same. The copies are not the fingerprint's business (the
+// plan row is hashed, the record's cells are not), so a row edited by hand
+// would keep a valid fingerprint and still describe another case.
+func declaredMismatch(c Case, r Record) string {
+	var parts []string
+	for _, f := range []struct{ name, recorded, declared string }{
+		{"module", r.Module, c.Module},
+		{"expected", r.Expected, c.Expected},
+		{"property", r.Property, c.Property},
+	} {
+		if f.recorded != f.declared {
+			parts = append(parts, fmt.Sprintf("%s is %q and the plan declares %q", f.name, f.recorded, f.declared))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// current reports whether r is a measurement of case c as it stands: it names
+// the fingerprint and the count of files that src gives the case now, and the
+// module, expected outcome and property the plan declares for it.
+func current(src Source, c Case, r Record) (bool, error) {
+	fp, files, err := src.Fingerprint(c.Config)
 	if err != nil {
 		return false, err
 	}
-	return r.InputSHA256 == fp && r.InputFiles == files, nil
+	return r.InputSHA256 == fp && r.InputFiles == files && declaredMismatch(c, r) == "", nil
 }
 
 // StaleGroups returns the groups, sorted, that hold a declared case with no
@@ -298,7 +321,7 @@ func StaleGroups(src Source, cases []Case, records []Record) ([]string, error) {
 			set[c.Group] = true
 			continue
 		}
-		fresh, err := current(src, r)
+		fresh, err := current(src, c, r)
 		if err != nil {
 			return nil, err
 		}
@@ -340,27 +363,27 @@ func Carry(src Source, cases []Case, base []Record, runs ...[]Record) (kept []Re
 			measured[r.Config] = true
 		}
 	}
-	group := map[string]string{}
+	declaredCase := map[string]Case{}
 	for _, c := range cases {
-		group[c.Config] = c.Group
+		declaredCase[c.Config] = c
 	}
 	for _, r := range base {
 		if measured[r.Config] {
 			continue
 		}
-		g, declared := group[r.Config]
+		c, declared := declaredCase[r.Config]
 		if !declared {
 			dropped = append(dropped, Dropped{Config: r.Config, Why: DroppedGone})
 			continue
 		}
-		fresh, err := current(src, r)
+		fresh, err := current(src, c, r)
 		if err != nil {
 			return nil, nil, err
 		}
 		if fresh {
 			kept = append(kept, r)
 		} else {
-			dropped = append(dropped, Dropped{Config: r.Config, Group: g, Why: DroppedStale})
+			dropped = append(dropped, Dropped{Config: r.Config, Group: c.Group, Why: DroppedStale})
 		}
 	}
 	return kept, dropped, nil
