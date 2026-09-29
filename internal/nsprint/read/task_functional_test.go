@@ -21,6 +21,8 @@ import (
 // diff.patch equal to `git -C <mirror> diff <base_sha>..<head>`, with the
 // GitHub stub counting zero calls.
 func TestReadBriefFromFirstReadTaskMirrorDiffZeroGitHubCalls(t *testing.T) {
+	t.Parallel()
+
 	stub := testutil.StartGitHubStub(t)
 	mirror, base, head := mirrorFixture(t, false)
 	c := client(t)

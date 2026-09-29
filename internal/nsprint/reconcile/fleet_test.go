@@ -15,7 +15,8 @@ import (
 // TestFleetRefillReturnsOnUpOnly verifies that benchReturns counts a bench as returned
 // only when its state changes to UP, even when its beat was present the entire time.
 func TestFleetRefillReturnsOnUpOnly(t *testing.T) {
-	t.Setenv(testutil.CIEnv, "1")
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

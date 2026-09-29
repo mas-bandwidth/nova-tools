@@ -104,6 +104,8 @@ func client(t *testing.T) *redis.Client {
 // from Redis and the mirror with no HTTP call at all (the GitHub stub fails
 // the test on any request and its counter stays 0).
 func TestReadBriefZeroGitHubCalls(t *testing.T) {
+	t.Parallel()
+
 	stub := testutil.StartGitHubStub(t)
 	mirror, base, head := mirrorFixture(t, false)
 	c := client(t)
@@ -305,6 +307,8 @@ func TestReadPostStoresLineAndMirrorsOneComment(t *testing.T) {
 
 // TestReadPostNoGitHubMakesZeroCalls: --no-github is Redis only.
 func TestReadPostNoGitHubMakesZeroCalls(t *testing.T) {
+	t.Parallel()
+
 	stub := testutil.StartGitHubStub(t)
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
@@ -325,6 +329,8 @@ func TestReadPostNoGitHubMakesZeroCalls(t *testing.T) {
 // TestReadPostRefusals: an untyped line, a line with no who= or head=, and
 // a PR with no record are refused (exit 1) with nothing written and no call.
 func TestReadPostRefusals(t *testing.T) {
+	t.Parallel()
+
 	stub := testutil.StartGitHubStub(t)
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)

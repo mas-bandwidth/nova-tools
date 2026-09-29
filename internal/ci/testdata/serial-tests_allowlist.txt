@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 188
+# ceiling: 164
 cmd/nova-sandbox/handoff_test.go:TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
 cmd/nova-sandbox/handoff_test.go:TestRunRefusesWhenTheHandoffFailsAfterACleanCommand serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
 cmd/nova-sandbox/reapverb_test.go:TestAnUnreadableMarkerIsAnOrphan serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
@@ -94,8 +94,6 @@ internal/nsprint/ci/env_functional_test.go:TestCIRunCheckDoesNotSeeTheSeatEnviro
 internal/nsprint/ci/fleet_test.go:TestFleetCIUnhealthyNonUp serial: t.Setenv
 internal/nsprint/consume/review_test.go:TestPrToReadMakesNoRestCall serial: swaps package var http.DefaultTransport
 internal/nsprint/consume/runner_functional_test.go:TestControl33PrToRead serial: swaps package var http.DefaultTransport
-internal/nsprint/deal/fleet_test.go:TestFleetDealRefusesNonUp serial: t.Setenv
-internal/nsprint/deal/fleet_test.go:TestFleetPassUpFromState serial: t.Setenv
 internal/nsprint/deal/oneledger_3877_test.go:TestDealerIsTheOneSlotLedger serial: t.Setenv
 internal/nsprint/fleet/fleet_functional_test.go:TestFleetConfigDefaults serial: t.Setenv
 internal/nsprint/fleet/fleet_functional_test.go:TestFleetConfigRefusesZero serial: t.Setenv
@@ -106,35 +104,14 @@ internal/nsprint/fleet/fleet_functional_test.go:TestFleetStepHoldsBenchAfterSSHT
 internal/nsprint/fleet/fleet_functional_test.go:TestFleetThresholdsFromConfig serial: t.Setenv
 internal/nsprint/fleet/fleet_functional_test.go:TestFleetUpAfterOneFromDown serial: t.Setenv
 internal/nsprint/fleet/fleet_functional_test.go:TestFleetUpAfterOneFromHeld serial: t.Setenv
-internal/nsprint/fold/fold_test.go:TestMainJevEvalExitCodes serial: t.Setenv
 internal/nsprint/land/eval_controls_functional_test.go:TestNoStateAPI serial: swaps package var http.DefaultTransport
-internal/nsprint/land/fleet_test.go:TestL15 serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchOverrunsWithNothingRefused serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesASecondLaunchOfOneAttempt serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesLinesPastTheBudget serial: t.Setenv
 internal/nsprint/lessons/lessons_test.go:TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives serial: swaps package var lessons.lockBusy
 internal/nsprint/preflight/seat_test.go:TestPreflightUsesSeatUser serial: t.Setenv
-internal/nsprint/read/read_functional_test.go:TestReadBriefZeroGitHubCalls serial: t.Setenv
-internal/nsprint/read/read_functional_test.go:TestReadPostNoGitHubMakesZeroCalls serial: t.Setenv
-internal/nsprint/read/read_functional_test.go:TestReadPostRefusals serial: t.Setenv
-internal/nsprint/read/task_functional_test.go:TestReadBriefFromFirstReadTaskMirrorDiffZeroGitHubCalls serial: t.Setenv
-internal/nsprint/reconcile/bound_duties_test.go:TestRouteDutyStopsAtLeaseMargin serial: t.Setenv
-internal/nsprint/reconcile/fleet_test.go:TestFleetRefillReturnsOnUpOnly serial: t.Setenv
-internal/nsprint/reconcile/route_consumers_test.go:TestRouteConsumerStableOverHundredPasses serial: t.Setenv
-internal/nsprint/reconcile/route_consumers_test.go:TestRouteConsumerSweepBoundsRestarts serial: t.Setenv
-internal/nsprint/reconcile/route_consumers_test.go:TestRouteConsumerSweepKeepsRecent serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestAuthorFromBuilderTaskNotBranch serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestEveryUnreadHeadGetsOneRead serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestHeldHeadWithoutFixTaskPushesOneFixToAuthor serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestIdenticalDiffCarriesTheRead serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestNewHeadSupersedesOldRead serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestSwarmBuiltHoldIsRecutOnTheCoordinator serial: t.Setenv
-internal/nsprint/reconcile/route_pr_test.go:TestThirdHeldHeadIsCloseOverRecut serial: t.Setenv
-internal/nsprint/sprint/sprint_test.go:TestControl21 serial: t.Setenv
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
 internal/nsprint/table/streams_records_test.go:TestTableTickMakesNoRestCall serial: swaps package var http.DefaultTransport
-internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv
-internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
 internal/sprinttable/session_unix_test.go:TestRefreshInTheUnitGroupDiesWithTheUnit serial: swaps package var sprinttable.heldUnit, swaps package var sprinttable.heldWait
 internal/sprinttable/session_unix_test.go:TestRefreshSurvivesUnitProcessGroupKill serial: swaps package var sprinttable.heldUnit, swaps package var sprinttable.heldWait
@@ -191,7 +168,6 @@ internal/nsprint/card/copy_functional_test.go:TestReadCopyDealtToBenchRendersALi
 internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/nsprint/store/reach_test.go:TestUnreachable3277 serial: t.Setenv
 internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
-internal/nsprint/reconcile/rebalance_test.go:TestFriendRebalanceNeverSilentZero serial: t.Setenv (through a helper)
 cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv

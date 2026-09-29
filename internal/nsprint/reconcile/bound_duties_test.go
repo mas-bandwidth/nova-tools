@@ -133,6 +133,8 @@ func TestSlowDutyPassEndsInsideLease(t *testing.T) {
 // of the lease left the route duty makes no move and says what it left;
 // with the lease renewed the same pass makes the move.
 func TestRouteDutyStopsAtLeaseMargin(t *testing.T) {
+	t.Parallel()
+
 	f := newPRFixture(t, "control-3805")
 	_ = f.l.Release(f.ctx)
 	l, clk := fakeLease(t, f.ctx, store.New(f.c))
