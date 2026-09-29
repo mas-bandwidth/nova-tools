@@ -84,9 +84,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 RUN arch="$(dpkg --print-architecture)" \
  && case "${arch}" in \
-      amd64) go_sum="${GO_SHA256_AMD64}"; sops_sum="${SOPS_SHA256_AMD64}"; age_sum="${AGE_SHA256_AMD64}" ;; \
-      arm64) go_sum="${GO_SHA256_ARM64}"; sops_sum="${SOPS_SHA256_ARM64}"; age_sum="${AGE_SHA256_ARM64}" ;; \
-      *) echo "no checksums for ${arch}" >&2; exit 1 ;; \
+      amd64) go_sum="${GO_SHA256_AMD64}" && sops_sum="${SOPS_SHA256_AMD64}" && age_sum="${AGE_SHA256_AMD64}" ;; \
+      arm64) go_sum="${GO_SHA256_ARM64}" && sops_sum="${SOPS_SHA256_ARM64}" && age_sum="${AGE_SHA256_ARM64}" ;; \
+      *) echo "no checksums for ${arch}" >&2 && exit 1 ;; \
     esac \
  && fetch() { curl -fsSL -o "$1" "$2" && printf '%s  %s\n' "$3" "$1" | sha256sum -c -; } \
  && fetch /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" "${go_sum}" \

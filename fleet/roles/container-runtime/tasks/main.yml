@@ -116,6 +116,8 @@
   ansible.builtin.file:
     path: "/etc/systemd/system/user@{{ container_runtime_uid }}.service.d"
     state: directory
+    owner: root
+    group: root
     mode: "0755"
   when: container_runtime_controllers | difference(container_runtime_delegated.stdout.split()) | length > 0
 
@@ -126,6 +128,8 @@
     content: |
       [Service]
       Delegate={{ (container_runtime_delegated.stdout.split() + container_runtime_controllers) | unique | sort | join(' ') }}
+    owner: root
+    group: root
     mode: "0644"
   register: container_runtime_delegation
   when: container_runtime_controllers | difference(container_runtime_delegated.stdout.split()) | length > 0

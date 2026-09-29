@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -268,32 +269,122 @@ func TestContainerRuntimeDropInHasItsDirectory(t *testing.T) {
 	if strings.Contains(dest, "user@.service.d") || !strings.Contains(dest, "user@{{ container_runtime_uid }}.service.d") {
 		t.Errorf("%s/tasks/main.yml: the drop-in %q is not for the runner's manager only (user@<uid>.service.d)", containerRuntimeRole, dest)
 	}
+	dm, cm := tasks[dirAt].args("ansible.builtin.file"), tasks[copyAt].args("ansible.builtin.copy")
+	for _, c := range []struct {
+		what string
+		got  map[string]any
+		mode string
+	}{{"directory", dm, "0755"}, {"drop-in", cm, "0644"}} {
+		if c.got["owner"] != "root" || c.got["group"] != "root" || c.got["mode"] != c.mode {
+			t.Errorf("%s/tasks/main.yml: the %s is owner %v group %v mode %v; want root, root, %s (it configures every service of a user's manager, and an existing one with another owner is corrected)", containerRuntimeRole, c.what, c.got["owner"], c.got["group"], c.got["mode"], c.mode)
+		}
+	}
 	if !strings.Contains(tasks[dirAt].text(), "container_runtime_controllers") || !strings.Contains(tasks[copyAt].text(), "container_runtime_controllers") {
 		t.Errorf("%s/tasks/main.yml: the directory and the drop-in are made under different conditions", containerRuntimeRole)
 	}
 }
 
+// probeTask returns the probe container's task, its argv and its script (the
+// last argv element): what the probe runs, without the comments around it.
+func probeTask(t *testing.T) (roleTask, []string, string) {
+	t.Helper()
+	for _, k := range roleTasks(t, "tasks/main.yml") {
+		if !strings.HasPrefix(k.name(), "the probe container") {
+			continue
+		}
+		var argv []string
+		if l, ok := k.args("ansible.builtin.command")["argv"].([]any); ok {
+			for _, e := range l {
+				argv = append(argv, fmt.Sprint(e))
+			}
+		}
+		if len(argv) == 0 {
+			t.Fatalf("%s/tasks/main.yml: the probe task has no argv", containerRuntimeRole)
+		}
+		return k, argv, argv[len(argv)-1]
+	}
+	t.Fatalf("%s/tasks/main.yml: no probe container task", containerRuntimeRole)
+	return nil, nil, ""
+}
+
+// readmeRunCommand returns the README's run command: the indented block that
+// starts `podman run --rm --name nova-functional-run`, joined on one line.
+func readmeRunCommand(t *testing.T) string {
+	t.Helper()
+	readme := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageReadme)))
+	lines := strings.Split(readme, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(l), "podman run --rm --name nova-functional-run") {
+			continue
+		}
+		var cmd []string
+		for _, m := range lines[i:] {
+			if strings.TrimSpace(m) == "" {
+				break
+			}
+			cmd = append(cmd, strings.TrimSuffix(strings.TrimSpace(m), "\\"))
+		}
+		return fold(strings.Join(cmd, " "))
+	}
+	t.Fatalf("%s: no run command (`podman run --rm --name nova-functional-run ...`)", functionalImageReadme)
+	return ""
+}
+
+// TestFunctionalImageReadmeRunCommandCarriesEveryFlag: the flags are read from
+// the run command itself, not from the flags table below it, so deleting one
+// from the command is red.
+func TestFunctionalImageReadmeRunCommandCarriesEveryFlag(t *testing.T) {
+	t.Parallel()
+	cmd := readmeRunCommand(t)
+	for _, want := range []string{
+		"--network none", "--ipc private", "--pids-limit ", "--memory ", "--memory-swap ", "--cpus ",
+		"--read-only", "--tmpfs /tmp:", "--timeout ", "--init", "--security-opt no-new-privileges", "--cap-drop all",
+		"-v \"$PWD\":/src:ro", "-v nova-gomod:/gomodcache:ro",
+	} {
+		if !strings.Contains(cmd+" ", want) {
+			t.Errorf("%s: the run command lacks %q: %s", functionalImageReadme, want, cmd)
+		}
+	}
+}
+
 // TestContainerRuntimeProbeValuesAreNumbers: cpu.max is computed as an integer
-// however the variable is given ("2" from -e, 1.5), and the probe proves the
-// no-new-privileges and capability flags the README's run command carries.
+// however the variable is given ("2" from -e, 1.5), and the probe container
+// itself (its argv and its script, not the comments around them) carries and
+// reads back every flag of the README's run command that a limit or a
+// restriction depends on.
 func TestContainerRuntimeProbeValuesAreNumbers(t *testing.T) {
 	t.Parallel()
-	tasks := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/tasks/main.yml")))
-	line := regexp.MustCompile(`WANT_CPU=\{\{ (.*?) \}\} 100000`).FindStringSubmatch(tasks)
+	_, argv, script := probeTask(t)
+	joined := strings.Join(argv[:len(argv)-1], " ")
+	line := regexp.MustCompile(`WANT_CPU=\{\{ (.*?) \}\} 100000`).FindStringSubmatch(joined)
 	if line == nil {
-		t.Fatalf("%s/tasks/main.yml: no WANT_CPU line", containerRuntimeRole)
+		t.Fatalf("%s/tasks/main.yml: no WANT_CPU argument", containerRuntimeRole)
 	}
 	if !strings.Contains(line[1], "| float") || !strings.Contains(line[1], "| int") || !strings.Contains(line[1], "round") {
 		t.Errorf("%s/tasks/main.yml: WANT_CPU is %q; a string times 100000 repeats the string and a fraction gives 150000.0, so it must be (cpus | float * 100000) | round | int", containerRuntimeRole, line[1])
 	}
-	for _, want := range []string{"- --security-opt", "- no-new-privileges", "- --cap-drop", "- all", "NoNewPrivs", "CapBnd", "memory.swap.max"} {
-		if !strings.Contains(tasks, want) {
-			t.Errorf("%s/tasks/main.yml: the probe lacks %q", containerRuntimeRole, want)
+	have := map[string]bool{}
+	for _, a := range argv {
+		have[a] = true
+	}
+	for _, want := range []string{"--security-opt", "no-new-privileges", "--cap-drop", "all", "--memory", "--memory-swap", "--pids-limit", "--cpus", "--read-only", "--network", "--ipc", "--timeout"} {
+		if !have[want] {
+			t.Errorf("%s/tasks/main.yml: the probe's argv lacks %q", containerRuntimeRole, want)
 		}
 	}
-	readme := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageReadme)))
-	for _, want := range []string{"--security-opt no-new-privileges", "--cap-drop all"} {
-		if !strings.Contains(readme, want) {
+	for _, want := range []string{"pids.max", "memory.max", "memory.swap.max", "cpu.max", "/sys/class/net", "/probe-rootfs", "/tmp/probe-tmp", "NoNewPrivs", "CapBnd"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("%s/tasks/main.yml: the probe's script never reads %q", containerRuntimeRole, want)
+		}
+	}
+	for code := 11; code <= 19; code++ {
+		if !strings.Contains(script, fmt.Sprintf("exit %d", code)) {
+			t.Errorf("%s/tasks/main.yml: the probe's script has no `exit %d`; one of its checks was deleted", containerRuntimeRole, code)
+		}
+	}
+	cmd := readmeRunCommand(t)
+	for _, want := range []string{"--security-opt no-new-privileges", "--cap-drop all", "--memory-swap "} {
+		if !strings.Contains(cmd, want) {
 			t.Errorf("%s: the run command lacks %s, which the runtime probe proves", functionalImageReadme, want)
 		}
 	}

@@ -63,6 +63,9 @@ var (
 	wgetRe           = regexp.MustCompile(`\bwget\b`)
 	shaCommandRe     = regexp.MustCompile(`\bsha256sum\b`)
 	shaStdinCheckRe  = regexp.MustCompile(`\bsha256sum\s+-c\s+-(?:\s|$|;|&|\)|\})`)
+	curlViaVarRe     = regexp.MustCompile(`(=\s*["']?(?:/usr/bin/)?curl\b|\balias\s+curl\b)`)
+	softFailRe       = regexp.MustCompile(`\|\|\s*(?:true|:|exit\s+0)\b`)
+	otherFetcherRe   = regexp.MustCompile(`\b(?:git\s+(?:clone|fetch|pull|submodule)|go\s+(?:install|get|mod\s+download)|pip3?\s+install|npm\s+(?:i|install|ci)|gem\s+install|cargo\s+install|nc|ncat|scp|rsync|ssh)\b`)
 	shaArgVarRe      = regexp.MustCompile(`\$\{?[A-Z0-9_]*SHA256[A-Z0-9_]*`)
 )
 
@@ -111,7 +114,35 @@ func containerArgs(src string) map[string]string {
 func downloadProblems(ins []string) []string {
 	var out []string
 	used := strings.Builder{}
+	stage := 0
+	stages := map[string]bool{}
 	for _, in := range ins {
+		if strings.HasPrefix(in, "FROM ") {
+			stage++
+			if f := strings.Fields(in); len(f) == 4 && strings.EqualFold(f[2], "AS") {
+				stages[f[3]] = true
+			}
+			continue
+		}
+		low := strings.ToLower(in)
+		for _, w := range []string{"trusted: yes", "trusted=yes", "allow-unauthenticated", "allowunauthenticated", "allowinsecure", "allow-insecure", "--force-yes", "verify-host=false", "check-valid-until=false", "check-date=false"} {
+			if strings.Contains(low, w) {
+				out = append(out, "an instruction switches off a package check ("+w+"): "+shorten(in))
+			}
+		}
+		if strings.Contains(low, "verify-peer=false") && stage != 1 {
+			out = append(out, "TLS peer verification is off outside the first stage's bootstrap install: "+shorten(in))
+		}
+		if strings.HasPrefix(in, "RUN ") && strings.Contains(in, "sources.list.d") && strings.Contains(in, "Types: deb") && !strings.Contains(in, "Signed-By:") {
+			out = append(out, "an apt source is written with no Signed-By key: "+shorten(in))
+		}
+		if strings.HasPrefix(in, "COPY ") {
+			for _, f := range strings.Fields(in) {
+				if v, ok := strings.CutPrefix(f, "--from="); ok && !stages[v] {
+					out = append(out, "a COPY takes files from "+v+", which is not a stage of this file (an outside image by tag moves and is not checked): "+shorten(in))
+				}
+			}
+		}
 		short := in
 		if len(short) > 110 {
 			short = short[:110]
@@ -126,6 +157,12 @@ func downloadProblems(ins []string) []string {
 		used.WriteString("\n")
 		if wgetRe.MatchString(in) {
 			out = append(out, "a RUN downloads with wget; use curl -fsSL -o <file> and check a pinned sha256: "+short)
+		}
+		if otherFetcherRe.MatchString(in) {
+			out = append(out, "a RUN fetches with a tool that has no pinned checksum (git, go get, pip, npm and the like); download a release with curl and check a pinned sha256: "+short)
+		}
+		if curlViaVarRe.MatchString(in) {
+			out = append(out, "curl is reached through a variable or an alias, so its flags are not read: "+short)
 		}
 		downloads := false
 		for _, m := range curlCallRe.FindAllStringSubmatch(in, -1) {
@@ -157,6 +194,12 @@ func downloadProblems(ins []string) []string {
 		if !shaArgVarRe.MatchString(in) {
 			out = append(out, "a RUN downloads and never reads a pinned ARG *_SHA256 value: "+short)
 		}
+		if softFailRe.MatchString(in) {
+			out = append(out, "a RUN that downloads goes on after a failure (|| true, || :, || exit 0): "+short)
+		}
+		if strings.Contains(strings.ReplaceAll(strings.ReplaceAll(in, ";;", ""), "; }", ""), ";") {
+			out = append(out, "a RUN that downloads uses ';' between commands, so it goes on after a failed checksum; chain with &&: "+short)
+		}
 	}
 	for name := range containerArgsFromInstructions(ins) {
 		if !strings.Contains(name, "SHA256") {
@@ -168,6 +211,13 @@ func downloadProblems(ins []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func shorten(in string) string {
+	if len(in) > 110 {
+		return in[:110]
+	}
+	return in
 }
 
 func containerArgsFromInstructions(ins []string) map[string]string {
@@ -199,6 +249,15 @@ func TestFunctionalImageDownloadCheckSeesEveryWayAroundIt(t *testing.T) {
 		{"no -f", `RUN curl -sSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`, "no -f"},
 		{"no -o", `RUN curl -fsSL https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`, "no -o"},
 		{"no checksum", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && echo "${X_SHA256}"`, "sha256sum -c -"},
+		{"a failed checksum ignored", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c - || true`, "goes on after a failure"},
+		{"; after the download", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c - ; tar -xzf /tmp/x`, "';'"},
+		{"git clone", `RUN git clone https://example.invalid/r.git /r && echo "${X_SHA256}"`, "no pinned checksum"},
+		{"go get", `RUN go install example.invalid/x@latest && echo "${X_SHA256}"`, "no pinned checksum"},
+		{"an outside image by tag", `COPY --from=docker.io/library/busybox:latest /bin/busybox /bin/busybox`, "not a stage"},
+		{"a trusted apt source", `RUN printf '%s\n' 'Types: deb' 'Trusted: yes' 'Signed-By: /k.gpg' > /etc/apt/sources.list.d/x.sources`, "trusted: yes"},
+		{"an apt source with no key", `RUN printf '%s\n' 'Types: deb' > /etc/apt/sources.list.d/x.sources`, "Signed-By"},
+		{"peer checks off after the bootstrap", `RUN apt-get -o Acquire::https::Verify-Peer=false update`, "TLS peer verification is off"},
+		{"curl through a variable", `RUN c=curl && $c -sSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`, "through a variable"},
 		{"a sum that is not a pinned ARG", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "abc" /tmp/x | sha256sum -c -`, "pinned ARG"},
 	}
 	for _, c := range cases {
@@ -308,6 +367,33 @@ func TestFunctionalImageInputsArePinned(t *testing.T) {
 	}
 }
 
+// isRootUser reports whether a USER value is empty or is root by name or by any
+// spelling of uid 0 (`0`, `00`, `root:root`, `0:0`).
+func isRootUser(user string) bool {
+	name, _, _ := strings.Cut(strings.TrimSpace(user), ":")
+	if name == "" || name == "root" {
+		return true
+	}
+	if n, err := strconv.Atoi(name); err == nil && n == 0 {
+		return true
+	}
+	return false
+}
+
+func TestFunctionalImageRootUserSpellings(t *testing.T) {
+	t.Parallel()
+	for _, u := range []string{"", "root", "0", "00", "000", "root:root", "0:0", "00:0", " root "} {
+		if !isRootUser(u) {
+			t.Errorf("USER %q is root and the test does not see it", u)
+		}
+	}
+	for _, u := range []string{"bench", "10001", "bench:bench", "10001:10001"} {
+		if isRootUser(u) {
+			t.Errorf("USER %q is not root", u)
+		}
+	}
+}
+
 // TestFunctionalImageRunsAsTheTierExpects: a non-root user, no toolchain
 // fetch, no module proxy, and the variables the fixtures read.
 func TestFunctionalImageRunsAsTheTierExpects(t *testing.T) {
@@ -325,7 +411,7 @@ func TestFunctionalImageRunsAsTheTierExpects(t *testing.T) {
 			env.WriteString(" ")
 		}
 	}
-	if user == "" || user == "root" || user == "0" {
+	if isRootUser(user) {
 		t.Errorf("%s ends as user %q; postgres refuses root and the tier runs as a non-root user", functionalImageFile, user)
 	}
 	for _, want := range []string{"GOTOOLCHAIN=local", "GOPROXY=off", "NOVA_CI=1", "NOVA_FUNCTIONAL_RUN=container"} {
@@ -654,13 +740,18 @@ func TestFunctionalImageRuntimeAndReadmeAgree(t *testing.T) {
 	if !strings.Contains(defaults, `container_runtime_probe_image: "`+base+`"`) {
 		t.Errorf("%s/defaults/main.yml: container_runtime_probe_image is not the Containerfile's BASE (%s)", containerRuntimeRole, base)
 	}
-	tasks := readFile(t, filepath.Join(root, filepath.FromSlash(containerRuntimeRole+"/tasks/main.yml")))
+	_, argv, _ := probeTask(t)
+	have := map[string]bool{}
+	for _, a := range argv {
+		have[a] = true
+	}
 	readme := readFile(t, filepath.Join(root, filepath.FromSlash(functionalImageReadme)))
-	for _, flag := range []string{"--network", "--pids-limit", "--memory", "--memory-swap", "--cpus", "--read-only", "--tmpfs", "--timeout", "--ipc"} {
-		if !strings.Contains(tasks, "- "+flag) {
+	cmd := readmeRunCommand(t)
+	for _, flag := range []string{"--network", "--pids-limit", "--memory", "--memory-swap", "--cpus", "--read-only", "--tmpfs", "--timeout", "--ipc", "--security-opt", "--cap-drop"} {
+		if !have[flag] {
 			t.Errorf("%s/tasks/main.yml: the probe does not run with %s", containerRuntimeRole, flag)
 		}
-		if !strings.Contains(readme, flag) {
+		if !strings.Contains(cmd+" ", flag+" ") {
 			t.Errorf("%s: the run command does not carry %s, which the runtime probe proves", functionalImageReadme, flag)
 		}
 	}

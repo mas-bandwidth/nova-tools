@@ -1537,6 +1537,8 @@ different runs.
 (`internal/ci/functional_image_class_test.go`), and
 `TestFunctionalImageReadmeKeepsTheBuildCachePerTrustDomain`,
 `TestFunctionalImageBuildLeavesNothingBehind`,
+`TestFunctionalImageRootUserSpellings`,
+`TestFunctionalImageReadmeRunCommandCarriesEveryFlag`,
 `TestContainerRuntimeRefusesRootBeforeItsFirstChange`,
 `TestContainerRuntimeSubidsNeverReuseARange`,
 `TestContainerRuntimeSubidExpressionsArePinned` (the allocation's Jinja, pinned
@@ -1555,7 +1557,12 @@ refuses root before its first change, allocates a subordinate id range after
 every existing one, makes the delegation drop-in's directory (for the runner's
 manager only), computes the probe's cpu.max as a number and probes
 `no-new-privileges` and the dropped capabilities; the README's build cache is
-per trust domain.
+per trust domain, and the run command (not the table below it) carries every
+flag. The download check also refuses a checksum step that continues after a
+failure (`|| true`, `;`), a fetch by `git clone`, `go install`, `pip` and the
+like, a `COPY --from` an outside image, an apt source with no `Signed-By` or
+with `Trusted: yes`, TLS peer checks off outside the bootstrap, and `curl`
+reached through a variable; `USER` is refused in any spelling of uid 0.
 **Its allowlist.** `infra/functional-image/binaries.txt` itself: one row per
 program, checked in both directions, so a program no file runs any more is a
 row to delete.
