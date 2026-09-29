@@ -2,6 +2,8 @@ package card_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -201,9 +203,14 @@ func TestFindingGoesBackIntoCardTextOnRecut(t *testing.T) {
 func TestLintCardAcceptsReadTier(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
 	validCard := []byte("RESULT: card-1 sha=0123456789ab\n" +
 		"BASE: dev\n" +
-		"base-repo: https://github.com/mas-bandwidth/nova-tools\n" +
+		"base-repo: " + srv.URL + "/mas-bandwidth/nova-tools\n" +
 		"base-sha: " + strings.Repeat("ab", 20) + "\n" +
 		"PATHS: internal/x.go\n" +
 		"DEPENDS-ON: none\n" +
@@ -215,7 +222,7 @@ func TestLintCardAcceptsReadTier(t *testing.T) {
 
 	invalidCard := []byte("RESULT: card-1 sha=0123456789ab\n" +
 		"BASE: dev\n" +
-		"base-repo: https://github.com/mas-bandwidth/nova-tools\n" +
+		"base-repo: " + srv.URL + "/mas-bandwidth/nova-tools\n" +
 		"base-sha: " + strings.Repeat("ab", 20) + "\n" +
 		"PATHS: internal/x.go\n" +
 		"DEPENDS-ON: none\n" +
