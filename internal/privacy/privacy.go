@@ -131,7 +131,7 @@ func NewRules(marker string, entryTokens, stop []string, refuse, warn []Pattern,
 		stop:        map[string]bool{},
 		trimSet:     trim,
 		allowSet:    map[string]bool{},
-		markerKey:   foldSpace(marker),
+		markerKey:   foldBlanks(marker),
 	}
 	addStop := func(text string) {
 		words(normalise(text), func(w word) { r.stop[w.key] = true })
@@ -150,11 +150,11 @@ func NewRules(marker string, entryTokens, stop []string, refuse, warn []Pattern,
 }
 
 // HasMarker reports whether s carries the marker. Both sides are compared
-// with invisible formatting characters dropped, any Unicode space read as a
-// space and runs of them collapsed, and case folded, so a no-break space or
-// a zero-width character cannot hide the marker.
+// with invisible formatting characters dropped, any Unicode whitespace read
+// as one blank with runs of it collapsed, and case folded, so a no-break
+// blank (U+00A0) or a zero-width character cannot hide the marker.
 func (r Rules) HasMarker(s string) bool {
-	return strings.Contains(foldSpace(s), r.markerKey)
+	return strings.Contains(foldBlanks(s), r.markerKey)
 }
 
 // Block is one entry of a private-material source. Source and Index are its

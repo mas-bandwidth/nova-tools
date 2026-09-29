@@ -105,26 +105,26 @@ func CountWords(text string) int {
 }
 
 // isInvisible reports a formatting character that shows nothing: the
-// zero-width space and joiners, the soft hyphen, the byte-order mark, and
-// every other character of Unicode category Cf.
+// zero-width characters (U+200B to U+200D), the soft hyphen, the byte-order
+// mark, and every other character of Unicode category Cf.
 func isInvisible(c rune) bool { return unicode.Is(unicode.Cf, c) }
 
-// foldSpace is how the marker is compared: the text normalised as words are
-// (see normalise), any Unicode space read as one space with runs collapsed,
-// and the ends trimmed.
-func foldSpace(s string) string {
+// foldBlanks is how the marker is compared: the text normalised as words are
+// (see normalise), any Unicode whitespace read as one blank with runs
+// collapsed, and the ends trimmed.
+func foldBlanks(s string) string {
 	s = normalise(s)
 	var b strings.Builder
-	space := false
+	blank := false
 	for _, c := range s {
 		switch {
 		case isInvisible(c):
 		case unicode.IsSpace(c):
-			space = b.Len() > 0
+			blank = b.Len() > 0
 		default:
-			if space {
+			if blank {
 				b.WriteByte(' ')
-				space = false
+				blank = false
 			}
 			b.WriteRune(c)
 		}
