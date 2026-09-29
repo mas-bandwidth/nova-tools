@@ -46,6 +46,10 @@ type memState struct {
 	seq      int
 	touched  map[uint64]int // store calls that named each epoch, for tests
 	Fail     func(point string) error
+	// MaxWrite, when above zero, is the largest operation record the store
+	// takes in one write, as a store's bulk length bound: a larger one is
+	// not written and the write fails as the connection closing does.
+	MaxWrite int
 	// Calls counts store exchanges by kind.
 	Calls map[string]int
 }
@@ -687,6 +691,9 @@ func (m *Mem) Acquire(_ context.Context, gen uint64, op OpRecord) (bool, error) 
 	body, err := json.Marshal(op)
 	if err != nil {
 		return false, err
+	}
+	if m.MaxWrite > 0 && len(body) > m.MaxWrite {
+		return false, errors.New("write tcp: write: broken pipe")
 	}
 	var copyOp OpRecord
 	if err := json.Unmarshal(body, &copyOp); err != nil {

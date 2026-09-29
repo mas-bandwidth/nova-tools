@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -322,4 +323,53 @@ func TestTheLogAndTheInboxAgree(t *testing.T) {
 	if v := rule14(); len(v) != 2 || !strings.Contains(strings.Join(v, "\n"), "outside-2.1 (happened, an outside note): only in the log is in the log and not in the inbox") {
 		t.Fatalf("a line with no inbox entry: %v", v)
 	}
+}
+
+// Glenn's drive: a sentinel every 100 cards of a stream of 1,000 ready
+// cards, each inserted in front of the cards after it. Each step's record
+// stays bounded (a store that takes at most 4 MB in one write takes them
+// all), a line's cause is its own card's and short, and the log replays.
+func TestSentinelsInsertedIntoALongStreamAreBoundedRecords(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.m.MaxWrite = 4 << 20
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1000}))
+	for k := 1; k <= 9; k++ {
+		gate := fmt.Sprintf("s1-gate-%d", k)
+		res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s1", IDs: []string{gate}, Sentinel: true, After: fmt.Sprintf("s1-%d", k*100)}))
+		if err != nil || len(res.Refused) > 0 {
+			t.Fatalf("the sentinel after s1-%d: %v %+v", k*100, err, res.Refused)
+		}
+	}
+	for _, l := range h.lines() {
+		if len(l.Cause) > sprint.MaxCause {
+			t.Fatalf("a line's cause of %d bytes: %.200s", len(l.Cause), l.Cause)
+		}
+	}
+	h.clean("nine sentinels")
+}
+
+// A write the store does not take (its bulk length bound) leaves the fence
+// empty: the step says nothing was changed and why, never changed=unknown.
+func TestARecordTheStoreRefusesChangesNothingAndSaysSo(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(0)
+	h.m.MaxWrite = 512
+	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s1", Count: 20}))
+	if err == nil && len(res.Refused) == 0 {
+		t.Fatalf("a record over the store's bound was taken: %+v", res)
+	}
+	if errors.Is(err, ErrUnknown) {
+		t.Fatalf("changed=unknown for a write the store did not take: %v", err)
+	}
+	why := fmt.Sprint(err, res.Refused)
+	if !strings.Contains(why, "nothing was changed") || !strings.Contains(why, "broken pipe") {
+		t.Fatalf("the refusal does not say nothing changed and the store's reason: %s", why)
+	}
+	if n := len(h.snap().Work.Column(sprint.Ready)); n != 0 {
+		t.Fatalf("%d cards added by a refused write", n)
+	}
+	h.clean("refused")
 }

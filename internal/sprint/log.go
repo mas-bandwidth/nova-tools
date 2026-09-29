@@ -54,6 +54,10 @@ type Line struct {
 	Note *Note `json:"note,omitempty"`
 }
 
+// MaxCause is the longest cause a line carries: the cause is its own card's,
+// and a step that moves many cards says so in a few words on each.
+const MaxCause = 300
+
 // TextFields are the fields whose words a move line carries in Text.
 var TextFields = []string{"brief", "fix", "report", "finding", "reason", "return_reason", "did", "note", "ci_note"}
 

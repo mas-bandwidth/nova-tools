@@ -373,8 +373,17 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Notes = len(op.Notes) + len(op.Decided)
 		body, _ := json.Marshal(res)
 		op.Result = string(body)
+		if n := recordSize(op); n > MaxOpRecord {
+			return refuseWhole(res, plan, fmt.Sprintf("the step's record is %d bytes, over the bound of %d bytes one write to the store takes; nothing was changed; do it in parts (fewer cards at once)", n, MaxOpRecord))
+		}
 		ok, err := st.B.Acquire(ctx, gen, op)
 		if err != nil {
+			// A write the store did not take leaves the fence without this
+			// operation: nothing was changed, and the store's reason says why.
+			if f, ferr := st.B.ReadFence(ctx); ferr == nil && (f.Pending == nil || f.Pending.ID != op.ID) {
+				res.Op = ""
+				return refuseWhole(res, plan, fmt.Sprintf("the store did not take the step's record (%d bytes): %v; nothing was changed", recordSize(op), err))
+			}
 			return res, fmt.Errorf("%w: acquiring the fence for %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
 		if !ok {
@@ -627,6 +636,20 @@ func (e *twiceError) Error() string {
 	return fmt.Sprintf("card %s of %s is changed twice in one step, by %s and by %s, and the changes disagree (%s)", e.Card, e.Table, e.First, e.Second, e.Why)
 }
 
+// MaxOpRecord is the largest operation record one step writes, well under
+// a store's bulk length bound (Redis's 512 MiB by default): a step over it
+// is refused before any write, naming the bound.
+const MaxOpRecord = 256 << 20
+
+// recordSize is an operation record's size as it is written.
+func recordSize(op OpRecord) int {
+	b, err := json.Marshal(op)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
 // moveLine is the log's line of one card's change in a step: its place
 // before and after, its generation after, the words given with it, and the
 // judgments the step answered on it.
@@ -682,10 +705,18 @@ func moveLine(k entryKey, e ntable.BatchMemberEntry, units []sprint.Unit, snap *
 		}
 		l.Set[f] = v
 	}
+	// The cause is this card's own: a unit about this card gives its moved
+	// line; one about another card (a sentinel inserted in front of many)
+	// names that card, never its whole line, so no step's record grows with
+	// the square of the cards it moves.
 	var causes []string
 	for _, u := range units {
-		if u.Moved != "" && !slices.Contains(causes, u.Moved) {
-			causes = append(causes, u.Moved)
+		cause := u.Moved
+		if u.Key != k.id && u.Key != l.Primary {
+			cause = "with " + u.Key
+		}
+		if cause != "" && !slices.Contains(causes, cause) {
+			causes = append(causes, cause)
 		}
 		for _, o := range u.Closes {
 			if o.Subject() == k.id || o.Subject() == l.Primary {
@@ -696,6 +727,9 @@ func moveLine(k entryKey, e ntable.BatchMemberEntry, units []sprint.Unit, snap *
 		}
 	}
 	l.Cause = strings.Join(causes, "; ")
+	if len(l.Cause) > sprint.MaxCause {
+		l.Cause = l.Cause[:sprint.MaxCause-3] + "..."
+	}
 	return l
 }
 
