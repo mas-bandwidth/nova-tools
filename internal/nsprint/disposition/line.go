@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/textbody"
 )
 
 // Type is the typed-line token.
@@ -81,11 +81,11 @@ var (
 )
 
 // Parse reads the first non-empty line of body after dropping fenced blocks
-// and `>` quotes (merge.StripQuotedAndCode). Only a line starting exactly with
+// and `>` quotes (textbody.StripQuotedAndCode). Only a line starting exactly with
 // `DISPOSITION `, `REPAIR `, `SCORE ` or `HOLD ` is typed; anything else is
 // NORECORD prose.
 func Parse(body string) Result {
-	clean := merge.StripQuotedAndCode(body)
+	clean := textbody.StripQuotedAndCode(body)
 	lines := strings.Split(clean, "\n")
 	first := -1
 	for i, l := range lines {
