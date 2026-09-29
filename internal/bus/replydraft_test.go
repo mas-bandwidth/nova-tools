@@ -112,13 +112,14 @@ func TestPublishNoReplaceWritesTheWholeDraftAndRemovesItsTemporary(t *testing.T)
 // version threw the link error away and reported the second call's words instead -- and
 // naming the second call and its words too. No file, no temporary.
 func TestNoCreateExclusivePublishQuotesWhatEachCallSaid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	linkSaid := errors.New("operation not supported by this filesystem")
 	renameSaid := errors.New("the second call is not here either")
-	restore := stubPublish(func(string, string) error { return linkSaid }, func(string, string) error { return renameSaid })
-	defer restore()
 
-	path, err := PublishNoReplace(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("body\n"))
+	path, err := publishNoReplaceWith(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("body\n"),
+		func(string, string) error { return linkSaid },
+		func(string, string) error { return renameSaid })
 	if !errors.Is(err, ErrNoExclusivePublish) {
 		t.Fatalf("PublishNoReplace on a filesystem with neither publish returned (%q, %v), want ErrNoExclusivePublish", path, err)
 	}
@@ -133,12 +134,13 @@ func TestNoCreateExclusivePublishQuotesWhatEachCallSaid(t *testing.T) {
 // The second publish is the one that succeeds where the first is not available: a
 // filesystem that refuses hard links still publishes, and still refuses an existing name.
 func TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	linkSaid := errors.New("operation not supported by this filesystem")
-	restore := stubPublish(func(string, string) error { return linkSaid }, os.Rename)
-	defer restore()
 
-	path, err := PublishNoReplace(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("body\n"))
+	path, err := publishNoReplaceWith(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("body\n"),
+		func(string, string) error { return linkSaid },
+		os.Rename)
 	if err != nil {
 		t.Fatalf("the second publish did not publish: %v", err)
 	}
@@ -149,19 +151,12 @@ func TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable(t *testing.T) {
 	assertOnlyFiles(t, dir, "2026-09-09T1234Z-re-bo-abcdef012345.md")
 
 	// And an existing name is still the refusal, made by the publish and not by a check.
-	restore2 := stubPublish(func(string, string) error { return linkSaid }, func(string, string) error { return os.ErrExist })
-	defer restore2()
-	if _, err := PublishNoReplace(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("another\n")); !errors.Is(err, ErrDraftExists) {
+	if _, err := publishNoReplaceWith(dir, "2026-09-09T1234Z-re-bo-abcdef012345.md", []byte("another\n"),
+		func(string, string) error { return linkSaid },
+		func(string, string) error { return os.ErrExist }); !errors.Is(err, ErrDraftExists) {
 		t.Errorf("the second publish's already-exists error is %v, want ErrDraftExists", err)
 	}
 	assertOnlyFiles(t, dir, "2026-09-09T1234Z-re-bo-abcdef012345.md")
-}
-
-// stubPublish stands in for the two create-exclusive publishes and hands back the restore.
-func stubPublish(link, rename func(from, to string) error) func() {
-	oldLink, oldRename := linkFile, noReplacePublish
-	linkFile, noReplacePublish = link, rename
-	return func() { linkFile, noReplacePublish = oldLink, oldRename }
 }
 
 // assertOnlyFiles is the directory holding exactly these names and nothing else -- a
