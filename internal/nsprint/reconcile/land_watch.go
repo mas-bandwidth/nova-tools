@@ -31,7 +31,8 @@ package reconcile
 //     episode is oldest@oldest_at) to the coordinator's bus channel and the
 //     declared notify channel (cfg:land notify), through friend:outbox as a
 //     notice. The progress duty (#4319) reads stalled into its status; the
-//     table's own LAND-SLOW line is a seam (see the PR).
+//     table reads land:slow:<stream> and prints the line under the streams table
+//     (#4387).
 //   - LAND-WALL: past cfg:land wall (default 1800) the line is LAND-WALL,
 //     land:slow:<stream> stalled=1 (the stream counts as stalled), and one
 //     more wake note for the episode.
@@ -111,6 +112,81 @@ func LandMergeKey(s string) string        { return stream.OwnerKey(s) }
 func LandMergingKey(stream string) string { return "land:merging:" + stream }
 func LandNotedKey(stream string) string   { return "land:noted:" + stream }
 func LandGenKey(stream string) string     { return "land:gen:" + stream } // the move's generation the watch saw with its first sight: a generation it has not seen is a new stay
+
+// LandSlow is a stream's slow record (land:slow:<stream>, #4324, #4387).
+type LandSlow struct {
+	Stream   string
+	Word     string
+	Oldest   string
+	OldestAt time.Time
+	Age      time.Duration
+	Max      time.Duration
+	Stalled  bool
+	At       time.Time
+}
+
+// Line renders the LAND-SLOW or LAND-WALL line for a stream under the streams table.
+func (s LandSlow) Line() string {
+	return fmt.Sprintf("%s %s oldest=%s age=%s max=%s", s.Word, oneline.Field(s.Stream), s.Oldest, s.Age.Truncate(time.Second), s.Max.Truncate(time.Second))
+}
+
+// ParseLandSlow parses a land:slow:<stream> hash into a LandSlow.
+// When max is not stored on the hash, it defaults from word:
+// DefaultLandWall for LAND-WALL, else DefaultLandSlow.
+func ParseLandSlow(stream string, h map[string]string, now time.Time) (LandSlow, bool) {
+	word := h["word"]
+	if word != "LAND-SLOW" && word != "LAND-WALL" {
+		return LandSlow{}, false
+	}
+	oldest := h["oldest"]
+	oldestAtMS, _ := strconv.ParseInt(h["oldest_at"], 10, 64)
+	ageMS, _ := strconv.ParseInt(h["age_ms"], 10, 64)
+	atMS, _ := strconv.ParseInt(h["at"], 10, 64)
+	stalled := h["stalled"] == "1"
+
+	var oldestAt time.Time
+	if oldestAtMS > 0 {
+		oldestAt = time.UnixMilli(oldestAtMS)
+	}
+	var at time.Time
+	if atMS > 0 {
+		at = time.UnixMilli(atMS)
+	}
+
+	var age time.Duration
+	if !oldestAt.IsZero() && !now.IsZero() && now.After(oldestAt) {
+		age = now.Sub(oldestAt)
+	} else if ageMS > 0 {
+		age = time.Duration(ageMS) * time.Millisecond
+	}
+
+	maxDuration := DefaultLandSlow
+	if word == "LAND-WALL" {
+		maxDuration = DefaultLandWall
+	}
+	if maxStr := h["max_ms"]; maxStr != "" {
+		if m, err := strconv.ParseInt(maxStr, 10, 64); err == nil && m > 0 {
+			maxDuration = time.Duration(m) * time.Millisecond
+		}
+	} else if maxStr := h["max"]; maxStr != "" {
+		if d, err := time.ParseDuration(maxStr); err == nil && d > 0 {
+			maxDuration = d
+		} else if m, err := strconv.ParseInt(maxStr, 10, 64); err == nil && m > 0 {
+			maxDuration = time.Duration(m) * time.Second
+		}
+	}
+
+	return LandSlow{
+		Stream:   stream,
+		Word:     word,
+		Oldest:   oldest,
+		OldestAt: oldestAt,
+		Age:      age,
+		Max:      maxDuration,
+		Stalled:  stalled,
+		At:       at,
+	}, true
+}
 
 // MergeMember is one member of a merge card's brief.
 type MergeMember struct {

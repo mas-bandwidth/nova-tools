@@ -9,7 +9,7 @@
 //	<landed>/<total> done <z>%, left <l>, eta <HH:MM> ET gh <n>/h   (ws.SprintCounts.Header)
 //
 //	stream | waiting | ready | working | review | merging | landed   (rows in ws:order, all-zero rows hidden, total)
-//	REVIEW stream=<s> over=<n> oldest=<id> age=<d> max=<d>     (a stream with cards in review past cfg:review max_age, #4072)
+//	LAND-SLOW <stream> oldest=<id> age=<d> max=<d>              (one line per stream with land:slow:<stream>, #4387)
 //
 //	consumer | ready | working | done | ok | fail | ok% | status | load   (one row per consumer, total)
 //
@@ -116,6 +116,7 @@ type StreamRow struct {
 	Name                                             string
 	Waiting, Ready, Working, Review, Merging, Landed int64
 	Unread                                           [6]bool
+	Slow                                             *LandSlow
 }
 
 // AnyUnread says a cell of the row did not come back.
@@ -151,6 +152,9 @@ type SprintSnapshot struct {
 	// asks so far, the last EVENT line, and the last pass's duty refusals.
 	// The table prints one EVENTS line from it only when non-zero.
 	Events ProgressEvents
+	// LandSlow are the slow landing records (land:slow:<stream>, #4387) in
+	// stream order.
+	LandSlow []LandSlow
 	// Consumers are the consumer table's rows, in display order (#4071).
 	Consumers []ConsumerRow
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
@@ -457,6 +461,11 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
+	streams := r.counts.Streams()
+	slowCmds := make([]*redis.MapStringStringCmd, len(streams))
+	for i, s := range streams {
+		slowCmds[i] = pipe.HGetAll(ctx, LandSlowKey(s))
+	}
 	// THE EPOCH (nova-tools#4238): read once per tick, in the same pipeline
 	// and AFTER every cell: the cells are keyed by the epoch of the last
 	// tick, and a clear that lands anywhere before this read (before or
@@ -549,8 +558,19 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	} else {
 		snap.Events = ParseProgressEvents(h)
 	}
-	for _, sc := range gotCounts.Streams {
-		snap.Streams = append(snap.Streams, streamRow(sc))
+	for i, sc := range gotCounts.Streams {
+		row := streamRow(sc)
+		if i < len(slowCmds) {
+			if h, err := slowCmds[i].Result(); err == nil {
+				if slow, ok := ParseLandSlow(sc.Stream, h, now); ok {
+					row.Slow = &slow
+					snap.LandSlow = append(snap.LandSlow, slow)
+				}
+			} else if !errors.Is(err, redis.Nil) {
+				snap.Errors = append(snap.Errors, fmt.Sprintf("land:slow:%s not read: %v", sc.Stream, err))
+			}
+		}
+		snap.Streams = append(snap.Streams, row)
 	}
 	for i, c := range roster {
 		row := ConsumerRow{Consumer: c, Load: "-"}
@@ -797,5 +817,8 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
 		return
 	}
 	b.WriteString(block)
+	for _, slow := range s.LandSlow {
+		b.WriteString(slow.Line() + "\n")
+	}
 	b.WriteByte('\n')
 }

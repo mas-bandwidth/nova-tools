@@ -97,5 +97,19 @@ func TestACLEachActorCallsOnlyItsFunctions(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "NOPERM") {
 			t.Errorf("expected NOPERM, got %v", err)
 		}
+
+		// Allowed read of land:* keys (nova-tools #4387)
+		_, err = c.HGetAll(ctx, "land:slow:test").Result()
+		if err != nil && strings.Contains(err.Error(), "NOPERM") {
+			t.Errorf("ns-table should be allowed read of land:slow:test, got NOPERM: %v", err)
+		}
+
+		// Refused direct write to land:*
+		err = c.HSet(ctx, "land:slow:test", "word", "LAND-SLOW").Err()
+		if err == nil {
+			t.Errorf("ns-table should be refused direct write to land:slow:test")
+		} else if !strings.Contains(err.Error(), "NOPERM") {
+			t.Errorf("expected NOPERM, got %v", err)
+		}
 	})
 }
