@@ -25,18 +25,43 @@ var errCleared = errors.New("the sprint was cleared while the step read it")
 type ClearedError struct {
 	Held, Now uint64
 	At        time.Time
+	// Finished says the step finished at the epoch it held as the clear
+	// closed it: its moves stand there, and nothing of it is at the new one.
+	Finished bool
 }
 
 func (e *ClearedError) Error() string {
+	if e.Held > e.Now {
+		return fmt.Sprintf("this step holds epoch %d, which is unknown to this sprint: its epoch is %d; nothing was changed; read the sprint again (nova-sprint queue, where) and act on epoch %d",
+			e.Held, e.Now, e.Now)
+	}
+	if e.Finished {
+		return fmt.Sprintf("the sprint was cleared at %s as this step finished: its moves stand at epoch %d, which the clear closed, and the sprint's epoch is now %d; read the sprint again (nova-sprint queue, where) and act on epoch %d",
+			e.At.UTC().Format(time.RFC3339), e.Held, e.Now, e.Now)
+	}
 	return fmt.Sprintf("the sprint was cleared at %s: its epoch is now %d, and this step holds epoch %d; nothing was changed; read the sprint again (nova-sprint queue, where) and act on epoch %d",
 		e.At.UTC().Format(time.RFC3339), e.Now, e.Held, e.Now)
 }
 
 // pin is the store pinned to the sprint's current epoch; a pinned store is
-// itself.
+// itself. A restore the epoch still owes (a clear cut between its advance and
+// its restore) is performed first.
 func (st *Store) pin(ctx context.Context) (*Store, error) {
+	c, es, err := st.pinOnly(ctx)
+	if err != nil || c == st || !es.Owed {
+		return c, err
+	}
+	if _, err := c.restore(ctx, es.N-1); err != nil {
+		return nil, fmt.Errorf("finishing the clear of %s (the shape of epoch %d at epoch %d): %w", es.Cleared.UTC().Format(time.RFC3339), es.N-1, es.N, err)
+	}
+	return c, nil
+}
+
+// pinOnly is the store pinned to the sprint's current epoch, with the epoch as
+// read, and no restore performed; a pinned store is itself.
+func (st *Store) pinOnly(ctx context.Context) (*Store, EpochState, error) {
 	if st.pinned {
-		return st, nil
+		return st, EpochState{N: st.epoch, Cleared: st.cleared}, nil
 	}
 	root := st.root
 	if root == nil {
@@ -44,7 +69,7 @@ func (st *Store) pin(ctx context.Context) (*Store, error) {
 	}
 	es, err := root.Epoch(ctx)
 	if err != nil {
-		return nil, err
+		return nil, es, err
 	}
 	c := *st
 	c.root, c.B, c.epoch, c.cleared, c.pinned = root, root, es.N, es.Cleared, true
@@ -53,7 +78,7 @@ func (st *Store) pin(ctx context.Context) (*Store, error) {
 		// store uses it as given (a test's wrapper stays in place).
 		c.B = root.AtEpoch(es.N, false)
 	}
-	return &c, nil
+	return &c, es, nil
 }
 
 // repin is the store pinned again, to the epoch the sprint is at now.
@@ -61,6 +86,13 @@ func (st *Store) repin(ctx context.Context) (*Store, error) {
 	c := *st
 	c.pinned = false
 	return c.pin(ctx)
+}
+
+// repinOnly is the store pinned again, with no restore performed.
+func (st *Store) repinOnly(ctx context.Context) (*Store, EpochState, error) {
+	c := *st
+	c.pinned = false
+	return c.pinOnly(ctx)
 }
 
 // At is the store reading an earlier epoch as it was: where, card and inbox
@@ -101,3 +133,27 @@ func (st *Store) Pinned(ctx context.Context) (*Store, error) { return st.pin(ctx
 
 // PinnedEpoch is the epoch a pinned store is at.
 func (st *Store) PinnedEpoch() uint64 { return st.epoch }
+
+// left reads the sprint's epoch and says whether the sprint has left the
+// epoch the store is pinned to.
+func (st *Store) left(ctx context.Context) (EpochState, bool, error) {
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return es, false, err
+	}
+	return es, es.N != st.epoch, nil
+}
+
+// SetReview sets an open judgment's next review time (wait) at the sprint's
+// epoch. A judgment id of another epoch is refused, naming its epoch: an id
+// of an earlier epoch never reaches a judgment of this one.
+func (st *Store) SetReview(ctx context.Context, noteID string, at time.Time) error {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	if e := sprint.IDEpoch(noteID); e != st.epoch {
+		return errors.New(sprint.OtherEpoch(noteID, e, st.epoch))
+	}
+	return st.B.SetReview(ctx, noteID, at)
+}

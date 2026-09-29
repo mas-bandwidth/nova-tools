@@ -247,17 +247,20 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	ctx = withBudget(ctx)
 	res := Result{Verb: step.Verb, Args: step.Args}
+	if strings.Contains(step.CallerOp, "~") {
+		return res, fmt.Errorf("operation id %s holds '~', which marks the epoch in the sprint's ids; nothing was done; give the step an --op without '~'", step.CallerOp)
+	}
 	st, err := st.pin(ctx)
 	if err != nil {
 		return res, err
 	}
 	if step.CallerOp != "" {
-		if raw, ok, err := st.B.Done(ctx, step.CallerOp); err != nil {
-			return res, err
-		} else if ok {
-			return replay(step, raw)
+		if r, done, err := st.callerOp(ctx, step, res); done || err != nil {
+			return r, err
 		}
 	}
+	// The operation's ids carry the epoch it runs at (OpFamily): none is the
+	// same in two epochs.
 	family := step.CallerOp
 	if family == "" {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
@@ -290,8 +293,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, nil
 		}
 		if step.CallerOp != "" {
-			if raw, ok, err := st.B.Done(ctx, step.CallerOp); err == nil && ok {
-				return replay(step, raw)
+			if r, done, err := st.callerOp(ctx, step, res); done || err != nil {
+				return r, err
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
@@ -312,7 +315,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				res.Moved = append(res.Moved, u.Moved)
 			}
 		}
-		op, err := st.operation(step.Verb, family+"-"+strconv.Itoa(res.Attempts), plan, snap)
+		op, err := st.operation(step.Verb, sprint.OpFamily(family, st.epoch)+"-"+strconv.Itoa(res.Attempts), plan, snap)
 		if err != nil {
 			return res, err
 		}
@@ -387,9 +390,44 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	return res, nil
 }
 
+// callerOp is the recorded result of the step's caller operation id, when
+// done: at the pinned epoch it replays; recorded at an earlier epoch the step
+// is refused, naming the epoch, and never run again as new work.
+func (st *Store) callerOp(ctx context.Context, step Step, res Result) (Result, bool, error) {
+	raw, ok, err := st.B.Done(ctx, step.CallerOp)
+	if err != nil {
+		return res, true, err
+	}
+	if ok {
+		r, err := replay(step, raw)
+		return r, true, err
+	}
+	if st.epoch == 0 {
+		return res, false, nil
+	}
+	e, ok, err := st.B.DoneBefore(ctx, step.CallerOp, st.epoch)
+	if err != nil || !ok {
+		return res, err != nil, err
+	}
+	now, err := st.EpochNow(ctx)
+	if err != nil {
+		return res, true, err
+	}
+	res.Moved, res.Op, res.Notes = nil, "", 0
+	res.Refused = []sprint.Refusal{{Key: "op " + step.CallerOp, Why: fmt.Sprintf("the sprint was cleared at %s: operation %s belongs to epoch %d, and the sprint's epoch is now %d; it is not run again as new work; nothing was changed; read the sprint again (nova-sprint queue, where) and give new work a fresh --op",
+		now.Cleared.UTC().Format(time.RFC3339), step.CallerOp, e, now.N)}}
+	return res, true, nil
+}
+
+// after brings the display cells up to date after a step. A step finished at
+// an epoch a clear closed as it ran (the clear finished its operation there)
+// is told the sprint was cleared, not what the sync of the display cells met.
 func (st *Store) after(ctx context.Context, step Step, res Result) (Result, error) {
 	if step.Mirrors {
 		if err := st.SyncMirrors(ctx); err != nil {
+			if es, left, lerr := st.left(ctx); lerr == nil && left {
+				return res, &ClearedError{Held: st.epoch, Now: es.N, At: es.Cleared, Finished: true}
+			}
 			return res, err
 		}
 	}

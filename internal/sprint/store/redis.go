@@ -40,7 +40,7 @@ func (r *Redis) writeOpts() ntable.WriteOptions { return ntable.WriteOptions{Epo
 
 // Epoch reads the sprint's epoch hash in one exchange.
 func (r *Redis) Epoch(ctx context.Context) (EpochState, error) {
-	vals, err := r.C.HMGet(ctx, r.Names.EpochKey(), "n", "cleared", "shape").Result()
+	vals, err := r.C.HMGet(ctx, r.Names.EpochKey(), "n", "cleared", "restore").Result()
 	if err != nil {
 		return EpochState{}, err
 	}
@@ -53,14 +53,15 @@ func (r *Redis) Epoch(ctx context.Context) (EpochState, error) {
 	if v, ok := vals[1].(string); ok {
 		es.Cleared, _ = time.Parse(time.RFC3339Nano, v)
 	}
-	if v, ok := vals[2].(string); ok {
-		es.Shape = v
+	if v, ok := vals[2].(string); ok && v != "" {
+		es.Owed = true
 	}
 	return es, nil
 }
 
-// AdvanceEpoch is WATCH on the epoch hash, then one MULTI/EXEC.
-func (r *Redis) AdvanceEpoch(ctx context.Context, from uint64, at time.Time, shape string) (bool, error) {
+// AdvanceEpoch is WATCH on the epoch hash, then one MULTI/EXEC; the hash's
+// restore field names the epoch whose shape the new one owes.
+func (r *Redis) AdvanceEpoch(ctx context.Context, from uint64, at time.Time) (bool, error) {
 	key := r.Names.EpochKey()
 	moved := false
 	err := r.C.Watch(ctx, func(tx *redis.Tx) error {
@@ -77,7 +78,7 @@ func (r *Redis) AdvanceEpoch(ctx context.Context, from uint64, at time.Time, sha
 			return nil
 		}
 		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
-			p.HSet(ctx, key, "n", strconv.FormatUint(from+1, 10), "cleared", at.UTC().Format(time.RFC3339Nano), "shape", shape)
+			p.HSet(ctx, key, "n", strconv.FormatUint(from+1, 10), "cleared", at.UTC().Format(time.RFC3339Nano), "restore", strconv.FormatUint(from, 10))
 			return nil
 		})
 		return err
@@ -88,9 +89,29 @@ func (r *Redis) AdvanceEpoch(ctx context.Context, from uint64, at time.Time, sha
 	return err == nil, err
 }
 
-// SettleEpoch removes the shape a clear had to restore.
-func (r *Redis) SettleEpoch(ctx context.Context) error {
-	return r.C.HDel(ctx, r.Names.EpochKey(), "shape").Err()
+// SettleEpoch removes the restore owed at epoch n: WATCH on the epoch hash,
+// then one MULTI/EXEC, only while the sprint is at n.
+func (r *Redis) SettleEpoch(ctx context.Context, n uint64) error {
+	key := r.Names.EpochKey()
+	err := r.C.Watch(ctx, func(tx *redis.Tx) error {
+		v, err := tx.HGet(ctx, key, "n").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		if v != strconv.FormatUint(n, 10) {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.HDel(ctx, key, "restore")
+			return nil
+		})
+		return err
+	}, key)
+	if errors.Is(err, redis.TxFailedErr) {
+		// the epoch hash moved: another clear advanced it, or settled it
+		return nil
+	}
+	return err
 }
 
 // Shapes reads every table in one pipeline; pinned to an old epoch, each at
@@ -417,6 +438,28 @@ func (r *Redis) Done(ctx context.Context, callerOp string) (string, bool, error)
 		return "", false, nil
 	}
 	return v, err == nil, err
+}
+
+// DoneBefore asks every earlier epoch's results for the caller's operation id,
+// in one pipeline.
+func (r *Redis) DoneBefore(ctx context.Context, callerOp string, before uint64) (uint64, bool, error) {
+	if before == 0 {
+		return 0, false, nil
+	}
+	pipe := r.C.Pipeline()
+	cmds := make([]*redis.BoolCmd, before)
+	for e := uint64(0); e < before; e++ {
+		cmds[e] = pipe.HExists(ctx, r.Names.KeyAt(keyDone, e), callerOp)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, false, err
+	}
+	for e := before; e > 0; e-- {
+		if cmds[e-1].Val() {
+			return e - 1, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 func (r *Redis) SetReview(ctx context.Context, noteID string, at time.Time) error {

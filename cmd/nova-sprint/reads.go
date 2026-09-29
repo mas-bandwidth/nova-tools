@@ -194,11 +194,13 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", fmt.Sprint("takes no words ", err))
 	}
-	st, err := a.storeAt(*c, *atEpoch)
-	if err != nil {
-		return refuse(stderr, "where", err.Error())
-	}
 	for {
+		// every frame reads the sprint's epoch again: a clear while it
+		// watches shows the new epoch
+		st, err := a.storeAt(*c, *atEpoch)
+		if err != nil {
+			return refuse(stderr, "where", err.Error())
+		}
 		v, frame, err := a.where(context.Background(), st, *stale)
 		if err != nil {
 			return a.readFailed("where", err, stderr)
@@ -313,6 +315,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", fmt.Sprint("takes no words ", err))
+	}
+	if *read && *atEpoch >= 0 {
+		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {

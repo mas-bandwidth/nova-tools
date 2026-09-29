@@ -40,14 +40,15 @@ type Backend interface {
 	CheckTable(ctx context.Context, table string) error
 
 	// Epoch reads the sprint's epoch: its number, when it was last cleared,
-	// and the shape a clear still has to restore ("" when none).
+	// and whether the restore of the shape of the epoch before it is owed.
 	Epoch(ctx context.Context) (EpochState, error)
 	// AdvanceEpoch moves the sprint from epoch from to from+1 atomically,
-	// recording the time and the shape to restore; false when the sprint is
-	// no longer at from.
-	AdvanceEpoch(ctx context.Context, from uint64, at time.Time, shape string) (bool, error)
-	// SettleEpoch records that the current epoch's shape is restored.
-	SettleEpoch(ctx context.Context) error
+	// recording the time and that the restore of epoch from's shape is owed;
+	// false when the sprint is no longer at from.
+	AdvanceEpoch(ctx context.Context, from uint64, at time.Time) (bool, error)
+	// SettleEpoch records that the restore owed at epoch n is done; it does
+	// nothing when the sprint is no longer at n.
+	SettleEpoch(ctx context.Context, n uint64) error
 	// AtEpoch is the backend pinned to an epoch: the sprint's keys of that
 	// epoch, and its writes at that epoch. With old, reads of the tables read
 	// that epoch as it was, not the active one.
@@ -68,6 +69,9 @@ type Backend interface {
 	Release(ctx context.Context, op OpRecord, commit bool) error
 	// Done is the recorded result of a caller's operation id.
 	Done(ctx context.Context, callerOp string) (string, bool, error)
+	// DoneBefore is the latest epoch before the given one that recorded a
+	// result of the caller's operation id, in one exchange.
+	DoneBefore(ctx context.Context, callerOp string, before uint64) (uint64, bool, error)
 	// SetReview sets an open judgment's next review time (wait).
 	SetReview(ctx context.Context, noteID string, at time.Time) error
 	// Progress is each stream's last progress: the time of the last operation
@@ -96,7 +100,9 @@ type Backend interface {
 type EpochState struct {
 	N       uint64
 	Cleared time.Time
-	Shape   string
+	// Owed says the clear into N has not restored the shape of epoch N-1 at
+	// it yet: the next verb, tick or clear performs the restore first.
+	Owed bool
 }
 
 // Fence is the sprint-wide fence as read: its generation, advanced by every
