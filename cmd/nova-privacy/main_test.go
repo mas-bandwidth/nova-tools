@@ -728,3 +728,30 @@ func TestCorpusNamesTheEntriesThatCanNeverFire(t *testing.T) {
 		t.Errorf("err %v silent %+v", err, rep.Silent)
 	}
 }
+
+// A refused structure shape outranks a broken corpus at the command too:
+// the payload is FLAGGED, exit 1, and the corpus problem is spoken beside it.
+func TestAStructureRefusalOutranksABrokenCorpus(t *testing.T) {
+	t.Parallel()
+	for name, mutate := range map[string]func(t *testing.T, tr tree){
+		"a declared source is gone": func(t *testing.T, tr tree) {
+			tr.write(t, ".nova-privacy", configFixture+"source private/gone.md\n")
+		},
+		"nothing is marked private": func(t *testing.T, tr tree) {
+			tr.write(t, "private/ideas.md", "## Ordinary\nnothing marked\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := newTree(t)
+			mutate(t, tr)
+			code, out, errOut := screenStdin(tr, "the evidence is at /home/ada/work/logs/latest\n")
+			if code != exitFlagged || out != "" || !strings.Contains(errOut, "SCREEN STRUCTURE class=home-path") || !strings.Contains(errOut, "SCREEN FLAGGED") {
+				t.Fatalf("exit %d stdout %q stderr %q", code, out, errOut)
+			}
+			if !strings.Contains(errOut, "SCREEN WARN") || !(strings.Contains(errOut, "could not be read") || strings.Contains(errOut, "verified nothing")) {
+				t.Errorf("the corpus problem is not spoken: %q", errOut)
+			}
+		})
+	}
+}
