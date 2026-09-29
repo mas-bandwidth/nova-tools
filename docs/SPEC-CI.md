@@ -1510,6 +1510,42 @@ file is tagged, so an untagged caller does not build, and the lint job's
 lands (`make check`, ci.yml's `functional` job on merge_group and schedule) and nightly
 (nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
 compiles it on every change.
+### `functional-image` — the functional-tier image is pinned and carries every program the tier runs
+
+**The rule.** `infra/functional-image/Containerfile` names its base image by
+digest, installs the Go version `go.mod` pins, checks every download against a
+sha256, takes its packages from a dated archive snapshot with
+`--no-install-recommends`, and runs as a non-root user with `GOTOOLCHAIN=local`,
+`GOPROXY=off`, `NOVA_CI=1` and `NOVA_FUNCTIONAL_RUN=container`. Every program a
+Go file under `cmd`, `internal` or `tools` runs by name (a string literal, or a
+package-level constant holding one, given to `exec.Command`,
+`exec.CommandContext` or `exec.LookPath`) is a row of
+`infra/functional-image/binaries.txt`, and the image carries it or the row says
+why the tier does without it.
+**The mistake it prevents.** A functional run inside a container that lacks a
+program the tests exec either fails on it or, worse, skips the test and stays
+green; an unpinned base, archive or toolchain makes two runs of one commit
+different runs.
+**The test.** `TestFunctionalImageBaseIsPinnedByDigest`,
+`TestFunctionalImageGoIsTheModulesPin`, `TestFunctionalImageInputsArePinned`,
+`TestFunctionalImageRunsAsTheTierExpects`,
+`TestFunctionalImageCarriesEveryBinaryTheTierExecs` and
+`TestFunctionalImageRuntimeAndReadmeAgree`
+(`internal/ci/functional_image_class_test.go`). The last holds the runtime
+role's probe (`fleet/roles/container-runtime`) to the image's base and to the
+flags of the README's run command.
+**Its allowlist.** `infra/functional-image/binaries.txt` itself: one row per
+program, checked in both directions, so a program no file runs any more is a
+row to delete.
+**Its remedy line.** ``<name> is run by name and is not a row of
+infra/functional-image/binaries.txt: add a row and install it in the
+Containerfile, or say why the tier can do without it``.
+**Its narrowings.** It reads names, not scripts: a program run inside a `sh -c`
+string or through a variable is not seen, and the `[unscanned]` rows of the list
+carry the ones known to be needed. The rest is caught by a run of the tier in
+the image, where `NOVA_CI=1` makes a missing program a failure. It does not
+build the image.
+
 ### `cardtemplates` — no card template carries a command only one platform has
 
 **The rule.** A card template is the text a worker is handed verbatim; nothing

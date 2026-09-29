@@ -12,6 +12,7 @@
 
 - name: the host can run the runtime
   ansible.builtin.assert:
+    quiet: true
     that:
       - ansible_facts["os_family"] == "Debian"
       - ansible_facts["system"] == "Linux"
@@ -29,7 +30,7 @@
 
 - name: the runner user's uid
   ansible.builtin.set_fact:
-    container_runtime_uid: "{{ getent_passwd[container_runtime_user][1] }}"
+    container_runtime_uid: "{{ ansible_facts['getent_passwd'][container_runtime_user][1] }}"
 
 - name: podman and its rootless helpers
   become: true
@@ -81,6 +82,7 @@
 
 - name: an existing subordinate id range is large enough
   ansible.builtin.assert:
+    quiet: true
     that: item.value | length == 0 or (item.value | max) >= container_runtime_subid_count
     fail_msg: >-
       /etc/{{ item.key }} gives {{ container_runtime_user }} {{ item.value }}
@@ -109,6 +111,7 @@
 
 - name: user namespaces are enabled
   ansible.builtin.assert:
+    quiet: true
     that: container_runtime_userns.stdout | int > 0
     fail_msg: >-
       user.max_user_namespaces is {{ container_runtime_userns.stdout }}; set it
@@ -165,6 +168,7 @@
 
 - name: podman runs rootless on cgroups v2
   ansible.builtin.assert:
+    quiet: true
     that:
       - container_runtime_info.stdout.split()[0] == "true"
       - container_runtime_info.stdout.split()[1] == "v2"
@@ -225,6 +229,11 @@
   changed_when: false
   when: not ansible_check_mode
 
+- name: what the probe read back
+  ansible.builtin.debug:
+    msg: "{{ container_runtime_probe.stdout_lines }}"
+  when: not ansible_check_mode
+
 # --timeout is the runtime's own bound: it ends the container whatever happens
 # to the client. A container that would sleep a minute is gone within the grace
 # of a three second bound, and nothing of it remains.
@@ -249,7 +258,23 @@
       - "60"
   register: container_runtime_bound
   changed_when: false
-  failed_when: container_runtime_bound.rc == 0 or (container_runtime_bound.delta.split(':')[-1] | float) > (container_runtime_probe_kill_after + container_runtime_probe_grace) or (container_runtime_bound.delta.split(':')[-2] | int) > 0
+  failed_when: container_runtime_bound.rc == 0
+  when: not ansible_check_mode
+
+- name: how long the bound took to end the container
+  ansible.builtin.set_fact:
+    container_runtime_bound_seconds: >-
+      {{ (container_runtime_bound.delta.split(':')[0] | int) * 3600
+         + (container_runtime_bound.delta.split(':')[1] | int) * 60
+         + (container_runtime_bound.delta.split(':')[2] | float) }}
+  when: not ansible_check_mode
+
+- name: the bound ended the container within the grace
+  ansible.builtin.assert:
+    quiet: true
+    that: (container_runtime_bound_seconds | float) <= (container_runtime_probe_kill_after | int) + (container_runtime_probe_grace | int)
+    success_msg: "podman run --timeout {{ container_runtime_probe_kill_after }} ended a sleep 60 container after {{ container_runtime_bound_seconds }} s"
+    fail_msg: "podman run --timeout {{ container_runtime_probe_kill_after }} took {{ container_runtime_bound_seconds }} s to end a container; the runtime's own bound does not hold within {{ container_runtime_probe_grace }} s"
   when: not ansible_check_mode
 
 - name: no probe container is left
