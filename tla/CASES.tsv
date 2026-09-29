@@ -49,6 +49,7 @@ MCSprintBrokenCardCloses.cfg	MCSprintTables.tla	invariant	StoppedIsNotified	igno
 MCSprintBrokenCrossEpochAnswer.cfg	MCSprintTables.tla	invariant	ReviewNeverSilent	ignore-terminal	sprintw6	required	-
 MCSprintBrokenDropKeepsReads.cfg	MCSprintTables.tla	invariant	ReadsOnlyInReview	ignore-terminal	sprintw2	required	-
 MCSprintBrokenFinishNoMove.cfg	MCSprintTables.tla	invariant	WorkingIsDelegated	ignore-terminal	sprintw1	required	-
+MCSprintBrokenHoldIgnored.cfg	MCSprintTables.tla	action	StatusFollowsBeat	ignore-terminal	sprintw8	required	-
 MCSprintBrokenInsertNoBack.cfg	MCSprintTables.tla	invariant	SentinelHolds	ignore-terminal	sprintw6	required	-
 MCSprintBrokenLandSkipsWork.cfg	MCSprintTables.tla	invariant	MergedIsLanded	ignore-terminal	sprintw2	required	-
 MCSprintBrokenLateSilent.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
@@ -88,10 +89,16 @@ MCSprintBrokenWithdrawLost.cfg	MCSprintTables.tla	invariant	NoCardLostOrTwice	ig
 MCSprintCutDelegated.cfg	MCSprintTables.tla	invariant	AlwaysDelegated	ignore-terminal	sprintw8	required	-
 MCSprintCutMergeMatches.cfg	MCSprintTables.tla	invariant	AlwaysMergeMatches	ignore-terminal	sprintw9	required	-
 MCSprintCutMergedLanded.cfg	MCSprintTables.tla	invariant	AlwaysMergedLanded	ignore-terminal	sprintw9	required	-
-MCSprintCutReadsInReview.cfg	MCSprintTables.tla	invariant	AlwaysReadsInReview	ignore-terminal	sprintw8	required	-
+MCSprintCutReadsInReview.cfg	MCSprintTables.tla	invariant	AlwaysReadsInReview	ignore-terminal	sprintw9	required	-
 MCSprintFindingRawSkip.cfg	MCSprintTables.tla	invariant	WorkingIsDelegated	ignore-terminal	sprintw9	required	-
+MCSprintTablesBeat.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-beat	required	-
 MCSprintTablesClock.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-clock	required	-
+MCSprintTablesDoneBad.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-done-bad	required	-
 MCSprintTablesDoneOne.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-done-one	required	-
+MCSprintTablesDoneTwo.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-done-two	required	-
+MCSprintTablesLiveBad.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-bad	required	-
+MCSprintTablesLiveBeat.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-beat	required	-
+MCSprintTablesLiveClear.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-clear	required	-
 MCSprintTablesLiveOne.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-one	required	-
 MCSprintTablesLivePosition.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-position	required	-
 MCSprintTablesLiveSentinel.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-live-sentinel	required	-
