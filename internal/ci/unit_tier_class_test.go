@@ -204,9 +204,10 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 }
 
 // TestFunctionalTierRunsOnlyAsStreamsMerge: the functional job runs on
-// merge_group, schedule and workflow_dispatch and never on a pull request, on
-// the space pool under the two-minute cap, over test-packages' functional
-// list, through `make test-functional`; ci-ok requires it when it ran.
+// merge_group, schedule, workflow_dispatch, push to dev, and ready_for_review
+// (or labeled) pull requests, on the space pool under the two-minute cap, over
+// test-packages' functional list, through `make test-functional`; ci-ok requires
+// it when it ran.
 func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	t.Parallel()
 
@@ -220,8 +221,21 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 			t.Errorf("functional's if does not run on %s: %s", ev, job.If)
 		}
 	}
-	if strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !=") {
-		t.Errorf("functional's if must name the events it runs on, never pull_request: %s", job.If)
+	if !strings.Contains(job.If, "pull_request") {
+		t.Errorf("functional's if must run on pull_request: %s", job.If)
+	}
+	if !strings.Contains(job.If, "ready_for_review") {
+		t.Errorf("functional's if must check ready_for_review on pull requests: %s", job.If)
+	}
+	if !strings.Contains(job.If, "head.repo.full_name == github.repository") {
+		t.Errorf("functional's if must carry the head-repo check on pull requests: %s", job.If)
+	}
+	if !strings.Contains(job.If, "dev") {
+		t.Errorf("functional's if must run on push to dev: %s", job.If)
+	}
+	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if !strings.Contains(ci, "ready_for_review") {
+		t.Error("ci.yml pull_request trigger does not include ready_for_review")
 	}
 	if job.TimeoutMinutes != 2 {
 		t.Errorf("functional timeout-minutes = %d, want 2", job.TimeoutMinutes)

@@ -1099,9 +1099,9 @@ min(share, 2) and the Makefile's `GOTEST_P ?= 2` on `go test -p` and
 redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
 `functional` job, `make test-functional`) runs only the `//go:build functional`
-tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, four space shards under the
-two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
+tests of the selected packages, on `merge_group`, `schedule`,
+`workflow_dispatch`, `push` to dev, and `pull_request` when marked `ready_for_review`
+(or on a label), four space shards under the two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
 measurement, printed on every leg and enforced only on the nightly space legs;
 what is enforced on every leg is static (`unitwaits`).

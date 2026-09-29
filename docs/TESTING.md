@@ -29,8 +29,8 @@ real one fails there, naming this rule.
 the real thing (a redis-server, a built binary, a child process) lives in a
 `_test.go` that starts with `//go:build functional`. `make test-functional` runs
 only those tests, and ci.yml's `functional` job runs it in the merge queue (a
-whole work stream merging into dev), nightly and by hand, never on a pull
-request. Keep them few and cheap: one server per package (`TestMain`) rather
+whole work stream merging into dev), on pull requests marked ready for review (or on a label),
+push to dev, nightly and by hand. Keep them few and cheap: one server per package (`TestMain`) rather
 than one per test, and the same two-minute cap as every job.
 
 ### Table epoch actions and receipt replay

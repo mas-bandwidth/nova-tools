@@ -42,8 +42,8 @@
 # package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
 # names it. The FUNCTIONAL tier is the `functional` job: the tests behind
 # `//go:build functional`, over the same packages, on merge_group (a stream's
-# merge into dev), the nightly schedule and a manual run, never on a pull
-# request. See docs/TESTING.md.
+# merge into dev), push to dev, pull requests marked ready for review (or labeled),
+# the nightly schedule and a manual run. See docs/TESTING.md.
 #
 # NO NATIVE WINDOWS LEG, since 2026-09-18. Glenn's ruling: "drop the native
 # windows CI runners. WSL only from now on." Every windows-latest leg this file
@@ -84,6 +84,7 @@ on:
     # TestIntegrationBranchesAreOneList holds the two spellings equal.
     branches: [main, dev]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   # merge_group: the merge queue builds a group commit of the PRs about to land and
   # runs this workflow on it; ci-ok on the group is the merge gate, so every PR is
   # proved against the main it actually lands on (2026-09-16: with the up-to-date
@@ -555,8 +556,9 @@ jobs:
           # THE FUNCTIONAL TIER'S LIST: the same selected packages, dealt into
           # FOUR space shards like a pull request's unit legs (the darwin-only
           # packages have no Linux leg). The `functional` job reads it on
-          # merge_group, schedule and workflow_dispatch only; each leg's `make
-          # test-functional` runs just the tests behind the functional tag.
+          # merge_group, schedule, workflow_dispatch, push to dev, and ready_for_review
+          # pull requests; each leg's `make test-functional` runs just the tests
+          # behind the functional tag.
           FUNCTIONAL_SHARDS=4
           declare -a functional_grp
           f=0
@@ -1022,13 +1024,13 @@ jobs:
     # A functional test is one behind `//go:build functional`: a real
     # redis-server, a real binary, a real process. It runs on merge_group (the
     # queue's run of a stream PR into dev), on the nightly schedule and by hand,
-    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
-    # into dev both skip it. Same selected packages as the unit legs, four space
+    # on push to dev, and on pull requests marked ready for review (or with a
+    # functional label). Same selected packages as the unit legs, four space
     # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
     # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'dev') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (!github.event.pull_request.draft || github.event.action == 'ready_for_review' || contains(github.event.pull_request.labels.*.name, 'functional') || contains(github.event.pull_request.labels.*.name, 'ci-functional')))
     strategy:
       fail-fast: false
       matrix:
@@ -2034,8 +2036,9 @@ jobs:
             [ "$result" = "success" ] && continue
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
-            # functional runs on merge_group and workflow_dispatch only; on a
-            # pull request it is skipped by design. When it ran, it must pass.
+            # functional runs on merge_group, workflow_dispatch, push to dev,
+            # and ready_for_review / labeled pull requests. On a draft pull
+            # request without a functional label it is skipped by design. When it ran, it must pass.
             [ "$job" = "functional" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" = "pull_request" ] && continue
             # test-windows-pr was aggregated here until 2026-09-18, when the
             # native windows runners were dropped. The Windows guard is now the
@@ -2053,6 +2056,7 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
+            "functional:${{ needs.functional.result }}" \
             "test-race-queue:${{ needs.test-race-queue.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "lisp:${{ needs.lisp.result }}" \
@@ -2064,6 +2068,7 @@ jobs:
             # path moved; a skipped lisp is a pass. A red
             # lisp still blocks the merge.
             if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
+            if [ "$job" = "functional" ] && [ "$result" = "skipped" ]; then continue; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
