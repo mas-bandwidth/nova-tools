@@ -111,3 +111,52 @@ func TestSampleLeavesTheSampleOut(t *testing.T) {
 		t.Errorf("empty: %v", got)
 	}
 }
+
+func TestSampleFromPS(t *testing.T) {
+	t.Parallel()
+	at := int64(1_800_000_000)
+	sample := PSSample{
+		At: at,
+		Procs: []PSProc{
+			{PID: 10, PPID: 1, Start: at - 2, Cmd: "/usr/local/bin/bench-row"},
+			{PID: 11, PPID: 1, Start: at - 5, Cmd: "bench-row"},
+			{PID: 20, PPID: 1, Start: at - 90000, Cmd: "ci-run --daemon"},
+			{PID: 30, PPID: 1, Start: at - 90000, Cmd: "sshd"},
+			{PID: 40, PPID: 2, Start: at - 90000, Cmd: "non-orphan"},
+		},
+	}
+	c := SampleFromPS(sample, 12)
+	if c.YoungTotal != 2 || c.Young["bench-row"] != 2 {
+		t.Errorf("young = %+v, want 2 bench-row", c.Young)
+	}
+	if len(c.Old) != 1 || c.Old[0].PID != 20 || c.Old[0].Comm != "ci-run" {
+		t.Errorf("old = %+v, want pid 20 ci-run", c.Old)
+	}
+	lines := c.Lines("hulk")
+	want := []string{
+		"hulk young bench-row 2",
+		"hulk old pid=20 age=1d comm=ci-run",
+		"CHURN hulk young=2 old=1",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("lines =\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestCommName(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		cmd  string
+		want string
+	}{
+		{"", ""},
+		{"/usr/local/bin/sprint-table", "sprint-table"},
+		{"-bash", "bash"},
+		{"ci-run --flag", "ci-run"},
+		{"/usr/sbin/sshd -D", "sshd"},
+	} {
+		if got := CommName(tc.cmd); got != tc.want {
+			t.Errorf("CommName(%q) = %q, want %q", tc.cmd, got, tc.want)
+		}
+	}
+}

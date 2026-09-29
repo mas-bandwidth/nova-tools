@@ -59,6 +59,7 @@ const (
 // PSProc is one process on the beat.
 type PSProc struct {
 	PID   int     `json:"pid"`
+	PPID  int     `json:"ppid,omitempty"`
 	CPU   float64 `json:"cpu"`
 	User  string  `json:"user,omitempty"`
 	Start int64   `json:"start"` // unix seconds: the sample's At minus the process's age
@@ -79,6 +80,7 @@ type PSSample struct {
 	OldN  int      `json:"old_n"` // Old before the PSOldMax cut
 	Units []PSUnit `json:"units"`
 	UnitN int      `json:"unit_n"` // Units before the PSUnitMax cut
+	Procs []PSProc `json:"procs,omitempty"`
 	// Err is why the bench could not take the sample (no ps, a line it
 	// cannot read); the verb prints it and never reads the bench as clean.
 	Err string `json:"err,omitempty"`
@@ -326,7 +328,7 @@ func SamplePS(in PSInput) PSSample {
 		user = func(uid int) string { return strconv.Itoa(uid) }
 	}
 	proc := func(r PSRow) PSProc {
-		return PSProc{PID: r.PID, CPU: r.CPU, User: user(r.UID), Start: s.At - int64(r.Age), Cmd: oneline.Cap(r.Args, PSCmdMax)}
+		return PSProc{PID: r.PID, PPID: r.PPID, CPU: r.CPU, User: user(r.UID), Start: s.At - int64(r.Age), Cmd: oneline.Cap(r.Args, PSCmdMax)}
 	}
 
 	// The declared units' command lines, and every unit's state.
@@ -437,6 +439,11 @@ func PSAge(sec int64) string {
 		return fmt.Sprintf("%dm%ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
+}
+
+// Sample reads a bench's sample, or the one line that says why it has none.
+func (b PSBench) Sample(verb string) (PSSample, string) {
+	return b.sample(verb)
 }
 
 // sample reads a bench's sample, or the one line that says why it has none.

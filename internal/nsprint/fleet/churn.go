@@ -9,6 +9,7 @@ package fleet
 // out, since it is always young.
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"sort"
@@ -167,3 +168,49 @@ func (c Churn) Lines(machine string) []string {
 	}
 	return append(out, fmt.Sprintf("CHURN %s young=%d old=%d", machine, c.YoungTotal, len(c.Old)))
 }
+
+// CommName extracts the command base name from a command line string.
+func CommName(cmd string) string {
+	f := strings.Fields(cmd)
+	if len(f) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(path.Base(f[0]), "-")
+}
+
+// SampleFromPS converts a PSSample into a Churn reading against window seconds.
+func SampleFromPS(s PSSample, window int) Churn {
+	var procs []Proc
+	all := s.Procs
+	if len(all) == 0 {
+		seen := map[int]bool{}
+		for _, p := range s.Top {
+			if !seen[p.PID] {
+				seen[p.PID] = true
+				all = append(all, p)
+			}
+		}
+		for _, p := range s.Old {
+			if !seen[p.PID] {
+				seen[p.PID] = true
+				all = append(all, p)
+			}
+		}
+	}
+	for _, p := range all {
+		age := int(s.At - p.Start)
+		if age < 0 {
+			age = 0
+		}
+		procs = append(procs, Proc{
+			PID:  p.PID,
+			PPID: p.PPID,
+			Age:  age,
+			Comm: CommName(p.Cmd),
+		})
+	}
+	return Sample(procs, window)
+}
+
+// ChurnSampler samples process telemetry for a bench.
+type ChurnSampler func(ctx context.Context, bench string) (PSSample, error)

@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 )
 
 // churnFake answers the ps sample per host with canned output and records
@@ -132,5 +135,145 @@ func TestFleetChurnRefusals(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := runFleet(context.Background(), []string{"churn", "--machines", reg, "--nope"}, &out, &errOut); code != 2 {
 		t.Errorf("dispatch: code=%d err=%q", code, errOut.String())
+	}
+}
+
+// TestFleetChurnRedisWithSampler tests telemetry sampling via fake sampler seam.
+func TestFleetChurnRedisWithSampler(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	mr.SAdd("benches", "hulk", "batman")
+
+	at := int64(1_800_000_000)
+	sampler := func(ctx context.Context, bench string) (fleet.PSSample, error) {
+		if bench == "hulk" {
+			return fleet.PSSample{
+				At: at,
+				Procs: []fleet.PSProc{
+					{PID: 10, PPID: 1, Start: at - 2, Cmd: "/usr/local/bin/bench-row"},
+					{PID: 11, PPID: 1, Start: at - 5, Cmd: "bench-row"},
+					{PID: 20, PPID: 1, Start: at - 90000, Cmd: "ci-run --daemon"},
+					{PID: 30, PPID: 1, Start: at - 90000, Cmd: "sshd"},
+				},
+			}, nil
+		}
+		if bench == "batman" {
+			return fleet.PSSample{
+				At: at,
+				Procs: []fleet.PSProc{
+					{PID: 5, PPID: 1, Start: at - 20, Cmd: "/usr/bin/thing"},
+				},
+			}, nil
+		}
+		return fleet.PSSample{}, errors.New("unexpected bench " + bench)
+	}
+
+	// 1. All benches with sampler
+	var out, errOut bytes.Buffer
+	code := runFleetChurnWithSampler(context.Background(), []string{"--redis", mr.Addr(), "--seconds", "12"}, &out, &errOut, nil, sampler, func(string) string { return "" })
+	want := strings.Join([]string{
+		"CHURN batman young=0 old=0",
+		"hulk young bench-row 2",
+		"hulk old pid=20 age=1d comm=ci-run",
+		"CHURN hulk young=2 old=1",
+		"FLEET CHURN OK benches=2 churn=2 orphans=1",
+		"",
+	}, "\n")
+	if code != 0 || out.String() != want || errOut.String() != "" {
+		t.Fatalf("code=%d\n%s\nwant:\n%s\nerr=%q", code, out.String(), want, errOut.String())
+	}
+
+	// 2. Filter to single bench via --bench
+	out.Reset()
+	errOut.Reset()
+	code = runFleetChurnWithSampler(context.Background(), []string{"--redis", mr.Addr(), "--bench", "hulk", "--seconds", "12"}, &out, &errOut, nil, sampler, func(string) string { return "" })
+	wantHulk := strings.Join([]string{
+		"hulk young bench-row 2",
+		"hulk old pid=20 age=1d comm=ci-run",
+		"CHURN hulk young=2 old=1",
+		"FLEET CHURN OK benches=1 churn=2 orphans=1",
+		"",
+	}, "\n")
+	if code != 0 || out.String() != wantHulk || errOut.String() != "" {
+		t.Fatalf("bench filter: code=%d\n%s\nwant:\n%s\nerr=%q", code, out.String(), wantHulk, errOut.String())
+	}
+
+	// 3. Bench failure in sampler
+	failingSampler := func(ctx context.Context, bench string) (fleet.PSSample, error) {
+		if bench == "batman" {
+			return fleet.PSSample{}, errors.New("timeout reached")
+		}
+		return sampler(ctx, bench)
+	}
+	out.Reset()
+	errOut.Reset()
+	code = runFleetChurnWithSampler(context.Background(), []string{"--redis", mr.Addr()}, &out, &errOut, nil, failingSampler, func(string) string { return "" })
+	if code != 1 || !strings.Contains(out.String(), "CHURN batman FAIL timeout reached") || strings.Contains(out.String(), "FLEET CHURN OK") {
+		t.Fatalf("failing sampler: code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+}
+
+// TestFleetChurnRedisDirectBeats tests reading PSSample directly from bench:<b>:beat in Redis.
+func TestFleetChurnRedisDirectBeats(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	mr.SAdd("benches", "hulk", "batman")
+
+	at := int64(1_800_000_000)
+	sampleHulk := fleet.PSSample{
+		At: at,
+		Procs: []fleet.PSProc{
+			{PID: 10, PPID: 1, Start: at - 2, Cmd: "/usr/local/bin/bench-row"},
+			{PID: 20, PPID: 1, Start: at - 90000, Cmd: "ci-run"},
+		},
+	}
+	sampleBatman := fleet.PSSample{
+		At: at,
+	}
+	mr.HSet("bench:hulk:beat", "ps", sampleHulk.Encode())
+	mr.HSet("bench:batman:beat", "ps", sampleBatman.Encode())
+
+	var out, errOut bytes.Buffer
+	code := runFleetChurnWith(context.Background(), []string{"--redis", mr.Addr(), "--seconds", "12"}, &out, &errOut, nil, func(string) string { return "" })
+	want := strings.Join([]string{
+		"CHURN batman young=0 old=0",
+		"hulk young bench-row 1",
+		"hulk old pid=20 age=1d comm=ci-run",
+		"CHURN hulk young=1 old=1",
+		"FLEET CHURN OK benches=2 churn=1 orphans=1",
+		"",
+	}, "\n")
+	if code != 0 || out.String() != want || errOut.String() != "" {
+		t.Fatalf("code=%d\n%s\nwant:\n%s\nerr=%q", code, out.String(), want, errOut.String())
+	}
+}
+
+func TestFleetChurnRedisRefusals(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	mr.SAdd("benches", "hulk")
+
+	// 1. Unregistered bench
+	var out, errOut bytes.Buffer
+	code := runFleetChurnWith(context.Background(), []string{"--redis", mr.Addr(), "--bench", "ghost"}, &out, &errOut, nil, func(string) string { return "" })
+	if code != 2 || !strings.Contains(errOut.String(), "unregistered bench ghost") {
+		t.Errorf("unregistered: code=%d err=%q", code, errOut.String())
+	}
+
+	// 2. Empty benches set
+	empty := miniredis.RunT(t)
+	out.Reset()
+	errOut.Reset()
+	code = runFleetChurnWith(context.Background(), []string{"--redis", empty.Addr()}, &out, &errOut, nil, func(string) string { return "" })
+	if code != 2 || !strings.Contains(errOut.String(), "no bench is registered") {
+		t.Errorf("empty: code=%d err=%q", code, errOut.String())
+	}
+
+	// 3. Unreachable store
+	out.Reset()
+	errOut.Reset()
+	code = runFleetChurnWith(context.Background(), []string{"--redis", "127.0.0.1:0"}, &out, &errOut, nil, func(string) string { return "" })
+	if code != 5 || !strings.Contains(errOut.String(), "dial tcp") {
+		t.Errorf("unreachable: code=%d err=%q", code, errOut.String())
 	}
 }
