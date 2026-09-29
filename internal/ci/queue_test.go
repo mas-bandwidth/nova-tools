@@ -3,6 +3,7 @@ package ci
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -256,3 +257,36 @@ func TestGHQueueForgeRunner(t *testing.T) {
 		t.Errorf("entry = %+v", report.Entries[0])
 	}
 }
+
+func TestInspectQueueForgeErrorFailsClosed(t *testing.T) {
+	t.Parallel()
+	errForge := &errQueueForge{err: errors.New("API rate limit exceeded")}
+	_, err := InspectQueue(context.Background(), errForge, "mas-bandwidth/nova-tools", "dev", 3)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "API rate limit exceeded") {
+		t.Errorf("expected error mentioning rate limit, got: %v", err)
+	}
+}
+
+type errQueueForge struct {
+	err error
+}
+
+func (e *errQueueForge) QueueEntries(context.Context, string, string) ([]QueueNode, error) {
+	return []QueueNode{{PR: 100, Position: 0, State: "QUEUED"}}, nil
+}
+
+func (e *errQueueForge) MergeGroupRuns(context.Context, string) ([]MergeGroupRun, error) {
+	return nil, e.err
+}
+
+func (e *errQueueForge) Jobs(context.Context, string, int64) ([]FailedJob, error) {
+	return nil, e.err
+}
+
+func (e *errQueueForge) JobLog(context.Context, string, int64) (string, error) {
+	return "", e.err
+}
+

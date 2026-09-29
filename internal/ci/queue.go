@@ -230,8 +230,7 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 	// Fetch merge_group runs once to match against all queued PRs.
 	runs, err := f.MergeGroupRuns(ctx, repo)
 	if err != nil {
-		// If listing runs fails, continue without run details.
-		runs = nil
+		return QueueReport{}, fmt.Errorf("listing merge_group runs for %s: %w", repo, err)
 	}
 
 	for _, n := range nodes {
@@ -266,16 +265,18 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 			switch entry.Conclusion {
 			case "failure", "timed_out", "cancelled", "canceled":
 				jobs, err := f.Jobs(ctx, repo, bestRun.ID)
-				if err == nil {
-					for _, j := range jobs {
-						if j.Failed() {
-							entry.Job = j.Name
-							logText, err := f.JobLog(ctx, repo, j.ID)
-							if err == nil {
-								entry.FailLines = ExtractFailLines(j.Name, logText, failLinesCap)
-							}
-							break // report the first failed job
+				if err != nil {
+					return QueueReport{}, fmt.Errorf("listing jobs for run %d: %w", bestRun.ID, err)
+				}
+				for _, j := range jobs {
+					if j.Failed() {
+						entry.Job = j.Name
+						logText, err := f.JobLog(ctx, repo, j.ID)
+						if err != nil {
+							return QueueReport{}, fmt.Errorf("fetching log for job %d (%s): %w", j.ID, j.Name, err)
 						}
+						entry.FailLines = ExtractFailLines(j.Name, logText, failLinesCap)
+						break // report the first failed job
 					}
 				}
 			}

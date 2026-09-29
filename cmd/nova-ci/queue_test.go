@@ -102,6 +102,30 @@ func TestQueueForgeError(t *testing.T) {
 	}
 }
 
+type runsErrForge struct {
+	fakeQueueForge
+}
+
+func (r *runsErrForge) MergeGroupRuns(ctx context.Context, repo string) ([]ci.MergeGroupRun, error) {
+	return nil, errors.New("HTTP 500: internal server error")
+}
+
+func TestQueueRunsForgeError(t *testing.T) {
+	t.Parallel()
+	fake := &runsErrForge{
+		fakeQueueForge: fakeQueueForge{
+			nodes: []ci.QueueNode{{PR: 100, Position: 0, State: "QUEUED"}},
+		},
+	}
+	code, _, stderr := runQueue([]string{"--repo", "mas-bandwidth/nova-tools"}, fake)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "listing merge_group runs") || !strings.Contains(stderr, "internal server error") {
+		t.Errorf("stderr %q missing expected refusal", stderr)
+	}
+}
+
 func TestQueueEmpty(t *testing.T) {
 	t.Parallel()
 	fake := &fakeQueueForge{}
