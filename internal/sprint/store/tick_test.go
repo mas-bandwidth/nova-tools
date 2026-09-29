@@ -692,3 +692,38 @@ func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
 		t.Fatalf("after %s began: %+v", cards[1].ID, late)
 	}
 }
+
+// A card late at the moment it is redealt (withdrawn past its deadline with
+// no member up) does not name the member just handed it (reader finding 6):
+// its decisions are wait and drop, not fleet down of that member.
+func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine() // dealt to m1
+	h.live = nil
+	for i := 0; i < 25; i++ { // m1 silent 25 minutes: withdrawn, nobody to deal it to
+		h.tick(time.Minute)
+		h.machine()
+	}
+	if n := len(h.openOf(sprint.NWorkLate)); n != 1 {
+		t.Fatalf("late while withdrawn: %d", n)
+	}
+	h.live = []string{"m1"}
+	h.tick(time.Second)
+	h.machine() // m1 back: redealt to it
+	c := h.snap().Fleet.Card("s1-1.w1")
+	if c == nil || c.Col != sprint.Ready || c.Row != "m1" {
+		t.Fatalf("redealt: %+v", c)
+	}
+	h.tick(time.Minute)
+	h.machine()
+	for _, o := range h.openOf(sprint.NWorkLate) {
+		if contains(o.Note.Decisions, "fleet down m1") || !contains(o.Note.Decisions, "wait") {
+			t.Fatalf("late at its redeal, decisions %v", o.Note.Decisions)
+		}
+	}
+}

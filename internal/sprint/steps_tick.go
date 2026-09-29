@@ -361,11 +361,18 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// withdrawal rewrites either: a member whose beat lapses again and again
 	// cannot reset them, and the time a card spends withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
-		field, limit, word := WorkDeadline(c)
+		field, limit, word, own := WorkDeadline(c)
 		if at, ok := late(field, c, limit); ok {
+			// fleet down names the member only when it has had its own whole
+			// deadline: a card late at the moment it is redealt is not the
+			// new member's fault
+			decisions := []string{"wait", "drop"}
+			if _, mine := late(own, c, limit); own != "" && mine && s.MemberCtl(c.Row).F("status") == Up {
+				decisions = append([]string{"fleet down " + c.Row}, decisions...)
+			}
 			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
 				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word),
-				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
+				decisions: decisions})
 		}
 	}
 	// N5: read cards asked and not begun, begun and not reported.
@@ -634,8 +641,10 @@ func MovesDue(s *Snapshot) int {
 // withdrawn from a take, is late not finished 2 hours from first_taken, the
 // attempt's first take. The tick's deadline part and the no-stall rule both
 // call it, so they speak at the same moment. field is the stamp it counts
-// from.
-func WorkDeadline(c *Card) (field string, limit time.Duration, word string) {
+// from; own is the stamp of the current member's own deal or take, which
+// says whether that member has had its whole deadline ("" when the card is
+// withdrawn: no member holds it).
+func WorkDeadline(c *Card) (field string, limit time.Duration, word, own string) {
 	first := func(fields ...string) string {
 		for _, f := range fields[:len(fields)-1] {
 			if c.F(f) != "" {
@@ -644,13 +653,19 @@ func WorkDeadline(c *Card) (field string, limit time.Duration, word string) {
 		}
 		return fields[len(fields)-1]
 	}
+	switch c.Col {
+	case Working:
+		own = "taken"
+	case Ready:
+		own = "dealt"
+	}
 	switch {
 	case c.Col == Working:
-		return first("first_taken", "taken"), DeadlineUnfinished, "not finished"
+		return first("first_taken", "taken"), DeadlineUnfinished, "not finished", own
 	case c.F("untaken_since") != "":
-		return "untaken_since", DeadlineUntaken, "not taken"
+		return "untaken_since", DeadlineUntaken, "not taken", own
 	case c.F("first_taken") != "":
-		return "first_taken", DeadlineUnfinished, "not finished"
+		return "first_taken", DeadlineUnfinished, "not finished", own
 	}
-	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken"
+	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken", own
 }
