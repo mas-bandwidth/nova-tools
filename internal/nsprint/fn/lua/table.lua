@@ -257,10 +257,51 @@ do
   end
   function T.stage(d, ...) d.commands[#d.commands + 1] = {...} end
   function T.place(row, col) return row .. ':' .. col end
+  local command_expected_type = {
+    ZADD = 'zset',
+    ZREM = 'zset',
+    HSET = 'hash',
+    HDEL = 'hash',
+    SADD = 'set',
+    SREM = 'set',
+    XADD = 'stream',
+  }
+  function T.check_types(commands)
+    local key_kinds = {}
+    for _, cmd in ipairs(commands) do
+      local op = cmd[1]
+      local key = cmd[2]
+      if op == 'DEL' or op == 'UNLINK' then
+        key_kinds[key] = 'none'
+      else
+        local want = command_expected_type[op]
+        if want then
+          local kind = key_kinds[key]
+          if not kind then
+            local t = redis.call('TYPE', key)
+            kind = (type(t) == 'table' and t.ok) and t.ok or t
+            key_kinds[key] = kind
+          end
+          if kind ~= 'none' and kind ~= want then
+            return T.refuse('WRONGTYPE', key, kind, want)
+          end
+          if kind == 'none' then
+            key_kinds[key] = want
+          end
+        end
+      end
+    end
+    return nil
+  end
   function T.memberkey(d, id) return d.cfg.member_prefix .. id end
   function T.member(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER') end
-    local h = T.hash(T.memberkey(d, id))
+    local mkey = T.memberkey(d, id)
+    local h, _, err = T.hash(mkey)
+    if err then
+      if string.find(err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, 'wrong type', 'hash') end
+      return nil, nil, { 'ERR', err }
+    end
     local exists = next(h) ~= nil
     local epoch = h.epoch or '0'
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
@@ -291,11 +332,44 @@ do
     for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
       local h = T.hash(T.rowkey(d, row))
       for _, col in ipairs(d.cols) do
-        if redis.call('ZSCORE', T.cellkey(d, row, col.name), id) then
+        local key = T.cellkey(d, row, col.name)
+        local res = redis.pcall('ZSCORE', key, id)
+        if type(res) == 'table' and res.err then
+          if string.find(res.err, 'WRONGTYPE') then
+            local t = redis.call('TYPE', key)
+            local kind = (type(t) == 'table' and t.ok) and t.ok or t
+            return T.refuse('WRONGTYPE', key, kind, 'zset')
+          end
+          return {'ERR', res.err}
+        end
+        if res then
           return T.refuse('DRIFT', row, col.name, id)
         end
       end
     end
+  end
+  function T.check_placement(d, id, expected_place)
+    for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
+      for _, col in ipairs(d.cols) do
+        local place = T.place(row, col.name)
+        if place ~= expected_place then
+          local key = T.cellkey(d, row, col.name)
+          local res = redis.pcall('ZSCORE', key, id)
+          if type(res) == 'table' and res.err then
+            if string.find(res.err, 'WRONGTYPE') then
+              local t = redis.call('TYPE', key)
+              local kind = (type(t) == 'table' and t.ok) and t.ok or t
+              return T.refuse('WRONGTYPE', key, kind, 'zset')
+            end
+            return {'ERR', res.err}
+          end
+          if res then
+            return T.refuse('DRIFT', row, col.name, id)
+          end
+        end
+      end
+    end
+    return nil
   end
   function T.rowfields(d, row, spec)
     if not T.row(row) or type(spec) ~= 'table' then return nil, T.refuse('ROW') end
@@ -510,6 +584,8 @@ do
     for _, cmd in ipairs(d.commands) do
       if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end
     end
+    local type_err = T.check_types(d.commands)
+    if type_err then return type_err end
     local id
     for _, cmd in ipairs(d.commands) do id = redis.call(unpack(cmd)) end
     local before = d.revision
@@ -911,7 +987,12 @@ do
     local row, col = args[2], args[3]
     local src, err = T.cell(d, row, col, true)
     if not src then return nil, err end
-    local count, first, dst = redis.call('ZCARD', src.key), 5, nil
+    local count = redis.pcall('ZCARD', src.key)
+    if type(count) == 'table' and count.err then
+      if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', src.key, 'wrong type', 'zset') end
+      return nil, { 'ERR', count.err }
+    end
+    local first, dst = 5, nil
     if op == 'add' then
       local score = tonumber(args[4])
       if not score or score ~= score or score == math.huge or score == -math.huge then return nil, T.refuse('SCORE') end
@@ -919,7 +1000,11 @@ do
     else
       dst, err = T.cell(d, row, args[4], true)
       if not dst then return nil, err end
-      count = redis.call('ZCARD', dst.key)
+      count = redis.pcall('ZCARD', dst.key)
+      if type(count) == 'table' and count.err then
+        if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', dst.key, 'wrong type', 'zset') end
+        return nil, { 'ERR', count.err }
+      end
     end
     local seen, here = {}, T.place(row, col)
     for i = first, #args - 1 do
@@ -1241,6 +1326,8 @@ do
       local h, exists, why = T.member(d, id)
       if why then return why end
       if not exists then
+        local drift = T.unindexed(d, id)
+        if drift then return drift end
         missing[#missing + 1] = id
       else
         local rev = h.revision or '0'
@@ -1249,17 +1336,19 @@ do
         local row, col, score = '', '', '0'
         if place then
           local r, c = string.match(place, '^(.*):([^:]+)$')
-          if r and c then
-            local cell = T.cell(d, r, c, false)
-            if cell then
-              local s = redis.call('ZSCORE', cell.key, id)
-              if s then
-                placed = '1'
-                row, col = r, c
-                score = tostring(s)
-              end
-            end
-          end
+          if not r or not c then return T.refuse('DRIFT', id, place) end
+          local cell = T.cell(d, r, c, false)
+          if not cell then return T.refuse('DRIFT', id, place) end
+          local s = redis.call('ZSCORE', cell.key, id)
+          if not s then return T.refuse('DRIFT', r, c, id) end
+          local drift = T.check_placement(d, id, place)
+          if drift then return drift end
+          placed = '1'
+          row, col = r, c
+          score = tostring(s)
+        else
+          local drift = T.unindexed(d, id)
+          if drift then return drift end
         end
         local fields = {}
         for k, v in pairs(h) do
@@ -1274,12 +1363,267 @@ do
     return {'SET', d.name, d.epoch, d.revision, members_out, missing}
   end
 
+  function T.validate_manifest_json(raw)
+    local pos = 1
+    local len = #raw
+
+    local function skip_ws()
+      while pos <= len do
+        local b = string.byte(raw, pos)
+        if b == 32 or b == 9 or b == 10 or b == 13 then
+          pos = pos + 1
+        else
+          break
+        end
+      end
+    end
+
+    local function peek()
+      skip_ws()
+      if pos > len then return nil end
+      return string.sub(raw, pos, pos)
+    end
+
+    local function next_char()
+      skip_ws()
+      if pos > len then return nil end
+      local ch = string.sub(raw, pos, pos)
+      pos = pos + 1
+      return ch
+    end
+
+    local function parse_string()
+      skip_ws()
+      if string.sub(raw, pos, pos) ~= '"' then return nil, "expected string" end
+      local start = pos
+      pos = pos + 1
+      while pos <= len do
+        local ch = string.sub(raw, pos, pos)
+        if ch == '\\' then
+          pos = pos + 2
+        elseif ch == '"' then
+          pos = pos + 1
+          local ok, s = pcall(cjson.decode, string.sub(raw, start, pos - 1))
+          if not ok then return nil, "invalid string escape" end
+          return s
+        else
+          pos = pos + 1
+        end
+      end
+      return nil, "unterminated string"
+    end
+
+    local parse_value, parse_object, parse_array
+
+    parse_value = function(ctx)
+      skip_ws()
+      local ch = peek()
+      if not ch then return nil, "unexpected EOF" end
+      if ctx == 'root' or ctx == 'member' or ctx == 'expect' or ctx == 'place' or ctx == 'create' or ctx == 'move' or ctx == 'set' or ctx == 'fields' or ctx == 'field_guard' then
+        if ch ~= '{' then
+          return nil, "expected object for " .. tostring(ctx)
+        end
+        return parse_object(ctx)
+      elseif ctx == 'members' or ctx == 'unset' or ctx == 'one_of' then
+        if ch ~= '[' then
+          return nil, "expected array for " .. tostring(ctx)
+        end
+        return parse_array(ctx)
+      elseif ctx == 'string' then
+        if ch ~= '"' then
+          return nil, "expected string"
+        end
+        local s, err = parse_string()
+        if err then return nil, err end
+        return true
+      end
+
+      if ch == '{' then
+        return parse_object(ctx)
+      elseif ch == '[' then
+        return parse_array(ctx)
+      elseif ch == '"' then
+        local s, err = parse_string()
+        if err then return nil, err end
+        return true
+      elseif ch == 't' or ch == 'f' or ch == 'n' then
+        local start = pos
+        while pos <= len do
+          local c = string.sub(raw, pos, pos)
+          if c == ',' or c == '}' or c == ']' or c == ' ' or c == '\t' or c == '\r' or c == '\n' then
+            break
+          end
+          pos = pos + 1
+        end
+        local lit = string.sub(raw, start, pos - 1)
+        if lit ~= "true" and lit ~= "false" and lit ~= "null" then
+          return nil, "invalid literal: " .. lit
+        end
+        return true
+      else
+        local start = pos
+        while pos <= len do
+          local c = string.sub(raw, pos, pos)
+          if c == ',' or c == '}' or c == ']' or c == ' ' or c == '\t' or c == '\r' or c == '\n' then
+            break
+          end
+          pos = pos + 1
+        end
+        local num_str = string.sub(raw, start, pos - 1)
+        if not tonumber(num_str) then
+          return nil, "invalid number: " .. num_str
+        end
+        return true
+      end
+    end
+
+    parse_object = function(ctx)
+      if next_char() ~= '{' then return nil, "expected {" end
+      local seen = {}
+      skip_ws()
+      if peek() == '}' then
+        next_char()
+        if ctx == 'member' then
+          return nil, "member entry missing expect record"
+        end
+        return true
+      end
+
+      while true do
+        local key, err = parse_string()
+        if err then return nil, err end
+
+        if seen[key] then
+          return nil, "duplicate key: " .. key
+        end
+        seen[key] = true
+
+        local val_ctx = nil
+        if ctx == 'root' then
+          local root_keys = {
+            schema=true, table=true, epoch=true, expected_table_revision=true,
+            operation_id=true, actor=true, members=true
+          }
+          if not root_keys[key] then return nil, "unknown field: " .. key end
+          if key == 'members' then val_ctx = 'members' end
+        elseif ctx == 'member' then
+          local member_keys = {
+            id=true, expect=true, create=true, move=true, remove=true, set=true, unset=true
+          }
+          if not member_keys[key] then return nil, "unknown member field: " .. key end
+          if key == 'expect' then val_ctx = 'expect'
+          elseif key == 'create' then val_ctx = 'create'
+          elseif key == 'move' then val_ctx = 'move'
+          elseif key == 'set' then val_ctx = 'set'
+          elseif key == 'unset' then val_ctx = 'unset'
+          end
+        elseif ctx == 'expect' then
+          local expect_keys = {
+            absent=true, revision=true, place=true, fields=true
+          }
+          if not expect_keys[key] then return nil, "unknown expect field: " .. key end
+          if key == 'place' then val_ctx = 'place'
+          elseif key == 'fields' then val_ctx = 'fields'
+          end
+        elseif ctx == 'place' then
+          local place_keys = {row=true, col=true}
+          if not place_keys[key] then return nil, "unknown place field: " .. key end
+        elseif ctx == 'fields' then
+          if not T.word(key) then return nil, "invalid field guard name: " .. key end
+          val_ctx = 'field_guard'
+        elseif ctx == 'field_guard' then
+          local guard_keys = {equals=true, absent=true, one_of=true}
+          if not guard_keys[key] then return nil, "unknown guard field: " .. key end
+          if key == 'one_of' then val_ctx = 'one_of' end
+        elseif ctx == 'create' then
+          local create_keys = {row=true, col=true, score=true}
+          if not create_keys[key] then return nil, "unknown create field: " .. key end
+        elseif ctx == 'move' then
+          local move_keys = {row=true, col=true, score=true}
+          if not move_keys[key] then return nil, "unknown move field: " .. key end
+        elseif ctx == 'set' then
+          if not T.word(key) then return nil, "invalid field name: " .. key end
+          val_ctx = 'string'
+        else
+          return nil, "unexpected object context: " .. tostring(ctx)
+        end
+
+        skip_ws()
+        if next_char() ~= ':' then return nil, "expected :" end
+
+        local ok, v_err = parse_value(val_ctx)
+        if not ok then return nil, v_err end
+
+        skip_ws()
+        local sep = peek()
+        if sep == ',' then
+          next_char()
+        elseif sep == '}' then
+          next_char()
+          break
+        else
+          return nil, "expected , or } after object property"
+        end
+      end
+
+      if ctx == 'member' then
+        if not seen['id'] then return nil, "member entry missing id" end
+        if not seen['expect'] then return nil, "member entry missing expect record" end
+      end
+
+      return true
+    end
+
+    parse_array = function(ctx)
+      if next_char() ~= '[' then return nil, "expected [" end
+      skip_ws()
+      if peek() == ']' then
+        next_char()
+        return true
+      end
+
+      while true do
+        local elem_ctx = nil
+        if ctx == 'members' then
+          elem_ctx = 'member'
+        elseif ctx == 'unset' or ctx == 'one_of' then
+          elem_ctx = 'string'
+        end
+
+        local ok, err = parse_value(elem_ctx)
+        if not ok then return nil, err end
+
+        skip_ws()
+        local sep = peek()
+        if sep == ',' then
+          next_char()
+        elseif sep == ']' then
+          next_char()
+          break
+        else
+          return nil, "expected , or ] after array element"
+        end
+      end
+      return true
+    end
+
+    skip_ws()
+    if peek() ~= '{' then return T.refuse('MANIFEST', "expected root object") end
+    local ok, err = parse_object('root')
+    if not ok then return T.refuse('MANIFEST', err) end
+    skip_ws()
+    if pos <= len then return T.refuse('MANIFEST', "trailing characters") end
+    return nil
+  end
+
   function T.apply(keys, args)
     if #args ~= 2 then return T.refuse('ARGS', 'apply') end
     local table_name = args[1]
     local raw_json = args[2]
     if type(raw_json) ~= 'string' then return T.refuse('ARGS', 'apply payload') end
     if #raw_json > 1048576 then return T.refuse('LIMIT', 'manifest exceeds 1 MiB') end
+    local manifest_err = T.validate_manifest_json(raw_json)
+    if manifest_err then return manifest_err end
     local digest = redis.sha1hex(raw_json)
     local manifest = T.decode(raw_json)
     if not manifest or type(manifest) ~= 'table' then return T.refuse('MANIFEST', 'invalid json') end
@@ -1293,7 +1637,13 @@ do
 
     -- Check operation replay first:
     local op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
-    local op_record = T.hash(op_key)
+    local op_record, _, op_err = T.hash(op_key)
+    if op_err then
+      if string.find(op_err, 'WRONGTYPE') then
+        return T.refuse('WRONGTYPE', op_key, 'wrong type', 'hash')
+      end
+      return {'ERR', op_err}
+    end
     if next(op_record) then
       if op_record.request ~= raw_json then
         return T.refuse('OPCONFLICT', manifest.operation_id)
@@ -1314,6 +1664,20 @@ do
     -- Expected table revision:
     if manifest.expected_table_revision ~= d.revision then
       return T.refuse('REVISION', manifest.expected_table_revision, d.revision)
+    end
+
+    -- Preflight change stream type and capacity:
+    local stream = d.key .. ':changes'
+    local st = redis.call('TYPE', stream)
+    local skind = (type(st) == 'table' and st.ok) and st.ok or st
+    if skind ~= 'none' and skind ~= 'stream' then return T.refuse('STREAMTYPE', stream) end
+    if skind == 'stream' then
+      local info = redis.call('XINFO', 'STREAM', stream)
+      for i = 1, #info, 2 do
+        if info[i] == 'last-generated-id' and info[i + 1] == '18446744073709551615-18446744073709551615' then
+          return T.refuse('STREAMFULL', stream)
+        end
+      end
     end
 
     -- Validate bounds on members:
@@ -1364,8 +1728,14 @@ do
         if not r or not c then return T.refuse('DRIFT', id, current_place) end
         local cell, cell_err = T.cell(d, r, c, true)
         if not cell then return cell_err end
-        local score = redis.call('ZSCORE', cell.key, id)
+        local score = redis.pcall('ZSCORE', cell.key, id)
+        if type(score) == 'table' and score.err then
+          if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, 'wrong type', 'zset') end
+          return {'ERR', score.err}
+        end
         if not score then return T.refuse('DRIFT', r, c, id) end
+        local drift = T.check_placement(d, id, current_place)
+        if drift then return drift end
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
       else
@@ -1374,9 +1744,11 @@ do
       end
 
       -- Check expectations:
-      if entry.expect then
-        local exp = entry.expect
-        if exp.absent then
+      if not entry.expect or type(entry.expect) ~= 'table' then
+        return T.refuse('MANIFEST', 'member ' .. id .. ' missing expect record')
+      end
+      local exp = entry.expect
+      if exp.absent then
           if exists or current_place then return T.refuse('MEMBEREXISTS', id) end
         else
           if not exists then return T.refuse('NOTMEMBER', id) end
@@ -1416,10 +1788,12 @@ do
                 if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
                   return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
                 end
+                for _, opt in ipairs(guard.one_of) do
+                  if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
+                end
                 local matched = false
                 if actual ~= nil then
                   for _, opt in ipairs(guard.one_of) do
-                    if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
                     if actual == opt then matched = true; break end
                   end
                 end
@@ -1431,7 +1805,6 @@ do
           end
         end
       end
-    end
 
     -- Validate mutation constraints before staging:
     local plan = {}
@@ -1447,6 +1820,9 @@ do
         end
         if entry.expect and (entry.expect.revision or entry.expect.place or entry.expect.fields) then
           return T.refuse('MUTATION', id, 'create cannot expect existing record')
+        end
+        if not entry.expect or not entry.expect.absent then
+          return T.refuse('MUTATION', id, 'create requires expect absent')
         end
         if next(record) or current_place then
           return T.refuse('MEMBEREXISTS', id)
@@ -1670,6 +2046,16 @@ do
 
     if not redis.acl_check_cmd('HSET', op_key, 'operation_id', manifest.operation_id) then
       return T.refuse('NOPERM', 'HSET', op_key)
+    end
+
+    -- Pre-flight type check on all staged commands and op_key:
+    local type_err = T.check_types(d.commands)
+    if type_err then return type_err end
+
+    local op_kind = redis.call('TYPE', op_key)
+    op_kind = (type(op_kind) == 'table' and op_kind.ok) and op_kind.ok or op_kind
+    if op_kind ~= 'none' and op_kind ~= 'hash' then
+      return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
     end
 
     -- Execute all staged commands:

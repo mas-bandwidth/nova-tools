@@ -58,6 +58,9 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 			Members: []ntable.BatchMemberEntry{
 				{
 					ID: "batch-trip-job",
+					Expect: &ntable.MemberExpect{
+						Absent: true,
+					},
 					Create: &ntable.MemberCreateOp{
 						Row:   "r",
 						Col:   "ready",
