@@ -44,7 +44,7 @@ func init() {
 			return app.cmdMember(append([]string{"create"}, a...), o, e)
 		}},
 		{"member find", "<table> <id>", "member find demo b1", (*application).cmdMemberFind},
-		{"batch", "<manifest>", "batch manifest.json", (*application).cmdBatch},
+		{"batch", "(<manifest-file> | - | '<json>')", "batch manifest.json", (*application).cmdBatch},
 		{"check", "<table>", "check demo", (*application).cmdCheck},
 		{"clear", "<table>", "clear demo", (*application).cmdClear},
 		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
@@ -171,6 +171,9 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 	fmt.Fprintln(out, "usage: nova-table "+strings.TrimSpace(c.name+" "+c.syntax))
 	fmt.Fprintln(out, "\nexample:")
 	fmt.Fprintln(out, "  nova-table "+c.example)
+	if c.name == "batch" {
+		fmt.Fprintln(out, "  nova-table batch - < manifest.json")
+	}
 	if fs != nil {
 		// Product flags first, connection next, receipt metadata last. Never print
 		// defaults: a store address or credential may come from the environment.

@@ -412,8 +412,10 @@ Use the existing table validation and staged-write machinery inside this one ser
 invocation. After all validation, stage cells, reverse indexes, member fields and
 revisions, the operation record, table revision and receipt together. An accepted
 batch increments the table revision once; every changed member increments its own
-revision once. An accepted no-op batch has a recorded result and one noop receipt;
-a refused batch changes no key, revision, operation record or receipt. Tests must
+revision once. An accepted no-op batch has a recorded result and one noop receipt, and it
+advances the table revision once like any accepted batch, so every other prepared
+manifest that expects the earlier revision is stale; a refused batch changes no key,
+revision, operation record or receipt. Tests must
 pin no-op and refused results separately.
 
 Redis scripts do not provide rollback of writes after a runtime command error.
@@ -463,17 +465,19 @@ never changed=no without evidence.
 
 `nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]`
 executes an atomic conditional mutation manifest against one table in a single Redis call (`ns_table_apply`).
+The manifest is a file path, `-` for stdin, or inline JSON that starts with `{`. A path that cannot be
+read is refused with the path and the operating system's error, never as a JSON error.
 
 #### Manifest structure
 
-The manifest file is a JSON document containing `schema`, `table`, `epoch`, `expected_table_revision`, `operation_id`, optional `actor`, and `members` (an array of member mutation and guard objects):
+The manifest is a JSON document containing `schema`, `table`, `epoch`, `expected_table_revision`, `operation_id`, optional `actor`, and `members` (an array of member mutation and guard objects). The manifest states its epoch. `--epoch <n>` given on the command must equal it, and a difference is refused, naming both, before the store is asked; `--actor <name>` given on the command must equal the manifest's actor when the manifest names one, and fills it when the manifest names none.
 
 ```json
 {
   "schema": 1,
   "table": "demo",
   "epoch": "0",
-  "expected_table_revision": "2",
+  "expected_table_revision": "5",
   "operation_id": "op-4590",
   "actor": "coordinator",
   "members": [
@@ -499,27 +503,27 @@ The manifest file is a JSON document containing `schema`, `table`, `epoch`, `exp
 
 #### Output format
 
-Upon successful execution, `batch` prints a summary line with operation ID, table revision, guard and changed counts, and trip count, the commit receipt, and one receipt line per affected member reporting before and after place, score, revision, and fields:
+On success `batch` prints a summary line with the table, operation, epoch, table revision before and after, outcome, the selected, guard-only and changed entry counts and the trip count; the commit receipt; and one line per member in the manifest reporting its place, score and revision before and after, and its changed application fields as one JSON object of `[before, after]` pairs (`null` is absent). `-` is an unplaced member or an absent score.
 
 ```text
-TABLE BATCH table=demo operation=op-4590 epoch=0 before=2 after=4 outcome=changed trips=1
-TABLE RECEIPT event=1727570000000-0 epoch=0 before=2 after=4 outcome=changed
-MEMBER m1 place=build:ready->build:working rev=1->2
-MEMBER m2 place=-->build:ready rev=0->1
+TABLE BATCH table=demo operation=op-4590 epoch=0 before=5 after=6 outcome=changed selected=2 guards=0 changed=2 trips=1
+TABLE RECEIPT event=1727570000000-0 epoch=0 before=5 after=6 outcome=changed
+MEMBER m1 place=build:ready->build:working score=1->1 rev=1->2 fields={"status":[null,"in_progress"]}
+MEMBER m2 place=-->build:ready score=-->10 rev=0->1 fields={"role":[null,"tester"]}
 ```
 
-Specifying `--receipt=false` suppresses the `TABLE RECEIPT` line.
+Specifying `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes nothing (`changed=0`) is a no-op batch: it prints `outcome=noop` and, like any accepted batch, advances the table revision by one.
 
 #### Error handling and exit codes
 
 - `0` (`done`): The batch commits successfully, or an identical request replays without additional side effects.
-- `1` (`refused`): A precondition, epoch check, revision check, or field guard fails. `batch` outputs the refusal reason, observed state, and remediation command on stderr. The entire table store remains unchanged (`changed=no`).
-- `2` (`usage`): Invalid syntax, missing manifest argument, unreadable file, or malformed JSON.
+- `1` (`refused`): A precondition, epoch check, revision check, field guard or bound fails. `batch` prints the operation, the member at fault, the state expected against the state found, `changed=no` and a next command on stderr. The table store is unchanged.
+- `2` (`usage`): Invalid syntax, a missing or unreadable manifest, a manifest that is not valid JSON or breaks the manifest schema, or `--epoch` or `--actor` differing from the manifest.
 
 `-h` prints the complete usage banner to stdout at exit 0 with empty stderr:
 
 ```text
-usage: nova-table batch <manifest>
+usage: nova-table batch (<manifest-file> | - | '<json>')
 
 example:
   nova-table batch manifest.json
@@ -530,8 +534,8 @@ connection:
   --seat <name>  dial as this seat: its seats.tsv row, else the nova-secrets seat of that name
 
 write epoch and receipt:
-  --actor <string>  actor recorded with the change
-  --epoch <uint>  the epoch this write observed (default 0)
+  --actor <string>  actor recorded with the change; it must equal the manifest's actor when the manifest names one
+  --epoch <uint>  the epoch this write observed; it must equal the manifest's epoch
   --receipt  print the committed event ID, epoch and revision
 
 exit codes: 0 done, 1 refused, 2 usage
@@ -545,7 +549,7 @@ cat > manifest.json <<'EOF'
   "schema": 1,
   "table": "demo",
   "epoch": "0",
-  "expected_table_revision": "2",
+  "expected_table_revision": "5",
   "operation_id": "op-4590",
   "actor": "coordinator",
   "members": [

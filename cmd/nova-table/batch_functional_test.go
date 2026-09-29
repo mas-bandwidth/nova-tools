@@ -23,7 +23,7 @@ func TestBatchCLIHelp(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("expected empty stderr, got %q", stderr)
 	}
-	if !strings.Contains(stdout, "batch <manifest>") {
+	if !strings.Contains(stdout, "batch (<manifest-file> | - | '<json>')") {
 		t.Fatalf("expected stdout to mention batch syntax, got:\n%s", stdout)
 	}
 }
@@ -58,7 +58,7 @@ func TestBatchCLIExecution(t *testing.T) {
 	if !strings.Contains(stdout, "TABLE RECEIPT event=") {
 		t.Errorf("expected TABLE RECEIPT in stdout, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "MEMBER m1 place=-->build:ready rev=0->1") && !strings.Contains(stdout, "MEMBER m1 place=--->build:ready rev=0->1") && !strings.Contains(stdout, "MEMBER m1 place=-->build:ready rev=0->1") {
+	if !strings.Contains(stdout, `MEMBER m1 place=-->build:ready score=-->10 rev=0->1 fields={"role":[null,"builder"]}`) {
 		t.Errorf("expected MEMBER before/after line in stdout, got:\n%s", stdout)
 	}
 
@@ -77,7 +77,7 @@ func TestBatchCLIExecution(t *testing.T) {
 	if !strings.Contains(stdout2, "TABLE BATCH table=demo operation=op-cli-2") {
 		t.Errorf("expected TABLE BATCH header in stdout2, got:\n%s", stdout2)
 	}
-	if !strings.Contains(stdout2, "MEMBER m1 place=build:ready->build:working rev=1->2") {
+	if !strings.Contains(stdout2, "MEMBER m1 place=build:ready->build:working score=10->10 rev=1->2 fields={}") {
 		t.Errorf("expected MEMBER move line in stdout2, got:\n%s", stdout2)
 	}
 }
