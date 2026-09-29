@@ -84,10 +84,15 @@ created or written through the link. For the shape rule a link named `sessions`,
 directory above the store is part of the path given and is not judged. The
 check is made on the open file or directory: after the open the handle is
 compared with the name, and the directories already looked at are compared again,
-so a swap between the check and the use is refused; only the creation of a new
-file, which is by name, is not covered. The answer is the same however
+so a swap between the check and the use is refused. The answer is the same however
 `--store` is spelled, relative or absolute or in another letter case, because
 nothing is resolved.
+
+nova-cairn defends a store against links that are there when a command starts.
+It does not defend against someone who can write inside the store directory and
+replaces a directory while a command runs: in that case an append can report OK
+with its entry file created through the replaced directory, and temporary files
+can remain there.
 
 **A defect in one session's record is that session's.** Two kinds, and each
 has its own answer.
@@ -188,7 +193,9 @@ shape.
 reconstruct. The remedy quotes the caller's store and session for a POSIX shell.
 Control bytes use octal decoding inside a subshell with a sentinel to preserve
 trailing newlines, so the printed command stays one line and opens exactly the
-named record, in the shape the store already has.
+named record, in the shape the store already has. Where that open would itself be refused (a
+`log.jsonl` that is a link, say), the append repeats the open's refusal and its
+own next command instead.
 
 The lifecycle of a store (shape, open, append, duplicate, conflict, refusal) is
 modelled in `tla/CairnStore.tla`: one shape per store, an entry id maps to one
@@ -300,7 +307,7 @@ New regression cases must demonstrate the defect before the repair.
 49. `TestNoVerbFollowsASymbolicLink` — a link at the store as given, `sessions/`, `entries/`, an entry directory, `log.jsonl` or a record, in either shape, is refused with the one text and nothing is written where it leads. `TestARecordSwappedForALinkNeverCarriesAWriteOutside`, `TestAnAncestorOfTheStoreSwappedUnderAppendsLosesAndInventsNothing` and `TestAStoreSwappedForALinkNeverCarriesAWriteOutside` run the swaps of a record, of an ancestor and of the store while a fixed number of appends run, in a temp directory each; `TestADirectoryThatChangesAfterItWasCheckedIsRefused` fixes the check on a directory looked at earlier; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs one store named relative, absolute and in other letter cases.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
-    `TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` and `TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append leaves no entry file, no pointer line and no log line.
+    `TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` and `TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append (a record or `log.jsonl` that is a link, a directory or read-only, `entries/` a link) leaves no entry file, no pointer line and no log line: the record and the log are opened before the entry is stored, and the pointer and the log line are written through those handles. `TestAppendForAnUnopenedSessionRepeatsTheRefusalOfOpen` fixes that an append for an unopened session repeats the refusal of an open that would be refused instead of suggesting it.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.
 53. `TestAppendRefusesNamingTheHolderWhenTheLockStaysHeld`, `TestAppendWaitsForTheHolderAndThenReadsWhatItWrote`, `TestAppendRefusesNamingTheCauseInAReadOnlyStoreDirectory` and `TestTheLockFileIsCreatedByAWriteAndByNothingElse` — with an injected clock, so no real wait: a held lock refuses after the bounded wait naming the holder, and the wait ends when the holder lets go; a read-only store directory refuses naming the cause; the lock file appears only by a write. `TestWordsEmptyAfterTrimmingAreRefusedOnTheBenchShape` — words empty after trimming are refused as an empty note. `TestWhitespaceOnlyWordsAreStoredInTheOwnShapeAndNoWordsAreRefused` — the own shape stores whitespace-only words exactly and refuses only no words. `TestABadLockFileIsRefusedWithMoveOrRemoveNotWritable` — a link or a directory at the lock's name refuses saying to move or remove it, not to make the directory writable. `TestALockRefusalIsNotSentToTheHelpBanner` — a lock refusal is one line at exit 2 and does not end by pointing at the help.
 54. `TestConcurrentAppendsOfOneIDWithDifferentWordsHaveOneWinner`, `TestConcurrentAppendsOfOneIDWithTheSameWordsWriteOnce` and `TestConcurrentProcessAppendsOfOneIDHaveOneWinner` (functional tier) — of twelve concurrent appends of one id, in goroutines and in real processes for twelve rounds, in each shape, exactly one writes (different words) or one writes and eleven are duplicates (same words).

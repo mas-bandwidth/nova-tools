@@ -161,14 +161,27 @@ func TestARefusedOwnAppendStoresNothing(t *testing.T) {
 		"record is a link":      func(s string) { moveAndLink(sessionFile(s, "x")) },
 		"entries is a link":     func(s string) { moveAndLink(filepath.Join(s, "entries")) },
 		"log is a link":         func(s string) { moveAndLink(filepath.Join(s, "log.jsonl")) },
+		"log is read-only":      func(s string) { os.Chmod(filepath.Join(s, "log.jsonl"), 0o444) },
+		"log is a directory": func(s string) {
+			os.Remove(filepath.Join(s, "log.jsonl"))
+			os.Mkdir(filepath.Join(s, "log.jsonl"), 0o755)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			store := laidStore(t, true)
 			spoil(store)
+			if f, err := os.OpenFile(filepath.Join(store, "log.jsonl"), os.O_WRONLY|os.O_APPEND, 0); name == "log is read-only" && err == nil {
+				f.Close()
+				t.Skip("a read-only file stays writable here (root or a lax file system)")
+			}
 			before := treeOf(store)
-			if _, err := Append(store, "x", "e2", "more words", "", benchNow, PublishManual); err == nil {
+			_, err := Append(store, "x", "e2", "more words", "", benchNow, PublishManual)
+			if err == nil {
 				t.Fatal("the append was not refused")
+			}
+			if name == "log is a directory" && !strings.Contains(err.Error(), "is a directory") {
+				t.Fatalf("the refusal must say it is a directory: %v", err)
 			}
 			if after := treeOf(store); after != before {
 				t.Fatalf("a refused append stored something:\n%s\n%s", before, after)
@@ -233,5 +246,36 @@ func TestWhitespaceOnlyWordsAreStoredInTheOwnShapeAndNoWordsAreRefused(t *testin
 	}
 	if _, err := Append(store, "s1", "e2", "", "", benchNow, PublishManual); err == nil || !strings.Contains(err.Error(), "empty note stores nothing") {
 		t.Fatalf("no words at all: %v", err)
+	}
+}
+
+// After a refused open, an append for the unopened session does not suggest the
+// open that was just refused: it repeats the refusal, and its next command.
+func TestAppendForAnUnopenedSessionRepeatsTheRefusalOfOpen(t *testing.T) {
+	t.Parallel()
+	store := laidStore(t, true)
+	log := filepath.Join(store, "log.jsonl")
+	if err := os.Rename(log, log+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(log+".moved", log); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	opened := Open(store, "y", "", benchNow, PublishManual)
+	_, appended := Append(store, "y", "e1", "words", "", benchNow, PublishManual)
+	if opened == nil || appended == nil {
+		t.Fatalf("open %v, append %v: both are refused", opened, appended)
+	}
+	for _, w := range append([]string{"cannot append an entry", log}, linkText...) {
+		if !strings.Contains(appended.Error(), w) {
+			t.Errorf("%q lacks %q", appended, w)
+		}
+	}
+	if strings.Contains(appended.Error(), "open first") {
+		t.Errorf("the append suggests the open that was refused: %q", appended)
+	}
+	// With a usable log the suggestion stands.
+	if _, err := Append(laidStore(t, true), "y", "e1", "words", "", benchNow, PublishManual); err == nil || !strings.Contains(err.Error(), "open first: nova-cairn open") {
+		t.Errorf("a store whose open would work keeps the suggestion: %v", err)
 	}
 }

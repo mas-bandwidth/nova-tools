@@ -246,6 +246,16 @@ func noRecord(store, session, publish string) error {
 		session, store, openRemedy(store, session, publish))}
 }
 
+// missingRecord is the refusal for a session with no record. It suggests the
+// open that would make one, unless that open would itself be refused: then it is
+// the open's refusal, with the open's own next command.
+func missingRecord(d *dirs, sh shape, store, session, publish string) error {
+	if _, err := sessionSource(d, sh, store, session); err != nil {
+		return err
+	}
+	return noRecord(store, session, publish)
+}
+
 // benchHeadingRe reads the one heading this tool writes into a bench file:
 // `## <rfc3339> — <entry>`. It is the section boundary too, which is why the
 // form is machine-tight -- a hand-written `## 21:55Z beat: …` heading in the
@@ -338,27 +348,14 @@ func entryPath(store, session, id string) string {
 	return filepath.Join(store, "entries", session, id+".json")
 }
 
-// appendLine adds one line to a file, creating it, and fsyncs before return.
-func appendLine(d *dirs, name, line string) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return err
+// openLog opens the store's append-only log for appending, creating it. It is
+// opened before anything is stored, and the event is written through the
+// handle after, so a log that cannot be used refuses the verb with nothing stored.
+func (d *dirs) openLog(store string) (*os.File, error) {
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		return nil, err
 	}
-	f, err := d.openFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return fsyncDir(filepath.Dir(name))
+	return d.openFile(filepath.Join(store, "log.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 }
 
 func fsyncDir(dir string) error {
@@ -371,8 +368,9 @@ func fsyncDir(dir string) error {
 	return nil
 }
 
-// appendLog records one event on the store's append-only log.
-func appendLog(d *dirs, store, event, session, id, stamp, policy, source string) error {
+// appendLog records one event on the store's append-only log, through the open
+// handle f, and fsyncs before return.
+func appendLog(f *os.File, event, session, id, stamp, policy, source string) error {
 	rec, _ := json.Marshal(map[string]string{
 		"event":   event,
 		"session": session,
@@ -381,7 +379,13 @@ func appendLog(d *dirs, store, event, session, id, stamp, policy, source string)
 		"publish": policy,
 		"source":  source,
 	})
-	return appendLine(d, filepath.Join(store, "log.jsonl"), string(rec))
+	if _, err := f.WriteString(string(rec) + "\n"); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return fsyncDir(filepath.Dir(f.Name()))
 }
 
 // SessionSource reads back the --source the session was opened with. In the
@@ -517,6 +521,11 @@ func openOwn(store, session, source string, now time.Time, publish string) error
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
+	logf, err := d.openLog(store)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return err
 	}
@@ -526,7 +535,7 @@ func openOwn(store, session, source string, now time.Time, publish string) error
 	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
 		return err
 	}
-	return appendLog(d, store, "open", session, "", stamp, publish, source)
+	return appendLog(logf, "open", session, "", stamp, publish, source)
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -616,16 +625,19 @@ func appendTarget(store, session, publish string) (d *dirs, path string, bench b
 		return nil, "", false, err
 	}
 	if !ok {
-		return nil, "", false, noRecord(store, session, publish)
+		return nil, "", false, missingRecord(d, sh, store, session, publish)
 	}
-	// A link at entries/, the entry directory or log.jsonl is a refusal too, and
-	// like the others it is decided without the lock and leaves nothing behind.
+	// A link at entries/, the entry directory or log.jsonl, and a log that cannot
+	// be opened for appending (read-only, a directory), are refusals too, and like
+	// the others they are decided without the lock and leave nothing behind.
 	if !bench {
 		if err := d.checkEntryDirs(store, session); err != nil {
 			return nil, "", false, err
 		}
-		if li, err := os.Lstat(filepath.Join(store, "log.jsonl")); err == nil && isLink(li) {
-			return nil, "", false, linkRefusal("append", filepath.Join(store, "log.jsonl"))
+		if f, err := d.openFile(filepath.Join(store, "log.jsonl"), os.O_WRONLY|os.O_APPEND, 0); err == nil {
+			f.Close()
+		} else if !os.IsNotExist(err) {
+			return nil, "", false, err
 		}
 	}
 	return d, path, bench, nil
@@ -637,9 +649,13 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 	if err != nil {
 		return res, err
 	}
+	sh := shapeOwn
+	if bench {
+		sh = shapeBench
+	}
 	rec, err := d.openFile(path, os.O_RDWR|os.O_APPEND, 0)
 	if os.IsNotExist(err) {
-		return res, noRecord(store, session, publish)
+		return res, missingRecord(d, sh, store, session, publish)
 	}
 	if err != nil {
 		return res, err
@@ -698,6 +714,13 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 		Publish: publish,
 		Text:    text,
 	})
+	// Everything that can refuse is opened before the entry is stored: the
+	// record is held, and the log is opened here.
+	logf, err := d.openLog(store)
+	if err != nil {
+		return res, err
+	}
+	defer logf.Close()
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return res, err
 	}
@@ -710,7 +733,7 @@ func appendLocked(store, session, id, text, source string, now time.Time, publis
 	if err := ensurePointer(rec, raw, id, stamp); err != nil {
 		return res, err
 	}
-	if err := appendLog(d, store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
+	if err := appendLog(logf, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil

@@ -159,6 +159,13 @@ func (d *dirs) openFile(path string, flag int, perm os.FileMode) (*os.File, erro
 		}
 		return nil, linkRefusal(d.op, path)
 	}
+	if lerr == nil && li.IsDir() {
+		if f != nil {
+			f.Close()
+		}
+		return nil, &RecordPathError{Msg: fmt.Sprintf("cannot %s: %q is a directory, not a file; move or remove it, then run the same command again",
+			opPhrase(d.op), path)}
+	}
 	if err != nil {
 		return nil, err
 	}
