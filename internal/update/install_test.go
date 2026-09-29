@@ -30,21 +30,21 @@ var fleetMatrix = []benchPlatformRow{
 		platform:    "darwin-arm64",
 		targetGOOS:  "darwin",
 		targetArch:  "arm64",
-		description: "Apple Silicon Mac Studio / local developer workstations",
+		description: "darwin-arm64 host",
 	},
 	{
 		benchKind:   "linux-amd64",
 		platform:    "linux-amd64",
 		targetGOOS:  "linux",
 		targetArch:  "amd64",
-		description: "Space runners and Linux server benches (hulk, vision)",
+		description: "linux-amd64 host",
 	},
 	{
 		benchKind:   "wsl2",
 		platform:    "linux-amd64",
 		targetGOOS:  "linux",
 		targetArch:  "amd64",
-		description: "Windows hardware joining fleet as Linux bench under WSL2 (threadripper-wsl)",
+		description: "wsl2 host",
 	},
 }
 
