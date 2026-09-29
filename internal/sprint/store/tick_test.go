@@ -470,3 +470,40 @@ func TestAStoppedTickSaysItLooked(t *testing.T) {
 		t.Fatalf("a stopped tick: %+v %v", hb, err)
 	}
 }
+
+// A member whose beat lapses again and again has its card dealt to another
+// and back each time, re-stamping dealt: the unfinished deadline counts from
+// the attempt's first deal, so three hours of it are late all the same.
+func TestAFlappingMemberCannotHideALateCard(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	first := h.snap().Fleet.Card("s1-1.w1").F("first_dealt")
+	if first == "" {
+		t.Fatalf("no first_dealt on the card")
+	}
+	// m1 beats for 10 s and falls silent for 20 s, over and over, for three
+	// hours; its card goes withdrawn and back
+	for elapsed := time.Duration(0); elapsed < 3*time.Hour; elapsed += 10 * time.Second {
+		if (elapsed/(30*time.Second))%3 == 0 {
+			h.live = []string{"m1"}
+		} else {
+			h.live = nil
+		}
+		h.tick(10 * time.Second)
+		h.machine()
+	}
+	h.live = []string{"m1"}
+	h.tick(time.Second)
+	h.machine()
+	if c := h.snap().Fleet.Card("s1-1.w1"); c.F("first_dealt") != first {
+		t.Fatalf("first_dealt moved: %s, was %s", c.F("first_dealt"), first)
+	}
+	if h.written(sprint.NWorkLate) == 0 {
+		t.Fatalf("three hours of a card dealt and never finished, and no deadline")
+	}
+}

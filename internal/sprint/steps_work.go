@@ -557,7 +557,8 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 	}
 	m := shortest(up, q)
 	q[m]++
-	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m, "dealt": stamp(s.Now)}
+	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m,
+		"dealt": stamp(s.Now), "first_dealt": stamp(s.Now)}
 	if fix != "" {
 		fields["fix"] = fix
 	}

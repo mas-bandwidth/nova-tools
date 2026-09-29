@@ -354,6 +354,15 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
 				what:      fmt.Sprintf("%s@%s %s to %s at %s, %s", c.ID, c.F("gen"), field, c.Row, at, word),
 				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
+			continue
+		}
+		// A card dealt again and again (its member's beat lapsing) is
+		// re-stamped dealt each time: the unfinished deadline counts from the
+		// attempt's first deal.
+		if at, ok := late("first_dealt", c, DeadlineUnfinished); ok {
+			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
+				what:      fmt.Sprintf("%s first dealt at %s, not finished", c.ID, at),
+				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
 		}
 	}
 	// N5: read cards asked and not begun, begun and not reported.

@@ -66,7 +66,8 @@ observation (ci, ci_head, ci_run, ci_source).
 **Work card** (consumer). What a child with a worktree is handed: the brief and
 the place to work, and on a later attempt the fix. Identity `<primary>.w<attempt>`.
 Fields: primary, stream, kind=work, attempt, fix, member, gen (its assignment
-generation), dealt and taken (the clock times it was dealt and taken), ok (set
+generation), dealt and taken (the clock times it was dealt and taken),
+first_dealt (the attempt's first deal, kept through every redeal), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -654,7 +655,8 @@ The tick writes a judgment once while its condition holds and closes it when
 the condition clears: cannot ask (fewer than two different readers are free;
 one condition per primary whatever its count of free readers),
 no fleet member is up, a work card past its deadline (15 minutes dealt and not
-taken, 2 hours taken and not finished), a read card past its deadline (30
+taken, 2 hours taken and not finished, or 2 hours from its first deal and not
+finished, however often it was dealt again), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
 and the cards). Deadlines count running time: time spent STOPPED does not
