@@ -35,11 +35,66 @@ end)
 do
   local T = {}
   function T.refuse(reason, ...) return {'REFUSED', reason, ...} end
+  -- T.kind(key): the Redis type of key ('none' when absent).
+  function T.kind(key)
+    local t = redis.call('TYPE', key)
+    return (type(t) == 'table' and t.ok) and t.ok or t
+  end
+  -- T.hash(key): the hash at key as a table, and its flat form. A value of
+  -- another type raises {wrongtype=...}, which T.top (every registered
+  -- function runs under it) turns into the refusal WRONGTYPE naming the key
+  -- and the type found; a wrong-type key never leaves as a raw Redis error.
   function T.hash(key)
-    local flat, h = redis.call('HGETALL', key), {}
+    local flat = redis.pcall('HGETALL', key)
+    if type(flat) == 'table' and flat.err then
+      if string.find(flat.err, 'WRONGTYPE') then error({wrongtype = true, key = key, found = T.kind(key), want = 'hash'}) end
+      error(flat)
+    end
+    local h = {}
     for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
     return h, flat
   end
+  -- T.top(callback): the wrapper every registered function runs under.
+  function T.top(callback)
+    return function(keys, args)
+      local ok, res = pcall(callback, keys, args)
+      if ok then return res end
+      if type(res) == 'table' and res.wrongtype then return T.refuse('WRONGTYPE', res.key, res.found, res.want) end
+      error(res, 0)
+    end
+  end
+  -- From here on `redis` is a shim whose register_function runs every
+  -- function under T.top. (Library load runs before the standard globals
+  -- exist, so nothing here calls type().)
+  -- (redis.call and its kin do not exist while the library loads, so the shim
+  -- forwards to them when a function runs.)
+  local redis = {
+    -- A command answered WRONGTYPE: the refusal names its key, the type found and
+    -- the type the command wants. It never leaves as a raw Redis error.
+    call = function(...)
+      local res = redis.pcall(...)
+      if type(res) == 'table' and res.err then
+        if string.find(res.err, 'WRONGTYPE') then
+          local command, key = ...
+          if command == 'XINFO' then key = select(3, ...) end
+          local family = {H = 'hash', Z = 'zset', S = 'set', X = 'stream', L = 'list'}
+          error({wrongtype = true, key = key, found = T.kind(key), want = family[string.sub(command, 1, 1)] or 'value'})
+        end
+        error(res)
+      end
+      return res
+    end,
+    pcall = function(...) return redis.pcall(...) end,
+    sha1hex = function(...) return redis.sha1hex(...) end,
+    acl_check_cmd = function(...) return redis.acl_check_cmd(...) end,
+    register_function = function(spec, callback)
+      if callback == nil then
+        spec.callback = T.top(spec.callback)
+        return redis.register_function(spec)
+      end
+      return redis.register_function(spec, T.top(callback))
+    end,
+  }
   function T.flat(h)
     local flat = {}
     for k, v in pairs(h) do flat[#flat + 1] = k; flat[#flat + 1] = v end
@@ -358,7 +413,7 @@ do
     local mkey = T.memberkey(d, id)
     local flat = redis.pcall('HGETALL', mkey)
     if type(flat) == 'table' and flat.err then
-      if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, 'wrong type', 'hash') end
+      if string.find(flat.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash') end
       return nil, nil, { 'ERR', flat.err }
     end
     local h = {}
@@ -1067,7 +1122,7 @@ do
     if not src then return nil, err end
     local count = redis.pcall('ZCARD', src.key)
     if type(count) == 'table' and count.err then
-      if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', src.key, 'wrong type', 'zset') end
+      if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', src.key, T.kind(src.key), 'zset') end
       return nil, { 'ERR', count.err }
     end
     local first, dst = 5, nil
@@ -1080,7 +1135,7 @@ do
       if not dst then return nil, err end
       count = redis.pcall('ZCARD', dst.key)
       if type(count) == 'table' and count.err then
-        if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', dst.key, 'wrong type', 'zset') end
+        if string.find(count.err, 'WRONGTYPE') then return nil, T.refuse('WRONGTYPE', dst.key, T.kind(dst.key), 'zset') end
         return nil, { 'ERR', count.err }
       end
     end
@@ -1892,13 +1947,7 @@ do
     if op_kind ~= 'none' and op_kind ~= 'hash' then
       return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
     end
-    local op_record, _, op_err = T.hash(op_key)
-    if op_err then
-      if string.find(op_err, 'WRONGTYPE') then
-        return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
-      end
-      return {'ERR', op_err}
-    end
+    local op_record = T.hash(op_key)
     if next(op_record) then
       if op_record.request ~= raw_json then
         return T.refuse('OPCONFLICT', manifest.operation_id)
@@ -1947,7 +1996,7 @@ do
         if not cell then return at_member(cell_err, id) end
         local score = redis.pcall('ZSCORE', cell.key, id)
         if type(score) == 'table' and score.err then
-          if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, 'wrong type', 'zset') end
+          if string.find(score.err, 'WRONGTYPE') then return T.refuse('WRONGTYPE', cell.key, T.kind(cell.key), 'zset') end
           return {'ERR', score.err}
         end
         if not score then return T.refuse('DRIFT', r, c, id) end
