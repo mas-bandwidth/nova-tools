@@ -141,3 +141,61 @@ func TestABusyFenceWaitsWithJitter(t *testing.T) {
 		t.Fatal("a busy step changed the fleet")
 	}
 }
+
+// A store with no NewID, Sleep or Rand runs a step: the defaults stand in.
+func TestAZeroStoreHasWorkingDefaults(t *testing.T) {
+	t.Parallel()
+	m := NewMem()
+	st := &Store{B: m, Names: sprint.Names{Prefix: "z-"}, Now: time.Now}
+	if err := st.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	res, err := st.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	if err != nil || res.Op == "" {
+		t.Fatalf("run: %+v %v", res, err)
+	}
+	r := st.retry()
+	st.Rand = func(int64) int64 { return 0 } // time.Sleep(0): the default sleeps, it does not spin on nil
+	if !r.next(2) || !r.next(2) || r.next(2) {
+		t.Fatal("two tries, then none")
+	}
+}
+
+// Two writers started fresh, as two processes or one restarted, generate
+// different operation ids, so neither step is taken for a replay of the
+// other: both members come up.
+func TestFreshStoresGenerateDifferentOperationIDs(t *testing.T) {
+	t.Parallel()
+	m := NewMem()
+	names := sprint.Names{Prefix: "p-"}
+	fresh := func() *Store {
+		return &Store{B: m, Names: names, Actor: "a", Now: func() time.Time { return t0 }, Sleep: func(time.Duration) {}}
+	}
+	a, b := fresh(), fresh()
+	if err := a.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ra, err := a.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := b.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ra.Op == rb.Op {
+		t.Fatalf("both stores used operation id %s", ra.Op)
+	}
+	if a.newID() == b.newID() || NewID() == NewID() {
+		t.Fatal("two fresh ids are the same")
+	}
+	s, err := a.Load(context.Background(), tables(sprint.Fleet), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"m1", "m2"} {
+		if s.MemberCtl(id) == nil || s.MemberCtl(id).F("status") != sprint.Up {
+			t.Fatalf("%s is not up: the second step was swallowed", id)
+		}
+	}
+}

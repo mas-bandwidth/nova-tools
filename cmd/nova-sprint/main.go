@@ -10,8 +10,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -127,13 +125,7 @@ func (a *app) store(c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: newID, Sleep: a.sleep}, nil
-}
-
-func newID() string {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return time.Now().UTC().Format("150405") + hex.EncodeToString(b[:])
+	return &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}, nil
 }
 
 // run is the one entry point: the command line, and the driver, which runs

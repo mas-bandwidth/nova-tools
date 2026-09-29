@@ -54,7 +54,7 @@ type Store struct {
 	Names    sprint.Names
 	Actor    string
 	Now      func() time.Time
-	NewID    func() string       // a fresh operation id family
+	NewID    func() string       // a fresh operation id family; nil is NewID
 	Sleep    func(time.Duration) // the wait between tries on busy tables or fence; nil is time.Sleep
 	Rand     func(n int64) int64 // the jitter of that wait, a number in [0, n); nil is math/rand/v2
 	Attempts int                 // plans per step before giving up on a busy fence; default FenceTries
@@ -193,7 +193,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	}
 	family := step.CallerOp
 	if family == "" {
-		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.NewID()
+		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
 	rowsAdded := false
 	plans := st.retry()

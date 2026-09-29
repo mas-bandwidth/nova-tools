@@ -1,7 +1,11 @@
 package store
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	mrand "math/rand/v2"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -79,4 +83,21 @@ func (st *Store) sleep(d time.Duration) {
 		return
 	}
 	time.Sleep(d)
+}
+
+// newID is Store.NewID when set, else NewID.
+func (st *Store) newID() string {
+	if st.NewID != nil {
+		return st.NewID()
+	}
+	return NewID()
+}
+
+// NewID is a fresh operation id family, unique across processes and across
+// restarts of one: the time to the nanosecond, the process id and eight
+// random bytes, in letters, digits and '-'.
+func NewID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.Itoa(os.Getpid()) + "-" + hex.EncodeToString(b[:])
 }
