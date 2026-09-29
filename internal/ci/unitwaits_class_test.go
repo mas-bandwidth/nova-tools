@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -81,19 +82,24 @@ var unitPlatforms = [][2]string{{"linux", "amd64"}, {"darwin", "arm64"}, {"darwi
 // with no constraint is a unit file.
 func unitTierFile(src []byte) bool {
 	var expr constraint.Expr
-	for _, line := range strings.Split(string(src), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "package ") {
+	for {
+		line, rest, more := bytes.Cut(src, []byte("\n"))
+		line = bytes.TrimSpace(line)
+		if bytes.HasPrefix(line, []byte("package ")) {
 			break
 		}
-		if constraint.IsGoBuild(line) {
-			e, err := constraint.Parse(line)
+		if bytes.HasPrefix(line, []byte("//go:build")) && constraint.IsGoBuild(string(line)) {
+			e, err := constraint.Parse(string(line))
 			if err != nil {
 				return true
 			}
 			expr = e
 			break
 		}
+		if !more {
+			break
+		}
+		src = rest
 	}
 	if expr == nil {
 		return true
