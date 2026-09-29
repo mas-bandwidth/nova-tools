@@ -514,19 +514,34 @@ witnesses do not establish an implementation refinement proof.
 The repository runner records this group using `make tlc` with
 `TLC_GROUP=multitablebatch`, an explicit installed jar and an owned output path.
 
-On 2026-09-29, `make tlc` checked all 16 declarations from commit
-`6bd6e25200317af0c58a7bfef65ac58bcc9fd6b5` in an owned Linux container on
-`spacegame.losangeles`. Twelve normal scenarios passed and all four faulty
-variants violated their exact declared action properties. The measured rows in
-`RUNS.tsv` retain emitted container hostname `236bcec8fdac` and input fingerprint
-`7649c252836fa3c848dac55ea560fa72e02dab8cfa9838442d07741953492674`.
-The TLC jar SHA-256 was
-`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`;
-all archived source hashes matched before and after the run. No runtime services
-ran in that model-checking container. These are repository-runner measurements,
-separate from the initial standalone parser and scenario checks.
+On 2026-09-29, the standalone repository runner checked all 16 declarations
+from source commit `f9024299ace7e167f93f096ac3c4d44ae636a730`, after integrating
+dev `abdc7a23026316fc4e31435c75ff5df9d959eb54`, in an owned Linux container.
+Twelve normal scenarios passed and all four faulty variants violated their
+exact declared action properties. `RUNS.tsv` contains their measured per-case
+input fingerprints, the `linux-amd64` platform and actual logical CPU count;
+the container was limited to two CPUs and 4 GiB, with one TLC worker and a
+110-second group budget. The standalone runner SHA-256 was
+`0c3a9fd4f32c443f20b2eb204b83a5299fdfa1c70d685d87be57a59d37113e95`
+and the TLC jar SHA-256 was
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+All 4,439 archived source-file hashes matched before and after the checks.
 
-The other 76 existing model rows retain their measured global fingerprints.
-They have not been relabeled or rerun by this change. The current global record
-gate therefore remains stale for those rows pending integration of the per-case
-fingerprint checker from #4705 and reconciliation of its evidence.
+A separate owned Redis 8.0.5 container replayed six schema-1 runtime histories
+against the merged Lua SHA-256
+`382720351ec9037dc15833892c467e7db44c45695d686355b0e20a5f77aada31`.
+Five histories passed; the deliberate corrupt observation violated exactly
+`MatchesExecution`. This used the separately frozen decoder and models from
+`8fc37bcf7620695f5903891d8a5516b890fea035` (#4618), whose standalone binary
+SHA-256 was `b99c07886cb789e827b68579d33eb256e85371db102c4466304a098f4ad2d011`.
+The captured replay suite SHA-256 was
+`5adabdac125f9190929054dddc69cf82c5118bfaa77212ba7c1f665d6a68374e`.
+These histories check schema-1 behavior against the new Lua; they do not add a
+schema-2 implementation refinement claim. Full functional-tag runs of
+`internal/ntable` and `cmd/nova-table` passed 197 and 94 top-level tests,
+respectively, with no skips, in separate owned containers. All owned containers
+were removed after execution.
+
+The other 76 model records are retained unchanged from dev in the current
+per-case layout, for 92 records total. Their recorded outcomes, including the
+existing CardMachine/LandWatch bench debt, have not been relabeled or rerun.
