@@ -11,8 +11,28 @@ import socket
 import hashlib
 import subprocess
 
-REDIS_ADDR = os.environ.get("NOVA_SPRINT_REDIS") or os.environ.get("NOVA_REDIS_ADDR") or "127.0.0.1:6379"
 TABLE_DEFAULT = "cards"
+REDIS_ADDR = None
+
+def get_redis_addr():
+    global REDIS_ADDR
+    if REDIS_ADDR:
+        return REDIS_ADDR
+    addr = None
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--redis" and i + 1 < len(args):
+            addr = args[i+1]
+            break
+        i += 1
+    if not addr:
+        addr = os.environ.get("NOVA_SPRINT_REDIS") or os.environ.get("NOVA_REDIS_ADDR")
+    if not addr:
+        sys.stderr.write("refused: explicit redis address required (--redis or NOVA_REDIS_ADDR); ambient autodiscovery disabled for test confinement\n")
+        sys.exit(2)
+    REDIS_ADDR = addr
+    return REDIS_ADDR
 
 def get_nova_table_bin():
     nova_table = os.environ.get("NOVA_TABLE_BIN")
@@ -27,17 +47,19 @@ def get_nova_table_bin():
     return nova_table
 
 def nova_table_cmd(*args):
-    cmd = [get_nova_table_bin()] + list(args) + ["--redis", REDIS_ADDR]
+    addr = get_redis_addr()
+    cmd = [get_nova_table_bin()] + list(args) + ["--redis", addr]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 def run_nova_table_batch(manifest):
+    addr = get_redis_addr()
     bin_path = get_nova_table_bin()
     for m in manifest.get("members", []):
         for k in list(m.keys()):
             if m[k] is None:
                 del m[k]
-    cmd = [bin_path, "batch", "-", "--redis", REDIS_ADDR]
+    cmd = [bin_path, "batch", "-", "--redis", addr]
     p = subprocess.run(
         cmd,
         input=json.dumps(manifest),
@@ -48,8 +70,13 @@ def run_nova_table_batch(manifest):
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 def redis_cmd(*args):
-    host = REDIS_ADDR.split(":")[0]
-    port = int(REDIS_ADDR.split(":")[1])
+    addr = get_redis_addr()
+    if ":" in addr:
+        host, port_str = addr.rsplit(":", 1)
+        port = int(port_str)
+    else:
+        host = "127.0.0.1"
+        port = int(addr)
     s = socket.socket()
     s.connect((host, port))
     parts = ["*" + str(len(args)) + "\r\n"]
@@ -105,12 +132,77 @@ def get_table_revision(table):
         return int(lines[1].decode("utf-8"))
     return 0
 
-def inc_table_revision(table):
-    raw = redis_cmd("HINCRBY", f"table:{table}:revision", "n", "1")
-    lines = raw.split(b"\r\n")
-    if len(lines) > 1 and lines[0].startswith(b":"):
-        return int(lines[0][1:])
-    return get_table_revision(table) + 1
+def decode_and_verify_receipt(table, op_id, expected_epoch, nova_table_stdout):
+    """
+    Decodes the actual committed receipt from nova-table stdout,
+    verifies it against the independent Redis oprecord and table revision,
+    and retains it in durable Redis storage.
+    """
+    receipt_data = {}
+    for line in nova_table_stdout.splitlines():
+        line = line.strip()
+        if line.startswith("TABLE RECEIPT "):
+            parts = line.split()
+            for part in parts[2:]:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    receipt_data[k] = v
+            break
+
+    if not receipt_data or "event" not in receipt_data:
+        raise RuntimeError(f"failed to decode committed receipt from nova-table stdout:\n{nova_table_stdout}")
+
+    event_id = receipt_data["event"]
+    r_epoch = receipt_data.get("epoch", str(expected_epoch))
+    r_before = int(receipt_data.get("before", "0"))
+    r_after = int(receipt_data.get("after", "0"))
+    r_outcome = receipt_data.get("outcome", "changed")
+
+    # 1. Query independent oprecord in Redis: table:{table}:op:{op_id} or table:{table}:{epoch}:op:{op_id}
+    prefix = f"table:{table}" if str(r_epoch) == "0" else f"table:{table}:{r_epoch}"
+    op_key = f"{prefix}:op:{op_id}"
+    op_record = redis_hgetall(op_key)
+    if not op_record:
+        raise RuntimeError(f"committed oprecord not found at independent Redis key {op_key}")
+
+    # Compare actual committed receipt against independent Redis state / oprecord
+    if op_record.get("stream_id") != event_id:
+        raise RuntimeError(f"receipt event {event_id} does not match oprecord stream_id {op_record.get('stream_id')}")
+    if op_record.get("epoch") != str(r_epoch):
+        raise RuntimeError(f"receipt epoch {r_epoch} does not match oprecord epoch {op_record.get('epoch')}")
+    if int(op_record.get("rev_before", "0")) != r_before:
+        raise RuntimeError(f"receipt rev_before {r_before} does not match oprecord rev_before {op_record.get('rev_before')}")
+    if int(op_record.get("rev_after", "0")) != r_after:
+        raise RuntimeError(f"receipt rev_after {r_after} does not match oprecord rev_after {op_record.get('rev_after')}")
+    if op_record.get("outcome") != r_outcome:
+        raise RuntimeError(f"receipt outcome {r_outcome} does not match oprecord outcome {op_record.get('outcome')}")
+
+    # 2. Independent table revision in Redis
+    current_rev = get_table_revision(table)
+    if current_rev != r_after:
+        raise RuntimeError(f"receipt after revision {r_after} does not match Redis table revision {current_rev}")
+
+    # 3. Retain committed receipt in Redis state
+    redis_hset(f"receipt:{table}:{op_id}", {
+        "operation_id": op_id,
+        "table": table,
+        "event": event_id,
+        "epoch": r_epoch,
+        "before": str(r_before),
+        "after": str(r_after),
+        "outcome": r_outcome,
+        "verified": "yes",
+        "op_key": op_key
+    })
+
+    return {
+        "event": event_id,
+        "epoch": r_epoch,
+        "before": r_before,
+        "after": r_after,
+        "outcome": r_outcome,
+        "op_key": op_key
+    }
 
 def file_digest(path):
     if os.path.exists(path):
@@ -155,6 +247,8 @@ def cmd_add(args):
         elif args[i] == "--admissions" and i + 1 < len(args):
             admissions_file = args[i+1]
             i += 2
+        elif args[i] == "--redis" and i + 1 < len(args):
+            i += 2
         else:
             i += 1
     if not admissions_file:
@@ -166,15 +260,14 @@ def cmd_add(args):
 
     op_id = manifest.get("operation_id", "op-add")
     epoch = str(manifest.get("epoch", "0"))
-    expected_rev = str(manifest.get("expected_table_revision", "0"))
     admissions = manifest.get("admissions", [])
 
-    # Check for duplicate card IDs in admissions manifest
+    # Check for duplicate card IDs in admissions manifest (preflight validation)
     seen = set()
     for adm in admissions:
         cid = adm.get("id")
         if cid in seen:
-            sys.stderr.write(f"REFUSED {op_id} card={cid} cause=duplicate_card_in_manifest expected=unique observed={cid} changed=no remedy=remove duplicate from {admissions_file}\n")
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=duplicate_card_in_manifest expected=unique observed={cid} changed=no remedy=remove duplicate from {admissions_file}\n")
             return 1
         seen.add(cid)
 
@@ -191,7 +284,7 @@ def cmd_add(args):
         # Check if already present in table
         mem = redis_hgetall(f"card:{cid}")
         if mem.get(f"place:{table}"):
-            sys.stderr.write(f"REFUSED {op_id} card={cid} cause=already_admitted expected=absent observed={mem.get(f'place:{table}')} changed=no remedy=card inspect --table {table}\n")
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=already_admitted expected=absent observed={mem.get(f'place:{table}')} changed=no remedy=card inspect --table {table}\n")
             return 1
 
         _, headers, digest = parse_card_file(card_file)
@@ -235,17 +328,17 @@ def cmd_add(args):
 
     code, out, err = run_nova_table_batch(table_manifest)
     if code != 0:
-        sys.stderr.write(f"{err}\n")
+        sys.stderr.write(f"RUNTIME REFUSED {op_id} server refusal: {err}\n")
         return code
 
-    after_table_rev = get_table_revision(table)
+    rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
     delta = {
         "operation_id": op_id,
         "changed_count": len(delta_members),
         "guard_count": 0,
         "members": delta_members
     }
-    print(f"RECEIPT {op_id} epoch={epoch} before={before_table_rev} after={after_table_rev} outcome=changed delta={json.dumps(delta)}")
+    print(f"RECEIPT {op_id} event={rcpt['event']} epoch={rcpt['epoch']} before={rcpt['before']} after={rcpt['after']} outcome={rcpt['outcome']} delta={json.dumps(delta)}")
     return 0
 
 def cmd_resolve(args):
@@ -258,6 +351,8 @@ def cmd_resolve(args):
             i += 2
         elif args[i] == "--scope" and i + 1 < len(args):
             scope_file = args[i+1]
+            i += 2
+        elif args[i] == "--redis" and i + 1 < len(args):
             i += 2
         else:
             i += 1
@@ -299,12 +394,8 @@ def cmd_resolve(args):
         for dep in deps:
             dep_mem = redis_hgetall(f"card:{dep}")
             dep_place = dep_mem.get(f"place:{table}", "")
-            dep_kind = dep_mem.get("kind", "")
-            dep_outcome = dep_mem.get("outcome", "")
-            # Dependency is met when landed, or done/completed for non-PR kinds
-            is_landed = "landed" in dep_place
-            is_done_non_pr = ("done" in dep_place) and (dep_outcome == "completed") and (dep_kind in ["read", "probe", "text", "tone", "report"])
-            if not (is_landed or is_done_non_pr):
+            # Dependency satisfied only when landed or done
+            if not ("landed" in dep_place or "done" in dep_place):
                 all_met = False
                 missing_dep = dep
                 break
@@ -327,6 +418,9 @@ def cmd_resolve(args):
                 "blocked_by": missing_dep
             })
 
+    event_id = ""
+    outcome = "unchanged"
+    after_table_rev = before_table_rev
     if delta_members:
         batch_members = []
         for m in delta_members:
@@ -351,12 +445,15 @@ def cmd_resolve(args):
         }
         code, out, err = run_nova_table_batch(table_manifest)
         if code != 0:
-            sys.stderr.write(f"{err}\n")
+            sys.stderr.write(f"RUNTIME REFUSED {op_id} server refusal: {err}\n")
             return code
 
-    after_table_rev = get_table_revision(table)
-    outcome = "changed" if delta_members else "unchanged"
-    # Clean stream from delta_members for receipt output
+        rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
+        event_id = rcpt["event"]
+        before_table_rev = rcpt["before"]
+        after_table_rev = rcpt["after"]
+        outcome = rcpt["outcome"]
+
     cleaned_deltas = []
     for m in delta_members:
         cleaned_deltas.append({
@@ -374,7 +471,8 @@ def cmd_resolve(args):
         "members": cleaned_deltas,
         "blocked": blocked_members
     }
-    print(f"RECEIPT {op_id} epoch={epoch} before={before_table_rev} after={after_table_rev} outcome={outcome} delta={json.dumps(delta)}")
+    event_str = f"event={event_id} " if event_id else ""
+    print(f"RECEIPT {op_id} {event_str}epoch={epoch} before={before_table_rev} after={after_table_rev} outcome={outcome} delta={json.dumps(delta)}")
     return 0
 
 def cmd_move(args):
@@ -387,6 +485,8 @@ def cmd_move(args):
             i += 2
         elif args[i] == "--events" and i + 1 < len(args):
             events_file = args[i+1]
+            i += 2
+        elif args[i] == "--redis" and i + 1 < len(args):
             i += 2
         else:
             i += 1
@@ -402,18 +502,12 @@ def cmd_move(args):
     expected_table_rev = manifest.get("expected_table_revision")
     events = manifest.get("events", [])
 
-    # Check stale table revision if specified
-    current_table_rev = get_table_revision(table)
-    if expected_table_rev is not None and str(expected_table_rev) != str(current_table_rev):
-        sys.stderr.write(f"REFUSED {op_id} cause=stale_table_revision expected={expected_table_rev} observed={current_table_rev} changed=no remedy=card inspect --table {table}\n")
-        return 1
-
-    # Check for duplicate events for one card in same batch
+    # Check for duplicate events for one card in same batch (preflight validation)
     seen_cards = set()
     for ev in events:
         cid = ev.get("id")
         if cid in seen_cards:
-            sys.stderr.write(f"REFUSED {op_id} card={cid} cause=duplicate_card_events_in_batch expected=one_event_per_card observed=multiple changed=no remedy=split into sequential batches\n")
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=duplicate_card_events_in_batch expected=one_event_per_card observed=multiple changed=no remedy=split into sequential batches\n")
             return 1
         seen_cards.add(cid)
 
@@ -430,18 +524,6 @@ def cmd_move(args):
             "stream": mem.get("stream", "stream-1"),
             "kind": mem.get("kind", "")
         }
-        
-        # Check expected revision guard
-        exp_rev = ev.get("expect_revision")
-        if exp_rev is not None and str(exp_rev) != str(pre_rev):
-            sys.stderr.write(f"REFUSED {op_id} card={cid} cause=stale_member_revision expected={exp_rev} observed={pre_rev} changed=no remedy=card inspect --table {table}\n")
-            return 1
-
-        # Check expected place guard
-        exp_place = ev.get("expect_place")
-        if exp_place is not None and exp_place not in place:
-            sys.stderr.write(f"REFUSED {op_id} card={cid} cause=unexpected_place expected={exp_place} observed={place} changed=no remedy=card inspect --table {table}\n")
-            return 1
 
     # Prepare atomic batch mutation
     batch_members = []
@@ -454,17 +536,56 @@ def cmd_move(args):
         from_col = state["place"].split(":")[-1]
         new_rev = str(int(state["revision"]) + 1)
 
+        # Gate check for moving to merging: require at least 2 distinct reader records with accepted disposition & pass CI
+        if to_state == "merging":
+            readers_raw = redis_cmd("SMEMBERS", f"evidence:{cid}:readers")
+            lines = readers_raw.split(b"\r\n")
+            reader_list = []
+            if lines and lines[0].startswith(b"*"):
+                num = int(lines[0][1:])
+                idx = 1
+                for _ in range(num):
+                    if idx >= len(lines) or not lines[idx].startswith(b"$"):
+                        break
+                    r_name = lines[idx+1].decode("utf-8", errors="replace")
+                    reader_list.append(r_name)
+                    idx += 2
+            
+            valid_readers = []
+            for r_name in reader_list:
+                keys_raw = redis_cmd("KEYS", f"evidence:{cid}:*:{r_name}")
+                klines = keys_raw.split(b"\r\n")
+                if len(klines) > 1 and klines[0].startswith(b"*") and int(klines[0][1:]) > 0:
+                    ekey = klines[2].decode("utf-8", errors="replace")
+                    edata = redis_hgetall(ekey)
+                    if edata.get("disposition") in ("accepted", "approved") and edata.get("ci_status") in ("pass", "passed", "green"):
+                        valid_readers.append(r_name)
+
+            if len(set(valid_readers)) < 2:
+                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=insufficient_evidence expected=at_least_2_approved_readers observed={len(set(valid_readers))} changed=no remedy=record 2 distinct reader approvals with ci_status=pass\n")
+                return 1
+
         set_fields = {}
         if "outcome" in ev:
             set_fields["outcome"] = ev["outcome"]
         if "landing_sha" in ev:
             set_fields["landing_sha"] = ev["landing_sha"]
 
+        exp_rev = str(ev.get("expect_revision", state["revision"]))
+        exp_row = stream
+        exp_col = from_col
+        if "expect_place" in ev:
+            ep = ev["expect_place"]
+            if ":" in ep:
+                exp_row, exp_col = ep.split(":", 1)
+            else:
+                exp_col = ep
+
         entry = {
             "id": cid,
             "expect": {
-                "revision": state["revision"],
-                "place": {"row": stream, "col": from_col}
+                "revision": exp_rev,
+                "place": {"row": exp_row, "col": exp_col}
             },
             "move": {
                 "row": stream,
@@ -483,27 +604,31 @@ def cmd_move(args):
             "after_rev": new_rev
         })
 
+    # Pass expected_table_rev directly so server FCALL exercises runtime revision rejection
+    current_table_rev = get_table_revision(table)
+    exp_table_rev_wire = str(expected_table_rev) if expected_table_rev is not None else str(current_table_rev)
+
     table_manifest = {
         "schema": 1,
         "table": table,
         "epoch": epoch,
-        "expected_table_revision": str(current_table_rev),
+        "expected_table_revision": exp_table_rev_wire,
         "operation_id": op_id,
         "members": batch_members
     }
 
     code, out, err = run_nova_table_batch(table_manifest)
     if code != 0:
-        sys.stderr.write(f"{err}\n")
+        sys.stderr.write(f"RUNTIME REFUSED {op_id} server refusal: {err}\n")
         return code
 
-    after_table_rev = get_table_revision(table)
+    rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
     delta = {
         "operation_id": op_id,
         "changed_count": len(delta_members),
         "members": delta_members
     }
-    print(f"RECEIPT {op_id} epoch={epoch} before={current_table_rev} after={after_table_rev} outcome=changed delta={json.dumps(delta)}")
+    print(f"RECEIPT {op_id} event={rcpt['event']} epoch={rcpt['epoch']} before={rcpt['before']} after={rcpt['after']} outcome={rcpt['outcome']} delta={json.dumps(delta)}")
     return 0
 
 def cmd_evidence(args):
@@ -516,6 +641,8 @@ def cmd_evidence(args):
             i += 2
         elif args[i] == "--evidence" and i + 1 < len(args):
             evidence_file = args[i+1]
+            i += 2
+        elif args[i] == "--redis" and i + 1 < len(args):
             i += 2
         else:
             i += 1
@@ -539,22 +666,52 @@ def cmd_evidence(args):
         disposition = ev.get("disposition")
         ci_status = ev.get("ci_status")
 
-        mem = redis_hgetall(f"card:{cid}")
-        actual_digest = mem.get("digest")
-        if digest and digest != actual_digest:
-            sys.stderr.write(f"REFUSED {op_id} card={cid} cause=digest_mismatch expected={actual_digest} observed={digest} changed=no remedy=re-read card definition\n")
+        if not reader:
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=missing_reader expected=reader_id observed=none changed=no\n")
             return 1
 
-        ev_key = f"evidence:{cid}:{op_id}"
+        mem = redis_hgetall(f"card:{cid}")
+        if not mem or not mem.get(f"place:{table}"):
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=card_not_in_table expected=placed observed=none changed=no\n")
+            return 1
+
+        actual_digest = mem.get("digest")
+        if digest and digest != actual_digest:
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=digest_mismatch expected={actual_digest} observed={digest} changed=no remedy=re-read card definition\n")
+            return 1
+
+        if head:
+            if len(head) != 40 or not all(c in "0123456789abcdefABCDEF" for c in head):
+                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=invalid_head_sha expected=40_char_hex observed={head} changed=no\n")
+                return 1
+            git_check = subprocess.run(["git", "cat-file", "-e", head], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if git_check.returncode != 0:
+                sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=head_commit_not_found expected=reachable_git_commit observed={head} changed=no\n")
+                return 1
+
+        if disposition not in ("accepted", "approved"):
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=invalid_disposition expected=accepted observed={disposition} changed=no\n")
+            return 1
+
+        if ci_status not in ("pass", "passed", "green"):
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={cid} cause=ci_not_passed expected=pass observed={ci_status} changed=no\n")
+            return 1
+
+        # Durable reader key: distinct per reader so entries NEVER overwrite each other
+        ev_key = f"evidence:{cid}:{op_id}:{reader}"
         ev_data = {
             "card_id": cid,
+            "operation_id": op_id,
             "head": head,
+            "digest": digest or actual_digest or "",
             "reader": reader,
             "disposition": disposition,
-            "ci_status": ci_status or "pass",
+            "ci_status": ci_status,
             "epoch": epoch
         }
         redis_hset(ev_key, ev_data)
+        redis_cmd("SADD", f"evidence:{cid}:readers", reader)
+        redis_cmd("SADD", f"evidence:{cid}:{op_id}:readers", reader)
         recorded.append(ev_key)
 
     current_table_rev = get_table_revision(table)
@@ -577,6 +734,8 @@ def cmd_replace(args):
         elif args[i] == "--replacements" and i + 1 < len(args):
             replacements_file = args[i+1]
             i += 2
+        elif args[i] == "--redis" and i + 1 < len(args):
+            i += 2
         else:
             i += 1
     if not replacements_file:
@@ -596,21 +755,18 @@ def cmd_replace(args):
     for p in pairs:
         old_id = p.get("old_id")
         new_id = p.get("new_id")
-        new_file = p.get("new_file")
-        stream = p.get("stream", "stream-1")
-
         old_mem = redis_hgetall(f"card:{old_id}")
         old_place = old_mem.get(f"place:{table}", "")
         if "working" in old_place:
-            sys.stderr.write(f"REFUSED {op_id} card={old_id} cause=working_card_cannot_be_replaced expected=non_working observed={old_place} changed=no remedy=wait or cancel working card first\n")
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={old_id} cause=working_card_cannot_be_replaced expected=non_working observed={old_place} changed=no remedy=wait or cancel working card first\n")
             return 1
         if "done" in old_place or "landed" in old_place:
-            sys.stderr.write(f"REFUSED {op_id} card={old_id} cause=terminal_card_cannot_be_replaced expected=non_terminal observed={old_place} changed=no remedy=admit new card directly\n")
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={old_id} cause=terminal_card_cannot_be_replaced expected=non_terminal observed={old_place} changed=no remedy=admit new card directly\n")
             return 1
 
         new_mem = redis_hgetall(f"card:{new_id}")
         if new_mem.get(f"place:{table}"):
-            sys.stderr.write(f"REFUSED {op_id} card={new_id} cause=already_admitted expected=absent observed={new_mem.get(f'place:{table}')} changed=no remedy=pick fresh successor id\n")
+            sys.stderr.write(f"PREFLIGHT REFUSED {op_id} card={new_id} cause=already_admitted expected=absent observed={new_mem.get(f'place:{table}')} changed=no remedy=pick fresh successor id\n")
             return 1
 
     batch_members = []
@@ -693,16 +849,16 @@ def cmd_replace(args):
 
     code, out, err = run_nova_table_batch(table_manifest)
     if code != 0:
-        sys.stderr.write(f"{err}\n")
+        sys.stderr.write(f"RUNTIME REFUSED {op_id} server refusal: {err}\n")
         return code
 
-    after_table_rev = get_table_revision(table)
+    rcpt = decode_and_verify_receipt(table, op_id, epoch, out)
     delta = {
         "operation_id": op_id,
         "changed_count": len(delta_members),
         "members": delta_members
     }
-    print(f"RECEIPT {op_id} epoch={epoch} before={before_table_rev} after={after_table_rev} outcome=changed delta={json.dumps(delta)}")
+    print(f"RECEIPT {op_id} event={rcpt['event']} epoch={rcpt['epoch']} before={rcpt['before']} after={rcpt['after']} outcome={rcpt['outcome']} delta={json.dumps(delta)}")
     return 0
 
 def cmd_inspect(args):
@@ -715,6 +871,8 @@ def cmd_inspect(args):
             i += 2
         elif args[i] == "--scope" and i + 1 < len(args):
             scope_file = args[i+1]
+            i += 2
+        elif args[i] == "--redis" and i + 1 < len(args):
             i += 2
         else:
             i += 1
@@ -763,13 +921,13 @@ def cmd_help(args):
     print("""nova-sprint card manager — batch operations over arrays of cards
 
 usage:
-  card add --admissions <file> --table <table>
-  card resolve --scope <scope-file> --table <table>
-  card move --events <file> --table <table>
-  card evidence --evidence <file> --table <table>
-  card replace --replacements <file> --table <table>
-  card inspect [--scope <scope-file>] --table <table>
-  check <table>
+  card add --admissions <file> --table <table> [--redis <addr>]
+  card resolve --scope <scope-file> --table <table> [--redis <addr>]
+  card move --events <file> --table <table> [--redis <addr>]
+  card evidence --evidence <file> --table <table> [--redis <addr>]
+  card replace --replacements <file> --table <table> [--redis <addr>]
+  card inspect [--scope <scope-file>] --table <table> [--redis <addr>]
+  check <table> [--redis <addr>]
   help [<verb>]
   version
 
@@ -778,10 +936,41 @@ exit codes: 0 done, 1 refused, 2 usage
     return 0
 
 def main():
-    if len(sys.argv) < 2:
+    raw_args = sys.argv[1:]
+    if not raw_args:
         return cmd_help([])
-    verb = sys.argv[1]
-    args = sys.argv[2:]
+
+    verb = None
+    args = []
+    i = 0
+    while i < len(raw_args):
+        if raw_args[i] == "--redis" and i + 1 < len(raw_args):
+            global REDIS_ADDR
+            REDIS_ADDR = raw_args[i+1]
+            i += 2
+        elif verb is None and not raw_args[i].startswith("-"):
+            verb = raw_args[i]
+            i += 1
+        else:
+            args.append(raw_args[i])
+            i += 1
+
+    if not verb:
+        if "--help" in raw_args or "-h" in raw_args or "help" in raw_args:
+            return cmd_help([])
+        if "--version" in raw_args or "version" in raw_args:
+            print("nova-sprint card manager v1.0.0-draft (ideas#825)")
+            return 0
+        return cmd_help([])
+
+    if verb == "help":
+        return cmd_help(args)
+    elif verb == "version":
+        print("nova-sprint card manager v1.0.0-draft (ideas#825)")
+        return 0
+
+    # For all operational verbs, ensure Redis address is resolved
+    get_redis_addr()
 
     if verb == "add":
         return cmd_add(args)
@@ -797,11 +986,6 @@ def main():
         return cmd_inspect(args)
     elif verb == "check":
         return cmd_check(args)
-    elif verb == "help":
-        return cmd_help(args)
-    elif verb == "version":
-        print("nova-sprint card manager v1.0.0-draft (ideas#825)")
-        return 0
     else:
         sys.stderr.write(f"unknown verb: {verb}\n")
         return 2

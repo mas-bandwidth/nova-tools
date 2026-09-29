@@ -29,7 +29,7 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 # Defaults
 TABLE="cards"
-REDIS="${NOVA_SPRINT_REDIS:-${NOVA_REDIS_ADDR:-127.0.0.1:6379}}"
+REDIS="${NOVA_SPRINT_REDIS:-${NOVA_REDIS_ADDR:-}}"
 STREAMS="stream-alpha,stream-beta,stream-gamma"
 COLUMNS="waiting,ready,working,review,merging,landed,done"
 MEMBER_PREFIX="card:"
@@ -96,6 +96,11 @@ while [ $# -gt 0 ]; do
             echo "error: unknown argument $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [ "$DRY_RUN" -eq 0 ] && [ -z "$REDIS" ]; then
+    echo "error: explicit Redis address required (--redis or NOVA_REDIS_ADDR); ambient autodiscovery disabled for test confinement" >&2
+    exit 2
+fi
 
 # Locate nova-table executable
 if [ -x "$REPO_ROOT/bin/nova-table" ]; then

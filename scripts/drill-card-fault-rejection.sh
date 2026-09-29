@@ -25,7 +25,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 TABLE="drill_fault_$$"
-REDIS="${NOVA_SPRINT_REDIS:-${NOVA_REDIS_ADDR:-127.0.0.1:6379}}"
+REDIS="${NOVA_SPRINT_REDIS:-${NOVA_REDIS_ADDR:-}}"
 STREAM="stream-alpha"
 KEEP=0
 
@@ -63,6 +63,11 @@ while [ $# -gt 0 ]; do
             echo "error: unknown argument $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [ -z "$REDIS" ]; then
+    echo "error: explicit Redis address required (--redis or NOVA_REDIS_ADDR); ambient autodiscovery disabled for test confinement" >&2
+    exit 2
+fi
 
 # Locate nova-table
 if [ -x "$REPO_ROOT/bin/nova-table" ]; then

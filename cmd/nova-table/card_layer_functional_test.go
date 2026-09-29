@@ -3,17 +3,30 @@
 package main
 
 import (
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
+// buildNovaTable compiles nova-table from source into a private temp directory
+// ensuring proven executable provenance for drill tests.
+func buildNovaTable(t *testing.T, repoRoot string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "nova-table")
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/nova-table")
+	cmd.Dir = repoRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to build nova-table: %v\noutput:\n%s", err, string(out))
+	}
+	return binPath
+}
+
 // runDrillsOnStore executes scripts/card_layer_drills_test.sh against the given redis address.
-func runDrillsOnStore(t *testing.T, addr string) {
+func runDrillsOnStore(t *testing.T, addr string, binPath string) {
 	t.Helper()
 
 	wd, err := os.Getwd()
@@ -25,9 +38,16 @@ func runDrillsOnStore(t *testing.T, addr string) {
 
 	cmd := exec.Command("sh", testScript, "--redis", addr)
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(),
+	cleanEnv := []string{}
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "NOVA_SPRINT_REDIS=") && !strings.HasPrefix(env, "NOVA_REDIS_ADDR=") {
+			cleanEnv = append(cleanEnv, env)
+		}
+	}
+	cmd.Env = append(cleanEnv,
 		"NOVA_SPRINT_REDIS="+addr,
 		"NOVA_REDIS_ADDR="+addr,
+		"NOVA_TABLE_BIN="+binPath,
 	)
 
 	out, err := cmd.CombinedOutput()
@@ -38,39 +58,27 @@ func runDrillsOnStore(t *testing.T, addr string) {
 }
 
 // TestCardLayerDrills verifies that seed-card-layer.sh, drill-card-lifecycle.sh,
-// and drill-card-fault-rejection.sh execute cleanly against both a spawned throwaway
-// store and any available live redis server, with graceful offline fallback.
+// and drill-card-fault-rejection.sh execute cleanly against a spawned throwaway store.
+// Strictly confined to test-owned disposable redis; ambient autodiscovery removed.
 func TestCardLayerDrills(t *testing.T) {
 	t.Parallel()
 
-	// 1. Spawned isolated throwaway store (via testredis / firstRunStore)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := filepath.Dir(filepath.Dir(wd))
+	binPath := buildNovaTable(t, repoRoot)
+
 	t.Run("SpawnedStore", func(t *testing.T) {
 		t.Parallel()
 		addr := throwaway(t)
-		runDrillsOnStore(t, addr)
-	})
-
-	// 2. Real / live redis server (e.g. 127.0.0.1:6379 or $NOVA_SPRINT_REDIS)
-	t.Run("LiveStore", func(t *testing.T) {
-		t.Parallel()
-		liveAddr := "127.0.0.1:6379"
-		if env := os.Getenv("NOVA_SPRINT_REDIS"); env != "" {
-			liveAddr = env
-		} else if env := os.Getenv("NOVA_REDIS_ADDR"); env != "" {
-			liveAddr = env
-		}
-
-		conn, err := net.DialTimeout("tcp", liveAddr, 250*time.Millisecond)
-		if err != nil {
-			t.Skipf("live redis server at %s unavailable; skipping live test: %v", liveAddr, err)
-		}
-		_ = conn.Close()
-
+		runDrillsOnStore(t, addr, binPath)
 	})
 }
 
-// runDrillScript runs a drill script against the specified redis address.
-func runDrillScript(t *testing.T, drillName, addr string) string {
+// runDrillScript runs a drill script against the specified redis address using test-owned paths.
+func runDrillScript(t *testing.T, drillName, addr string, binPath string) string {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
@@ -78,13 +86,21 @@ func runDrillScript(t *testing.T, drillName, addr string) string {
 	}
 	repoRoot := filepath.Dir(filepath.Dir(wd))
 	drillScript := filepath.Join(repoRoot, "drills", drillName)
+	tmpArtifactDir := t.TempDir()
 
-	cmd := exec.Command("bash", drillScript)
+	cmd := exec.Command("bash", drillScript, "--redis", addr)
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(),
+	cleanEnv := []string{}
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "NOVA_SPRINT_REDIS=") && !strings.HasPrefix(env, "NOVA_REDIS_ADDR=") {
+			cleanEnv = append(cleanEnv, env)
+		}
+	}
+	cmd.Env = append(cleanEnv,
 		"NOVA_SPRINT_REDIS="+addr,
 		"NOVA_REDIS_ADDR="+addr,
-		"NOVA_TABLE_BIN="+filepath.Join(repoRoot, "bin", "nova-table"),
+		"NOVA_TABLE_BIN="+binPath,
+		"CARD_DRILL_TMPDIR="+tmpArtifactDir,
 	)
 
 	out, err := cmd.CombinedOutput()
@@ -95,17 +111,31 @@ func runDrillScript(t *testing.T, drillName, addr string) string {
 }
 
 // TestDrill1AndDrill2Verification verifies Drill 1 and Drill 2 execution and receipt output.
+// Strictly confined to test-owned disposable redis; ambient autodiscovery removed.
 func TestDrill1AndDrill2Verification(t *testing.T) {
 	t.Parallel()
 
-	testOnStore := func(t *testing.T, addr string) {
-		t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := filepath.Dir(filepath.Dir(wd))
+	binPath := buildNovaTable(t, repoRoot)
+
+	t.Run("SpawnedStore", func(t *testing.T) {
+		t.Parallel()
+		addr := throwaway(t)
+
 		// Drill 1: Admission to landed
-		out1 := runDrillScript(t, "drill-1-admission-to-landed.sh", addr)
+		out1 := runDrillScript(t, "drill-1-admission-to-landed.sh", addr, binPath)
 		for _, want := range []string{
 			"RECEIPT op-drill1-admit",
 			"RECEIPT op-drill1-resolve-1",
 			"RECEIPT op-drill1-landed",
+			"Verified committed receipt for op-drill1-admit in Redis",
+			"Verified committed receipt for op-drill1-resolve-1 in Redis",
+			"Verified committed receipt for op-drill1-landed in Redis",
+			"Both distinct reader records verified with disposition=accepted and ci_status=pass",
 			"result: PASSED",
 		} {
 			if !strings.Contains(out1, want) {
@@ -114,42 +144,21 @@ func TestDrill1AndDrill2Verification(t *testing.T) {
 		}
 
 		// Drill 2: Arrays under real use
-		out2 := runDrillScript(t, "drill-2-arrays-under-real-use.sh", addr)
+		out2 := runDrillScript(t, "drill-2-arrays-under-real-use.sh", addr, binPath)
 		for _, want := range []string{
 			"RECEIPT op-drill2-admit-10",
 			"RECEIPT op-drill2-move-5",
 			"RECEIPT op-drill2-replace-06",
-			"PASSED: command refused with exit code 1",
+			"Verified committed receipt for op-drill2-admit-10 in Redis",
+			"Verified committed receipt for op-drill2-move-5 in Redis",
+			"Verified committed receipt for op-drill2-replace-06 in Redis",
+			"server FCALL runtime refusal: REFUSED REVISION",
+			"store image bit-identical to baseline across all 5 refusal controls",
 			"result: PASSED",
 		} {
 			if !strings.Contains(out2, want) {
 				t.Errorf("Drill 2 missing receipt token %q", want)
 			}
 		}
-	}
-
-	t.Run("SpawnedStore", func(t *testing.T) {
-		t.Parallel()
-		addr := throwaway(t)
-		testOnStore(t, addr)
-	})
-
-	t.Run("LiveStore", func(t *testing.T) {
-		t.Parallel()
-		liveAddr := "127.0.0.1:6379"
-		if env := os.Getenv("NOVA_SPRINT_REDIS"); env != "" {
-			liveAddr = env
-		} else if env := os.Getenv("NOVA_REDIS_ADDR"); env != "" {
-			liveAddr = env
-		}
-
-		conn, err := net.DialTimeout("tcp", liveAddr, 250*time.Millisecond)
-		if err != nil {
-			t.Skipf("live redis server at %s unavailable; skipping live test: %v", liveAddr, err)
-		}
-		_ = conn.Close()
-
-		testOnStore(t, liveAddr)
 	})
 }
-

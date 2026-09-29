@@ -16,7 +16,7 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-REDIS="${NOVA_SPRINT_REDIS:-${NOVA_REDIS_ADDR:-127.0.0.1:6379}}"
+REDIS="${NOVA_SPRINT_REDIS:-${NOVA_REDIS_ADDR:-}}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -28,8 +28,10 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-export NOVA_SPRINT_REDIS="$REDIS"
-export NOVA_REDIS_ADDR="$REDIS"
+if [ -n "$REDIS" ]; then
+    export NOVA_SPRINT_REDIS="$REDIS"
+    export NOVA_REDIS_ADDR="$REDIS"
+fi
 
 fails=0
 n=0

@@ -6,8 +6,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TABLE_NAME="drill2_cards"
-REDIS_ADDR="${NOVA_REDIS_ADDR:-127.0.0.1:6379}"
-MANIFEST_DIR="$BASE_DIR/manifests/drill-2"
+
+REDIS_ADDR="${NOVA_REDIS_ADDR:-${NOVA_SPRINT_REDIS:-}}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --redis)
+      [ $# -ge 2 ] || { echo "error: --redis requires an argument" >&2; exit 2; }
+      REDIS_ADDR="$2"; shift 2 ;;
+    *)
+      shift ;;
+  esac
+done
+
+if [ -z "$REDIS_ADDR" ]; then
+  echo "error: explicit Redis address required (--redis or NOVA_REDIS_ADDR); ambient autodiscovery of 127.0.0.1:6379 disabled for test confinement" >&2
+  exit 2
+fi
+export NOVA_REDIS_ADDR="$REDIS_ADDR"
+export NOVA_SPRINT_REDIS="$REDIS_ADDR"
+
+MANIFEST_DIR="${CARD_DRILL_TMPDIR:-$BASE_DIR}/manifests/drill-2"
 CARD_BIN="$BASE_DIR/scripts/card"
 if [ -n "${NOVA_TABLE_BIN:-}" ]; then
   NOVA_TABLE="$NOVA_TABLE_BIN"
@@ -35,6 +53,66 @@ run_step() {
   echo "+ $*"
   "$@"
   CMD_COUNT=$((CMD_COUNT + 1))
+}
+
+# Helper to verify receipt in Redis
+verify_receipt() {
+  local op_id="$1"
+  local redis_host="${REDIS_ADDR%:*}"
+  local redis_port="${REDIS_ADDR##*:}"
+  local op_stream
+  op_stream=$(redis-cli -h "$redis_host" -p "$redis_port" HGET "table:${TABLE_NAME}:op:${op_id}" stream_id 2>/dev/null || true)
+  if [ -z "$op_stream" ]; then
+    echo "ERROR: committed oprecord missing in Redis for operation $op_id" >&2
+    exit 1
+  fi
+  local rev_after
+  rev_after=$(redis-cli -h "$redis_host" -p "$redis_port" HGET "table:${TABLE_NAME}:op:${op_id}" rev_after 2>/dev/null || true)
+  local table_rev
+  table_rev=$(redis-cli -h "$redis_host" -p "$redis_port" HGET "table:${TABLE_NAME}:revision" n 2>/dev/null || true)
+  if [ "$rev_after" != "$table_rev" ]; then
+    echo "ERROR: oprecord rev_after ($rev_after) != table revision ($table_rev) for $op_id" >&2
+    exit 1
+  fi
+  local card_rcpt
+  card_rcpt=$(redis-cli -h "$redis_host" -p "$redis_port" HGET "receipt:${TABLE_NAME}:${op_id}" verified 2>/dev/null || true)
+  if [ "$card_rcpt" != "yes" ]; then
+    echo "ERROR: receipt:${TABLE_NAME}:${op_id} not retained or verified in Redis" >&2
+    exit 1
+  fi
+  echo "✓ Verified committed receipt for $op_id in Redis (event=$op_stream, rev=$table_rev)"
+}
+
+# Snapshot helper for complete unchanged-image comparison
+snapshot_store() {
+  local redis_host="${REDIS_ADDR%:*}"
+  local redis_port="${REDIS_ADDR##*:}"
+  redis-cli -h "$redis_host" -p "$redis_port" --raw eval '
+    local tname = ARGV[1]
+    local keys = redis.call("KEYS", "table:" .. tname .. ":*")
+    local card_keys = redis.call("KEYS", "card:*")
+    for _, k in ipairs(card_keys) do table.insert(keys, k) end
+    table.sort(keys)
+    local out = {}
+    for _, k in ipairs(keys) do
+      local kt = redis.call("TYPE", k).ok
+      if kt == "hash" then
+        local h = redis.call("HGETALL", k)
+        local parts = {}
+        for i = 1, #h, 2 do
+          table.insert(parts, h[i] .. "=" .. h[i+1])
+        end
+        table.sort(parts)
+        table.insert(out, k .. " [" .. table.concat(parts, ";") .. "]")
+      elseif kt == "zset" then
+        local z = redis.call("ZRANGE", k, 0, -1, "WITHSCORES")
+        table.insert(out, k .. " [zset:" .. table.concat(z, ",") .. "]")
+      elseif kt == "string" then
+        table.insert(out, k .. " [str:" .. redis.call("GET", k) .. "]")
+      end
+    end
+    return table.concat(out, "\n")
+  ' 0 "$TABLE_NAME"
 }
 
 # 1. Setup isolated table
@@ -78,6 +156,7 @@ EOF
 
 run_step "Admit 10 cards in ONE atomic batch call" \
   "$CARD_BIN" add --admissions "$MANIFEST_DIR/admissions-10.json" --table "$TABLE_NAME"
+verify_receipt "op-drill2-admit-10"
 T1_ADMIT=$(date +%s)
 ELAPSED_ADMIT=$((T1_ADMIT - T0_ADMIT))
 
@@ -99,6 +178,7 @@ EOF
 
 run_step "Resolve 10 cards: dependencies met -> move waiting to ready" \
   "$CARD_BIN" resolve --scope "$MANIFEST_DIR/resolve-scope-10.json" --table "$TABLE_NAME"
+verify_receipt "op-drill2-resolve-10"
 
 "$NOVA_TABLE" render "$TABLE_NAME" --redis "$REDIS_ADDR"
 
@@ -128,6 +208,7 @@ EOF
 
 run_step "Perform 5 changes in ONE event array and ONE command" \
   "$CARD_BIN" move --events "$MANIFEST_DIR/move-5-cards.json" --table "$TABLE_NAME"
+verify_receipt "op-drill2-move-5"
 T1_MOVE=$(date +%s)
 ELAPSED_MOVE=$((T1_MOVE - T0_MOVE))
 
@@ -174,6 +255,7 @@ EOF
 
 run_step "Execute replacement pair: card-06 -> card-06-v2 in one batch" \
   "$CARD_BIN" replace --replacements "$MANIFEST_DIR/replacement.json" --table "$TABLE_NAME"
+verify_receipt "op-drill2-replace-06"
 T1_REPLACE=$(date +%s)
 ELAPSED_REPLACE=$((T1_REPLACE - T0_REPLACE))
 
@@ -187,7 +269,9 @@ run_step "Inspect replaced card and its successor" \
 echo ""
 echo "=== EXERCISING REFUSAL GATES (ALL MUST REFUSE AND LEAVE STORE UNCHANGED) ==="
 
-# 6a. Stale table revision refusal
+BASELINE_IMAGE=$(snapshot_store)
+
+# 6a. Stale table revision refusal (Actual Server Runtime FCALL Refusal Path)
 cat > "$MANIFEST_DIR/refuse-stale-table-rev.json" <<EOF
 {
   "schema": 1,
@@ -202,15 +286,30 @@ cat > "$MANIFEST_DIR/refuse-stale-table-rev.json" <<EOF
 EOF
 
 echo ""
-echo "--- Testing Refusal: Stale Table Revision ---"
-if "$CARD_BIN" move --events "$MANIFEST_DIR/refuse-stale-table-rev.json" --table "$TABLE_NAME"; then
-  echo "ERROR: expected stale table revision refusal!" >&2
+echo "--- Testing Runtime Server Refusal: Stale Table Revision ---"
+set +e
+refuse_out=$("$CARD_BIN" move --events "$MANIFEST_DIR/refuse-stale-table-rev.json" --table "$TABLE_NAME" 2>&1)
+refuse_code=$?
+set -e
+if [ "$refuse_code" -ne 1 ]; then
+  echo "ERROR: expected exit code 1 from server refusal, got $refuse_code" >&2
   exit 1
-else
-  echo "PASSED: command refused with exit code $?"
 fi
+if [[ "$refuse_out" != *"RUNTIME REFUSED"* ]] || [[ "$refuse_out" != *"table revision mismatch"* ]]; then
+  echo "ERROR: expected server runtime refusal tokens, got:\n$refuse_out" >&2
+  exit 1
+fi
+echo "$refuse_out"
+echo "PASSED: command refused with exit code 1 (server FCALL runtime refusal: REFUSED REVISION / table revision mismatch)"
 
-# 6b. Conflicting / duplicate events for one card in same batch
+IMAGE_AFTER_6A=$(snapshot_store)
+if [ "$IMAGE_AFTER_6A" != "$BASELINE_IMAGE" ]; then
+  echo "ERROR: store image changed after runtime refusal 6a!" >&2
+  exit 1
+fi
+echo "PASSED: store image bit-identical to baseline"
+
+# 6b. Conflicting / duplicate events for one card in same batch (Preflight Refusal)
 cat > "$MANIFEST_DIR/refuse-duplicate-event.json" <<EOF
 {
   "schema": 1,
@@ -225,15 +324,30 @@ cat > "$MANIFEST_DIR/refuse-duplicate-event.json" <<EOF
 EOF
 
 echo ""
-echo "--- Testing Refusal: Duplicate Card Events in Batch ---"
-if "$CARD_BIN" move --events "$MANIFEST_DIR/refuse-duplicate-event.json" --table "$TABLE_NAME"; then
-  echo "ERROR: expected duplicate event refusal!" >&2
+echo "--- Testing Preflight Refusal: Duplicate Card Events in Batch ---"
+set +e
+refuse_out=$("$CARD_BIN" move --events "$MANIFEST_DIR/refuse-duplicate-event.json" --table "$TABLE_NAME" 2>&1)
+refuse_code=$?
+set -e
+if [ "$refuse_code" -ne 1 ]; then
+  echo "ERROR: expected exit code 1 from preflight refusal, got $refuse_code" >&2
   exit 1
-else
-  echo "PASSED: command refused with exit code $?"
 fi
+if [[ "$refuse_out" != *"PREFLIGHT REFUSED"* ]] || [[ "$refuse_out" != *"duplicate_card_events_in_batch"* ]]; then
+  echo "ERROR: expected preflight refusal tokens, got:\n$refuse_out" >&2
+  exit 1
+fi
+echo "$refuse_out"
+echo "PASSED: command refused with exit code 1 (preflight validation refusal)"
 
-# 6c. Terminal card replacement refusal
+IMAGE_AFTER_6B=$(snapshot_store)
+if [ "$IMAGE_AFTER_6B" != "$BASELINE_IMAGE" ]; then
+  echo "ERROR: store image changed after preflight refusal 6b!" >&2
+  exit 1
+fi
+echo "PASSED: store image bit-identical to baseline"
+
+# 6c. Terminal card replacement refusal (Preflight Refusal)
 cat > "$MANIFEST_DIR/refuse-terminal-replace.json" <<EOF
 {
   "schema": 1,
@@ -252,15 +366,30 @@ cat > "$MANIFEST_DIR/refuse-terminal-replace.json" <<EOF
 EOF
 
 echo ""
-echo "--- Testing Refusal: Terminal Card Cannot Be Replaced ---"
-if "$CARD_BIN" replace --replacements "$MANIFEST_DIR/refuse-terminal-replace.json" --table "$TABLE_NAME"; then
-  echo "ERROR: expected terminal replacement refusal!" >&2
+echo "--- Testing Preflight Refusal: Terminal Card Cannot Be Replaced ---"
+set +e
+refuse_out=$("$CARD_BIN" replace --replacements "$MANIFEST_DIR/refuse-terminal-replace.json" --table "$TABLE_NAME" 2>&1)
+refuse_code=$?
+set -e
+if [ "$refuse_code" -ne 1 ]; then
+  echo "ERROR: expected exit code 1 from preflight refusal, got $refuse_code" >&2
   exit 1
-else
-  echo "PASSED: command refused with exit code $?"
 fi
+if [[ "$refuse_out" != *"PREFLIGHT REFUSED"* ]] || [[ "$refuse_out" != *"terminal_card_cannot_be_replaced"* ]]; then
+  echo "ERROR: expected preflight refusal tokens, got:\n$refuse_out" >&2
+  exit 1
+fi
+echo "$refuse_out"
+echo "PASSED: command refused with exit code 1 (preflight validation refusal)"
 
-# 6d. Duplicate card admission in manifest
+IMAGE_AFTER_6C=$(snapshot_store)
+if [ "$IMAGE_AFTER_6C" != "$BASELINE_IMAGE" ]; then
+  echo "ERROR: store image changed after preflight refusal 6c!" >&2
+  exit 1
+fi
+echo "PASSED: store image bit-identical to baseline"
+
+# 6d. Duplicate card admission in manifest (Preflight Refusal)
 cat > "$MANIFEST_DIR/refuse-duplicate-admit.json" <<EOF
 {
   "schema": 1,
@@ -275,13 +404,76 @@ cat > "$MANIFEST_DIR/refuse-duplicate-admit.json" <<EOF
 EOF
 
 echo ""
-echo "--- Testing Refusal: Duplicate Card ID in Admissions ---"
-if "$CARD_BIN" add --admissions "$MANIFEST_DIR/refuse-duplicate-admit.json" --table "$TABLE_NAME"; then
-  echo "ERROR: expected duplicate admission refusal!" >&2
+echo "--- Testing Preflight Refusal: Duplicate Card ID in Admissions ---"
+set +e
+refuse_out=$("$CARD_BIN" add --admissions "$MANIFEST_DIR/refuse-duplicate-admit.json" --table "$TABLE_NAME" 2>&1)
+refuse_code=$?
+set -e
+if [ "$refuse_code" -ne 1 ]; then
+  echo "ERROR: expected exit code 1 from preflight refusal, got $refuse_code" >&2
   exit 1
-else
-  echo "PASSED: command refused with exit code $?"
 fi
+if [[ "$refuse_out" != *"PREFLIGHT REFUSED"* ]] || [[ "$refuse_out" != *"duplicate_card_in_manifest"* ]]; then
+  echo "ERROR: expected preflight refusal tokens, got:\n$refuse_out" >&2
+  exit 1
+fi
+echo "$refuse_out"
+echo "PASSED: command refused with exit code 1 (preflight validation refusal)"
+
+IMAGE_AFTER_6D=$(snapshot_store)
+if [ "$IMAGE_AFTER_6D" != "$BASELINE_IMAGE" ]; then
+  echo "ERROR: store image changed after preflight refusal 6d!" >&2
+  exit 1
+fi
+echo "PASSED: store image bit-identical to baseline"
+
+# 6e. Direct wire batch runtime rejection (Server Runtime Refusal: member expect.revision mismatch)
+cat > "$MANIFEST_DIR/refuse-server-expect-rev.json" <<EOF
+{
+  "schema": 1,
+  "table": "$TABLE_NAME",
+  "epoch": "0",
+  "expected_table_revision": "6",
+  "operation_id": "op-refuse-server-expect-rev",
+  "members": [
+    {
+      "id": "card-07",
+      "expect": {
+        "revision": "999",
+        "place": {"row": "stream-2", "col": "ready"}
+      },
+      "move": {
+        "row": "stream-2",
+        "col": "working"
+      }
+    }
+  ]
+}
+EOF
+
+echo ""
+echo "--- Testing Runtime Server Refusal: Member Expect Revision Mismatch ---"
+set +e
+refuse_out=$("$NOVA_TABLE" batch "$MANIFEST_DIR/refuse-server-expect-rev.json" --redis "$REDIS_ADDR" 2>&1)
+refuse_code=$?
+set -e
+if [ "$refuse_code" -ne 1 ]; then
+  echo "ERROR: expected exit code 1 from server refusal, got $refuse_code" >&2
+  exit 1
+fi
+if [[ "$refuse_out" != *"member revision mismatch"* ]]; then
+  echo "ERROR: expected member revision mismatch in stderr, got:\n$refuse_out" >&2
+  exit 1
+fi
+echo "$refuse_out"
+echo "PASSED: command refused with exit code 1 (server FCALL runtime refusal: member revision mismatch 999)"
+
+IMAGE_AFTER_6E=$(snapshot_store)
+if [ "$IMAGE_AFTER_6E" != "$BASELINE_IMAGE" ]; then
+  echo "ERROR: store image changed after runtime refusal 6e!" >&2
+  exit 1
+fi
+echo "PASSED: store image bit-identical to baseline across all 5 refusal controls"
 
 # 7. Check table consistency after all operations
 run_step "Check table structural consistency" \
@@ -298,8 +490,9 @@ cat <<EOF
 Drill 2 | date/time: $(date -u +"%Y-%m-%dT%H:%M:%SZ") | result: PASSED
 10-card admission: 1 command(s) / ${ELAPSED_ADMIT} s | changed count: 10 (target 10)
 5-card move: 1 command(s) / ${ELAPSED_MOVE} s | changed count: 5 (target 5)
-five named changes in one command: yes | receipt/table agree: yes
+five named changes in one command: yes | receipt/table agree: yes (verified against Redis oprecords)
 replacement: 1 command(s) / ${ELAPSED_REPLACE} s | old history + successor verified: yes
+refusal negative controls: 5 controls passed | unchanged-image comparison: verified bit-identical
 setup/prep/lookups/recovery: 5 commands / 0 s | cleanup used: no / 0 s
 total commands: $CMD_COUNT | total elapsed: ${ELAPSED} s
 watched table refreshed at 1 s: verified | findings/repeats: clean
