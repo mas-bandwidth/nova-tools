@@ -5,10 +5,12 @@
 // command line of one TLC run and its bounded execution (run.go); the reading
 // of TLC's exit status and output into pass or fail, the statistics and the
 // violated invariant, action or temporal property (outcome.go); the case plan
-// tla/CASES.tsv and its refusals (cases.go); the run records tla/RUNS.tsv
-// (records.go); the inputs a case reads and the fingerprint a record names
-// (inputs.go, with the runner's own files in fingerprint.go); and the suite that runs a selection of cases under one
-// budget and writes the records (suite.go).
+// tla/CASES.tsv into the cases a run is judged by, and its refusals (plan.go);
+// the plan's checks against the tree and the choice of a run's cases (cases.go);
+// the run records tla/RUNS.tsv (records.go); the inputs a case reads and the
+// fingerprint a record names (inputs.go, with the runner's own files in
+// fingerprint.go); and the suite that runs a selection of cases under one budget
+// and writes the records (suite.go).
 //
 // WHAT IT NEVER DOES. It downloads nothing, runs no more than two TLC workers
 // per case, and never runs TLC beside the sources: every run happens in a
@@ -19,7 +21,8 @@
 // WHAT A FINGERPRINT COVERS. One case's inputs and nothing else: its
 // configuration, its module and the modules that one extends or instantiates,
 // its own row of the plan, and the runner's result files (the ones that decide how a
-// result is produced and read; see fingerprint.go). Editing one model leaves the
+// result is produced and read, and how a plan row is read into the case a run is
+// judged by; see fingerprint.go). Editing one model leaves the
 // records of the cases that do not read it as they are.
 //
 // WHY THE SOURCES ARE EMBEDDED. The runner's result files are part of every

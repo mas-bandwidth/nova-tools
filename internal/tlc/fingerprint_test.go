@@ -1,6 +1,9 @@
 package tlc
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
@@ -137,5 +140,50 @@ func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 	}
 	if err := CheckRunner(root); err != nil {
 		t.Fatalf("an edited bookkeeping file: %v", err)
+	}
+}
+
+// The file that turns a row of CASES.tsv into a Case (its columns, its defaults,
+// what it refuses) decides what a run is judged by, so it is a result file: an
+// edit to it stales every record. The test finds the declarations by parsing the
+// package, so moving them to a bookkeeping file fails it.
+func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	where := map[string]string{}
+	for _, pkg := range pkgs {
+		for name, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				switch d := decl.(type) {
+				case *ast.FuncDecl:
+					if d.Recv == nil && d.Name.Name == "ParseCases" {
+						where["ParseCases"] = name
+					}
+					if d.Recv != nil && d.Name.Name == "check" {
+						where["Case.check"] = name
+					}
+				case *ast.GenDecl:
+					for _, spec := range d.Specs {
+						if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == "Case" {
+							where["Case"] = name
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, what := range []string{"ParseCases", "Case", "Case.check"} {
+		file, ok := where[what]
+		if !ok {
+			t.Errorf("%s is not declared in the package", what)
+			continue
+		}
+		if !slices.Contains(ResultFiles, file) {
+			t.Errorf("%s is declared in %s, which is not a result file: it reads a plan row into the case a run is judged by", what, file)
+		}
 	}
 }

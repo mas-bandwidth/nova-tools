@@ -11,17 +11,19 @@ import (
 // The runner's files that decide how a result is produced and read: the command
 // line of a TLC run, its flags, its workers and its timeouts (run.go, suite.go)
 // and the reading of TLC's exit status and output into pass or fail
-// (outcome.go). A change to one of them can change what a record means, so they
-// are inputs of every case's fingerprint. go:embed cannot take a list, so the
-// directive below repeats ResultFiles and InputListFiles;
+// (outcome.go), and the reading of a row of the case plan into the case a run is
+// judged by (plan.go: the expected outcome, the property and the deadlock policy
+// that outcome.go and suite.go apply). A change to one of them can change what a
+// record means, so they are inputs of every case's fingerprint. go:embed cannot
+// take a list, so the directive below repeats ResultFiles and InputListFiles;
 // TestEmbeddedSourcesAreTheCheckedFiles holds them together.
 //
-//go:embed outcome.go run.go suite.go inputs.go
+//go:embed outcome.go plan.go run.go suite.go inputs.go
 var sources embed.FS
 
 // ResultFiles are the runner's files that are inputs of every fingerprint, by
 // name in RunnerDir.
-var ResultFiles = []string{"outcome.go", "run.go", "suite.go"}
+var ResultFiles = []string{"outcome.go", "plan.go", "run.go", "suite.go"}
 
 // InputListFiles are the bookkeeping files that decide which files a case's
 // fingerprint covers (the parser of module references and the list of TLC's
@@ -32,9 +34,10 @@ var ResultFiles = []string{"outcome.go", "run.go", "suite.go"}
 var InputListFiles = []string{"inputs.go"}
 
 // BookkeepingFiles are the runner's other non-test files: the description
-// (doc.go), the reading of the case plan (cases.go), the records (records.go),
-// the jar and helper lookup (jar.go), the listing of a case's inputs and the
-// list of TLC's standard modules (inputs.go) and this file. They decide no
+// (doc.go), the plan's checks against the tree and the choice of a run's cases
+// (cases.go), the records (records.go), the jar and helper lookup (jar.go), the
+// listing of a case's inputs and the list of TLC's standard modules (inputs.go)
+// and this file. They decide no
 // result, so a change to one of them stales no record. Every non-test file of
 // the package is in exactly one of ResultFiles and BookkeepingFiles, so a new
 // file cannot be left unclassified: TestEveryRunnerFileIsClassified.
