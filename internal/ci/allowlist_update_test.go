@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -85,58 +86,126 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 // one, each read named by its path relative to root.
 func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[string]bool, []string) {
 	t.Helper()
-	pkgs := map[string][]string{}
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	var tree *repoTreeIndex
+	if root == repoRoot(t) {
+		tree = repoTree(t)
+	} else {
+		var err error
+		tree, err = loadRepoTree(root)
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "testdata", "vendor", "node_modules":
-				return filepath.SkipDir
-			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if isDeprecatedDir(root, p) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasSuffix(p, ".go") {
-			pkgs[filepath.Dir(p)] = append(pkgs[filepath.Dir(p)], p)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	loaded := map[string]bool{}
-	var raw []string
-	for _, paths := range pkgs {
-		srcs, names := map[string][]byte{}, false
-		for _, p := range paths {
-			src, err := os.ReadFile(p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			rel, err := filepath.Rel(root, p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			srcs[filepath.ToSlash(rel)] = src
-			for name := range lists {
-				if strings.Contains(string(src), name) {
-					names = true
-				}
-			}
-		}
-		if !names {
+	pkgs := map[string][]*treeFile{}
+	for _, f := range tree.Files {
+		if !f.Go || f.AST == nil {
 			continue
 		}
-		l, r := helperReads(t, srcs, lists)
+		if f.HasDirNamed(".git") || f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") || f.InDir("deprecated") {
+			continue
+		}
+		dir := filepath.Dir(f.Rel)
+		pkgs[dir] = append(pkgs[dir], f)
+	}
+
+	listBytes := make([][]byte, 0, len(lists))
+	for name := range lists {
+		listBytes = append(listBytes, []byte(name))
+	}
+
+	loaded := map[string]bool{}
+	var raw []string
+	for _, files := range pkgs {
+		hasName := false
+		for _, f := range files {
+			for _, lb := range listBytes {
+				if bytes.Contains(f.Src, lb) {
+					hasName = true
+					break
+				}
+			}
+			if hasName {
+				break
+			}
+		}
+		if !hasName {
+			continue
+		}
+		l, r := helperReadsTree(t, tree.Root, tree.FSet, files, lists)
 		for name := range l {
 			loaded[name] = true
 		}
 		raw = append(raw, r...)
+	}
+	sort.Strings(raw)
+	return loaded, raw
+}
+
+func helperReadsTree(t *testing.T, root string, fset *token.FileSet, files []*treeFile, lists map[string]bool) (map[string]bool, []string) {
+	t.Helper()
+	consts := map[string]string{}
+	funcs := map[string]*ast.FuncDecl{}
+	for _, f := range files {
+		for _, decl := range f.AST.Decls {
+			switch d := decl.(type) {
+			case *ast.GenDecl:
+				if d.Tok != token.CONST {
+					continue
+				}
+				for _, spec := range d.Specs {
+					vs := spec.(*ast.ValueSpec)
+					for i, name := range vs.Names {
+						if i < len(vs.Values) {
+							if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+								if v, err := strconv.Unquote(lit.Value); err == nil {
+									consts[name.Name] = v
+								}
+							}
+						}
+					}
+				}
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Body != nil {
+					funcs[d.Name.Name] = d
+				}
+			}
+		}
+	}
+
+	r := listResolver{lists: lists, consts: consts, funcs: funcs}
+	loaded := map[string]bool{}
+	var raw []string
+	for _, fn := range funcs {
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			switch callName(call.Fun) {
+			case "loadAllowlist":
+				if len(call.Args) > 1 {
+					for _, name := range r.resolve(fn, call.Args[1], 0) {
+						loaded[name] = true
+					}
+				}
+			case "allowlist.Load", "allowlist.Parse":
+				if len(call.Args) > 0 {
+					for _, name := range r.resolve(fn, call.Args[0], 0) {
+						loaded[name] = true
+					}
+				}
+			case "os.ReadFile", "os.Open", "readFile":
+				arg := call.Args[len(call.Args)-1]
+				for _, name := range r.resolve(fn, arg, 0) {
+					pos := fset.Position(call.Pos())
+					if rel, err := filepath.Rel(root, pos.Filename); err == nil {
+						pos.Filename = filepath.ToSlash(rel)
+					}
+					raw = append(raw, fmt.Sprintf("%s: %s(%s)", pos, callName(call.Fun), name))
+				}
+			}
+			return true
+		})
 	}
 	sort.Strings(raw)
 	return loaded, raw
@@ -321,4 +390,37 @@ func (r listResolver) local(fn *ast.FuncDecl, name string, depth int) []string {
 		})
 	}
 	return out
+}
+
+// TestTreeHelperReadsExaminesNestedDeprecatedDirectories verifies that
+// treeHelperReads does not exclude nested directories named "deprecated"
+// (like cmd/live/deprecated/), only the root deprecated/ directory.
+func TestTreeHelperReadsExaminesNestedDeprecatedDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for rel, body := range map[string]string{
+		"cmd/live/deprecated/nested.go": "package nested\n\nimport \"os\"\n\nfunc f() {\n\tos.ReadFile(\"test.allow\")\n}\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lists := map[string]bool{"test.allow": true}
+	_, raw := treeHelperReads(t, root, lists)
+	found := false
+	for _, r := range raw {
+		if strings.Contains(r, "cmd/live/deprecated/nested.go") && strings.Contains(r, "test.allow") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("raw reads = %v; want raw read in cmd/live/deprecated/nested.go to be examined", raw)
+	}
 }
