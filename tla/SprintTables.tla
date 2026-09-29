@@ -109,12 +109,10 @@
 \*   The Go as audited, each caught by OwnersRule:
 \*   "noacceptnote"     two readers ok is a happened note only (gap 2)
 \*   "noreturnnote"     return opens no judgment (gap 3)
-\*   "nofleetnote"      no member up opens no judgment (gap 6)
+\*   "nofleetnote"      the tick never writes the no-member judgment (gap 6)
 \*   "ackstrands"       ack writes nothing when it strands its card (gap 4)
 \*   "auditack"         ack writes "stranded" only for a primary in review,
 \*                      as the audit proposes
-\*   "clearfleet"       clear empties the fleet's judgment while no member is
-\*                      up
 \*   "addlanded"        add into a landed stream leaves it landed
 \*                                                   (StreamStateIsTrue)
 
@@ -251,6 +249,7 @@ TickResumable(s) ==
 TickMove(p) ==
   \/ InWork(p, "waiting") /\ p \notin Sentinels /\ NeedsMet(p)
   \/ InWork(p, "ready") /\ Up # {}
+  \/ InWork(p, "ready") /\ FleetNote \notin open /\ ~Br("nofleetnote")
   \/ InWork(p, "review") /\ ~Failed(p) /\ \A c \in LiveReads : c[2] # p
   \/ InWork(p, "merging") /\ TickResumable(StreamOf[p])
 JudgedIn(p, opn) ==
@@ -509,10 +508,11 @@ Ask(p) ==
                  op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks>>
 
 \* ask --another: the coordinator's judgment, free (F1): one more reader for
-\* a primary in review (under the judged-coordinator bound, only for a card a
-\* judgment names). It answers a broken read or reads exhausted.
+\* a primary in review already asked at its attempt (refused before the first
+\* ask); under the judged-coordinator bound, only for a card a judgment
+\* names. It answers a broken read or reads exhausted.
 AskAnother(p, r) ==
-  /\ Fenced /\ InWork(p, "review") /\ Judged(p)
+  /\ Fenced /\ InWork(p, "review") /\ Judged(p) /\ AskedNow(p)
   /\ RC(p, attempt[p], r) \notin made
   /\ readers' = [readers EXCEPT ![r]["asked"] = @ \cup {RC(p, attempt[p], r)}]
   /\ made' = made \cup {RC(p, attempt[p], r)}
@@ -767,14 +767,13 @@ FleetDown(m) ==
              /\ UNCHANGED <<gone, op, crashed, open>>
         ELSE IF cs = {}
         THEN /\ Fenced
-             /\ open' = IF Br("nofleetnote") THEN open ELSE open \cup {FleetNote}
-             /\ UNCHANGED <<fleet, gen, gone, op, crashed>>
+             /\ UNCHANGED <<fleet, gen, gone, op, crashed, open>>
         ELSE /\ Free
              /\ fleet' = [fleet EXCEPT ![m]["ready"] = {}, ![m]["working"] = {}]
              /\ gen' = Bump(cs)
              /\ gone' = IF Br("withdrawlost") THEN gone ELSE gone \cup cs
              /\ Begin(Op("withdraw", {<<c[2], "working", "ready">> : c \in cs},
-                         {}, {}, IF Br("nofleetnote") THEN {} ELSE {FleetNote}, {}))
+                         {}, {}, {}, {}))
              /\ UNCHANGED open
   /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, score, attempt,
                  head, pair, held, fin, result, made, twice, cause, need,
@@ -814,6 +813,20 @@ Level(a, b) ==
                  need, open, op, crashed, bad, returnsN, ranks, waived, released,
                  machine, stops, redstop, epoch, rheld, stale, acks>>
 
+\* The no-member judgment is a condition the tick (or the first verb) keeps
+\* true: a primary ready, or a work card withdrawn, and no member up.
+NoMemberCond ==
+  /\ Up = {}
+  /\ \/ \E p \in Primaries : Placedp(p) /\ InWork(p, "ready")
+     \/ \E c \in gone \cap WorkCards : result[c] = None /\ Placedp(c[2])
+TickNoMember ==
+  /\ Fenced /\ NoMemberCond /\ FleetNote \notin open /\ ~Br("nofleetnote")
+  /\ open' = open \cup {FleetNote}
+  /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
+                 score, attempt, head, pair, gen, held, fin, result, made, gone,
+                 twice, cause, need, op, crashed, bad, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks>>
+
 \* THE MACHINE: the verbs start and stop. While stopped the tick does
 \* nothing; every verb and every outside actor still acts.
 MachineStart ==
@@ -834,9 +847,8 @@ MachineStop ==
 
 \* clear: stops the machine and advances one epoch; every table is empty at
 \* the new epoch. The outside actors keep what they hold (with its epoch).
-\* The members' status survives, and with it the fleet's judgment when no
-\* member is up (a finding: without it the new epoch's ready primaries are
-\* silent; see "clearfleet").
+\* The members' status survives; the fleet's judgment is the tick's
+\* condition and is written again at the new epoch when it holds.
 Clear ==
   /\ Free /\ epoch < MaxEpoch
   /\ epoch' = epoch + 1 /\ machine' = "stopped"
@@ -851,8 +863,7 @@ Clear ==
   /\ fin' = [c \in WorkCards |-> 0] /\ result' = [c \in Cards |-> None]
   /\ made' = {} /\ gone' = {} /\ twice' = FALSE
   /\ cause' = [p \in Primaries |-> None] /\ need' = [p \in Primaries |-> None]
-  /\ open' = IF Up = {} /\ ~Br("clearfleet") THEN {FleetNote} ELSE {}
-  /\ redstop' = {}
+  /\ open' = {} /\ redstop' = {}
   /\ waived' = [p \in Primaries |-> {}] /\ released' = {}
   /\ returnsN' = [p \in Primaries |-> 0] /\ ranks' = 0
   /\ UNCHANGED <<mstatus, held, op, crashed, bad, stops, rheld, stale, acks>>
@@ -871,20 +882,21 @@ CiRed(p) ==
 \* ack <note> --reason (F3): the coordinator looked and nothing is to be done;
 \* the judgment closes with the reason. Refused for a stopped stream's
 \* judgment, a reached sentinel's and the fleet's (they close only when their
-\* cause does). When the ack leaves its card held by no actor, no tick move
-\* and no other judgment, the ack writes a "stranded" judgment (audit gap 4,
-\* generalised: see "auditack").
+\* cause does). ACK CANNOT SILENCE A CARD: refused when it is the last open
+\* judgment on a card that would then satisfy no clause of the owner's rule
+\* (the refusal names the decisions that move the card).
+Silences(n) ==
+  /\ n.p # None /\ Placedp(n.p) /\ ~InWork(n.p, "landed")
+  /\ ~RuleIn(n.p, open \ {n}, Cardinality(Primaries))
 Ack(n) ==
   /\ Fenced /\ n \in open /\ acks < MaxAcks
   /\ n.t \notin {"stopped", "reached", "nomember"} \/ (Br("ackstopped") /\ n.t = "stopped")
+  /\ ~Silences(n) \/ Br("ackstrands") \/ Br("auditack")
   /\ acks' = acks + 1
   /\ LET opn == open \ {n}
          p == n.p
-         strands == CASE Br("ackstrands") -> FALSE
-                      [] Br("auditack")   -> InWork(p, "review") /\ OutOf(p) = {}
-                                             /\ ~Acceptable(p) /\ ~\E x \in opn : x.p = p
-                      [] OTHER            -> Placedp(p) /\ ~InWork(p, "landed")
-                                             /\ ~RuleIn(p, opn, Cardinality(Primaries))
+         strands == Br("auditack") /\ InWork(p, "review") /\ OutOf(p) = {}
+                    /\ ~Acceptable(p) /\ ~\E x \in opn : x.p = p
      IN open' = opn \cup (IF p # None /\ strands THEN {Note("stranded", p)} ELSE {})
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
@@ -970,7 +982,7 @@ Next ==
        \/ \E h \in rheld[r] : ReadRefused(r, h) \/ \E v \in {"ok", "broken"} : Read(r, h, v)
   \/ \E s \in Streams : MergeStep(s) \/ Resume(s) \/ TickResume(s)
   \/ \E a, b \in Members : Level(a, b)
-  \/ MachineStart \/ MachineStop \/ Clear
+  \/ MachineStart \/ MachineStop \/ Clear \/ TickNoMember
   \/ Continue \/ Crash \/ Repair
 
 Spec == Init /\ [][Next]_vars
@@ -998,6 +1010,7 @@ Fairness ==
   /\ \A s \in Streams : WF_vars(TickResume(s))
   /\ WF_vars(\E a, b \in Members : Level(a, b))
   /\ WF_vars(MachineStart)
+  /\ WF_vars(TickNoMember)
   /\ \A n \in Notes : WF_vars(Answer(n))
 
 FairSpec == Spec /\ Fairness
@@ -1151,6 +1164,9 @@ MergeInWorkOrder ==
 
 \* D1. A step cut short is finished.
 CutRepaired == (op # NoOp) ~> (op = NoOp)
+
+\* The no-member condition is eventually judged (or clears).
+NoMemberIsJudged == NoMemberCond ~> (FleetNote \in open \/ ~NoMemberCond)
 
 \* Every primary that is not dropped eventually lands.
 EveryPrimaryEnds ==
