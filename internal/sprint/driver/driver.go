@@ -260,7 +260,8 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	if c.Start {
 		d.run(false, "start", "--limit", strconv.Itoa(c.StartLimit))
 	}
-	// Workers: finish what they took last tick, then take.
+	// Workers: finish what they took last tick, then take the oldest ready
+	// cards; every card is named <card>@<gen>, the generation from the queue.
 	for _, m := range members {
 		if !next[m] {
 			continue
@@ -269,13 +270,16 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		if !d.read(&q, "queue", "--as", m) {
 			continue
 		}
-		var good []string
+		var good, ready []string
 		bad := map[string][]string{}
 		for _, card := range q.Cards {
+			word := card.ID + "@" + strconv.Itoa(card.Gen)
+			if card.Col == "ready" && len(ready) < c.TakeLimit {
+				ready = append(ready, word)
+			}
 			if card.Col != "working" {
 				continue
 			}
-			word := card.ID + "@" + strconv.Itoa(card.Gen)
 			if ok, report := d.Facts.Work(card.ID); ok {
 				good = append(good, word)
 			} else {
@@ -288,7 +292,9 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		for _, report := range sortedKeys(bad) {
 			d.run(false, append([]string{"finish", "--as", m, "--failed", "--report", report}, bad[report]...)...)
 		}
-		d.run(false, "take", "--as", m, "--limit", strconv.Itoa(c.TakeLimit))
+		if len(ready) > 0 {
+			d.run(false, append([]string{"take", "--as", m}, ready...)...)
+		}
 	}
 	d.run(false, "ask")
 	// Readers report what is asked of them.

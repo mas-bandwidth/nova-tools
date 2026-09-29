@@ -110,7 +110,11 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	for _, x := range cards {
 		l := fmt.Sprintf("%s %s:%s:%s", x.ID, x.Table, x.Row, x.Col)
 		if x.Gen > 0 {
-			l += " gen=" + strconv.Itoa(x.Gen) + " take: " + x.ID + "@" + strconv.Itoa(x.Gen)
+			next := "take"
+			if x.Col == sprint.Working {
+				next = "finish"
+			}
+			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen)
 		}
 		lines = append(lines, l)
 	}

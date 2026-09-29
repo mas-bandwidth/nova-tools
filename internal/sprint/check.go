@@ -101,6 +101,12 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	}
 	if quiet {
 		out = append(out, diff(2, working, dealt, "work working", "fleet ready+working")...)
+		// A primary whose card was withdrawn is ready, not working.
+		for _, c := range s.Fleet.Column(Withdrawn) {
+			if st := s.StateOf(c.F("primary")); st != Ready {
+				out = append(out, Violation{2, fmt.Sprintf("%s is withdrawn and its primary %s is %s, not ready", c.ID, c.F("primary"), orDash(st))})
+			}
+		}
 	}
 	// 3. Read cards in asked or reading belong to primaries in review.
 	for _, c := range s.Readers.Column(Asked, Reading) {

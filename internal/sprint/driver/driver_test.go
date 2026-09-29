@@ -49,7 +49,7 @@ const done = `{"landed":2,"all":2,"summary":"2/2 100.0% -> ETA","tables":{},"str
 func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	t.Parallel()
 	w := &world{where: []string{busy, busy, done}, queue: map[string]string{
-		"m1":       `{"cards":[{"id":"s1-1.w2","col":"working","gen":3}]}`,
+		"m1":       `{"cards":[{"id":"s1-1.w2","col":"working","gen":3},{"id":"s1-4.w1","col":"ready","gen":2}]}`,
 		"reader-a": `{"cards":[{"id":"s1-2.r1.reader-a","col":"asked"}]}`,
 		"s1":       `{"cards":[{"id":"s1-3","col":"queued"}]}`,
 	}, inbox: `{"groups":[{"kind":"judgment","type":"work came back failed","stream":"s1","count":2,"oldest":"2030-01-02T03:00:00Z"}]}`}
@@ -69,14 +69,14 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 		lines = append(lines, strings.Join(a, " "))
 	}
 	all := strings.Join(lines, "\n")
-	for _, want := range []string{"finish --as m1 s1-1.w2@3 --prefix dev-", "take --as m1 --limit 10", "read --as reader-a --ok s1-2.r1.reader-a",
+	for _, want := range []string{"finish --as m1 s1-1.w2@3 --prefix dev-", "take --as m1 s1-4.w1@2 --prefix dev-", "read --as reader-a --ok s1-2.r1.reader-a",
 		"merge --stream s1 --batch 5", "start --limit 1000", "resolve", "ask"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("no %q in\n%s", want, all)
 		}
 	}
 	text := out.String()
-	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 --limit 10 --prefix dev-", "TAKE OK moved=1 refused=0",
+	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 s1-4.w1@2 --prefix dev-", "TAKE OK moved=1 refused=0",
 		"waits for the coordinator: work came back failed s1 x2 4m5s", "every stream has landed: 2/2 100.0% -> ETA"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the output lacks %q:\n%s", want, text)

@@ -48,13 +48,16 @@ const (
 )
 
 // Fleet table columns (ready and working are named as in the work table).
-// ctl (hidden) holds the member's control card: status, and the ok and failed
-// counts behind ok%.
+// withdrawn (hidden) holds a work card withdrawn because no member was up, so
+// that start deals the same card again rather than cutting another: the table
+// layer never places a removed member again. ctl (hidden) holds the member's
+// control card: status, and the ok and failed counts behind ok%.
 const (
-	Done   = "done"
-	OkPct  = "okpct"
-	Status = "status"
-	Load   = "load"
+	Done      = "done"
+	OkPct     = "okpct"
+	Status    = "status"
+	Load      = "load"
+	Withdrawn = "withdrawn"
 )
 
 // Stream states (the merge table's state column).
@@ -107,7 +110,7 @@ func (n Names) Definitions() []ntable.Table {
 		mk(Work, "waiting,ready,working,review,merging,landed"),
 		mk(Readers, "asked,reading,ok,broken"),
 		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Returned, Ctl),
-		mk(Fleet, "ready,working,done,okpct:text:none:ok%,status:text,load:text,ctl:first:none", Ctl),
+		mk(Fleet, "ready,working,done,okpct:text:none:ok%,status:text,load:text,withdrawn,ctl:first:none", Withdrawn, Ctl),
 	}
 }
 

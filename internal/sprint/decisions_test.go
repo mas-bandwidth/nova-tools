@@ -48,8 +48,8 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	for _, id := range []string{"s1-1", "s1-2"} {
 		c := w.s.Fleet.Card(w.s.Work.Card(id).F("work"))
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(Ask(w.s, AskReq{}))
 	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
@@ -75,8 +75,8 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 		t.Fatalf("the refusal does not name the retirement: %+v", late.Refused)
 	}
 	// The fixed work returns: both readers asked again at the new head.
-	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: w.gens(card.ID)}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: w.gens(card.ID), Head: "h2"}))
+	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID), Head: "h2"}))
 	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
 	if len(again) != 2 || again[0].F("head") != "h2" || again[1].F("head") != "h2" {
 		t.Fatalf("not asked again at the new head: %v", again)
@@ -144,8 +144,8 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: m}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
 	for id, g := range before {
-		if c := w.s.Fleet.Card(id); c.Placed() || c.Int("gen") <= g {
-			t.Fatalf("withdrawn %s: placed %v gen %d (was %d)", id, c.Placed(), c.Int("gen"), g)
+		if c := w.s.Fleet.Card(id); c.Col != Withdrawn || c.Int("gen") <= g {
+			t.Fatalf("withdrawn %s: at %s gen %d (was %d)", id, placeWord(c), c.Int("gen"), g)
 		}
 	}
 	w.clean("withdrawn")
@@ -169,8 +169,8 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 	w := setup(t, 3)
 	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 3}}))
 	for _, c := range w.s.Fleet.Column(Ready) {
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
@@ -200,10 +200,10 @@ func TestD5AnswersDischargeOnlyWhatWasResolved(t *testing.T) {
 	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 3}}))
 	var ids []string
 	for _, c := range w.s.Fleet.Column(Ready) {
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		ids = append(ids, c.ID)
 	}
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: ids}, Gens: w.gens(ids...), Failed: true}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: ids}, Gens: gensOf(w.s, ids...), Failed: true}))
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	failed := w.openOn("s1-1")
 	if len(failed) != 2 {
@@ -471,5 +471,32 @@ func TestRule7IsJudgedAgainstAPendingRank(t *testing.T) {
 	v := Check(w.s, &Pending{ID: "start-1", Verb: "start"})
 	if len(v) != 2 || v[0].Rule != 7 {
 		t.Fatalf("a copy at another score while another operation is pending: %v", v)
+	}
+}
+
+// G1: dropping a primary takes its withdrawn card too; a withdrawn card whose
+// primary is not ready breaks rule 2.
+func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
+	if len(w.s.Fleet.Column(Withdrawn)) != 2 {
+		t.Fatalf("withdrawn: %d", len(w.s.Fleet.Column(Withdrawn)))
+	}
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "x"}))
+	if c := w.s.Fleet.Card("s1-1.w1"); c.Placed() {
+		t.Fatalf("drop left the withdrawn card at %s", c.Col)
+	}
+	w.clean("dropped")
+	w.s.Work.Card("s1-2").Col = Review
+	w.s.Work.cells = nil
+	found := false
+	for _, v := range Check(w.s, nil) {
+		found = found || v.Rule == 2 && strings.Contains(v.Detail, "withdrawn")
+	}
+	if !found {
+		t.Fatalf("a withdrawn card of a primary in review: %v", Check(w.s, nil))
 	}
 }

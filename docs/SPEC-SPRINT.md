@@ -37,7 +37,9 @@ where a primary sent back from merging waits (the table layer never places a
 removed member again, so an accept after a return moves it back), and `ctl`,
 where each stream's control card holds the stream's state, cause, ci and
 `since`. The fleet table has a hidden `ctl` column where each member's control
-card holds its status and its ok and failed counts. `done` holds a member's
+card holds its status and its ok and failed counts, and a hidden `withdrawn`
+column where a work card withdrawn because no member was up is kept (the table
+layer never places a removed member again). `done` holds a member's
 finished work cards, ok and failed; `ok%` (the column `okpct`, labelled `ok%`)
 is ok / (ok + failed) from the member's counts. The text cells (ci, state,
 since, ok%, status, load) are display copies of the control cards, written
@@ -98,7 +100,10 @@ and it is the coordinator's decision, receipted.
 
 - start deals each work card to the up member with the shortest ready queue.
 - A member going down: its unfinished work cards are dealt to up members.
-- No member up: unfinished work cards are withdrawn; primaries return to ready.
+- No member up: unfinished work cards are withdrawn (kept in `withdrawn`);
+  primaries return to ready. start deals the same card again at a new
+  generation; the attempt advances only on rework. A primary with a withdrawn
+  card is ready, never working.
 - A member coming up: ready queues are levelled in one call; the newest cards move.
 - ok% is computed from the member's ok and failed counts behind done. load and
   status are reported, never typed by the coordinator except `fleet up|down` to

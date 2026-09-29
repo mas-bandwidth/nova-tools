@@ -67,8 +67,8 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	w.clean("start")
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 10}}))
 	w.must(Take(w.s, TakeReq{As: "m2", Sel: Sel{Limit: 10}}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}}, Gens: w.gens("s1-1.w1", "s1-2.w1", "s1-3.w1")}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-4.w1"}}, Gens: w.gens("s1-4.w1"), Failed: true, Report: "tests red"}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}}, Gens: gensOf(w.s, "s1-1.w1", "s1-2.w1", "s1-3.w1")}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-4.w1"}}, Gens: gensOf(w.s, "s1-4.w1"), Failed: true, Report: "tests red"}))
 	w.clean("finish")
 	if len(w.notesOf(NWorkOK)) != 3 || len(w.notesOf(NWorkFailed)) != 1 {
 		t.Fatalf("notes: %d ok, %d failed", len(w.notesOf(NWorkOK)), len(w.notesOf(NWorkFailed)))
@@ -132,8 +132,8 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 		t.Fatalf("the next attempt's card is %s", card)
 	}
 	member := w.s.Fleet.Card(card).Row
-	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: w.gens(card)}))
-	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: w.gens(card)}))
+	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
+	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
 	if len(again) != 2 || again[0].F("reader") != second[0].F("reader") && again[1].F("reader") != second[0].F("reader") {
 		t.Fatalf("fixed work not asked of the same readers: %v", again)
@@ -196,11 +196,11 @@ func TestFleetDownDealsAndWithdrawsWhenNoneIsUp(t *testing.T) {
 	if len(p.Units) != 0 || len(p.Refused) != 1 {
 		t.Fatalf("start with nobody up: %+v", p)
 	}
-	// Up again: the next attempt's card is cut.
+	// Up again: the same card is dealt again.
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if w.s.Work.Card("s1-1").F("work") != "s1-1.w2" {
-		t.Fatalf("after withdrawal the next card is %s", w.s.Work.Card("s1-1").F("work"))
+	if w.s.Work.Card("s1-1").F("work") != "s1-1.w1" {
+		t.Fatalf("after withdrawal the card is %s", w.s.Work.Card("s1-1").F("work"))
 	}
 	w.clean("up again")
 }
@@ -278,8 +278,8 @@ func accepted(w *world, ids ...string) {
 	w.must(Start(w.s, StartReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
 		c := w.s.Fleet.Card(w.s.Work.Card(id).F("work"))
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
