@@ -355,8 +355,9 @@ func batchFlagSet() (*flags, *batchFlags) {
 	// the string the fill script wrote in the TSV, and the TSV's model is the fallback.
 	// Routing is the launcher's default: --route is kept for callers that spell it out, and
 	// --no-route --reason is the one way out. --route-log and --route-usage name the
-	// accounting home; without one the rules answer, no model call is made, and the receipt
-	// says why=no-accounting, because a call nobody can account for is not made.
+	// accounting home, and a call nobody can account for is not made: with a key set and
+	// either flag missing the rules answer and the receipt says why=no-accounting; with no
+	// key it says why=no-key, and with no registry (or one with no rungs) why=no-ladder.
 	bf := &batchFlags{
 		tokens:        f.fs.String("tokens", "", ""),
 		deadline:      f.fs.String("deadline", "", ""),
