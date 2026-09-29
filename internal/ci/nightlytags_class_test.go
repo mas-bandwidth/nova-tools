@@ -10,10 +10,10 @@ import (
 )
 
 // nightlytags_class_test.go is the class test behind the rule that a test moved
-// behind a build tag still runs SOMEWHERE.
+// behind a build tag still runs SOMEWHERE (and under the two-minute cap, issue #4218).
 //
 // A build tag is how this tree takes a test off the per-change path: `slow`
-// (#516), `perf`, `novadisk`, and — since unit tests never touch the network —
+// (#516, #4218), `perf`, `novadisk`, and — since unit tests never touch the network —
 // `nightly` and `soak`, the two tags CheckNet exempts because the real network
 // is allowed in those suites (see ci_net.go and ci_net_test.go cases 3 and 4).
 // Every one of those tags is an OPT-IN: `go test ./...` without it compiles the

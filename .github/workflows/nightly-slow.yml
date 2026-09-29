@@ -17,7 +17,7 @@
 #
 # The legs, and why each one is where it is:
 #
-#   slow      ubuntu + macos  #516's tier: correct tests too slow for the CL budget.
+#   slow      ubuntu + macos  #516's tier: correct tests too slow for the CL budget (split under 120s cap, #4218).
 #   soak      ubuntu          CheckNet exempts these two, so a test carrying one may
 #   nightly   ubuntu          touch the real network (Glenn's rule: unit tests never
 #                             do). They have a leg before they have a file, so the

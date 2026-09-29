@@ -1439,7 +1439,7 @@ audit's --disable-auto`.
 — the rule is about what runs. A spelling assembled at run time from separate
 words is not seen.
 
-### `nightly-tags` — every tagged suite is run by a scheduled job
+### `nightly-tags` (issue #4218) — every tagged suite is run by a scheduled job
 
 **The rule.** Every opt-in build tag a `_test.go` carries is named by a
 SCHEDULED workflow, either literally on a `go test`/`go vet` line
