@@ -256,11 +256,6 @@ internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls seria
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome serial: t.Setenv
 internal/sandbox/policy_test.go:TestACommandInTheCallersHomeIsRefused serial: t.Setenv
 internal/sandbox/systemreads_test.go:TestLinuxWallGrantsTheResolvedResolverConfigDirectory serial: swaps package var sandbox.resolvConfPath
 internal/sandbox/wrap_darwin_test.go:TestNoSandboxRefusesOnDarwin serial: swaps package var sandbox.available
