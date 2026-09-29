@@ -75,8 +75,11 @@ flags:
                     session file in either shape; README is refused as a
                     session id. A symlink named <id>.md counts as a record only
                     if it resolves to a regular file inside the store. A defect
-                    in one session's record refuses verbs addressed to that
-                    session; index flags it as one row and lists the others.
+                    in one session's record is that session's: a record path
+                    holding no record refuses the verbs addressed to it; a
+                    damaged file is refused by receipt and still opened and
+                    appended. On a bench store index flags either as one row
+                    and lists the others.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:

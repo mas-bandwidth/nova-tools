@@ -1859,8 +1859,17 @@ of a shared store upgrades together: an older `nova-cairn` opening a new session
 in a bench store writes the own shape beside the records, and this version then
 refuses the store until those paths are moved out. A top-level `README.md`, in any case, is documentation
 and never a session file in either shape: it counts for no shape and is not
-indexed, and `README` is refused as a session id. The lifecycle is modelled in
-`tla/CairnStore.tla`.
+indexed, and `README` is refused as a session id.
+
+A defect in one session's record is that session's. A record path that holds no
+record (a directory, a dangling or outside link) refuses the verbs addressed to
+that session at exit 2. A damaged file (an invalid heading, a duplicate entry)
+is refused by `receipt`, and `open` and `append` still work on it, because they
+read it only to find their own entry. On a bench store `index` reports either as
+one `INDEX FLAGGED session=<id> cause=<why>` row, lists every other session,
+and exits 1 after printing everything. The record is checked on the open file,
+so a link re-pointed after the check is refused before anything is written
+through it. The lifecycle is modelled in `tla/CairnStore.tla`.
 
 
 ## nova-table
