@@ -175,3 +175,21 @@ func TestTheRepositoryPlanLoads(t *testing.T) {
 		t.Fatal("the plan declares no case or no required group")
 	}
 }
+
+func TestLoadCasesRefusesAConfigurationThatCannotRun(t *testing.T) {
+	t.Parallel()
+	plan := header + row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-")
+	module := "---- MODULE MCA ----\nEXTENDS A, Naturals\n====\n"
+	base := "---- MODULE A ----\nCONSTANTS Streams, \\* the rows\n          F(_), Broken\nVARIABLE x\n====\n"
+	good := "\\* a comment naming Nothing = 1\nSPECIFICATION Spec\nCONSTANTS\n Streams = {a}\n F <- MCF\n Broken = \"none\"\nINVARIANT TypeOK\n"
+	bad := "SPECIFICATION Spec\nCONSTANTS\n Streams = {a}\nINVARIANT Broken\n"
+	files := map[string]string{"CASES.tsv": plan, "MCA.tla": module, "A.tla": base, "MCA.cfg": good}
+	if _, err := LoadCases(tree(t, files)); err != nil {
+		t.Fatalf("a configuration assigning every constant was refused: %v", err)
+	}
+	files["MCA.cfg"] = bad
+	_, err := LoadCases(tree(t, files))
+	if err == nil || !strings.Contains(err.Error(), "MCA.cfg leaves Broken, F unassigned") {
+		t.Fatalf("a configuration leaving constants unassigned: got %v", err)
+	}
+}

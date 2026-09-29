@@ -98,7 +98,8 @@ func (c Case) check() error {
 }
 
 // LoadCases reads tla/CASES.tsv under root and checks it against the tree: it
-// must name every MC*.cfg exactly once and every module must exist.
+// must name every MC*.cfg exactly once, every module must exist, and every
+// configuration must assign every constant its module declares.
 func LoadCases(root string) ([]Case, error) {
 	dir := filepath.Join(root, "tla")
 	f, err := os.Open(filepath.Join(dir, CasesFile))
@@ -135,6 +136,9 @@ func LoadCases(root string) ([]Case, error) {
 		if info, err := os.Stat(filepath.Join(dir, c.Module)); err != nil || !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("missing instance module: %s", c.Module)
 		}
+	}
+	if err := CheckConstants(dir, cases); err != nil {
+		return nil, err
 	}
 	return cases, nil
 }

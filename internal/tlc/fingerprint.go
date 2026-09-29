@@ -14,7 +14,7 @@ import (
 // out the tests; TestEmbeddedSourcesAreTheNonTestFiles holds it to the
 // directory.
 //
-//go:embed cases.go doc.go fingerprint.go jar.go outcome.go records.go run.go suite.go
+//go:embed cases.go constants.go doc.go fingerprint.go jar.go outcome.go records.go run.go suite.go
 var sources embed.FS
 
 // RunnerDir is where the runner's files live in a checkout, and the prefix
