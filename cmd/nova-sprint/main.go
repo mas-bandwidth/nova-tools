@@ -146,6 +146,10 @@ func firstEnv(getenv func(string) string, names ...string) string {
 	return ""
 }
 
+// store is the one way a command reaches the store: pinned to the sprint's
+// current epoch (a restore a cut clear still owes performed first), so every
+// key it reads or writes is of that epoch. A command reads an earlier epoch
+// only through storeAt.
 func (a *app) store(c common) (*store.Store, error) {
 	if strings.TrimSpace(c.redis) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
@@ -155,7 +159,8 @@ func (a *app) store(c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}, nil
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
+	return st.Pinned(context.Background())
 }
 
 // run is the one entry point: the command line, and the driver, which runs
@@ -198,7 +203,7 @@ func refuse(stderr io.Writer, verb, what string) int {
 }
 
 // storeAt is the store, reading an earlier epoch as it was when at is 0 or
-// more.
+// more: a store for reads only.
 func (a *app) storeAt(c common, at int64) (*store.Store, error) {
 	st, err := a.store(c)
 	if err != nil || at < 0 {
