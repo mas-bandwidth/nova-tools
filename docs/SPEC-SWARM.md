@@ -128,9 +128,10 @@ The seven rules:
 
 1. A bench carries ONE slot store shared by every owner, at <bench store>/slots,
    a directory of atomic mkdir leases each holding owner, pid, card label, until=.
-2. Every launcher (a batch runner, a hand launch; native takes directory leases (.lease, .slot-lease))
-   takes a lease per card before it runs and releases it after; a launch
-   without a lease is refused by the launcher.
+2. Batch runners and hand launchers take a capacity lease per card before they
+   run and release it afterward; a launch without that lease is refused by the
+   launcher. Native takes only job and slot directory leases (.lease, .slot-lease);
+   it reads and writes no bench capacity store.
 3. The broker verbs are the only way to hold a slot:
 
    ```
@@ -344,10 +345,7 @@ is read once and the per-job clone is small.
 
 ### The prompt text is the tool's
 
-Five shell scripts duplicated five of the seven tools on the measured bench;
-for `nova-swarm` the live text is a template, not a shell
-script's private variable. That is the inverse of this spec:
-the prompts and their conditions are `internal/swarm/templates.go` in the
+The prompts and their conditions are `internal/swarm/templates.go` in the
 binary, printable, and versioned with the tool. So **the prompt text the workers run is the
 tool's**: `Prompt` and `WrapTemplate` assemble it from the named template; the
 shell scripts are prototypes. No tool's live state is a shell script's private variable.

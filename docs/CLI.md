@@ -780,7 +780,7 @@ read-pr — read one pull request against the rules
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
 3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+4. A FILE BUDGET: read at most <n> files (the limit stated in the card). When the budget
    is spent, write what you have and stop. Say in RESULT.md which files you
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]

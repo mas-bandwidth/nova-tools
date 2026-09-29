@@ -27,7 +27,7 @@ import (
 // run had managed to print by the time that arrangement worked out. That is a wall-clock
 // assertion in an event's clothing, and it held only while the machine was quiet.
 // `TestNativeIdleEndsAStillCardLongBeforeItsDeadline` went red in landing batch 16an on
-// hulk, under the gate's whole-suite load (GOMAXPROCS=8 -p 2 -parallel 4 across the repo),
+// the bench, under the gate's whole-suite load (GOMAXPROCS=8 -p 2 -parallel 4 across the repo),
 // and took #1831 out of the batch. Its own ci-ok had been green because ci.yml:302's CL
 // tier shards run only the touched packages, lightly loaded -- the one condition the
 // assumption survives.

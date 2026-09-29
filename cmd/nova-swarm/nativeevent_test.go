@@ -91,7 +91,7 @@ func TestCardEndEventIsOKOnlyWhenTheCardEarnedIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			job := jobWithResult(t, tc.result)
 			e, ok := cardEndEvent(nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-				nativeRunResult{job: job, usage: okRow()}, tc.verdict, "hulk")
+				nativeRunResult{job: job, usage: okRow()}, tc.verdict, "bench-1")
 			if !ok {
 				t.Fatal("no entry was built for a finished card")
 			}
@@ -109,7 +109,7 @@ func TestCardEndEventCarriesTheUsageRow(t *testing.T) {
 
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	e, _ := cardEndEvent(nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+		nativeRunResult{job: job, usage: okRow()}, "OK", "bench-1")
 	if e.TokensIn == nil || e.TokensOut == nil || *e.TokensIn != 1200 || *e.TokensOut != 340 {
 		t.Errorf("tokens are %v/%v, want 1200/340", e.TokensIn, e.TokensOut)
 	}
@@ -122,7 +122,7 @@ func TestCardEndEventCarriesTheUsageRow(t *testing.T) {
 	if e.Route != "opencode" {
 		t.Errorf("route is %q, want the row's provider", e.Route)
 	}
-	if e.Attempt != 1 || e.Bench != "hulk" || e.Label != "card-1" {
+	if e.Attempt != 1 || e.Bench != "bench-1" || e.Label != "card-1" {
 		t.Errorf("the entry lost a field: %+v", e)
 	}
 	if err := e.Validate(); err != nil {
@@ -140,7 +140,7 @@ func TestCardEndEventKeepsDashesOutOfTheStream(t *testing.T) {
 		"tokens_in": swarm.Dash, "tokens_out": swarm.Dash, "usd": swarm.Dash}
 	job := jobWithResult(t, "")
 	e, _ := cardEndEvent(nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-		nativeRunResult{job: job, usage: row}, "INCOMPLETE", "hulk")
+		nativeRunResult{job: job, usage: row}, "INCOMPLETE", "bench-1")
 	if e.TokensIn != nil || e.TokensOut != nil || e.USD != nil {
 		t.Fatalf("a dashed row became %v/%v/%v, want all absent (nil), never 0", e.TokensIn, e.TokensOut, e.USD)
 	}
@@ -175,7 +175,7 @@ func TestCardEndEmitCannotFailTheCard(t *testing.T) {
 		},
 		Dial: func(context.Context, events.Dial) (events.Store, error) { return fake, nil },
 	}, nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+		nativeRunResult{job: job, usage: okRow()}, "OK", "bench-1")
 
 	if fake.Len() != 0 {
 		t.Fatalf("a store that errors kept %d entries", fake.Len())
@@ -206,7 +206,7 @@ func TestCardEndEmitIsSkippedWithoutAPassword(t *testing.T) {
 			t.Fatal("a bench with no password dialled the store")
 			return nil, nil
 		},
-	}, nativeRunConfig{label: "card-1"}, nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+	}, nativeRunConfig{label: "card-1"}, nativeRunResult{job: job, usage: okRow()}, "OK", "bench-1")
 	if stderr.String() != "" {
 		t.Fatalf("a bench with no password wrote %q", stderr.String())
 	}
@@ -227,7 +227,7 @@ func TestCardEndEmitWritesTheEntry(t *testing.T) {
 		},
 		Dial: func(context.Context, events.Dial) (events.Store, error) { return fake, nil },
 	}, nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+		nativeRunResult{job: job, usage: okRow()}, "OK", "bench-1")
 	if fake.Len() != 1 {
 		t.Fatalf("the card end wrote %d entries, want 1 (stderr: %s)", fake.Len(), stderr.String())
 	}
@@ -261,7 +261,7 @@ func TestCardEndEmitWritesTheCardsDoneKey(t *testing.T) {
 			return events.Open(ctx, d)
 		},
 	}, nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+		nativeRunResult{job: job, usage: okRow()}, "OK", "bench-1")
 	if stderr.String() != "" {
 		t.Fatalf("the emit said: %s", stderr.String())
 	}
@@ -293,7 +293,7 @@ func TestCardEndEmitBoundsTheWriteAndNotOnlyTheDial(t *testing.T) {
 		},
 		Dial: func(context.Context, events.Dial) (events.Store, error) { return store, nil },
 	}, nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
-		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+		nativeRunResult{job: job, usage: okRow()}, "OK", "bench-1")
 
 	if store.hadNone > 0 {
 		t.Fatalf("the card-end entry was written under a context with NO deadline; a hung store would hold the slot lease")

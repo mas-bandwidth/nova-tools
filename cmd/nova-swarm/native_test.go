@@ -96,7 +96,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 // 2026-09-18, and it is the whole bug in one assertion: the provisioning standard puts Go
 // and sbcl under `~/sdk` with `~/go/bin` on PATH and the module cache at `~/go/pkg/mod`,
 // the wall named none of them, and `nova-swarm native` pins GOTOOLCHAIN=local -- so every
-// Go card on hulk got `Permission denied` on the bench's own go and then
+// Go card on the bench got `Permission denied` on the bench's own go and then
 // `go.mod requires go >= 1.26 (running go 1.22.2)` from the only one the wall left it.
 // The roots are read-only and come from ONE list (swarm.ToolchainRoots).
 func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {

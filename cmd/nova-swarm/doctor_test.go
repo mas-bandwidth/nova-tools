@@ -313,4 +313,3 @@ func TestLaunchFlagSetParityWithBatchAndNative(t *testing.T) {
 	nFlags, _ := nativeFlagSet()
 	checkParity("native", nFlags.fs)
 }
-

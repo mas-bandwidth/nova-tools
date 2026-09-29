@@ -6,7 +6,7 @@ LEGS: go, make
 MODE: explore
 TURNS: 40
 DEADLINE: finish within 45 minutes
-SOURCE: mas-bandwidth/nova-tools#1282 (the coordinator's hostile-input run on hulk: 36 of 40 cases pass, the four HOME cases fail)
+SOURCE: mas-bandwidth/nova-tools#1282 (the coordinator's hostile-input run on the bench: 36 of 40 cases pass, the four HOME cases fail)
 BASE: dev@1af36d0eb0393557664aca861a50686d22193837 (every anchor below re-read at this head)
 SPEC: docs/SPEC-TOOLWORK.md §5 kind `fix-red`
 ROUTE: jev=opus conf=0.90 floor=0.65 why=kind-fix-with-red-test-starts-at-opus eligible=rules ask=child

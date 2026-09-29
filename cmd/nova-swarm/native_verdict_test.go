@@ -3,13 +3,13 @@ package main
 // `NATIVE OK` was printed for a run that produced nothing (nova-tools #1844).
 //
 // THE RECEIPT, from the tools12 shift, 2026-09-19T18:00:28Z. Card `tools12c18` on bench
-// `vision`: rc=1 on both attempts, zero tokens, zero dollars, no RESULT.md, no repo, and no
+// `bench-1`: rc=1 on both attempts, zero tokens, zero dollars, no RESULT.md, no repo, and no
 // NATIVE line in the slot's own native.log. The provider was the cause -- attempt 1
 // `Error: {"name":"UnknownError","data":{"message":"Unexpected server error. Check server
 // logs for details.","ref":"err_fb35c63e"}}`, attempt 2 `Cannot connect to API`. And the
 // launcher's one log line for it read:
 //
-//	vision tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=/home/worker/...
+//	bench-1 tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=/home/worker/...
 //
 // A fill loop or a manager counting its in-flight cards by that line counts a card that
 // never ran as delivered, and a card that made zero paid calls as done. The shift caught it
