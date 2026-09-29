@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -141,14 +142,17 @@ func (repeatByte) Read(p []byte) (int, error) {
 // capture is bounded and the result says it was cut.
 func TestExecRunCapsRunawayOutputAndMarksIt(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("NOVA_MERGE_EXEC_CAP_HELPER") == "1" {
+	if slices.Contains(os.Args, "--helper-process") {
+		if os.Getenv("NOVA_MERGE_EXEC_CAP_HELPER") != "1" {
+			t.Fatalf("helper process called directly")
+		}
 		_, _ = io.Copy(os.Stdout, io.LimitReader(repeatByte{}, 1<<20))
 		os.Exit(0)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	e := Exec{Env: append(os.Environ(), "NOVA_MERGE_EXEC_CAP_HELPER=1")}
-	out, _ := e.Run(ctx, "", os.Args[0], "-test.run=TestExecRunCapsRunawayOutputAndMarksIt")
+	out, _ := e.Run(ctx, "", os.Args[0], "-test.run=TestExecRunCapsRunawayOutputAndMarksIt", "--", "--helper-process")
 	if len(out) >= 1<<19 {
 		t.Fatalf("a runaway child produced %d bytes of captured output: the cap did not hold at its named line", len(out))
 	}
@@ -159,12 +163,15 @@ func TestExecRunCapsRunawayOutputAndMarksIt(t *testing.T) {
 
 func TestExecRunLeavesBelowCapSuccess(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("NOVA_MERGE_EXEC_SMALL_HELPER") == "1" {
+	if slices.Contains(os.Args, "--helper-process") {
+		if os.Getenv("NOVA_MERGE_EXEC_SMALL_HELPER") != "1" {
+			t.Fatalf("helper process called directly")
+		}
 		_, _ = io.WriteString(os.Stdout, "small output\n")
 		os.Exit(0)
 	}
 	e := Exec{Env: append(os.Environ(), "NOVA_MERGE_EXEC_SMALL_HELPER=1")}
-	out, err := e.Run(context.Background(), "", os.Args[0], "-test.run=TestExecRunLeavesBelowCapSuccess")
+	out, err := e.Run(context.Background(), "", os.Args[0], "-test.run=TestExecRunLeavesBelowCapSuccess", "--", "--helper-process")
 	if err != nil || out != "small output\n" {
 		t.Fatalf("below-cap command returned out=%q err=%v", out, err)
 	}
@@ -175,14 +182,17 @@ func TestExecRunLeavesBelowCapSuccess(t *testing.T) {
 // prefix into an apparently complete command result.
 func TestExecRunReturnsErrorWhenChildEndsAtCaptureCap(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER") == "1" {
+	if slices.Contains(os.Args, "--helper-process") {
+		if os.Getenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER") != "1" {
+			t.Fatalf("helper process called directly")
+		}
 		_, _ = io.CopyN(os.Stdout, repeatByte{}, execOutputCap)
 		os.Exit(0)
 	}
 	e := Exec{Env: append(os.Environ(), "NOVA_MERGE_EXEC_CAP_EXACT_HELPER=1")}
 	for i := 0; i < 100; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		out, err := e.Run(ctx, "", os.Args[0], "-test.run=TestExecRunReturnsErrorWhenChildEndsAtCaptureCap")
+		out, err := e.Run(ctx, "", os.Args[0], "-test.run=TestExecRunReturnsErrorWhenChildEndsAtCaptureCap", "--", "--helper-process")
 		cancel()
 		if !strings.Contains(out, "truncated") {
 			t.Fatalf("iteration %d: capped child output was not marked truncated", i)

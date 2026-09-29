@@ -396,3 +396,69 @@ func TestQueueCellsFillsAnInMemoryTable(t *testing.T) {
 		t.Fatalf("unread cell render:\n%s", got)
 	}
 }
+
+func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+
+	tb := demo()
+	if err := ntable.Create(ctx, c, tb, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add member m1 to source cell "build:ready"
+	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 42); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set destination cell key to a string (wrong type)
+	dst := ntable.CellKey("demo", "build", "working")
+	if err := c.Set(ctx, dst, "foo", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Attempt member move via ApplyBatch
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	manifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: rev,
+		OperationID:           "op-wrongtype-test",
+		Actor:                 "tester",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row: "build",
+					Col: "working",
+				},
+			},
+		},
+	}
+
+	_, err := ntable.ApplyBatch(ctx, c, manifest)
+	if err == nil {
+		t.Fatal("expected ApplyBatch to fail on wrong destination type, got nil")
+	}
+	if !errors.Is(err, ntable.ErrWrongType) || !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected ErrWrongType with changed=no, got: %v", err)
+	}
+
+	// Assert member STILL EXISTS on source cell with score preserved (no partial mutation / ZREM)
+	srcKey := ntable.CellKey("demo", "build", "ready")
+	score, err := c.ZScore(ctx, srcKey, "m1").Result()
+	if err != nil {
+		t.Fatalf("expected member m1 to still exist in source cell after refusal, got error: %v", err)
+	}
+	if score != 42 {
+		t.Fatalf("expected member score to remain 42, got %v", score)
+	}
+}

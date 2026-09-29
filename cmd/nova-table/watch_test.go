@@ -256,7 +256,7 @@ func TestWatchCheckViewFailureProducesStallRow(t *testing.T) {
 		}
 	}
 	checker := func(ctx context.Context, c redis.Cmdable, name string) (ntable.CheckReport, error) {
-		return ntable.CheckReport{}, fmt.Errorf("table %s: %w: observed 1, active 2; run: nova-table show '%s'", name, ntable.ErrStale, name)
+		return ntable.CheckReport{}, fmt.Errorf("table %s: %w: requested 1, active 2; run: nova-table show '%s'", name, ntable.ErrStale, name)
 	}
 
 	read := viewReaderWith(nil, "myview", ntable.RenderOpts{}, true, viewGet, snapshotter, checker)
@@ -264,7 +264,7 @@ func TestWatchCheckViewFailureProducesStallRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	wantStall := "stall: demo: observed epoch is stale: observed 1, active 2\n"
+	wantStall := "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2\n"
 	if !strings.Contains(got, "Work View") {
 		t.Fatalf("expected view title in output:\n%s", got)
 	}
@@ -344,8 +344,8 @@ func TestFormatStall(t *testing.T) {
 	if got := formatStall("demo", err1); got != "stall: demo: member record and owned set disagree: [row col id duplicate place]" {
 		t.Fatalf("unexpected format: %q", got)
 	}
-	err2 := fmt.Errorf("table demo: %w: observed 1, active 2; run: nova-table show 'demo'", ntable.ErrStale)
-	if got := formatStall("demo", err2); got != "stall: demo: observed epoch is stale: observed 1, active 2" {
+	err2 := fmt.Errorf("table demo: %w: requested 1, active 2; run: nova-table show 'demo'", ntable.ErrStale)
+	if got := formatStall("demo", err2); got != "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2" {
 		t.Fatalf("unexpected format: %q", got)
 	}
 	err3 := errors.New("connection failed")

@@ -181,6 +181,10 @@ func decodeSnapshot(name string, reply []any) (Table, error) {
 			}
 			if fmt.Sprint(cell[0]) == "UNREAD" {
 				row.Cells[j].Unread = true
+				row.Cells[j].UnreadWhy = fmt.Sprint(cell[1])
+				if len(cell) >= 4 && fmt.Sprint(cell[3]) != "" {
+					row.Cells[j].UnreadWhy = fmt.Sprintf("key %v is %v, expected zset", cell[2], cell[3])
+				}
 				continue
 			}
 			if len(cell) != 3 {

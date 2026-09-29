@@ -36,7 +36,7 @@ func TestCLIObservedEpochHistoryAndReceipt(t *testing.T) {
 	}
 	events := c.XLen(ctx, "table:epoch-cli:changes").Val()
 	code, _, errout := runTable(at(addr, "clear", "epoch-cli")...)
-	if code != 1 || !strings.Contains(errout, "observed epoch is stale") {
+	if code != 1 || !strings.Contains(errout, "requested epoch is stale") {
 		t.Fatalf("stale CLI = %d %s", code, errout)
 	}
 	if got := c.XLen(ctx, "table:epoch-cli:changes").Val(); got != events {

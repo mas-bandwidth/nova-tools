@@ -118,10 +118,12 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 var tableGrants = []string{
 	"~table:*", "~tables", "~ws:*",
 	"+hdel", "+type", "+xadd", "+xinfo|stream", "+hset", "+hget", "+hgetall", "+del", "+exists",
+	// a batch reads a member's head and the fields its entries name, by name
+	"+hmget", "+hlen", "+hstrlen", "+hexists",
 	"+sadd", "+srem", "+smembers", "+scard", "+sismember",
 	"+zadd", "+zrem", "+zrange", "+zcard", "+zscore",
 	"+fcall|" + ntable.FnMove, "+fcall|" + ntable.FnClear,
-	"+fcall|ns_table_create", "+fcall|ns_table_drop", "+fcall|ns_table_row_add", "+fcall|ns_table_row_del", "+fcall|ns_table_cell_add", "+fcall|ns_table_cell_remove", "+fcall|ns_table_cell_move", "+fcall|ns_table_bind", "+fcall_ro|ns_table_read", "+fcall_ro|ns_table_list", "+fcall_ro|ns_table_members",
+	"+fcall|ns_table_create", "+fcall|ns_table_drop", "+fcall|ns_table_row_add", "+fcall|ns_table_row_del", "+fcall|ns_table_cell_add", "+fcall|ns_table_cell_remove", "+fcall|ns_table_cell_move", "+fcall|ns_table_bind", "+fcall|ns_table_apply", "+fcall_ro|ns_table_read", "+fcall_ro|ns_table_read_set", "+fcall_ro|ns_table_list", "+fcall_ro|ns_table_members",
 }
 
 // TestTableGrantsAreExactlyWhatTheWriterNeeds runs every write and read of
@@ -174,6 +176,16 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	}
 	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "the build |     0 |       1 |    0 | -\n") {
 		t.Fatalf("render as the writer:\n%s", got)
+	}
+	// a batch: create a member, then set and guard a field of it, as the writer
+	rev := func() string { return w.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val() }
+	if _, err := ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-1", Members: []ntable.BatchMemberEntry{
+		{ID: "bt", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 2}, Set: map[string]string{"k": "v"}}}}); err != nil {
+		t.Fatalf("batch create as the writer: %v", err)
+	}
+	if _, err := ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-2", Members: []ntable.BatchMemberEntry{
+		{ID: "bt", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"k": {Equals: strPtr("v")}}}, Set: map[string]string{"k": "w"}, Unset: []string{"gone"}}}}); err != nil {
+		t.Fatalf("batch set as the writer: %v", err)
 	}
 	bound := ntable.Table{Name: "views", Columns: tb.Columns[:2]}
 	r := ntable.NewRow(bound, "v")

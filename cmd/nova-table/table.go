@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -10,9 +11,21 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The table verbs: create, drop, list, clear, show, render.
+
+// refuseColumns reports a column list that ParseColumns would not accept. A list
+// past the column bound is the store's kind of no, as `col add` past it is: exit
+// 1, the bound and the count, and how to get under it. Any other fault is usage.
+func refuseColumns(stderr io.Writer, verb string, err error) int {
+	var limit *ntable.LimitError
+	if errors.As(err, &limit) {
+		return refused(stderr, verb, "--columns: "+limit.Error()+"; "+limit.Advice())
+	}
+	return refuse(stderr, verb, "--columns: "+err.Error())
+}
 
 func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	const verb = "create"
@@ -37,7 +50,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	}
 	cols, err := ntable.ParseColumns(*columns)
 	if err != nil {
-		return refuse(stderr, verb, "--columns: "+err.Error())
+		return refuseColumns(stderr, verb, err)
 	}
 	if *widths != "" {
 		w, err := ntable.ParseWidths(*widths)
@@ -98,7 +111,7 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	o := ntable.SetOpts{Rename: *rename}
 	if *columns != "" {
 		if o.Columns, err = ntable.ParseColumns(*columns); err != nil {
-			return refuse(stderr, verb, err.Error())
+			return refuseColumns(stderr, verb, err)
 		}
 	}
 	if *footer != "\x00" {
@@ -291,6 +304,21 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 			b.WriteString(" " + col.Name + "=" + field(ntable.CellText(t.Columns, r, j)))
 		}
 		fmt.Fprintln(stdout, b.String())
+	}
+	// A cell that did not come back prints as ? above, never as a false 0; show is
+	// the record of the table, so it also says which cell and why, and exits 1.
+	unread := 0
+	for _, r := range t.Rows {
+		for j, col := range t.Columns {
+			if j < len(r.Cells) && r.Cells[j].Unread {
+				unread++
+				fmt.Fprintf(stderr, "nova-table show: warning: table %q row %q column %q cannot be read: %s\n", t.Name, oneline.Escape(r.Key), col.Name, oneline.Escape(r.Cells[j].UnreadWhy))
+			}
+		}
+	}
+	if unread > 0 {
+		fmt.Fprintf(stderr, "nova-table show: %d cell(s) printed as ? could not be read; run: nova-table check '%s'\n", unread, strings.ReplaceAll(t.Name, "'", `'\''`))
+		return 1
 	}
 	return 0
 }
