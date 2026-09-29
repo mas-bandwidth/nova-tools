@@ -67,7 +67,8 @@ observation (ci, ci_head, ci_run, ci_source).
 the place to work, and on a later attempt the fix. Identity `<primary>.w<attempt>`.
 Fields: primary, stream, kind=work, attempt, fix, member, gen (its assignment
 generation), dealt and taken (the clock times it was dealt and taken),
-first_dealt (the attempt's first deal, kept through every redeal), ok (set
+first_dealt and first_taken (the attempt's first deal and first take, kept
+through every redeal and withdrawal), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -708,9 +709,10 @@ the condition clears (closing a primary's last judgment in review, it writes
 the judgment the primary needs next, as every step that leaves one in review
 does): cannot ask (fewer than two different readers are free;
 one condition per primary whatever its count of free readers),
-no fleet member is up, a work card past its deadline (15 minutes dealt and not
-taken, 2 hours taken and not finished, or 2 hours from its first deal and not
-finished, however often it was dealt again), a read card past its deadline (30
+no fleet member is up, a work card past its deadline (15 minutes from the
+attempt's first deal and not taken, 2 hours from its first take and not
+finished: no redeal or withdrawal rewrites either, and the time a card spends
+withdrawn counts), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
 and the cards), stalled (rule 12: what nothing holds, and why). Deadlines count running time: time spent STOPPED does not

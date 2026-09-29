@@ -692,7 +692,7 @@ func Take(s *Snapshot, r TakeReq) Plan {
 		return ""
 	}, s.Fleet.Card)
 	for _, c := range chosen {
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, map[string]string{"taken": stamp(s.Now)}))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now)))},
 			Moved: fmt.Sprintf("%s ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p
@@ -1052,4 +1052,14 @@ func orderLike(rows, names []string, extra string) []string {
 		out = append(out, extra)
 	}
 	return out
+}
+
+// takenStamps is the fields of a take: taken now, and first_taken once per
+// attempt, kept through every redeal and withdrawal.
+func takenStamps(c *Card, now time.Time) map[string]string {
+	set := map[string]string{"taken": stamp(now)}
+	if c.F("first_taken") == "" {
+		set["first_taken"] = stamp(now)
+	}
+	return set
 }

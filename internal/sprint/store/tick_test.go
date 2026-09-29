@@ -509,3 +509,77 @@ func TestAFlappingMemberCannotHideALateCard(t *testing.T) {
 		t.Fatalf("three hours of a card dealt and never finished, and no deadline")
 	}
 }
+
+// The deadlines count from the attempt's first deal and first take: a member
+// whose beat lapses and returns four times, its card withdrawn and dealt
+// again each time, is late "not taken" once 15 minutes of running time have
+// passed since the first deal; taken, then lapsing three times, it is late
+// "not finished" 2 hours after the first take.
+func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.live = []string{"m1"}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	lap := func() {
+		h.live = nil // silent past the beat deadline: withdrawn
+		for i := 0; i < 3; i++ {
+			h.tick(10 * time.Second)
+			h.machine()
+		}
+		h.live = []string{"m1"} // back: dealt again
+		h.tick(time.Second)
+		h.machine()
+		h.tick(5 * time.Minute) // under the 15 minutes from any one deal
+		h.machine()
+	}
+	for i := 0; i < 4; i++ {
+		lap()
+	}
+	notTaken := func() int {
+		n := 0
+		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+		for _, x := range notes {
+			if x.Type == sprint.NWorkLate && x.Kind == sprint.Judgment && strings.Contains(x.What, "not taken") {
+				n++
+			}
+		}
+		return n
+	}
+	if n := notTaken(); n != 1 {
+		t.Fatalf("four laps, over 15 minutes of running time from the first deal: %d not-taken judgments", n)
+	}
+	// taken, then lapsing: late not finished two hours from the first take
+	h2 := newHarness(t)
+	h2.live = []string{"m1"}
+	h2.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h2.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h2.startMachine()
+	h2.machine()
+	h2.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+	for i := 0; i < 3; i++ {
+		h2.live = nil
+		for j := 0; j < 3; j++ {
+			h2.tick(10 * time.Second)
+			h2.machine()
+		}
+		h2.live = []string{"m1"}
+		h2.tick(time.Second)
+		h2.machine()
+		h2.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
+		h2.tick(45 * time.Minute)
+		h2.machine()
+	}
+	notes, _, _ := h2.m.NotesSince(h2.ctx, "", 100000)
+	late := 0
+	for _, x := range notes {
+		if x.Type == sprint.NWorkLate && x.Kind == sprint.Judgment && strings.Contains(x.What, "not finished") {
+			late++
+		}
+	}
+	if late != 1 {
+		t.Fatalf("three laps after a take, past 2 hours from the first take: %d not-finished judgments", late)
+	}
+}

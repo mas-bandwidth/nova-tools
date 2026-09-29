@@ -355,24 +355,24 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		d, ok := r.running(s.Now, c.F(stampField))
 		return c.F(stampField), ok && d > limit
 	}
-	// N4: work cards dealt and not taken, taken and not finished.
-	for _, c := range s.Fleet.Column(Ready, Working) {
-		field, limit, word := "dealt", DeadlineUntaken, "not taken"
-		if c.Col == Working {
-			field, limit, word = "taken", DeadlineUnfinished, "not finished"
+	// N4: work cards dealt and not taken, taken and not finished. Each is
+	// measured from the attempt's first deal and first take, which no redeal
+	// or withdrawal rewrites: a member whose beat lapses again and again
+	// cannot reset them, and the time a card spends withdrawn counts.
+	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
+		first := func(firstField, field string) string {
+			if c.F(firstField) != "" {
+				return firstField
+			}
+			return field
+		}
+		field, limit, word := first("first_dealt", "dealt"), DeadlineUntaken, "not taken"
+		if c.F("first_taken") != "" || c.Col == Working {
+			field, limit, word = first("first_taken", "taken"), DeadlineUnfinished, "not finished"
 		}
 		if at, ok := late(field, c, limit); ok {
 			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
-				what:      fmt.Sprintf("%s@%s %s to %s at %s, %s", c.ID, c.F("gen"), field, c.Row, at, word),
-				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
-			continue
-		}
-		// A card dealt again and again (its member's beat lapsing) is
-		// re-stamped dealt each time: the unfinished deadline counts from the
-		// attempt's first deal.
-		if at, ok := late("first_dealt", c, DeadlineUnfinished); ok {
-			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
-				what:      fmt.Sprintf("%s first dealt at %s, not finished", c.ID, at),
+				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(field, "first_"), at, word),
 				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
 		}
 	}
