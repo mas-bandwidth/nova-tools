@@ -103,7 +103,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	adding := map[string]bool{}
 	for _, id := range ids {
-		adding[id] = true
+		if ValidID(id) && !strings.HasPrefix(id, "ctl-") {
+			adding[id] = true
+		}
 	}
 	var missing []string
 	for _, n := range r.Needs {
@@ -400,6 +402,18 @@ func droppedNeeds(s *Snapshot, needs []string) []string {
 	return out
 }
 
+// missingNeeds names dependencies with no record at all. Resolve reads the
+// unplaced dependencies too, so kept dropped records remain a distinct case.
+func missingNeeds(s *Snapshot, needs []string) []string {
+	var out []string
+	for _, n := range needs {
+		if s.Work.Card(n) == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func placeWord(c *Card) string {
 	if c.Placed() {
 		return c.Row + ":" + c.Col
@@ -432,7 +446,7 @@ func ResolveExtras(s *Snapshot) []string {
 }
 
 // Resolve moves waiting -> ready where every need has landed. A need that was
-// dropped is a judgment for the coordinator, once.
+// dropped or missing is a judgment for the coordinator, once.
 func Resolve(s *Snapshot, r ResolveReq) Plan { return Lawful(resolvePlan(s, r)) }
 
 func resolvePlan(s *Snapshot, r ResolveReq) Plan {
@@ -440,21 +454,43 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	p.on(s)
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
 	for _, c := range chosen {
-		var waits, dropped []string
+		// A missing prerequisite that now exists is no longer a missing-need
+		// judgment; it still has to land before the primary can move.
+		for _, o := range s.Open {
+			if o.Note.Type == NMissingNeed && o.Subject() == c.ID && len(o.Note.Needs) > 0 && len(missingNeeds(s, o.Note.Needs)) == 0 {
+				p.Closes = append(p.Closes, o)
+			}
+		}
+		var waits, dropped, missing []string
 		for _, n := range WaitsFor(s, c, nil) {
-			if len(droppedNeeds(s, []string{n})) > 0 {
+			if s.Work.Card(n) == nil {
+				missing = append(missing, n)
+			} else if len(droppedNeeds(s, []string{n})) > 0 {
 				dropped = append(dropped, n)
 			} else {
 				waits = append(waits, n)
 			}
 		}
+		if len(missing) > 0 {
+			if left := unblocked(s.Open, c.ID, missing, NMissingNeed); len(left) > 0 {
+				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
+				n.What, n.Who, n.Needs = c.ID+" needs "+strings.Join(left, ",")+", not on the table", r.Who, left
+				p.Notes = append(p.Notes, n)
+			}
+			if len(r.IDs) > 0 {
+				p.refuse(c.ID, "needs "+strings.Join(missing, ",")+", not on the table")
+			}
+		}
 		if len(dropped) > 0 {
-			if left := unblocked(s.Open, c.ID, dropped); len(left) > 0 {
+			if left := unblocked(s.Open, c.ID, dropped, NBlocked); len(left) > 0 {
 				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
 			}
 			if len(r.IDs) > 0 {
 				p.refuse(c.ID, "needs "+strings.Join(dropped, ",")+", which was dropped")
 			}
+			continue
+		}
+		if len(missing) > 0 {
 			continue
 		}
 		if len(waits) > 0 {

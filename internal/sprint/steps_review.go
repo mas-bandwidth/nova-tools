@@ -806,7 +806,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 					gone = append(gone, need)
 				}
 			}
-			if gone = unblocked(s.Open, w.ID, gone); len(gone) > 0 {
+			if gone = unblocked(s.Open, w.ID, gone, NBlocked); len(gone) > 0 {
 				u.Notes = append(u.Notes, blockedNote(s, w.Row, w.ID, r.Who, gone))
 			}
 		}

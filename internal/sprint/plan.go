@@ -335,10 +335,15 @@ func OnePerCause(s *Snapshot, p Plan) Plan {
 	for _, o := range p.Closes {
 		closing[o.Key] = true
 	}
-	open := map[string]bool{} // type | subject
+	// A cause is the type, and for a judgment that names needs, the needs
+	// it names: a need dropped later is its own judgment.
+	cause := func(n Note, sub string) string {
+		return n.Type + "|" + strings.Join(n.Needs, ",") + "|" + sub
+	}
+	open := map[string]bool{}
 	for _, o := range s.Open {
 		if o.Note.Kind == Judgment && !closing[o.Key] {
-			open[o.Note.Type+"|"+o.Subject()] = true
+			open[cause(o.Note, o.Subject())] = true
 		}
 	}
 	keep := func(notes []Note) []Note {
@@ -350,7 +355,7 @@ func OnePerCause(s *Snapshot, p Plan) Plan {
 			}
 			var subs []string
 			for _, sub := range n.Primaries {
-				if !open[n.Type+"|"+sub] {
+				if !open[cause(n, sub)] {
 					subs = append(subs, sub)
 				}
 			}

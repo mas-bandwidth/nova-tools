@@ -174,26 +174,21 @@ func bound(p Plan) (Plan, int) {
 
 // T1. TickResolve scans every stream's waiting set in score order, from the
 // state, whenever the tick reads the whole sprint: a primary whose every need
-// has landed moves to ready; a need that was dropped is the blocked judgment,
-// once. A sentinel is never moved: when everything it needs has landed the
-// tick marks it reached and opens its judgment (SentinelsDue), and what waits
+// has landed moves to ready; a dropped or missing need is a blocked judgment,
+// once. A sentinel is never moved: when everything it needs has landed,
+// resolve marks it reached and opens its judgment, and what waits
 // behind it stays waiting until the coordinator releases it. No flag says a
 // scan is due: what is due is read from the state, so a tick that did not
 // finish leaves it due for the next.
 func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	for _, c := range s.Work.Column(Waiting) {
-		if !IsSentinel(c) {
-			ids = append(ids, c.ID)
-		}
+		ids = append(ids, c.ID)
 	}
 	var p Plan
 	if len(ids) > 0 {
 		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
-	due := SentinelsDue(s, r.who())
-	p.Units = append(p.Units, due.Units...)
-	p.Notes = append(p.Notes, due.Notes...)
 	return bound(p)
 }
 

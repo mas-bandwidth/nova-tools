@@ -61,6 +61,7 @@ const (
 	NCross           = "stream stopped: needs a card of another stream first"
 	NRejected        = "stream stopped: the merge queue rejected"
 	NBlocked         = "a primary is blocked on something dropped"
+	NMissingNeed     = "a primary is blocked on something missing"
 	NCIRed           = "ci red"
 	NReadsExhausted  = "reads exhausted"
 	NStranded        = "stranded in review" // failed work acknowledged, or never asked, and nothing open
@@ -84,6 +85,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBlocked:         {"drop", "ack"},
+	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
 	NReadsExhausted:  {"ask another reader", "rework", "drop"},
 	NStranded:        {"ask", "rework", "drop"},
