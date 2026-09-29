@@ -55,9 +55,12 @@ Name the packages. The run needs rootless `podman` (on macOS, a running
 (`FUNCTIONAL_CONTEXT=<dir>` names another). The target calls
 `tools/functionalrun`, which, in order:
 
-1. **reaps**: removes every container carrying its run label whose deadline
-   label, plus a grace, has passed, in any state. It selects by label, never by
-   name, and touches nothing else: no other container, no volume, no process;
+1. **reaps**: removes every container of this tool and this user whose
+   deadline label, plus a grace, has passed, in any state: the run label with a
+   run id of the tool's own shape, and the owner label equal to this uid. It
+   selects by label, never by name, reports one of its own containers with an
+   unreadable label and leaves it, and touches nothing else: no other
+   container, no volume, no process;
 2. **builds or reuses the image**, tagged by the hash of the build context, so an
    unchanged context is never built twice;
 3. **uses this user's own cache volumes**, `nova-functional-gocache-uid<uid>` and
@@ -69,15 +72,18 @@ Name the packages. The run needs rootless `podman` (on macOS, a running
 5. **runs `make test-functional PKGS=...` in one container**: the tree mounted
    read-only at `/src`, `/tmp` and the home directory as tmpfs scratch, the build
    cache read-write, the module cache read-only, `--network none`, a private IPC
-   namespace, limits on CPUs, memory (no swap) and pids, and the deadline
-   (`FUNCTIONAL_DEADLINE`, default `10m`) enforced from outside the container by
-   the runtime's own `--timeout`, which holds even when the client is killed.
+   namespace, no capabilities and no new privileges, limits on CPUs, memory
+   (no swap) and pids, and the deadline
+   (`FUNCTIONAL_DEADLINE`, default `10m`, the bound of this container alone)
+   enforced from outside the container by the runtime's own `--timeout`, which
+   holds even when the client is killed.
    Inside, `timeout` ends the run 10 s before the deadline and `go test
    -timeout` 20 s before it, so a hang prints its stack first;
 6. **removes the container** at the end whatever happened: a pass, a failure,
    the deadline, or an interrupt (Ctrl-C reaches the tool, which removes the
-   container, never the runtime's client alone). It then counts the run's
-   containers by label and prints one line:
+   container, never the runtime's client alone; a second one kills the tool at
+   once). It then counts the run's containers by label, within 30 s in all,
+   and prints one line:
 
 ```
 FUNCTIONAL RUN run=<id> ended=finished exit=0 wall=20.3s build=0.0s modcache=0.5s total=21.2s containers_left=0
