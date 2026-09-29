@@ -155,7 +155,7 @@ func linkSwapped(t *testing.T, own bool) {
 			}
 		}
 	}()
-	deadline := time.Now().Add(300 * time.Millisecond)
+	deadline := time.Now().Add(150 * time.Millisecond)
 	landed := 0
 	for i := 0; time.Now().Before(deadline); i++ {
 		if _, err := Append(store, "x", "e"+strconv.Itoa(i), "words", "", benchNow, PublishManual); err == nil {

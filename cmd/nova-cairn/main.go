@@ -139,7 +139,8 @@ func refuse(stderr io.Writer, where, what string) int {
 func refuseErr(stderr io.Writer, where string, err error) int {
 	var mixed *cairn.MixedShapeError
 	var path *cairn.RecordPathError
-	if errors.As(err, &mixed) || errors.As(err, &path) {
+	var locked *cairn.LockedError
+	if errors.As(err, &mixed) || errors.As(err, &path) || errors.As(err, &locked) {
 		fmt.Fprintf(stderr, "nova-cairn%s: %s\n", oneline.Escape(where), oneline.Err(err))
 		return 2
 	}
