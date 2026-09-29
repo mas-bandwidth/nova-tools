@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -392,6 +393,44 @@ func (w *JournalWriter) AppendWithTimestamp(payload []byte, ts time.Time) (*Fram
 	return frame, nil
 }
 
+// AppendWithSeq writes a payload with an explicit sequence number and timestamp.
+func (w *JournalWriter) AppendWithSeq(seq uint64, ts time.Time, payload []byte) (*Frame, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return nil, ErrClosed
+	}
+
+	rawBytes, frame, err := EncodeFrame(seq, ts, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	frame.Offset = w.lastOffset
+
+	// Atomic file append
+	n, err := w.file.Write(rawBytes)
+	if err != nil {
+		return nil, fmt.Errorf("journal: append write failed at offset %d: %w", w.lastOffset, err)
+	}
+	if n != len(rawBytes) {
+		return nil, fmt.Errorf("journal: short write (%d of %d bytes)", n, len(rawBytes))
+	}
+
+	if w.syncOnAppend {
+		if err := w.file.Sync(); err != nil {
+			return nil, fmt.Errorf("journal: sync failed: %w", err)
+		}
+	}
+
+	w.lastOffset += int64(n)
+	w.nextSeq = seq + 1
+
+	return frame, nil
+}
+
+
 // NextSeq returns the next sequence number that will be assigned.
 func (w *JournalWriter) NextSeq() uint64 {
 	w.mu.Lock()
@@ -646,3 +685,99 @@ func RepairJournal(path string) (int64, error) {
 		lastValidOffset += frame.TotalSize
 	}
 }
+
+// ============================================================================
+// Journal Mutation Event Protocol
+// ============================================================================
+
+// JournalAction names a discrete mutation action recorded in the journal.
+type JournalAction string
+
+const (
+	ActSetCapacity   JournalAction = "set_capacity"
+	ActPush          JournalAction = "push"
+	ActRelease       JournalAction = "release"
+	ActDealWork      JournalAction = "deal_work"
+	ActEndWorkPR     JournalAction = "end_work_pr"
+	ActDealRead      JournalAction = "deal_read"
+	ActEndReadHigh   JournalAction = "end_read_high"
+	ActLand          JournalAction = "land"
+	ActEndWorkDone   JournalAction = "end_work_done"
+	ActCancelPrimary JournalAction = "cancel_primary"
+)
+
+type journalAction = JournalAction
+
+const (
+	actSetCapacity   = ActSetCapacity
+	actPush          = ActPush
+	actRelease       = ActRelease
+	actDealWork      = ActDealWork
+	actEndWorkPR     = ActEndWorkPR
+	actDealRead      = ActDealRead
+	actEndReadHigh   = ActEndReadHigh
+	actLand          = ActLand
+	actEndWorkDone   = ActEndWorkDone
+	actCancelPrimary = ActCancelPrimary
+)
+
+// JournalMutationEvent models the serializable journal event payload for dual-table operations.
+type JournalMutationEvent struct {
+	Action    JournalAction `json:"act"`
+	Epoch     EpochID       `json:"ep"`
+	Actor     string        `json:"actor"`
+	CardID    CardID        `json:"card,omitempty"`
+	Stream    string        `json:"stream,omitempty"`
+	Consumer  ConsumerID    `json:"consumer,omitempty"`
+	Slots     int           `json:"slots,omitempty"`
+	CopyID    CopyID        `json:"copy,omitempty"`
+	Score     float64       `json:"score,omitempty"`
+	CommitSHA string        `json:"sha,omitempty"`
+	Outcome   CardOutcome   `json:"outcome,omitempty"`
+	ToLanded  bool          `json:"to_landed,omitempty"`
+	Reason    string        `json:"reason,omitempty"`
+}
+
+// ApplyJournalEvent applies a JournalMutationEvent to a MemoryCardMachine.
+func ApplyJournalEvent(ctx context.Context, cm *MemoryCardMachine, ev JournalMutationEvent) error {
+	opts := WriteOptions{Epoch: ev.Epoch, Actor: ev.Actor}
+	switch ev.Action {
+	case ActSetCapacity:
+		cm.SetConsumerCapacity(ev.Consumer, ev.Slots)
+		return nil
+	case ActPush:
+		_, err := cm.Push(ctx, ev.CardID, ev.Stream, opts)
+		return err
+	case ActRelease:
+		_, err := cm.Release(ctx, ev.CardID, opts)
+		return err
+	case ActDealWork:
+		_, err := cm.DealWork(ctx, DealWorkParams{Card: ev.CardID, Consumer: ev.Consumer, Score: ev.Score}, opts)
+		return err
+	case ActEndWorkPR:
+		_, err := cm.EndWorkPR(ctx, EndWorkPRParams{Copy: ev.CopyID, CommitSHA: ev.CommitSHA}, opts)
+		return err
+	case ActDealRead:
+		_, err := cm.DealRead(ctx, DealReadParams{Card: ev.CardID, Consumer: ev.Consumer, Score: ev.Score}, opts)
+		return err
+	case ActEndReadHigh:
+		_, err := cm.EndReadHigh(ctx, EndReadHighParams{Copy: ev.CopyID, Score: ev.Score}, opts)
+		return err
+	case ActLand:
+		_, err := cm.Land(ctx, ev.CardID, opts)
+		return err
+	case ActEndWorkDone:
+		_, err := cm.EndWorkDone(ctx, EndWorkDoneParams{Copy: ev.CopyID, Outcome: ev.Outcome, ToLanded: ev.ToLanded}, opts)
+		return err
+	case ActCancelPrimary:
+		_, err := cm.CancelPrimary(ctx, CancelPrimaryParams{Card: ev.CardID, Reason: ev.Reason}, opts)
+		return err
+	default:
+		return fmt.Errorf("unknown journal action: %s", ev.Action)
+	}
+}
+
+func applyJournalEvent(ctx context.Context, cm *MemoryCardMachine, ev JournalMutationEvent) error {
+	return ApplyJournalEvent(ctx, cm, ev)
+}
+
