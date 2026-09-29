@@ -69,14 +69,14 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 		lines = append(lines, strings.Join(a, " "))
 	}
 	all := strings.Join(lines, "\n")
-	for _, want := range []string{"finish --as m1 s1-1.w2@3 --prefix dev-", "take --as m1 s1-4.w1@2 --prefix dev-", "read --as reader-a --ok s1-2.r1.reader-a",
+	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --prefix dev-", "take --as m1 --epoch 0 s1-4.w1@2 --prefix dev-", "read --as reader-a --ok --epoch 0 s1-2.r1.reader-a",
 		"merge --stream s1 --batch 5", "start --limit 1000", "resolve", "ask"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("no %q in\n%s", want, all)
 		}
 	}
 	text := out.String()
-	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 s1-4.w1@2 --prefix dev-", "TAKE OK moved=1 refused=0",
+	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 --epoch 0 s1-4.w1@2 --prefix dev-", "TAKE OK moved=1 refused=0",
 		"waits for the coordinator: work came back failed s1 x2 4m5s", "every stream has landed: 2/2 100.0% -> ETA"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the output lacks %q:\n%s", want, text)

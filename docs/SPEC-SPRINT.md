@@ -392,10 +392,15 @@ command that loads it.
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch`, with a pending operation and stalled streams |
 | play | plays the world outside the table through these verbs, seeded (section 12) |
-| teardown | drops the tables, the view and every key under the prefix; `--confirm <prefix>` |
+| clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm <prefix>` |
+| teardown | drops the tables, the view and every key under the prefix, of every epoch; `--confirm <prefix>` |
 
 The read verbs (queue, where, inbox, card, check) have `--json`, one object for a
-program.
+program; where, inbox and card take `--at-epoch <n>` to read an earlier epoch as
+it was. Every store verb takes `--epoch <n>`, the epoch the caller holds (a
+worker's cards, from `queue`; the driver passes it on every worker's, reader's
+and merge verb): a sprint at another epoch refuses the step, saying when it was
+cleared and naming the new epoch.
 
 ## 12. The driver
 
@@ -416,3 +421,26 @@ member down and brings a down member up with the same chance, and the driver
 brings up every member it took down before it stops. Its facts come through one interface (a worker's result, a reader's
 finding, a merge batch's outcome, which members are up); the seeded source is
 one implementation.
+
+## 13. Epochs and clear
+
+The four tables are bound to one epoch of the sprint (the table layer's epoch
+key, one hash under the sprint's prefix). Every step reads, writes and names
+its keys at the epoch it started at: the notification stream, the open
+judgments, the cursor, the operation records and the fence are per epoch.
+Because the table layer binds every card record to its epoch, a card is held at
+an epoch by a stored id of that epoch, and a card id is used again in a later
+epoch.
+
+`nova-sprint clear` stops the sprint (the machine, when there is one, is set
+stopped first and left stopped) and clears all work in it: it finishes a
+pending operation, or abandons it with the old epoch, then advances the epoch
+once, atomically, recording when and the shape to restore. It deletes nothing.
+At the new epoch every table is empty with the same rows (streams, readers,
+members), every stream waiting, every member with its status and no work
+counted; these are written at the new epoch in the same verb, and a clear cut
+before they are is finished by the next clear. The old epoch stays where it is
+and readable (`where`, `card` and `inbox --at-epoch <n>`), and every writer
+still holding it is refused as stale: nothing of the old epoch lands in the
+new one. clear prints the epoch before and after, what the old epoch held as
+counts, and the sprint line.

@@ -279,3 +279,50 @@ func TestTeardownWantsTheSamePrefix(t *testing.T) {
 		t.Fatalf("the tables are still there")
 	}
 }
+
+// clear: a new epoch, the old one readable, a late worker refused naming it,
+// the same ids again.
+func TestClearByTheCommand(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("start --limit 2")
+	ta.ok("take --as m1 --limit 2")
+	if code, _, _ := ta.do("clear --confirm other"); code != 2 {
+		t.Fatalf("clear with another prefix: %d", code)
+	}
+	out := ta.ok("clear --confirm t-")
+	if !strings.Contains(out, "CLEAR OK epoch=0->1") || !strings.Contains(out, "primaries=2") || !strings.Contains(out, "0/0 0.0% -> ETA") {
+		t.Fatalf("clear: %s", out)
+	}
+	code, _, errs := ta.do("finish --as m1 --epoch 0 s1-1.w1@1")
+	if code != 1 || !strings.Contains(errs, "cleared at") || !strings.Contains(errs, "epoch is now 1") {
+		t.Fatalf("a late finish: %d %s", code, errs)
+	}
+	var w whereView
+	ta.json("where", &w)
+	if w.Epoch != 1 || w.All != 0 || w.Tables["merge"]["s1"]["state"] != "waiting" {
+		t.Fatalf("where after clear: %+v", w)
+	}
+	ta.json("where --at-epoch 0", &w)
+	if w.Epoch != 0 || w.All != 2 {
+		t.Fatalf("where at the old epoch: %+v", w)
+	}
+	if out := ta.ok("card s1-1 --at-epoch 0"); !strings.Contains(out, "place=s1:working") {
+		t.Fatalf("card at the old epoch: %s", out)
+	}
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("start --limit 2")
+	var q struct {
+		Epoch uint64
+		Cards []queueCard
+	}
+	ta.json("queue --as m1", &q)
+	if q.Epoch != 1 || len(q.Cards) != 2 || q.Cards[0].ID != "s1-1.w1" {
+		t.Fatalf("the same ids in the new epoch: %+v", q)
+	}
+	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
+	ta.ok("clear --confirm t-")
+	ta.clean()
+}

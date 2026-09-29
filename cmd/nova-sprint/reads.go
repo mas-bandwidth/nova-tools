@@ -76,6 +76,10 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "queue", err.Error())
 	}
 	ctx := context.Background()
+	if st, err = st.Pinned(ctx); err != nil {
+		return a.readFailed("queue", err, stderr)
+	}
+	epoch := st.PinnedEpoch()
 	var cards []queueCard
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
@@ -102,7 +106,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if cards == nil {
 			cards = []queueCard{}
 		}
-		b, _ := json.Marshal(map[string]any{"as": *as, "stream": *stream, "cards": cards})
+		b, _ := json.Marshal(map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -114,12 +118,12 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			if x.Col == sprint.Working {
 				next = "finish"
 			}
-			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen)
+			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen) + " --epoch " + strconv.FormatUint(epoch, 10)
 		}
 		lines = append(lines, l)
 	}
 	listed(stdout, "CARD", lines, c.max, "queue")
-	fmt.Fprintf(stdout, "QUEUE OK cards=%d\n", len(cards))
+	fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
 	return 0
 }
 
@@ -141,6 +145,8 @@ type whereView struct {
 	Streams []sprint.StreamClock                    `json:"streams"`
 	Stalled []string                                `json:"stalled,omitempty"`
 	Pending string                                  `json:"pending,omitempty"`
+	Epoch   uint64                                  `json:"epoch"`
+	Cleared time.Time                               `json:"cleared,omitempty"` // when the epoch began
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -148,11 +154,12 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	watch := fs.Bool("watch", false, "redraw every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
+	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", fmt.Sprint("takes no words ", err))
 	}
-	st, err := a.store(*c)
+	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "where", err.Error())
 	}
@@ -178,6 +185,14 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (whereView, string, error) {
+	st, err := st.Pinned(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
 	names := make([]string, len(sprint.ViewOrder))
 	for i, t := range sprint.ViewOrder {
 		names[i] = st.Names.Table(t)
@@ -195,7 +210,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		return whereView{}, "", err
 	}
 	now := a.now()
-	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks}
+	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Epoch: st.PinnedEpoch()}
+	if v.Epoch == es.N {
+		v.Cleared = es.Cleared
+	}
 	v.Landed, v.All = counts(shapes[0])
 	v.Summary = summary(shapes[0])
 	if f.Pending != nil {
@@ -238,11 +256,12 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)")
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
+	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", fmt.Sprint("takes no words ", err))
 	}
-	st, err := a.store(*c)
+	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "inbox", err.Error())
 	}
@@ -385,12 +404,13 @@ type cardView struct {
 
 func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("card")
+	atEpoch := fs.Int64("at-epoch", -1, "the primary as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, "card", fmt.Sprint("wants one primary id ", err))
 	}
 	id := pos[0]
-	st, err := a.store(*c)
+	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "card", err.Error())
 	}

@@ -94,3 +94,10 @@ func (st *Store) sids(ids []string) []string {
 	}
 	return out
 }
+
+// Pinned is the store pinned to the sprint's current epoch (itself when it is
+// pinned already, as an At store is).
+func (st *Store) Pinned(ctx context.Context) (*Store, error) { return st.pin(ctx) }
+
+// PinnedEpoch is the epoch a pinned store is at.
+func (st *Store) PinnedEpoch() uint64 { return st.epoch }

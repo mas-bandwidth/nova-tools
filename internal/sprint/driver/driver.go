@@ -132,6 +132,7 @@ func short(verb, text string, code int) string {
 
 // where is what the driver reads of the view.
 type where struct {
+	Epoch   uint64                                  `json:"epoch"`
 	Landed  int64                                   `json:"landed"`
 	All     int64                                   `json:"all"`
 	Summary string                                  `json:"summary"`
@@ -262,6 +263,10 @@ func landed(w where) bool {
 }
 
 func (d *Driver) tick(tick int, c Config, w where) {
+	// The workers', readers' and merge step's verbs hold the epoch the tick
+	// read: a clear since refuses them, naming it, and nothing of the old
+	// epoch lands in the new one.
+	held := []string{"--epoch", strconv.FormatUint(w.Epoch, 10)}
 	// Members up and down, as the facts say.
 	fleet := w.Tables["fleet"]
 	members := sortedRows(fleet)
@@ -317,13 +322,13 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			}
 		}
 		if len(good) > 0 {
-			d.run(false, append([]string{"finish", "--as", m}, good...)...)
+			d.run(false, append(append([]string{"finish", "--as", m}, held...), good...)...)
 		}
 		for _, report := range sortedKeys(bad) {
-			d.run(false, append([]string{"finish", "--as", m, "--failed", "--report", report}, bad[report]...)...)
+			d.run(false, append(append([]string{"finish", "--as", m, "--failed", "--report", report}, held...), bad[report]...)...)
 		}
 		if len(ready) > 0 {
-			d.run(false, append([]string{"take", "--as", m}, ready...)...)
+			d.run(false, append(append([]string{"take", "--as", m}, held...), ready...)...)
 		}
 	}
 	d.run(false, "ask")
@@ -346,10 +351,10 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			}
 		}
 		if len(good) > 0 {
-			d.run(false, append([]string{"read", "--as", r, "--ok"}, good...)...)
+			d.run(false, append(append([]string{"read", "--as", r, "--ok"}, held...), good...)...)
 		}
 		for _, f := range sortedKeys(broken) {
-			d.run(false, append([]string{"read", "--as", r, "--broken", "--finding", f}, broken[f]...)...)
+			d.run(false, append(append([]string{"read", "--as", r, "--broken", "--finding", f}, held...), broken[f]...)...)
 		}
 	}
 	// Each stream's merge step, with its facts. A stream's queue is read just
@@ -414,7 +419,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 				}
 			}
 		}
-		d.run(false, args...)
+		d.run(false, append(args, held...)...)
 	}
 }
 

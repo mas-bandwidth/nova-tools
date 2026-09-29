@@ -28,6 +28,10 @@ func (e *movedError) Error() string { return "table " + e.table + " changed whil
 // RetryBudget asleep: the snapshot is one consistent state of each table.
 // extras names records to read as well (unplaced ones included), by table.
 func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var last *movedError
 	r := st.retry(ctx)
 	for r.next(LoadTries) {

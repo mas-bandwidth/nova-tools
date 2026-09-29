@@ -58,6 +58,7 @@ func init() {
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
 		{"play", "[--seed <n>] [--every <duration>] [--start] [--fail <p>] [--broken <p>] [--batch <n>] [--stuck <p>] [--cross <p>] [--red <p>] [--flap <p>] [--ticks <n>]", "play --seed 7 --every 1s --start", (*app).cmdPlay},
+		{"clear", "--confirm <prefix>", "clear --confirm dev-", (*app).cmdClear},
 		{"teardown", "--confirm <prefix>", "teardown --confirm dev-", (*app).cmdTeardown},
 	}
 }
@@ -345,6 +346,10 @@ const (
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	step.CallerOp = c.op
+	if c.epoch >= 0 {
+		e := uint64(c.epoch)
+		step.Epoch = &e
+	}
 	res, err := st.Run(ctx, step)
 	return a.report(ctx, verbName, c, st, res, err, stdout, stderr)
 }
@@ -1094,5 +1099,50 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "TEARDOWN OK prefix=%s keys=%d\n", oneline.Escape(c.prefix), n)
+	return 0
+}
+
+func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("clear")
+	confirm := fs.String("confirm", "", "the prefix again, to confirm; 'none' for an empty prefix")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) > 0 {
+		return refuse(stderr, "clear", fmt.Sprint("takes no words ", err))
+	}
+	want := c.prefix
+	if want == "" {
+		want = "none"
+	}
+	if *confirm != want {
+		return refuse(stderr, "clear", "stops the sprint under prefix "+strconv.Quote(c.prefix)+" and clears all work in it (a new epoch; the old one stays readable with --at-epoch); wants --confirm "+want)
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "clear", err.Error())
+	}
+	ctx := context.Background()
+	res, err := st.Clear(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s clear: %s\n", prog, oneline.Escape(err.Error()))
+		return 2
+	}
+	var held []string
+	for _, k := range []string{"primaries", "work cards", "read cards", "merge cards", "open judgments"} {
+		held = append(held, strings.ReplaceAll(k, " ", "_")+"="+strconv.Itoa(res.Held[k]))
+	}
+	extra := ""
+	if res.Finished != "" {
+		extra += " finished=" + oneline.Escape(res.Finished)
+	}
+	if res.Abandoned != "" {
+		extra += " abandoned=" + oneline.Escape(res.Abandoned)
+	}
+	if res.Restored {
+		extra += " restored=yes"
+	}
+	fmt.Fprintf(stdout, "CLEAR OK epoch=%d->%d at=%s held: %s%s\n", res.From, res.To, res.At.UTC().Format(time.RFC3339), strings.Join(held, " "), extra)
+	if line := sprintLine(ctx, st); line != "" {
+		fmt.Fprintln(stdout, line)
+	}
 	return 0
 }
