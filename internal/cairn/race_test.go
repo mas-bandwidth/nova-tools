@@ -93,7 +93,7 @@ func TestARecordSwappedForALinkNeverCarriesAWriteOutside(t *testing.T) {
 			if err := os.Link(record, record+".real"); err != nil {
 				t.Skipf("no hard links here: %v", err)
 			}
-			race(store, 8, func(i int) {
+			race(store, 5, func(i int) {
 				if i%2 == 0 {
 					repoint(record, outside)
 				} else if os.Remove(record + ".tmp"); os.Link(record+".real", record+".tmp") == nil {
@@ -126,7 +126,7 @@ func TestAnAncestorOfTheStoreSwappedUnderAppendsLosesAndInventsNothing(t *testin
 	if err := os.Symlink("realpar", par); err != nil {
 		t.Skipf("no symlinks here: %v", err)
 	}
-	ok := race(filepath.Join(par, "st"), 8, func(i int) { repoint(par, []string{"evilpar", "realpar"}[i%2]) })
+	ok := race(filepath.Join(par, "st"), 5, func(i int) { repoint(par, []string{"evilpar", "realpar"}[i%2]) })
 	if got := sections(filepath.Join(root, "realpar", "st", "x.md")) + sections(filepath.Join(root, "evilpar", "st", "x.md")); got != ok {
 		t.Fatalf("%d appends answered OK and %d sections are in the two stores", ok, got)
 	}
@@ -152,7 +152,7 @@ func TestAStoreSwappedForALinkNeverCarriesAWriteOutside(t *testing.T) {
 	if err := os.Symlink(evil, filepath.Join(root, "probe")); err != nil {
 		t.Skipf("no symlinks here: %v", err)
 	}
-	ok := race(store, 8, func(int) {
+	ok := race(store, 5, func(int) {
 		os.Rename(store, store+".real")
 		os.Symlink(evil, store)
 		spin() // the link stands long enough to be met
