@@ -36,7 +36,7 @@ func cmdQueue(ctx context.Context, args []string, stdout, stderr io.Writer, newF
 		return refuse(stderr, where, oneline.Cap(err.Error(), oneline.TailBytes)+": nova-ci "+queueUsage)
 	}
 	if fs.NArg() > 0 {
-		return refuse(stderr, where, fmt.Sprintf("takes flags only, nothing positional: %q; run: nova-ci help", fs.Arg(0)))
+		return refuse(stderr, where, fmt.Sprintf("takes flags only, nothing positional: %q", fs.Arg(0)))
 	}
 
 	*repo = strings.TrimSpace(*repo)

@@ -217,7 +217,7 @@ type QueueForge interface {
 func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLinesCap int) (QueueReport, error) {
 	nodes, err := f.QueueEntries(ctx, repo, branch)
 	if err != nil {
-		return QueueReport{}, err
+		return QueueReport{}, fmt.Errorf("query merge queue for branch %s of %s: %w; merge queue entries were not read: check forge access or branch name and retry", branch, repo, err)
 	}
 	report := QueueReport{
 		Repo:   repo,
@@ -230,7 +230,7 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 	// Fetch merge_group runs once to match against all queued PRs.
 	runs, err := f.MergeGroupRuns(ctx, repo)
 	if err != nil {
-		return QueueReport{}, fmt.Errorf("listing merge_group runs for %s: %w", repo, err)
+		return QueueReport{}, fmt.Errorf("list merge_group runs of %s: %w; merge-group runs were not read: check forge access and retry", repo, err)
 	}
 
 	for _, n := range nodes {
@@ -266,14 +266,14 @@ func InspectQueue(ctx context.Context, f QueueForge, repo, branch string, failLi
 			case "failure", "timed_out", "cancelled", "canceled":
 				jobs, err := f.Jobs(ctx, repo, bestRun.ID)
 				if err != nil {
-					return QueueReport{}, fmt.Errorf("listing jobs for run %d: %w", bestRun.ID, err)
+					return QueueReport{}, fmt.Errorf("list jobs for run %d of %s: %w; failed job details were not read: check forge access and retry", bestRun.ID, repo, err)
 				}
 				for _, j := range jobs {
 					if j.Failed() {
 						entry.Job = j.Name
 						logText, err := f.JobLog(ctx, repo, j.ID)
 						if err != nil {
-							return QueueReport{}, fmt.Errorf("fetching log for job %d (%s): %w", j.ID, j.Name, err)
+							return QueueReport{}, fmt.Errorf("read log for job %d (%s) of %s: %w; job failure log was not read: check forge access and retry", j.ID, j.Name, repo, err)
 						}
 						entry.FailLines = ExtractFailLines(j.Name, logText, failLinesCap)
 						break // report the first failed job

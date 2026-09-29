@@ -53,14 +53,21 @@ func TestExtractFailLinesWithRealFixtures(t *testing.T) {
 }
 
 type fakeQueueForge struct {
-	nodes []QueueNode
-	runs  []MergeGroupRun
-	jobs  map[int64][]FailedJob
-	logs  map[int64]string
-	err   error
+	nodes      []QueueNode
+	runs       []MergeGroupRun
+	jobs       map[int64][]FailedJob
+	logs       map[int64]string
+	err        error
+	entriesErr error
+	runsErr    error
+	jobsErr    error
+	logsErr    error
 }
 
 func (f *fakeQueueForge) QueueEntries(ctx context.Context, repo, branch string) ([]QueueNode, error) {
+	if f.entriesErr != nil {
+		return nil, f.entriesErr
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -68,6 +75,9 @@ func (f *fakeQueueForge) QueueEntries(ctx context.Context, repo, branch string) 
 }
 
 func (f *fakeQueueForge) MergeGroupRuns(ctx context.Context, repo string) ([]MergeGroupRun, error) {
+	if f.runsErr != nil {
+		return nil, f.runsErr
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -75,6 +85,9 @@ func (f *fakeQueueForge) MergeGroupRuns(ctx context.Context, repo string) ([]Mer
 }
 
 func (f *fakeQueueForge) Jobs(ctx context.Context, repo string, runID int64) ([]FailedJob, error) {
+	if f.jobsErr != nil {
+		return nil, f.jobsErr
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -82,10 +95,87 @@ func (f *fakeQueueForge) Jobs(ctx context.Context, repo string, runID int64) ([]
 }
 
 func (f *fakeQueueForge) JobLog(ctx context.Context, repo string, jobID int64) (string, error) {
+	if f.logsErr != nil {
+		return "", f.logsErr
+	}
 	if f.err != nil {
 		return "", f.err
 	}
 	return f.logs[jobID], nil
+}
+
+func TestInspectQueueForgeErrors(t *testing.T) {
+	t.Parallel()
+
+	// 1. QueueEntries error
+	f1 := &fakeQueueForge{entriesErr: errors.New("graphql timeout")}
+	_, err := InspectQueue(context.Background(), f1, "mas-bandwidth/nova-tools", "dev", 3)
+	if err == nil {
+		t.Fatal("expected error on QueueEntries failure, got nil")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "query merge queue") || !strings.Contains(errStr, "graphql timeout") ||
+		!strings.Contains(errStr, "merge queue entries were not read") || !strings.Contains(errStr, "check forge access") {
+		t.Errorf("QueueEntries error = %q, want operation, cause, state, and next action", errStr)
+	}
+
+	// 2. MergeGroupRuns error
+	f2 := &fakeQueueForge{
+		nodes:   []QueueNode{{PR: 4582, Position: 0, State: "AWAITING_CHECKS", HeadSHA: "e29673fe4"}},
+		runsErr: errors.New("502 bad gateway"),
+	}
+	_, err = InspectQueue(context.Background(), f2, "mas-bandwidth/nova-tools", "dev", 3)
+	if err == nil {
+		t.Fatal("expected error on MergeGroupRuns failure, got nil")
+	}
+	errStr = err.Error()
+	if !strings.Contains(errStr, "list merge_group runs") || !strings.Contains(errStr, "502 bad gateway") ||
+		!strings.Contains(errStr, "merge-group runs were not read") || !strings.Contains(errStr, "check forge access") {
+		t.Errorf("MergeGroupRuns error = %q, want operation, cause, state, and next action", errStr)
+	}
+
+	// 3. Jobs error
+	f3 := &fakeQueueForge{
+		nodes: []QueueNode{{PR: 4582, Position: 0, State: "AWAITING_CHECKS", HeadSHA: "e29673fe4"}},
+		runs: []MergeGroupRun{{
+			ID:         35375346271,
+			HeadBranch: "gh-readonly-queue/dev/pr-4582-82c79a57ae0f",
+			Conclusion: "failure",
+		}},
+		jobsErr: errors.New("rate limited"),
+	}
+	_, err = InspectQueue(context.Background(), f3, "mas-bandwidth/nova-tools", "dev", 3)
+	if err == nil {
+		t.Fatal("expected error on Jobs failure, got nil")
+	}
+	errStr = err.Error()
+	if !strings.Contains(errStr, "list jobs for run") || !strings.Contains(errStr, "rate limited") ||
+		!strings.Contains(errStr, "failed job details were not read") || !strings.Contains(errStr, "check forge access") {
+		t.Errorf("Jobs error = %q, want operation, cause, state, and next action", errStr)
+	}
+
+	// 4. JobLog error
+	f4 := &fakeQueueForge{
+		nodes: []QueueNode{{PR: 4582, Position: 0, State: "AWAITING_CHECKS", HeadSHA: "e29673fe4"}},
+		runs: []MergeGroupRun{{
+			ID:         35375346271,
+			HeadBranch: "gh-readonly-queue/dev/pr-4582-82c79a57ae0f",
+			Conclusion: "failure",
+		}},
+		jobs: map[int64][]FailedJob{
+			35375346271: {{ID: 101, Name: "test (linux)", Conclusion: "failure"}},
+		},
+		logsErr: errors.New("log 404"),
+	}
+	_, err = InspectQueue(context.Background(), f4, "mas-bandwidth/nova-tools", "dev", 3)
+	if err == nil {
+		t.Fatal("expected error on JobLog failure, got nil")
+	}
+	errStr = err.Error()
+	if !strings.Contains(errStr, "read log for job") || !strings.Contains(errStr, "log 404") ||
+		!strings.Contains(errStr, "job failure log was not read") || !strings.Contains(errStr, "check forge access") {
+		t.Errorf("JobLog error = %q, want operation, cause, state, and next action", errStr)
+	}
 }
 
 func TestInspectQueueEmpty(t *testing.T) {
@@ -265,8 +355,10 @@ func TestInspectQueueForgeErrorFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "API rate limit exceeded") {
-		t.Errorf("expected error mentioning rate limit, got: %v", err)
+	errStr := err.Error()
+	if !strings.Contains(errStr, "list merge_group runs") || !strings.Contains(errStr, "API rate limit exceeded") ||
+		!strings.Contains(errStr, "merge-group runs were not read") || !strings.Contains(errStr, "check forge access") {
+		t.Errorf("expected error naming operation, cause, state, and next action, got: %v", err)
 	}
 }
 

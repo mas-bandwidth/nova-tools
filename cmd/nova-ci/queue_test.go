@@ -97,8 +97,9 @@ func TestQueueForgeError(t *testing.T) {
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr, "no merge queue found") {
-		t.Errorf("stderr = %q, want 'no merge queue found'", stderr)
+	if !strings.Contains(stderr, "query merge queue") || !strings.Contains(stderr, "no merge queue found") ||
+		!strings.Contains(stderr, "merge queue entries were not read") || !strings.Contains(stderr, "check forge access or branch name and retry") {
+		t.Errorf("stderr = %q, want operation, cause, state, and next action", stderr)
 	}
 }
 
@@ -121,7 +122,71 @@ func TestQueueRunsForgeError(t *testing.T) {
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr, "listing merge_group runs") || !strings.Contains(stderr, "internal server error") {
+	if !strings.Contains(stderr, "list merge_group runs") || !strings.Contains(stderr, "internal server error") ||
+		!strings.Contains(stderr, "merge-group runs were not read") || !strings.Contains(stderr, "check forge access and retry") {
+		t.Errorf("stderr %q missing expected refusal", stderr)
+	}
+}
+
+type jobsErrForge struct {
+	fakeQueueForge
+}
+
+func (j *jobsErrForge) Jobs(ctx context.Context, repo string, runID int64) ([]ci.FailedJob, error) {
+	return nil, errors.New("rate limited")
+}
+
+func TestQueueJobsForgeError(t *testing.T) {
+	t.Parallel()
+	fake := &jobsErrForge{
+		fakeQueueForge: fakeQueueForge{
+			nodes: []ci.QueueNode{{PR: 100, Position: 0, State: "QUEUED"}},
+			runs: []ci.MergeGroupRun{{
+				ID:         35375346271,
+				HeadBranch: "gh-readonly-queue/dev/pr-100-abc",
+				Conclusion: "failure",
+			}},
+		},
+	}
+	code, _, stderr := runQueue([]string{"--repo", "mas-bandwidth/nova-tools"}, fake)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "list jobs for run") || !strings.Contains(stderr, "rate limited") ||
+		!strings.Contains(stderr, "failed job details were not read") || !strings.Contains(stderr, "check forge access and retry") {
+		t.Errorf("stderr %q missing expected refusal", stderr)
+	}
+}
+
+type logsErrForge struct {
+	fakeQueueForge
+}
+
+func (l *logsErrForge) JobLog(ctx context.Context, repo string, jobID int64) (string, error) {
+	return "", errors.New("log 404")
+}
+
+func TestQueueJobLogForgeError(t *testing.T) {
+	t.Parallel()
+	fake := &logsErrForge{
+		fakeQueueForge: fakeQueueForge{
+			nodes: []ci.QueueNode{{PR: 100, Position: 0, State: "QUEUED"}},
+			runs: []ci.MergeGroupRun{{
+				ID:         35375346271,
+				HeadBranch: "gh-readonly-queue/dev/pr-100-abc",
+				Conclusion: "failure",
+			}},
+			jobs: map[int64][]ci.FailedJob{
+				35375346271: {{ID: 501, Name: "test (linux)", Conclusion: "failure"}},
+			},
+		},
+	}
+	code, _, stderr := runQueue([]string{"--repo", "mas-bandwidth/nova-tools"}, fake)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "read log for job") || !strings.Contains(stderr, "log 404") ||
+		!strings.Contains(stderr, "job failure log was not read") || !strings.Contains(stderr, "check forge access and retry") {
 		t.Errorf("stderr %q missing expected refusal", stderr)
 	}
 }
