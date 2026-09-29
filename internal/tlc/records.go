@@ -150,7 +150,57 @@ func Merge(src Source, cases []Case, runs ...[]Record) ([]Record, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("no record for %d declared cases (%s)", len(missing), strings.Join(missing, ", "))
 	}
+	if err := OneJar(cases, merged); err != nil {
+		return nil, err
+	}
 	return merged, nil
+}
+
+// OneJar refuses a set of records that was not all measured with one jar: a
+// file mixing jars says nothing about any one of them. The refusal names each
+// jar with how many records it measured, and the groups of the cases recorded
+// under the jars other than the commonest, which are the ones to run again.
+func OneJar(cases []Case, records []Record) error {
+	count := map[string]int{}
+	for _, r := range records {
+		count[r.JarSHA256]++
+	}
+	if len(count) <= 1 {
+		return nil
+	}
+	jars := make([]string, 0, len(count))
+	for j := range count {
+		jars = append(jars, j)
+	}
+	sort.Slice(jars, func(a, b int) bool {
+		if count[jars[a]] != count[jars[b]] {
+			return count[jars[a]] > count[jars[b]]
+		}
+		return jars[a] < jars[b]
+	})
+	group := map[string]string{}
+	for _, c := range cases {
+		group[c.Config] = c.Group
+	}
+	var parts []string
+	for _, j := range jars {
+		parts = append(parts, fmt.Sprintf("%s (%d records)", short(j), count[j]))
+	}
+	other := map[string]bool{}
+	var cfgs []string
+	for _, r := range records {
+		if r.JarSHA256 != jars[0] {
+			other[group[r.Config]] = true
+			cfgs = append(cfgs, r.Config)
+		}
+	}
+	var groups []string
+	for g := range other {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+	return fmt.Errorf("the records hold %d jars: %s; one jar measures the whole file: run again, with the jar %s, the groups recorded under the other jars (%s: %s), or run every group with one jar and merge without --keep",
+		len(jars), strings.Join(parts, ", "), short(jars[0]), strings.Join(groups, ", "), strings.Join(cfgs, ", "))
 }
 
 func short(h string) string { return h[:min(12, len(h))] }

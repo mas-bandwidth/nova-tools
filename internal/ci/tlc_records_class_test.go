@@ -95,6 +95,15 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 	}
 }
 
+// tc is the index of each column of tla/RUNS.tsv by its name.
+var tc = func() map[string]int {
+	m := map[string]int{}
+	for i, name := range tlcRunHeader {
+		m[name] = i
+	}
+	return m
+}()
+
 var tlcRunHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "host", "started_utc", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
 
 func readTLCTSV(path string, header []string) ([][]string, error) {
@@ -208,54 +217,66 @@ func tlcRecordProblems(root string) []string {
 	}
 	seen := map[string]bool{}
 	for _, row := range records {
-		name := row[0]
+		name := row[tc["config"]]
 		p, ok := wanted[name]
 		if !ok || seen[name] {
 			bad("TLC unexpected or duplicate run record %s", name)
 			continue
 		}
 		seen[name] = true
-		if row[1] != p[1] || row[12] != p[2] || row[13] != p[3] {
+		if row[tc["module"]] != p[1] || row[tc["expected"]] != p[2] || row[tc["property"]] != p[3] {
 			bad("TLC %s record disagrees with its declared module or outcome", name)
 		}
 		if want, files, err := src.Fingerprint(name); err == nil {
-			if row[2] != want || row[3] != strconv.Itoa(files) {
+			if row[tc["input_sha256"]] != want || row[tc["input_files"]] != strconv.Itoa(files) {
 				bad("TLC %s record is stale: it was measured on inputs %s (%d files) and the case now reads %s (%d files): %s; run its group on a Linux bench (`tlacheck inputs --case %s` prints each file and its hash)",
-					name, row[2], atoiOrZero(row[3]), want, files, tlcInputList(src, name), name)
+					name, row[tc["input_sha256"]], atoiOrZero(row[tc["input_files"]]), want, files, tlcInputList(src, name), name)
 			}
 		}
-		jar, err := hex.DecodeString(row[4])
-		if err != nil || len(jar) != sha256.Size || strings.TrimSpace(row[5]) == "" {
+		jar, err := hex.DecodeString(row[tc["jar_sha256"]])
+		if err != nil || len(jar) != sha256.Size || strings.TrimSpace(row[tc["host"]]) == "" {
 			bad("TLC %s is missing jar identity or bench provenance", name)
 		}
-		if _, err := time.Parse(time.RFC3339Nano, row[6]); err != nil {
+		if _, err := time.Parse(time.RFC3339Nano, row[tc["started_utc"]]); err != nil {
 			bad("TLC %s has no valid run timestamp", name)
 		}
-		generated, eg := strconv.ParseUint(row[7], 10, 64)
-		distinct, ed := strconv.ParseUint(row[8], 10, 64)
-		seconds, es := strconv.ParseFloat(row[9], 64)
-		budget, eb := strconv.ParseFloat(row[14], 64)
-		bounded := row[15] == "bounded"
-		if eb != nil || math.IsNaN(budget) || math.IsInf(budget, 0) || budget <= 0 || budget > 3600 || bounded && budget > 110 || !bounded && row[15] != "manual" || p[6] == "required" && !bounded {
+		generated, eg := strconv.ParseUint(row[tc["generated"]], 10, 64)
+		distinct, ed := strconv.ParseUint(row[tc["distinct"]], 10, 64)
+		seconds, es := strconv.ParseFloat(row[tc["seconds"]], 64)
+		budget, eb := strconv.ParseFloat(row[tc["budget"]], 64)
+		bounded := row[tc["mode"]] == "bounded"
+		if eb != nil || math.IsNaN(budget) || math.IsInf(budget, 0) || budget <= 0 || budget > 3600 || bounded && budget > 110 || !bounded && row[tc["mode"]] != "manual" || p[6] == "required" && !bounded {
 			bad("TLC %s invalid run budget or mode", name)
 		}
 		if es != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds <= 0 || seconds > budget+2 {
 			bad("TLC %s invalid elapsed time or exceeded its recorded budget", name)
 		}
-		debtFailure := p[6] == "bench" && p[7] != "-" && row[11] == "FAIL"
+		debtFailure := p[6] == "bench" && p[7] != "-" && row[tc["result"]] == "FAIL"
 		if !debtFailure && (eg != nil || ed != nil || distinct == 0 || generated < distinct || bounded && seconds > 110) {
 			bad("TLC %s has invalid state counts or exceeded its 110-second budget", name)
 		}
 		if debtFailure {
-			if _, err := strconv.Atoi(row[10]); err != nil {
+			if _, err := strconv.Atoi(row[tc["exit"]]); err != nil {
 				bad("TLC %s debt record has invalid exit", name)
 			}
 			continue // retained failed measurement, explicitly not a passing proof
 		}
 		code := map[string]string{"pass": "0", "invariant": "12", "action": "13", "temporal": "13"}[p[2]]
-		if code == "" || row[10] != code || row[11] != "PASS" {
+		if code == "" || row[tc["exit"]] != code || row[tc["result"]] != "PASS" {
 			bad("TLC %s did not reach its declared result; timeout and generic failure are not evidence", name)
 		}
+	}
+	jars := map[string]int{}
+	for _, row := range records {
+		jars[row[tc["jar_sha256"]]]++
+	}
+	if len(jars) > 1 {
+		var parts []string
+		for jar, n := range jars {
+			parts = append(parts, fmt.Sprintf("%.12s (%d records)", jar, n))
+		}
+		sort.Strings(parts)
+		bad("TLC run records hold %d jars (%s); one jar measures the whole file: run again the groups recorded under the other jars with one jar (`tlacheck groups --stale` names none, since the jar is not an input; run those groups, then `tlacheck merge --keep`), or run every group with one jar", len(jars), strings.Join(parts, ", "))
 	}
 	for name := range wanted {
 		if !seen[name] && wanted[name][7] == "-" {
@@ -354,7 +375,10 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 		if err != nil {
 			f.t.Fatal(err)
 		}
-		row := []string{p[0], p[1], fp, strconv.Itoa(files), strings.Repeat("a", 64), "fixture-bench", "2026-01-01T00:00:00Z", "10", "5", "1.25", "0", "PASS", p[2], p[3], "110", "bounded"}
+		row := make([]string, len(tlcRunHeader))
+		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "host": "fixture-bench", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
+			row[tc[name]] = v
+		}
 		if edit != nil {
 			if row = edit(row); row == nil {
 				continue
@@ -421,8 +445,8 @@ func TestTLCPerCaseFingerprintStalesOnlyTheCasesThatReadWhatChanged(t *testing.T
 		}, nil},
 		{"a record with the wrong count of files", func(f tlcFixture) {
 			f.seal(func(row []string) []string {
-				if row[0] == "MCLone.cfg" {
-					row[3] = "99"
+				if row[tc["config"]] == "MCLone.cfg" {
+					row[tc["input_files"]] = "99"
 				}
 				return row
 			})
@@ -470,7 +494,7 @@ func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
 		{"a configuration with no declared case", func(f tlcFixture) { f.write("tla/MCNew.cfg", "SPECIFICATION Spec\n") }, "MCNew.cfg has no declared case"},
 		{"a declared case with no record", func(f tlcFixture) {
 			f.seal(func(row []string) []string {
-				if row[0] == "MCB.cfg" {
+				if row[tc["config"]] == "MCB.cfg" {
 					return nil
 				}
 				return row
@@ -481,7 +505,7 @@ func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
 			f.write("tla/MCC.tla", "---- MODULE MCC ----\n====\n")
 			f.write("tla/CASES.tsv", f.read("tla/CASES.tsv")+"MCC.cfg\tMCC.tla\tpass\t-\tcheck\tdelta\trequired\t-\n")
 			f.seal(func(row []string) []string {
-				if row[0] == "MCC.cfg" {
+				if row[tc["config"]] == "MCC.cfg" {
 					return nil
 				}
 				return row
@@ -589,6 +613,26 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 	}
 }
 
+// One jar measures the whole record file: a record on another jar is refused
+// by the class test whatever its inputs say.
+func TestTLCRecordFileHoldsOneJar(t *testing.T) {
+	t.Parallel()
+	f := newTLCFixture(t)
+	if stale, other := f.stale(); len(stale)+len(other) != 0 {
+		t.Fatalf("fixture refused: %v %v", stale, other)
+	}
+	f.seal(func(row []string) []string {
+		if row[tc["config"]] == "MCB.cfg" {
+			row[tc["jar_sha256"]] = strings.Repeat("b", 64)
+		}
+		return row
+	})
+	stale, other := f.stale()
+	if len(stale) != 0 || len(other) != 1 || !strings.Contains(other[0], "hold 2 jars") || !strings.Contains(other[0], "aaaaaaaaaaaa (2 records)") || !strings.Contains(other[0], "bbbbbbbbbbbb (1 records)") {
+		t.Fatalf("stale %v, other %v", stale, other)
+	}
+}
+
 // The gates that are not about freshness: what the class test refuses about a
 // record's result, budget and mode, and about a case's gate and debt.
 func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
@@ -600,19 +644,19 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 			edit := func(row []string) []string { return row }
 			switch mutation {
 			case "failed-record":
-				edit = func(row []string) []string { row[11] = "FAIL"; return row }
+				edit = func(row []string) []string { row[tc["result"]] = "FAIL"; return row }
 			case "wrong-exit":
-				edit = func(row []string) []string { row[10] = "124"; return row }
+				edit = func(row []string) []string { row[tc["exit"]] = "124"; return row }
 			case "manual-required":
-				edit = func(row []string) []string { row[15] = "manual"; return row }
+				edit = func(row []string) []string { row[tc["mode"]] = "manual"; return row }
 			case "waived-required":
 				f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "required\t-\n", "bench\twaiver\n", 1))
 			case "declared-debt", "stale-debt":
 				f.write("tla/MCCardMachine.tla", "card model\n")
 				f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "MCA.cfg\tMCA.tla\tpass\t-\tcheck\talpha\trequired\t-", "MCA.cfg\tMCCardMachine.tla\tpass\t-\tcheck\tcard\tbench\tlayer-2", 1))
 				edit = func(row []string) []string {
-					if row[0] == "MCA.cfg" {
-						row[7], row[8], row[9], row[10], row[11] = "-", "-", "110.2", "124", "FAIL"
+					if row[tc["config"]] == "MCA.cfg" {
+						row[tc["generated"]], row[tc["distinct"]], row[tc["seconds"]], row[tc["exit"]], row[tc["result"]] = "-", "-", "110.2", "124", "FAIL"
 					}
 					return row
 				}

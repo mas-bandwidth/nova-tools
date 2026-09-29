@@ -136,3 +136,24 @@ func TestMergeRefusesRecordsOfAnotherRunnerOrEditedModel(t *testing.T) {
 		t.Errorf("records of a model edited since: %v", err)
 	}
 }
+
+// A merge of records that were not all measured with one jar is refused: the
+// kept records of an older jar beside the runs of a new one.
+func TestMergeRefusesRecordsOfMoreThanOneJar(t *testing.T) {
+	t.Parallel()
+	src, cases, recs := mergeTree(t)
+	for i := range cases {
+		cases[i].Group = []string{"alpha", "beta", "gamma"}[i]
+	}
+	a, b, c := recs["MCA.cfg"], recs["MCB.cfg"], recs["MCC.cfg"]
+	c.JarSHA256 = strings.Repeat("c", 64)
+	_, err := Merge(src, cases, []Record{a, b}, []Record{c})
+	want := "the records hold 2 jars: aaaaaaaaaaaa (2 records), cccccccccccc (1 records); one jar measures the whole file: run again, with the jar aaaaaaaaaaaa, the groups recorded under the other jars (gamma: MCC.cfg), or run every group with one jar and merge without --keep"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v\nwant %s", err, want)
+	}
+	c.JarSHA256 = a.JarSHA256
+	if _, err := Merge(src, cases, []Record{a, b, c}); err != nil {
+		t.Fatalf("one jar refused: %v", err)
+	}
+}

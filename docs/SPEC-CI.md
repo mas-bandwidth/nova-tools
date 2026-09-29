@@ -2340,7 +2340,9 @@ stales that case only, an edit to the shared module stales the cases that extend
 other, an edit to one row of the case plan stales that case only, an edit to the runner
 stales every case, and edits to files no case reads stale none.
 `TestTLCEveryFileACaseReadsStalesIt` changes each file a case reads, one at a time, and
-each change stales the case. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
+each change stales the case. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
+set of records measured with more than one jar, naming each jar with its record count and the
+groups to run again. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
 declared failed bench measurement is retained as debt, never PASS.
 
