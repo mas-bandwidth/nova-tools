@@ -332,10 +332,66 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
 		}
+		u.Closes = closesFor(s.Open, nil, c.ID)
 		p.Units = append(p.Units, u)
+	}
+	// A waiting stream with something queued is merging.
+	for _, st := range unitStreams(p) {
+		if ctl := s.StreamCtl(st); ctl.F("state") == StreamWaiting {
+			n := happened(NStartedMerging, st, s.Now)
+			n.Who = r.Who
+			setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": stamp(s.Now)}, n)
+		}
 	}
 	answered(&p, s.Open, r.Answers)
 	return p
+}
+
+// unitStreams is the streams of the plan's units, in order.
+func unitStreams(p Plan) []string {
+	var out []string
+	for _, u := range p.Units {
+		if u.Stream != "" && !contains(out, u.Stream) {
+			out = append(out, u.Stream)
+		}
+	}
+	return out
+}
+
+// settle keeps a stream's state true after cards leave its merge queue
+// (offQueue) or the table (offTable): landed when every primary of the stream
+// left on the table has landed, else waiting when a merging stream has nothing
+// queued or stuck. A stopped stream stays stopped until it resumes.
+func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool) {
+	for _, st := range unitStreams(*p) {
+		ctl := s.StreamCtl(st)
+		state := ctl.F("state")
+		if ctl == nil || state == StreamStopped || state == StreamLanded {
+			continue
+		}
+		left := 0
+		for _, c := range append(s.Merge.Cell(st, Queued), s.Merge.Cell(st, Stuck)...) {
+			if !offQueue[c.ID] && !offTable[c.ID] {
+				left++
+			}
+		}
+		open, landed := 0, s.Work.Count(st, Landed)
+		for _, x := range []State{Waiting, Ready, Working, Review, Merging} {
+			for _, c := range s.Work.Cell(st, x) {
+				if !offTable[c.ID] {
+					open++
+				}
+			}
+		}
+		switch {
+		case open == 0 && landed > 0:
+			n := happened(NStreamLanded, st, s.Now)
+			n.Who = who
+			setStream(p, s, st, map[string]string{"state": StreamLanded, "since": stamp(s.Now)}, n)
+		case left == 0 && state == StreamMerging:
+			setStream(p, s, st, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})
+		}
+	}
 }
 
 // ReworkReq is the coordinator sending primaries back with a fix.
@@ -444,6 +500,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
+	leaving := map[string]bool{}
 	for _, c := range chosen {
 		m := s.Merge.Placed(c.ID)
 		set := map[string]string{"returns": itoa(c.Int("returns") + 1)}
@@ -461,8 +518,10 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 				u.Notes = append(u.Notes, decided(o, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID))
 			}
 		}
+		leaving[c.ID] = true
 		p.Units = append(p.Units, u)
 	}
+	settle(&p, s, r.Who, leaving, nil)
 	answered(&p, s.Open, r.Answers)
 	return p
 }
@@ -534,6 +593,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
+	settle(&p, s, r.Who, dropping, dropping)
 	answered(&p, s.Open, r.Answers)
 	return p
 }

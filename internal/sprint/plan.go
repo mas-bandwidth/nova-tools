@@ -213,3 +213,19 @@ func decided(o Open, what, who string, now time.Time, primaries ...string) Note 
 	return Note{Kind: Decided, Type: o.Note.Type, Stream: o.Note.Stream, Answers: o.Note.ID, What: what, Who: who, At: now,
 		Primaries: primaries, Count: len(primaries)}
 }
+
+// setStream is the stream's control card changed by a step, carried by the
+// step's first unit of that stream: the card is changed once per step.
+func setStream(p *Plan, s *Snapshot, stream string, set map[string]string, notes ...Note) {
+	ctl := s.StreamCtl(stream)
+	if ctl == nil || len(set) == 0 {
+		return
+	}
+	for i := range p.Units {
+		if p.Units[i].Stream == stream {
+			p.Units[i].Changes = append(p.Units[i].Changes, change(Merge, setEntry(ctl, set)))
+			p.Units[i].Notes = append(p.Units[i].Notes, notes...)
+			return
+		}
+	}
+}

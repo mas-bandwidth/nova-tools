@@ -413,3 +413,46 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 		t.Fatalf("reads exhausted by an ack: %v", o)
 	}
 }
+
+// G4: every step that changes what is queued keeps the stream's state true:
+// accept makes a waiting stream merging (and closes the card judgments of what
+// it accepts); return empties the queue to waiting; a drop that leaves only
+// landed primaries lands the stream.
+func TestG4StreamStateIsKeptTrue(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 3)
+	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
+		c := w.s.Fleet.Card(id)
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
+	}
+	w.must(Ask(w.s, AskReq{}))
+	for _, id := range []string{"s1-1", "s1-2"} {
+		for _, rc := range readsAt(w.s, w.s.Work.Card(id), 1) {
+			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+		}
+	}
+	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r"}))
+	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	if st := w.s.StreamCtl("s1").F("state"); st != StreamMerging || len(w.notesOf(NStartedMerging)) != 1 {
+		t.Fatalf("accept on a waiting stream: %s, %d notes", st, len(w.notesOf(NStartedMerging)))
+	}
+	if len(w.openOn("s1-1")) != 0 {
+		t.Fatalf("accept left the card's judgments open: %v", w.openOn("s1-1"))
+	}
+	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	if st := w.s.StreamCtl("s1").F("state"); st != StreamWaiting {
+		t.Fatalf("return of the only queued card: %s", st)
+	}
+	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
+	if st := w.s.StreamCtl("s1").F("state"); st != StreamMerging {
+		t.Fatalf("with s1-3 still open the stream is %s", st)
+	}
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-3"}}, Reason: "not needed"}))
+	if st := w.s.StreamCtl("s1").F("state"); st != StreamLanded || len(w.notesOf(NStreamLanded)) != 1 {
+		t.Fatalf("a drop of the last open primary: %s", st)
+	}
+	w.clean("landed by a drop")
+}

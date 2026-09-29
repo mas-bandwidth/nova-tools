@@ -158,6 +158,13 @@ card is a barrier: the merge step never passes an earlier stuck or queued card.
 | stopped | it needs the coordinator; ci and the notification say why |
 | landed | every primary of the stream has landed |
 
+Every step that changes what is queued keeps the stream's state true: accept
+makes a waiting stream merging; the merge step, return and drop make a merging
+stream with nothing queued or stuck waiting, and a stream landed when every
+primary of it left on the table has landed. A stopped stream stays stopped
+until it resumes. accept closes the open card judgments of the primaries it
+accepts.
+
 `since` is the clock time the state last changed. The merge step is mechanical
 and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: conflict on a card; stream branch red; a
@@ -215,7 +222,7 @@ notification of that cause, and "stop and look" is added to its decisions.
 A judgment is open per card and per cause. A verb discharges only the
 obligations it actually resolved: rework resolves a failure, a broken read and
 a red CI on the primaries it reworks; drop resolves everything on the primaries
-it drops; ask --another resolves a broken read; a green CI on the current head
+it drops, and accept every card judgment of the primaries it accepts; ask --another resolves a broken read; a green CI on the current head
 resolves a red one; return resolves a red CI on the primaries it returns, and
 answers its stream's red or rejected batch (recorded; that judgment stays open
 while the stream is stopped); resume resolves the stream's stop.
