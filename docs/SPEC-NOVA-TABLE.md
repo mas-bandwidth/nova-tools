@@ -254,9 +254,9 @@ When `watch --check` detects an invariant violation on any snapshotted table:
 The data-oriented rule is **batch always**: members are plain data in arrays,
 and the manager transforms the selected array in one store call.
 
-This section accompanies the implementation of the table batch API. The card
-manager waits for this table extension's gate; it does not implement private
-placement or emulate a batch using repeated client calls.
+A caller reads the members it depends on, then writes against what it read. It
+does not place members privately or emulate a batch with repeated client calls; the
+batch is the call.
 
 ### Scope and calls
 
@@ -422,28 +422,27 @@ permissions. It validates record/set agreement, including no duplicate hidden ow
 placement, before creating or relocating a member. Every guard is evaluated against
 the same pre-state; an update made in this batch cannot satisfy another guard.
 
-Use the existing table validation and staged-write machinery inside this one server
-invocation. After all validation, stage cells, reverse indexes, member fields and
-revisions, the operation record, table revision and receipt together. An accepted
+The batch commits through the staged-write path every ordinary verb uses
+(`T.finish`), inside this one server invocation. After all validation, it stages
+cells, reverse indexes, member fields and revisions, the operation record, the table
+revision and the receipt together. An accepted
 batch increments the table revision once; every changed member increments its own
 revision once. An accepted no-op batch has a recorded result and one noop receipt, and it
 advances the table revision once like any accepted batch, so every other prepared
 manifest that expects the earlier revision is stale; a refused batch changes no key,
-revision, operation record or receipt. Tests must
-pin no-op and refused results separately.
+revision, operation record or receipt.
 
-Redis scripts do not provide rollback of writes after a runtime command error.
-The design must therefore show that every staged command's type, bounds, permissions
-and other preventable failure conditions were checked before writes. Inject failure
-at those conditions in tests and compare the complete store image. Redis process
-loss/durability guarantees remain those of the configured store; a transport error
-is uncertain, not evidence of rollback. No stronger crash guarantee is asserted
-merely because the function is one FCALL.
+Redis scripts do not provide rollback of writes after a runtime command error, so
+every staged command's type, bounds, permissions and other preventable failure
+conditions are checked before the first write; tests inject failure at each and
+compare the complete store image. Redis process loss and durability guarantees are
+those of the configured store; a transport error is uncertain, not evidence of
+rollback. No stronger crash guarantee is asserted because the function is one FCALL.
 
-Operation identity is table plus epoch plus operation_id. Persist the canonical
-request bytes and result, with its digest for evidence. Caller-provided digest
-equality is insufficient to establish identical requests. An identical recorded
-request returns the original receipt/result without writes, even when its old
+Operation identity is table plus epoch plus operation_id. The record holds the
+canonical request bytes and the result, with the request's digest as evidence. A
+caller-provided digest is not enough to establish identical requests: the bytes are
+compared. An identical recorded request returns the original receipt/result without writes, even when its old
 expected revisions no longer match; operation lookup precedes those checks. A
 changed request with an existing operation ID refuses. An unrecorded operation at
 a stale epoch refuses. Original result epoch/revisions remain visible, so retry
@@ -469,14 +468,14 @@ The batch entry point's dedicated operation record supplies its replay contract.
 
 ### Receipt and refusals
 
-Extend the existing receipt through an explicit batch delta, preserving ordinary
-verb receipt compatibility. One receipt identifies operation/request digest, table,
+The receipt extends an ordinary verb's receipt with a batch delta; an ordinary
+verb's receipt is unchanged. One receipt identifies operation/request digest, table,
 epoch, before/after table revision, actor, changed/noop result and all affected
 members' before/after placements, scores, revisions and application-field changes.
-For each affected application field, include its before and after values with
-absence distinguished from a present empty string. An absent placement has no
-score. Set/unset instructions alone do not supply the before values. Include
-explicit guard/selection counts; a missing member is not silently omitted.
+For each affected application field it holds the before and after values, absence
+distinguished from a present empty string. An absent placement has no score.
+Set/unset instructions alone do not supply the before values. The receipt carries
+explicit guard and selection counts; a missing member is not silently omitted.
 A receipt is bounded by its manifest, not by the values the manifest replaces: a
 field value of at most 256 bytes (`ReceiptValueBytes`) is recorded in full, and a
 longer one is recorded as its length and its SHA-1 (`before_bytes`, `before_sha1`,
@@ -672,30 +671,24 @@ write epoch and receipt:
 exit codes: 0 done, 1 refused, 2 usage
 ```
 
-### Model and table-layer gate
+### Model
 
-Extend the member/epoch table model with an atomic batch action, member revisions,
-field guards, operation records and one receipt per accepted batch. Reuse the
-one-place/epoch definitions; preserve the current per-verb model cases separately.
-A named batch wrapper/config uses 3 members, 2 rows, 2 columns, 2 epochs and batch
-sizes 1..3. Include a guard-only dependency and a cross-row move. Retain exact model,
-config, executable and input hashes; larger configurations are not silently replaced
-by smaller ones when they exceed a budget. TLC runs on a bench.
+The member/epoch table model has an atomic batch action, member revisions, field
+guards, operation records and one receipt per accepted batch, over the one-place and
+epoch definitions; the per-verb model cases are separate. The batch configuration
+has 3 members, 2 rows, 2 columns, 2 epochs and batch sizes 1..3, with a guard-only
+dependency and a cross-row move. A larger configuration is not replaced by a smaller
+one when it exceeds a budget. TLC runs on a bench.
 
-The reversed witnesses must catch: a second member validation failure after a first
-member writes; guard evaluation against partially updated state; duplicate placement;
-stale epoch, table or member revision; missing revision advancement by an ordinary
-writer; wrong-type/permission refusal after partial writes; lost reply causing a
-second effect; request-hash collision without byte comparison; receipt emitted before
-its complete delta; and stale retry reported as a new operation.
+The model's reversed witnesses catch: a second member validation failure after a
+first member writes; guard evaluation against partially updated state; duplicate
+placement; stale epoch, table or member revision; missing revision advancement by an
+ordinary writer; wrong-type or permission refusal after partial writes; a lost reply
+causing a second effect; a request-hash collision without byte comparison; a receipt
+emitted before its complete delta; and a stale retry reported as a new operation.
 
-Gate items are the full table-layer bar: model plus reversed witnesses; trip/commit
-and complete unchanged-store refusal tests; bounded randomized batches on owned
-Redis (16 fixed seeds, 128 steps each) plus runtime checks; Go receipt replay with
-one batch receipt per action; real-use rehearsal on an owned store; two independent
-exact-revision reads of at least 9/10 with accepting dispositions; then the maintainer's
-interactive mini-quack with every verb/refusal, watched table, findings repaired and
-repeated until clean. Test N=1 and maximum configured N separately, including a late
-invalid entry, interacting moves and a replay. Ordinary table callers retain their
-regression suite. The card layer resumes only after this extension has passed the
-table gate; no green card test can substitute for proving the lower layer.
+The tests around it: trip and commit tests with complete unchanged-store refusal
+tests; bounded randomized batches on owned Redis (16 fixed seeds, 128 steps each)
+with runtime checks; Go receipt replay with one batch receipt per action; N=1 and the
+maximum configured N separately, including a late invalid entry, interacting moves and
+a replay; and the ordinary callers' regression suite.

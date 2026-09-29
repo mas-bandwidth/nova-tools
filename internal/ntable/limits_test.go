@@ -99,3 +99,26 @@ func TestReceiptValueBoundAgreesBetweenServerAndLibrary(t *testing.T) {
 		t.Errorf("table.lua %d, limits.go %d", got, ReceiptValueBytes)
 	}
 }
+
+// The batch section of the specification says what is: no process, no gate, no
+// design brief, and no second copy of the document under another name.
+func TestSpecBatchSectionDescribesWhatIs(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("../../docs/SPEC-NOVA-TABLE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	i := strings.Index(text, "## Batched member read and conditional write")
+	if i < 0 {
+		t.Fatal("no batch section")
+	}
+	for _, phrase := range []string{" gate", "mini-quack", "card manager", "card layer", "Use the existing", "Tests must", "must pin", "Extend the", "The design must", "resumes"} {
+		if strings.Contains(text[i:], phrase) {
+			t.Errorf("the batch section holds %q: it describes process, not what is", phrase)
+		}
+	}
+	if _, err := os.Lstat("../../docs/SPEC-TABLE.md"); err == nil {
+		t.Errorf("docs/SPEC-TABLE.md exists: a second name for SPEC-NOVA-TABLE.md that nothing needs")
+	}
+}
