@@ -52,7 +52,8 @@
 \*
 \* FreeCoordinator: TRUE, the coordinator may rework, drop or return any card
 \* at any time; FALSE, only a card an open judgment names (a bound that keeps
-\* the three-primary instance checkable). ask --another is free in both (F1).
+\* the three-primary instance checkable). The same bound applies to
+\* ask --another, which the design leaves free (F1).
 \*
 \* Broken is a reversed witness: a deliberately wrong design, each caught by
 \* one property. "none" is the design.
@@ -369,9 +370,10 @@ Ask(p) ==
                  op, crashed, bad, returnsN, ranks>>
 
 \* ask --another: the coordinator's judgment, free (F1): one more reader for
-\* a primary in review. It answers a broken read or reads exhausted.
+\* a primary in review (under the judged-coordinator bound, only for a card a
+\* judgment names). It answers a broken read or reads exhausted.
 AskAnother(p, r) ==
-  /\ Fenced /\ InWork(p, "review")
+  /\ Fenced /\ InWork(p, "review") /\ Judged(p)
   /\ RC(p, attempt[p], r) \notin made
   /\ readers' = [readers EXCEPT ![r]["asked"] = @ \cup {RC(p, attempt[p], r)}]
   /\ made' = made \cup {RC(p, attempt[p], r)}
