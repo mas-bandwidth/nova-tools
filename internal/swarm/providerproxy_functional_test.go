@@ -76,3 +76,114 @@ func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)
 	}
 }
+
+// TestBodyThatResumesInsideTheDeadlineIsNotUnknown: headers, a pause shorter
+// than the gap, then the body. That is success. Nothing is marked lost.
+func TestBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
+	t.Parallel()
+
+	var upstream atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream.Add(1)
+		discardReq(r)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte("ok\n"))
+	}))
+	defer up.Close()
+
+	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := proxyClient().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("a body inside the deadline failed: %v", err)
+	}
+	if string(body) != "ok\n" {
+		t.Fatalf("body %q, want ok", body)
+	}
+	if p.Lost() {
+		t.Fatal("a body inside the deadline was marked unknown")
+	}
+	if got, upn := p.Requests(), upstream.Load(); got != 1 || upn != 1 {
+		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)
+	}
+}
+
+// TestDelayedHeadersInsideTheWaitPassThrough: headers late but inside the
+// wait, then a streamed body. The status, a header and every body byte pass
+// through unchanged. Nothing is marked lost.
+func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
+	t.Parallel()
+
+	var upstream atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream.Add(1)
+		discardReq(r)
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Upstream", "kept")
+		w.WriteHeader(http.StatusOK)
+		f, _ := w.(http.Flusher)
+		for _, chunk := range []string{"data: one\n\n", "data: two\n\n", "data: [DONE]\n\n"} {
+			_, _ = w.Write([]byte(chunk))
+			if f != nil {
+				f.Flush()
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}))
+	defer up.Close()
+
+	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 2 * time.Second, HeaderWait: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := proxyClient().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("a body after delayed headers failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Upstream") != "kept" || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("status %d headers %v", resp.StatusCode, resp.Header)
+	}
+	if want := "data: one\n\ndata: two\n\ndata: [DONE]\n\n"; string(body) != want {
+		t.Fatalf("body %q, want %q", body, want)
+	}
+	if p.Lost() || p.HeaderWall() != 0 {
+		t.Fatalf("delayed headers inside the wait were marked unknown (header wall %s)", p.HeaderWall())
+	}
+	if got, upn := p.Requests(), upstream.Load(); got != 1 || upn != 1 {
+		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)
+	}
+}

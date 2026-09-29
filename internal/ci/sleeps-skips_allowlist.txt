@@ -41,12 +41,7 @@ internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
 internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
 internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
 internal/nsprint/capacity	TestL20b	#4221 calls time.Sleep
-internal/nsprint/card	TestWrapperOwnsOneCardEndToEnd	#4221 calls time.Sleep
 internal/nsprint/card	TestWrapperFillsTheResult	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/ci	TestControl54CancelledLegRerunsOnceThenEndsRed	#4221 calls time.Sleep
-internal/nsprint/ci	TestControl54TimedOutLegRerunsOnceThenEndsRed	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/nsprint/ci	TestParityCountsEveryActionsPassedHead	#4221 calls time.Sleep
-internal/nsprint/land	TestL15	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/nsprint/land/guard	TestGuardsOnThisRepository	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/nsprint/life	TestBenchBeatSingleInstance	#4221 calls time.Sleep
 internal/nsprint/reconcile	TestControl09OneAssignmentOneReceipt	#4221 calls time.Sleep
@@ -58,19 +53,11 @@ internal/nsprint/reconcile	TestRouteConsumerSweepBoundsRestarts	#4221 calls time
 internal/nsprint/verbs	TestVerbsUnused	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/sprinttable	TestRefreshInTheUnitGroupDiesWithTheUnit	#4221 calls time.Sleep
-internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestBatchPrefixLine1WithLongerTailAccepted	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/swarm	TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/swarm	TestIdleWatchKeepsACardWhoseLogGrowsAPage	#4221 calls time.Sleep
-internal/swarm	TestABatchNeverExceedsItsRouteCap	#4221 calls time.Sleep
 internal/swarm	TestWithNoStallAfterASilentCardIsNotStalled	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/swarm	TestBatchCardsPutsTheWordInTheLocalNativeArgv	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/swarm	TestARouteNamesTheProfileNeverTheSecret	#4221 calls time.Sleep
-internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
-internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
-internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
-internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
-internal/swarm	TestNoSlotIsEverHeldTwice	#4221 calls time.Sleep
 internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
