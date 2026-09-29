@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -353,6 +354,106 @@ func multiReceiptMatches(r MultiBatchReceipt, m MultiBatchManifest, body string)
 	return nil
 }
 
+// multiRefused translates schema-2 refusals before using the table refusal
+// decoder. A scope names the durable operation ledger, not a participant table.
+// Table-first replies put the participant before the schema-1 detail fields;
+// PLACEGUARD puts it after the member id. Replies without an identified table
+// keep scope context and offer a table list rather than naming the scope as one.
+func multiRefused(reply []any, m MultiBatchManifest) error {
+	o := operation{opID: m.OperationID, batch: true}
+	if len(reply) == 0 || fmt.Sprint(reply[0]) != "REFUSED" {
+		return nil
+	}
+	malformed := func() error {
+		return fmt.Errorf("%s: %w: malformed refusal (changed=unknown); send the identical manifest with the same operation id", multiScopeLocation(m), ErrUnknownOutcome)
+	}
+	if len(reply) < 3 {
+		return malformed()
+	}
+	normalized := reply
+	table := ""
+	code := fmt.Sprint(reply[1])
+	switch code {
+	case "NOTABLE", "STALE", "EPOCHAHEAD", "REVISION":
+		if (code == "STALE" || code == "EPOCHAHEAD") && len(reply) < 5 ||
+			code == "REVISION" && len(reply) < 4 {
+			return malformed()
+		}
+		table = fmt.Sprint(reply[2])
+		normalized = append([]any{reply[0], reply[1]}, reply[3:]...)
+	case "PLACEGUARD":
+		if len(reply) < 6 {
+			return malformed()
+		}
+		table = fmt.Sprint(reply[3])
+		normalized = []any{reply[0], reply[1], reply[2], reply[4], reply[5]}
+	case "MEMBEREXISTS":
+		if len(reply) >= 4 && multiNamesTable(m, fmt.Sprint(reply[3])) {
+			table = fmt.Sprint(reply[3])
+			observed := any("member record")
+			if len(reply) >= 5 {
+				observed = reply[4]
+			}
+			normalized = []any{reply[0], reply[1], reply[2], observed}
+		}
+	case "NOTMEMBER":
+		if len(reply) >= 5 && multiNamesTable(m, fmt.Sprint(reply[3])) {
+			table = fmt.Sprint(reply[3])
+			normalized = []any{reply[0], reply[1], reply[2], "unplaced", reply[4]}
+		}
+	case "TWICE":
+		if len(reply) >= 4 && multiNamesTable(m, fmt.Sprint(reply[3])) {
+			table = fmt.Sprint(reply[3])
+			normalized = []any{reply[0], reply[1], reply[2]}
+		}
+	case "SCORE", "CONFIG":
+		if len(reply) >= 4 && multiNamesTable(m, fmt.Sprint(reply[3])) {
+			table = fmt.Sprint(reply[3])
+			if code == "SCORE" && len(reply) >= 5 {
+				normalized = []any{reply[0], reply[1], reply[2], reply[4]}
+			}
+		}
+	}
+	o.table = table
+	err := o.refused(normalized)
+	if table == "" {
+		if refusal, ok := err.(*Refusal); ok {
+			refusal.Location = multiScopeLocation(m)
+			refusal.Next = "nova-table list"
+		}
+	}
+	return err
+}
+
+func multiScopeLocation(m MultiBatchManifest) string {
+	return fmt.Sprintf("multi batch scope %q operation %q", m.Scope, m.OperationID)
+}
+
+func multiBeforeSending(m MultiBatchManifest, err error) error {
+	o := operation{table: m.Scope, opID: m.OperationID, batch: true}
+	answer := o.beforeSending(err)
+	var refusal *Refusal
+	if errors.As(answer, &refusal) {
+		refusal.Location = multiScopeLocation(m)
+		refusal.Next = "nova-table batch -h"
+		return answer
+	}
+	var manifest *ManifestError
+	if errors.As(err, &manifest) {
+		return fmt.Errorf("%s: invalid batch manifest: %w; %s; changed=no; run: nova-table batch -h", multiScopeLocation(m), err, CheckedBeforeSending)
+	}
+	return answer
+}
+
+func multiNamesTable(m MultiBatchManifest, name string) bool {
+	for _, table := range m.Tables {
+		if table.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ApplyMultiBatch sends one v2 manifest as one Redis function call. A transport
 // error has an unknown outcome; resend the identical manifest and operation ID
 // to obtain the durable receipt or perform the original transaction.
@@ -367,9 +468,8 @@ func ApplyMultiBatch(ctx context.Context, c redis.Cmdable, m MultiBatchManifest)
 	if err != nil {
 		return MultiBatchReceipt{}, err
 	}
-	o := operation{table: m.Scope, opID: m.OperationID, batch: true}
 	if _, err = ValidateMultiBatchManifestRaw([]byte(body)); err != nil {
-		return MultiBatchReceipt{}, o.beforeSending(err)
+		return MultiBatchReceipt{}, multiBeforeSending(m, err)
 	}
 	if c == nil {
 		return MultiBatchReceipt{}, fmt.Errorf("multi batch scope %q: nil Redis client", m.Scope)
@@ -379,7 +479,7 @@ func ApplyMultiBatch(ctx context.Context, c redis.Cmdable, m MultiBatchManifest)
 	if err != nil {
 		return MultiBatchReceipt{}, fmt.Errorf("multi batch scope %q operation %q: %w: %w (changed=unknown); send the identical manifest with the same operation id", m.Scope, m.OperationID, ErrUnknownOutcome, err)
 	}
-	if err := o.refused(reply); err != nil {
+	if err := multiRefused(reply, m); err != nil {
 		return MultiBatchReceipt{}, err
 	}
 	r, err := parseMultiBatchReply(reply)

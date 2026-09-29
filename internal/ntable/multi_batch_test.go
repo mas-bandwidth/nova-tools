@@ -199,3 +199,80 @@ func TestParseMultiBatchReply(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyMultiBatchSchema2RefusalText(t *testing.T) {
+	t.Parallel()
+	m := multiFixture()
+	for _, tc := range []struct {
+		name, location, sentence, next string
+		wire                           []any
+		cause                          error
+	}{
+		{"missing participant", `table "b" batch "op-1"`, "no such table", "nova-table list", []any{"REFUSED", "NOTABLE", "b"}, ErrNoTable},
+		{"stale participant", `table "b" batch "op-1"`, "requested 0, active 2", "nova-table show 'b'", []any{"REFUSED", "STALE", "b", "0", "2"}, ErrStale},
+		{"epoch ahead", `table "b" batch "op-1"`, "requested epoch 5, active epoch 0", "nova-table show 'b'", []any{"REFUSED", "EPOCHAHEAD", "b", "5", "0"}, ErrEpochAhead},
+		{"revision mismatch", `table "b" batch "op-1"`, "expected 0, observed 2", "nova-table show 'b'", []any{"REFUSED", "REVISION", "b", "0", "2"}, ErrRevisionMismatch},
+		{"revision overflow", `table "b" batch "op-1"`, "the table revision 18446744073709551615 is at its maximum", "nova-table show 'b'", []any{"REFUSED", "REVISION", "b", "18446744073709551615"}, ErrCounterOverflow},
+		{"place guard", `table "a" batch "op-1" member "m"`, `member "m": expected place work:done, observed work:ready`, "nova-table member read 'a' 'm'", []any{"REFUSED", "PLACEGUARD", "m", "a", "work:done", "work:ready"}, ErrPlaceGuard},
+		{"record exists", `table "a" batch "op-1" member "m"`, "expected absent, observed member record", "nova-table member read 'a' 'm'", []any{"REFUSED", "MEMBEREXISTS", "m", "a"}, ErrMemberExists},
+		{"already placed", `table "b" batch "op-1" member "m"`, "expected absent, observed work:ready", "nova-table member read 'b' 'm'", []any{"REFUSED", "MEMBEREXISTS", "m", "b", "work:ready"}, ErrMemberExists},
+		{"unplaced move", `table "b" batch "op-1" member "m"`, "expected a placed member to move, observed unplaced", "nova-table member read 'b' 'm'", []any{"REFUSED", "NOTMEMBER", "m", "b", "a placed member to move"}, ErrNotMember},
+		{"duplicate physical member", `table "b" batch "op-1" member "m"`, `duplicate manifest member: member "m" appears more than once`, "nova-table show 'b'", []any{"REFUSED", "TWICE", "m", "b"}, ErrDuplicateMember},
+		{"stored score", `table "b" batch "op-1" member "m"`, "expected a finite JSON number, observed stored score is not finite", "nova-table show 'b'", []any{"REFUSED", "SCORE", "m", "b", "stored score is not finite"}, ErrInvalidScore},
+		{"scope operation conflict", `multi batch scope "release" operation "op-1"`, `operation "op-1" already holds a different request`, "nova-table list", []any{"REFUSED", "OPCONFLICT", "op-1"}, ErrOpConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ApplyMultiBatch(context.Background(), multiReplyClient{reply: tc.wire}, m)
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || !errors.Is(err, tc.cause) {
+				t.Fatalf("reply %#v: refusal %v", tc.wire, err)
+			}
+			if refusal.Location != tc.location || !strings.Contains(refusal.Sentence, tc.sentence) || refusal.Next != tc.next || !refusal.Guarded {
+				t.Fatalf("reply %#v: %+v", tc.wire, refusal)
+			}
+			if strings.Contains(refusal.Error(), "nova-table show 'release'") || strings.Contains(refusal.Error(), "nova-table member read 'release'") {
+				t.Fatalf("scope incorrectly used as table: %v", refusal)
+			}
+		})
+	}
+
+	_, err := ApplyMultiBatch(context.Background(), multiReplyClient{reply: []any{"REFUSED", "REVISION", "b"}}, m)
+	if !errors.Is(err, ErrUnknownOutcome) || IsRefusal(err) || !strings.Contains(err.Error(), "send the identical manifest") {
+		t.Fatalf("malformed refusal is not a confirmed no: %v", err)
+	}
+}
+
+func TestApplyMultiBatchPreSendRefusalUsesScopeContext(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		mutate func(*MultiBatchManifest)
+	}{
+		{"duplicate table", func(m *MultiBatchManifest) { m.Tables[1].Name = "a" }},
+		{"malformed expect", func(m *MultiBatchManifest) { m.Members[0].Expect = nil }},
+		{"participant limit", func(m *MultiBatchManifest) {
+			m.Tables = nil
+			for i := 0; i < LimitMultiTables+1; i++ {
+				m.Tables = append(m.Tables, MultiBatchTable{Name: fmt.Sprintf("table%d", i), Epoch: "0", ExpectedTableRevision: "0"})
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := multiFixture()
+			tc.mutate(&m)
+			_, err := ApplyMultiBatch(context.Background(), nil, m)
+			if err == nil || !strings.Contains(err.Error(), `multi batch scope "release" operation "op-1"`) ||
+				!strings.Contains(err.Error(), CheckedBeforeSending) ||
+				!strings.Contains(err.Error(), "changed=no; run: nova-table batch -h") ||
+				strings.Contains(err.Error(), `table "release"`) || strings.Contains(err.Error(), "nova-table show 'release'") {
+				t.Fatalf("wrong pre-send context or next command: %v", err)
+			}
+			var refusal *Refusal
+			if errors.As(err, &refusal) && (refusal.Location != `multi batch scope "release" operation "op-1"` || refusal.Next != "nova-table batch -h") {
+				t.Fatalf("wrong structured refusal: %+v", refusal)
+			}
+		})
+	}
+}
