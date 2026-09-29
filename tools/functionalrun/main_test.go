@@ -131,6 +131,7 @@ func TestTestArgsHoldTheRunInsideItsBounds(t *testing.T) {
 		t.Errorf("--timeout %q, want the deadline in seconds, 600", got)
 	}
 	for flag, want := range map[string]string{
+		"--security-opt": "no-new-privileges", "--cap-drop": "all",
 		"--network": "none", "--ipc": "private", "--pids-limit": "1024",
 		"--memory": "4g", "--memory-swap": "4g", "--cpus": "4", "-w": "/src",
 	} {
@@ -225,6 +226,9 @@ func TestPrefillHasTheNetworkAndWritesOnlyTheModuleCache(t *testing.T) {
 	}
 	if got := flagValue(t, args, "--timeout"); got != strconv.Itoa(int(prefillDeadline/time.Second)) {
 		t.Errorf("--timeout %q", got)
+	}
+	if flagValue(t, args, "--security-opt") != "no-new-privileges" || flagValue(t, args, "--cap-drop") != "all" {
+		t.Errorf("the module step keeps capabilities or new privileges: %q", joined)
 	}
 	if got := flagValue(t, args, "-e"); got != "GOPROXY=https://proxy.example" {
 		t.Errorf("-e %q", got)

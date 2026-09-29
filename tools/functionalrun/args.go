@@ -91,6 +91,10 @@ func testArgs(c runConfig, image, runID string, start time.Time) []string {
 	}
 	args = append(args,
 		"--timeout", strconv.Itoa(timeoutSeconds(c.deadline)),
+		// No capability and no privilege gained through a setuid binary of
+		// the image: the tests run as the image's non-root user and need none.
+		"--security-opt", "no-new-privileges",
+		"--cap-drop", "all",
 		"--network", "none",
 		"--ipc", "private",
 		"--pids-limit", strconv.Itoa(c.pids),
@@ -130,6 +134,8 @@ func prefillArgs(c runConfig, image, runID, stamp, proxy string, start time.Time
 	args = append(args, runLabels(id, start, start.Add(prefillDeadline), c.ownerID)...)
 	args = append(args,
 		"--timeout", strconv.Itoa(timeoutSeconds(prefillDeadline)),
+		"--security-opt", "no-new-privileges",
+		"--cap-drop", "all",
 		"--pids-limit", strconv.Itoa(c.pids),
 		"--memory", c.memory,
 		"--memory-swap", c.memory,
