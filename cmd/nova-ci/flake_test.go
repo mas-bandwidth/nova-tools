@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
 func runFlakeWith(args []string, runner ci.FlakeRunner) (int, string, string) {
@@ -27,6 +30,11 @@ func TestFlakeFlagRefusals(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
+		{
+			name:    "missing_both",
+			args:    []string{},
+			wantErr: "--package and --test are required; refusing to guess",
+		},
 		{
 			name:    "missing_package",
 			args:    []string{"--test", "TestFoo"},
@@ -157,6 +165,36 @@ func TestFlakeDetectedRun(t *testing.T) {
 	}
 }
 
+func TestFlakeAllFailedRun(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	runner := func(ctx context.Context, pkg, testPattern string) (ci.RunOutcome, error) {
+		calls++
+		return ci.RunOutcome{Passed: false, Output: "FAIL"}, nil
+	}
+
+	code, stdout, stderr := runFlakeWith([]string{
+		"--package", "./internal/ci",
+		"--test", "TestBroken",
+		"--runs", "5",
+	}, runner)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; stderr: %q", code, stderr)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	if calls != 5 {
+		t.Errorf("runner called %d times, want 5", calls)
+	}
+	wantLine := "FAIL package=./internal/ci test=TestBroken runs=5 failed=5 passed=0\n"
+	if stdout != wantLine {
+		t.Errorf("stdout = %q, want %q", stdout, wantLine)
+	}
+}
+
 func TestFlakeCannotRunRefusals(t *testing.T) {
 	t.Parallel()
 
@@ -178,11 +216,12 @@ func TestFlakeCannotRunRefusals(t *testing.T) {
 		if stdout != "" {
 			t.Errorf("stdout = %q, want empty", stdout)
 		}
-		if !strings.Contains(stderr, "no tests matched pattern") {
-			t.Errorf("stderr = %q, want 'no tests matched pattern'", stderr)
+		want := "nova-ci flake: no tests matched pattern \"TestDoesNotExist\" in package \"./internal/ci\"; next: go test -list \"TestDoesNotExist\" ./internal/ci\n"
+		if stderr != want {
+			t.Errorf("stderr = %q, want %q", stderr, want)
 		}
-		if !strings.Contains(stderr, "run: nova-ci help") {
-			t.Errorf("stderr = %q, want 'run: nova-ci help'", stderr)
+		if strings.Contains(stderr, "run: nova-ci help") {
+			t.Errorf("stderr contains 'run: nova-ci help'")
 		}
 	})
 
@@ -204,8 +243,15 @@ func TestFlakeCannotRunRefusals(t *testing.T) {
 		if stdout != "" {
 			t.Errorf("stdout = %q, want empty", stdout)
 		}
-		if !strings.Contains(stderr, "setup failed") {
-			t.Errorf("stderr = %q, want 'setup failed'", stderr)
+		want := "nova-ci flake: package \"./nonexistent\" failed to build; next: go test ./nonexistent\n"
+		if stderr != want {
+			t.Errorf("stderr = %q, want %q", stderr, want)
+		}
+		if strings.Contains(stderr, "run: nova-ci help") {
+			t.Errorf("stderr contains 'run: nova-ci help'")
+		}
+		if strings.Contains(stderr, "cannot find package") {
+			t.Errorf("stderr should not dump output: %q", stderr)
 		}
 	})
 }
@@ -248,8 +294,8 @@ func TestFlakeEndToEndHelpAndRefusalThroughRun(t *testing.T) {
 	if code != 2 {
 		t.Errorf("bare flake exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "--package is required") {
-		t.Errorf("stderr = %q, want '--package is required'", stderr.String())
+	if !strings.Contains(stderr.String(), "--package and --test are required; refusing to guess") {
+		t.Errorf("stderr = %q, want '--package and --test are required; refusing to guess'", stderr.String())
 	}
 
 	// flake -h through run()
@@ -278,5 +324,39 @@ func TestFlakeEndToEndHelpAndRefusalThroughRun(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "usage: nova-ci flake [flags]") {
 		t.Errorf("stdout = %q, want usage", stdout.String())
+	}
+}
+
+func TestTheCommandReferenceFlakeRefusalsAreWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.Transcript(string(raw), "nova-ci", "flake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-ci", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("the `### flake` block runs %d commands, want 2 refusals", len(steps))
+	}
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		if len(s.Args) < 1 || s.Args[0] != "flake" {
+			t.Fatalf("the documented command %q is not nova-ci flake", s.Line)
+		}
+		var out, errb bytes.Buffer
+		code := run(s.Args, strings.NewReader(""), &out, &errb)
+		if code != 2 {
+			t.Errorf("%s: exit %d, want 2", s.Line, code)
+		}
+		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+		t.Error(p)
 	}
 }

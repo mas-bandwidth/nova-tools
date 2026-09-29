@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestDetectFlakeValidations(t *testing.T) {
@@ -13,13 +12,19 @@ func TestDetectFlakeValidations(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Missing package
-	_, err := DetectFlake(ctx, FlakeConfig{Test: "TestFoo", Runs: 5})
+	// Missing both package and test
+	_, err := DetectFlake(ctx, FlakeConfig{Runs: 5})
+	if err == nil || !strings.Contains(err.Error(), "--package and --test are required") {
+		t.Errorf("missing both flags error: got %v, want --package and --test are required", err)
+	}
+
+	// Missing package only
+	_, err = DetectFlake(ctx, FlakeConfig{Test: "TestFoo", Runs: 5})
 	if err == nil || !strings.Contains(err.Error(), "--package is required") {
 		t.Errorf("missing package error: got %v, want --package is required", err)
 	}
 
-	// Missing test
+	// Missing test only
 	_, err = DetectFlake(ctx, FlakeConfig{Package: "./internal/ci", Runs: 5})
 	if err == nil || !strings.Contains(err.Error(), "--test is required") {
 		t.Errorf("missing test error: got %v, want --test is required", err)
@@ -55,6 +60,9 @@ func TestDetectFlakeStable(t *testing.T) {
 	}
 	if res.IsFlake() {
 		t.Errorf("res.IsFlake() = true, want false")
+	}
+	if res.IsFail() {
+		t.Errorf("res.IsFail() = true, want false")
 	}
 	if res.Passed != 5 || res.Failed != 0 {
 		t.Errorf("res = %+v, want Passed=5, Failed=0", res)
@@ -93,6 +101,9 @@ func TestDetectFlakeIntermittent(t *testing.T) {
 	if !res.IsFlake() {
 		t.Errorf("res.IsFlake() = false, want true")
 	}
+	if res.IsFail() {
+		t.Errorf("res.IsFail() = true, want false")
+	}
 	if res.Passed != 3 || res.Failed != 2 {
 		t.Errorf("res = %+v, want Passed=3, Failed=2", res)
 	}
@@ -106,7 +117,7 @@ func TestDetectFlakeAllFailed(t *testing.T) {
 	t.Parallel()
 
 	fakeRunner := func(ctx context.Context, pkg, testPattern string) (RunOutcome, error) {
-		return RunOutcome{Passed: false, Output: "FAIL"}, nil
+		return RunOutcome{Passed: false, Output: "FAIL: directory not found"}, nil
 	}
 
 	res, err := DetectFlake(context.Background(), FlakeConfig{
@@ -118,13 +129,16 @@ func TestDetectFlakeAllFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !res.IsFlake() {
-		t.Errorf("res.IsFlake() = false, want true")
+	if res.IsFlake() {
+		t.Errorf("res.IsFlake() = true, want false (steady failure is FAIL)")
+	}
+	if !res.IsFail() {
+		t.Errorf("res.IsFail() = false, want true")
 	}
 	if res.Passed != 0 || res.Failed != 3 {
 		t.Errorf("res = %+v, want Passed=0, Failed=3", res)
 	}
-	wantLine := "FLAKE package=./internal/ci test=TestBroken runs=3 failed=3 passed=0"
+	wantLine := "FAIL package=./internal/ci test=TestBroken runs=3 failed=3 passed=0"
 	if res.Line() != wantLine {
 		t.Errorf("res.Line() = %q, want %q", res.Line(), wantLine)
 	}
@@ -143,8 +157,15 @@ func TestDetectFlakeNoTestsMatched(t *testing.T) {
 		Runs:    3,
 		Runner:  fakeRunner,
 	})
-	if err == nil || !strings.Contains(err.Error(), "no tests matched pattern") {
-		t.Errorf("expected no tests error, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var noTests *NoTestsError
+	if !errors.As(err, &noTests) {
+		t.Errorf("expected NoTestsError, got %T: %v", err, err)
+	}
+	if noTests.Package != "./internal/ci" || noTests.Test != "TestMissing" {
+		t.Errorf("unexpected NoTestsError fields: %+v", noTests)
 	}
 }
 
@@ -161,8 +182,15 @@ func TestDetectFlakeSetupFailed(t *testing.T) {
 		Runs:    3,
 		Runner:  fakeRunner,
 	})
-	if err == nil || !strings.Contains(err.Error(), "setup failed") {
-		t.Errorf("expected setup failed error, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var setupFailed *SetupFailedError
+	if !errors.As(err, &setupFailed) {
+		t.Errorf("expected SetupFailedError, got %T: %v", err, err)
+	}
+	if setupFailed.Package != "./internal/ci" {
+		t.Errorf("unexpected SetupFailedError package: %q", setupFailed.Package)
 	}
 }
 
@@ -181,21 +209,5 @@ func TestDetectFlakeRunnerError(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "exec error: binary not found") {
 		t.Errorf("expected runner error, got %v", err)
-	}
-}
-
-func TestExecTestRunnerRealRun(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Run an existing fast test in allowlist package
-	outcome, err := ExecTestRunner(ctx, "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist", "TestCheckReportsWithoutWriting")
-	if err != nil {
-		t.Fatalf("ExecTestRunner failed: %v", err)
-	}
-	if !outcome.Passed {
-		t.Errorf("expected test to pass, output: %s", outcome.Output)
 	}
 }

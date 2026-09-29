@@ -391,8 +391,8 @@ docs/CLI.md line for line through `onboarding.CompareTranscript`.
 ```
 flake   --package <pkg> --test <pattern> [--runs <n>] [--timeout <duration>]
         isolated test flake detection: run test up to --runs times in separate
-        processes and emit a STABLE or FLAKE receipt line; exit 0 stable,
-        1 flake detected, 2 bad arguments or cannot run
+        processes and emit a STABLE, FLAKE or FAIL receipt line; exit 0 stable,
+        1 flake or steady failure detected, 2 bad arguments or cannot run
 ```
 
 It executes `go test -count=1 -run <pattern> <pkg>` in a child process for each run, up to `--runs` iterations (default 10). Each run executes under a timeout context (default 60s, configurable via `--timeout`).
@@ -404,15 +404,21 @@ When every run passes, it prints one line on stdout and exits 0:
 STABLE package=<pkg> test=<pattern> runs=<n> passed=<n> failed=0
 ```
 
-When one or more runs fail, it prints one line on stdout and exits 1:
+When runs both pass and fail, it prints one line on stdout and exits 1:
 
 ```
 FLAKE package=<pkg> test=<pattern> runs=<n> failed=<f> passed=<p>
 ```
 
+When every run fails, it prints one line on stdout and exits 1:
+
+```
+FAIL package=<pkg> test=<pattern> runs=<n> failed=<f> passed=0
+```
+
 **Its refusals (exit 2).**
 Missing required flags (`--package`, `--test`), non-positive `--runs` or `--timeout`, or unexpected positional arguments refuse on stderr with the tool's standard refusal ending `run: nova-ci help`.
-If no tests match the pattern, or if the package cannot be built or set up, the command refuses on stderr and exits 2.
+If no tests match the pattern, or if the package cannot be built or set up, the command refuses on stderr with a concrete next command and exits 2.
 
 ## The CI class test against a real network host on the CI path
 

@@ -110,16 +110,16 @@ usage:
 
   nova-ci flake --package <pkg> --test <pattern> [--runs <n>] [--timeout <duration>]
                       isolated test flake detection: run test up to --runs
-                      times in separate processes and emit a STABLE or FLAKE
-                      receipt line; exit 0 stable, 1 flake detected, 2 bad
-                      arguments or cannot run.
+                      times in separate processes and emit a STABLE, FLAKE or
+                      FAIL receipt line; exit 0 stable, 1 flake or steady
+                      failure detected, 2 bad arguments or cannot run.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
             unreadable stdin, partial listing); local adds 1 for a red test or
             a package that did not build, github receipt and cost add 1 for
             a write the store refused or a close failure, and flake adds 1 for
-            a flake detected.
+            a flake or steady failure detected.
 
 example:
   nova-ci help

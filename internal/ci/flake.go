@@ -3,6 +3,7 @@ package ci
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,26 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// NoTestsError indicates that no tests in the package matched the specified pattern.
+type NoTestsError struct {
+	Package string
+	Test    string
+}
+
+func (e *NoTestsError) Error() string {
+	return fmt.Sprintf("no tests matched pattern %q in package %q", e.Test, e.Package)
+}
+
+// SetupFailedError indicates that the package failed to build or set up.
+type SetupFailedError struct {
+	Package string
+	Output  string
+}
+
+func (e *SetupFailedError) Error() string {
+	return fmt.Sprintf("package %q failed to build", e.Package)
+}
 
 // RunOutcome represents the result of a single isolated test run.
 type RunOutcome struct {
@@ -43,9 +64,14 @@ type FlakeResult struct {
 	Failed  int
 }
 
-// IsFlake reports whether a flake was detected (at least one failure).
+// IsFlake reports whether a flake was detected (both pass and fail observed).
 func (r FlakeResult) IsFlake() bool {
-	return r.Failed > 0
+	return r.Passed > 0 && r.Failed > 0
+}
+
+// IsFail reports whether steady failure was detected (all runs failed).
+func (r FlakeResult) IsFail() bool {
+	return r.Passed == 0 && r.Failed > 0
 }
 
 // Line returns the one-line receipt for the flake detection run.
@@ -54,54 +80,103 @@ func (r FlakeResult) Line() string {
 		return fmt.Sprintf("FLAKE package=%s test=%s runs=%d failed=%d passed=%d",
 			oneline.Field(r.Package), oneline.Field(r.Test), r.Runs, r.Failed, r.Passed)
 	}
+	if r.IsFail() {
+		return fmt.Sprintf("FAIL package=%s test=%s runs=%d failed=%d passed=0",
+			oneline.Field(r.Package), oneline.Field(r.Test), r.Runs, r.Failed)
+	}
 	return fmt.Sprintf("STABLE package=%s test=%s runs=%d passed=%d failed=0",
 		oneline.Field(r.Package), oneline.Field(r.Test), r.Runs, r.Passed)
 }
 
-// ExecTestRunner is the default production runner executing `go test -count=1 -run <pattern> <pkg>`.
+type flakeTestEvent struct {
+	Action      string `json:"Action"`
+	Package     string `json:"Package"`
+	Test        string `json:"Test"`
+	Output      string `json:"Output"`
+	FailedBuild string `json:"FailedBuild"`
+}
+
+// ExecTestRunner is the default production runner executing `go test -json -count=1 -run <pattern> <pkg>`.
 func ExecTestRunner(ctx context.Context, pkg, testPattern string) (RunOutcome, error) {
-	cmd := exec.CommandContext(ctx, "go", "test", "-count=1", "-run", testPattern, pkg)
+	cmd := exec.CommandContext(ctx, "go", "test", "-json", "-count=1", "-run", testPattern, pkg)
+	configureFlakeProcess(cmd)
 	cmd.Env = goenv.Clean(os.Environ())
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
 	err := cmd.Run()
-	output := buf.String()
 
-	if strings.Contains(output, "[no tests to run]") {
-		return RunOutcome{NoTests: true, Output: output}, nil
-	}
-	if strings.Contains(output, "[setup failed]") ||
-		strings.Contains(output, "[build failed]") ||
-		strings.Contains(output, "directory not found") ||
-		strings.Contains(output, "cannot find package") ||
-		strings.Contains(output, "no Go files in") {
-		return RunOutcome{SetupFailed: true, Output: output}, nil
+	var (
+		ranTests    int
+		failedTests int
+		buildFailed bool
+	)
+
+	for _, line := range bytes.Split(stdoutBuf.Bytes(), []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var ev flakeTestEvent
+		if jsonErr := json.Unmarshal(line, &ev); jsonErr == nil {
+			if ev.Action == "run" && ev.Test != "" {
+				ranTests++
+			}
+			if ev.Action == "fail" && ev.Test != "" {
+				failedTests++
+			}
+			if ev.Action == "build-fail" || ev.FailedBuild != "" {
+				buildFailed = true
+			}
+		}
 	}
 
-	if err == nil {
-		return RunOutcome{Passed: true, Output: output}, nil
-	}
-
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return RunOutcome{Passed: false, Output: output}, nil
+	rawOutput := stdoutBuf.String()
+	if stderrBuf.Len() > 0 {
+		if len(rawOutput) > 0 {
+			rawOutput += "\n"
+		}
+		rawOutput += stderrBuf.String()
 	}
 
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
-		return RunOutcome{Passed: false, Output: "test execution timed out: " + output}, nil
+		return RunOutcome{Passed: false, Output: "test execution timed out: " + rawOutput}, nil
 	}
 
-	return RunOutcome{}, err
+	if buildFailed || (ranTests == 0 && err != nil) {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) || err == nil {
+			return RunOutcome{SetupFailed: true, Output: rawOutput}, nil
+		}
+		return RunOutcome{}, err
+	}
+
+	if ranTests == 0 && err == nil {
+		return RunOutcome{NoTests: true, Output: rawOutput}, nil
+	}
+
+	if err == nil && failedTests == 0 {
+		return RunOutcome{Passed: true, Output: rawOutput}, nil
+	}
+
+	return RunOutcome{Passed: false, Output: rawOutput}, nil
 }
 
 // DetectFlake runs the configured test up to cfg.Runs times in isolated processes.
 func DetectFlake(ctx context.Context, cfg FlakeConfig) (FlakeResult, error) {
+	var missing []string
 	if strings.TrimSpace(cfg.Package) == "" {
-		return FlakeResult{}, errors.New("--package is required; refusing to guess")
+		missing = append(missing, "--package")
 	}
 	if strings.TrimSpace(cfg.Test) == "" {
-		return FlakeResult{}, errors.New("--test is required; refusing to guess")
+		missing = append(missing, "--test")
+	}
+	if len(missing) == 1 {
+		return FlakeResult{}, fmt.Errorf("%s is required; refusing to guess", missing[0])
+	}
+	if len(missing) > 1 {
+		return FlakeResult{}, fmt.Errorf("%s are required; refusing to guess", strings.Join(missing, " and "))
 	}
 	if cfg.Runs <= 0 {
 		return FlakeResult{}, fmt.Errorf("--runs must be greater than zero (got %d)", cfg.Runs)
@@ -127,10 +202,10 @@ func DetectFlake(ctx context.Context, cfg FlakeConfig) (FlakeResult, error) {
 			return FlakeResult{}, fmt.Errorf("run %d failed: %w", i+1, err)
 		}
 		if outcome.NoTests {
-			return FlakeResult{}, fmt.Errorf("no tests matched pattern %q in package %q", cfg.Test, cfg.Package)
+			return FlakeResult{}, &NoTestsError{Package: cfg.Package, Test: cfg.Test}
 		}
 		if outcome.SetupFailed {
-			return FlakeResult{}, fmt.Errorf("package %q setup failed: %s", cfg.Package, oneline.Cap(outcome.Output, oneline.TailBytes))
+			return FlakeResult{}, &SetupFailedError{Package: cfg.Package, Output: outcome.Output}
 		}
 
 		if outcome.Passed {
