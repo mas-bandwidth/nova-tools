@@ -26,8 +26,8 @@ import (
 // Its standard output is a FILE: the skeleton, alone, with no OK line under it, so
 // `nova-bus draft ... > draft.md` is a draft. Refusals go to stderr like every other
 // verb's, and every one of them is printed rather than the first.
-func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("draft")
+func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("draft", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required: the roster lives in it)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	to := f.fs.String("to", "", "who the note is to, as a To line: names, aliases or a group, separated by ; (required)")
@@ -86,6 +86,9 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			gitTimeout: *gitTimeout,
 			reGiven:    len(re) > 0, toGiven: given["to"], ccGiven: given["cc"],
 			subjectGiven: given["subject"],
+			publish:      deps.publishFn(),
+			refresh:      deps.refreshFn(),
+			lockWait:     deps.lockWaitDuration(),
 		}, f, stdout, stderr, now)
 	}
 	c, err := bus.LoadConfig(*busDir)

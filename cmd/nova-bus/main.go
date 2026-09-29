@@ -291,8 +291,58 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
+// busDeps holds optional dependencies and environment overrides for testing.
+type busDeps struct {
+	lockWait        time.Duration
+	refreshCheckout func(dir, remote, branch string) (bool, error)
+	publishDraft    func(dir, name string, content []byte) (string, error)
+	getenv          func(string) string
+	workingDir      string
+}
+
+func defaultDeps() busDeps {
+	return busDeps{
+		lockWait:        checkoutLockWait,
+		refreshCheckout: refreshCheckout,
+		publishDraft:    publishDraft,
+		getenv:          os.Getenv,
+	}
+}
+
+func (d busDeps) lockWaitDuration() time.Duration {
+	if d.lockWait > 0 {
+		return d.lockWait
+	}
+	return checkoutLockWait
+}
+
+func (d busDeps) refreshFn() func(dir, remote, branch string) (bool, error) {
+	if d.refreshCheckout != nil {
+		return d.refreshCheckout
+	}
+	return refreshCheckout
+}
+
+func (d busDeps) publishFn() func(dir, name string, content []byte) (string, error) {
+	if d.publishDraft != nil {
+		return d.publishDraft
+	}
+	return publishDraft
+}
+
+func (d busDeps) getenvFn() func(string) string {
+	if d.getenv != nil {
+		return d.getenv
+	}
+	return os.Getenv
+}
+
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	return runWithDeps(args, stdin, stdout, stderr, now, defaultDeps())
+}
+
+func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, deps busDeps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
@@ -303,30 +353,30 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	switch cmd {
 	case "help", "-h", "--help":
 		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdin, stdout, stderr, now)
+			return runWithDeps(append(rest, "--help"), stdin, stdout, stderr, now, deps)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "draft":
-		return cmdDraft(rest, stdout, stderr, now)
+		return cmdDraft(rest, stdout, stderr, now, deps)
 	case "prepare":
-		return cmdPrepare(rest, stdin, stdout, stderr, now)
+		return cmdPrepare(rest, stdin, stdout, stderr, now, deps)
 	case "send":
-		return cmdSend(rest, stdin, stdout, stderr, now)
+		return cmdSend(rest, stdin, stdout, stderr, now, deps)
 	case "reply":
-		return cmdReply(rest, stdout, stderr, now)
+		return cmdReply(rest, stdout, stderr, now, deps)
 	case "inbox":
-		return cmdInbox(rest, stdout, stderr, now)
+		return cmdInbox(rest, stdout, stderr, now, deps)
 	case "receipt":
-		return cmdReceipt(rest, stdout, stderr, now)
+		return cmdReceipt(rest, stdout, stderr, now, deps)
 	case "close":
-		return cmdClose(rest, stdout, stderr, now)
+		return cmdClose(rest, stdout, stderr, now, deps)
 	case "wait":
-		return cmdWait(rest, stdout, stderr, now)
+		return cmdWait(rest, stdout, stderr, now, deps)
 	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
+		return cmdCheck(rest, stdout, stderr, now, deps)
 	case "names":
-		return cmdNames(rest, stdout, stderr)
+		return cmdNames(rest, stdout, stderr, deps)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -351,13 +401,14 @@ func (s *stringList) Set(v string) error {
 type flags struct {
 	verb string
 	fs   *flag.FlagSet
+	deps busDeps
 }
 
-func newFlags(verb string) *flags {
+func newFlags(verb string, deps busDeps) *flags {
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	return &flags{verb: verb, fs: fs}
+	return &flags{verb: verb, fs: fs, deps: deps}
 }
 
 // parse runs the flag set and enforces the no-guessing rule for every flag named in
@@ -447,7 +498,7 @@ func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, s
 	if !flagWasSet {
 		if v, ok := receiptMaxWordsFromDefaults(busDir); ok {
 			flagValue = v
-		} else if v, ok := receiptMaxWordsFromEnv(); ok {
+		} else if v, ok := receiptMaxWordsFromEnv(f.deps.getenvFn()); ok {
 			flagValue = v
 		}
 	}
@@ -535,8 +586,11 @@ func hostFromDefaults(busDir string) string {
 
 // receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
 // An empty or unusable value is "absent".
-func receiptMaxWordsFromEnv() (int, bool) {
-	s := strings.TrimSpace(os.Getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
+func receiptMaxWordsFromEnv(getenv func(string) string) (int, bool) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	s := strings.TrimSpace(getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
 	if s == "" {
 		return 0, false
 	}
@@ -612,8 +666,12 @@ var checkoutLockWait = 10 * time.Second
 // listening -- which is the opposite of what a tool that makes waiting cheap is for. The
 // lock covers what it has always covered: one poll's fetch, listing and cursor, which is
 // exactly one `inbox` run's worth of work.
-func lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
-	release, err := bus.LockCheckout(busDir, checkoutLockWait)
+func lockCheckout(token, busDir string, stderr io.Writer, wait ...time.Duration) (func(), int) {
+	d := checkoutLockWait
+	if len(wait) > 0 && wait[0] > 0 {
+		d = wait[0]
+	}
+	release, err := bus.LockCheckout(busDir, d)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s REFUSED: %s\n", token, oneline.Err(err))
 		return nil, 1
@@ -668,8 +726,8 @@ func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
 
 // ------------------------------------------------------------------------------- verbs
 
-func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("prepare")
+func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("prepare", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	file := f.fs.String("file", "", "the draft to prepare")
@@ -727,8 +785,8 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	return 0
 }
 
-func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("send")
+func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("send", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	file := f.fs.String("file", "", "the draft to send")
 	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
@@ -822,7 +880,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			}
 			return 1
 		}
-		release, err := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, err := bus.LockCheckout(*busDir, deps.lockWaitDuration())
 		if err != nil {
 			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.Err(err))
 			return 1
@@ -895,7 +953,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
 		return 2
 	}
-	release, err := bus.LockCheckout(*busDir, checkoutLockWait)
+	release, err := bus.LockCheckout(*busDir, deps.lockWaitDuration())
 	if err != nil {
 		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.Err(err))
 		return 1
@@ -1052,8 +1110,8 @@ func printSendDraft(stdout io.Writer, p bus.Prepared, c *bus.Config, now time.Ti
 	fmt.Fprintf(stdout, "SEND DRAFT END id=%s\n", oneline.Field(id))
 }
 
-func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("receipt")
+func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("receipt", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
@@ -1083,7 +1141,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-bus receipt: %s\n", oneline.Err(err))
 		return 2
 	}
-	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+	release, lockErr := bus.LockCheckout(*busDir, deps.lockWaitDuration())
 	if lockErr != nil {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.Err(lockErr))
 		return 1
@@ -1149,8 +1207,8 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 // and `close --before` is the explicit opt-in bulk cutoff: `--advance` draws a line past the
 // history and leaves the notes behind it; `close` answers them, each with a Re line that
 // removes it from the reader's open list for good.
-func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("close")
+func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("close", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	beforeFlag := f.fs.String("before", "", "every open note addressed to you and dated before this RFC 3339 instant is closed by a receipt (required)")
@@ -1278,8 +1336,8 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return 0
 }
 
-func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("inbox")
+func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("inbox", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
@@ -1387,6 +1445,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 		maxCommits: *maxCommits, walkProgress: true,
 		diagnostics: *diagnostics,
+		lockWait:    deps.lockWaitDuration(),
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -1399,7 +1458,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed, and moving a cursor, need git; %s\n", oneline.Err(err))
 			return 2
 		}
-		release, code := lockCheckout("INBOX", o.busDir, stderr)
+		release, code := lockCheckout("INBOX", o.busDir, stderr, o.lockWait)
 		if code != 0 {
 			return code
 		}
@@ -1472,6 +1531,7 @@ type inboxOpts struct {
 	// tick print WAIT TIMEOUT and the rearm line so the harness can re-arm. Prints no
 	// INBOX OPEN frame. `inbox` leaves it false.
 	onNote bool
+	lockWait time.Duration
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -2543,8 +2603,8 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("wait")
+func cmdWait(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("wait", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
@@ -2772,6 +2832,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		quietBeats:  *quietBeats,
 		maxCommits:  *maxCommits,
 		onNote:      *onNote,
+		lockWait:    deps.lockWaitDuration(),
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -3156,7 +3217,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 //
 // The lock is taken and released here rather than around the loop; see lockCheckout.
 func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stdout, stderr io.Writer, repairs *repairLog) (int, inboxReading, string, bool) {
-	release, code := lockCheckout("WAIT", o.busDir, stderr)
+	release, code := lockCheckout("WAIT", o.busDir, stderr, o.lockWait)
 	if code != 0 {
 		repairs.flush(stdout)
 		return code, inboxReading{}, "", false
@@ -3448,8 +3509,8 @@ func legacyLine(verb, value string, stderr io.Writer) (bus.LegacyLine, bool) {
 	return line, true
 }
 
-func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("check")
+func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("check", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	full := f.fs.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
 	as := f.fs.String("as", "", "check what changed since this participant's cursor")
@@ -3493,7 +3554,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	if *rebuildIndex {
-		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, lockErr := bus.LockCheckout(*busDir, deps.lockWaitDuration())
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.Err(lockErr))
 			return 1
@@ -3655,8 +3716,8 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return 0
 }
 
-func cmdNames(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("names")
+func cmdNames(args []string, stdout, stderr io.Writer, deps busDeps) int {
+	f := newFlags("names", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2

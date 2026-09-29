@@ -41,22 +41,42 @@ var ErrUnsafe = errors.New("refusing to remove an unsafe path")
 // outside its root, and the path itself may not be a link: removing a link removes
 // only the link, but a link where a directory was expected is a derivation the tool
 // must not act on.
+// Policy configures the environmental boundaries for path removal.
+// The zero value uses os.UserHomeDir and standard path resolution.
+type Policy struct {
+	UserHomeDir func() (string, error)
+	WorkingDir  string
+}
+
+func (p Policy) abs(path string) (string, error) {
+	if p.WorkingDir != "" && !filepath.IsAbs(path) {
+		return filepath.Clean(filepath.Join(p.WorkingDir, path)), nil
+	}
+	return filepath.Abs(path)
+}
+
+// RemoveUnder removes path when it is strictly below root.
 func RemoveUnder(root, path string) error {
+	return Policy{}.RemoveUnder(root, path)
+}
+
+// RemoveUnder removes path when it is strictly below root under the given policy.
+func (p Policy) RemoveUnder(root, path string) error {
 	if strings.TrimSpace(root) == "" {
 		return fmt.Errorf("%w: the root is empty", ErrUnsafe)
 	}
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("%w: the path is empty", ErrUnsafe)
 	}
-	rootAbs, err := filepath.Abs(root)
+	rootAbs, err := p.abs(root)
 	if err != nil {
 		return fmt.Errorf("%w: the root %q does not resolve: %v", ErrUnsafe, root, err)
 	}
-	pathAbs, err := filepath.Abs(path)
+	pathAbs, err := p.abs(path)
 	if err != nil {
 		return fmt.Errorf("%w: the path %q does not resolve: %v", ErrUnsafe, path, err)
 	}
-	if err := refuseUnsafeRoot(rootAbs); err != nil {
+	if err := p.refuseUnsafeRoot(rootAbs); err != nil {
 		return err
 	}
 	if filepath.Clean(rootAbs) == filepath.Clean(pathAbs) {
@@ -73,7 +93,7 @@ func RemoveUnder(root, path string) error {
 	// The resolved root is the boundary that will actually be used, so it is the one
 	// that has to be a boundary: a root spelled as a symlink to the home or to the
 	// whole disk is that directory, whatever the caller called it.
-	if err := refuseUnsafeRoot(rootReal); err != nil {
+	if err := p.refuseUnsafeRoot(rootReal); err != nil {
 		return err
 	}
 	pathReal, err := filepath.EvalSymlinks(pathAbs)
@@ -83,7 +103,7 @@ func RemoveUnder(root, path string) error {
 		}
 		return fmt.Errorf("%w: the path %q cannot be resolved: %v", ErrUnsafe, path, err)
 	}
-	if err := refuseUnsafePath(pathReal); err != nil {
+	if err := p.refuseUnsafePath(pathReal); err != nil {
 		return err
 	}
 	under, err := strictlyUnder(rootReal, pathReal)
@@ -189,13 +209,25 @@ func resolveRoot(rootAbs, root string) (string, error) {
 // refuseUnsafeRoot refuses a root that is the whole disk or the user's home: those are
 // not a boundary, they are the absence of one, and a mistake under either is the disk.
 func refuseUnsafeRoot(root string) error {
+	return Policy{}.refuseUnsafeRoot(root)
+}
+
+func (p Policy) refuseUnsafeRoot(root string) error {
 	if isDisk, err := sameDir(root, string(os.PathSeparator)); err != nil {
 		return fmt.Errorf("%w: the root %q cannot be identified: %v", ErrUnsafe, root, err)
 	} else if isDisk {
 		return fmt.Errorf("%w: the root is %q, the whole disk", ErrUnsafe, root)
 	}
-	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
-		isHome, err := sameDir(root, home)
+	homeFn := p.UserHomeDir
+	if homeFn == nil {
+		homeFn = os.UserHomeDir
+	}
+	if home, err := homeFn(); err == nil && strings.TrimSpace(home) != "" {
+		homePath := home
+		if p.WorkingDir != "" && !filepath.IsAbs(homePath) {
+			homePath = filepath.Join(p.WorkingDir, homePath)
+		}
+		isHome, err := sameDir(root, homePath)
 		if err != nil {
 			return fmt.Errorf("%w: the root %q could not be compared with the user's home: %v", ErrUnsafe, root, err)
 		}
@@ -210,13 +242,25 @@ func refuseUnsafeRoot(root string) error {
 // even when it is technically below the root: the home directory is never a directory
 // this tool computed, and deleting it is the bug that matters most.
 func refuseUnsafePath(path string) error {
+	return Policy{}.refuseUnsafePath(path)
+}
+
+func (p Policy) refuseUnsafePath(path string) error {
 	if isDisk, err := sameDir(path, string(os.PathSeparator)); err != nil {
 		return fmt.Errorf("%w: the path %q cannot be identified: %v", ErrUnsafe, path, err)
 	} else if isDisk {
 		return fmt.Errorf("%w: the path resolves to %q, the whole disk", ErrUnsafe, path)
 	}
-	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
-		isHome, err := sameDir(path, home)
+	homeFn := p.UserHomeDir
+	if homeFn == nil {
+		homeFn = os.UserHomeDir
+	}
+	if home, err := homeFn(); err == nil && strings.TrimSpace(home) != "" {
+		homePath := home
+		if p.WorkingDir != "" && !filepath.IsAbs(homePath) {
+			homePath = filepath.Join(p.WorkingDir, homePath)
+		}
+		isHome, err := sameDir(path, homePath)
 		if err != nil {
 			return fmt.Errorf("%w: the path %q could not be compared with the user's home: %v", ErrUnsafe, path, err)
 		}
@@ -302,12 +346,20 @@ func ResolvedUnder(path, root string) (string, error) {
 // RemoveUnderRoots removes path when it is strictly below one of roots. It is the
 // only rm in the hygiene verbs; a refusal names the path and the reason.
 func RemoveUnderRoots(path string, roots ...string) error {
+	return Policy{}.RemoveUnderRoots(path, roots...)
+}
+
+// RemoveUnderRoots removes path when it is strictly below one of roots under the given policy.
+func (p Policy) RemoveUnderRoots(path string, roots ...string) error {
 	if len(roots) == 0 {
 		return &Refused{Path: path, Reason: "no root to remove under"}
 	}
+	if HasDotDot(path) {
+		return &Refused{Path: path, Reason: `the path contains ".."`}
+	}
 	var last error
 	for _, root := range roots {
-		rootAbs, err := filepath.Abs(root)
+		rootAbs, err := p.abs(root)
 		if err != nil {
 			last = fmt.Errorf("%w: the root %q does not resolve: %v", ErrUnsafe, root, err)
 			continue
@@ -317,16 +369,24 @@ func RemoveUnderRoots(path string, roots ...string) error {
 			last = err
 			continue
 		}
-		if err := refuseUnsafeRoot(rootReal); err != nil {
+		if err := p.refuseUnsafeRoot(rootReal); err != nil {
 			last = err
 			continue
 		}
-		resolved, err := ResolvedUnder(path, root)
+		targetPath := path
+		if p.WorkingDir != "" && !filepath.IsAbs(targetPath) {
+			targetPath = filepath.Join(p.WorkingDir, targetPath)
+		}
+		targetRoot := root
+		if p.WorkingDir != "" && !filepath.IsAbs(targetRoot) {
+			targetRoot = filepath.Join(p.WorkingDir, targetRoot)
+		}
+		resolved, err := ResolvedUnder(targetPath, targetRoot)
 		if err != nil {
 			last = err
 			continue
 		}
-		if err := refuseUnsafePath(resolved); err != nil {
+		if err := p.refuseUnsafePath(resolved); err != nil {
 			last = err
 			continue
 		}

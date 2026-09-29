@@ -16,8 +16,8 @@ import (
 // notes in the checkout after fetching --remote/--branch, and writes one reply note into
 // the caller's lane. Without --advance it writes nothing else; with it, the caller's cursor
 // moves in the same commit as the reply.
-func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("reply")
+func cmdReply(args []string, stdout, stderr io.Writer, now time.Time, deps busDeps) int {
+	f := newFlags("reply", deps)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	re := f.fs.String("re", "", "the note being answered, by id (required)")
@@ -68,7 +68,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-bus reply: %s\n", oneline.Err(err))
 		return 2
 	}
-	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+	release, lockErr := bus.LockCheckout(*busDir, deps.lockWaitDuration())
 	if lockErr != nil {
 		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.Err(lockErr))
 		return 1
@@ -94,7 +94,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
 			return 1
 		}
-		if _, err := refreshCheckout(*busDir, *remote, *branch); err != nil {
+		if _, err := deps.refreshFn()(*busDir, *remote, *branch); err != nil {
 			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
 			printTranscript(stderr, err)
 			return 1

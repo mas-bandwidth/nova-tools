@@ -22,13 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 290
-cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
-cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
-cmd/nova-bus/reply_functional_test.go:TestARelativeDraftDirInsideTheCheckoutIsRefused serial: t.Chdir
-cmd/nova-bus/reply_functional_test.go:TestASecondReplyOnOneCheckoutWaitsAndThenRefuses serial: swaps package var main.checkoutLockWait
-cmd/nova-bus/reply_functional_test.go:TestReplyRefreshesBeforeItResolves serial: swaps package var main.refreshCheckout
-cmd/nova-bus/robustness_functional_test.go:TestASecondInvocationOnOneCheckoutRefuses serial: swaps package var main.checkoutLockWait
+# ceiling: 272
 cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
@@ -100,9 +94,6 @@ cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableIt
 cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
 cmd/nova-update/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-version/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
-cmd/nova-version/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-version/friendsequence_test.go:TestFriendSequenceSnapshotReport serial: t.Setenv
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
 internal/merge/cisource_test.go:TestChecksMapsTheRecordWord serial: t.Setenv
@@ -183,11 +174,6 @@ internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Sete
 internal/nsprint/table/streams_records_test.go:TestTableTickMakesNoRestCall serial: swaps package var http.DefaultTransport
 internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot serial: t.Setenv
-internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome serial: t.Setenv
 internal/sandbox/policy_test.go:TestACommandInTheCallersHomeIsRefused serial: t.Setenv
 internal/sandbox/systemreads_test.go:TestLinuxWallGrantsTheResolvedResolverConfigDirectory serial: swaps package var sandbox.resolvConfPath
 internal/sandbox/wrap_darwin_test.go:TestNoSandboxRefusesOnDarwin serial: swaps package var sandbox.available
@@ -244,10 +230,6 @@ internal/swarm/staging_functional_test.go:TestWorkerClonesAfterLaunchCarriesPool
 internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
 internal/swarm/usagecard_functional_test.go:TestUsageRowWithoutSqlite serial: t.Setenv
 internal/swarm/warm_functional_test.go:TestAClipResetsTheWorktreeToBase serial: t.Setenv
-internal/testguard/testguard_test.go:TestAFakeOnPATHIsNotAHost serial: os.Unsetenv, t.Setenv
-internal/testguard/testguard_test.go:TestAllowHostsIsScopedAndNests serial: os.Unsetenv, t.Setenv
-internal/testguard/testguard_test.go:TestArmedGuardNamesTheCommandAndTheRemedy serial: os.Unsetenv, t.Setenv
-internal/testguard/testguard_test.go:TestUnsetGuardLetsTheSeamRun serial: t.Setenv
 internal/update/adopt_test.go:TestWatchAdoptRunsPassEscalatesAndPostsReceipt serial: t.Setenv
 internal/update/delivery_test.go:TestALineOutsideTheBusGrammarIsNotRelayed serial: t.Setenv
 internal/update/delivery_test.go:TestNewObservationCannotReplaceUnresolvedPending serial: t.Setenv
