@@ -1946,3 +1946,877 @@ func TestBatchContractRefusalStoreImagePreserved(t *testing.T) {
 		})
 	}
 }
+
+func TestBatchAcceptedInteractingCrossRowMultiMemberWitness(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+
+	cols, err := ntable.ParseColumns("col1,col2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "demo", Columns: cols}
+	if err := ntable.Create(ctx, c, tb, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "row1", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "row2", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	revInit := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Prestate: member m1 placed in row1:col1 with score 10; member m2 placed in row2:col2 with score 20.
+	preManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revInit,
+		OperationID:           "op-interacting-prestate",
+		Actor:                 "setup",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "row1",
+					Col:   "col1",
+					Score: 10,
+				},
+				Set: map[string]string{
+					"role":  "leader",
+					"phase": "pre",
+				},
+			},
+			{
+				ID:     "m2",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "row2",
+					Col:   "col2",
+					Score: 20,
+				},
+				Set: map[string]string{
+					"role":  "follower",
+					"phase": "pre",
+				},
+			},
+		},
+	}
+	rcptPre, err := ntable.ApplyBatch(ctx, c, preManifest)
+	if err != nil {
+		t.Fatalf("setup prestate batch: %v", err)
+	}
+	if rcptPre.Outcome != "changed" {
+		t.Fatalf("setup prestate outcome = %q, want changed", rcptPre.Outcome)
+	}
+
+	// Verify prestate via ReadSet
+	rsPre, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1", "m2"})
+	if err != nil {
+		t.Fatalf("ReadSet prestate: %v", err)
+	}
+	m1Pre, ok1 := rsPre.Member("m1")
+	m2Pre, ok2 := rsPre.Member("m2")
+	if !ok1 || !m1Pre.Placed || m1Pre.Row != "row1" || m1Pre.Col != "col1" || m1Pre.Score != 10 || m1Pre.Revision != 1 {
+		t.Fatalf("unexpected m1 prestate: %+v", m1Pre)
+	}
+	if !ok2 || !m2Pre.Placed || m2Pre.Row != "row2" || m2Pre.Col != "col2" || m2Pre.Score != 20 || m2Pre.Revision != 1 {
+		t.Fatalf("unexpected m2 prestate: %+v", m2Pre)
+	}
+
+	// Batch: In a single atomic batch manifest:
+	// - Move m1 to row2:col2 with score 30 and field/place guard evaluating prestate
+	// - Move m2 to row1:col1 with score 40 and field/place guard evaluating prestate
+	// Both guards evaluate against the common pre-state in a single atomic transaction.
+	revCurrent := strconv.FormatUint(rcptPre.After, 10)
+	score30 := float64(30)
+	score40 := float64(40)
+	valLeader := "leader"
+	valFollower := "follower"
+	valPre := "pre"
+
+	batchManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revCurrent,
+		OperationID:           "op-interacting-cross-row-witness",
+		Actor:                 "worker",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "row1", Col: "col1"},
+					Fields: map[string]ntable.FieldGuard{
+						"role":  {Equals: &valLeader},
+						"phase": {Equals: &valPre},
+					},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row:   "row2",
+					Col:   "col2",
+					Score: &score30,
+				},
+				Set: map[string]string{
+					"phase": "post",
+				},
+			},
+			{
+				ID: "m2",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "row2", Col: "col2"},
+					Fields: map[string]ntable.FieldGuard{
+						"role":  {Equals: &valFollower},
+						"phase": {Equals: &valPre},
+					},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row:   "row1",
+					Col:   "col1",
+					Score: &score40,
+				},
+				Set: map[string]string{
+					"phase": "post",
+				},
+			},
+		},
+	}
+
+	rcptBatch, err := ntable.ApplyBatch(ctx, c, batchManifest)
+	if err != nil {
+		t.Fatalf("interacting cross-row ApplyBatch failed: %v", err)
+	}
+
+	// Verify acceptance and receipts
+	if rcptBatch.Outcome != "changed" {
+		t.Fatalf("expected outcome changed, got %q", rcptBatch.Outcome)
+	}
+	if rcptBatch.BatchDelta == nil {
+		t.Fatal("expected non-nil BatchDelta")
+	}
+	if rcptBatch.BatchDelta.ChangedCount != 2 {
+		t.Fatalf("expected changed_count=2, got %d", rcptBatch.BatchDelta.ChangedCount)
+	}
+	if rcptBatch.BatchDelta.SelectedCount != 2 {
+		t.Fatalf("expected selected_count=2, got %d", rcptBatch.BatchDelta.SelectedCount)
+	}
+	if rcptBatch.BatchDelta.GuardCount != 0 {
+		t.Fatalf("expected syntactic guard_count=0 for moves, got %d", rcptBatch.BatchDelta.GuardCount)
+	}
+
+	deltaMembers := make(map[string]ntable.BatchMemberDelta)
+	for _, md := range rcptBatch.BatchDelta.Members {
+		deltaMembers[md.ID] = md
+	}
+	d1, ok1 := deltaMembers["m1"]
+	d2, ok2 := deltaMembers["m2"]
+	if !ok1 || !ok2 {
+		t.Fatalf("missing member delta: m1=%v, m2=%v", ok1, ok2)
+	}
+	if d1.BeforePlace != "row1:col1" || d1.AfterPlace != "row2:col2" || d1.BeforeScore == nil || *d1.BeforeScore != 10 || d1.AfterScore == nil || *d1.AfterScore != 30 || d1.BeforeRev != "1" || d1.AfterRev != "2" {
+		t.Fatalf("unexpected m1 delta: %+v", d1)
+	}
+	if d2.BeforePlace != "row2:col2" || d2.AfterPlace != "row1:col1" || d2.BeforeScore == nil || *d2.BeforeScore != 20 || d2.AfterScore == nil || *d2.AfterScore != 40 || d2.BeforeRev != "1" || d2.AfterRev != "2" {
+		t.Fatalf("unexpected m2 delta: %+v", d2)
+	}
+
+	// Verify full poststate
+	rsPost, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1", "m2"})
+	if err != nil {
+		t.Fatalf("ReadSet poststate: %v", err)
+	}
+	m1Post, _ := rsPost.Member("m1")
+	m2Post, _ := rsPost.Member("m2")
+	if !m1Post.Placed || m1Post.Row != "row2" || m1Post.Col != "col2" || m1Post.Score != 30 || m1Post.Revision != 2 || m1Post.Fields["phase"] != "post" {
+		t.Fatalf("unexpected m1 poststate: %+v", m1Post)
+	}
+	if !m2Post.Placed || m2Post.Row != "row1" || m2Post.Col != "col1" || m2Post.Score != 40 || m2Post.Revision != 2 || m2Post.Fields["phase"] != "post" {
+		t.Fatalf("unexpected m2 poststate: %+v", m2Post)
+	}
+
+	// Verify physical Redis cell zsets
+	if sc := c.ZScore(ctx, ntable.CellKey("demo", "row2", "col2"), "m1").Val(); sc != 30 {
+		t.Fatalf("expected m1 score 30 in row2:col2, got %v", sc)
+	}
+	if sc := c.ZScore(ctx, ntable.CellKey("demo", "row2", "col2"), "m2").Val(); sc != 0 {
+		t.Fatalf("expected m2 removed from row2:col2, got %v", sc)
+	}
+	if sc := c.ZScore(ctx, ntable.CellKey("demo", "row1", "col1"), "m2").Val(); sc != 40 {
+		t.Fatalf("expected m2 score 40 in row1:col1, got %v", sc)
+	}
+	if sc := c.ZScore(ctx, ntable.CellKey("demo", "row1", "col1"), "m1").Val(); sc != 0 {
+		t.Fatalf("expected m1 removed from row1:col1, got %v", sc)
+	}
+
+	// Verify reverse indexes
+	if p := c.HGet(ctx, ntable.MemberKey("m1"), "place:demo").Val(); p != "row2:col2" {
+		t.Fatalf("expected m1 reverse index row2:col2, got %q", p)
+	}
+	if p := c.HGet(ctx, ntable.MemberKey("m2"), "place:demo").Val(); p != "row1:col1" {
+		t.Fatalf("expected m2 reverse index row1:col1, got %q", p)
+	}
+}
+
+func TestBatchLateInvalidAtNMaxRefusal(t *testing.T) {
+	t.Parallel()
+	testBatchLateInvalidAtNMaxRefusal(t)
+}
+
+func testBatchLateInvalidAtNMaxRefusal(t *testing.T) {
+	c, _ := store(t)
+	ctx := context.Background()
+
+	cols, err := ntable.ParseColumns("ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "demo", Columns: cols}
+	if err := ntable.Create(ctx, c, tb, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	revInit := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Create 128 members in the table in a single batch (max mutation entries = 128)
+	createEntries := make([]ntable.BatchMemberEntry, 128)
+	for i := 0; i < 128; i++ {
+		createEntries[i] = ntable.BatchMemberEntry{
+			ID:     fmt.Sprintf("m_%03d", i),
+			Expect: &ntable.MemberExpect{Absent: true},
+			Create: &ntable.MemberCreateOp{
+				Row:   "build",
+				Col:   "ready",
+				Score: float64(i + 1),
+			},
+			Set: map[string]string{
+				"idx": strconv.Itoa(i),
+			},
+		}
+	}
+	createManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revInit,
+		OperationID:           "op-create-128-max",
+		Actor:                 "setup",
+		Members:               createEntries,
+	}
+	rcptCreate, err := ntable.ApplyBatch(ctx, c, createManifest)
+	if err != nil {
+		t.Fatalf("create 128 members batch: %v", err)
+	}
+	if rcptCreate.Outcome != "changed" || rcptCreate.BatchDelta.ChangedCount != 128 {
+		t.Fatalf("expected 128 changed, got outcome=%q delta=%+v", rcptCreate.Outcome, rcptCreate.BatchDelta)
+	}
+
+	curRev := strconv.FormatUint(rcptCreate.After, 10)
+
+	// Subtest A: Stale revision on the 128th entry
+	t.Run("stale revision on 128th entry", func(t *testing.T) {
+		entries := make([]ntable.BatchMemberEntry, 128)
+		for i := 0; i < 127; i++ {
+			entries[i] = ntable.BatchMemberEntry{
+				ID:     fmt.Sprintf("m_%03d", i),
+				Expect: &ntable.MemberExpect{Revision: "1"},
+				Set:    map[string]string{"processed": "true"},
+			}
+		}
+		// 128th entry is invalid (stale member revision: expected 999, actual is 1)
+		entries[127] = ntable.BatchMemberEntry{
+			ID:     "m_127",
+			Expect: &ntable.MemberExpect{Revision: "999"},
+			Set:    map[string]string{"processed": "true"},
+		}
+
+		manifest := ntable.BatchManifest{
+			Schema:                1,
+			Table:                 "demo",
+			Epoch:                 "0",
+			ExpectedTableRevision: curRev,
+			OperationID:           "op-late-invalid-128-rev",
+			Actor:                 "tester",
+			Members:               entries,
+		}
+
+		before, err := dumpStore(ctx, c)
+		if err != nil {
+			t.Fatalf("dumpStore before: %v", err)
+		}
+		_, err = ntable.ApplyBatch(ctx, c, manifest)
+		after, err2 := dumpStore(ctx, c)
+		if err2 != nil {
+			t.Fatalf("dumpStore after: %v", err2)
+		}
+
+		if err == nil {
+			t.Fatal("expected ApplyBatch to fail on 128th invalid entry")
+		}
+		if !errors.Is(err, ntable.ErrMemberRevision) {
+			t.Fatalf("expected ErrMemberRevision, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "changed=no") {
+			t.Fatalf("expected changed=no, got: %v", err)
+		}
+		if diff := diffSnapshots(before, after); diff != "" {
+			t.Fatalf("store modified despite refusal: %s", diff)
+		}
+	})
+
+	// Subtest B: Invalid remove on unplaced member as 128th entry
+	t.Run("invalid remove on 128th entry", func(t *testing.T) {
+		entries := make([]ntable.BatchMemberEntry, 128)
+		for i := 0; i < 127; i++ {
+			entries[i] = ntable.BatchMemberEntry{
+				ID:     fmt.Sprintf("m_%03d", i),
+				Expect: &ntable.MemberExpect{Revision: "1"},
+				Set:    map[string]string{"step": "2"},
+			}
+		}
+		// 128th entry is invalid remove on unplaced member
+		entries[127] = ntable.BatchMemberEntry{
+			ID:     "m_nonexistent",
+			Expect: &ntable.MemberExpect{Absent: false},
+			Remove: true,
+		}
+
+		manifest := ntable.BatchManifest{
+			Schema:                1,
+			Table:                 "demo",
+			Epoch:                 "0",
+			ExpectedTableRevision: curRev,
+			OperationID:           "op-late-invalid-128-rem",
+			Actor:                 "tester",
+			Members:               entries,
+		}
+
+		before, err := dumpStore(ctx, c)
+		if err != nil {
+			t.Fatalf("dumpStore before: %v", err)
+		}
+		_, err = ntable.ApplyBatch(ctx, c, manifest)
+		after, err2 := dumpStore(ctx, c)
+		if err2 != nil {
+			t.Fatalf("dumpStore after: %v", err2)
+		}
+
+		if err == nil {
+			t.Fatal("expected ApplyBatch to fail on 128th invalid remove entry")
+		}
+		if !errors.Is(err, ntable.ErrNotMember) {
+			t.Fatalf("expected ErrNotMember, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "changed=no") {
+			t.Fatalf("expected changed=no, got: %v", err)
+		}
+		if diff := diffSnapshots(before, after); diff != "" {
+			t.Fatalf("store modified despite refusal: %s", diff)
+		}
+	})
+}
+
+func TestBatchLateInvalidAtNMaxWitness(t *testing.T) {
+	t.Parallel()
+	testBatchLateInvalidAtNMaxRefusal(t)
+}
+
+func TestBatchRetainedUnplacedMemberRemovalWitness(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+
+	cols, err := ntable.ParseColumns("ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "demo", Columns: cols}
+	if err := ntable.Create(ctx, c, tb, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	revInit := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// 1. Create and place member m_unplaced
+	createManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revInit,
+		OperationID:           "op-create-unplaced-witness",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m_unplaced",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: 10,
+				},
+				Set: map[string]string{
+					"role":   "tester",
+					"custom": "payload",
+				},
+			},
+		},
+	}
+	rcptCreate, err := ntable.ApplyBatch(ctx, c, createManifest)
+	if err != nil {
+		t.Fatalf("create m_unplaced: %v", err)
+	}
+	if rcptCreate.Outcome != "changed" {
+		t.Fatalf("expected outcome changed, got %q", rcptCreate.Outcome)
+	}
+
+	// 2. Remove m_unplaced by a prior batch write so it is retained as an unplaced record
+	revAfterCreate := strconv.FormatUint(rcptCreate.After, 10)
+	removeManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revAfterCreate,
+		OperationID:           "op-prior-remove-witness",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m_unplaced",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Remove: true,
+			},
+		},
+	}
+
+	rcptRemove, err := ntable.ApplyBatch(ctx, c, removeManifest)
+	if err != nil {
+		t.Fatalf("prior remove m_unplaced: %v", err)
+	}
+
+	// Verify acceptance and receipt deltas for the removal
+	if rcptRemove.Outcome != "changed" {
+		t.Fatalf("expected outcome changed on remove, got %q", rcptRemove.Outcome)
+	}
+	if rcptRemove.BatchDelta == nil || rcptRemove.BatchDelta.ChangedCount != 1 {
+		t.Fatalf("unexpected remove delta: %+v", rcptRemove.BatchDelta)
+	}
+	if len(rcptRemove.BatchDelta.Members) != 1 {
+		t.Fatalf("expected 1 member delta, got %d", len(rcptRemove.BatchDelta.Members))
+	}
+	remDelta := rcptRemove.BatchDelta.Members[0]
+	if remDelta.ID != "m_unplaced" || remDelta.BeforePlace != "build:ready" || remDelta.AfterPlace != "" {
+		t.Fatalf("unexpected remDelta places: %+v", remDelta)
+	}
+	if remDelta.BeforeScore == nil || *remDelta.BeforeScore != 10 || remDelta.AfterScore != nil {
+		t.Fatalf("unexpected remDelta scores: %+v", remDelta)
+	}
+	if remDelta.BeforeRev != "1" || remDelta.AfterRev != "2" {
+		t.Fatalf("unexpected remDelta revs: %+v", remDelta)
+	}
+
+	// Verify full store state: member record is retained, application fields and revision are preserved,
+	// but placement is cleared and cell zset no longer contains the member.
+	if sc := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m_unplaced").Val(); sc != 0 {
+		t.Fatalf("expected m_unplaced removed from zset, got score %v", sc)
+	}
+	if p := c.HGet(ctx, ntable.MemberKey("m_unplaced"), "place:demo").Val(); p != "" {
+		t.Fatalf("expected place:demo to be cleared, got %q", p)
+	}
+	if r := c.HGet(ctx, ntable.MemberKey("m_unplaced"), "revision").Val(); r != "2" {
+		t.Fatalf("expected member revision 2, got %q", r)
+	}
+	if role := c.HGet(ctx, ntable.MemberKey("m_unplaced"), "role").Val(); role != "tester" {
+		t.Fatalf("expected retained field role=tester, got %q", role)
+	}
+	if custom := c.HGet(ctx, ntable.MemberKey("m_unplaced"), "custom").Val(); custom != "payload" {
+		t.Fatalf("expected retained field custom=payload, got %q", custom)
+	}
+
+	rsUnplaced, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m_unplaced"})
+	if err != nil {
+		t.Fatalf("ReadSet unplaced: %v", err)
+	}
+	mUnplaced, ok := rsUnplaced.Member("m_unplaced")
+	if !ok || mUnplaced.Placed || mUnplaced.Revision != 2 || mUnplaced.Fields["role"] != "tester" {
+		t.Fatalf("ReadSet unplaced record mismatch: %+v", mUnplaced)
+	}
+
+	// 3. Now, a batch attempts remove: true on this retained already-unplaced member.
+	// Contract: Removal requires existing owned placement; an already-unplaced member refuses
+	// with NOTMEMBER before writes. The store must remain completely unchanged.
+	revAfterRemove := strconv.FormatUint(rcptRemove.After, 10)
+	reRemoveManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revAfterRemove,
+		OperationID:           "op-re-remove-unplaced-refusal",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m_unplaced",
+				Expect: &ntable.MemberExpect{
+					Revision: "2",
+				},
+				Remove: true,
+			},
+		},
+	}
+
+	beforeDump, err := dumpStore(ctx, c)
+	if err != nil {
+		t.Fatalf("dumpStore before: %v", err)
+	}
+	_, err = ntable.ApplyBatch(ctx, c, reRemoveManifest)
+	afterDump, err2 := dumpStore(ctx, c)
+	if err2 != nil {
+		t.Fatalf("dumpStore after: %v", err2)
+	}
+
+	if err == nil {
+		t.Fatal("expected ApplyBatch to refuse remove:true on already-unplaced member")
+	}
+	if !errors.Is(err, ntable.ErrNotMember) {
+		t.Fatalf("expected ErrNotMember, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "changed=no") {
+		t.Fatalf("expected changed=no, got: %v", err)
+	}
+	if diff := diffSnapshots(beforeDump, afterDump); diff != "" {
+		t.Fatalf("store modified on unplaced remove refusal: %s", diff)
+	}
+}
+
+func TestBatchNoopGuardCountAndCardinalityWitness(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+
+	cols, err := ntable.ParseColumns("ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "demo", Columns: cols}
+	if err := ntable.Create(ctx, c, tb, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	revInit := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Initial create of m1 at build:ready with score 10
+	createManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revInit,
+		OperationID:           "op-create-m1-noop-witness",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: 10,
+				},
+				Set: map[string]string{"env": "prod"},
+			},
+		},
+	}
+	rcptCreate, err := ntable.ApplyBatch(ctx, c, createManifest)
+	if err != nil {
+		t.Fatalf("create m1: %v", err)
+	}
+	if rcptCreate.Outcome != "changed" {
+		t.Fatalf("expected outcome changed, got %q", rcptCreate.Outcome)
+	}
+
+	// Capture state before no-op move
+	revBefore := strconv.FormatUint(rcptCreate.After, 10)
+	changesKey := ntable.ChangesKey("demo")
+	streamLenBefore, err := c.XLen(ctx, changesKey).Result()
+	if err != nil {
+		t.Fatalf("XLen before: %v", err)
+	}
+
+	// Apply a move of member m1 to the same cell and same score with no field changes (a no-op move)
+	score10 := float64(10)
+	noopManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revBefore,
+		OperationID:           "op-move-noop-witness",
+		Actor:                 "test",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: &score10,
+				},
+			},
+		},
+	}
+
+	rcptNoop, err := ntable.ApplyBatch(ctx, c, noopManifest)
+	if err != nil {
+		t.Fatalf("apply noop move: %v", err)
+	}
+
+	// Assert outcome is noop
+	if rcptNoop.Outcome != "noop" {
+		t.Fatalf("expected outcome noop, got %q", rcptNoop.Outcome)
+	}
+	if rcptNoop.BatchDelta == nil {
+		t.Fatal("expected non-nil BatchDelta")
+	}
+
+	// Assert rcpt.BatchDelta.GuardCount == 0 (syntactic guard_count is 0, since move is mutation syntax)
+	if rcptNoop.BatchDelta.GuardCount != 0 {
+		t.Fatalf("expected syntactic GuardCount == 0 for move syntax, got %d", rcptNoop.BatchDelta.GuardCount)
+	}
+	if rcptNoop.BatchDelta.ChangedCount != 0 {
+		t.Fatalf("expected ChangedCount == 0 for no-op move, got %d", rcptNoop.BatchDelta.ChangedCount)
+	}
+	if rcptNoop.BatchDelta.SelectedCount != 1 {
+		t.Fatalf("expected SelectedCount == 1, got %d", rcptNoop.BatchDelta.SelectedCount)
+	}
+
+	// Assert member revision is unchanged
+	rsAfter, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err != nil {
+		t.Fatalf("ReadSet after: %v", err)
+	}
+	m1After, ok := rsAfter.Member("m1")
+	if !ok || m1After.Revision != 1 {
+		t.Fatalf("expected m1 revision unchanged at 1, got %+v", m1After)
+	}
+	if r := c.HGet(ctx, ntable.MemberKey("m1"), "revision").Val(); r != "1" {
+		t.Fatalf("expected m1 hash revision 1, got %q", r)
+	}
+
+	// Assert table revision +1
+	if rcptNoop.After != rcptCreate.After+1 {
+		t.Fatalf("expected table revision to increment from %d to %d, got %d", rcptCreate.After, rcptCreate.After+1, rcptNoop.After)
+	}
+	tableRevCurrent := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	if tableRevCurrent != strconv.FormatUint(rcptCreate.After+1, 10) {
+		t.Fatalf("expected table revision %d, got %s", rcptCreate.After+1, tableRevCurrent)
+	}
+
+	// Assert stream cardinality is exactly 1 event
+	streamLenAfter, err := c.XLen(ctx, changesKey).Result()
+	if err != nil {
+		t.Fatalf("XLen after: %v", err)
+	}
+	if streamLenAfter != streamLenBefore+1 {
+		t.Fatalf("expected stream cardinality to increase by 1 (from %d to %d), got %d", streamLenBefore, streamLenBefore+1, streamLenAfter)
+	}
+	events, err := c.XRange(ctx, changesKey, rcptNoop.ID, rcptNoop.ID).Result()
+	if err != nil || len(events) != 1 {
+		t.Fatalf("expected exactly 1 stream event for rcptNoop.ID %s, got %d (err: %v)", rcptNoop.ID, len(events), err)
+	}
+	if events[0].Values["outcome"] != "noop" {
+		t.Fatalf("expected stream event outcome noop, got %v", events[0].Values["outcome"])
+	}
+
+	// Assert operation-record cardinality is exactly 1 record
+	opKey := ntable.DefKey("demo") + ":op:op-move-noop-witness"
+	opRecord, err := c.HGetAll(ctx, opKey).Result()
+	if err != nil {
+		t.Fatalf("HGetAll opRecord: %v", err)
+	}
+	if len(opRecord) == 0 {
+		t.Fatalf("expected operation record at %s, got none", opKey)
+	}
+	if opRecord["outcome"] != "noop" {
+		t.Fatalf("expected opRecord outcome noop, got %q", opRecord["outcome"])
+	}
+	if opRecord["stream_id"] != rcptNoop.ID {
+		t.Fatalf("expected opRecord stream_id %s, got %s", rcptNoop.ID, opRecord["stream_id"])
+	}
+}
+
+func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+
+	cols, err := ntable.ParseColumns("ready,working")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "demo", Columns: cols}
+	if err := ntable.Create(ctx, c, tb, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+
+	revInit := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+
+	// Initial creation: member m1 placed with status "step0", revision 1
+	createManifest := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revInit,
+		OperationID:           "op-init-m1-omitted-witness",
+		Actor:                 "creator",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID:     "m1",
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "build",
+					Col:   "ready",
+					Score: 10,
+				},
+				Set: map[string]string{
+					"status": "step0",
+					"tag":    "initial",
+				},
+			},
+		},
+	}
+	rcptInit, err := ntable.ApplyBatch(ctx, c, createManifest)
+	if err != nil {
+		t.Fatalf("create m1: %v", err)
+	}
+	if rcptInit.Outcome != "changed" {
+		t.Fatalf("expected outcome changed, got %q", rcptInit.Outcome)
+	}
+
+	// Writer 1 advances member m1's revision (via field update / move)
+	revAfterInit := strconv.FormatUint(rcptInit.After, 10)
+	manifestWriter1 := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revAfterInit,
+		OperationID:           "op-writer1-advance-rev",
+		Actor:                 "writer1",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					Revision: "1",
+					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
+				},
+				Move: &ntable.MemberMoveOp{Row: "build", Col: "working"},
+				Set: map[string]string{
+					"status": "step1",
+				},
+			},
+		},
+	}
+	rcptW1, err := ntable.ApplyBatch(ctx, c, manifestWriter1)
+	if err != nil {
+		t.Fatalf("writer1 apply batch: %v", err)
+	}
+	if rcptW1.Outcome != "changed" {
+		t.Fatalf("writer1 expected outcome changed, got %q", rcptW1.Outcome)
+	}
+
+	// Verify member m1's revision advanced to 2
+	rsW1, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err != nil {
+		t.Fatalf("ReadSet after writer1: %v", err)
+	}
+	m1W1, ok := rsW1.Member("m1")
+	if !ok || m1W1.Revision != 2 || m1W1.Fields["status"] != "step1" || m1W1.Col != "working" {
+		t.Fatalf("expected m1 at revision 2, col=working, got %+v", m1W1)
+	}
+
+	// Writer 2 submits a batch modifying m1 with Revision omitted (empty string)
+	// and only explicit field guards.
+	revAfterW1 := strconv.FormatUint(rcptW1.After, 10)
+	valStep1 := "step1"
+	manifestWriter2 := ntable.BatchManifest{
+		Schema:                1,
+		Table:                 "demo",
+		Epoch:                 "0",
+		ExpectedTableRevision: revAfterW1,
+		OperationID:           "op-writer2-omitted-rev-witness",
+		Actor:                 "writer2",
+		Members: []ntable.BatchMemberEntry{
+			{
+				ID: "m1",
+				Expect: &ntable.MemberExpect{
+					// Revision omitted!
+					Fields: map[string]ntable.FieldGuard{
+						"status": {Equals: &valStep1},
+					},
+				},
+				Set: map[string]string{
+					"status":  "step2",
+					"writer2": "applied",
+				},
+			},
+		},
+	}
+
+	rcptW2, err := ntable.ApplyBatch(ctx, c, manifestWriter2)
+	if err != nil {
+		t.Fatalf("writer2 apply batch with omitted revision: %v", err)
+	}
+	if rcptW2.Outcome != "changed" {
+		t.Fatalf("writer2 expected outcome changed, got %q", rcptW2.Outcome)
+	}
+
+	// Verify batch succeeded and m1's revision advanced to 3
+	rsW2, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err != nil {
+		t.Fatalf("ReadSet after writer2: %v", err)
+	}
+	m1W2, ok := rsW2.Member("m1")
+	if !ok || m1W2.Revision != 3 || m1W2.Fields["status"] != "step2" || m1W2.Fields["writer2"] != "applied" {
+		t.Fatalf("expected m1 at revision 3 after writer2, got %+v", m1W2)
+	}
+
+	// Writer 3 submits a batch modifying m1 with raw JSON expect without revision
+	// confirming omitted revision in wire format is accepted after revision advance.
+	revAfterW2 := strconv.FormatUint(rcptW2.After, 10)
+	rawWriter3 := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"op-w3-wire-omitted","actor":"writer3","members":[{"id":"m1","expect":{"fields":{"status":{"equals":"step2"}}},"set":{"status":"step3","wire":"accepted"}}]}`, revAfterW2)
+	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawWriter3).Slice()
+	if err != nil {
+		t.Fatalf("writer3 raw apply: %v", err)
+	}
+	if len(ans) < 2 || ans[0] != "OK" {
+		t.Fatalf("writer3 expected OK, got %v", ans)
+	}
+
+	// Verify m1 revision advanced to 4 and status is step3
+	rsW3, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
+	if err != nil {
+		t.Fatalf("ReadSet after writer3: %v", err)
+	}
+	m1W3, ok := rsW3.Member("m1")
+	if !ok || m1W3.Revision != 4 || m1W3.Fields["status"] != "step3" || m1W3.Fields["wire"] != "accepted" {
+		t.Fatalf("expected m1 at revision 4 after writer3, got %+v", m1W3)
+	}
+}

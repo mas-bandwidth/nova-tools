@@ -119,7 +119,7 @@ nova-table cell move     <table> <row> <from-col> <to-col> <member>...
 nova-table cell members  <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
-nova-table batch  <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]
+nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
@@ -436,7 +436,7 @@ never changed=no without evidence.
 
 ### CLI batch verb (`nova-table batch`)
 
-`nova-table batch <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]`
+`nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]`
 executes an atomic conditional mutation manifest against one table in a single Redis call (`ns_table_apply`).
 
 #### Manifest structure
@@ -498,6 +498,7 @@ usage: nova-table batch <manifest>
 
 example:
   nova-table batch manifest.json
+  nova-table batch - < manifest.json
 
 connection:
   --redis <string>  the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)
@@ -506,8 +507,6 @@ connection:
 write epoch and receipt:
   --actor <string>  actor recorded with the change
   --epoch <uint>  the epoch this write observed (default 0)
-  --fence <string>  coordinator fence recorded with the change
-  --idem <string>  attempt identifier recorded with the change; does not deduplicate
   --receipt  print the committed event ID, epoch and revision
 
 exit codes: 0 done, 1 refused, 2 usage

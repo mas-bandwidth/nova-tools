@@ -1965,8 +1965,8 @@ the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Batch mutation
 
-`nova-table batch <manifest-file> [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--fence <token>] [--idem <token>] [--receipt=true|false]`
-applies an atomic batch manifest (file path or inline JSON string) of member mutations and preconditions
+`nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]`
+applies an atomic batch manifest (file path, stdin via `-`, or inline JSON string) of member mutations and preconditions
 against one table in a single Redis transaction. It creates, moves, removes, and sets or unsets permitted
 member fields in one call, checking observed table revision, epoch, and member expectations whole against
 the single pre-state snapshot before staging any writes.
