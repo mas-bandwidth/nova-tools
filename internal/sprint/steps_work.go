@@ -51,6 +51,7 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 }
 
 // Add admits primaries: waiting if they need something not landed, else ready.
+// A need names a primary on the table (placed or kept) or one of this add.
 func Add(s *Snapshot, r AddReq) Plan {
 	var p Plan
 	if !ValidID(r.Stream) {
@@ -83,6 +84,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score = *r.Score
 	}
 	needs := strings.Join(r.Needs, ",")
+	adding := map[string]bool{}
+	for _, id := range AddIDs(s, r) {
+		adding[id] = true
+	}
+	var missing []string
+	for _, n := range r.Needs {
+		if s.Work.Card(n) == nil && !adding[n] {
+			missing = append(missing, n)
+		}
+	}
 	seen := map[string]bool{}
 	for _, id := range AddIDs(s, r) {
 		switch {
@@ -94,6 +105,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		case s.Work.Card(id) != nil:
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
+			continue
+		case len(missing) > 0:
+			p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
 			continue
 		}
 		seen[id] = true

@@ -7,11 +7,12 @@ import "github.com/mas-bandwidth/nova-tools/internal/sprint"
 
 func tables(ts ...string) []string { return ts }
 
-// AddStep admits primaries.
+// AddStep admits primaries; it reads the named needs as well, placed or not.
 func AddStep(r sprint.AddReq) Step {
 	return Step{Verb: "add", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
-			return map[string][]string{sprint.Work: sprint.AddIDs(s, r)}
+			ids := append([]string(nil), sprint.AddIDs(s, r)...)
+			return map[string][]string{sprint.Work: append(ids, r.Needs...)}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }

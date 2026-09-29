@@ -101,6 +101,61 @@ func TestResumeAfterRedWantsWhatWasDone(t *testing.T) {
 	h.clean("resumed")
 }
 
+// rank refuses a landed primary: landed is final.
+func TestRankRefusesALandedPrimary(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.through("s1-1")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
+	res := h.run(RankStep(sprint.RankReq{IDs: []string{"s1-1"}, First: true}))
+	if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "landed") {
+		t.Fatalf("rank of a landed primary: moved %v refused %v", res.Moved, res.Refused)
+	}
+	h.must(RankStep(sprint.RankReq{IDs: []string{"s1-2"}, First: true}))
+}
+
+// add refuses a need that names no primary; a need on a primary on the
+// table, placed or kept (dropped), is admitted waiting.
+func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	res := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "nosuch"}}))
+	if len(res.Moved) != 0 || len(res.Refused) != 2 || !strings.Contains(res.Refused[0].Why, "nosuch") {
+		t.Fatalf("add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
+	}
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "s1-2"}}))
+	if h.state("b1") != sprint.Waiting || h.state("b2") != sprint.Waiting {
+		t.Fatalf("b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
+	}
+	h.clean("added")
+}
+
+// Two needs dropped in one step give one blocked note per waiting primary.
+func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1", "s1-2"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
+	notes, _, err := h.m.NotesSince(h.ctx, "", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocked []sprint.Note
+	for _, n := range notes {
+		if n.Type == sprint.NBlocked {
+			blocked = append(blocked, n)
+		}
+	}
+	if len(blocked) != 1 || !strings.Contains(blocked[0].What, "s1-1") || !strings.Contains(blocked[0].What, "s1-2") {
+		t.Fatalf("blocked notes: %+v", blocked)
+	}
+	h.clean("dropped")
+}
+
 func hasString(xs []string, x string) bool {
 	for _, y := range xs {
 		if y == x {

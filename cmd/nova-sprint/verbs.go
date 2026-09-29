@@ -394,7 +394,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("add")
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
-	needs := fs.String("needs", "", "primaries that must land first, comma separated")
+	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
 	brief := fs.String("brief", "", "the brief")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	ids, err := parse(fs, args)
