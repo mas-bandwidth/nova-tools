@@ -84,17 +84,29 @@ func (d *dirs) list(path string) ([]os.DirEntry, error) {
 	return entries, err
 }
 
-// resolvedRoot is the store directory with its symlinks resolved, once.
+// resolvedRoot is the store directory, absolute and with its symlinks resolved,
+// once. Both sides of a containment test are spelled this way, so the answer
+// does not depend on whether --store was written relative or absolute.
 func (d *dirs) resolvedRoot(root string) string {
 	if r, ok := d.realRoot[root]; ok {
 		return r
 	}
-	r, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		r = root
-	}
+	r := resolved(root)
 	d.realRoot[root] = r
 	return r
+}
+
+// resolved is path made absolute with its symlinks resolved; when it cannot be
+// resolved (nothing there), the absolute spelling.
+func resolved(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
 }
 
 // storeShape reads the store's contents and names its shape. A directory that
@@ -230,7 +242,7 @@ func recordState(d *dirs, op, root, path string) (bool, error) {
 			// A link to a regular file is a record only while it stays in the
 			// store: the tool never reads or appends outside the directory it
 			// was given.
-			if real, err := filepath.EvalSymlinks(path); err != nil || !within(d.resolvedRoot(root), real) {
+			if !within(d.resolvedRoot(root), resolved(path)) {
 				found = fmt.Sprintf("a symlink to %q, which resolves outside the store", target)
 			}
 		}
