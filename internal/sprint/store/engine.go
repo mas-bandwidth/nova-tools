@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,9 @@ type Step struct {
 	// request): a caller's operation id replays only for the same verb and
 	// the same arguments.
 	Args string
+	// Actor, when set, is who the step's lines are by (the machine, for a
+	// tick's part), whoever runs it; else the store's actor.
+	Actor string
 	// Named says the step names its cards or notes (ids, a group's members,
 	// an ack's notes): it applies all or none, and one refusal refuses the
 	// whole step, naming every one.
@@ -326,7 +330,11 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				res.Moved = append(res.Moved, u.Moved)
 			}
 		}
-		op, err := st.operation(step.Verb, sprint.OpFamily(family, st.epoch)+"-"+strconv.Itoa(res.Attempts), plan, snap)
+		actor := st.Actor
+		if step.Actor != "" {
+			actor = step.Actor
+		}
+		op, err := st.operation(step.Verb, actor, sprint.OpFamily(family, st.epoch)+"-"+strconv.Itoa(res.Attempts), plan, snap)
 		var twice *twiceError
 		if errors.As(err, &twice) {
 			return refuseWhole(res, plan, twice.Error())
@@ -619,6 +627,78 @@ func (e *twiceError) Error() string {
 	return fmt.Sprintf("card %s of %s is changed twice in one step, by %s and by %s, and the changes disagree (%s)", e.Card, e.Table, e.First, e.Second, e.Why)
 }
 
+// moveLine is the log's line of one card's change in a step: its place
+// before and after, its generation after, the words given with it, and the
+// judgments the step answered on it.
+func moveLine(k entryKey, e ntable.BatchMemberEntry, units []sprint.Unit, snap *sprint.Snapshot, op, verb, actor string) sprint.Line {
+	l := sprint.Line{Kind: sprint.LineMove, At: snap.Now, Epoch: snap.Epoch, Op: op, Card: k.id, Table: k.table, Verb: verb, Actor: actor}
+	pre := snap.T(k.table).Card(k.id)
+	if pre.Placed() {
+		l.From = pre.Row + ":" + pre.Col
+	}
+	l.To, l.Gen = l.From, pre.Int("gen")
+	switch {
+	case e.Remove:
+		l.To, l.Removed = "", true
+	case e.Create != nil:
+		l.To = e.Create.Row + ":" + e.Create.Col
+		l.Set = map[string]string{"score": strconv.FormatFloat(e.Create.Score, 'f', -1, 64)}
+	case e.Move != nil:
+		l.To = e.Move.Row + ":" + e.Move.Col
+		if e.Move.Score != nil {
+			l.Set = map[string]string{"score": strconv.FormatFloat(*e.Move.Score, 'f', -1, 64)}
+		}
+	}
+	field := func(name string) string {
+		if v, ok := e.Set[name]; ok {
+			return v
+		}
+		if slices.Contains(e.Unset, name) {
+			return ""
+		}
+		return pre.F(name)
+	}
+	l.Gen, _ = strconv.Atoi(field("gen"))
+	l.Primary, l.Stream = field("primary"), field("stream")
+	if k.table == sprint.Work {
+		l.Primary = k.id
+		if l.Stream == "" {
+			l.Stream, _, _ = strings.Cut(l.To, ":")
+		}
+	}
+	if k.table == sprint.Merge && l.Primary == "" {
+		l.Primary = k.id
+	}
+	for f, v := range e.Set {
+		if slices.Contains(sprint.TextFields, f) {
+			if l.Text == nil {
+				l.Text = map[string]string{}
+			}
+			l.Text[f] = v
+			continue
+		}
+		if l.Set == nil {
+			l.Set = map[string]string{}
+		}
+		l.Set[f] = v
+	}
+	var causes []string
+	for _, u := range units {
+		if u.Moved != "" && !slices.Contains(causes, u.Moved) {
+			causes = append(causes, u.Moved)
+		}
+		for _, o := range u.Closes {
+			if o.Subject() == k.id || o.Subject() == l.Primary {
+				if !slices.Contains(l.Answers, o.Note.ID) {
+					l.Answers = append(l.Answers, o.Note.ID)
+				}
+			}
+		}
+	}
+	l.Cause = strings.Join(causes, "; ")
+	return l
+}
+
 func unitCause(u sprint.Unit) string {
 	if u.Moved != "" {
 		return u.Key + " (" + u.Moved + ")"
@@ -688,11 +768,13 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // ntable.LimitChangedEntries changed and ntable.LimitGuardEntries guard-only
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
-func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
+func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
 	op := OpRecord{ID: id, Verb: verb, At: snap.Now}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}
+	var logOrder []entryKey                  // the cards changed, in the order of their first change
+	logUnits := map[entryKey][]sprint.Unit{} // the units that changed each
 	bumps := map[entryKey]map[string]int{}
 	var bumpOrder []entryKey
 	streams := map[string]bool{}
@@ -702,6 +784,10 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 		}
 		for _, c := range u.Changes {
 			k := entryKey{c.Table, c.Entry.ID}
+			if len(logUnits[k]) == 0 {
+				logOrder = append(logOrder, k)
+			}
+			logUnits[k] = append(logUnits[k], u)
 			if i := seen[k]; i > 0 {
 				// Two changes of one card in one step are one entry when they
 				// agree; else the step is refused, naming both.
@@ -795,6 +881,11 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 		}
 		flush()
 	}
+	// Every card the step changes is a move line of the log, written with
+	// the step's commit: the log replays to every card's place.
+	for _, k := range logOrder {
+		op.Log = append(op.Log, moveLine(k, entries[k.table][seen[k]-1], logUnits[k], snap, id, verb, actor))
+	}
 	var all []sprint.Note
 	var closes []sprint.Open
 	for _, u := range plan.Units {
@@ -843,7 +934,7 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 				what = a
 			}
 			d = &sprint.Note{Kind: sprint.Decided, Type: o.Note.Type, Stream: o.Note.Stream, Answers: o.Note.ID,
-				What: what, Who: st.Actor, At: snap.Now}
+				What: what, Who: actor, At: snap.Now}
 			byNote[o.Note.ID] = d
 			order = append(order, o.Note.ID)
 		}
@@ -1415,6 +1506,19 @@ func (st *Store) withSkips(op OpRecord, skips []Skip) OpRecord {
 		What: fmt.Sprintf("repair of %s (%s) skipped %d entries the store refused as recorded: %s", op.ID, op.Verb, len(skips), strings.Join(lines, "; ")),
 		Who:  st.Actor, At: st.now(), Decisions: append([]string(nil), RepairSkippedDecisions...)}
 	op.Notes = append(append([]sprint.Note(nil), op.Notes...), n)
+	// a skipped entry did not happen: its move line is not written, and the
+	// skip's judgment says what was skipped
+	var kept []sprint.Line
+	for _, l := range op.Log {
+		skipped := false
+		for _, k := range skips {
+			skipped = skipped || l.Card == k.Card && (k.Table == l.Table || k.Table == st.Names.Table(l.Table))
+		}
+		if !skipped {
+			kept = append(kept, l)
+		}
+	}
+	op.Log = kept
 	var res Result
 	if op.Result != "" && json.Unmarshal([]byte(op.Result), &res) == nil {
 		res.Skipped = lines

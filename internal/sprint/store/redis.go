@@ -250,6 +250,7 @@ const (
 	keyFence    = "fence"    // STRING, the pending operation record
 	keyGen      = "fencegen" // STRING, the fence's generation
 	keyInbox    = "inbox"    // STREAM of notifications, field "note"
+	keyLog      = "log"      // STREAM of the log's lines, field "line"
 	keyNotes    = "notes"    // HASH note id -> judgment note
 	keyOpen     = "open"     // HASH <note id>|<subject> -> note id, one per open subject
 	keyCursor   = "cursor"   // STRING, the coordinator's last read stream id
@@ -404,11 +405,23 @@ func released(op OpRecord, commit bool, held string, recorded bool) bool {
 }
 
 func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) error {
+	for _, line := range op.Log {
+		body, err := json.Marshal(line)
+		if err != nil {
+			return err
+		}
+		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(body)}})
+	}
 	for _, n := range append(append([]sprint.Note{}, op.Notes...), op.Decided...) {
 		body, err := json.Marshal(n.Bound())
 		if err != nil {
 			return err
 		}
+		lb, err := json.Marshal(sprint.NoteLine(n.Bound(), op.ID))
+		if err != nil {
+			return err
+		}
+		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(lb)}})
 		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyInbox), Values: []any{"note", string(body)}})
 		if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
 			p.HSet(ctx, r.key(keyNotes), n.ID, string(body))
@@ -550,6 +563,27 @@ func (r *Redis) NotesSince(ctx context.Context, after string, max int) ([]sprint
 		}
 	}
 	return notes, ids, nil
+}
+
+func (r *Redis) LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error) {
+	start := "-"
+	if after != "" {
+		start = "(" + after
+	}
+	msgs, err := r.C.XRangeN(ctx, r.key(keyLog), start, "+", int64(max)).Result()
+	if err != nil {
+		return nil, nil, err
+	}
+	var lines []sprint.Line
+	var ids []string
+	for _, m := range msgs {
+		var l sprint.Line
+		if s, ok := m.Values["line"].(string); ok && json.Unmarshal([]byte(s), &l) == nil {
+			lines = append(lines, l)
+			ids = append(ids, m.ID)
+		}
+	}
+	return lines, ids, nil
 }
 
 func (r *Redis) Cursor(ctx context.Context) (string, error) {

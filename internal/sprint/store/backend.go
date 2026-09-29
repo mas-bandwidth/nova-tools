@@ -82,6 +82,9 @@ type Backend interface {
 	// NotesSince is the notifications after the stream id (all when empty),
 	// at most max, oldest first, with each one's stream id.
 	NotesSince(ctx context.Context, after string, max int) ([]sprint.Note, []string, error)
+	// LogSince is the log's lines after the stream id (all when empty), at
+	// most max, with their stream ids: the epoch's append-only record.
+	LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error)
 	Cursor(ctx context.Context) (string, error)
 	SetCursor(ctx context.Context, id string) error
 	// Coordinator is the sprint's coordinator, set by init ("" when none
@@ -123,6 +126,7 @@ type OpRecord struct {
 	Manifests []ntable.BatchManifest `json:"manifests"`
 	Notes     []sprint.Note          `json:"notes,omitempty"`   // happened and judgment, ids assigned
 	Decided   []sprint.Note          `json:"decided,omitempty"` // answers to open judgments
+	Log       []sprint.Line          `json:"log,omitempty"`     // the log's move lines of the step's changes
 	Closes    []string               `json:"closes,omitempty"`  // open keys the step closes
 	Streams   []string               `json:"streams,omitempty"` // streams whose progress it is
 	CallerOp  string                 `json:"caller_op,omitempty"`

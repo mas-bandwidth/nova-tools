@@ -62,6 +62,7 @@ func init() {
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"inbox", "[--open <group>] [--read] [--deadline <duration>] [--stale <duration>]", "inbox", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
+		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},

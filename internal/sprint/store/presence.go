@@ -102,7 +102,7 @@ func (st *Store) tellStrangers(ctx context.Context) (Result, error) {
 		return res, nil
 	}
 	sort.Strings(names)
-	res, err = st.Run(ctx, Step{Verb: "tick strangers", Load: tables(sprint.Fleet), Plan: func(snap *sprint.Snapshot) sprint.Plan {
+	res, err = st.Run(ctx, Step{Verb: "tick strangers", Actor: sprint.MachineActor, Load: tables(sprint.Fleet), Plan: func(snap *sprint.Snapshot) sprint.Plan {
 		var p sprint.Plan
 		for _, m := range names {
 			if snap.Fleet.HasRow(m) {

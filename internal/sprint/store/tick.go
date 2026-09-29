@@ -345,7 +345,7 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 // as stale. guard refuses the part on any other ground. due, when not nil, is
 // set to what the last plan left due past the part's bounds.
 func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *uint64, guard func(*sprint.Snapshot) string, due *int) Step {
-	return Step{Verb: "tick " + name, Load: All, Extras: tickExtras, Epoch: epoch,
+	return Step{Verb: "tick " + name, Actor: sprint.MachineActor, Load: All, Extras: tickExtras, Epoch: epoch,
 		Mirrors: name == "presence" || name == "deal" || name == "level" || name == "resume",
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
 			if guard != nil {
@@ -533,7 +533,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		// A stuck operation repaired since: its judgment, once, by a step
 		// that writes nothing else.
 		at := st.epoch
-		r, err := st.Run(ctx, Step{Verb: "tick stuck", Epoch: &at, Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
+		r, err := st.Run(ctx, Step{Verb: "tick stuck", Actor: sprint.MachineActor, Epoch: &at, Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
 		if err != nil {
 			return last, fmt.Errorf("tick stuck: %w", err)
 		}

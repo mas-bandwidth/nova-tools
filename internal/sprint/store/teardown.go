@@ -17,7 +17,7 @@ import (
 // (Names.Key): the fence and its generation, the notification stream, the
 // judgments, the open subjects, the coordinator's cursor, the streams'
 // progress and the callers' results. Each epoch has its own.
-var sprintKeys = []string{keyFence, keyGen, keyInbox, keyNotes, keyOpen, keyCursor, keyProgress, keyDone}
+var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone}
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
@@ -413,6 +413,11 @@ func sprintKey(l *memLog, s string, del bool) bool {
 		held = len(l.inbox) > 0
 		if del {
 			l.inbox = nil
+		}
+	case keyLog:
+		held = len(l.lines) > 0
+		if del {
+			l.lines = nil
 		}
 	case keyNotes:
 		held = len(l.notes) > 0

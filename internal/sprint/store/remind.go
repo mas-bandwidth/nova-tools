@@ -277,7 +277,7 @@ func (st *Store) remind(ctx context.Context, m Machine, res *TickResult) error {
 		return err
 	}
 	if want := g.Failing(); !maps.Equal(want, g.Noted) {
-		r, err := st.Run(ctx, Step{Verb: "tick remind", Plan: func(s *sprint.Snapshot) sprint.Plan {
+		r, err := st.Run(ctx, Step{Verb: "tick remind", Actor: sprint.MachineActor, Plan: func(s *sprint.Snapshot) sprint.Plan {
 			return sprint.RemindNotes(s, g, sprint.MachineActor)
 		}})
 		if err != nil {

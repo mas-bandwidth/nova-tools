@@ -73,6 +73,11 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 		if err != nil {
 			return rep, nil, err
 		}
+		// the log, read between the two fence reads: of the same state
+		lines, err := st.Log(ctx)
+		if err != nil {
+			return rep, nil, err
+		}
 		f2, err := st.B.ReadFence(ctx)
 		if err != nil {
 			return rep, nil, err
@@ -95,6 +100,9 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 			ops = pendingOf(*pending, st.Names)
 		}
 		rep.Violations = sprint.Check(s, ops)
+		if pending == nil {
+			rep.Violations = append(rep.Violations, sprint.LogViolations(s, lines)...)
+		}
 		held, err := st.heldState(ctx, s, pending)
 		if err != nil {
 			return rep, nil, err
@@ -319,6 +327,26 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 			sprint.Command{Decision: "start", Lines: []string{"nova-sprint start"}}))
 	}
 	return out, nil
+}
+
+// logPage is how many lines the log is read by at a time.
+const logPage = 5000
+
+// Log is the epoch's log, every line, in order.
+func (st *Store) Log(ctx context.Context) ([]sprint.Line, error) {
+	var all []sprint.Line
+	after := ""
+	for {
+		lines, ids, err := st.B.LogSince(ctx, after, logPage)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, lines...)
+		if len(ids) < logPage {
+			return all, nil
+		}
+		after = ids[len(ids)-1]
+	}
 }
 
 // StreamClocks is every stream's state, since and progress.

@@ -483,8 +483,13 @@ exactly, member by member, never by their counts.
     holds, a stopped stream with no open judgment, and an operation pending
     past its grace that a tick since has not finished are stalls too. `card`
     prints what holds a primary (`HELD`).
+13. The log replays to the tables: replaying the epoch's move lines from
+    empty gives every card's place and generation (the control cards aside),
+    and a card the log never placed, or placed elsewhere, is a violation
+    naming it (section 17). `check` and the property test hold it; the tick's
+    check does not read the log.
 
-Rules 2, 3, 4, 5, 9 and 12 hold whenever no operation is pending (while one
+Rules 2, 3, 4, 5, 9, 12 and 13 hold whenever no operation is pending (while one
 is, 12 judges only the operation); 1, 6, 7, 8 and
 11 always; 5 and 6 skip sentinels, which land by release and are never read or
 merged. A rank is the one step that changes scores: while a rank is pending, a
@@ -616,6 +621,7 @@ command that loads it.
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read` |
 | card | everything about one primary |
+| log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch`, with a pending operation and stalled streams |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
@@ -810,3 +816,35 @@ and landed, and the sprint is not done while one waits. A ready primary whose
 work card was withdrawn (no member up) stays ready when a sentinel is inserted
 in front of it, and is waited for as past the stop: check's rule 2 holds that
 the primary of a withdrawn card is ready.
+
+## 17. The log
+
+Each epoch has one log: an append-only record of every change of every card
+and every notification, in the order written. A step's lines are written in
+the same transaction as its change (the operation's commit; a repair that
+finishes an operation writes its lines, and an entry the repair skips has no
+line, the skip's judgment saying what it skipped), so no card changes without
+its line. Nothing in the log is ever rewritten or trimmed within its epoch: a
+second accept, a second ci result and a return each add a line. The inbox's
+cursor never hides a line. The log has no hidden lines: every line is every
+actor's to read.
+
+A move line has: the time, the epoch, the operation that wrote it, the card,
+its primary and its stream, the table, the place before and after
+(member:column; none before when the step created it, removed when the step
+took it off), its generation after, who acted (the machine, for the tick's own
+moves: deal, redeal, level, withdraw, ask, resume, the sentinels), the verb,
+the cause in the step's own words, the judgments the step answered on it, the
+words given with it (brief, fix, report, finding, reason, return reason, did,
+note, ci note), whole, and the other fields it set. A notification's line has
+its kind (judgment, happened, decided, acknowledged) and the notification as
+written. A note on a card will be a line of its own kind.
+
+`log` prints each line in plain words at its local time, the words given
+following it as paragraphs; one function renders a line, for `log` and for a
+card's timeline. At clear, the log stays with its epoch and is read with
+`--at-epoch`, as `where` is; the new epoch's log starts empty. Teardown
+removes every epoch's log. The log is stored beside the notifications (a
+stream of its own in the same transaction), so the inbox's reads never page
+through it.
+
