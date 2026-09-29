@@ -122,8 +122,8 @@ func TestEveryFlagInTheSynopsisIsDefinedByItsVerb(t *testing.T) {
 	// `draft` and `send` each have two forms and the banner shows both, because the reply
 	// form's and the prepared form's required flags are not the released form's and one
 	// line offering all of them is a line nobody can paste. `reply` is its own line.
-	if got := len(block); got != 12 {
-		t.Errorf("the synopsis parsed to %d verb lines, want 12: %+v", got, block)
+	if got := len(block); got != 13 {
+		t.Errorf("the synopsis parsed to %d verb lines, want 13: %+v", got, block)
 	}
 	if checked < 30 {
 		t.Errorf("only %d flags were checked; the banner offers more than that, so the parser is reading less than the banner says", checked)

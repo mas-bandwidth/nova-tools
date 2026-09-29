@@ -405,7 +405,7 @@ MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=note
 
 ## nova-bus
 
-A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is ten verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
+A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is eleven verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, archives old notes, and validates the whole bus. It has no opinion about what a note says.
 
 ### First run
 
@@ -603,6 +603,20 @@ CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
 ```
 
 **One receipt per sender lane**, carrying a `Re:` line for every note of theirs it closes — `closed=` counts the notes, `receipts=` the files it took. It was one file per closed note until #1540, and that could not finish: every receipt in a run shares the stamp as its subject, so every filename differed only by an id hashed over fields two receipts also shared but for `re`, and two notes sharing a target id produced one filename twice and `file exists` at the second write. One receipt per lane removes that by construction — two receipts differ in `To`, in `Re` and in body — and a target named twice is closed once. A close that cannot finish takes back everything it wrote, so a failed run leaves the lane exactly as it found it.
+
+**`archive --before <instant>`** moves notes dated strictly before an RFC 3339 instant out of active lanes and into `<bus>/archive/` (or into a `.tar.gz`/`.tgz` compressed archive if `--out <file>` names a tarball). Archived notes are removed from active lane `INDEX` files and appended to `<bus>/archive/INDEX`, so that references (`Re:`) and receipts remain valid and `check` continues to verify them without indexing old notes in active lanes. Open lists pointing to archived notes are repointed to `archive/...`, preserving reader cursors. `--dry-run` reports what would be archived and writes nothing.
+
+```sh
+nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --remote origin --branch main
+ARCHIVE OK archived=120 kept=15 target=archive commit=a1b2c3d4 pushed=true attempts=1
+```
+
+If `--out <path>` ends in `.tar.gz` or `.tgz`, the archived notes are packaged into that tarball and removed from active lanes while `<bus>/archive/INDEX` is updated:
+
+```sh
+nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --out ~/bus-archive-20260901.tar.gz --remote origin --branch main
+ARCHIVE OK archived=120 kept=15 target=/home/ada/bus-archive-20260901.tar.gz commit=e5f6a7b8 pushed=true attempts=1
+```
 
 **`check`** is the gate: every note parses, every header resolves, every note sits in the lane its `From:` names, every id is well formed and unique, every `Re:` and receipt names something that exists, every lane has an owner and holds nothing but notes, its state files and a `README.md`. It reports every finding in one run and asserts nothing about a body. It refuses to guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.
 

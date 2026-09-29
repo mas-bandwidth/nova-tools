@@ -841,15 +841,23 @@ func splitList(s string) []string {
 // per lane and one line per note SENT BY THIS TOOL -- no note is parsed, no body is read,
 // and a lane with no INDEX simply contributes nothing rather than failing.
 type Index struct {
-	Entries []IndexEntry
-	root    string
-	byID    map[string]*IndexEntry
-	byPath  map[string]*IndexEntry
+	Entries        []IndexEntry
+	root           string
+	byID           map[string]*IndexEntry
+	byPath         map[string]*IndexEntry
+	archivedByID   map[string]*IndexEntry
+	archivedByPath map[string]*IndexEntry
 }
 
 // ReadIndex reads the INDEX of every lane the roster declares.
 func ReadIndex(root string, c *Config) (*Index, error) {
-	idx := &Index{root: root, byID: map[string]*IndexEntry{}, byPath: map[string]*IndexEntry{}}
+	idx := &Index{
+		root:           root,
+		byID:           map[string]*IndexEntry{},
+		byPath:         map[string]*IndexEntry{},
+		archivedByID:   map[string]*IndexEntry{},
+		archivedByPath: map[string]*IndexEntry{},
+	}
 	for _, lane := range c.Lanes() {
 		entries, err := ReadLaneIndex(root, lane)
 		if err != nil {
@@ -864,12 +872,63 @@ func ReadIndex(root string, c *Config) (*Index, error) {
 		}
 		idx.byPath[e.Path] = e
 	}
+	archiveIndexPath := filepath.Join(root, "archive", IndexName)
+	if raw, err := os.ReadFile(archiveIndexPath); err == nil {
+		for _, r := range records(string(raw)) {
+			fields := strings.Split(r.text, "\t")
+			if len(fields) >= indexFields {
+				e := &IndexEntry{
+					ID:   fields[0],
+					Path: fields[1],
+					Date: undash(fields[2]),
+					To:   splitList(fields[3]),
+					Re:   splitList(fields[4]),
+					Lane: "archive",
+					Line: r.line,
+				}
+				if e.ID != "" && e.ID != "-" {
+					if _, dup := idx.archivedByID[e.ID]; !dup {
+						idx.archivedByID[e.ID] = e
+					}
+				}
+				if e.Path != "" {
+					idx.archivedByPath[e.Path] = e
+					if !strings.HasPrefix(e.Path, "archive/") {
+						idx.archivedByPath["archive/"+e.Path] = e
+					} else {
+						idx.archivedByPath[strings.TrimPrefix(e.Path, "archive/")] = e
+					}
+				}
+			}
+		}
+	}
 	return idx, nil
 }
 
 // ByID and ByPath are the two lookups a Re line or a receipt needs.
-func (i *Index) ByID(id string) (*IndexEntry, bool)     { e, ok := i.byID[id]; return e, ok }
-func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path]; return e, ok }
+func (i *Index) ByID(id string) (*IndexEntry, bool) {
+	if e, ok := i.byID[id]; ok {
+		return e, true
+	}
+	if i.archivedByID != nil {
+		if e, ok := i.archivedByID[id]; ok {
+			return e, true
+		}
+	}
+	return nil, false
+}
+
+func (i *Index) ByPath(path string) (*IndexEntry, bool) {
+	if e, ok := i.byPath[path]; ok {
+		return e, true
+	}
+	if i.archivedByPath != nil {
+		if e, ok := i.archivedByPath[path]; ok {
+			return e, true
+		}
+	}
+	return nil, false
+}
 
 // AppendIndexLine adds one record to a lane's INDEX. Append-only, like RECEIPTS: a sender
 // only ever adds to their own lane, so two DIFFERENT senders writing at once touch
