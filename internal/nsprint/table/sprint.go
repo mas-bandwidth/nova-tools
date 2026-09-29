@@ -635,7 +635,7 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	// you can hide the status x/y z% etc. make sure there is not an extra
 	// newline left"): the title's blank line is then the gap before the
 	// worker table.
-	if s.Counts.All() > 0 || s.Counts.Unread() {
+	if s.Counts.All() > 0 || s.Counts.Unread() || s.Counts.Drift != "" {
 		fmt.Fprintf(&b, "%s gh %d/h\n\n", s.Counts.Header(), s.GHHour)
 	}
 

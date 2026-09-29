@@ -91,6 +91,8 @@ type SprintCounts struct {
 	Sprint string
 	// Status is the open sprint's s:<S> status; "" when none is open.
 	Status string
+	// Drift is the sprint's table drift status ("" or "DRIFT"); written by table check.
+	Drift string
 	// Streams are ws:order's streams in rank order; Total is their column
 	// sums (Stream "total").
 	Streams []StreamCounts
@@ -181,7 +183,11 @@ func (c SprintCounts) Header() string {
 	if c.Unread() {
 		return "?/? done ?%, left ?, eta ?"
 	}
-	return fmt.Sprintf("%d/%d done %d%%, left %d, eta %s", c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
+	h := fmt.Sprintf("%d/%d done %d%%, left %d, eta %s", c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
+	if c.Drift != "" {
+		h += " " + c.Drift
+	}
+	return h
 }
 
 // Receipt is the same numbers as one key=value line (ws counts).
@@ -276,6 +282,7 @@ type CountsCmd struct {
 	order   *redis.StringSliceCmd
 	sprintQ *redis.StringSliceCmd
 	states  []*redis.StringCmd // HGET s:<S> status per cached sprint
+	drifts  []*redis.StringCmd // HGET s:<S> drift per cached sprint
 	log     *redis.XMessageSliceCmd
 	cells   CellsCmd // the cells of every cached stream
 	// epochQ is sprint:epoch read after every cell (#4238): a clear that
@@ -292,6 +299,7 @@ func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time
 		// the status field on s:<S> (what sprint open, close and the
 		// pit stop use): closed is out, any other status is open
 		q.states = append(q.states, pipe.HGet(ctx, "s:"+name, "status"))
+		q.drifts = append(q.drifts, pipe.HGet(ctx, "s:"+name, "drift"))
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	q.log = pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", LogWindowMax)
@@ -390,10 +398,15 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 	}
 	// the open sprint: the last of sprint:order whose status is not closed
 	// (Glenn 2026-09-26 8:50 AM ET: one sprint active at a time)
-	open, status := "", ""
+	open, status, drift := "", "", ""
 	for i, name := range r.sprints {
 		if st, err := q.states[i].Result(); err == nil && st != "closed" {
 			open, status = name, st
+			if i < len(q.drifts) {
+				if d, err := q.drifts[i].Result(); err == nil && d != "" {
+					drift = d
+				}
+			}
 		}
 	}
 	// An epoch that could not be read is not epoch 0: the read fails rather
@@ -424,7 +437,7 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 		return SprintCounts{}, false, err
 	}
 	c := Sum(rows)
-	c.Sprint, c.Status, c.At, c.Epoch = r.SprintName(), status, q.at, epoch
+	c.Sprint, c.Status, c.Drift, c.At, c.Epoch = r.SprintName(), status, drift, q.at, epoch
 	if msgs, err := q.log.Result(); err != nil && !errors.Is(err, redis.Nil) {
 		c.LogErr = err
 	} else {
