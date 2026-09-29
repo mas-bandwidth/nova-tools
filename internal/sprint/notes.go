@@ -118,14 +118,20 @@ type Note struct {
 	// SprintLevel says the judgment is about the whole sprint (it is done):
 	// its one subject is SprintSubject.
 	SprintLevel bool `json:"sprint_level,omitempty"`
+	// Needs is a blocked judgment's dropped needs: acknowledging it waives
+	// these, and only these.
+	Needs []string `json:"needs,omitempty"`
 	// Review is the next review time the coordinator set with wait; the
 	// judgment stays open and shown, and is due then.
 	Review time.Time `json:"review,omitempty"`
 }
 
 // Due is when the judgment is overdue: its review time when one is set, else
-// its time plus the deadline.
+// its time plus the deadline. The sprint is done has no due time (zero).
 func (n Note) Due(deadline time.Duration) time.Time {
+	if n.Type == NSprintDone {
+		return time.Time{}
+	}
 	if !n.Review.IsZero() {
 		return n.Review
 	}
@@ -209,6 +215,11 @@ func MergeNotes(notes []Note) []Note {
 		}
 		if n.Before > out[i].Before {
 			out[i].Before = n.Before
+		}
+		for _, x := range n.Needs {
+			if !contains(out[i].Needs, x) {
+				out[i].Needs = append(out[i].Needs, x)
+			}
 		}
 	}
 	for i := range out {

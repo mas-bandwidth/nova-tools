@@ -244,9 +244,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		u.Changes = append(head, change(Work, createEntry(a.id, r.Stream, col, a.score, fields)))
 		if gone := droppedNeeds(s, a.needs); len(gone) > 0 {
-			n := judgment(NBlocked, r.Stream, s.Now, 0, a.id)
-			n.What, n.Who = a.id+" needs "+strings.Join(gone, ",")+", dropped", r.Who
-			u.Notes = append(u.Notes, n)
+			u.Notes = append(u.Notes, blockedNote(s, r.Stream, a.id, r.Who, gone))
 		}
 		head = nil
 		p.Units = append(p.Units, u)
@@ -271,8 +269,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if head != nil && len(p.Units) == 0 && len(p.Refused) == 0 {
 		p.Units = append(p.Units, Unit{Key: CtlID(r.Stream), Changes: head, Moved: "stream " + r.Stream + " open"})
 	}
-	// More work: the sprint is not done.
-	if len(p.Units) > 0 {
+	// More work: the sprint is not done. An add that only opens a stream
+	// admits no card, and leaves it done.
+	if admits(p) {
 		for _, o := range s.Open {
 			if o.Note.Type == NSprintDone {
 				p.Units[0].Closes = append(p.Units[0].Closes, o)
@@ -280,6 +279,18 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 	}
 	return p
+}
+
+// admits says the plan places a card on the work table.
+func admits(p Plan) bool {
+	for _, u := range p.Units {
+		for _, c := range u.Changes {
+			if c.Table == Work && c.Entry.Create != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // NeedsCycle is a cycle the needs would make with the edges given (a primary
@@ -346,9 +357,11 @@ func WaitsFor(s *Snapshot, c *Card, landing map[string]bool) []string {
 // NeedState is one need of a primary as it stands: the need's state (its
 // column, or off the table with its outcome), and whether it was waived.
 type NeedState struct {
-	ID     string `json:"id"`
-	State  string `json:"state"`
-	Waived bool   `json:"waived,omitempty"`
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Waived   bool   `json:"waived,omitempty"`
+	WaivedBy string `json:"waived_by,omitempty"` // who waived the primary's needs last, and when
+	WaivedAt string `json:"waived_at,omitempty"`
 }
 
 // NeedsOf is each need of the primary with its state, and the primaries on
@@ -362,7 +375,11 @@ func NeedsOf(s *Snapshot, id string) (needs []NeedState, neededBy []string) {
 		} else if nc != nil {
 			st = "off the table (" + orDash(nc.F("outcome")) + ")"
 		}
-		needs = append(needs, NeedState{ID: n, State: st, Waived: contains(Split(c.F("waived")), n)})
+		ns := NeedState{ID: n, State: st, Waived: contains(Split(c.F("waived")), n)}
+		if ns.Waived {
+			ns.WaivedBy, ns.WaivedAt = c.F("waived_by"), c.F("waived_at")
+		}
+		needs = append(needs, ns)
 	}
 	for _, o := range s.Work.Column(States...) {
 		if contains(Split(o.F("needs")), id) {
@@ -432,11 +449,8 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(dropped) > 0 {
-			if !hasOpen(s.Open, NBlocked, c.ID) {
-				n := judgment(NBlocked, c.Row, s.Now, 0, c.ID)
-				n.What = c.ID + " needs " + strings.Join(dropped, ",") + ", dropped"
-				n.Who = r.Who
-				p.Notes = append(p.Notes, n)
+			if left := unblocked(s.Open, c.ID, dropped); len(left) > 0 {
+				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
 			}
 			if len(r.IDs) > 0 {
 				p.refuse(c.ID, "needs "+strings.Join(dropped, ",")+", which was dropped")

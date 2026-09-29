@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // H11: card shows each need with its state and what needs the card; queue
@@ -25,6 +27,23 @@ func TestTheReadsShowTheNeeds(t *testing.T) {
 	}
 	if code, _, errs := ta.do("queue --as m1 --col waiting"); code != 2 || !strings.Contains(errs, "--col takes waiting, with --stream") {
 		t.Fatalf("--col without --stream: %d %s", code, errs)
+	}
+	ta.clean()
+}
+
+// card shows each waived need, by whom and when it was waived.
+func TestCardShowsTheWaivedNeeds(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s2 b --needs s1-1")
+	ta.ok("drop s1-1 --reason obsolete")
+	g := ta.group(sprint.NBlocked, "s2")
+	ta.ok("ack " + g.Notes[0] + " --reason fine")
+	out := ta.ok("card b")
+	if !strings.Contains(out, "NEEDS s1-1 off the table (dropped) waived by ") || !strings.Contains(out, " at 20") {
+		t.Fatalf("card b: %s", out)
 	}
 	ta.clean()
 }

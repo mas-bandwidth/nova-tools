@@ -56,7 +56,7 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 		if n.Type == NBlocked {
 			for _, o := range entries {
-				if c, notes := waive(s, o.Subject(), r.Who); c.Entry.ID != "" {
+				if c, notes := waive(s, o.Subject(), r.Who, n.Needs); c.Entry.ID != "" {
 					u.Changes = append(u.Changes, c)
 					u.Notes = append(u.Notes, notes...)
 					u.Moved += "; " + o.Subject() + " waives " + c.Entry.Set["waived"]
@@ -93,15 +93,22 @@ func Ack(s *Snapshot, r AckReq) Plan {
 }
 
 // waive is the change that records, on a waiting primary, that the
-// coordinator acknowledged its dropped needs: they are waived, by whom and
-// when, and count as satisfied. A primary with nothing else to wait for moves
-// to ready in the same change; a sentinel is reached instead.
-func waive(s *Snapshot, id, who string) (Change, []Note) {
+// coordinator acknowledged its dropped needs: the ones the blocked judgment
+// names (only; every dropped one for a judgment that names none) are waived,
+// by whom and when, and count as satisfied. A need dropped after the judgment
+// was written has its own. A primary with nothing else to wait for moves to
+// ready in the same change; a sentinel is reached instead.
+func waive(s *Snapshot, id, who string, only []string) (Change, []Note) {
 	c := s.Work.Placed(id)
 	if c == nil || c.Col != Waiting {
 		return Change{}, nil
 	}
-	gone := droppedNeeds(s, WaitsFor(s, c, nil))
+	var gone []string
+	for _, n := range droppedNeeds(s, WaitsFor(s, c, nil)) {
+		if len(only) == 0 || contains(only, n) {
+			gone = append(gone, n)
+		}
+	}
 	if len(gone) == 0 {
 		return Change{}, nil
 	}
@@ -116,6 +123,39 @@ func waive(s *Snapshot, id, who string) (Change, []Note) {
 		return change(Work, moveEntry(c, c.Row, Ready, set)), nil
 	}
 	return change(Work, setEntry(c, set)), nil
+}
+
+// blockedNote is the judgment that a waiting primary needs primaries dropped
+// off the table (gone): it names them, and acknowledging it waives those.
+func blockedNote(s *Snapshot, stream, id, who string, gone []string) Note {
+	n := judgment(NBlocked, stream, s.Now, 0, id)
+	n.What, n.Who, n.Needs = id+" needs "+strings.Join(gone, ",")+", dropped", who, gone
+	return n
+}
+
+// unblocked is the dropped needs (gone) of a waiting primary that no blocked
+// judgment open on it names: a need dropped after the judgment was written is
+// its own judgment. A blocked judgment that names none names every one.
+func unblocked(open []Open, id string, gone []string) []string {
+	named := map[string]bool{}
+	for _, o := range open {
+		if o.Note.Type != NBlocked || o.Subject() != id {
+			continue
+		}
+		if len(o.Note.Needs) == 0 {
+			return nil
+		}
+		for _, n := range o.Note.Needs {
+			named[n] = true
+		}
+	}
+	var out []string
+	for _, g := range gone {
+		if !named[g] {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // strandedNote is the judgment of a stranded primary: failed work is not

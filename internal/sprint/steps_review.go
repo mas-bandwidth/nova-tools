@@ -775,10 +775,11 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		u.Changes = append(u.Changes, change(Work, removeEntry(c, map[string]string{
 			"outcome": "dropped", "reason": r.Reason, "dropped_from": c.Col, "dropped_at": stamp(s.Now)})))
 		for _, w := range s.Work.Column(Waiting) {
-			if dropping[w.ID] || blocked[w.ID] || !contains(Split(w.F("needs")), c.ID) || hasOpen(s.Open, NBlocked, w.ID) {
+			if dropping[w.ID] || blocked[w.ID] || !contains(Split(w.F("needs")), c.ID) {
 				continue
 			}
-			// One note per waiting primary, naming every need this step drops.
+			// One note per waiting primary, naming every need this step drops
+			// that no blocked judgment open on it names yet.
 			blocked[w.ID] = true
 			var gone []string
 			for _, need := range Split(w.F("needs")) {
@@ -786,9 +787,9 @@ func Drop(s *Snapshot, r DropReq) Plan {
 					gone = append(gone, need)
 				}
 			}
-			n := judgment(NBlocked, w.Row, s.Now, 0, w.ID)
-			n.What, n.Who = w.ID+" needs "+strings.Join(gone, ",")+", dropped", r.Who
-			u.Notes = append(u.Notes, n)
+			if gone = unblocked(s.Open, w.ID, gone); len(gone) > 0 {
+				u.Notes = append(u.Notes, blockedNote(s, w.Row, w.ID, r.Who, gone))
+			}
 		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
 		answerListed(&u, s.Open, r.Answers, "drop", c.Row, "dropped "+c.ID+"; "+r.Reason, r.Who, s.Now, c.ID)
