@@ -104,7 +104,8 @@ outcome and reason are kept.
 The store holds every step's plan to this table before it applies it, whatever
 step built it: a primary is admitted waiting or ready, moves only by a row of
 the table, and leaves only from an open state; a unit that does not is refused,
-naming the move. A primary leaves waiting only when every need has landed or
+naming the move. A step refused whole writes nothing, not even the rows of a
+stream it would have declared. A primary leaves waiting only when every need has landed or
 was waived: a step that may move a primary to ready builds its plan on the
 snapshot it read, and the lifecycle judges the needs against it; a plan
 without it moves nothing waiting to ready. The lifecycle is judged first on
@@ -180,7 +181,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own.
   Work that came back failed is not read: it waits for the coordinator.
-  `ask --another` deals a primary already asked to one more reader; before
+  `ask --another` deals a primary already asked to one more reader, for that
+  attempt only (the readers kept on the primary stay the pair it was asked
+  of, and after a rework the two are asked again); before
   the first ask of its attempt it is refused, naming `ask` and the tick as
   what asks first.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
@@ -259,7 +262,10 @@ it. The other causes are resolved by the coordinator, who says what was done
 without it is refused. A cross fact is refused unless the other card is placed,
 in another stream, and not landed. `return` sends a merging primary back to review (off queued
 or stuck), from where it is reworked, dropped or accepted again; it opens the
-judgment returned to review on the primary.
+judgment returned to review on the primary, and the card's cross need goes
+with it. A conflict stop has no cross need, and resume checks a need only
+when the stop's cause is cross. A merge step on a stream with nothing queued
+(before its first stuck card) is refused and writes nothing.
 
 ## 8. Notifications
 
@@ -386,7 +392,9 @@ verb answers. It is accepted for every decision the notification itself lists
 return; drop on a rejected, conflict or cross stop; rank on the cross stop
 that names the card; ask --another on reads exhausted, which it closes: the
 new read outstanding is what keeps the primary from being exhausted), and
-refused for a notification the verb resolves nothing of. Each answer is
+refused for a notification the verb resolves nothing of; one refused answer
+refuses the whole step, which writes nothing (a verb refused has written
+nothing). Each answer is
 recorded as a `decided` notification; a stopped stream's judgment stays open
 while it is stopped. `wait <notification>`
 records a next review time; it does not hide the notification. Reading the
@@ -718,4 +726,7 @@ coordinator (`init --coordinator`, shown by `where`), lands it. The same step
 moves what waited behind it to ready, marks reached any sentinel now due, and
 always writes a notification that it landed. A dropped need blocks it like any
 waiting card; ack waives the need. It counts in the sprint line and in waiting
-and landed, and the sprint is not done while one waits.
+and landed, and the sprint is not done while one waits. A ready primary whose
+work card was withdrawn (no member up) stays ready when a sentinel is inserted
+in front of it, and is waited for as past the stop: check's rule 2 holds that
+the primary of a withdrawn card is ready.
