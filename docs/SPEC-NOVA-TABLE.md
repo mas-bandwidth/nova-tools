@@ -656,6 +656,39 @@ event and one durable operation record commit in the same call. Replay appends
 none of them. An uncertain client retries the same scope, ID and request; it does
 not invent another operation to make a lost reply disappear.
 
+### Bounded receipt cursor
+
+`ntable.ReadReceiptPage(ctx, store, table, cursor, limit)` calls the read-only
+`ns_table_receipts` function once and returns ordered change-stream entries for
+one table, a next cursor, the current table revision and `has_more`. A cursor
+holds the table name, last handled stream ID, table revision and epoch. The zero
+cursor starts at the first event. A page holds at most 128 events and accepts a
+limit from 1 through 128. The server inspects one additional event to determine
+`has_more`; the total inspected entry bytes, including the lookahead, may not
+exceed 4 MiB. An oversized
+page refuses so the caller can request fewer events. The read makes no changes.
+
+The stream ID is an opaque position. The reader requires the cursor event still
+to exist and to have the cursor's revision and epoch. Every subsequent event
+must advance the table revision by exactly one, and its `rev_before` must equal
+the preceding `rev_after`. If a page reaches the stream tail, its final revision
+must equal the table's stored revision. A first page begins with `rev_before=0`.
+These checks run in the same read-only server call as the page. A missing cursor
+event, trimmed prefix, deleted middle or tail event, malformed revision, or
+missing stream behind a nonzero revision refuses without returning a partial
+page. Pages ending before the tail verify their next event as lookahead; a later
+page checks the rest. A caller persists the returned cursor only after handling
+the whole page. Deletion of already handled events is harmless while the
+cursor's own event remains available.
+
+Epoch transitions retain the table revision sequence. Drop and recreate also
+retain the table's revision and stream; their events are returned in order, even
+when the recreated table uses the old epoch value. A schema-2 `multi_ref` is a
+per-table event in that same sequence and points to its aggregate receipt.
+Renaming or removing a cursor's stream refuses its next read. The contract
+detects gaps under ordinary table writers and missing stream entries; it does
+not claim to detect a coordinated rewrite of both stream and revision metadata.
+
 ### CLI batch verb (`nova-table batch`)
 
 `nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]`
