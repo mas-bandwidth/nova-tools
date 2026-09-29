@@ -25,16 +25,23 @@ fi
 export NOVA_REDIS_ADDR="$REDIS_ADDR"
 export NOVA_SPRINT_REDIS="$REDIS_ADDR"
 
-MANIFEST_DIR="${CARD_DRILL_TMPDIR:-$BASE_DIR}/manifests/drill-1"
+if [ -z "${CARD_DRILL_TMPDIR:-}" ]; then
+  CARD_DRILL_TMPDIR=$(mktemp -d)
+  trap 'rm -rf "$CARD_DRILL_TMPDIR"' EXIT
+fi
+MANIFEST_DIR="$CARD_DRILL_TMPDIR/manifests/drill-1"
 CARD_BIN="$BASE_DIR/scripts/card"
 if [ -n "${NOVA_TABLE_BIN:-}" ] && [ -x "${NOVA_TABLE_BIN:-}" ]; then
   NOVA_TABLE="$NOVA_TABLE_BIN"
+elif [ -x "$BASE_DIR/bin/nova-table" ]; then
+  NOVA_TABLE="$BASE_DIR/bin/nova-table"
 elif command -v nova-table >/dev/null 2>&1; then
   NOVA_TABLE="nova-table"
 else
   echo "error: NOVA_TABLE_BIN not set to executable and nova-table not found in PATH" >&2
   exit 1
 fi
+export NOVA_TABLE_BIN="$NOVA_TABLE"
 
 mkdir -p "$MANIFEST_DIR"
 

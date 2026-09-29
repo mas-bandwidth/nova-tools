@@ -38,6 +38,9 @@ def get_nova_table_bin():
     nova_table = os.environ.get("NOVA_TABLE_BIN")
     if nova_table and os.path.exists(nova_table) and os.access(nova_table, os.X_OK):
         return nova_table
+    repo_bin = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "bin", "nova-table"))
+    if os.path.isfile(repo_bin) and os.access(repo_bin, os.X_OK):
+        return repo_bin
     import shutil
     candidate = shutil.which("nova-table")
     if candidate:
