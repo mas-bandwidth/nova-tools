@@ -2307,19 +2307,24 @@ It also records the bench (the machine name the run reported), UTC start, instal
 hash, an input fingerprint and the count of files under it. The fingerprint covers what
 that case's TLC run reads and nothing else: its configuration; the module `CASES.tsv`
 names for it and, transitively, every module that one `EXTENDS` or `INSTANCE`s (a name
-with no file under `tla/` must be one of TLC's standard modules, which read nothing from
-the tree); the case's own row of `CASES.tsv` under the file's header; and the runner's Go
-files (`internal/tlc`, without its tests). It is the SHA-256 over those inputs in path
+with no file under `tla/` must be one of the ten modules the TLC jar bundles, the `standardModules` list in
+`internal/tlc/inputs.go`, which read nothing from the tree; any other name refuses the case);
+the case's own row of `CASES.tsv` under the file's header; and the runner's result files
+(`outcome.go`, `run.go` and `suite.go` of `internal/tlc`: the command line, flags, workers
+and timeouts of a run and the reading of TLC's output). The package's other non-test files
+are bookkeeping and in no fingerprint, and `TestEveryRunnerFileIsClassified` holds each file
+to exactly one of the two lists (`ResultFiles`, `BookkeepingFiles`). It is the SHA-256 over those inputs in path
 order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline: no timestamp,
 no host and no absolute path. The jar is not an input; the record names it in its own
-column. `tlacheck inputs --case <config>` prints each input and its hash, the fingerprint
+column, beside the java version and the worker count. `tlacheck inputs --case <config>` prints each input and its hash, the fingerprint
 and the count. `tlacheck merge` joins the records of the group runs into the committed
 file, refuses a record that is not the fingerprint its case has at that checkout (another
 runner, or a model edited since the run), and with `--keep` carries the current records of
 the cases no run measured again; `tlacheck groups --stale` names the groups to run again.
 Unknown state counts on a failed timeout stay unknown, never zero-state success.
 Editing a model, a configuration or a case's row requires refreshing the records of the
-cases that read it, and only those; editing the runner requires refreshing every record.
+cases that read it, and only those; editing a result file of the runner requires refreshing every record, and editing a
+bookkeeping file or the standard-module list requires none.
 
 `TestTLCRecordsCoverCurrentModels` checks declaration coverage and current evidence
 without executing Java or making a network call. Required models cannot become

@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,6 +36,7 @@ type env struct {
 	getenv         func(string) string
 	lookPath       func(string) (string, error)
 	hostname       func() (string, error)
+	javaVersion    func(java string) (string, error) // the version `java -version` reports
 	exec           tlc.Executor
 	goos           string
 	tmpDir         string // where a disposable store's directory goes; the system default when empty
@@ -43,9 +45,17 @@ type env struct {
 func main() {
 	os.Exit(run(os.Args[1:], env{
 		stdout: os.Stdout, stderr: os.Stderr,
-		getenv: os.Getenv, lookPath: tlc.LookPath, hostname: os.Hostname,
+		getenv: os.Getenv, lookPath: tlc.LookPath, hostname: os.Hostname, javaVersion: javaVersion,
 		exec: tlc.Execute, goos: hostOS,
 	}))
+}
+
+// javaVersion runs the java it is given with -version, bounded, and returns
+// the version it reports. It runs java, so it belongs on a bench.
+func javaVersion(java string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return tlc.ReadJavaVersion(ctx, java)
 }
 
 type verb struct {

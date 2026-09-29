@@ -16,8 +16,10 @@ type Record struct {
 	InputSHA256 string // fingerprint of what the case reads (Source.Inputs, Digest)
 	InputFiles  int    // how many inputs the fingerprint covers
 	JarSHA256   string
+	JavaVersion string // the version java reported, as JavaVersion reads it
 	Host        string
 	StartedUTC  string // RFC 3339, microseconds, +00:00
+	Workers     int    // TLC workers this case ran with
 	Generated   string // states generated; "-" when unknown
 	Distinct    string // distinct states; "-" when unknown
 	Seconds     string // elapsed, three decimals
@@ -30,10 +32,10 @@ type Record struct {
 }
 
 // RecordsHeader is the header of tla/RUNS.tsv.
-var RecordsHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "host", "started_utc", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
+var RecordsHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "java_version", "host", "started_utc", "workers", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
 
 func (r Record) fields() []string {
-	return []string{r.Config, r.Module, r.InputSHA256, fmt.Sprint(r.InputFiles), r.JarSHA256, r.Host, r.StartedUTC, r.Generated, r.Distinct, r.Seconds, fmt.Sprint(r.Exit), r.Result, r.Expected, r.Property, r.Budget, r.Mode}
+	return []string{r.Config, r.Module, r.InputSHA256, fmt.Sprint(r.InputFiles), r.JarSHA256, r.JavaVersion, r.Host, r.StartedUTC, fmt.Sprint(r.Workers), r.Generated, r.Distinct, r.Seconds, fmt.Sprint(r.Exit), r.Result, r.Expected, r.Property, r.Budget, r.Mode}
 }
 
 // WriteRecords writes the header and the records, one line each.
@@ -70,14 +72,17 @@ func ReadRecords(r io.Reader) ([]Record, error) {
 	}
 	var out []Record
 	for _, f := range rows[1:] {
-		var files, code int
+		var files, workers, code int
 		if _, err := fmt.Sscanf(f[3], "%d", &files); err != nil || files < 1 {
 			return nil, fmt.Errorf("record %s has input_files %q, not a count", f[0], f[3])
 		}
-		if _, err := fmt.Sscanf(f[10], "%d", &code); err != nil {
-			return nil, fmt.Errorf("record %s has exit %q, not a number", f[0], f[10])
+		if _, err := fmt.Sscanf(f[8], "%d", &workers); err != nil || workers < 1 {
+			return nil, fmt.Errorf("record %s has workers %q, not a count", f[0], f[8])
 		}
-		out = append(out, Record{f[0], f[1], f[2], files, f[4], f[5], f[6], f[7], f[8], f[9], code, f[11], f[12], f[13], f[14], f[15]})
+		if _, err := fmt.Sscanf(f[12], "%d", &code); err != nil {
+			return nil, fmt.Errorf("record %s has exit %q, not a number", f[0], f[12])
+		}
+		out = append(out, Record{Config: f[0], Module: f[1], InputSHA256: f[2], InputFiles: files, JarSHA256: f[4], JavaVersion: f[5], Host: f[6], StartedUTC: f[7], Workers: workers, Generated: f[9], Distinct: f[10], Seconds: f[11], Exit: code, Result: f[13], Expected: f[14], Property: f[15], Budget: f[16], Mode: f[17]})
 	}
 	return out, nil
 }

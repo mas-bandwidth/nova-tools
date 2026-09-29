@@ -22,8 +22,8 @@ import (
 // Model changes require new measured evidence, independent of checkout mtimes.
 // A record's fingerprint covers what its own case reads: the configuration, the
 // module the plan names for it and the modules that one extends or instantiates,
-// the case's own row of the plan, and the runner (internal/tlc's non-test
-// files), so changing a dependency or the interpretation of a result invalidates
+// the case's own row of the plan, and the runner's result files
+// (tlc.ResultFiles), so changing a dependency or the interpretation of a result invalidates
 // the records that read it and no other. No JVM or network runs in this class
 // test.
 func TestTLCRecordsCoverCurrentModels(t *testing.T) {
@@ -69,7 +69,7 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 	for _, in := range inputs {
 		paths = append(paths, in.Path)
 	}
-	for _, need := range []string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg", "internal/tlc/inputs.go"} {
+	for _, need := range []string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg", "internal/tlc/run.go", "internal/tlc/outcome.go", "internal/tlc/suite.go"} {
 		if !slices.Contains(paths, need) {
 			t.Errorf("MCEpochMemberFixedPoint.cfg does not read %s; it reads %v", need, paths)
 		}
@@ -104,7 +104,7 @@ var tc = func() map[string]int {
 	return m
 }()
 
-var tlcRunHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "host", "started_utc", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
+var tlcRunHeader = []string{"config", "module", "input_sha256", "input_files", "jar_sha256", "java_version", "host", "started_utc", "workers", "generated", "distinct", "seconds", "exit", "result", "expected", "property", "budget", "mode"}
 
 func readTLCTSV(path string, header []string) ([][]string, error) {
 	f, err := os.Open(path)
@@ -126,28 +126,21 @@ func readTLCTSV(path string, header []string) ([][]string, error) {
 }
 
 // tlcSource is where the inputs of a case are read from in root: the models and
-// the plan under tla/, and the runner's files from the checkout (the bytes of
-// internal/tlc's non-test Go files; the tests are not part of how a result is
-// read).
+// the plan under tla/, and the runner's result files from the checkout (the
+// bytes of tlc.ResultFiles; the bookkeeping files and the tests are not part of
+// how a result is read).
 func tlcSource(root string) (tlc.Source, error) {
 	plan, err := os.ReadFile(filepath.Join(root, "tla", "CASES.tsv"))
 	if err != nil {
 		return tlc.Source{}, err
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "internal", "tlc", "*.go"))
-	if err != nil {
-		return tlc.Source{}, err
-	}
 	runner := map[string][]byte{}
-	for _, m := range matches {
-		if strings.HasSuffix(m, "_test.go") {
-			continue
-		}
-		raw, err := os.ReadFile(m)
+	for _, name := range tlc.ResultFiles {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(tlc.RunnerDir), name))
 		if err != nil {
 			return tlc.Source{}, err
 		}
-		runner["internal/tlc/"+filepath.Base(m)] = raw
+		runner[tlc.RunnerDir+"/"+name] = raw
 	}
 	return tlc.Source{TLADir: filepath.Join(root, "tla"), Plan: plan, Runner: runner}, nil
 }
@@ -232,6 +225,12 @@ func tlcRecordProblems(root string) []string {
 				bad("TLC %s record is stale: it was measured on inputs %s (%d files) and the case now reads %s (%d files): %s; run its group on a Linux bench (`tlacheck inputs --case %s` prints each file and its hash)",
 					name, row[tc["input_sha256"]], atoiOrZero(row[tc["input_files"]]), want, files, tlcInputList(src, name), name)
 			}
+		}
+		if w := row[tc["workers"]]; w != "1" && w != "2" {
+			bad("TLC %s records %q workers; a run uses one or two", name, w)
+		}
+		if v := row[tc["java_version"]]; v == "" || strings.ContainsAny(v, " \t") {
+			bad("TLC %s records no java version", name)
 		}
 		jar, err := hex.DecodeString(row[tc["jar_sha256"]])
 		if err != nil || len(jar) != sha256.Size || strings.TrimSpace(row[tc["host"]]) == "" {
@@ -325,7 +324,12 @@ func newTLCFixture(t *testing.T) tlcFixture {
 	for _, name := range []string{"MCA", "MCB", "MCLone"} {
 		f.write("tla/"+name+".cfg", "SPECIFICATION Spec\n")
 	}
-	f.write("internal/tlc/run.go", "sample runner\n")
+	for _, name := range tlc.ResultFiles {
+		f.write("internal/tlc/"+name, "sample "+name+"\n")
+	}
+	for _, name := range tlc.BookkeepingFiles {
+		f.write("internal/tlc/"+name, "bookkeeping "+name+"\n")
+	}
 	f.write("internal/tlc/run_test.go", "the runner's tests are not an input\n")
 	f.write("tla/README.md", "not an input\n")
 	f.write("tla/CASES.tsv", tlcFixturePlanHeader+
@@ -376,7 +380,7 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 			f.t.Fatal(err)
 		}
 		row := make([]string, len(tlcRunHeader))
-		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "host": "fixture-bench", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
+		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "java_version": "21.0.12.1", "workers": "2", "host": "fixture-bench", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
 			row[tc[name]] = v
 		}
 		if edit != nil {
@@ -437,6 +441,7 @@ func TestTLCPerCaseFingerprintStalesOnlyTheCasesThatReadWhatChanged(t *testing.T
 			f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "check\tbeta", "ignore-terminal\tbeta", 1))
 		}, []string{"MCB.cfg"}},
 		{"the runner edited", func(f tlcFixture) { f.write("internal/tlc/run.go", "changed interpretation\n") }, []string{"MCA.cfg", "MCB.cfg", "MCLone.cfg"}},
+		{"a bookkeeping file of the runner edited", func(f tlcFixture) { f.write("internal/tlc/inputs.go", "the list of standard modules grew\n") }, nil},
 		{"the runner's tests edited", func(f tlcFixture) { f.write("internal/tlc/run_test.go", "edited\n") }, nil},
 		{"a file that is not an input edited", func(f tlcFixture) { f.write("tla/README.md", "edited\n") }, nil},
 		{"a module nobody extends added", func(f tlcFixture) { f.write("tla/Unused.tla", "---- MODULE Unused ----\n====\n") }, nil},
@@ -571,7 +576,7 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 	for _, in := range inputs {
 		got = append(got, in.Path)
 	}
-	want := []string{"internal/tlc/run.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
+	want := []string{"internal/tlc/outcome.go", "internal/tlc/run.go", "internal/tlc/suite.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("MCA.cfg reads %v, want %v", got, want)
 	}

@@ -49,10 +49,11 @@ func testEnv(t *testing.T, exec tlc.Executor) (env, *bytes.Buffer, *bytes.Buffer
 	var out, errs bytes.Buffer
 	return env{
 		stdout: &out, stderr: &errs,
-		getenv:   func(string) string { return "" },
-		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
-		hostname: func() (string, error) { return "bench", nil },
-		exec:     exec, goos: "linux",
+		getenv:      func(string) string { return "" },
+		lookPath:    func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		hostname:    func() (string, error) { return "bench", nil },
+		javaVersion: func(string) (string, error) { return "21.0.12.1", nil },
+		exec:        exec, goos: "linux",
 	}, &out, &errs
 }
 
@@ -233,7 +234,7 @@ func TestRunWritesRecordsAndReportsEachCase(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
-	want := []string{"HELPER OK name=jar", "HELPER OK name=java path=/usr/bin/java", "CASE OK config=MCA.cfg result=PASS", "CASE OK config=MCABroken.cfg result=PASS", "RUN OK cases=2 records="}
+	want := []string{"HELPER OK name=jar", "HELPER OK name=java path=/usr/bin/java", "HELPER OK name=java-version version=21.0.12.1", "CASE OK config=MCA.cfg result=PASS", "CASE OK config=MCABroken.cfg result=PASS", "RUN OK cases=2 records="}
 	if len(lines) != len(want) {
 		t.Fatalf("lines = %q", lines)
 	}
@@ -245,7 +246,7 @@ func TestRunWritesRecordsAndReportsEachCase(t *testing.T) {
 			t.Errorf("line %d is not an event: %q", i, lines[i])
 		}
 	}
-	if !strings.Contains(lines[0], "source=flag") || !strings.Contains(lines[2], "exit=0 generated=15518 distinct=263") {
+	if !strings.Contains(lines[0], "source=flag") || !strings.Contains(lines[3], "exit=0 generated=15518 distinct=263") {
 		t.Errorf("fields: %q / %q", lines[0], lines[2])
 	}
 	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
@@ -254,6 +255,29 @@ func TestRunWritesRecordsAndReportsEachCase(t *testing.T) {
 	}
 	if len(runs) != 2 || runs[0].Workers != 1 {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestRunRecordsTheJavaVersionAndWorkersAndRefusesWhenJavaHasNone(t *testing.T) {
+	t.Parallel()
+	root, jar := checkout(t)
+	e, out, errs := testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil))
+	dir := filepath.Join(t.TempDir(), "run")
+	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha", "--workers", "1"); r.code != 0 || !strings.Contains(r.stdout, "HELPER OK name=java-version version=21.0.12.1") {
+		t.Fatalf("%+v", r)
+	}
+	recs, err := tlc.ReadRecordsFile(filepath.Join(dir, tlc.RunsFile))
+	if err != nil || len(recs) != 2 || recs[0].JavaVersion != "21.0.12.1" || recs[0].Workers != 1 || recs[1].Workers != 1 {
+		t.Fatalf("records %+v, %v", recs, err)
+	}
+	e, out, errs = testEnv(t, func(context.Context, tlc.Run, string) int { t.Error("TLC ran without a java version"); return 0 })
+	e.javaVersion = func(string) (string, error) { return "", errors.New("java -version printed no quoted version") }
+	dir2 := filepath.Join(t.TempDir(), "run2")
+	if r := do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", dir2, "--group", "alpha"); r.code != 2 || !strings.Contains(r.stderr, "the java version cannot be read") || !strings.Contains(r.stderr, "nothing was run") {
+		t.Fatalf("%+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(dir2, tlc.RunsFile)); err == nil {
+		t.Fatal("records written for a java with no version")
 	}
 }
 

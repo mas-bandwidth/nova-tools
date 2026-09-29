@@ -1,6 +1,7 @@
 package tlc
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // JarEnv is the environment variable that names the TLC jar when --jar is not
@@ -80,3 +82,31 @@ func FindHelper(name, override string, lookPath func(string) (string, error)) (s
 
 // LookPath is exec.LookPath, named so callers pass one seam.
 var LookPath = exec.LookPath
+
+// JavaVersion reads the version out of what `java -version` prints (it goes to
+// standard error): the quoted token of its first line, for example 21.0.12.1.
+// It is an error when there is none, so a record never names a java of no
+// version.
+func JavaVersion(output string) (string, error) {
+	line, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
+	first := strings.Index(line, `"`)
+	if first < 0 {
+		return "", fmt.Errorf("java -version printed no quoted version: %q", strings.TrimSpace(line))
+	}
+	rest := line[first+1:]
+	last := strings.Index(rest, `"`)
+	if last <= 0 || strings.ContainsAny(rest[:last], " \t") {
+		return "", fmt.Errorf("java -version printed no usable version: %q", strings.TrimSpace(line))
+	}
+	return rest[:last], nil
+}
+
+// ReadJavaVersion runs `java -version`, bounded by ctx, and returns its
+// version. It runs java, so it belongs on a bench.
+func ReadJavaVersion(ctx context.Context, java string) (string, error) {
+	out, err := exec.CommandContext(ctx, java, "-version").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s -version failed: %v", java, err)
+	}
+	return JavaVersion(string(out))
+}

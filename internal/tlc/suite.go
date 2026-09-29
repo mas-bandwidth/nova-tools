@@ -43,6 +43,7 @@ type Options struct {
 	Cases   []Case        // the selected cases, in order
 	Jar     Jar           // the TLC jar
 	Java    string        // the java program
+	JavaVer string        // the version java reported (JavaVersion); recorded
 	Out     string        // output directory: logs, RUNS.tsv and the private copy of the models
 	Budget  time.Duration // the whole suite's limit
 	Workers int           // TLC workers for a case expected to pass; counterexample cases use one
@@ -110,6 +111,9 @@ func RunSuite(o Options) (Result, error) {
 		exec = Execute
 	}
 	var res Result
+	if o.JavaVer == "" {
+		return res, errors.New("no java version to record")
+	}
 	out, err := filepath.Abs(o.Out)
 	if err != nil {
 		return res, err
@@ -177,6 +181,10 @@ func RunSuite(o Options) (Result, error) {
 		started := clock()
 		log := filepath.Join(out, c.Config+".log")
 		code := ExitTimeout
+		workers := 1
+		if c.Expected == "pass" {
+			workers = o.Workers
+		}
 		if remaining := deadline.Sub(started); remaining <= 0 {
 			if err := os.WriteFile(log, []byte("TLC suite budget exhausted before starting this case\n"), 0o644); err != nil {
 				return res, err
@@ -185,10 +193,6 @@ func RunSuite(o Options) (Result, error) {
 			scratch, err := os.MkdirTemp(out, "tlc-")
 			if err != nil {
 				return res, err
-			}
-			workers := 1
-			if c.Expected == "pass" {
-				workers = o.Workers
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), remaining)
 			code = exec(ctx, Run{
@@ -216,7 +220,7 @@ func RunSuite(o Options) (Result, error) {
 		outcome := Parse(string(raw))
 		ok := Accepts(c, code, string(raw), string(cfg)) && outcome.HasStats()
 		rec := Record{
-			Config: c.Config, Module: c.Module, InputSHA256: digests[c.Config].fingerprint, InputFiles: digests[c.Config].files, JarSHA256: o.Jar.SHA256,
+			Config: c.Config, Module: c.Module, InputSHA256: digests[c.Config].fingerprint, InputFiles: digests[c.Config].files, JarSHA256: o.Jar.SHA256, JavaVersion: o.JavaVer, Workers: workers,
 			Host: o.Host, StartedUTC: started.UTC().Format("2006-01-02T15:04:05.000000-07:00"),
 			Generated: outcome.Generated, Distinct: outcome.Distinct,
 			Seconds: fmt.Sprintf("%.3f", clock().Sub(started).Seconds()),

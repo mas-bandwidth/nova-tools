@@ -32,10 +32,10 @@ declared invariant, action or temporal property. A timeout, a parse failure or a
 violation is a failure. A case that ends the budget early fails the run.
 
 RUNS.tsv holds one record per case: config, module, the fingerprint of what the case reads,
-the number of files under it, the jar's digest, host, UTC start, states generated and distinct
+the number of files under it, the jar's digest, the java version, host, UTC start, the TLC workers, states generated and distinct
 ("-" when unknown), seconds, exit, result, expected, property, budget and mode. The
 fingerprint covers the case's configuration, its module and the modules that one extends or
-instantiates, the case's own row of CASES.tsv and the runner's files (tlacheck inputs prints
+instantiates, the case's own row of CASES.tsv and the runner's result files (tlacheck inputs prints
 them). It is written only if every case's fingerprint is the same when the cases are done as
 when they started.
 
@@ -193,8 +193,11 @@ usage: tlacheck inputs --case <config> [--root <checkout>]
 
 The inputs are the case's configuration; the module CASES.tsv gives it and every module that
 one EXTENDS or INSTANCEs, transitively (a name with no file under tla/ must be one of TLC's
-standard modules, which read nothing from the tree); the case's own row of CASES.tsv under
-its header; and the runner's files (internal/tlc, without its tests) as this binary was built.
+standard modules, which read nothing from the tree: the ten the jar bundles, listed in
+standardModules in internal/tlc/inputs.go); the case's own row of CASES.tsv under
+its header; and the runner's result files (outcome.go, run.go and suite.go of internal/tlc: the command
+line, flags, workers and timeouts of a run and the reading of its output) as this binary was
+built. The package's other files are bookkeeping and in no fingerprint.
 The fingerprint in a record is the SHA-256 over the paths and hashes listed here, in path
 order, and the record's input_files is their count. A change to none of them leaves the
 record current. The jar is not an input: a record names it in its own column.

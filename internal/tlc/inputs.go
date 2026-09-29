@@ -51,19 +51,21 @@ func SourceAt(root string) (Source, error) {
 	return Source{TLADir: filepath.Join(root, "tla"), Plan: plan, Runner: runner}, nil
 }
 
-// standardModules are the modules TLC carries in its jar. A module that names
-// one and has no file of its own under tla/ reads nothing from the tree.
+// standardModules are the modules the pinned TLC jar bundles as TLA+ modules
+// (the .tla files of its tla2sany/StandardModules). A module that names one and
+// has no file of its own under tla/ reads nothing from the tree. The list is
+// bookkeeping: adding a name changes no fingerprint. A module that is not here
+// and not a file under tla/ refuses the case.
 var standardModules = map[string]bool{
-	"Bags": true, "CSV": true, "FiniteSets": true, "IOUtils": true, "Integers": true,
-	"Json": true, "Naturals": true, "Randomization": true, "RealTime": true, "Reals": true,
-	"Sequences": true, "TLC": true, "TLCExt": true, "TLCGetSet": true, "Toolbox": true,
+	"Bags": true, "FiniteSets": true, "Integers": true, "Naturals": true, "Randomization": true,
+	"RealTime": true, "Reals": true, "Sequences": true, "TLC": true, "Toolbox": true,
 }
 
 // Inputs is exactly what a TLC run of the case reads, sorted by path: its
 // configuration; the module the plan names for it and, transitively, every
 // module that one extends or instantiates (a name with no file under tla/ must
 // be one of TLC's standard modules); the case's own row of the plan under the
-// plan's header; and the runner's files. It is an error when the case is not
+// plan's header; and the runner's result files (ResultFiles). It is an error when the case is not
 // in the plan, when the configuration or a module cannot be read, or when a
 // module names one that is neither a file nor a standard module.
 //
@@ -114,7 +116,7 @@ func (s Source) Inputs(config string) ([]Input, error) {
 				if standardModules[name] {
 					continue
 				}
-				return nil, fmt.Errorf("case %s: module %s names %s, which is neither tla/%s nor one of TLC's standard modules", config, next.file, name, file)
+				return nil, fmt.Errorf("case %s: module %s names %s, which is neither tla/%s nor one of TLC's standard modules; add the module file tla/%s, or add the name to standardModules in internal/tlc/inputs.go if the TLC jar bundles it", config, next.file, name, file, file)
 			}
 			queue = append(queue, pending{file, next.file})
 		}

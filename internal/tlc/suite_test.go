@@ -65,7 +65,7 @@ func suiteOptions(root string, cases []Case, out string, exec Executor, clock *f
 	return Options{
 		Root: root, Cases: cases, Out: out, Budget: 110 * time.Second, Workers: 2, Host: "bench",
 		Jar:  Jar{Path: "/j/tla2tools.jar", Source: "flag", SHA256: strings.Repeat("b", 64)},
-		Java: "/usr/bin/java", Clock: clock.Now, Exec: exec,
+		Java: "/usr/bin/java", JavaVer: "21.0.12.1", Clock: clock.Now, Exec: exec,
 	}
 }
 
@@ -94,7 +94,7 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := res.Records[0]
-	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), Host: "bench",
+	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), JavaVersion: "21.0.12.1", Workers: 2, Host: "bench",
 		StartedUTC: "2026-09-28T12:00:00.250000+00:00", Generated: "15518", Distinct: "263", Seconds: "0.250",
 		Exit: 0, Result: "PASS", Expected: "pass", Property: "-", Budget: "110", Mode: "bounded"}
 	if first != want {
@@ -509,5 +509,29 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 				t.Fatalf("suite = %+v", res)
 			}
 		})
+	}
+}
+
+// A record names the workers its case ran with (a counterexample case runs with
+// one) and the java version the suite was given; a suite with no java version
+// refuses to run.
+func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
+	t.Parallel()
+	root, cases := suiteTree(t)
+	var seen []Run
+	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock))
+	if err != nil || len(res.Records) != 3 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	for i, want := range []int{2, 1, 1} {
+		if r := res.Records[i]; r.Workers != want || r.JavaVersion != "21.0.12.1" || seen[i].Workers != want {
+			t.Errorf("%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want)
+		}
+	}
+	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o2"), script(t, &seen), clock)
+	o.JavaVer = ""
+	if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no java version") {
+		t.Fatalf("a suite with no java version: %v", err)
 	}
 }

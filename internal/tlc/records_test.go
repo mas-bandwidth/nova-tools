@@ -10,8 +10,8 @@ import (
 )
 
 func rec(config, inputs string) Record {
-	return Record{Config: config, Module: "MCA.tla", InputSHA256: inputs, InputFiles: 3, JarSHA256: strings.Repeat("a", 64),
-		Host: "bench", StartedUTC: "2026-01-01T00:00:00.000000+00:00", Generated: "10", Distinct: "5",
+	return Record{Config: config, Module: "MCA.tla", InputSHA256: inputs, InputFiles: 3, JarSHA256: strings.Repeat("a", 64), JavaVersion: "21.0.1",
+		Host: "bench", StartedUTC: "2026-01-01T00:00:00.000000+00:00", Workers: 2, Generated: "10", Distinct: "5",
 		Seconds: "1.250", Exit: 0, Result: "PASS", Expected: "pass", Property: "-", Budget: "110", Mode: "bounded"}
 }
 
@@ -23,7 +23,7 @@ func TestRecordsRoundTrip(t *testing.T) {
 	if err := WriteRecords(&b, in); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\thost\tstarted_utc\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n") {
+	if !strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\tjava_version\thost\tstarted_utc\tworkers\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n") {
 		t.Fatalf("header: %q", strings.SplitN(b.String(), "\n", 2)[0])
 	}
 	out, err := ReadRecords(&b)
@@ -41,11 +41,13 @@ func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {
 	}
 	good := strings.Join(RecordsHeader, "\t") + "\n"
 	for name, text := range map[string]string{
-		"a wrong header":       "config\tmodule\n",
-		"a short row":          good + "MCA.cfg\tMCA.tla\n",
-		"a bad count of files": good + strings.Join([]string{"MCA.cfg", "MCA.tla", "x", "none", "j", "h", "t", "1", "1", "1", "0", "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n",
-		"no files":             good + strings.Join([]string{"MCA.cfg", "MCA.tla", "x", "0", "j", "h", "t", "1", "1", "1", "0", "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n",
-		"a bad exit":           good + strings.Join([]string{"MCA.cfg", "MCA.tla", "x", "3", "j", "h", "t", "1", "1", "1", "abc", "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n",
+		"a wrong header":         "config\tmodule\n",
+		"a short row":            good + "MCA.cfg\tMCA.tla\n",
+		"a bad count of files":   good + badRow("none", "2", "0"),
+		"no files":               good + badRow("0", "2", "0"),
+		"no workers":             good + badRow("3", "0", "0"),
+		"a bad count of workers": good + badRow("3", "two", "0"),
+		"a bad exit":             good + badRow("3", "2", "abc"),
 	} {
 		if _, err := ReadRecords(strings.NewReader(text)); err == nil {
 			t.Errorf("%s was read", name)
@@ -156,4 +158,8 @@ func TestMergeRefusesRecordsOfMoreThanOneJar(t *testing.T) {
 	if _, err := Merge(src, cases, []Record{a, b, c}); err != nil {
 		t.Fatalf("one jar refused: %v", err)
 	}
+}
+
+func badRow(files, workers, exit string) string {
+	return strings.Join([]string{"MCA.cfg", "MCA.tla", "x", files, "j", "21.0.1", "h", "t", workers, "1", "1", "1", exit, "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n"
 }

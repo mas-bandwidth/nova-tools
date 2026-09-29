@@ -229,13 +229,95 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 		}
 		reads[c.Config] = paths(in)
 		joined := " " + strings.Join(paths(in), " ") + " "
-		for _, need := range []string{"tla/" + c.Config, "tla/" + c.Module, CasesRowPath(c.Config), "internal/tlc/inputs.go"} {
+		for _, need := range []string{"tla/" + c.Config, "tla/" + c.Module, CasesRowPath(c.Config), "internal/tlc/run.go", "internal/tlc/outcome.go", "internal/tlc/suite.go"} {
 			if !strings.Contains(joined, " "+need+" ") {
 				t.Errorf("%s does not read %s", c.Config, need)
 			}
 		}
 	}
+	for config, read := range reads {
+		for _, name := range BookkeepingFiles {
+			if slicesContains(read, RunnerDir+"/"+name) {
+				t.Errorf("%s reads %s, a bookkeeping file: extending it must stale nothing", config, name)
+			}
+		}
+	}
 	if strings.Contains(strings.Join(reads["MCFileLock.cfg"], " "), "MemberTable") || strings.Contains(strings.Join(reads["MCMemberTable.cfg"], " "), "FileLock") {
 		t.Error("two models that share nothing read each other's files")
+	}
+}
+
+func slicesContains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Only the result files are inputs: an edit to any bookkeeping file (the
+// standard-module list is in one) stales no case.
+func TestOnlyTheResultFilesOfTheRunnerAreInputs(t *testing.T) {
+	t.Parallel()
+	src := testSource(t, inputsTree(t))
+	src.Runner = map[string][]byte{}
+	for _, n := range ResultFiles {
+		src.Runner[RunnerDir+"/"+n] = []byte(n + "\n")
+	}
+	before, _, err := src.Fingerprint("MCLone.cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := RunnerFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(built) != len(ResultFiles) {
+		t.Fatalf("the binary carries %d runner files, %d are result files", len(built), len(ResultFiles))
+	}
+	for name := range built {
+		base := filepath.Base(name)
+		if !slicesContains(ResultFiles, base) {
+			t.Errorf("%s is embedded and is not a result file", name)
+		}
+	}
+	for _, n := range ResultFiles {
+		other := testSource(t, inputsTree(t))
+		other.Runner = map[string][]byte{}
+		for k, v := range src.Runner {
+			other.Runner[k] = v
+		}
+		other.Runner[RunnerDir+"/"+n] = []byte("edited\n")
+		if after, _, _ := other.Fingerprint("MCLone.cfg"); after == before {
+			t.Errorf("editing the result file %s left the fingerprint unchanged", n)
+		}
+	}
+}
+
+// The refusal for a module that is neither a file nor standard names both ways
+// out, and the standard list holds what the pinned jar bundles.
+func TestUnknownModuleRefusalNamesTheNextAction(t *testing.T) {
+	t.Parallel()
+	root := tree(t, map[string]string{
+		"CASES.tsv": header + row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-"),
+		"MCA.tla":   "EXTENDS Naturals, Nowhere\n", "MCA.cfg": "c\n",
+	})
+	_, err := testSource(t, root).Inputs("MCA.cfg")
+	if err == nil {
+		t.Fatal("refused nothing")
+	}
+	for _, want := range []string{"neither tla/Nowhere.tla nor one of TLC's standard modules", "add the module file tla/Nowhere.tla", "add the name to standardModules in internal/tlc/inputs.go"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q lacks %q", err, want)
+		}
+	}
+	for _, name := range []string{"Bags", "FiniteSets", "Integers", "Naturals", "Randomization", "RealTime", "Reals", "Sequences", "TLC", "Toolbox"} {
+		if !standardModules[name] {
+			t.Errorf("%s is bundled by the jar and is not in standardModules", name)
+		}
+	}
+	if len(standardModules) != 10 {
+		t.Errorf("standardModules holds %d names; the jar bundles ten", len(standardModules))
 	}
 }

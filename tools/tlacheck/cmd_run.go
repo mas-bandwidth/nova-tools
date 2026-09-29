@@ -111,8 +111,13 @@ func cmdRun(e env, args []string) int {
 	if err != nil || host == "" {
 		host = "unknown"
 	}
+	javaVer, err := e.javaVersion(java)
+	if err != nil {
+		return refuse(e, "run", "the java version cannot be read: "+err.Error()+"; nothing was run", tool+" run --java /path/to/java ...")
+	}
+	event(e.stdout, "HELPER", "OK", "name", "java-version", "version", javaVer)
 	res, err := tlc.RunSuite(tlc.Options{
-		Root: *root, Cases: chosen, Jar: jar, Java: java, Out: *dir,
+		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
 		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
 		Budget:    *timeout, Workers: *workers, Manual: *manual, Host: host, Exec: e.exec,
 		OnCase: func(r tlc.Record) {

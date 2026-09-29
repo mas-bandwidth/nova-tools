@@ -18,10 +18,11 @@
 //
 // WHAT A FINGERPRINT COVERS. One case's inputs and nothing else: its
 // configuration, its module and the modules that one extends or instantiates,
-// its own row of the plan, and the runner's files. Editing one model leaves the
+// its own row of the plan, and the runner's result files (the ones that decide how a
+// result is produced and read; see fingerprint.go). Editing one model leaves the
 // records of the cases that do not read it as they are.
 //
-// WHY THE SOURCES ARE EMBEDDED. The runner's own files are part of every
+// WHY THE SOURCES ARE EMBEDDED. The runner's result files are part of every
 // fingerprint (a change to how a result is read invalidates the records taken
 // with the old reading), and a binary built on one machine and run on a bench
 // has no checkout of them. The binary therefore carries the bytes it was built
