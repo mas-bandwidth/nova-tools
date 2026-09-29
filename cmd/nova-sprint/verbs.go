@@ -52,6 +52,7 @@ func init() {
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
+		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member>", "fleet up m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
@@ -109,6 +110,7 @@ and prints each one's generation.
 
 ` + inboxExample + `
 ` + machineWords() + `
+` + fleetWords() + `
 ` + goalWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
@@ -185,6 +187,9 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		if name == "goal" {
 			fmt.Fprint(stdout, "\n"+goalWords())
+		}
+		if name == "fleet" {
+			fmt.Fprint(stdout, "\n"+fleetWords())
 		}
 		return 0
 	}
@@ -549,7 +554,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "INIT OK tables=%s view=%s\n", strings.Join([]string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers), st.Names.Table(sprint.Merge), st.Names.Table(sprint.Fleet)}, ","), st.Names.View())
 	for _, m := range sprint.Split(*members) {
-		if code := a.runStep("fleet up", *c, st, store.FleetStep(sprint.FleetReq{Op: "up", Member: m, Who: c.actor}), stdout, stderr); code != 0 {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m, c.actor), stdout, stderr); code != 0 {
 			return code
 		}
 	}
@@ -990,7 +995,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	return a.runStep(name, *c, st, store.FleetStep(sprint.FleetReq{Op: op, Member: member, Who: c.actor}), stdout, stderr)
+	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor), stdout, stderr)
 }
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {

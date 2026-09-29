@@ -114,6 +114,7 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 	if err := h2.m.RowsAdd(h2.ctx, "t-readers", []string{"reader-a"}); err != nil {
 		t.Fatal(err)
 	}
+	h2.beat()
 	h2.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h2.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	h2.startMachine()

@@ -762,22 +762,76 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 	return p
 }
 
-// FleetReq is a fleet verb: a member up or down, or the ready queues levelled.
+// FleetReq is a fleet move: a member up or down, or the ready queues
+// levelled (the tick's moves, as a member's derived status changes), or the
+// coordinator's hold on a member (hold) and its release (release).
 type FleetReq struct {
-	Op     string // up, down, level
+	Op     string // up, down, level, hold, release
 	Member string
 	Who    string
+	// Fresh says the member's last beat is within BeatDeadline: release
+	// brings it up at once.
+	Fresh bool
+	// Live, when set, is the other members up for this move: down deals to
+	// them and up levels with them. nil is every member whose status is up.
+	Live []string
+	// Why is said in the happened notification of a change of status.
+	Why string
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
 // (dealing its unfinished work cards to up members, or withdrawing them when
-// none is up), or levels the ready queues.
+// none is up), or levels the ready queues. hold marks a member held and takes
+// it down; release clears the hold, adding a member it does not know, and
+// brings it up when its beat is fresh.
 func FleetStep(s *Snapshot, r FleetReq) Plan { return Lawful(fleetStepPlan(s, r)) }
+
+// liveFor is the members up for a move of member: r.Live, else the members
+// whose status is up, without member.
+func liveFor(s *Snapshot, r FleetReq) []string {
+	all := r.Live
+	if all == nil {
+		all = s.UpMembers()
+	}
+	var out []string
+	for _, m := range all {
+		if m != r.Member {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// headOf puts the control card's change, its notification and its line in
+// front of the plan's first unit.
+func headOf(p *Plan, member string, head []Change, n *Note, line string) {
+	if len(head) == 0 && n == nil {
+		return
+	}
+	if len(p.Units) == 0 {
+		p.Units = append(p.Units, Unit{Key: CtlID(member)})
+	}
+	p.Units[0].Changes = append(head, p.Units[0].Changes...)
+	if n != nil {
+		p.Units[0].Notes = append(p.Units[0].Notes, *n)
+	}
+	p.Units[0].Moved = strings.TrimPrefix(p.Units[0].Moved+"; "+line, "; ")
+}
+
+// statusNote is the happened notification of a member's change of status.
+func statusNote(s *Snapshot, r FleetReq, typ, word string) *Note {
+	n := happened(typ, "", s.Now)
+	n.What, n.Who = r.Member+" "+word, r.Who
+	if r.Why != "" {
+		n.What += ": " + r.Why
+	}
+	return &n
+}
 
 func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 	var p Plan
 	switch r.Op {
-	case "up":
+	case "up", "release":
 		if !ValidID(r.Member) {
 			p.refuse(r.Member, "a member name wants letters, digits, _ and -")
 			return p
@@ -786,56 +840,70 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			p.Rows = append(p.Rows, RowAdd{Fleet, r.Member})
 		}
 		ctl := s.Fleet.Card(CtlID(r.Member))
-		n := happened(NMemberUp, "", s.Now)
-		n.What, n.Who = r.Member+" up", r.Who
+		comeUp := r.Op == "up" || r.Fresh
 		var head []Change
+		var n *Note
+		line := r.Member + " up"
 		switch {
 		case ctl == nil:
-			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0,
-				map[string]string{"kind": "member", "status": Up, "since": stamp(s.Now), "ok": "0", "failed": "0"})))
-		case ctl.F("status") != Up:
-			head = append(head, change(Fleet, setEntry(ctl, map[string]string{"status": Up, "since": stamp(s.Now)})))
-		default:
-			n = Note{}
-		}
-		up := s.UpMembers()
-		if !contains(up, r.Member) {
-			up = append(up, r.Member)
-		}
-		level(s, &p, orderLike(s.Fleet.Rows, up, r.Member))
-		if len(head) > 0 {
-			if len(p.Units) == 0 {
-				p.Units = append(p.Units, Unit{Key: CtlID(r.Member)})
+			status := Down
+			if comeUp {
+				status = Up
+				n = statusNote(s, r, NMemberUp, "up")
+			} else {
+				line = r.Member + " added, down until it beats"
 			}
-			p.Units[0].Changes = append(head, p.Units[0].Changes...)
-			p.Units[0].Notes = append(p.Units[0].Notes, n)
-			p.Units[0].Moved = strings.TrimPrefix(p.Units[0].Moved+"; "+r.Member+" up", "; ")
+			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0,
+				map[string]string{"kind": "member", "status": status, "since": stamp(s.Now), "ok": "0", "failed": "0"})))
+		default:
+			set := map[string]string{}
+			var unset []string
+			if comeUp && ctl.F("status") != Up {
+				set["status"], set["since"] = Up, stamp(s.Now)
+				n = statusNote(s, r, NMemberUp, "up")
+			}
+			if r.Op == "release" && ctl.F("held") != "" {
+				unset = append(unset, "held")
+				if !comeUp {
+					line = r.Member + " released, down until it beats"
+				}
+			}
+			if len(set) > 0 || len(unset) > 0 {
+				head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
+			}
 		}
-	case "down":
+		if comeUp {
+			level(s, &p, orderLike(s.Fleet.Rows, append(liveFor(s, r), r.Member), r.Member))
+		}
+		headOf(&p, r.Member, head, n, line)
+	case "down", "hold":
 		ctl := s.MemberCtl(r.Member)
 		if ctl == nil {
 			p.refuse(r.Member, "no fleet member "+r.Member)
 			return p
 		}
-		var head []Change
-		n := happened(NMemberDown, "", s.Now)
-		n.What, n.Who = r.Member+" down", r.Who
+		set := map[string]string{}
+		var n *Note
+		line := r.Member + " down"
 		if ctl.F("status") != Down {
-			head = append(head, change(Fleet, setEntry(ctl, map[string]string{"status": Down, "since": stamp(s.Now)})))
+			set["status"], set["since"] = Down, stamp(s.Now)
+			n = statusNote(s, r, NMemberDown, "down")
 		}
-		var up []string
-		for _, m := range s.UpMembers() {
-			if m != r.Member {
-				up = append(up, m)
-			}
+		if r.Op == "hold" && ctl.F("held") == "" {
+			set["held"] = stamp(s.Now)
+			line = r.Member + " held down"
 		}
+		var head []Change
+		if len(set) > 0 {
+			head = append(head, change(Fleet, setEntry(ctl, set)))
+		}
+		up := liveFor(s, r)
 		cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 		SortCards(cards)
 		q := map[string]int{}
 		for _, m := range up {
 			q[m] = s.Fleet.Count(m, Ready)
 		}
-		var withdrawn []string
 		for _, c := range cards {
 			if len(up) > 0 {
 				m := shortest(up, q)
@@ -851,25 +919,17 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
 				u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
 				u.Moved += "; " + pr.ID + " working -> ready"
-				withdrawn = append(withdrawn, pr.ID)
 				w := happened(NWithdrawn, pr.Row, s.Now, pr.ID)
 				w.Who = r.Who
 				u.Notes = append(u.Notes, w)
 			}
 			p.Units = append(p.Units, u)
 		}
-		if len(head) > 0 {
-			if len(p.Units) == 0 {
-				p.Units = append(p.Units, Unit{Key: CtlID(r.Member)})
-			}
-			p.Units[0].Changes = append(head, p.Units[0].Changes...)
-			p.Units[0].Notes = append(p.Units[0].Notes, n)
-			p.Units[0].Moved = strings.TrimPrefix(p.Units[0].Moved+"; "+r.Member+" down", "; ")
-		}
+		headOf(&p, r.Member, head, n, line)
 	case "level":
 		level(s, &p, s.UpMembers())
 	default:
-		p.refuse(r.Op, "fleet wants up, down or level")
+		p.refuse(r.Op, "fleet wants up, down, level, hold or release")
 	}
 	return p
 }

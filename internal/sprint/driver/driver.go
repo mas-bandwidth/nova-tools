@@ -282,6 +282,11 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	for _, m := range members {
 		up[m] = fleet[m]["status"] == "up"
 	}
+	// Every member's machine is alive and beats: its status follows its
+	// beat, and the facts' ups and downs are the coordinator's hold.
+	for _, m := range members {
+		d.run(true, "fleet", "beat", m, "--load", "0")
+	}
 	next := d.Facts.Up(tick, members, up)
 	for _, m := range members {
 		switch {

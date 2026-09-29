@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -22,21 +23,40 @@ type testApp struct {
 	m   *store.Mem
 	mu  sync.Mutex
 	now time.Time
+	// live is the fleet members that beat before every command line and
+	// after every step of the clock: the machines alive.
+	live []string
 }
 
 func newTestApp(t *testing.T) *testApp {
-	ta := &testApp{t: t, m: store.NewMem(), now: t0}
+	ta := &testApp{t: t, m: store.NewMem(), now: t0, live: []string{"m1", "m2"}}
 	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-"}
 	ta.a = newApp(func(k string) string { return env[k] })
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
-	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock() }
+	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(string, sprint.Names) (store.Backend, error) { return ta.m, nil }
+	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
 	return ta
+}
+
+// beat is one beat of every live member, at load 0.
+func (ta *testApp) beat() {
+	ta.mu.Lock()
+	live := append([]string(nil), ta.live...)
+	ta.mu.Unlock()
+	st := &store.Store{B: ta.m, Names: sprint.Names{Prefix: "t-"}, Now: ta.a.now}
+	zero := 0.0
+	for _, m := range live {
+		if _, err := st.Beat(context.Background(), m, &zero, hostload.Source{}); err != nil {
+			ta.t.Fatal(err)
+		}
+	}
 }
 
 // do runs a command line and returns its exit code, stdout and stderr.
 func (ta *testApp) do(line string) (int, string, string) {
 	var out, errb bytes.Buffer
+	ta.beat()
 	code := ta.a.run(split(line), &out, &errb)
 	return code, out.String(), errb.String()
 }

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
 )
@@ -82,6 +84,9 @@ type Heartbeat struct {
 	Landed    int64     `json:"landed"`
 	All       int64     `json:"all"`
 	Full      time.Time `json:"full"`
+	// Fresh is the fleet members whose beat was fresh at the last tick: a
+	// member coming or going makes the next tick a full one.
+	Fresh []string `json:"fresh,omitempty"`
 	// Looked is when a tick last read the machine's state, RUNNING or
 	// STOPPED: a run loop is alive while it is recent, whatever the state.
 	Looked time.Time `json:"looked,omitempty"`
@@ -306,7 +311,7 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 // as stale. guard refuses the part on any other ground.
 func TickPartStep(name string, fn func(*sprint.Snapshot, sprint.TickReq) sprint.Plan, r sprint.TickReq, epoch *uint64, guard func(*sprint.Snapshot) string) Step {
 	return Step{Verb: "tick " + name, Load: All, Extras: tickExtras, Epoch: epoch,
-		Mirrors: name == "deal" || name == "level" || name == "resume",
+		Mirrors: name == "presence" || name == "deal" || name == "level" || name == "resume",
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
 			if guard != nil {
 				if why := guard(s); why != "" {
@@ -329,8 +334,9 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 }
 
 // Tick runs one tick when the machine is RUNNING, and records it on the
-// heartbeat, its error with it when it failed; when the machine is STOPPED
-// it does nothing and writes nothing.
+// heartbeat, its error with it when it failed. When the machine is STOPPED
+// it moves nothing: it only shows each fleet member's status and load as
+// their beats say.
 func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	m, hb, err := st.Machine(ctx)
 	if err != nil {
@@ -338,8 +344,16 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	}
 	res := TickResult{State: m.StateWord()}
 	if !m.Running() {
-		// A STOPPED machine moves nothing; the tick only says it looked, so
-		// start can tell a run loop is waiting.
+		// A STOPPED machine moves nothing; the tick shows the fleet as its
+		// beats say and says it looked, so start can tell a run loop is
+		// waiting.
+		shape, beats, err := st.fleetBeats(ctx, nil)
+		if err == nil {
+			_, err = st.showFleet(ctx, shape, beats, st.now())
+		}
+		if err != nil {
+			return res, fmt.Errorf("fleet: %w", err)
+		}
 		hb.Looked = st.now()
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
@@ -352,7 +366,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err != nil {
 		hb.Error, hb.Failures = err.Error(), hb.Failures+1
 	} else {
-		hb.Revisions, hb.Landed, hb.All, hb.Full = seen.Revisions, seen.Landed, seen.All, seen.Full
+		hb.Revisions, hb.Landed, hb.All, hb.Full, hb.Fresh = seen.Revisions, seen.Landed, seen.All, seen.Full, seen.Fresh
 	}
 	if werr := st.putJSON(ctx, keyHeartbeat, hb); werr != nil && err == nil {
 		err = werr
@@ -362,7 +376,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 
 // look is the cheap read of a tick: the four tables' shapes in one exchange,
 // their revisions, and the landed and all primaries of the work table.
-func (st *Store) look(ctx context.Context) (Heartbeat, error) {
+func (st *Store) look(ctx context.Context) (Heartbeat, []ntable.Table, error) {
 	var seen Heartbeat
 	names := make([]string, len(All))
 	for i, t := range All {
@@ -370,7 +384,7 @@ func (st *Store) look(ctx context.Context) (Heartbeat, error) {
 	}
 	shapes, err := st.B.Shapes(ctx, names)
 	if err != nil {
-		return seen, err
+		return seen, nil, err
 	}
 	for i, sh := range shapes {
 		seen.Revisions[i] = sh.Revision
@@ -387,13 +401,14 @@ func (st *Store) look(ctx context.Context) (Heartbeat, error) {
 			}
 		}
 	}
-	return seen, nil
+	return seen, shapes, nil
 }
 
 // tick finishes a pending operation past its grace (T5), then, when a table
 // changed since the last tick, this is the first tick after start, or
-// TickFullEvery has passed, runs each part that has something to do as its
-// own operation on a fresh read. A part is skipped when it has nothing to do
+// TickFullEvery has passed, or a fleet member's beat came or went, runs each
+// part that has something to do as its own operation on a fresh read, the
+// presence part with the beats read. A part is skipped when it has nothing to do
 // on the tick's first read and nothing has moved before it in this tick. It
 // returns what it saw, for the heartbeat.
 func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult) (Heartbeat, error) {
@@ -427,18 +442,44 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		}
 		res.Parts = append(res.Parts, PartResult{Name: "stuck", Result: r})
 	}
-	seen, err := st.look(ctx)
+	seen, shapes, err := st.look(ctx)
+	if err != nil {
+		return last, err
+	}
+	fleet, beats, err := st.fleetBeats(ctx, shapes)
 	if err != nil {
 		return last, err
 	}
 	now := st.now()
+	seen.Fresh = freshOf(fleet, beats, now)
 	first := last.At.Before(m.Since)
 	seen.Full = last.Full
-	if !first && len(res.Repaired) == 0 && seen.Revisions == last.Revisions && now.Sub(last.Full) < TickFullEvery {
+	if !first && slices.Equal(seen.Fresh, last.Fresh) && len(res.Repaired) == 0 && seen.Revisions == last.Revisions && now.Sub(last.Full) < TickFullEvery {
 		res.Idle = true
-		return seen, nil
+		// The loads move with every beat: their cells are written here, and
+		// the revisions they leave are what this tick saw.
+		wrote, err := st.showFleet(ctx, fleet, beats, now)
+		if err != nil || !wrote {
+			return seen, err
+		}
+		again, _, err := st.look(ctx)
+		seen.Revisions = again.Revisions
+		return seen, err
 	}
 	seen.Full = now
+	// Every fleet cell up to date before the parts, the control cards read:
+	// the revisions it leaves are what this tick saw.
+	wrote, err := st.SyncFleet(ctx)
+	if err != nil {
+		return last, err
+	}
+	if wrote {
+		again, _, err := st.look(ctx)
+		if err != nil {
+			return last, err
+		}
+		seen.Revisions = again.Revisions
+	}
 	// The tick holds the epoch of its first read: a clear during the tick
 	// refuses the next part as stale, and the tick stops there; the next tick
 	// reads the new epoch.
@@ -455,7 +496,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		return last, err
 	}
 	at := snap.Epoch
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween,
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats,
 		Scan: first || seen.Landed != last.Landed || seen.All != last.All}
 	dirty := false // something ran: every later part runs on a fresh read
 	for _, part := range sprint.TickParts {
@@ -518,4 +559,37 @@ func (r *Redis) GetKey(ctx context.Context, name string) (string, bool, error) {
 // SetKey writes a machine record.
 func (r *Redis) SetKey(ctx context.Context, name, value string) error {
 	return r.C.Set(ctx, r.Names.Key(name), value, 0).Err()
+}
+
+// GetKeys reads machine records in one call.
+func (m *Mem) GetKeys(_ context.Context, names []string) ([]string, []bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.fail("kv"); err != nil {
+		return nil, nil, err
+	}
+	vals, oks := make([]string, len(names)), make([]bool, len(names))
+	for i, n := range names {
+		vals[i], oks[i] = m.kv[n]
+	}
+	return vals, oks, nil
+}
+
+// GetKeys reads machine records in one round trip.
+func (r *Redis) GetKeys(ctx context.Context, names []string) ([]string, []bool, error) {
+	keys := make([]string, len(names))
+	for i, n := range names {
+		keys[i] = r.Names.Key(n)
+	}
+	got, err := r.C.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, nil, err
+	}
+	vals, oks := make([]string, len(names)), make([]bool, len(names))
+	for i := range names {
+		if i < len(got) {
+			vals[i], oks[i] = got[i].(string)
+		}
+	}
+	return vals, oks, nil
 }

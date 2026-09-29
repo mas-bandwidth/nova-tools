@@ -80,6 +80,10 @@ type TickReq struct {
 	// Stopped is the time the machine was STOPPED between two clock readings:
 	// a deadline compares running time only. nil is none.
 	Stopped func(from, to time.Time) time.Duration
+	// Beats is each fleet member's last beat, read by the binding with the
+	// tick: the presence part applies the status it derives. nil is none
+	// read, and the presence part does nothing.
+	Beats map[string]Beat
 }
 
 func (r TickReq) who() string {
@@ -116,6 +120,7 @@ var TickParts = []struct {
 	Name string
 	Fn   func(*Snapshot, TickReq) Plan
 }{
+	{"presence", TickPresence},
 	{"resolve", TickResolve},
 	{"resume", TickResume},
 	{"deal", TickDeal},

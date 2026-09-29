@@ -315,7 +315,7 @@ func TestAnAcknowledgedConditionIsNotWrittenAgainUntilItComesBack(t *testing.T) 
 	if held := h.openOf(sprint.NNoMember); len(held) != 0 {
 		t.Fatalf("the condition cleared and the acknowledgement is held: %+v", held)
 	}
-	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1"}))
 	h.machine()
 	if h.written(sprint.NNoMember) != 2 || len(h.openOf(sprint.NNoMember)) != 1 {
 		t.Fatalf("the condition came back: written %d open %d", h.written(sprint.NNoMember), len(h.openOf(sprint.NNoMember)))
