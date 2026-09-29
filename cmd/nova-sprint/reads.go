@@ -181,6 +181,7 @@ type whereView struct {
 	Epoch       uint64                                  `json:"epoch"`
 	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
 	Machine     string                                  `json:"machine,omitempty"`
+	Goals       []goalView                              `json:"goals,omitempty"`
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -281,6 +282,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	b.WriteString(strings.Join(parts, "\n"))
+	b.WriteString(a.goalsFrame(ctx, st, &v))
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
 			v.Stalled = append(v.Stalled, c.Stream)

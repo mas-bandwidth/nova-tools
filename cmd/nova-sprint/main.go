@@ -178,7 +178,7 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 			return v.run(a, args[len(words):], stdout, stderr)
 		}
 	}
-	if args[0] == "fleet" || args[0] == "reader" {
+	if args[0] == "fleet" || args[0] == "reader" || args[0] == "goal" {
 		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
 	}
 	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")

@@ -37,6 +37,9 @@ func init() {
 		{"stop", "", "stop", (*app).cmdMachineStop},
 		{"run", "", "run", (*app).cmdRun},
 		{"tick", "", "tick", (*app).cmdTick},
+		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
+		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
+		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
 		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
@@ -106,6 +109,7 @@ and prints each one's generation.
 
 ` + inboxExample + `
 ` + machineWords() + `
+` + goalWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
 `)
@@ -172,12 +176,15 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	name := strings.Join(path, " ")
-	if name == "fleet" || name == "reader" {
+	if name == "fleet" || name == "reader" || name == "goal" {
 		fmt.Fprintln(stdout, "usage:")
 		for _, v := range verbs {
 			if strings.HasPrefix(v.name, name+" ") {
 				fmt.Fprintln(stdout, "  nova-sprint "+strings.TrimSpace(v.name+" "+v.syntax))
 			}
+		}
+		if name == "goal" {
+			fmt.Fprint(stdout, "\n"+goalWords())
 		}
 		return 0
 	}

@@ -344,6 +344,9 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
+	if rerr := st.remind(ctx, m, &res); rerr != nil && err == nil {
+		err = fmt.Errorf("remind: %w", rerr)
+	}
 	hb.At, hb.Ticks = st.now(), hb.Ticks+1
 	hb.Error, hb.Failures = "", 0
 	if err != nil {

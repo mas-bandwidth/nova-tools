@@ -419,7 +419,7 @@ command that loads it.
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor) |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 15) |
+| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16) |
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
@@ -447,6 +447,7 @@ command that loads it.
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch`, with a pending operation and stalled streams |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
+| goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm <prefix>` |
 | teardown | drops the tables, the view and every key under the prefix, of every epoch; `--confirm <prefix>` |
 
@@ -549,7 +550,22 @@ still holds is kept as acknowledged on the condition, in no inbox: the tick
 does not write it again until the condition has cleared (the tick then closes
 the acknowledgement) and come back.
 
-## 15. Sentinel cards
+## 15. Reminders
+
+The people who work on a sprint each have a goal: a text of what to keep doing,
+and a route that reaches them (`goal set <name> --file <path> --to
+file:<absolute path>`, `goal show [<name>]`, `goal drop <name>`). While the machine is
+RUNNING the tick pushes each person's goal down its route once every five
+minutes of running time (RemindEvery), and at once when the goal or its route
+is set or the machine starts; nothing is pushed while it is STOPPED. The file
+route replaces one file with a header line (`REMINDER <n> to <name> at <time>,
+sprint <prefix>, epoch <n>`) and the text, whole, so a watcher of the file sees
+one current reminder. A route that fails is one judgment, "a reminder could not
+be delivered", closed when a later delivery arrives. `where` shows each
+person's last push. The people and their goals are the sprint's, not the
+epoch's: a clear keeps them and resets their pushes.
+
+## 16. Sentinel cards
 
 A sentinel is a primary of kind sentinel, a stop in its stream, admitted by
 `add --stream <s> --sentinel <id>`, at the end of the stream or

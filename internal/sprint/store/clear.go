@@ -42,6 +42,11 @@ func (st *Store) Clear(ctx context.Context) (ClearResult, error) {
 			return res, fmt.Errorf("stopping the machine: %w", err)
 		}
 		res.Machine = before.StateWord()
+		// The people and their goals are the sprint's and are kept; their
+		// push times start again with the new sprint.
+		if err := st.ResetGoalPushes(ctx); err != nil {
+			return res, fmt.Errorf("resetting the goals' pushes: %w", err)
+		}
 	}
 	st, err := st.repin(ctx)
 	if err != nil {
