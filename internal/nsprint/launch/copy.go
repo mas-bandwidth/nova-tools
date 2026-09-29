@@ -57,7 +57,16 @@ func LaunchCopyEnv(wrapper string, l CopyLine, budget time.Duration, env []strin
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	_, ack, err := startDetachedArgsEnv(wrapper, []string{WrapperName, CopyArg, l.Copy}, l.String(), time.Now().Add(budget), env)
+	// Sanitize env: strip NOVA_CARD_HARNESS so no copy wrapper ever runs an
+	// obsolete external card harness that reads s:copies:card (#4234).
+	filtered := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, "NOVA_CARD_HARNESS=") {
+			filtered = append(filtered, e)
+		}
+	}
+	filtered = append(filtered, "NOVA_CARD_HARNESS=")
+	_, ack, err := startDetachedArgsEnv(wrapper, []string{WrapperName, CopyArg, l.Copy}, l.String(), time.Now().Add(budget), filtered)
 	if err != nil {
 		return "", err
 	}

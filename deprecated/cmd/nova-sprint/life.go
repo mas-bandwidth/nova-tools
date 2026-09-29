@@ -189,7 +189,14 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		if err != nil {
 			return refuse(errOut, "bench beat", "card env: "+err.Error()+" (the fleet play in rowan-tools writes it)")
 		}
-		launchEnv = env
+		var clean []string
+		for _, e := range env {
+			if !strings.HasPrefix(e, "NOVA_CARD_HARNESS=") {
+				clean = append(clean, e)
+			}
+		}
+		clean = append(clean, "NOVA_CARD_HARNESS=")
+		launchEnv = clean
 	}
 	copySession := benchCopySession(st, *bench, *copies, *wrapper, launchEnv, out, errOut)
 	return benchBeatLoop(signalCtx, ticker.C, life.BeatInterval, *bench, errOut,

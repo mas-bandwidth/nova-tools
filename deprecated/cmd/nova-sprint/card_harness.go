@@ -38,6 +38,7 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 	sprint := fs.String("sprint", "", "")
 	label := fs.String("label", "", "")
 	attempt := fs.String("attempt", "", "")
+	copyID := fs.String("copy", "", "")
 	addr := fs.String("redis", redisOr(getenv("NOVA_CARD_REDIS")), "")
 	out := fs.String("out", getenv("NOVA_CARD_OUT"), "")
 	job := fs.String("job", getenv("NOVA_CARD_JOB"), "")
@@ -48,6 +49,21 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return cardUsage(stderr, "takes flags, not positional arguments", cardRunWant)
 	}
 	a, err := strconv.Atoi(*attempt)
+	if *copyID != "" {
+		if *attempt == "" {
+			a = 1
+			if n, err := card.CopyNumber(*copyID); err == nil {
+				a = n
+			}
+			err = nil
+		}
+		if *sprint == "" {
+			*sprint = card.CopySprint
+		}
+		if *label == "" {
+			*label = card.CopyCardLabel(*copyID)
+		}
+	}
 	if *sprint == "" || *label == "" || err != nil || a < 1 {
 		return cardUsage(stderr, "wants --sprint, --label and --attempt (a positive integer)", cardRunWant)
 	}
@@ -65,6 +81,17 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return cardUsage(stderr, "missing "+strings.Join(missing, ", "), cardRunWant)
 	}
 	cfg.Sprint, cfg.Label, cfg.Attempt = *sprint, *label, a
+	if *copyID != "" {
+		cfg.CopyID = *copyID
+	} else if *sprint == card.CopySprint || *sprint == "copies" {
+		if strings.Contains(*label, "~") {
+			cfg.CopyID = *label
+		} else if idx := strings.LastIndex(*label, "-c"); idx != -1 {
+			cfg.CopyID = (*label)[:idx] + "~" + (*label)[idx+2:]
+		} else {
+			cfg.CopyID = *label
+		}
+	}
 	if cfg.OutDir, err = filepath.Abs(*out); err != nil {
 		return cardUsage(stderr, "--out: "+err.Error(), cardRunWant)
 	}

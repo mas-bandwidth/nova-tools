@@ -275,15 +275,40 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 
 	var body []byte
 	var field func(int) string
-	if cfg.CopyID != "" {
-		// 1 and 2 for a copy: its record, its rendered card.
+	isCopy := cfg.CopyID != "" || cfg.Sprint == CopySprint || cfg.Sprint == "copies"
+	if isCopy {
+		// 1 and 2 for a copy: its record, its rendered card (#4234).
+		if cfg.CopyID == "" {
+			candidate := cfg.Label
+			if strings.Contains(cfg.Label, "~") {
+				candidate = cfg.Label
+			} else if idx := strings.LastIndex(cfg.Label, "-c"); idx != -1 {
+				candidate = cfg.Label[:idx] + "~" + cfg.Label[idx+2:]
+			}
+			cfg.CopyID = candidate
+		}
 		cardKey = "task:" + cfg.CopyID
 		rec, err := st.Client().HGetAll(ctx, cardKey).Result()
 		if err != nil {
 			return refuse("copy read failed: " + err.Error())
 		}
 		if len(rec) == 0 {
-			return refuse("no copy " + cardKey)
+			altKey := "copy:" + cfg.CopyID
+			altRec, altErr := st.Client().HGetAll(ctx, altKey).Result()
+			if altErr == nil && len(altRec) > 0 {
+				cardKey = altKey
+				rec = altRec
+			} else if cfg.Label != cfg.CopyID {
+				lblRec, lblErr := st.Client().HGetAll(ctx, "task:"+cfg.Label).Result()
+				if lblErr == nil && len(lblRec) > 0 {
+					cardKey = "task:" + cfg.Label
+					rec = lblRec
+				} else {
+					return refuse("no copy " + cardKey)
+				}
+			} else {
+				return refuse("no copy " + cardKey)
+			}
 		}
 		cc := CopyCardFrom(cfg.CopyID, rec)
 		if cc.Notes, err = note.ForCopy(ctx, st.Client(), rec["stream"], rec["sprint"]); err != nil {

@@ -169,6 +169,51 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		keepRefusal(ctx, stderr, getenv, nil, true, line, card.WrapperReport{Code: 2, Card: line.Card(), Why: why})
 		return refuse(stderr, why)
 	}
+	if line.Sprint == card.CopySprint || line.Sprint == "copies" {
+		copyID := line.Label
+		if strings.Contains(line.Label, "~") {
+			copyID = line.Label
+		} else if idx := strings.LastIndex(line.Label, "-c"); idx != -1 {
+			copyID = line.Label[:idx] + "~" + line.Label[idx+2:]
+		}
+		cfg, err := copyConfig(line, getenv)
+		if err != nil {
+			ack("REFUSED " + err.Error())
+			rep := card.WrapperReport{Code: card.WrapperExitUsage, Card: copyID, Why: err.Error()}
+			keepRefusal(ctx, stderr, getenv, nil, true, line, rep)
+			fmt.Fprintln(stdout, rep.Line())
+			return card.WrapperExitUsage
+		}
+		if p := getenv("NOVA_CARD_HARNESS"); p != "" {
+			fmt.Fprintf(stderr, "nova-card: copy %s runs the Go harness in-process; NOVA_CARD_HARNESS=%s is a launched card's program, not a copy's (#4234)\n", copyID, oneline.Escape(p))
+		}
+		cfg.Copy = copyID
+		st, err := store.Open(ctx, getenv("NOVA_CARD_REDIS"))
+		if err != nil {
+			ack("REFUSED redis unavailable")
+			rep := card.WrapperReport{Code: card.WrapperExitRedis, Card: copyID, Why: "redis: " + err.Error()}
+			keepRefusal(ctx, stderr, getenv, nil, false, line, rep)
+			fmt.Fprintln(stdout, rep.Line())
+			return card.WrapperExitRedis
+		}
+		defer st.Close()
+		cfg.Store = st
+		cfg.Started = func() { ack("LAUNCHED") }
+		ledger := &card.CopyLedger{Client: st.Client(), Copy: copyID, Bench: cfg.Bench, Token: line.Token,
+			PushToken: getenv(harvestcopy.TokenEnv)}
+		if exe, err := os.Executable(); err == nil {
+			ledger.Askpass = exe
+		}
+		rep := card.RunWrapper(ctx, cfg, ledger)
+		if rep.Code != card.WrapperExitEnded {
+			ack("REFUSED " + rep.Why)
+		}
+		if rep.Outcome == "" && rep.Code != card.WrapperExitEnded {
+			keepRefusal(ctx, stderr, getenv, st, false, line, rep)
+		}
+		fmt.Fprintln(stdout, rep.Line())
+		return rep.Code
+	}
 	cfg, err := config(line, getenv)
 	if err != nil {
 		ack("REFUSED " + err.Error())

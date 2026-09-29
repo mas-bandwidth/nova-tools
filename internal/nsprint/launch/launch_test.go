@@ -51,7 +51,36 @@ func fixtureWrapper() int {
 	if err != nil {
 		return 3
 	}
-	l, err := ParseLine(strings.TrimSuffix(line, "\n"))
+	trimmed := strings.TrimRight(line, "\r\n")
+	if len(os.Args) >= 2 && os.Args[1] == CopyArg {
+		if len(os.Args) != 3 {
+			return 4
+		}
+		cl, err := ParseCopyLine(trimmed)
+		if err != nil || os.Args[2] != cl.Copy {
+			return 4
+		}
+		if cl.Copy == os.Getenv("NOVA_LAUNCH_TEST_REFUSE_LABEL") {
+			fixtureLaunchAck("REFUSED not dealt")
+			return 4
+		}
+		dir := os.Getenv("NOVA_LAUNCH_TEST_DIR")
+		if dir != "" {
+			name := filepath.Join(dir, "copy."+cl.Copy)
+			harness := os.Getenv("NOVA_CARD_HARNESS")
+			body := fmt.Sprintf("%d %s %s harness=%s\n", os.Getpid(), cl.Token, strings.Join(os.Args, " "), harness)
+			if err := os.WriteFile(name+".tmp", []byte(body), 0o644); err != nil {
+				return 5
+			}
+			if err := os.Rename(name+".tmp", name); err != nil {
+				return 5
+			}
+		}
+		fixtureLaunchAck("LAUNCHED")
+		time.Sleep(4 * testWait())
+		return 0
+	}
+	l, err := ParseLine(trimmed)
 	if err != nil || len(os.Args) != 2 || os.Args[1] != l.Card() {
 		return 4
 	}
