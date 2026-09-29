@@ -131,6 +131,7 @@ func TestMultiBatchDeniedMemberLengthReadsRefuseBeforeWrite(t *testing.T) {
 	}{
 		{"hstrlen", "hstrlen", true},
 		{"hlen", "hlen", false},
+		{"hmget", "hmget", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

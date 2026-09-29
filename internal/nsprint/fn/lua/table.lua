@@ -570,7 +570,6 @@ do
   function T.member_head(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
     local mkey = T.memberkey(d, id)
-    if not redis.acl_check_cmd('HLEN', mkey) then return nil, nil, T.refuse('NOPERM', 'HLEN', mkey) end
     local n = redis.pcall('HLEN', mkey)
     if type(n) == 'table' and n.err then
       if string.find(n.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
@@ -578,9 +577,6 @@ do
     end
     local h = {}
     if n == 0 then return h, false end
-    if not redis.acl_check_cmd('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name) then
-      return nil, nil, T.refuse('NOPERM', 'HMGET', mkey)
-    end
     local named = redis.call('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name)
     if named[1] then h.epoch = named[1] end
     if named[2] then h.revision = named[2] end
@@ -2862,6 +2858,11 @@ do
       physical_seen[key] = true
       local kind = T.kind(key)
       if kind ~= 'none' and kind ~= 'hash' then return T.refuse('WRONGTYPE', key, kind, 'hash', entry.id) end
+      if not redis.acl_check_cmd('HLEN', key) then return T.refuse('NOPERM', 'HLEN', key) end
+      local home = ds[entry.record_table]
+      if kind == 'hash' and not redis.acl_check_cmd('HMGET', key, 'epoch', 'revision', 'place:' .. home.name) then
+        return T.refuse('NOPERM', 'HMGET', key)
+      end
     end
     -- Bound every named field across all physical records before reading any
     -- field value. A guard and a mutation of one field count its before-value
