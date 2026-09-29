@@ -603,3 +603,41 @@ func TestAScreenNamesItsSample(t *testing.T) {
 		t.Errorf("exit %d stderr %q", code, errOut)
 	}
 }
+
+// With --json, every refusal prints one JSON object on stdout as well as its
+// line on stderr: a caller that parses stdout is never left with nothing.
+func TestJSONRefusalsPrintAnObject(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	for name, c := range map[string]struct {
+		stdin string
+		args  []string
+	}{
+		"empty payload":      {"", []string{"screen", "--json", "--root", tr.root, "-"}},
+		"not text":           {"a\x00b", []string{"screen", "--root", tr.root, "--json", "-"}},
+		"unknown flag":       {"x", []string{"screen", "--json", "--txt", "-"}},
+		"no payload named":   {"", []string{"screen", "--json", "--root", tr.root}},
+		"missing config":     {"x", []string{"screen", "--json", "--root", tr.path("typo"), "-"}},
+		"root and config":    {"x", []string{"corpus", "--json", "--root", tr.root, "--config", tr.path(".nova-privacy")}},
+		"corpus positional":  {"", []string{"corpus", "--json", "--root", tr.root, "extra"}},
+		"negative max":       {"x", []string{"screen", "--json", "--max", "-1", "--root", tr.root, "-"}},
+		"json=true spelling": {"", []string{"screen", "--json=true", "--root", tr.root, "-"}},
+	} {
+		code, out, errOut := runTool(c.stdin, c.args...)
+		if code != exitCouldNotRun || !strings.Contains(errOut, "run: ") {
+			t.Errorf("%s: exit %d stderr %q", name, code, errOut)
+			continue
+		}
+		var rep report
+		if err := json.Unmarshal([]byte(out), &rep); err != nil {
+			t.Errorf("%s: stdout is not one JSON object: %v %q", name, err, out)
+			continue
+		}
+		if rep.Exit != exitCouldNotRun || rep.Cleared || rep.Outcome != "COULD-NOT-RUN" || rep.Reason == "" || rep.Remedy == "" || rep.Verb != c.args[0] {
+			t.Errorf("%s: report %+v", name, rep)
+		}
+	}
+	if _, out, _ := runTool("", "screen", "--root", tr.root, "-"); out != "" {
+		t.Errorf("without --json a refusal prints nothing on stdout: %q", out)
+	}
+}

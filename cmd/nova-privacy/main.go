@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -68,7 +69,8 @@ corpus flags (name the corpus with --root, --config or --source):
                            either bound, the documents with the lowest hash of
                            their relative path, the same every run. A file
                            under two roots is one document
-  --json                   print one JSON object on stdout instead of lines
+  --json                   print one JSON object on stdout instead of lines,
+                           a refusal too (outcome COULD-NOT-RUN, exit 2)
   --max <n>                screen only: flag lines to print before one MORE
                            line, default 20, 0 prints all
 
@@ -116,11 +118,58 @@ func refuse(stderr io.Writer, where, what, next string) int {
 		next = "nova-privacy help"
 	}
 	fmt.Fprintf(stderr, "nova-privacy%s: %s; run: %s\n", where, oneline.Escape(what), next)
+	if rl, ok := stderr.(*refusalLog); ok {
+		rl.reasons = append(rl.reasons, what)
+		rl.remedies = append(rl.remedies, "run: "+next)
+	}
 	return exitCouldNotRun
+}
+
+// refusalLog is standard error with a record of every refusal written to it,
+// so that under --json a run that could not run still prints one object.
+type refusalLog struct {
+	io.Writer
+	reasons, remedies []string
+}
+
+// more adds a continuation line to the last refusal.
+func (rl *refusalLog) more(line string) {
+	if n := len(rl.reasons); n > 0 {
+		rl.reasons[n-1] += "; " + line
+	}
+}
+
+// wantsJSON reports whether the flags before any -- ask for --json.
+func wantsJSON(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || name != "json" {
+			continue
+		}
+		if !hasVal {
+			return true
+		}
+		if b, err := strconv.ParseBool(val); err == nil && b {
+			return true
+		}
+	}
+	return false
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	defer verbflag.Recover(stdout, "nova-privacy", usage, &code)
+	if len(args) > 0 && (args[0] == "screen" || args[0] == "corpus") && wantsJSON(args[1:]) {
+		rl := &refusalLog{Writer: stderr}
+		stderr = rl
+		defer func() {
+			if code == exitCouldNotRun && len(rl.reasons) > 0 {
+				writeRefusalJSON(stdout, args[0], rl)
+			}
+		}()
+	}
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; screen checks a file, corpus shows what it is checked against", "")
 	}
@@ -267,6 +316,9 @@ func load(verb string, c *corpusFlags, stderr io.Writer) (privacy.Corpus, bool) 
 				continue
 			}
 			fmt.Fprintf(stderr, "  %s\n", oneline.Escape(line))
+			if rl, ok := stderr.(*refusalLog); ok {
+				rl.more(line)
+			}
 		}
 		return privacy.Corpus{}, false
 	}
@@ -524,6 +576,19 @@ type jsonHit struct {
 type privacyBounds struct {
 	Rare       int `json:"rare"`
 	Background int `json:"background"`
+}
+
+// writeRefusalJSON is the --json object of a run that could not run: the
+// outcome COULD-NOT-RUN, exit 2, and every refusal's reason and remedy.
+func writeRefusalJSON(stdout io.Writer, verb string, rl *refusalLog) {
+	rep := report{
+		Verb: verb, Outcome: "COULD-NOT-RUN", Exit: exitCouldNotRun, Cleared: false,
+		Reason: strings.Join(rl.reasons, "; "), Remedy: strings.Join(rl.remedies, "; "),
+		Sources: []jsonSource{}, Roots: []jsonRoot{},
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(rep)
 }
 
 func writeJSON(stdout, stderr io.Writer, verb string, code int, c privacy.Corpus, res privacy.Result) int {

@@ -290,7 +290,10 @@ count. `--max` caps the flag lines (20 by default, 0 prints all).
 `--json` prints one JSON object on standard output instead: `verb`, `outcome`,
 `exit`, `cleared`, `reason`, `remedy`, `config`, the counts, `sources`, `roots`,
 `flags`, `structure`, `warnings`, `bounds` and `sample` (`found`, `read`,
-`bytes`, `rule`, `max_docs`, `max_bytes`). The exit code is the same.
+`bytes`, `rule`, `max_docs`, `max_bytes`). A run that could not run (exit 2) under `--json` prints
+one object too, with `outcome` `COULD-NOT-RUN`, `exit` 2, `cleared` false,
+and every refusal's `reason` and `remedy`; the refusal lines still go to
+standard error. The exit code is the same.
 
 ## Tests
 

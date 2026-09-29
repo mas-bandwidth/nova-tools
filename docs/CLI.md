@@ -2282,7 +2282,8 @@ background flat *.md journal
 Paths are relative to the file. `marker`, `entry`, `stop`, `refuse`, `warn`,
 `allow`, `max-docs` and `max-bytes` are optional; `nova-privacy help` lists them and
 SPEC-PRIVACY.md defines them. Pipe a draft in with `nova-privacy screen --root
-<dir> -`. `--json` prints one JSON object instead of lines.
+<dir> -`. `--json` prints one JSON object instead of lines, on every exit,
+a refusal included.
 
 Exit codes: 0 `UNPROVEN-CLEAN`, 1 `FLAGGED`, 2 could not run, 3 could not
 verify (`CORPUS-UNREADABLE`, `NO-PRIVATE-CORPUS`, `PAYLOAD-HAS-NO-WORDS`,
