@@ -131,3 +131,57 @@ func TestFrontierCardGoesOnlyToAWorkerAdvertisingIt(t *testing.T) {
 	}
 	cleanMoves(t, c, "frontier")
 }
+
+// TestReadTierFollowsCardOnPrimary (#4315): when a primary carries read_tier
+// (frontier), its read copy gets tier frontier and routes to a worker advertising frontier.
+func TestReadTierFollowsCardOnPrimary(t *testing.T) {
+	t.Parallel()
+	c := start(t)
+	ctx := context.Background()
+	plain := frontierWorker(t, c, "bench:plain2", "")            // advertises flash,pro
+	fbench := frontierWorker(t, c, "bench:fbench2", "frontier")  // advertises frontier
+	freader := frontierWorker(t, c, "bench:freader", "frontier") // advertises frontier
+
+	// primary with read_tier = frontier
+	_, err := taskcard.Push(ctx, c, taskcard.PushRequest{
+		ID: "rt1", Where: "waiting", Stream: mvStream,
+		Sprint: sprint, Kind: "build", Ref: "nova-tools#4315", Origin: "issue:nova-tools#4315", Title: "primary rt1",
+		Repo: "mas-bandwidth/nova-tools", By: "rowan",
+		Fields: []string{
+			"route", taskcard.RouteFrontier, "read_tier", "frontier", "base", "dev", "base_sha", baseSHA,
+			"paths", "internal/x.go", "done_when", "go test ./internal/x -run TestX passes",
+		},
+	})
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	// Deal to fbench
+	d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: fbench, IDs: []string{"rt1"}, By: "rowan"})
+	if err != nil || len(d) != 1 {
+		t.Fatalf("deal: %v", err)
+	}
+	w, err := taskcard.Work(ctx, c, fbench, "rowan", 0, true)
+	if err != nil || len(w.IDs) != 1 {
+		t.Fatalf("work: %v", err)
+	}
+	recordPR(c, 4315, head(1))
+	e, err := taskcard.End(ctx, c, taskcard.EndRequest{
+		IDs: w.IDs, OK: true, Repo: "nova-tools", PR: "4315",
+		Head: head(1), By: "rowan",
+		Fields: []string{"line1", "RESULT: ok", "line2", "DONE", "branch", "x/y", "commit", head(1)[:12]},
+	})
+	if err != nil || len(e) != 1 || e[0].To != "review" || e[0].Next == "" {
+		t.Fatalf("end ok: %v %v", e, err)
+	}
+	for _, cid := range strings.Split(e[0].Next, ",") {
+		r := c.HMGet(ctx, taskcard.Key(cid), "leg", "tier", "route", "consumer", "read_tier").Val()
+		if fmt.Sprint(r) != "[read frontier read "+freader.String()+" frontier]" {
+			t.Fatalf("read copy %s: leg tier route consumer read_tier = %v; want read frontier read %s frontier", cid, r, freader)
+		}
+	}
+	if n := c.ZCard(ctx, plain.KeyAt(0, "ready")).Val(); n != 0 {
+		t.Fatalf("the plain (pro) bench holds %d read copies; primary had read_tier=frontier", n)
+	}
+	cleanMoves(t, c, "read_tier")
+}

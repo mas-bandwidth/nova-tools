@@ -56,6 +56,9 @@ type CopyCard struct {
 	// held to it (it is green at the PR head already): its gate is the
 	// finding test the fix names (GateTest).
 	Test string
+	// ReadTier is the primary's READ-TIER header (#4315): frontier, pro, flash.
+	// A read leg routes to ReadTier if set, defaulting to RoutePro.
+	ReadTier string
 	// Review is the REVIEW line of the verdict that moved the primary out
 	// of review (#4072), carried to its next copy; "" when it never failed.
 	Review string
@@ -83,7 +86,8 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"]}
+		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"],
+		ReadTier: rec["read_tier"]}
 }
 
 // WorkerLine is the copy's WORKER value: model=<m> harness=<h> child=<c>, each
@@ -222,8 +226,22 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 		fmt.Fprintf(&sb, "DO: read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10. "+
 			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n",
 			prRef, c.Head, c.Base, c.BaseSHA)
+		fmt.Fprintf(&sb, "DIFF: git diff --stat %s..%s (or inspect your mirror/checkout range %s..%s)\n",
+			c.BaseSHA, c.Head, c.BaseSHA, c.Head)
+		sb.WriteString("CI: CI at head must be green (all checks OK); any failing check or red gate caps the score at 7.\n")
+		sb.WriteString("RUBRIC: score against DONE-WHEN with evidence at head (file:line or the failing check); the standard's test rules hold (unit tests never wait on wall clock, class tests under 2 s, redis in functional tests); only tens land on product code; a score under 10 names the work to 10.\n")
+		if c.DoneWhen != "" {
+			fmt.Fprintf(&sb, "PRIMARY-DONE-WHEN: %s\n", oneLine(c.DoneWhen))
+		}
+		if c.Paths != "" {
+			fmt.Fprintf(&sb, "PRIMARY-PATHS: %s\n", oneLine(c.Paths))
+		}
 		fmt.Fprintf(&sb, "END: nova-friend done --as %s --id %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'; "+
 			"when you could not read it: nova-friend done --as %s --id %s --fail 'ABSTAIN <why>'.\n", who, c.ID, who, c.ID)
+		if strings.TrimSpace(c.Body) != "" {
+			sb.WriteString("\n---\n")
+			sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
+		}
 	case "fix":
 		onto := oneLine(c.Branch)
 		if onto == "" {
@@ -248,6 +266,9 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 		fmt.Fprintf(&sb, "GATE: nova-friend done --ok runs TEST at base-sha %s (it must fail) and at your head (it must pass) in --repo, then nova-ci local, before it records anything, and refuses the end on a red.\n", c.BaseSHA)
 		fmt.Fprintf(&sb, "END: %s (the PR's number, its head commit and your checkout); when you cannot: %s.\n", endOK, endFail)
 		sb.WriteString(beat)
+		if f := oneLine(c.Finding); f != "" {
+			fmt.Fprintf(&sb, "\nA read of an earlier copy found:\n  %s\n", f)
+		}
 		sb.WriteString("\n---\n")
 		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
 	}
@@ -310,14 +331,30 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		// the PR record at the head and ends the copy from RESULT.md.
 		done = fmt.Sprintf("RESULT.md line 2 is the SCORE line for %s at head %s; the wrapper records it on pr:%s:%s and ends this copy",
 			prRef, c.Head, prkey.Name(c.Repo), c.PR)
-		body = fmt.Sprintf("Read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10.\n"+
-			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n"+
-			"RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is exactly\n"+
-			"  %s\n"+
-			"or, when you could not read it:\n"+
-			"  ABSTAIN <why>\n"+
-			"Write RESULT.md and exit. Never run nova-sprint, never push, never comment on the PR: the wrapper reads line 2 and ends this copy.\n",
-			prRef, c.Head, c.Base, c.BaseSHA, ScoreLine)
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10.\n"+
+			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n",
+			prRef, c.Head, c.Base, c.BaseSHA)
+		fmt.Fprintf(&sb, "DIFF: git -C repo diff --stat %s..%s (or inspect repo/ checked out at head %s against base %s)\n",
+			c.BaseSHA, c.Head, c.Head, c.BaseSHA)
+		sb.WriteString("CI: CI at head must be green (all checks OK); inspect CI status at head; any failing check or red gate caps the score at 7.\n")
+		sb.WriteString("RUBRIC: score against DONE-WHEN with evidence at head (file:line or the failing check); the standard's test rules hold (unit tests never wait on wall clock, class tests under 2 s, redis in functional tests); only tens land on product code; a score under 10 names the work to 10.\n")
+		if c.DoneWhen != "" {
+			fmt.Fprintf(&sb, "PRIMARY-DONE-WHEN: %s\n", oneLine(c.DoneWhen))
+		}
+		if c.Paths != "" {
+			fmt.Fprintf(&sb, "PRIMARY-PATHS: %s\n", oneLine(c.Paths))
+		}
+		sb.WriteString("RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is exactly\n" +
+			"  " + ScoreLine + "\n" +
+			"or, when you could not read it:\n" +
+			"  ABSTAIN <why>\n" +
+			"Write RESULT.md and exit. Never run nova-sprint, never push, never comment on the PR: the wrapper reads line 2 and ends this copy.\n")
+		if strings.TrimSpace(c.Body) != "" {
+			sb.WriteString("\n---\n")
+			sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
+		}
+		body = sb.String()
 	case c.Leg == "fix":
 		// The model commits the fix on the PR's branch in repo/ and exits
 		// (#4270): repo/ is staged at the PR's head (base-sha below), the
@@ -364,13 +401,17 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		body = sb.String()
 	}
 	// The copy carries the primary's route, one of the three model types
-	// (an unknown or absent one is flash); a read is always pro.
+	// (an unknown or absent one is flash); a read follows ReadTier (default pro).
 	route := c.Route
 	if !cardhdr.IsRoute(route) {
 		route = RouteFlash
 	}
 	if c.Leg == "read" {
-		route = RoutePro
+		if cardhdr.IsRoute(c.ReadTier) {
+			route = c.ReadTier
+		} else {
+			route = RoutePro
+		}
 	}
 	sha := c.Head
 	if sha == "" {
@@ -416,6 +457,10 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	if r := oneLine(c.Review); r != "" {
 		// the last copy failed and a review sent the card on: this copy reads why
 		fmt.Fprintf(&b, "\nAn earlier copy of this card failed and went to review; the verdict:\n  %s\n", r)
+	}
+	if f := oneLine(c.Finding); f != "" && c.Leg != "fix" {
+		// an earlier read found defects: recut copy reads the finding
+		fmt.Fprintf(&b, "\nA read of an earlier copy found:\n  %s\n", f)
 	}
 	if notes := notesBlock(c.Notes); notes != "" {
 		b.WriteString(notes)

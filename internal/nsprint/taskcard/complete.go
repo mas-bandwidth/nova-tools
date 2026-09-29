@@ -35,6 +35,7 @@ type Spec struct {
 	Route, Who, Kind, Type, Repo, Base, BaseSHA, Paths, Test string
 	DependsOn, DoneWhen, Est, Priority, Source, Task, Body   string
 	Stream, Origin                                           string // header lines that fill the push's own options
+	ReadTier                                                 string
 }
 
 // specFields maps each header key an issue may carry to the record field it
@@ -44,6 +45,7 @@ var specFields = []struct{ key, field string }{
 	{"BASE", "base"}, {"base-sha", "base_sha"}, {"PATHS", "paths"}, {"TEST", "test"},
 	{"DEPENDS-ON", "depends_on"}, {"DONE-WHEN", "done_when"}, {"EST", "est"}, {"PRIORITY", "priority"},
 	{"SOURCE", "source"}, {"TASK", "task"}, {"STREAM", "stream"}, {"ORIGIN", "origin"},
+	{"READ-TIER", "read_tier"},
 }
 
 func (s *Spec) slot(field string) *string {
@@ -82,6 +84,8 @@ func (s *Spec) slot(field string) *string {
 		return &s.Stream
 	case "origin":
 		return &s.Origin
+	case "read_tier":
+		return &s.ReadTier
 	case "body":
 		return &s.Body
 	}
@@ -134,10 +138,11 @@ var (
 // accepts; a friend needs nothing more than the record.
 func (s *Spec) Complete(ref, origin string) []string {
 	for _, p := range []*string{&s.Route, &s.Who, &s.Kind, &s.Type, &s.Repo, &s.Base, &s.BaseSHA, &s.Paths,
-		&s.Test, &s.DependsOn, &s.DoneWhen, &s.Est, &s.Priority, &s.Source, &s.Task} {
+		&s.Test, &s.DependsOn, &s.DoneWhen, &s.Est, &s.Priority, &s.Source, &s.Task, &s.ReadTier} {
 		*p = strings.TrimSpace(onelineRE.ReplaceAllString(*p, " "))
 	}
 	s.Route = strings.ToLower(s.Route)
+	s.ReadTier = strings.ToLower(s.ReadTier)
 	if s.Repo == "" {
 		if m := refRE.FindStringSubmatch(ref); m != nil {
 			s.Repo = m[1]

@@ -117,6 +117,7 @@ type cardDoc struct {
 	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
 	Task           string // TASK: <sentence>, the PR title's sentence when present (#3712); "" is absent
 	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
+	ReadTier       string // READ-TIER: frontier|pro|flash, model type for a read leg; absent is pro (#4315)
 	StreamPaths    string // PATHS as the stream holds them (ws.SplitPaths, comma-joined), set by push's gate (#4322)
 	Payload        string
 }
@@ -180,6 +181,11 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
+	readTierValue, readTierDeclared := header["READ-TIER"]
+	readTier, err := parseReadTier(readTierValue, readTierDeclared)
+	if err != nil {
+		return cardDoc{}, err
+	}
 	stream, origin := strings.TrimSpace(header["STREAM"]), strings.TrimSpace(header["ORIGIN"])
 	if strings.ContainsAny(stream, "\r\n\t") || strings.ContainsAny(origin, "\r\n\t") {
 		return cardDoc{}, fmt.Errorf("STREAM: and ORIGIN: are one line each")
@@ -219,6 +225,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		DoneWhen:       header["DONE-WHEN"],
 		Task:           strings.TrimSpace(header["TASK"]),
 		Leg:            leg,
+		ReadTier:       readTier,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }
@@ -242,6 +249,18 @@ func parseRoute(value string, declared bool) (string, error) {
 		return value, nil
 	}
 	return "", fmt.Errorf("ROUTE: %q is not %s", value, cardhdr.RouteList)
+}
+
+// parseReadTier accepts READ-TIER: frontier, pro or flash. An absent line is
+// pro; an empty READ-TIER line or any other value is refused, never guessed.
+func parseReadTier(value string, declared bool) (string, error) {
+	if !declared {
+		return RoutePro, nil
+	}
+	if cardhdr.IsRoute(value) {
+		return value, nil
+	}
+	return "", fmt.Errorf("READ-TIER: %q is not %s", value, cardhdr.RouteList)
 }
 
 // parsePriority accepts PRIORITY: <integer>, the ZADD score card push gives

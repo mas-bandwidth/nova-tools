@@ -423,6 +423,19 @@ reader sees it (practices 4 and 23 as a gate the wrapper runs, not prose the mod
 when a run shows a class the gate lets through. **Rollback:** practices 4 and 23 as prose.
 **Held by:** Rowan.
 
+## 28. Quality: a read gets the card, its evidence, the diff and CI at head, and scores against DONE-WHEN and the standard's rules; tier per leg
+
+A read copy's card carries the primary's full card context (EVIDENCE, PATHS, RECEIPTS,
+DONE-WHEN, the quoted issue/task body), the diff range (`base_sha..head`), CI at head with
+expectations (all checks green, failing checks cap score at 7), and the rubric (evidence at head,
+standard test rules, only tens land on product code; a score under 10 names the work to 10).
+The read tier follows the card's `READ-TIER` (`frontier`, `pro`, `flash`; default `pro`).
+When a reader scores under 10, the finding names the work to 10 and goes back into the card
+text on recut (nova-tools#4315).
+**Measured:** `TestReadTierFollowsCard`, `TestReadCopyCarriesFullContextDiffAndRubric`,
+`TestFindingGoesBackIntoCardTextOnRecut`, and `TestReadTierFollowsCardOnPrimary`.
+**Held by:** Emma.
+
 ## The depends-on token (#2636)
 
 `depends-on` is not one of the four §5 tokens above, and it is not one of the twelve

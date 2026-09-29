@@ -1,6 +1,7 @@
 package card_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -107,5 +108,120 @@ func TestCopyCardCarriesTheTestLine(t *testing.T) {
 	body, _ = card.RenderCopy(card.CopyCardFrom("p1~2", rec))
 	if strings.Contains(string(body), "\nTEST:") {
 		t.Fatalf("a read carries a TEST line:\n%s", body)
+	}
+}
+
+// TestReadTierFollowsCard (#4315): a read copy routes to its card's READ-TIER
+// (frontier, pro, flash), defaulting to pro.
+func TestReadTierFollowsCard(t *testing.T) {
+	t.Parallel()
+	base := card.CopyCard{ID: "p1~1", Primary: "p1", Leg: "read", Kind: "read", Repo: "mas-bandwidth/nova-tools",
+		Base: "dev", BaseSHA: strings.Repeat("ab", 20), Paths: "internal/x.go", DoneWhen: "TestX passes",
+		Title: "one verb", Origin: "issue:nova-tools#4315", Stream: "swarm: cards", Consumer: "bench:b", Body: "the issue",
+		PR: "4315", Head: strings.Repeat("cd", 20)}
+	for _, tc := range []struct{ readTier, want string }{
+		{card.RouteFrontier, "frontier"},
+		{card.RouteFlash, "flash"},
+		{card.RoutePro, "pro"},
+		{"", "pro"},
+		{"invalid", "pro"},
+	} {
+		cc := base
+		cc.ReadTier = tc.readTier
+		body, err := card.RenderCopy(cc)
+		if err != nil {
+			t.Fatalf("%q: %v", tc.readTier, err)
+		}
+		if !strings.Contains(string(body), "\nROUTE: "+tc.want+"\n") {
+			t.Fatalf("%q: no ROUTE: %s line:\n%s", tc.readTier, tc.want, body)
+		}
+	}
+}
+
+// TestReadCopyCarriesFullContextDiffAndRubric (#4315): a read copy's card
+// carries the primary's full context (PATHS, DONE-WHEN, EVIDENCE/body),
+// the diff range (base_sha..head), CI expectations, and the scoring rubric.
+func TestReadCopyCarriesFullContextDiffAndRubric(t *testing.T) {
+	t.Parallel()
+	c := card.CopyCard{ID: "p1~2", Primary: "p1", Leg: "read", Kind: "read", Repo: "mas-bandwidth/nova-tools",
+		Base: "dev", BaseSHA: strings.Repeat("ab", 20), Paths: "internal/x.go", DoneWhen: "TestX passes",
+		Title: "one verb", Origin: "issue:nova-tools#4315", Stream: "swarm: cards", Consumer: "bench:b",
+		PR: "4315", Head: strings.Repeat("cd", 20),
+		Body: "EVIDENCE: 100% green\nRECEIPTS: pass\nfix the bug"}
+	body, err := card.RenderCopy(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"DIFF: git -C repo diff --stat " + strings.Repeat("ab", 20) + ".." + strings.Repeat("cd", 20),
+		"CI: CI at head must be green (all checks OK); inspect CI status at head; any failing check or red gate caps the score at 7.",
+		"RUBRIC: score against DONE-WHEN with evidence at head (file:line or the failing check); the standard's test rules hold (unit tests never wait on wall clock, class tests under 2 s, redis in functional tests); only tens land on product code; a score under 10 names the work to 10.",
+		"PRIMARY-DONE-WHEN: TestX passes",
+		"PRIMARY-PATHS: internal/x.go",
+		"> EVIDENCE: 100% green",
+		"> RECEIPTS: pass",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("read card lacks %q:\n%s", want, s)
+		}
+	}
+}
+
+// TestFindingGoesBackIntoCardTextOnRecut (#4315): when an earlier copy had a finding
+// under 10, the recut work copy displays it in the card text.
+func TestFindingGoesBackIntoCardTextOnRecut(t *testing.T) {
+	t.Parallel()
+	rec := map[string]string{
+		"primary": "p1", "leg": "work", "kind": "build", "repo": "mas-bandwidth/nova-tools",
+		"base": "dev", "base_sha": strings.Repeat("ab", 20), "paths": "internal/x.go", "done_when": "TestX passes",
+		"title": "one verb", "finding": "SCORE who=reader head=cdcdcdcd score=7/10: work to 10 is add negative test",
+	}
+	// model work copy
+	body, err := card.RenderCopy(card.CopyCardFrom("p1~3", rec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "\nA read of an earlier copy found:\n  SCORE who=reader head=cdcdcdcd score=7/10: work to 10 is add negative test\n") {
+		t.Fatalf("model work card lacks finding:\n%s", body)
+	}
+	// friend work copy
+	rec["consumer"] = "friend:rowan"
+	fbody, err := card.RenderCopy(card.CopyCardFrom("p1~3", rec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fbody), "\nA read of an earlier copy found:\n  SCORE who=reader head=cdcdcdcd score=7/10: work to 10 is add negative test\n") {
+		t.Fatalf("friend work card lacks finding:\n%s", fbody)
+	}
+}
+
+// TestLintCardAcceptsReadTier (#4315): card push lint accepts valid READ-TIER
+// (frontier, pro, flash) and refuses any other value.
+func TestLintCardAcceptsReadTier(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	validCard := []byte("RESULT: card-1 sha=0123456789ab\n" +
+		"BASE: dev\n" +
+		"base-repo: https://github.com/mas-bandwidth/nova-tools\n" +
+		"base-sha: " + strings.Repeat("ab", 20) + "\n" +
+		"PATHS: internal/x.go\n" +
+		"DEPENDS-ON: none\n" +
+		"DONE-WHEN: TestX passes\n" +
+		"READ-TIER: frontier\n\nbody\n")
+	if err := card.LintCard(ctx, validCard); err != nil {
+		t.Fatalf("valid READ-TIER refused: %v", err)
+	}
+
+	invalidCard := []byte("RESULT: card-1 sha=0123456789ab\n" +
+		"BASE: dev\n" +
+		"base-repo: https://github.com/mas-bandwidth/nova-tools\n" +
+		"base-sha: " + strings.Repeat("ab", 20) + "\n" +
+		"PATHS: internal/x.go\n" +
+		"DEPENDS-ON: none\n" +
+		"DONE-WHEN: TestX passes\n" +
+		"READ-TIER: ultra\n\nbody\n")
+	if err := card.LintCard(ctx, invalidCard); err == nil || !strings.Contains(err.Error(), "READ-TIER: \"ultra\" is not") {
+		t.Fatalf("invalid READ-TIER accepted: %v", err)
 	}
 }

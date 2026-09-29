@@ -3020,7 +3020,7 @@ local TM = {
   LIVE_MS = 90000,
   -- the primary's fields a copy carries for its consumer's brief
   CARRY = { 'kind', 'ref', 'origin', 'title', 'repo', 'pr', 'head', 'base', 'base_sha', 'paths', 'done_when', 'tier',
-    'route', 'stream', 'review', 'body', 'branch', 'test' },
+    'route', 'stream', 'review', 'body', 'branch', 'test', 'finding', 'read_tier' },
   -- a card end's result fields (written onto the primary and the copy)
   RESULT = { line1 = true, line2 = true, check = true, paths = true, branch = true, commit = true, pr = true,
     repo = true, head = true, base = true, base_sha = true, model = true, route = true, wall = true, evidence = true,
@@ -3220,7 +3220,7 @@ end
 -- consumer declared. author, when given, is the author a card end is about
 -- to write (the record does not name it yet).
 function TM.may(c, d, id, leg, author)
-  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind', 'route')
+  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind', 'route', 'read_tier')
   local tier, kind = TK.str(f[4]), TK.str(f[5])
   if tier == '' and TM.MODEL_TYPES[TK.str(f[6])] then tier = TK.str(f[6]) end
   if leg == 'read' then
@@ -3235,7 +3235,8 @@ function TM.may(c, d, id, leg, author)
       for _, r in ipairs(readers) do s[r] = true end
       if not TM.names(s, c) then return 'READER ' .. c .. ' is not in readers' end
     end
-    tier, kind = 'pro', 'read'
+    local rt = TK.str(f[7])
+    tier, kind = TM.MODEL_TYPES[rt] and rt or 'pro', 'read'
   elseif not TM.admits(f[1], c) then
     return 'WHO task:' .. id .. ' is ' .. TK.str(f[1])
   end
@@ -3300,8 +3301,10 @@ function TM.cut(c, id, leg, o)
   if leg == 'read' then
     h[#h + 1] = 'kind'
     h[#h + 1] = 'read'
+    local rt = TK.str(redis.call('HGET', 'task:' .. id, 'read_tier'))
+    local rtier = TM.MODEL_TYPES[rt] and rt or 'pro'
     h[#h + 1] = 'tier'
-    h[#h + 1] = 'pro'
+    h[#h + 1] = rtier
     h[#h + 1] = 'route'
     h[#h + 1] = 'read'
   elseif leg == 'fix' then
@@ -3689,6 +3692,8 @@ function TM.finish(id, o)
           end
           why = TK.str(get.finding)
           if why == '' then why = text end
+          pf[#pf + 1] = 'finding'
+          pf[#pf + 1] = finding
           -- a second read under TM.PASS is the author's fail (#4072): review
           local author = TK.str(pr[4])
           local low = (tonumber(redis.call('HGET', 'task:' .. pid, 'low_reads')) or 0) + 1
