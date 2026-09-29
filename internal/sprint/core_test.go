@@ -398,7 +398,7 @@ func TestCheckFindsEveryBrokenRule(t *testing.T) {
 	s.Readers.Put(&Card{ID: "s1-3.r1.reader-a", Row: "reader-a", Col: Asked, Score: s.Work.Card("s1-3").Score,
 		Fields: map[string]string{"primary": "s1-3", "reader": "reader-a", "attempt": "1"}}) // rule 3
 	s.StreamCtl("s1").Fields["state"] = StreamStopped // rule 9
-	s.Work.Card("s1-1").Fields["head"] = "other"     // rule 6
+	s.Work.Card("s1-1").Fields["head"] = "other"      // rule 6
 	for _, tb := range []*Table{s.Work, s.Readers, s.Merge, s.Fleet} {
 		tb.cells, tb.byPrimary = nil, nil
 	}

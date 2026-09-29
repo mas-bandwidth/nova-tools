@@ -157,9 +157,9 @@ func SortCards(cs []*Card) {
 // runs at (given, never read), the tables it loaded, and the open judgment
 // notifications. A table the step did not load is nil.
 type Snapshot struct {
-	Now                          time.Time
+	Now                         time.Time
 	Work, Readers, Merge, Fleet *Table
-	Open                         []Open
+	Open                        []Open
 }
 
 // T is the loaded table by logical name.

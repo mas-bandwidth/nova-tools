@@ -60,7 +60,7 @@ func pick(p *Plan, sel Sel, all []*Card, streamOf func(*Card) string, eligible f
 	return out
 }
 
-func rowOf(c *Card) string    { return c.Row }
+func rowOf(c *Card) string       { return c.Row }
 func fieldStream(c *Card) string { return c.F("stream") }
 
 // primaryCard looks a primary up by id: placed or kept.
