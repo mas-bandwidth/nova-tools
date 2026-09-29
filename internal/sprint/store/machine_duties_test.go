@@ -185,8 +185,8 @@ func TestCRAckOfWorkFailedLeavesAPrimaryWithNoJudgment(t *testing.T) {
 	}
 }
 
-// PROBE D2: an ack of a tick judgment whose condition still holds: the tick
-// writes it again (at the next full read).
+// PROBE D2: an ack of a tick judgment whose condition still holds is refused:
+// wait is what answers it.
 func TestCRAckedTickJudgmentComesBack(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -197,12 +197,16 @@ func TestCRAckedTickJudgmentComesBack(t *testing.T) {
 	if len(o) != 1 {
 		t.Fatalf("no member: %d", len(o))
 	}
-	h.must(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
+	if res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"})); len(res.Refused) != 1 {
+		t.Fatalf("ack of no member up: %+v", res)
+	}
 	for i := 0; i < 5; i++ {
 		h.tick(time.Minute + time.Second)
 		h.machine()
 	}
-	t.Logf("NNoMember written %d times after one ack over 5 minutes", h.written(sprint.NNoMember))
+	if n := h.written(sprint.NNoMember); n != 1 || len(h.openOf(sprint.NNoMember)) != 1 {
+		t.Fatalf("written %d, open %d", n, len(h.openOf(sprint.NNoMember)))
+	}
 }
 
 // PROBE 3: every member down with cards in ready and working; a member up.

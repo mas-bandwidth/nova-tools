@@ -194,7 +194,7 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 	}
 	n := open[0].Note
 	if n.Kind != sprint.Judgment || !strings.Contains(n.What, "friend-a") || !strings.Contains(n.What, "blocker") ||
-		strings.Join(n.Decisions, "|") != "goal set friend-a --to <route>|goal drop friend-a" {
+		strings.Join(n.Decisions, "|") != "goal set friend-a --to <route>|goal drop friend-a|ack" {
 		t.Fatalf("the judgment: %+v", n)
 	}
 	// It keeps failing, tick after tick and attempt after attempt: still one.

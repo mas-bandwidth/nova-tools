@@ -1064,9 +1064,17 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
-	if err := st.SetReview(context.Background(), pos[0], at); err != nil {
+	res, held, err := st.Wait(context.Background(), pos[0], at)
+	if err == nil && len(res.Refused) > 0 {
+		err = fmt.Errorf("%s", res.Refused[0].Why)
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if held {
+		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+		return 0
 	}
 	fmt.Fprintf(stdout, "WAIT OK note=%s review=%s\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 	return 0

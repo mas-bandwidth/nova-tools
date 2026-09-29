@@ -27,7 +27,7 @@ func (p *probe) ctl(stream string) *sprint.Card { return p.snap().StreamCtl(stre
 
 // R6b. two broken reads, the coordinator acks both judgments in ONE ack:
 // reads are exhausted and no judgment is open.
-func TestAckingBothBrokenReadsInOneCallExhaustsTheReads(t *testing.T) {
+func TestAckOfBrokenReadsIsRefused(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
@@ -43,16 +43,18 @@ func TestAckingBothBrokenReadsInOneCallExhaustsTheReads(t *testing.T) {
 	if len(nids) != 2 {
 		t.Fatalf("open %v", nids)
 	}
-	p.do("ack both", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
-	o := p.openOn("s1-1")
-	if len(o) != 1 || o[0].Note.Type != sprint.NReadsExhausted {
-		t.Errorf("two broken judgments acked in one call leave s1-1 in review, reads exhausted, with open judgments %v", o)
+	r := p.do("ack both", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
+	if len(r.Moved) != 0 || len(r.Refused) != 2 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework --group") {
+		t.Errorf("ack of two broken reads: %+v", r)
+	}
+	if o := p.openOn("s1-1"); len(o) != 2 {
+		t.Errorf("after the refused ack: %v", o)
 	}
 }
 
 // ok + broken, ci red; ack the broken (ci red still open); ci green
 // closes the last judgment: reads exhausted, no judgment open.
-func TestCIGreenClosingTheLastJudgmentExhaustsTheReads(t *testing.T) {
+func TestCIGreenLeavesTheBrokenReadOpen(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
@@ -62,11 +64,13 @@ func TestCIGreenClosingTheLastJudgmentExhaustsTheReads(t *testing.T) {
 	p.read(rs[0].F("reader"), rs[0].ID, "ok")
 	p.do("ci red", CIStep(sprint.CIReq{Sel: ids("s1-1"), Red: true, Run: "r1"}))
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
-	p.do("ack broken", AckStep(sprint.AckReq{Notes: []string{p.noteOf("s1-1", sprint.NReadBroken)}, Reason: "x"}))
+	if r := p.do("ack broken", AckStep(sprint.AckReq{Notes: []string{p.noteOf("s1-1", sprint.NReadBroken)}, Reason: "x"})); len(r.Refused) != 1 {
+		t.Fatalf("ack of a broken read: %+v", r)
+	}
 	p.do("ci green", CIStep(sprint.CIReq{Sel: ids("s1-1"), Run: "r2"}))
 	o := p.openOn("s1-1")
-	if len(o) != 1 || o[0].Note.Type != sprint.NReadsExhausted {
-		t.Errorf("ci green closed the last judgment of s1-1 (review, one ok, one broken, nothing outstanding) and open is %v", o)
+	if len(o) != 1 || o[0].Note.Type != sprint.NReadBroken {
+		t.Errorf("ci green closes ci red and leaves the broken read open; open is %v", o)
 	}
 }
 
@@ -180,7 +184,7 @@ func TestReturnAndDropAnswerTheStreamJudgmentsThatListThem(t *testing.T) {
 }
 
 // reads exhausted: ask --another names it with --answers.
-func TestAskAnotherAnswersReadsExhausted(t *testing.T) {
+func TestAskAnotherAnswersABrokenRead(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
@@ -189,14 +193,10 @@ func TestAskAnotherAnswersReadsExhausted(t *testing.T) {
 	rs := p.snap().Readers.Of("s1-1")
 	p.read(rs[0].F("reader"), rs[0].ID, "ok")
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
-	p.do("ack broken", AckStep(sprint.AckReq{Notes: []string{p.noteOf("s1-1", sprint.NReadBroken)}, Reason: "x"}))
-	re := p.noteOf("s1-1", sprint.NReadsExhausted)
-	if re == "" {
-		t.Fatalf("no reads exhausted")
-	}
-	r := p.do("ask another --answers RE", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{re}}))
-	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadsExhausted) != "" {
-		t.Errorf("ask --another --answers <reads exhausted>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
+	br := p.noteOf("s1-1", sprint.NReadBroken)
+	r := p.do("ask another --answers broken", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{br}}))
+	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadBroken) != "" {
+		t.Errorf("ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
 	}
 }
 

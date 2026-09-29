@@ -154,7 +154,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own.
   Work that came back failed is not read: it waits for the coordinator.
-  `ask --another` deals a primary already asked to one more reader.
+  `ask --another` deals a primary already asked to one more reader; before
+  the first ask of its attempt it is refused, naming `ask` and the tick as
+  what asks first.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
   A report on a card still asked is accepted: it is the begin and the report in
   one step, and `begun` is stamped with it.
@@ -247,27 +249,49 @@ resumed because the card it needed landed.
 
 **judgment**: needs the coordinator. Each names the decisions open to it.
 
-| notification | decisions |
-|---|---|
-| work came back failed | rework with a fix, drop |
-| a reader found it broken | rework with the finding, ask another reader, drop |
-| stream stopped: conflict on a card | resolve and resume, rework, drop |
-| stream stopped: stream branch red | take the suspect off and resume, rework the suspect |
-| stream stopped: needs a card of another stream first | rank that card first, wait, look at both, return, drop |
-| stream stopped: the merge queue rejected | resume, return, drop |
-| ci red on a primary | rework with a fix, return, drop, look |
-| a primary came back a second time for the same cause | stop and look |
-| a primary is blocked on something dropped | drop, ack (the ack waives the dropped need) |
-| reads exhausted | ask another reader, rework, drop |
-| ready to accept | accept, rework, drop |
-| returned to review | rework, accept (while its reads stand at its head), drop |
-| stranded in review | rework, drop (and ask when never asked) |
-| sentinel reached | release, do more before going on, drop |
-| the sprint is done | clear, add |
-| repair skipped changes the store refused as recorded | look at the card, return, drop, rework, ack |
-| an operation was stuck | check, ack |
-| a judgment notification has waited past its due time | act |
-| a stream has made no progress past its deadline | look |
+Every judgment type, the verbs that answer it, and whether `ack` is one of
+them. `ack` answers only a judgment whose own decisions list it: information
+to be seen. For every other judgment it is refused, and the refusal prints that
+judgment's decisions as commands. For the types that list it, `ack` is still
+refused when it would leave a primary held by nobody (no outside actor, no move
+the tick would make, no other open judgment on it).
+
+| notification | answered by | ack |
+|---|---|---|
+| work came back failed | rework (with a fix), drop | no |
+| a reader found it broken | rework (with the finding), ask --another, drop | no |
+| stream stopped: conflict on a card | resume (resolved), rework, drop | no |
+| stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
+| stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |
+| stream stopped: the merge queue rejected | resume, return, drop | no |
+| ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
+| a primary came back a second time for the same cause | card (stop and look) | no |
+| a primary is blocked on something dropped | drop, ack (waives the dropped need) | yes |
+| reads exhausted | ask --another, rework, drop | no |
+| ready to accept | accept, rework, drop | no |
+| returned to review | rework, accept (while its reads stand at its head), drop | no |
+| stranded in review | rework, drop (and ask when never asked) | no |
+| sentinel reached | release, add --before (do more before going on), drop | no |
+| the sprint is done | clear, add | no |
+| repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
+| an operation was stuck | check, ack | yes |
+| a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
+| cannot ask | reader add, rework, drop, wait | no |
+| no fleet member is up | fleet up, wait | no |
+| a work card is past its deadline | fleet down (the member), wait, drop | no |
+| a read card is past its deadline | ask --another, wait, drop | no |
+| a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
+| an invariant is broken | card (look at the card), repair, wait | no |
+| a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
+| a stream has made no progress past its deadline (stalled) | where, queue (look) | no |
+
+A condition the tick keeps (cannot ask, no member up, a deadline passed, an
+invariant broken; a failing reminder too) is answered for a while by
+`wait <note> --for <duration>`: the judgment is closed and the condition held
+until that much running time has passed (STOPPED time does not count); when it
+has and the condition still holds, the tick raises it again, and when the
+condition clears first the hold is closed. `wait` on any other judgment sets
+its review time.
 
 The machine's tick writes its own judgments (section 14): cannot ask, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
@@ -322,9 +346,9 @@ it drops, and accept every card judgment of the primaries it accepts; ask --anot
 resolves a red one; return resolves a red CI on the primaries it returns, and
 answers its stream's red or rejected batch (recorded; that judgment stays open
 while the stream is stopped); resume resolves the stream's stop.
-`ack <notification> --reason <text>` says the coordinator looked and nothing is
-to be done ("look", "act"): it closes that judgment and records the reason. It
-is refused for the judgment of a stopped stream while the stream is stopped. Acting on one card of a
+`ack <notification> --reason <text>` answers a judgment that lists ack (the
+table above): it closes that judgment and records the reason. It is refused
+for the judgment of a stopped stream while the stream is stopped. Acting on one card of a
 group leaves the rest of the group open. A stopped stream keeps an open
 judgment until it is no longer stopped. `--answers <notification>` names what a
 verb answers. It is accepted for every decision the notification itself lists
@@ -603,10 +627,9 @@ taken, 2 hours taken and not finished), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
 and the cards). Deadlines count running time: time spent STOPPED does not
-count. A judgment of the tick the coordinator acknowledges while its condition
-still holds is kept as acknowledged on the condition, in no inbox: the tick
-does not write it again until the condition has cleared (the tick then closes
-the acknowledgement) and come back.
+count. A judgment the tick keeps is answered by its decisions or held by `wait`
+(section 8), never by `ack`, except a failing reminder, whose ack is held on
+the condition in no inbox until the condition clears and comes back.
 
 Every open judgment is due 10 minutes of running time (DeadlineJudgment) after
 it was written, or at the review time a `wait` set; when that passes, the tick

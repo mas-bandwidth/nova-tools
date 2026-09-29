@@ -43,7 +43,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		have := len(readsAt(s, c, c.Int("attempt")))
 		if r.Another && have == 0 {
-			return "not asked yet: run nova-sprint ask " + c.ID
+			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
 		if !r.Another && have > 0 {
 			return "asked already"

@@ -77,7 +77,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBlocked:         {"drop", "ack"},
-	NCIRed:           {"rework with a fix", "return", "drop", "look"},
+	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
 	NReadsExhausted:  {"ask another reader", "rework", "drop"},
 	NStranded:        {"ask", "rework", "drop"},
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
