@@ -312,3 +312,21 @@ func TestAZeroCorpusJudgesWithTheDefaultRules(t *testing.T) {
 		t.Errorf("outcome %s reason %q", r.Outcome, r.Reason)
 	}
 }
+
+// The shape the cold read found: a private heading whose idea is in its
+// bullets. The leak is flagged against the heading's entry.
+func TestALeakOfAPrivateHeadingsBulletsIsFlagged(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	f.write(t, "private/upkeep.md", "## The quillback engine (private)\none line of text\n- flibberty\n- wumpus\n- quillback\n- zarquon\n")
+	r := privacy.Screen(f.spec, "thinking about the quillback flibberty wumpus again")
+	if r.Outcome != privacy.Flagged {
+		t.Fatalf("outcome %s private %d entries %d", r.Outcome, r.Private, r.Blocks)
+	}
+	if r.Flags[0].Title != "The quillback engine (private)" || r.Flags[0].Source != "private/upkeep.md" {
+		t.Errorf("flags %+v", r.Flags)
+	}
+	if r.Sources[1].Private != 5 {
+		t.Errorf("source row %+v, want all five entries private", r.Sources[1])
+	}
+}

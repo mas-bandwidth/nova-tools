@@ -165,16 +165,36 @@ type Block struct {
 	Index  int
 	Title  string
 	Body   string
+	// Heading is the title of the private heading this entry is under, ""
+	// when it is under none. An entry under a private heading is private.
+	Heading string
+	// Section is the text of the entries under this one when it is a private
+	// heading, up to the next heading of the same or a higher level. It is
+	// measured with the entry, and never counted for rarity, where each
+	// entry counts once.
+	Section string
+
+	level int
 }
 
-// Text is what gets measured: the title and the body, with a blank between
-// so the two never fuse into one word.
+// Text is the entry's own words: the title and the body, with a blank
+// between so the two never fuse into one word. Rarity counts it.
 func (b Block) Text() string { return b.Title + " " + b.Body }
 
-// IsPrivate reports whether an entry declares itself private: the marker
-// anywhere in its title, or within the first MarkerScanRunes of its body.
+// Measured is what a private entry is compared with: its own words and the
+// words of the entries under it.
+func (b Block) Measured() string {
+	if b.Section == "" {
+		return b.Text()
+	}
+	return b.Text() + "\n" + b.Section
+}
+
+// IsPrivate reports whether an entry is private: it is under a private
+// heading, or the marker is anywhere in its title, or within the first
+// MarkerScanRunes of its body.
 func (r Rules) IsPrivate(b Block) bool {
-	return r.HasMarker(b.Title) || r.HasMarker(headRunes(b.Body, MarkerScanRunes))
+	return b.Heading != "" || r.HasMarker(b.Title) || r.HasMarker(headRunes(b.Body, MarkerScanRunes))
 }
 
 func headRunes(s string, n int) string {
@@ -191,21 +211,52 @@ func headRunes(s string, n int) string {
 // ParseBlocks splits a source into its entries, in file order. Lines before
 // the first entry are a preamble and belong to no entry, since a preamble
 // commonly explains the marker and would otherwise declare itself private.
+//
+// A private entry opened by a heading (a token of # characters) owns the
+// entries that follow it until the next heading of the same or a higher
+// level: each of them is private, and the heading's entry is measured with
+// their words.
 func (r Rules) ParseBlocks(source, text string) []Block {
 	var out []Block
 	var body []string
-	title, open := "", false
+	title, open, level, heading := "", false, 0, ""
+	// owners are the private headings whose sections are open, outermost
+	// first, as indexes into out.
+	var owners []int
 	flush := func() {
-		if open {
-			out = append(out, Block{Source: source, Index: len(out), Title: title, Body: strings.Join(body, "\n")})
+		if !open {
+			return
+		}
+		b := Block{Source: source, Index: len(out), Title: title, Body: strings.Join(body, "\n"), Heading: heading, level: level}
+		for _, o := range owners {
+			out[o].Section += b.Text() + "\n"
+		}
+		out = append(out, b)
+		if level > 0 && r.IsPrivate(b) {
+			owners = append(owners, b.Index)
+		}
+	}
+	closeTo := func(lv int) {
+		for len(owners) > 0 && out[owners[len(owners)-1]].level >= lv {
+			owners = owners[:len(owners)-1]
 		}
 	}
 	for _, ln := range strings.Split(text, "\n") {
+		lv := headingLevel(ln)
 		if r.opensEntry(ln) {
 			flush()
+			if lv > 0 {
+				closeTo(lv)
+			}
 			title = strings.TrimSpace(strings.TrimLeft(ln, r.trimSet))
-			body, open = nil, true
+			body, open, level, heading = nil, true, lv, ""
+			if len(owners) > 0 {
+				heading = out[owners[0]].Title
+			}
 			continue
+		}
+		if lv > 0 {
+			closeTo(lv)
 		}
 		if open {
 			body = append(body, strings.TrimRight(ln, "\r"))
@@ -213,6 +264,19 @@ func (r Rules) ParseBlocks(source, text string) []Block {
 	}
 	flush()
 	return out
+}
+
+// headingLevel is the level of a Markdown heading line, 1 to 6, or 0 for a
+// line that is not a heading.
+func headingLevel(ln string) int {
+	n := 0
+	for n < len(ln) && ln[n] == '#' {
+		n++
+	}
+	if n == 0 || n > 6 || n == len(ln) || (ln[n] != ' ' && ln[n] != '\t') {
+		return 0
+	}
+	return n
 }
 
 func (r Rules) opensEntry(ln string) bool {

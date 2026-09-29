@@ -168,7 +168,7 @@ func judge(c Corpus, payload string, withPayload bool) Result {
 	payloadTerms := rules.Terms(payload)
 	r.PayloadTerms = len(payloadTerms)
 	for _, p := range c.Private {
-		fingerprint := rules.Distinctive(p.Text(), df, c.BackgroundFreq, r.Bounds)
+		fingerprint := rules.Distinctive(p.Measured(), df, c.BackgroundFreq, r.Bounds)
 		if CanEverFire(fingerprint) {
 			r.Checkable++
 		}

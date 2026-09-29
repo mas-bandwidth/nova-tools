@@ -153,6 +153,8 @@ func TestDuplicateTitlesAreDistinctEntries(t *testing.T) {
 	}
 }
 
+// Bullets are entries of their own. Outside a private heading, each one is
+// private only by its own marker.
 func TestBulletsAreEntriesToo(t *testing.T) {
 	t.Parallel()
 	r := privacy.DefaultRules()
@@ -167,6 +169,76 @@ func TestBulletsAreEntriesToo(t *testing.T) {
 	}
 	if blocks[0].Title != "[2026-01-05] **(private)** the lantern project" {
 		t.Errorf("title %q: the bullet markup is stripped and nothing else", blocks[0].Title)
+	}
+}
+
+// An entry under a private heading is private: bullets and sub-entries that
+// follow a heading carrying the marker are private until the next heading of
+// the same or a higher level, and the heading's entry covers them when it is
+// measured. Each is still its own entry, counted once for rarity.
+func TestEntriesUnderAPrivateHeadingArePrivate(t *testing.T) {
+	t.Parallel()
+	r, err := privacy.NewRules("", []string{"##", "###", "-"}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := r.ParseBlocks("ideas.md", strings.Join([]string{
+		"## The zarquon engine (private)",
+		"one line of text",
+		"- flibberty",
+		"- wumpus",
+		"### a deeper part",
+		"- quillback",
+		"## A plain heading",
+		"- snorkelwick",
+		"# A top heading",
+		"- bramblethorn",
+	}, "\n"))
+	want := []struct {
+		title   string
+		private bool
+	}{
+		{"The zarquon engine (private)", true},
+		{"flibberty", true},
+		{"wumpus", true},
+		{"a deeper part", true},
+		{"quillback", true},
+		{"A plain heading", false},
+		{"snorkelwick", false},
+		{"bramblethorn", false},
+	}
+	if len(blocks) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(blocks), len(want), blocks)
+	}
+	for i, w := range want {
+		if blocks[i].Title != w.title || r.IsPrivate(blocks[i]) != w.private {
+			t.Errorf("entry %d: %q private=%v, want %q private=%v", i, blocks[i].Title, r.IsPrivate(blocks[i]), w.title, w.private)
+		}
+	}
+	if blocks[1].Heading != "The zarquon engine (private)" {
+		t.Errorf("a bullet names the private heading it is under: %+v", blocks[1])
+	}
+	measured := r.Terms(blocks[0].Measured())
+	for _, w := range []string{"zarquon", "flibberty", "wumpus", "quillback"} {
+		if !measured[w] {
+			t.Errorf("the private heading's entry is measured with %q under it: %v", w, measured)
+		}
+	}
+	if measured["snorkelwick"] {
+		t.Error("the section ends at the next heading of the same level")
+	}
+	if df := r.DocFrequency(blocks); df["flibberty"] != 1 {
+		t.Errorf("a word under a private heading is counted once for rarity, got %d", df["flibberty"])
+	}
+}
+
+// A heading one level up ends the section as well.
+func TestAHigherHeadingEndsAPrivateSection(t *testing.T) {
+	t.Parallel()
+	r := privacy.DefaultRules()
+	blocks := r.ParseBlocks("ideas.md", "## Secret (private)\n- under it\n# Top\n- not under it\n")
+	if len(blocks) != 3 || !r.IsPrivate(blocks[1]) || r.IsPrivate(blocks[2]) {
+		t.Errorf("got %+v", blocks)
 	}
 }
 

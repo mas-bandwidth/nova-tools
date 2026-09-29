@@ -17,9 +17,21 @@ over it. Another tool screens in process by building a `privacy.Spec` (or a
 A **source** is a file of private material. It is split into **entries**: a
 line starting with an entry token and one blank (`## ` or `- ` by default)
 opens an entry; everything before the first entry is a preamble and belongs to
-none. An entry is **private** when the marker (`(private)` by default) appears
-in its title, or in the first 200 runes of its body; further down, the marker
-is prose about privacy.
+none.
+
+What makes an entry **private**, each rule on its own:
+
+- the marker (`(private)` by default) appears in its title, or in the first
+  200 runes of its body; further down, the marker is prose about privacy;
+- it is under a private heading: an entry opened by a heading token (`##`, or
+  any token of `#` characters) that is private owns every entry after it until
+  the next heading of the same or a higher level (`## ` or `# ` after a `## `
+  section), whether or not that heading opens an entry. Bullets and
+  sub-entries in that section are private, each still its own entry.
+
+A private heading's entry is measured with the words of the entries under it,
+so an idea written as a heading and its bullets is compared as one. Rarity
+still counts each entry once, by its own title and body.
 
 A **term** is a lowercase ASCII word of four or more characters that is not a
 stop word. The marker's own words are stop words. A term is **distinctive** for
