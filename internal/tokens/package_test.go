@@ -434,18 +434,19 @@ func TestTC_VAL_10_AtomicRenameCompetingMarkerRace(t *testing.T) {
 
 // TC-VAL-11: durability_fsync_ancestor_directories_trace
 func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 
 	var trace []string
-	FsyncHook = func(path string) error {
+	hook := func(path string) error {
 		trace = append(trace, path)
 		return nil
 	}
-	defer func() { FsyncHook = nil }()
 
 	// 1. SyncDirectoryTree: bottom-up trace syncing day, bench, friend, records, mappings, up to root
-	if err := SyncDirectoryTree(b.Dir); err != nil {
-		t.Fatalf("SyncDirectoryTree failed: %v", err)
+	if err := syncDirectoryTreeWith(b.Dir, hook); err != nil {
+		t.Fatalf("syncDirectoryTreeWith failed: %v", err)
 	}
 
 	if len(trace) < 5 {
@@ -476,26 +477,26 @@ func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
 	// 2. StageMarker: writes and fsyncs batch.json.tmp
 	markerTemp := "batch.json.tmp"
 	markerPath := filepath.Join(b.Dir, markerTemp)
-	if err := StageMarker(b.Dir, markerTemp, b.CoverageBytes); err != nil {
-		t.Fatalf("StageMarker failed: %v", err)
+	if err := stageMarkerWith(b.Dir, markerTemp, b.CoverageBytes, hook); err != nil {
+		t.Fatalf("stageMarkerWith failed: %v", err)
 	}
 	if trace[len(trace)-1] != markerPath {
-		t.Errorf("expected StageMarker to sync %s, got %s", markerPath, trace[len(trace)-1])
+		t.Errorf("expected stageMarkerWith to sync %s, got %s", markerPath, trace[len(trace)-1])
 	}
 
 	// 3. CommitMarker: atomic no-replace rename, then fsync(root)
-	if err := CommitMarker(b.Dir, markerTemp); err != nil {
-		t.Fatalf("CommitMarker failed: %v", err)
+	if err := commitMarkerWith(b.Dir, markerTemp, hook); err != nil {
+		t.Fatalf("commitMarkerWith failed: %v", err)
 	}
 	if trace[len(trace)-1] != b.Dir {
-		t.Errorf("expected CommitMarker to sync root %s after rename, got %s", b.Dir, trace[len(trace)-1])
+		t.Errorf("expected commitMarkerWith to sync root %s after rename, got %s", b.Dir, trace[len(trace)-1])
 	}
 
-	// 4. Fail-stop behavior: error in FsyncHook immediately aborts
-	FsyncHook = func(path string) error {
+	// 4. Fail-stop behavior: error in hook immediately aborts
+	errHook := func(path string) error {
 		return errors.New("simulated fsync failure")
 	}
-	if err := SyncDirectoryTree(b.Dir); err == nil {
+	if err := syncDirectoryTreeWith(b.Dir, errHook); err == nil {
 		t.Fatal("expected fail-stop on simulated fsync error, got nil")
 	}
 }
