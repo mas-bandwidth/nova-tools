@@ -12,7 +12,9 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -501,9 +503,34 @@ func TestReadmeIsNeverASessionFile(t *testing.T) {
 			t.Fatalf("%s: coverage counted %d sessions, want 1", name, got)
 		}
 
-		// A README alone is an empty store: the tool's own shape.
-		if got, err := storeShape("open", own); err != nil || got != shapeOwn {
-			t.Fatal(got, err)
+	}
+}
+
+// A store holding only a README.md holds no session: it is the tool's own
+// shape, and the first open gives it the own layout beside the README.
+func TestStoreHoldingOnlyReadmeIsAnEmptyStore(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"README.md", "readme.md", "Readme.md"} {
+		store := t.TempDir()
+		if err := os.WriteFile(filepath.Join(store, name), []byte("# about\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := storeShape("open", store); got != shapeOwn || err != nil {
+			t.Fatalf("%s alone: shape %v %v, want own", name, got, err)
+		}
+		if rows, total, err := Index(store, "", 0); err != nil || total != 0 || len(rows) != 0 {
+			t.Fatalf("%s alone: index %v %d %v", name, rows, total, err)
+		}
+		if got := Coverage(store).Sessions; got != 0 {
+			t.Fatalf("%s alone: coverage %d", name, got)
+		}
+		if err := Open(store, "s1", "", benchNow, PublishManual); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{name, "log.jsonl", "sessions/"}
+		sort.Strings(want)
+		if got := listing(t, store); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s alone then open: %v", name, got)
 		}
 	}
 }
@@ -551,5 +578,44 @@ func TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed(t *testing.T) {
 	var me *MixedShapeError
 	if !errors.As(err, &me) || strings.Contains(err.Error(), "README") {
 		t.Fatalf("want a mixed refusal naming hand.md only, got %v", err)
+	}
+}
+
+// Many opens of one new session at once: exactly one header is written, every
+// caller succeeds, and no temporary file is left behind.
+func TestConcurrentBenchOpensWriteOneHeader(t *testing.T) {
+	t.Parallel()
+	store, before := manySessionStore(t)
+	const n = 32
+	start := make(chan struct{})
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs <- Open(store, "NEW", "src-"+strconv.Itoa(i), benchNow, PublishManual)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("a concurrent open failed: %v", err)
+		}
+	}
+	want := append(append([]string(nil), before...), "NEW.md")
+	sort.Strings(want)
+	if got := listing(t, store); !reflect.DeepEqual(got, want) {
+		t.Fatalf("listing %v want %v (no temporary file may remain)", got, want)
+	}
+	raw, err := os.ReadFile(benchFile(store, "NEW"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), "# Cairn ") != 1 || strings.Count(string(raw), "Session NEW opened") != 1 || strings.Count(string(raw), "Source: ") != 1 {
+		t.Fatalf("not exactly one header:\n%s", raw)
 	}
 }

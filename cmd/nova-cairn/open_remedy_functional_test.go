@@ -54,11 +54,19 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 	}
 }
 
-// The remedy the refusal prints, run through a shell on a bench store, opens
-// the named session as <id>.md and creates nothing else.
+// The remedy the refusal prints, run through a shell with the built binary
+// first on PATH, opens the named session as <id>.md on a bench store and
+// creates nothing else.
 func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("go", "build", "-o", filepath.Join(bin, "nova-cairn"), ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v: %s", err, out)
+	}
 	store := filepath.Join(root, "cairns")
 	if err := os.Mkdir(store, 0o755); err != nil {
 		t.Fatal(err)
@@ -74,8 +82,12 @@ func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
 		t.Fatalf("append=%d %q", code, errOut)
 	}
 	remedy = strings.TrimSuffix(remedy, "; run: nova-cairn help\n")
-	args := strings.Fields(strings.ReplaceAll(remedy, "'", ""))[1:] // open --store <dir> --session NEW --publish manual
-	runOK(t, "", args...)
+	cmd := exec.Command("/bin/sh", "-c", remedy)
+	cmd.Dir = root
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.HasPrefix(string(out), "OPEN OK session=NEW ") {
+		t.Fatalf("the remedy %q: %v: %s", remedy, err, out)
+	}
 	entries, err := os.ReadDir(store)
 	if err != nil {
 		t.Fatal(err)
@@ -87,4 +99,6 @@ func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"NEW.md", "a.md", "b.md"}) {
 		t.Fatalf("store after the remedy: %v", got)
 	}
+	// And the append that refused now lands.
+	runOK(t, "", "append", "--store", store, "--session", "NEW", "--entry", "e", "--text", "note", "--publish", "manual")
 }
