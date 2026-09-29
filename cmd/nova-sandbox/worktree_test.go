@@ -118,25 +118,11 @@ func (f *fakeForge) PR(id int) (worktreePR, error) {
 	return pr, nil
 }
 
-func useFakeGit(t *testing.T, g *fakeGit) {
-	t.Helper()
-	old := worktreeGit
-	worktreeGit = g.run
-	t.Cleanup(func() { worktreeGit = old })
-}
-
 // errForge is the forge seam for the failure tests: every call answers one
 // error.
 type errForge struct{ err error }
 
 func (f errForge) PR(int) (worktreePR, error) { return worktreePR{}, f.err }
-
-func useForge(t *testing.T, f worktreeForge) {
-	t.Helper()
-	old := worktreeForgeFactory
-	worktreeForgeFactory = func(repo string, env []string) worktreeForge { return f }
-	t.Cleanup(func() { worktreeForgeFactory = old })
-}
 
 type wjob struct {
 	base, repo, scratch string
