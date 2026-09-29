@@ -3,6 +3,8 @@
 # this user by default. When it connects as another, the tasks that run podman
 # become this user.
 container_runtime_user: "{{ ansible_facts['user_id'] }}"
+# The lowest uid the role acts for. Root is refused whatever this is set to.
+container_runtime_min_uid: 1000
 
 # The distribution's packages for rootless, daemonless podman. Recommended
 # packages come with them by default (the rootless helpers, the init and the

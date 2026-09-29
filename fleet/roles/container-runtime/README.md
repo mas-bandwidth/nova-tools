@@ -10,7 +10,10 @@ shows the inventory shape, with placeholder hosts.
 
 Run it from a control node, through a pipe: ansible needs blocking stdio. The
 play connects as the runner user and uses `sudo` for the tasks that change the
-host.
+host. The role acts for an ordinary user only: before its first change it stops
+when the runner user is root or has a uid below `container_runtime_min_uid`, so
+a connection made as root (or `become` set in `ansible.cfg`, which gathers the
+facts as root) names the runner with `container_runtime_user` instead.
 
 ## What it does
 
@@ -49,6 +52,7 @@ The probe image is the base of the functional image; a class test
 | variable | default | |
 |---|---|---|
 | `container_runtime_user` | the connecting user | the runner user |
+| `container_runtime_min_uid` | `1000` | the lowest uid the role acts for; root is refused whatever it is set to |
 | `container_runtime_packages` | the list above | packages to install |
 | `container_runtime_install_recommends` | `true` | apt recommends; the rootless helpers are recommended by `podman` |
 | `container_runtime_subid_start`, `container_runtime_subid_count` | `100000`, `65536` | the range given when the user has no row |

@@ -30,7 +30,24 @@
 
 - name: the runner user's uid
   ansible.builtin.set_fact:
-    container_runtime_uid: "{{ ansible_facts['getent_passwd'][container_runtime_user][1] }}"
+    container_runtime_uid: "{{ ansible_facts['getent_passwd'][container_runtime_user][1] | int }}"
+
+# The first change this role makes is below this task. The role never acts for
+# root (its default user is the connecting user, and a connection made as root,
+# or `become` set in ansible.cfg so that facts are gathered as root, would name
+# root here) and never for a system account.
+- name: the runner user is an ordinary user, never root
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - container_runtime_uid | int != 0
+      - container_runtime_uid | int >= container_runtime_min_uid | int
+    fail_msg: >-
+      container-runtime role: {{ container_runtime_user }} has uid
+      {{ container_runtime_uid }}; rootless podman is for an ordinary user (uid
+      at least {{ container_runtime_min_uid }}, never root). Connect as the
+      runner user or set container_runtime_user; container_runtime_min_uid
+      lowers the floor for a runner that is a system account.
 
 - name: podman and its rootless helpers
   become: true
