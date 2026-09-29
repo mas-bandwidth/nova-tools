@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -226,6 +227,30 @@ func setStream(p *Plan, s *Snapshot, stream string, set map[string]string, notes
 			p.Units[i].Changes = append(p.Units[i].Changes, change(Merge, setEntry(ctl, set)))
 			p.Units[i].Notes = append(p.Units[i].Notes, notes...)
 			return
+		}
+	}
+}
+
+// Lists says a judgment's decisions list the verb (a decision starts with it).
+func Lists(n Note, verb string) bool {
+	if verb == "return" && (n.Type == NRed || n.Type == NRejected) {
+		return true // "take the suspect off" is a return
+	}
+	for _, d := range n.Decisions {
+		if d == verb || strings.HasPrefix(d, verb+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// answerListed records the unit's answer to every stream-level judgment
+// named by --answers, open on the stream, whose decisions list the verb: the
+// judgment stays open while its stream is stopped, and the answer is kept.
+func answerListed(u *Unit, open []Open, answers []string, verb, stream, what, who string, now time.Time, primary string) {
+	for _, o := range open {
+		if o.Note.StreamLevel && o.Note.Stream == stream && contains(answers, o.Note.ID) && Lists(o.Note, verb) && !answeredIn(u.Notes, o.Note.ID) {
+			u.Notes = append(u.Notes, decided(o, what, who, now, primary))
 		}
 	}
 }

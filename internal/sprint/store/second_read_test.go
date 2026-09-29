@@ -4,6 +4,7 @@ package store
 // section 9 check after every step.
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -114,4 +115,84 @@ func TestTheStreamStateThroughAStreamsLife(t *testing.T) {
 	st("drop the last open primary", sprint.StreamLanded)
 	p.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	st("add to a landed stream", sprint.StreamWaiting)
+}
+
+// R1d. return and drop answering the stream-level judgments they are listed
+// as decisions for.
+func TestReturnAndDropAnswerTheStreamJudgmentsThatListThem(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"red", "rejected", "conflict", "cross"} {
+		for _, verb := range []string{"return", "drop"} {
+			kind, verb := kind, verb
+			t.Run(kind+"-"+verb, func(t *testing.T) {
+				p := newProbe(t)
+				p.setup(2)
+				p.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1}))
+				p.through("s1-1", "s1-2")
+				p.toReview("h", "s2-1")
+				req := sprint.MergeReq{Stream: "s1"}
+				switch kind {
+				case "red":
+					req.Red = true
+				case "rejected":
+					req.Rejected = true
+				case "conflict":
+					req.Conflict = "s1-1"
+				case "cross":
+					req.Cross = "s1-1=s2-1"
+				}
+				p.do("merge "+kind, MergeStep(req))
+				o := p.openOn("stream:s1")
+				if len(o) != 1 {
+					t.Fatalf("open on stream: %v", o)
+				}
+				nid := o[0].Note.ID
+				t.Logf("decisions of %q: %v", o[0].Note.Type, o[0].Note.Decisions)
+				var res Result
+				if verb == "return" {
+					res = p.do("return --answers", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Answers: []string{nid}}))
+				} else {
+					res = p.do("drop --answers", DropStep(sprint.DropReq{Sel: ids("s1-1"), Reason: "x", Answers: []string{nid}}))
+				}
+				listed := false
+				for _, d := range o[0].Note.Decisions {
+					listed = listed || strings.HasPrefix(d, verb)
+				}
+				refusedAnswer := false
+				for _, r := range res.Refused {
+					refusedAnswer = refusedAnswer || r.Key == nid
+				}
+				t.Logf("%s %s: listed=%v moved=%v refused=%v", verb, kind, listed, res.Moved, res.Refused)
+				if listed && refusedAnswer {
+					t.Errorf("%s is a listed decision of %q and --answers naming it is refused", verb, o[0].Note.Type)
+				}
+				if a := p.do("ack stopped", AckStep(sprint.AckReq{Notes: []string{nid}, Reason: "x"})); len(a.Refused) != 1 {
+					t.Errorf("ack of a stopped stream's judgment: %+v", a)
+				}
+				rr := p.do("resume", ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "fixed"}))
+				t.Logf("resume: %+v state=%s", rr, p.ctl("s1").F("state"))
+			})
+		}
+	}
+}
+
+// reads exhausted: ask --another names it with --answers.
+func TestAskAnotherAnswersReadsExhausted(t *testing.T) {
+	t.Parallel()
+	p := newProbe(t)
+	p.setup(1)
+	p.toReview("h", "s1-1")
+	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+	rs := p.snap().Readers.Of("s1-1")
+	p.read(rs[0].F("reader"), rs[0].ID, "ok")
+	p.read(rs[1].F("reader"), rs[1].ID, "broken")
+	p.do("ack broken", AckStep(sprint.AckReq{Notes: []string{p.noteOf("s1-1", sprint.NReadBroken)}, Reason: "x"}))
+	re := p.noteOf("s1-1", sprint.NReadsExhausted)
+	if re == "" {
+		t.Fatalf("no reads exhausted")
+	}
+	r := p.do("ask another --answers RE", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{re}}))
+	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadsExhausted) != "" {
+		t.Errorf("ask --another --answers <reads exhausted>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
+	}
 }

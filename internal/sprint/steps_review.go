@@ -106,7 +106,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted}, c.ID)
 		}
 		p.Units = append(p.Units, u)
 	}
@@ -524,11 +524,7 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		}, Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)}
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
-		for _, o := range s.Open {
-			if o.Note.StreamLevel && o.Note.Stream == c.Row && contains(r.Answers, o.Note.ID) && contains(ReturnResolves, o.Note.Type) && !answeredIn(u.Notes, o.Note.ID) {
-				u.Notes = append(u.Notes, decided(o, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID))
-			}
-		}
+		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
 		leaving[c.ID] = true
 		p.Units = append(p.Units, u)
 	}
@@ -609,6 +605,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 			u.Notes = append(u.Notes, n)
 		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
+		answerListed(&u, s.Open, r.Answers, "drop", c.Row, "dropped "+c.ID+"; "+r.Reason, r.Who, s.Now, c.ID)
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
@@ -671,6 +668,12 @@ func Rank(s *Snapshot, r RankReq) Plan {
 			u.Changes = append(u.Changes, change(Merge, scoreEntry(m, score)))
 		}
 		u.Changes = append(u.Changes, change(Work, scoreEntry(c, score)))
+		answerListed(&u, s.Open, r.Answers, "rank", c.Row, "ranked "+c.ID+" "+fmtScore(score), r.Who, s.Now, c.ID)
+		for _, o := range s.Open { // a cross stop names the card of another stream: rank answers it there
+			if o.Note.StreamLevel && contains(o.Note.Primaries, c.ID) && o.Note.Stream != c.Row {
+				answerListed(&u, s.Open, r.Answers, "rank", o.Note.Stream, "ranked "+c.ID+" "+fmtScore(score), r.Who, s.Now, c.ID)
+			}
+		}
 		u.Moved = fmt.Sprintf("%s score %s -> %s (%d copies)", c.ID, fmtScore(c.Score), fmtScore(score), len(u.Changes)-1)
 		p.Units = append(p.Units, u)
 		score++

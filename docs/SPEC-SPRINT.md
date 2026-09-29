@@ -246,8 +246,14 @@ to be done ("look", "act"): it closes that judgment and records the reason. It
 is refused for the judgment of a stopped stream while the stream is stopped. Acting on one card of a
 group leaves the rest of the group open. A stopped stream keeps an open
 judgment until it is no longer stopped. `--answers <notification>` names what a
-verb answers and is refused for a notification the verb resolves nothing of;
-each answer is recorded as a `decided` notification. `wait <notification>`
+verb answers. It is accepted for every decision the notification itself lists
+(return on a red, rejected or cross stop, since taking the suspect off is a
+return; drop on a rejected, conflict or cross stop; rank on the cross stop
+that names the card; ask --another on reads exhausted, which it closes: the
+new read outstanding is what keeps the primary from being exhausted), and
+refused for a notification the verb resolves nothing of. Each answer is
+recorded as a `decided` notification; a stopped stream's judgment stays open
+while it is stopped. `wait <notification>`
 records a next review time; it does not hide the notification. Reading the
 inbox or advancing the cursor resolves nothing.
 
