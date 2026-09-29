@@ -115,6 +115,8 @@
 \*                      as the audit proposes
 \*   "clearfleet"       clear empties the fleet's judgment while no member is
 \*                      up
+\*   "addlanded"        add into a landed stream leaves it landed
+\*                                                   (StreamStateIsTrue)
 
 EXTENDS Naturals, FiniteSets
 
@@ -352,7 +354,8 @@ Init ==
 
 \* ------------------------------------------------------------------ verbs
 
-\* add: admit a primary into its stream, waiting if it needs something.
+\* add: admit a primary into its stream, waiting if it needs something; a
+\* landed stream is waiting again (as built; see "addlanded").
 Add(p) ==
   /\ Fenced /\ p \in Primaries \ added
   /\ Br("admitcycle") \/ ~InCycle(p, added \cup {p})
@@ -361,7 +364,9 @@ Add(p) ==
      IN work' = [work EXCEPT ![StreamOf[p]][to] = @ \cup {p}]
   /\ open' = open \cup (IF Needs[p] \cap dropped # {} THEN {Note("blocked", p)} ELSE {})
                    \cup (IF p \in Sentinels /\ NeedsMet(p) THEN {Note("reached", p)} ELSE {})
-  /\ UNCHANGED <<dropped, fleet, readers, merge, sstate, mstatus, score, attempt,
+  /\ sstate' = [sstate EXCEPT ![StreamOf[p]] =
+                  IF @ = "landed" /\ ~Br("addlanded") THEN "waiting" ELSE @]
+  /\ UNCHANGED <<dropped, fleet, readers, merge, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, cause,
                  need, op, crashed, bad, returnsN, ranks, waived, released, machine, stops, redstop, epoch, rheld, stale, acks>>
 
