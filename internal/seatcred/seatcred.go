@@ -142,6 +142,7 @@ type Selection struct {
 	addr     string
 	github   string
 	resolver func(seat string) (Cred, error)
+	getenv   func(string) string
 }
 
 var process Selection
@@ -172,6 +173,27 @@ func Active() (Cred, bool, error) { return process.Active() }
 // FromArgs selects this process's seat from args; see Selection.FromArgs.
 func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	return process.FromArgs(args, getenv)
+}
+
+// WithLookup records this process's seat selection environment lookup; see Selection.WithLookup.
+func WithLookup(getenv func(string) string) *Selection { return process.WithLookup(getenv) }
+
+// Anonymous returns an independent Selection for tests running in parallel with every other.
+func Anonymous() *Selection { return new(Selection) }
+
+// WithLookup records getenv as s's environment lookup and returns s.
+func (s *Selection) WithLookup(getenv func(string) string) *Selection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getenv = getenv
+	return s
+}
+
+// Getenv returns s's environment lookup, nil when none was recorded.
+func (s *Selection) Getenv() func(string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getenv
 }
 
 // Select makes seat the selection ("" is none) and forgets any earlier
@@ -234,7 +256,12 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 	if !s.resolved {
 		resolve := s.resolver
 		if resolve == nil {
-			resolve = defaultResolver
+			if s.getenv != nil {
+				lookup := s.getenv
+				resolve = func(seat string) (Cred, error) { return Resolve(seat, lookup) }
+			} else {
+				resolve = defaultResolver
+			}
 		}
 		s.cred, s.credErr = resolve(s.selected)
 		s.resolved = true
@@ -246,6 +273,11 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 // "--", which ends a tool's own flags), selects that seat or else getenv's
 // NOVA_SEAT, and returns the rest. A --seat with no name is an error.
 func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]string, error) {
+	if getenv != nil {
+		s.WithLookup(getenv)
+	} else if s.Getenv() != nil {
+		getenv = s.Getenv()
+	}
 	seat, flagged := "", false
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
