@@ -97,16 +97,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	now := stamp(s.Now)
 	if len(queued) == 0 {
-		switch {
-		case streamDone(s, r.Stream, 0):
-			n := happened(NStreamLanded, r.Stream, s.Now)
-			n.Who = r.Who
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamLanded, "since": now}))},
-				Notes: []Note{n}, Moved: "stream " + r.Stream + " " + state + " -> landed"})
-		case state == StreamMerging:
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": now}))},
-				Moved: "stream " + r.Stream + " merging -> waiting (nothing queued)"})
+		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
+		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
+			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
+		p.refuse(r.Stream, why)
 		return p
 	}
 	n := r.Batch

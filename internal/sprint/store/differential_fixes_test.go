@@ -4,6 +4,7 @@ package store
 // model, each as the sequence that showed it.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -127,5 +128,21 @@ func TestARefusedAddWritesNothing(t *testing.T) {
 	s := h.snap()
 	if s.Work.HasRow("s2") || s.Merge.HasRow("s2") || h.m.Revision("t-work") != before {
 		t.Fatalf("the refused add declared s2: work %v merge %v", s.Work.Rows, s.Merge.Rows)
+	}
+}
+
+// 7. A merge step on a stream with nothing queued is refused and writes
+// nothing, whatever its fact.
+func TestAMergeStepWithNothingQueuedIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	before := h.m.Revision("t-merge")
+	res := h.run(MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
+	if len(res.Refused) != 1 || len(res.Moved) != 0 || !strings.Contains(res.Refused[0].Why, "nothing queued") {
+		t.Fatalf("a merge step with nothing queued: %+v", res)
+	}
+	if h.m.Revision("t-merge") != before || h.snap().StreamCtl("s1").F("state") != sprint.StreamWaiting {
+		t.Fatalf("the refused step wrote")
 	}
 }

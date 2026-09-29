@@ -62,7 +62,9 @@ func (h *harness) readAll() {
 func (h *harness) landAll(stream string) {
 	h.t.Helper()
 	h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: stream}}))
-	h.must(MergeStep(sprint.MergeReq{Stream: stream, Batch: 100}))
+	if len(h.snap().Merge.Cell(stream, sprint.Queued)) > 0 { // a merge step wants something queued
+		h.must(MergeStep(sprint.MergeReq{Stream: stream, Batch: 100}))
+	}
 }
 
 func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {

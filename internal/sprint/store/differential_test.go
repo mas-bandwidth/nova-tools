@@ -65,15 +65,6 @@ var dKnown = []dKnownDiff{
 	{"MODEL a need cycle through a dropped primary refuses add", func(f dFinding) bool {
 		return f.Kind == "refusal" && f.Seq[len(f.Seq)-1].Kind == "add" && strings.Contains(f.Detail, "make a cycle")
 	}},
-	// ENGINE (or SPEC). The model's merge step needs a merging stream; the
-	// engine's merge step on a stream with nothing queued settles its state
-	// (steps_merge.go:99), whatever fact it is given: a red or rejected
-	// fact on an idle stream whose every primary has landed lands it. It
-	// is the one step that mends the stream a release left waiting.
-	{"ENGINE a merge step on a stream with nothing queued settles it, whatever its fact", func(f dFinding) bool {
-		return f.Kind == "refusal" && f.Seq[len(f.Seq)-1].Kind == "merge" && strings.Contains(f.Detail, "is not merging") &&
-			strings.HasSuffix(f.Sig(), "stream.state")
-	}},
 	// MODEL. The ack of a blocked judgment resolves at once: a waiting
 	// primary whose needs are then met moves to ready, a sentinel is marked
 	// reached; the model's Waive leaves both to Resolve and the tick.
