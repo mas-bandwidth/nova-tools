@@ -492,3 +492,62 @@ func TestInventoryTimeoutFlagGovernsTheConnectionNotAFixedBound(t *testing.T) {
 		}
 	}
 }
+
+// ansible hides a failing inventory script unless told not to: the same
+// wrapper whose nova-config refuses exits 0 with an empty inventory, and
+// exits non-zero with the variable the help prints. The run reads only the
+// wrapper: it contacts no machine.
+func TestAnsibleInventoryFailsLoudlyWithTheVariableTheHelpPrints(t *testing.T) {
+	t.Parallel()
+
+	ansible, err := exec.LookPath("ansible-inventory")
+	if err != nil {
+		t.Skip("ansible-inventory is not installed on this machine")
+	}
+	r := newReal(t, false)
+	help, _ := r.run(t, 0, "inventory", "-h")
+	printf, chmod := helpCommands(t, help)
+	var ansibleLine string
+	for _, l := range strings.Split(help, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory ") {
+			ansibleLine = l
+		}
+	}
+	if ansibleLine == "" {
+		t.Fatalf("the help prints no ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory command:\n%s", help)
+	}
+
+	dir := t.TempDir()
+	// A nova-config that refuses, as a missing or older one would.
+	if err := os.WriteFile(filepath.Join(dir, "nova-config"), []byte("#!/bin/sh\necho 'nova-config inventory: refused' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sh := func(script string) (int, string) {
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Dir = dir
+		cmd.Env = []string{
+			"PATH=" + dir + ":" + filepath.Dir(ansible) + ":/usr/bin:/bin",
+			"HOME=" + dir, "ANSIBLE_HOME=" + filepath.Join(dir, "ansible"),
+		}
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("%s: %v", script, err)
+		}
+		return code, out.String()
+	}
+	if code, out := sh(printf + "\n" + chmod); code != 0 {
+		t.Fatalf("the printed commands failed: %s", out)
+	}
+	plain := strings.TrimPrefix(ansibleLine, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ")
+	if code, out := sh(plain); code != 0 {
+		t.Fatalf("without the variable ansible exits %d, want 0 (it hides the failure): %s", code, out)
+	}
+	if code, out := sh(ansibleLine); code == 0 {
+		t.Fatalf("with the variable ansible exits 0 on a failing inventory script: %s", out)
+	}
+}

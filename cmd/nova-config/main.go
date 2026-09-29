@@ -68,10 +68,10 @@ usage:
   nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>]
       prints an Ansible dynamic JSON inventory from the store; groups: all and benches are every machine row, coordinator and store come from the fleet row, runners is every machine with at least one runner; every host's variables are under _meta.hostvars
       first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
-      ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible:
+      ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible with ANSIBLE_INVENTORY_UNPARSED_FAILED=true, because without it a failed inventory is an empty inventory and the play does nothing (ansible.cfg: [inventory] unparsed_is_failed = True):
       printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
       chmod +x nova-inventory
-      ansible-inventory -i ./nova-inventory --list
+      ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
       env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on (an empty value counts as unset), matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
       this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)
   nova-config <kind> add <name> --<field> <value> ... --as <friend>

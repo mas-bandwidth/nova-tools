@@ -313,8 +313,17 @@ executable, and the third lets ansible read the inventory:
 ```
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
 chmod +x nova-inventory
-ansible-inventory -i ./nova-inventory --list
+ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
 ```
+
+The variable matters: without it, ansible hides a failing inventory script.
+When the wrapper exits non-zero (`nova-config` missing from the PATH, a
+`nova-config` without the verb, an unknown `NOVA_MACHINE`, a store that is
+down, a timeout, an unmigrated schema), `ansible-inventory` and
+`ansible-playbook` log a warning, use an empty inventory and exit 0, so a
+playbook does nothing. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the
+environment, or `[inventory] unparsed_is_failed = True` in `ansible.cfg`, makes
+the same run exit non-zero.
 
 Ansible starts the script with `--list`. Every host's variables are in the
 `_meta.hostvars` of that output, so ansible does not call `--host <name>`. The

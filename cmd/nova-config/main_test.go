@@ -922,7 +922,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"--list", "--host", "--pg", "--timeout", // every flag
 		"NOVA_PG_DSN", "NOVA_PG_PASSWORD_ENV", "NOVA_MACHINE", // every variable
 		"first run", "nova-config inventory", // a first example
-		"-i wants an executable", "column one", "ansible-inventory -i ./nova-inventory --list", // the wrapper
+		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True", // the wrapper
 		"_meta.hostvars", "ansible never calls --host", // why --host is not called
 		"the default when neither --list nor --host is given",                                                                                         // what --list is
 		"all and benches are every machine row", "coordinator and store come from the fleet row", "runners is every machine with at least one runner", // the groups
@@ -942,7 +942,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "unparsed_is_failed = True", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
 			if !strings.Contains(string(raw), w) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
