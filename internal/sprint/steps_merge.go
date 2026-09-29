@@ -344,9 +344,14 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 			return p
 		}
 	}
+	// settled as settle settles a stream: merging with cards to merge, landed
+	// when every card of it ended with one landed, else waiting
 	state := StreamWaiting
-	if len(stuck)+s.Merge.Count(r.Stream, Queued) > 0 {
+	switch {
+	case len(stuck)+s.Merge.Count(r.Stream, Queued) > 0:
 		state = StreamMerging
+	case streamDone(s, r.Stream, 0):
+		state = StreamLanded
 	}
 	set := map[string]string{"state": state, "since": stamp(s.Now)}
 	if r.Did != "" {
@@ -354,6 +359,11 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other"))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
+	if state == StreamLanded {
+		n := happened(NStreamLanded, r.Stream, s.Now)
+		n.Who = r.Who
+		u.Notes = append(u.Notes, n)
+	}
 	for _, o := range s.Open {
 		if o.Subject() == StreamSubject(r.Stream) {
 			u.Closes = append(u.Closes, o)

@@ -247,3 +247,24 @@ func TestAnOrphanInMergingIsNeverSilent(t *testing.T) {
 	}
 	h2.clean("dropped")
 }
+
+// Model read 3: resume of a stopped stream whose every card has landed or
+// been dropped settles it: landed, as every other step settles a stream.
+func TestResumeSettlesAStreamWhoseCardsAllEnded(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.through("s1-1")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
+	h.through("s1-2")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-2"}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "gone"}))
+	if st := h.snap().StreamCtl("s1").F("state"); st != sprint.StreamStopped {
+		t.Fatalf("s1 is %s after the drop", st)
+	}
+	h.must(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "dropped the conflicting card"}))
+	if st := h.snap().StreamCtl("s1").F("state"); st != sprint.StreamLanded {
+		t.Fatalf("s1 is %s after the resume", st)
+	}
+	h.clean("resumed")
+}
