@@ -194,9 +194,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF") == "" {
 		_ = os.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "0s")
 	}
-	if os.Getenv("JEV_API_KEY") == "" {
-		_ = os.Setenv("JEV_API_KEY", "sekret")
-	}
+	_ = os.Setenv("JEV_API_KEY", "sekret")
 	if os.Getenv("CAP_BUDGET_ENV") == "" {
 		_ = os.Setenv("CAP_BUDGET_ENV", "fake-cap-budget-key")
 	}

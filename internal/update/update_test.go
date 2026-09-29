@@ -29,8 +29,11 @@ func TestHelperProcess(t *testing.T) {
 	for len(a) > 0 && a[0] != "--" {
 		a = a[1:]
 	}
-	if len(a) < 2 {
+	if len(a) == 0 {
 		return
+	}
+	if len(a) < 2 {
+		os.Exit(22)
 	}
 	a = a[1:]
 	if len(a) >= 3 && a[0] == "log-calls" {

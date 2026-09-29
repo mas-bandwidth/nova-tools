@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +141,7 @@ func TestPayloadRefusesAStateMissingARequiredTypedField(t *testing.T) {
 // criteria the question names must be IN the bytes, and no file the question
 // did not name may be.
 func TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := writeQuestionFile(t, dir, "questions-x.json", goodQuestions)
 	writeQuestionFile(t, dir, "criteria-x.md", "version: test.1\nTHE LONG CRITERIA BODY\n")
@@ -155,16 +155,15 @@ func TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse(t *testing.T) {
 		Model     string                     `json:"model"`
 		Questions map[string]json.RawMessage `json:"questions"`
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Error(err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"answers":{"x":{"type":"choice","choice":"a","confidence":0.9}}}`))
-	}))
+	})
 	defer srv.Close()
-	t.Setenv(DefaultKeyEnv, "test-key")
-	c, err := New(srv.URL, DefaultKeyEnv)
+	c, err := NewWithKey(srv.URL, "test-key")
 	if err != nil {
 		t.Fatal(err)
 	}

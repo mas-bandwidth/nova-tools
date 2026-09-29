@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 )
@@ -24,13 +23,13 @@ import (
 // the client's lock: it fails under -race the moment someone takes the lock
 // away, and it is cheap enough to run every time.
 func TestOneClientRecordsFromManyGoroutinesWithoutARace(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+	srv := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"answers":{"q":{"type":"choice","choice":"a","confidence":0.91}}}`))
-	}))
+	})
 	defer srv.Close()
-	t.Setenv("JEV_API_KEY", "test-key")
 
-	client, err := New(srv.URL, "JEV_API_KEY")
+	client, err := NewWithKey(srv.URL, "test-key")
 	if err != nil {
 		t.Fatal(err)
 	}

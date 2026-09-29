@@ -172,10 +172,9 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 // duration. Every value on both lines reproduces, so onboarding.Execute is
 // handed no Norm and says as much under any line that disagrees.
 //
-// The transcript's `--pool ./pool` is written from wherever the reader's shell
-// stands, and quickstart MAKES that directory, so the test does not rewrite the
-// documented path: it moves to a temp directory where `./pool` is the test's to
-// create, and the tool echoes back the relative `./pool` it was handed.
+// The transcript's documented command (template) prints without mutating the
+// working directory or creating a pool, so the test runs directly without
+// moving to a temporary directory.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	t.Parallel()
 

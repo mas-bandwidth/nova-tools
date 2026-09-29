@@ -115,25 +115,43 @@ type Client struct {
 // client forwarding the provider's answer, which is every ordinary question.
 func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)) { c.constrain = fn }
 
+// NewWithKey builds a client with the provided key directly rather than reading
+// it from an environment variable, allowing tests to run in parallel without
+// mutating process-wide environment variables.
+func NewWithKey(baseURL, key string) (*Client, error) {
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	if key == "" {
+		return nil, fmt.Errorf("decide: key is not set; refusing to guess")
+	}
+	return &Client{baseURL: baseURL, key: key, http: &http.Client{Timeout: deadline}}, nil
+}
+
 // New reads the key from the environment variable keyEnv (DefaultKeyEnv when
 // empty, with FallbackKeyEnv also accepted) and refuses with an error naming
 // the variable when it is unset. baseURL empty means DefaultBaseURL. The key
 // is never printed.
 func New(baseURL, keyEnv string) (*Client, error) {
+	return NewWithLookup(baseURL, keyEnv, os.Getenv)
+}
+
+// NewWithLookup resolves the key through the provided lookup function.
+func NewWithLookup(baseURL, keyEnv string, getenv func(string) string) (*Client, error) {
 	if keyEnv == "" {
 		keyEnv = DefaultKeyEnv
 	}
-	if baseURL == "" {
-		baseURL = DefaultBaseURL
+	if getenv == nil {
+		getenv = os.Getenv
 	}
-	key := os.Getenv(keyEnv)
+	key := getenv(keyEnv)
 	if key == "" && keyEnv != FallbackKeyEnv {
-		key = os.Getenv(FallbackKeyEnv)
+		key = getenv(FallbackKeyEnv)
 	}
 	if key == "" {
 		return nil, fmt.Errorf("decide: %s is not set; refusing to guess", keyEnv)
 	}
-	return &Client{baseURL: baseURL, key: key, http: &http.Client{Timeout: deadline}}, nil
+	return NewWithKey(baseURL, key)
 }
 
 // questionWire is the documented question shape.
