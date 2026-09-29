@@ -3,7 +3,6 @@ MCCairnStore.cfg	MCCairnStore.tla	pass	-	check	cairnstore	required	-
 MCCairnStoreBrokenAppendCreates.cfg	MCCairnStore.tla	action	AppendCreatesNoSession	check	cairnstore	required	-
 MCCairnStoreBrokenConflictAdds.cfg	MCCairnStore.tla	invariant	OneTextPerEntry	check	cairnstore	required	-
 MCCairnStoreBrokenMixedServed.cfg	MCCairnStore.tla	action	MixedIsRefusedByEveryVerb	check	cairnstore	required	-
-MCCairnStoreBrokenMoveLeaks.cfg	MCCairnStore.tla	action	MovingAwayLeavesOneShape	check	cairnstore	required	-
 MCCairnStoreBrokenOpenBlocked.cfg	MCCairnStore.tla	action	OpenLeavesARecord	check	cairnstore	required	-
 MCCairnStoreBrokenOpenOwn.cfg	MCCairnStore.tla	invariant	OneShapeUnlessHanded	check	cairnstore	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget

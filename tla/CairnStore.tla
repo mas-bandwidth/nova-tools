@@ -6,8 +6,8 @@
 \*
 \* The state the code owns: top, the regular session files directly under the
 \* store (<id>.md); blocked, the session paths directly under the store that
-\* hold something that is not a record (a symlink to a directory or to nothing,
-\* or a device, named <id>.md; a plain directory of that name counts for no
+\* hold something that is not a record (a symlink to a directory, to nothing or to
+\* somewhere outside the store, or a device, named <id>.md; a plain directory of that name counts for no
 \* shape and is outside the model); sess, the session files under sessions/; ownMark, whether
 \* any of sessions/, entries/ or log.jsonl exists; ents, the entries filed as
 \* (session, entry, text). The shape is not state: it is read from the
@@ -22,9 +22,10 @@
 \* session has no record). Index and Receipt read and change nothing, so they
 \* are no action. The outside events are a person keeping the store by hand:
 \* HandBenchFile, HandBlockFile and HandOwnDir, any of which can make a store
-\* mixed, and HandRemoveBlock, MoveBenchAway and MoveOwnAway, which take files
-\* away again (MoveBenchAway and MoveOwnAway are the two next actions a mixed
-\* store's refusal names); handed records that a person mixed the shapes.
+\* mixed, and HandRemoveBlock, HandMoveBenchAway and HandMoveOwnAway, which take
+\* paths away again (the person's own act after a mixed store's refusal, which
+\* names the next action in words; the tool moves and deletes nothing);
+\* handed records that a person mixed the shapes.
 \*
 \* Reserved names (README) and letter case are outside the model: a top-level
 \* README.md, in any case, is documentation and never a session file
@@ -45,8 +46,6 @@
 \*   "mixedserved"   open on a mixed store proceeds instead of refusing
 \*   "openblocked"   open reports success over a path that holds a non-record,
 \*                   leaving no record behind
-\*   "moveleaks"     the next action for a mixed store leaves a non-record
-\*                   path behind, so the store is still mixed
 \* Each is caught by one property below; the design passes all of them.
 
 EXTENDS Naturals, FiniteSets
@@ -74,7 +73,7 @@ TypeOK ==
   /\ ownMark \in BOOLEAN
   /\ ents \subseteq (Sessions \X Entries \X Texts)
   /\ handed \in BOOLEAN
-  /\ last \in {"Init", "Open", "Append", "Refuse", "Hand", "MoveBench", "MoveOwn"}
+  /\ last \in {"Init", "Open", "Append", "Refuse", "Hand"}
   /\ subj \in Sessions
 
 Init ==
@@ -203,25 +202,25 @@ HandOwnDir ==
   /\ last' = "Hand"
   /\ UNCHANGED <<top, blocked, sess, ents, subj>>
 
-\* the first next action of a mixed store's refusal: the top-level session paths
-\* are moved out of the store, and the entries filed in them go with them.
-MoveBenchAway ==
+\* a person moves the top-level session paths out of the store, and the entries
+\* filed in them go with them.
+HandMoveBenchAway ==
   /\ Shape = "mixed"
   /\ top' = {}
-  /\ blocked' = IF Broken = "moveleaks" THEN blocked ELSE {}
+  /\ blocked' = {}
   /\ ents' = {x \in ents : x[1] \in sess}
   /\ handed' = FALSE
-  /\ last' = "MoveBench"
+  /\ last' = "Hand"
   /\ UNCHANGED <<sess, ownMark, subj>>
 
-\* the second: sessions/, entries/ and log.jsonl are moved out of the store.
-MoveOwnAway ==
+\* a person moves sessions/, entries/ and log.jsonl out of the store.
+HandMoveOwnAway ==
   /\ Shape = "mixed"
   /\ sess' = {}
   /\ ownMark' = FALSE
   /\ ents' = {x \in ents : x[1] \in top}
   /\ handed' = FALSE
-  /\ last' = "MoveOwn"
+  /\ last' = "Hand"
   /\ UNCHANGED <<top, blocked, subj>>
 
 Next ==
@@ -234,8 +233,8 @@ Next ==
   \/ RefuseMixed
   \/ \E s \in Sessions : HandBenchFile(s) \/ HandBlockFile(s) \/ HandRemoveBlock(s)
   \/ HandOwnDir
-  \/ MoveBenchAway
-  \/ MoveOwnAway
+  \/ HandMoveBenchAway
+  \/ HandMoveOwnAway
 
 Spec == Init /\ [][Next]_vars
 
@@ -270,9 +269,5 @@ ToolKeepsTheShape ==
 \* reports success over a path that holds a non-record.
 OpenLeavesARecord ==
   [][(last' = "Open") => subj' \in RecordSet']_vars
-
-\* Either next action of a mixed store's refusal leaves one shape.
-MovingAwayLeavesOneShape ==
-  [][(last' \in {"MoveBench", "MoveOwn"}) => Shape' # "mixed"]_vars
 
 =============================================================================
