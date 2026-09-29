@@ -78,6 +78,7 @@ The run:
 
     podman run --rm --name nova-functional-run --init --timeout 600 \
       --network none --ipc private --pids-limit 512 --memory 4g --cpus 4 \
+      --security-opt no-new-privileges --cap-drop all \
       --read-only --tmpfs /tmp:rw,exec,size=2g --tmpfs /home/bench:rw,size=1g,mode=1777 \
       -v "$PWD":/src:ro -v nova-gocache:/gocache -v nova-gomod:/gomodcache:ro \
       -w /src nova-functional \
@@ -100,6 +101,8 @@ user as "other", so it is world-readable.
 | `--pids-limit` | a fork bomb or a leak stops at the limit |
 | `--memory` | the run, tmpfs included, stops at the limit and takes nothing more from the machine |
 | `--cpus` | the run takes no more cores than it was given |
+| `--security-opt no-new-privileges` | no process in the run gains privilege through a setuid binary (the base image carries `su`, `passwd` and `mount`) |
+| `--cap-drop all` | the run holds no capability; the fixtures need none as the `bench` user |
 | `--read-only` | the image is not written; only the tmpfs mounts and the named cache volume are |
 | `--tmpfs /tmp` | test directories and built test binaries live in memory and are gone at exit; `exec` because test binaries run from there |
 | `--tmpfs /home/bench` | a writable home, in memory; `mode=1777` because podman does not take a `uid` option here |

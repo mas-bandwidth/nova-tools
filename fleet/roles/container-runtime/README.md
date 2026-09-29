@@ -34,12 +34,13 @@ second real run reports `changed=0`.
 
 The last tasks run trivial containers as the runner user with the flags a
 functional run uses: `--network none --ipc private --pids-limit --memory --cpus
---read-only --tmpfs --timeout`. podman warns and goes on when a limit is
+--read-only --security-opt no-new-privileges --cap-drop all --tmpfs --timeout`. podman warns and goes on when a limit is
 unsupported, so the container reads its own cgroup back and the play fails when
 
 - `pids.max`, `memory.max` or `cpu.max` is not the value asked for,
 - the network is more than loopback,
-- the root filesystem is writable or `/tmp` is not, or
+- the root filesystem is writable or `/tmp` is not,
+- `no-new-privileges` is not set or a capability remains in the bounding set, or
 - a container that sleeps past `--timeout` is not gone within
   `container_runtime_probe_grace` seconds, or one of the probe containers is
   left behind.

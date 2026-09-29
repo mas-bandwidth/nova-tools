@@ -168,7 +168,8 @@
 # warns and goes on when a limit is unsupported, so the container itself reads
 # the limits back from its own cgroup and the play fails when one is not the
 # value asked for, when the network is not loopback only, when the root
-# filesystem is writable, or when /tmp is not.
+# filesystem is writable, when /tmp is not, when no-new-privileges is not set,
+# or when a capability remains.
 - name: the probe container has the limits the runner will use
   become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
   become_user: "{{ container_runtime_user }}"
@@ -192,6 +193,10 @@
       - --cpus
       - "{{ container_runtime_probe_cpus }}"
       - --read-only
+      - --security-opt
+      - no-new-privileges
+      - --cap-drop
+      - all
       - --tmpfs
       - /tmp:rw,exec,size=16m
       - --timeout
@@ -213,7 +218,9 @@
         test "$(ls /sys/class/net)" = lo || { echo "network is not loopback only: $(ls /sys/class/net)"; exit 14; }
         if touch /probe-rootfs 2>/dev/null; then echo "the root filesystem is writable"; exit 15; fi
         touch /tmp/probe-tmp || { echo "/tmp is not writable"; exit 16; }
-        echo "limits ok: pids=$WANT_PIDS memory=$WANT_MEMORY cpu=$WANT_CPU network=lo rootfs=ro tmp=rw"
+        grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status || { echo "no-new-privileges is not set"; exit 17; }
+        test "$(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)" = 0000000000000000 || { echo "capabilities remain: $(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)"; exit 18; }
+        echo "limits ok: pids=$WANT_PIDS memory=$WANT_MEMORY cpu=$WANT_CPU network=lo rootfs=ro tmp=rw nonewprivs=1 caps=none"
   register: container_runtime_probe
   changed_when: false
   when: not ansible_check_mode
