@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,8 +80,11 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	if opts.xyFile != "" {
 		return tableRefuse(stderr, xyFileRetired)
 	}
-	if opts.friends != "" || opts.lockKey != "" {
-		return tableRefuse(stderr, "--friends and --lock belong to --layout live; the wide table takes --out <file>")
+	if opts.friends != "" {
+		return tableRefuse(stderr, "--friends belongs to --layout live")
+	}
+	if opts.lockKey != "" && (!opts.loop || opts.out == "") {
+		return tableRefuse(stderr, "--lock names the writer lock of --loop --out")
 	}
 	if opts.check {
 		if opts.live {
@@ -103,20 +107,66 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	if opts.loop && opts.once {
 		return tableRefuse(stderr, "--redis takes either --once or --loop, not both")
 	}
-	return cmdTableRedis(opts.redis, opts.sprint, opts.loop, opts.every, opts.out, stdout, stderr)
+	return cmdTableRedis(opts, stdout, stderr)
 }
 
-func cmdTableRedis(addr, sprint string, loop bool, every time.Duration, out string, stdout, stderr io.Writer) int {
+var errLockLost = errors.New("lock lost")
+
+func cmdTableRedis(opts tableOpts, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return loopWideTable(ctx, opts, stdout, stderr)
+}
+
+func loopWideTable(ctx context.Context, opts tableOpts, stdout, stderr io.Writer) int {
+	addr, sprint, loop, every, out := opts.redis, opts.sprint, opts.loop, opts.every, opts.out
 	st, err := store.Open(ctx, addr)
 	if err != nil {
 		return tableRefuse(stderr, err.Error())
 	}
 	defer st.Close()
+
+	token := ""
+	lockKey := opts.lockKey
+	lockTTL := 5 * tickEvery(every)
+	locked := false
+	if loop && out != "" {
+		host, _ := os.Hostname()
+		token = fmt.Sprintf("%s:%d:%d", host, os.Getpid(), time.Now().UnixNano())
+		if lockKey == "" {
+			lockKey = defaultTableLock
+		}
+		holder, lerr := table.AcquireLock(ctx, st.Client(), lockKey, token, lockTTL)
+		switch {
+		case lerr != nil:
+			return tableRefuse(stderr, lerr.Error())
+		case holder != token:
+			fmt.Fprintf(stderr, "nova-sprint table: REFUSED: %s is held by %s; one table writer at a time\n", lockKey, oneline.Escape(holder))
+			return 3
+		default:
+			locked = true
+			fmt.Fprintf(stdout, "TABLE loop out=%s every=%s lock=%s\n", out, tickEvery(every), lockKey)
+		}
+	}
+	defer func() {
+		if locked {
+			if err := table.ReleaseLock(context.Background(), st.Client(), lockKey, token); err != nil {
+				fmt.Fprintf(stderr, "nova-sprint table: release %s: %s (held until its TTL)\n", lockKey, oneline.Escape(err.Error()))
+			}
+		}
+	}()
+
 	// One FCALL_RO per tick: one consistent server instant per rendered
 	// table, never a pipeline of separate reads (6.2).
 	tick := func(ctx context.Context) (string, int, error) {
+		if locked {
+			ok, err := table.RefreshLock(ctx, st.Client(), lockKey, token, lockTTL)
+			if err == nil && !ok {
+				fmt.Fprintf(stderr, "nova-sprint table: REFUSED: %s no longer holds this writer's token; exiting\n", lockKey)
+				locked = false
+				return "", 3, errLockLost
+			}
+		}
 		snap, err := table.ReadNamed(ctx, st.Client(), sprint)
 		if err != nil {
 			return "", 0, err
@@ -142,7 +192,7 @@ func tablePublishLoop(ctx context.Context, tick tableTick, loop bool, every time
 	render := func() (int, error) {
 		body, code, err := tick(ctx)
 		if err != nil {
-			return 0, err
+			return code, err
 		}
 		if out == "" {
 			if _, err := io.WriteString(stdout, body); err != nil {
@@ -163,7 +213,11 @@ func tablePublishLoop(ctx context.Context, tick tableTick, loop bool, every time
 	ticker := time.NewTicker(tickEvery(every))
 	defer ticker.Stop()
 	for {
-		if _, err := render(); err != nil {
+		code, err := render()
+		if err != nil {
+			if errors.Is(err, errLockLost) {
+				return code
+			}
 			fmt.Fprintf(stderr, "nova-sprint table: %s; next tick\n", oneline.Escape(err.Error()))
 		}
 		select {

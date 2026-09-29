@@ -319,3 +319,35 @@ func TestControl3530WriterLock(t *testing.T) {
 		t.Fatal("the holder's release left the key")
 	}
 }
+
+// TestRefreshLock: RefreshLock extends the lease while holding token,
+// reports false when held by another token, and re-takes the key if expired.
+func TestRefreshLock(t *testing.T) {
+	t.Parallel()
+
+	client, _, _ := sprintStore(t)
+	ctx := context.Background()
+	const key = "lock:nova-sprint-table-refresh"
+	if holder, err := table.AcquireLock(ctx, client, key, "a", 5*time.Second); err != nil || holder != "a" {
+		t.Fatalf("first acquire: %q %v", holder, err)
+	}
+	ok, err := table.RefreshLock(ctx, client, key, "a", 5*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("refresh holder: ok=%v err=%v", ok, err)
+	}
+	ok, err = table.RefreshLock(ctx, client, key, "b", 5*time.Second)
+	if err != nil || ok {
+		t.Fatalf("refresh stranger: ok=%v err=%v, want false", ok, err)
+	}
+	if err := table.ReleaseLock(ctx, client, key, "a"); err != nil {
+		t.Fatal(err)
+	}
+	// After release/expiry, RefreshLock re-takes the lease for token
+	ok, err = table.RefreshLock(ctx, client, key, "b", 5*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("refresh after release: ok=%v err=%v", ok, err)
+	}
+	if v, _ := client.Get(ctx, key).Result(); v != "b" {
+		t.Fatalf("re-taken key holds %q, want b", v)
+	}
+}
