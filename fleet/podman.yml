@@ -1,0 +1,17 @@
+# podman.yml: rootless podman on a Linux bench, so the functional tier of the
+# tests can run inside a container that owns every process, port, System V
+# shared memory segment and temp file the run makes (mas-bandwidth/ideas#826).
+#
+# TRACER BULLET, not for landing: it converges one host to prove the runtime
+# works; the real play belongs with the fleet's inventory (the machines
+# registry), not with the one-host inventory beside this file.
+#
+#   ansible-playbook -i fleet/inventory-tracer.ini fleet/podman.yml --limit space --check --diff
+#   ansible-playbook -i fleet/inventory-tracer.ini fleet/podman.yml --limit space
+#
+# Run it through a pipe (| cat): ansible needs blocking stdio.
+- name: rootless podman for the functional tier
+  hosts: benches
+  gather_facts: true
+  roles:
+    - podman

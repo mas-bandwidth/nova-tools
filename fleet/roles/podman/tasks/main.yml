@@ -1,0 +1,56 @@
+---
+# Rootless, daemonless podman from the distribution's packages. Idempotent;
+# --check --diff is meaningful: it names the packages that would be installed
+# and the subuid/subgid/linger rows that would be added, and touches nothing.
+- name: the host is Debian family Linux
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+      - ansible_facts["system"] == "Linux"
+    fail_msg: "podman role: Debian-family Linux only (apt); this host is {{ ansible_facts["distribution"] }}"
+
+- name: podman and its rootless helpers
+  become: true
+  ansible.builtin.apt:
+    name: "{{ podman_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: subordinate uid range for the user
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/subuid
+    regexp: "^{{ podman_user }}:"
+    line: "{{ podman_user }}:{{ podman_subid_start }}:{{ podman_subid_count }}"
+    create: true
+    mode: "0644"
+
+- name: subordinate gid range for the user
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/subgid
+    regexp: "^{{ podman_user }}:"
+    line: "{{ podman_user }}:{{ podman_subid_start }}:{{ podman_subid_count }}"
+    create: true
+    mode: "0644"
+
+# Linger keeps /run/user/<uid> (the rootless runtime dir) alive with no login
+# session, which a runner started by systemd has none of.
+- name: linger for the user
+  become: true
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ podman_user }}"
+    creates: "/var/lib/systemd/linger/{{ podman_user }}"
+
+- name: rootless podman answers (skipped in check mode)
+  ansible.builtin.command: podman info --format '{{ '{{' }}.Host.Security.Rootless{{ '}}' }} {{ '{{' }}.Version.Version{{ '}}' }}'
+  register: podman_info
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: rootless is true
+  ansible.builtin.assert:
+    that: podman_info.stdout.split()[0] == "true"
+    fail_msg: "podman is not running rootless for {{ podman_user }}: {{ podman_info.stdout }}"
+  when: not ansible_check_mode

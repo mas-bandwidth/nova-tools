@@ -1,0 +1,53 @@
+# The functional-tier image (TRACER BULLET, mas-bandwidth/ideas#826): what a
+# functional test run needs and nothing else. Go at the version go.mod pins,
+# redis-server, postgresql, git, and a non-root user (postgres refuses to run
+# as root). The test fixtures are unchanged: they start redis-server and
+# postgres as child processes, here inside the container, so removing the
+# container removes them.
+#
+# Nothing secret is baked in. The source tree, the Go build cache and the Go
+# module cache all arrive as mounts at run time.
+#
+#   podman build -t nova-functional:tracer -f tools/functional-image/Containerfile tools/functional-image
+
+# ubuntu:24.04, the multi-arch index pinned by digest (2026-09-29). Its
+# postgresql is 16, which the fixtures search first under /usr/lib/postgresql/16/bin.
+FROM docker.io/library/ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+
+# The exact toolchain go.mod pins ("go 1.26.6"), from the vendor, sha256 checked.
+ARG GO_VERSION=1.26.6
+ARG GO_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+ARG BENCH_UID=10001
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git redis-server postgresql-16 procps \
+ && rm -rf /var/lib/apt/lists/* \
+ # the package makes a cluster and a service; the fixtures make their own
+ && rm -rf /var/lib/postgresql/16/main /etc/postgresql/16/main
+
+RUN curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+ && printf '%s  /tmp/go.tgz\n' "${GO_SHA256}" | sha256sum -c - \
+ && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz \
+ && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+ && /usr/local/bin/go version
+
+RUN useradd --uid "${BENCH_UID}" --create-home --home-dir /home/bench --shell /bin/bash bench \
+ && mkdir -p /gocache /gomodcache /src \
+ && chown bench:bench /gocache /gomodcache
+
+# GOTOOLCHAIN=local: never fetch a toolchain. NOVA_CI=1: a missing redis-server
+# or postgres FAILS the test instead of skipping it.
+ENV PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    HOME=/home/bench \
+    GOCACHE=/gocache \
+    GOMODCACHE=/gomodcache \
+    GOTOOLCHAIN=local \
+    GOFLAGS=-buildvcs=false \
+    NOVA_CI=1
+
+USER bench
+WORKDIR /src
+CMD ["bash"]

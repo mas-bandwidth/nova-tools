@@ -1,0 +1,16 @@
+---
+# The user whose containers these are: the user the play connects as (the
+# runner user on the Linux benches).
+podman_user: "{{ ansible_facts["user_id"] }}"
+# subordinate id range given to the user when /etc/subuid or /etc/subgid has no
+# row for it. An existing row is never changed.
+podman_subid_start: 100000
+podman_subid_count: 65536
+podman_packages:
+  - podman
+  - uidmap
+  - passt
+  - crun
+  - conmon
+  - netavark
+  - aardvark-dns
