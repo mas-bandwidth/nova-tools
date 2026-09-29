@@ -19,9 +19,11 @@ type ClearResult struct {
 	Finished  string // a pending operation of the old epoch clear finished first
 	Abandoned string // one it could not finish, abandoned with the old epoch
 	Restored  bool   // a clear cut before it restored its shape, finished first
+	Machine   string // the machine's state before clear set it STOPPED
 }
 
-// Clear stops the sprint and clears all work in it: it advances the sprint's
+// Clear stops the sprint and clears all work in it: it sets the machine
+// STOPPED and leaves it STOPPED, then advances the sprint's
 // epoch, once, atomically. Nothing is deleted: the old epoch stays where it is
 // and readable (At), and every writer still holding it is refused by the
 // table layer as stale. The new epoch starts with the same shape (streams,
@@ -32,10 +34,14 @@ type ClearResult struct {
 // restored its shape is finished first by the next one.
 func (st *Store) Clear(ctx context.Context) (ClearResult, error) {
 	var res ClearResult
-	if st.Stop != nil {
-		if err := st.Stop(ctx); err != nil {
+	// The machine first: no tick begins after it is STOPPED, and a tick in
+	// flight is refused as stale at its next part. Clear leaves it STOPPED.
+	if _, ok := st.B.(KV); ok {
+		before, _, _, err := st.SetMachine(ctx, false)
+		if err != nil {
 			return res, fmt.Errorf("stopping the machine: %w", err)
 		}
+		res.Machine = before.StateWord()
 	}
 	st, err := st.repin(ctx)
 	if err != nil {

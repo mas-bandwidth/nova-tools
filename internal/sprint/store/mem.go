@@ -42,6 +42,7 @@ type memState struct {
 	cleared  time.Time
 	shape    string
 	logs     map[uint64]*memLog // the sprint's keys, per epoch
+	kv       map[string]string  // the machine's records (tick.go)
 	seq      int
 	Fail     func(point string) error
 	// Calls counts store exchanges by kind.
@@ -96,7 +97,7 @@ type memOp struct {
 // NewMem is an empty store.
 func NewMem() *Mem {
 	return &Mem{memState: &memState{tables: map[string]*memTable{}, dropped: map[string]*memResidue{}, views: map[string]ntable.View{},
-		logs: map[uint64]*memLog{}, Calls: map[string]int{}}}
+		logs: map[uint64]*memLog{}, kv: map[string]string{}, Calls: map[string]int{}}}
 }
 
 // AtEpoch is the store pinned to an epoch.

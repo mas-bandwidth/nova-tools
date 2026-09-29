@@ -68,7 +68,7 @@ func TestRedisALargeSet(t *testing.T) {
 	st, _ := liveStore(t)
 	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
 	h.setup(300)
-	res := h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 300}}))
+	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 300}}))
 	if len(res.Moved) != 300 {
 		t.Fatalf("moved %d", len(res.Moved))
 	}
@@ -85,7 +85,7 @@ func TestRedisAPendingOperationIsFinishedByTheNextVerb(t *testing.T) {
 	lost := &lostOnce{Backend: st.B, table: st.Names.Table(sprint.Work)}
 	cut := *st
 	cut.B = lost
-	if _, err := cut.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
+	if _, err := cut.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("start with a lost reply: %v", err)
 	}
 	if f, _ := st.B.ReadFence(h.ctx); f.Pending == nil {

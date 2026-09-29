@@ -215,19 +215,19 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	return p
 }
 
-// StartReq cuts and deals work cards for ready primaries.
-type StartReq struct {
+// DealReq cuts and deals work cards for ready primaries.
+type DealReq struct {
 	Sel
 	Who string
 }
 
-// Start moves ready -> working: for each primary, in work order, its work
+// Deal moves ready -> working: for each primary, in work order, its work
 // card is dealt to the up member with the shortest ready queue. A card
 // withdrawn because no member was up is the same card dealt again at a new
 // generation, its attempt unchanged; otherwise the next attempt's card is cut.
-func Start(s *Snapshot, r StartReq) Plan { return Lawful(startPlan(s, r)) }
+func Deal(s *Snapshot, r DealReq) Plan { return Lawful(dealPlan(s, r)) }
 
-func startPlan(s *Snapshot, r StartReq) Plan {
+func dealPlan(s *Snapshot, r DealReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
 	up := s.UpMembers()

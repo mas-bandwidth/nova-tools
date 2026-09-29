@@ -13,7 +13,7 @@ func TestProbe1bStaleFinishWithoutGeneration(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	first := h.snap().Fleet.Card("s1-1.w1").Row
 	h.must(TakeStep(sprint.TakeReq{As: first, Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}))
 	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: first}))
@@ -48,7 +48,7 @@ func TestStartAfterAWithdrawalDealsTheSameCardThroughTheStore(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	before := h.snap().Fleet.Card("s1-1.w1")
 	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
@@ -57,7 +57,7 @@ func TestStartAfterAWithdrawalDealsTheSameCardThroughTheStore(t *testing.T) {
 	}
 	h.clean("withdrawn")
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	s := h.snap()
 	c, pr := s.Fleet.Card("s1-1.w1"), s.Work.Card("s1-1")
 	if c.Row != "m2" || c.Col != sprint.Ready || c.Int("gen") <= before.Int("gen")+1 || c.Score != before.Score || pr.F("work") != c.ID || pr.Int("attempt") != 1 || s.Fleet.Card("s1-1.w2") != nil {

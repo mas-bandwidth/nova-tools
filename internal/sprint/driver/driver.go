@@ -1,13 +1,15 @@
 // Package driver plays the world outside the sprint table, on a tick: workers
-// taking and finishing work cards, readers taking and reporting read cards,
-// each stream's merge step with its facts, fleet members going down and up,
-// and the mechanical moves that need no decision. It has no access of its own
-// to the core or the store: everything it does is a nova-sprint verb run
-// through the command's own entry point with an argument list, and everything
-// it knows it reads from the read verbs' --json output. It never runs the
-// coordinator's verbs (accept, rework, drop, rank, resume, return); it keeps
-// playing while things wait for the coordinator, says what waits and for how
-// long, and stops when every stream has landed.
+// taking and finishing work cards, readers reporting read cards, each
+// stream's merge step with its facts, and fleet members going down and up.
+// The mechanical moves are the machine's (nova-sprint run): the driver plays
+// only the outside actors, and refuses to play while no machine is running.
+// It has no access of its own to the core or the store: everything it does is
+// a nova-sprint verb run through the command's own entry point with an
+// argument list, and everything it knows it reads from the read verbs' --json
+// output. It never runs the coordinator's verbs (accept, rework, drop, rank,
+// resume, return, start, stop) nor the machine's (tick, run); it keeps playing
+// while things wait for the coordinator, says what waits and for how long,
+// and stops when every stream has landed.
 package driver
 
 import (
@@ -54,13 +56,11 @@ type Clock interface {
 
 // Config is how the driver plays.
 type Config struct {
-	Every      time.Duration // between ticks
-	Start      bool          // start ready primaries (a mechanical move)
-	Batch      int           // a merge step's batch
-	TakeLimit  int           // work cards a member takes a tick
-	ReadLimit  int           // read cards a reader reports a tick
-	StartLimit int           // primaries started a tick
-	Ticks      int           // stop after this many ticks; 0 is until every stream lands
+	Every     time.Duration // between ticks
+	Batch     int           // a merge step's batch
+	TakeLimit int           // work cards a member takes a tick
+	ReadLimit int           // read cards a reader reports a tick
+	Ticks     int           // stop after this many ticks; 0 is until every stream lands
 }
 
 // Driver runs the loop. Run is the command's entry point; Base is the flags
@@ -76,8 +76,10 @@ type Driver struct {
 	downed map[string]bool // members this driver took down and has not brought up
 }
 
-// coordinatorVerbs are never run by the driver.
-var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": true, "rank": true, "resume": true, "return": true}
+// coordinatorVerbs are never run by the driver: the coordinator's, and the
+// machine's.
+var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": true, "rank": true, "resume": true, "return": true,
+	"start": true, "stop": true, "tick": true, "run": true, "resolve": true, "ask": true}
 
 // run runs one verb, prints its command line and its summary shortened, and
 // returns its exit code and stdout.
@@ -142,6 +144,7 @@ type where struct {
 		State  string `json:"State"`
 	} `json:"streams"`
 	Pending string `json:"pending"`
+	Machine string `json:"machine"`
 }
 
 type queue struct {
@@ -191,6 +194,13 @@ func sortedKeys(m map[string][]string) []string {
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 // Loop plays until every stream has landed (exit 0), or until Ticks ticks.
 // It returns the reason it stopped.
 func (d *Driver) Loop() (string, error) {
@@ -204,8 +214,12 @@ func (d *Driver) Loop() (string, error) {
 	if c.ReadLimit <= 0 {
 		c.ReadLimit = 10
 	}
-	if c.StartLimit <= 0 {
-		c.StartLimit = 1000
+	var first where
+	if !d.read(&first, "where") {
+		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
+	}
+	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") {
+		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	for tick := 1; c.Ticks == 0 || tick <= c.Ticks; tick++ {
 		var w where
@@ -290,11 +304,6 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			}
 		}
 	}
-	// The mechanical moves.
-	d.run(false, "resolve")
-	if c.Start {
-		d.run(false, "start", "--limit", strconv.Itoa(c.StartLimit))
-	}
 	// Workers: finish what they took last tick, then take the oldest ready
 	// cards; every card is named <card>@<gen>, the generation from the queue.
 	for _, m := range members {
@@ -331,7 +340,6 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			d.run(false, append(append([]string{"take", "--as", m}, held...), ready...)...)
 		}
 	}
-	d.run(false, "ask")
 	// Readers report what is asked of them.
 	for _, r := range sortedRows(w.Tables["readers"]) {
 		var q queue

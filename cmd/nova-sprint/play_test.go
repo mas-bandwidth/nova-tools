@@ -40,12 +40,15 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 	for _, s := range []string{"s1", "s2", "s3"} {
 		ta.ok("add --stream " + s + " --count 15")
 	}
+	ta.ok("start")
 	for round := 1; round <= 300; round++ {
-		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --start --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))
-		if round == 1 && (!strings.Contains(out, "tick 1") || !strings.Contains(out, "nova-sprint start --limit 1000")) {
+		ta.ok("tick") // the machine: every mechanical move
+		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))
+		if round == 1 && !strings.Contains(out, "tick 1") {
 			t.Fatalf("the first tick:\n%s", out)
 		}
-		for _, bad := range []string{"nova-sprint accept", "nova-sprint rework", "nova-sprint resume", "nova-sprint drop", "nova-sprint rank"} {
+		for _, bad := range []string{"nova-sprint accept", "nova-sprint rework", "nova-sprint resume", "nova-sprint drop", "nova-sprint rank",
+			"nova-sprint start", "nova-sprint resolve", "nova-sprint ask", "nova-sprint tick"} {
 			if strings.Contains(out, bad) {
 				t.Fatalf("the driver ran a coordinator verb:\n%s", out)
 			}
@@ -70,7 +73,15 @@ func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	out := ta.ok("play --seed 1 --ticks 4 --start --fail 1 --every 1m")
+	if code, _, errs := ta.do("play --seed 1 --ticks 1"); code != 2 || !strings.Contains(errs, "no machine is running") {
+		t.Fatalf("play with the machine stopped: %d %s", code, errs)
+	}
+	ta.ok("start")
+	out := ""
+	for round := 1; round <= 3; round++ {
+		ta.ok("tick")
+		out = ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --fail 1 --every 1m", round))
+	}
 	if !strings.Contains(out, "waits for the coordinator: work came back failed s1 x3") || !strings.Contains(out, "PLAY OK stopped=ticks") {
 		t.Fatalf("play:\n%s", out)
 	}

@@ -90,7 +90,7 @@ func ids(xs ...string) sprint.Sel { return sprint.Sel{IDs: xs} }
 // toReview starts, takes and finishes ok the named primaries.
 func (p *probe) toReview(head string, xs ...string) {
 	p.t.Helper()
-	p.do("start "+strings.Join(xs, ","), StartStep(sprint.StartReq{Sel: ids(xs...)}))
+	p.do("deal "+strings.Join(xs, ","), DealStep(sprint.DealReq{Sel: ids(xs...)}))
 	s := p.snap()
 	for _, id := range xs {
 		c := s.Fleet.Card(s.Work.Card(id).F("work"))
@@ -110,7 +110,7 @@ func TestARedealThenBothFinishes(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
-	p.do("start", StartStep(sprint.StartReq{Sel: ids("s1-1")}))
+	p.do("deal", DealStep(sprint.DealReq{Sel: ids("s1-1")}))
 	c := p.snap().Fleet.Card("s1-1.w1")
 	first := c.Row
 	p.do("take by first", TakeStep(sprint.TakeReq{As: first, Sel: ids("s1-1.w1"), Gens: map[string]int{"s1-1.w1": 1}}))
@@ -146,7 +146,7 @@ func TestAFinishWithoutItsGenerationIsRefused(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
-	p.do("start", StartStep(sprint.StartReq{Sel: ids("s1-1")}))
+	p.do("deal", DealStep(sprint.DealReq{Sel: ids("s1-1")}))
 	first := p.snap().Fleet.Card("s1-1.w1").Row
 	p.do("take by first (gen 1)", TakeStep(sprint.TakeReq{As: first, Sel: ids("s1-1.w1"), Gens: map[string]int{"s1-1.w1": 1}}))
 	p.do("fleet down first", FleetStep(sprint.FleetReq{Op: "down", Member: first}))
@@ -175,9 +175,9 @@ func TestACutAfterEachWriteIsFinishedByRepair(t *testing.T) {
 		tables []string // the tables it writes, in order
 	}
 	cases := []multi{
-		{"start", func(p *probe) {}, func(p *probe) Step { return StartStep(sprint.StartReq{Sel: ids("s1-1")}) }, []string{"t-fleet", "t-work"}},
+		{"deal", func(p *probe) {}, func(p *probe) Step { return DealStep(sprint.DealReq{Sel: ids("s1-1")}) }, []string{"t-fleet", "t-work"}},
 		{"finish", func(p *probe) {
-			p.do("start", StartStep(sprint.StartReq{Sel: ids("s1-1")}))
+			p.do("deal", DealStep(sprint.DealReq{Sel: ids("s1-1")}))
 			c := p.snap().Fleet.Card("s1-1.w1")
 			p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 		}, func(p *probe) Step {
@@ -192,7 +192,7 @@ func TestACutAfterEachWriteIsFinishedByRepair(t *testing.T) {
 		{"merge", func(p *probe) { p.through("s1-1") }, func(p *probe) Step { return MergeStep(sprint.MergeReq{Stream: "s1"}) }, []string{"t-merge", "t-work"}},
 		{"drop", func(p *probe) { p.through("s1-1") }, func(p *probe) Step { return DropStep(sprint.DropReq{Sel: ids("s1-1"), Reason: "x"}) }, []string{"t-merge", "t-work"}},
 		{"withdraw", func(p *probe) {
-			p.do("start", StartStep(sprint.StartReq{Sel: ids("s1-1")}))
+			p.do("deal", DealStep(sprint.DealReq{Sel: ids("s1-1")}))
 			p.do("down m2", FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
 		}, func(p *probe) Step { return FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}) }, []string{"t-fleet", "t-work"}},
 	}
@@ -271,7 +271,7 @@ func everyVerb() map[string]Step {
 	return map[string]Step{
 		"add":      AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"z1"}}),
 		"resolve":  ResolveStep(sprint.ResolveReq{}),
-		"start":    StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 5}}),
+		"deal":     DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 5}}),
 		"take":     TakeStep(sprint.TakeReq{As: "m1"}),
 		"finish":   FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{Limit: 5}}),
 		"ask":      AskStep(sprint.AskReq{}),
@@ -539,7 +539,7 @@ func TestWithdrawAndReturn(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(4)
-	p.do("start all", StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 4}}))
+	p.do("deal all", DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 4}}))
 	c := p.snap().Fleet.Card("s1-1.w1")
 	p.do("take s1-1", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("down m1", FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
@@ -553,7 +553,7 @@ func TestWithdrawAndReturn(t *testing.T) {
 	t.Logf("finish on a withdrawn card: %+v", res.Refused)
 	p.do("up m2", FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	p.do("up m1", FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	p.do("start all again", StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 4}}))
+	p.do("deal all again", DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 4}}))
 	s := p.snap()
 	for _, m := range []string{"m1", "m2"} {
 		var o []string
@@ -574,7 +574,7 @@ func TestAnsweringOneCardOfAGroup(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(3)
-	p.do("start 3", StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 3}}))
+	p.do("deal 3", DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 3}}))
 	s := p.snap()
 	var cs []string
 	for _, c := range s.Fleet.Column(sprint.Ready) {
@@ -608,7 +608,7 @@ func TestALargeFailedGroupKeepsEverySubject(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(60)
-	p.do("start 60", StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 60}}))
+	p.do("deal 60", DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 60}}))
 	gens := map[string]int{}
 	var cards []string
 	for _, m := range []string{"m1", "m2"} {
@@ -655,14 +655,14 @@ func TestInterleavedWriters(t *testing.T) {
 		t.Parallel()
 		p := newProbe(t)
 		p.setup(2)
-		p.do("start 1", StartStep(sprint.StartReq{Sel: ids("s1-1")}))
+		p.do("deal 1", DealStep(sprint.DealReq{Sel: ids("s1-1")}))
 		c := p.snap().Fleet.Card("s1-1.w1")
 		p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 		p.newNotes()
 		other := &Store{B: p.m, Names: p.st.Names, Actor: "other", Now: p.st.Now, NewID: func() string { return "o" }}
 		var oerr error
 		r := &racer{Backend: p.m, at: "apply t-fleet", do: func() {
-			_, oerr = other.Run(p.ctx, StartStep(sprint.StartReq{Sel: ids("s1-2")}))
+			_, oerr = other.Run(p.ctx, DealStep(sprint.DealReq{Sel: ids("s1-2")}))
 		}}
 		st := *p.st
 		st.B = r
@@ -701,7 +701,7 @@ func TestInterleavedWriters(t *testing.T) {
 		}}
 		st := *p.st
 		st.B = r
-		_, err := st.Run(p.ctx, StartStep(sprint.StartReq{Sel: ids("s1-1")}))
+		_, err := st.Run(p.ctx, DealStep(sprint.DealReq{Sel: ids("s1-1")}))
 		t.Logf("cut: %v", err)
 		p.inv("cut by an outside write")
 		p.tick(time.Hour)

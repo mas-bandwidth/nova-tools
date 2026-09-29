@@ -15,7 +15,7 @@ func TestACallerOpOfAnotherVerbIsAConflict(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
-	start := StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 2}})
+	start := DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}})
 	start.CallerOp = "op-A"
 	h.must(start)
 	before := h.revisions()
@@ -24,7 +24,7 @@ func TestACallerOpOfAnotherVerbIsAConflict(t *testing.T) {
 	take.CallerOp = "op-A"
 	res, err := h.st.Run(h.ctx, take)
 	var ce *OpConflictError
-	if !errors.As(err, &ce) || ce.Recorded != "start" || res.Replay || len(res.Moved) != 0 || !strings.Contains(err.Error(), "start") {
+	if !errors.As(err, &ce) || ce.Recorded != "deal" || res.Replay || len(res.Moved) != 0 || !strings.Contains(err.Error(), "deal") {
 		t.Fatalf("take under start's operation id: %+v %v", res, err)
 	}
 	h.nothingWritten(before)

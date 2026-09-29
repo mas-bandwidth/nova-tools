@@ -16,8 +16,12 @@ import (
 // sprintKeys are the deployment's keys outside its tables, under its prefix
 // (Names.Key): the fence and its generation, the notification stream, the
 // judgments, the open subjects, the coordinator's cursor, the streams'
-// progress and the callers' results.
+// progress and the callers' results. Each epoch has its own.
 var sprintKeys = []string{keyFence, keyGen, keyInbox, keyNotes, keyOpen, keyCursor, keyProgress, keyDone}
+
+// machineKeys are the machine's records: one for the whole sprint, under its
+// prefix, never per epoch, so a clear keeps the machine's state and history.
+var machineKeys = []string{keyMachine, keyHeartbeat}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // identity, revision, definition record and change log; and its operation
@@ -79,6 +83,9 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 		for _, k := range sprintKeys {
 			keys = append(keys, names.KeyAt(k, e))
 		}
+	}
+	for _, k := range machineKeys {
+		keys = append(keys, names.Key(k))
 	}
 	return append(keys, names.EpochKey())
 }
@@ -340,6 +347,12 @@ func (m *Mem) deleteKey(k string) bool {
 			}
 		}
 	}
+	for _, s := range machineKeys {
+		if _, held := m.kv[s]; held && strings.HasSuffix(k, "sprint:"+s) {
+			delete(m.kv, s)
+			return true
+		}
+	}
 	return false
 }
 
@@ -446,6 +459,11 @@ func (m *Mem) Keys(names sprint.Names) []string {
 			if sprintKey(l, s, false) {
 				keys = append(keys, names.KeyAt(s, e))
 			}
+		}
+	}
+	for _, s := range machineKeys {
+		if _, held := m.kv[s]; held {
+			keys = append(keys, names.Key(s))
 		}
 	}
 	sort.Strings(keys)

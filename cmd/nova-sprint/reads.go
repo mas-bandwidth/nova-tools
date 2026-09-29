@@ -147,6 +147,7 @@ type whereView struct {
 	Pending string                                  `json:"pending,omitempty"`
 	Epoch   uint64                                  `json:"epoch"`
 	Cleared time.Time                               `json:"cleared,omitempty"` // when the epoch began
+	Machine string                                  `json:"machine,omitempty"`
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -219,8 +220,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
+	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
-	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + v.Summary + "\n\n")
+	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + strings.TrimSpace(v.Summary+"  "+v.Machine) + "\n\n")
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -292,7 +294,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if groups == nil {
 			groups = []sprint.Group{}
 		}
-		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now()}
+		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": st.MachineLine(ctx)}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)
 		}
@@ -323,6 +325,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "INBOX OK judgments=%d happened=%d cursor=%s\n", judg, other, dashed(v.Cursor))
+	if line := st.MachineLine(ctx); line != "" {
+		fmt.Fprintln(stdout, line)
+	}
 	return 0
 }
 

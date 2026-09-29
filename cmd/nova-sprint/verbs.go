@@ -32,7 +32,10 @@ func init() {
 		{"init", "[--readers <a,b,...>] [--members <m1,m2,...>]", "init --readers reader-a,reader-b,reader-c --members m1,m2", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n>) [--needs <a,b>] [--brief <text>] [--score <n>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
-		{"start", "(<id>... | --stream <s> | --limit <n> | --group <id> [--expect <n>])", "start --limit 10", (*app).cmdStart},
+		{"start", "", "start", (*app).cmdMachineStart},
+		{"stop", "", "stop", (*app).cmdMachineStop},
+		{"run", "", "run", (*app).cmdRun},
+		{"tick", "", "tick", (*app).cmdTick},
 		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
@@ -50,14 +53,14 @@ func init() {
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"ci", "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci", (*app).cmdCI},
-		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait start-x-1.2 --for 30m", (*app).cmdWait},
+		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"inbox", "[--open <group>] [--read] [--deadline <duration>] [--stale <duration>]", "inbox", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
-		{"play", "[--seed <n>] [--every <duration>] [--start] [--fail <p>] [--broken <p>] [--batch <n>] [--stuck <p>] [--cross <p>] [--red <p>] [--flap <p>] [--ticks <n>]", "play --seed 7 --every 1s --start", (*app).cmdPlay},
+		{"play", "[--seed <n>] [--every <duration>] [--fail <p>] [--broken <p>] [--batch <n>] [--stuck <p>] [--cross <p>] [--red <p>] [--flap <p>] [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm <prefix>", "clear --confirm dev-", (*app).cmdClear},
 		{"teardown", "--confirm <prefix>", "teardown --confirm dev-", (*app).cmdTeardown},
 	}
@@ -101,6 +104,7 @@ take with no card takes the member's oldest ready cards (--limit n, default 1)
 and prints each one's generation.
 
 ` + inboxExample + `
+` + machineWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
 `)
@@ -487,7 +491,7 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	if err != nil || len(shapes) == 0 {
 		return ""
 	}
-	return summary(shapes[0])
+	return strings.TrimSpace(summary(shapes[0]) + "  " + st.MachineLine(ctx))
 }
 
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
@@ -652,17 +656,6 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 func (a *app) cmdResolve(args []string, stdout, stderr io.Writer) int {
 	return a.setVerb("resolve", args, stdout, stderr, false, nil, nil, func(ids []string, s *sel, c *common) store.Step {
 		return store.ResolveStep(sprint.ResolveReq{Sel: s.sel(ids), Who: c.actor})
-	})
-}
-
-func (a *app) cmdStart(args []string, stdout, stderr io.Writer) int {
-	return a.setVerb("start", args, stdout, stderr, false, nil, func(ids []string, s *sel) string {
-		if len(ids) == 0 && s.stream == "" && s.limit == 0 {
-			return "wants ids, --stream <s>, --limit <n> or --group <id>"
-		}
-		return ""
-	}, func(ids []string, s *sel, c *common) store.Step {
-		return store.StartStep(sprint.StartReq{Sel: s.sel(ids), Who: c.actor})
 	})
 }
 
@@ -1140,9 +1133,15 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	if res.Restored {
 		extra += " restored=yes"
 	}
+	if res.Machine != "" {
+		extra += " machine=" + res.Machine + "->" + store.Stopped
+	}
 	fmt.Fprintf(stdout, "CLEAR OK epoch=%d->%d at=%s held: %s%s\n", res.From, res.To, res.At.UTC().Format(time.RFC3339), strings.Join(held, " "), extra)
 	if line := sprintLine(ctx, st); line != "" {
 		fmt.Fprintln(stdout, line)
+	}
+	if res.Machine == store.Running {
+		fmt.Fprintf(stdout, "the machine is STOPPED; when the new sprint is ready: nova-sprint start\n")
 	}
 	return 0
 }

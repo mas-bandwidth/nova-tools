@@ -67,11 +67,7 @@ type Store struct {
 	Resends  int                 // sends of one manifest after a lost reply; default 3
 	// Grace is how long an operation is taken as in flight (its writer alive)
 	// before a writer that finds its first manifest unapplied abandons it.
-	Grace time.Duration
-	// Stop, when set, is called first by clear: it stops the machine that
-	// moves the sprint on its own, and clear leaves it stopped.
-	Stop func(ctx context.Context) error
-
+	Grace   time.Duration
 	root    Backend   // the backend before pinning
 	epoch   uint64    // the epoch the store is pinned to
 	cleared time.Time // when the pinned epoch began
@@ -288,6 +284,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return res, eerr
 			}
 			why := (&ClearedError{Held: *step.Epoch, Now: now.N, At: now.Cleared}).Error()
+			// Nothing of an earlier attempt's plan was written.
+			res.Moved, res.Op, res.Notes = nil, "", 0
 			res.Refused = []sprint.Refusal{{Key: "epoch " + strconv.FormatUint(*step.Epoch, 10), Why: why}}
 			return res, nil
 		}

@@ -23,7 +23,7 @@ func gensOf(s *Snapshot, ids ...string) map[string]int {
 func TestTakeAndFinishNameTheGeneration(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	c := w.s.Fleet.Card("s1-1.w1")
 	m := c.Row
 
@@ -73,7 +73,7 @@ func TestTakeAndFinishNameTheGeneration(t *testing.T) {
 func TestStartAfterAWithdrawalDealsTheSameCard(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	first := w.s.Fleet.Card("s1-1.w1")
 	gen0, score0 := first.Int("gen"), first.Score
 	w.must(Take(w.s, TakeReq{As: first.Row, Sel: Sel{IDs: []string{first.ID}}, Gens: gensOf(w.s, first.ID)}))
@@ -87,7 +87,7 @@ func TestStartAfterAWithdrawalDealsTheSameCard(t *testing.T) {
 	w.clean("withdrawn")
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	pr := w.s.Work.Card("s1-1")
 	c := w.s.Fleet.Card("s1-1.w1")
 	switch {

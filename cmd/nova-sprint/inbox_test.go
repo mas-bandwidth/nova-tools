@@ -47,7 +47,7 @@ func TestAGroupIsNamedByItsIDNeverItsPosition(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("add --stream s2 --count 1")
-	ta.ok("start --limit 2")
+	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	first := ta.group(sprint.NWorkFailed, "s1")
 	if first.ID == "" || first.Size != 1 || first.Primaries[0] != "s1-1" {
@@ -88,7 +88,7 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("start --limit 3")
+	ta.deal(3)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	g := ta.group(sprint.NWorkFailed, "s1")
 	printed := g.Size
@@ -133,7 +133,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 4")
-	ta.ok("start --limit 4")
+	ta.deal(4)
 	ta.ok("take --as m1 --limit 4")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-3.w1@1 s1-4.w1@1")
 	ta.ok("finish --as m1 s1-2.w1@1 --failed --report 'the tests went red'")
@@ -167,7 +167,7 @@ func (ta *testApp) toMerging(streams ...string) {
 	for _, s := range streams {
 		ta.ok("add --stream " + s + " --count 3")
 	}
-	ta.ok("start --limit 100")
+	ta.deal(100)
 	ta.ok("take --as m1 --limit 100")
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
@@ -217,7 +217,7 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
 	ta.ok("add --stream s2 --count 2")
-	ta.ok("start --limit 100")
+	ta.deal(100)
 	ta.ok("take --as m1 --limit 100")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1 s2-2.w1@1")
 	ta.a.sleep(time.Second)

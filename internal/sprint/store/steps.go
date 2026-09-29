@@ -26,10 +26,10 @@ func ResolveStep(r sprint.ResolveReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Resolve(s, r) }}
 }
 
-// StartStep cuts and deals work cards.
-func StartStep(r sprint.StartReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "start", Load: tables(sprint.Work, sprint.Fleet), Mirrors: true,
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Start(s, r) }}
+// DealStep cuts and deals work cards.
+func DealStep(r sprint.DealReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "deal", Load: tables(sprint.Work, sprint.Fleet), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }
 
 // TakeStep is a worker taking work cards.

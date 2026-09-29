@@ -42,7 +42,7 @@ func (w *world) run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-const busy = `{"landed":0,"all":2,"summary":"0/2 0.0% -> ETA","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+const busy = `{"landed":0,"all":2,"summary":"0/2 0.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
 	`"merge":{"s1":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1","working":"1"}}},"streams":[{"Stream":"s1","State":"merging"}]}`
 const done = `{"landed":2,"all":2,"summary":"2/2 100.0% -> ETA","tables":{},"streams":[{"Stream":"s1","State":"landed"}]}`
 
@@ -56,7 +56,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	var out bytes.Buffer
 	facts := NewSeeded(7)
 	d := &Driver{Run: w.run, Base: []string{"--prefix", "dev-"}, Facts: facts, Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)},
-		Out: &out, Config: Config{Every: time.Second, Start: true, Batch: 5}}
+		Out: &out, Config: Config{Every: time.Second, Batch: 5}}
 	why, err := d.Loop()
 	if err != nil || why != "landed" {
 		t.Fatalf("loop: %s %v\n%s", why, err, out.String())
@@ -70,9 +70,16 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	}
 	all := strings.Join(lines, "\n")
 	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --prefix dev-", "take --as m1 --epoch 0 s1-4.w1@2 --prefix dev-", "read --as reader-a --ok --epoch 0 s1-2.r1.reader-a",
-		"merge --stream s1 --batch 5", "start --limit 1000", "resolve", "ask"} {
+		"merge --stream s1 --batch 5"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("no %q in\n%s", want, all)
+		}
+	}
+	for _, not := range []string{"start", "resolve", "ask ", "tick", "fleet level"} {
+		for _, l := range lines {
+			if strings.HasPrefix(l, not) {
+				t.Errorf("the driver ran the machine's move %q", l)
+			}
 		}
 	}
 	text := out.String()
@@ -102,6 +109,19 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 		if ao != bo || ar != br || fmt.Sprint(am) != fmt.Sprint(bm) || fmt.Sprint(au) != fmt.Sprint(bu) {
 			t.Fatalf("draw %d differs", i)
 		}
+	}
+}
+
+func TestTheDriverRefusesToPlayWithNoMachineRunning(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{strings.Replace(busy, "machine: running", "machine: STOPPED", 1)}}
+	var out bytes.Buffer
+	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &out}
+	if _, err := d.Loop(); err == nil || !strings.Contains(err.Error(), "no machine is running (machine: STOPPED)") {
+		t.Fatalf("a driver with the machine stopped: %v", err)
+	}
+	if len(w.ran) != 1 {
+		t.Fatalf("it ran more than the read: %v", w.ran)
 	}
 }
 
@@ -153,7 +173,7 @@ func (f *scripted) Up(tick int, members []string, up map[string]bool) map[string
 	return next
 }
 
-const twoStreams = `{"landed":0,"all":4,"summary":"0/4 0.0% -> ETA","tables":{"fleet":{"m1":{"status":"up"}},"readers":{},` +
+const twoStreams = `{"landed":0,"all":4,"summary":"0/4 0.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{},` +
 	`"merge":{"s1":{"state":"merging","queued":"1"},"s2":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1"},"s2":{"merging":"1"}}},` +
 	`"streams":[{"Stream":"s1","State":"merging"},{"Stream":"s2","State":"merging"}]}`
 

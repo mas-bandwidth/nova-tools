@@ -21,7 +21,7 @@ func midFlight(t *testing.T) *harness {
 	h.through("s1-1", "s1-2", "s1-3")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-2"}))
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-4", "s1-5"}}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-4", "s1-5"}}}))
 	s := h.snap()
 	c := s.Fleet.Card("s1-4.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
@@ -31,7 +31,7 @@ func midFlight(t *testing.T) *harness {
 	h.must(ReadStep(sprint.ReadReq{As: rs[0].F("reader"), Begin: true, Sel: sprint.Sel{IDs: []string{rs[0].ID}}}))
 	c = h.snap().Fleet.Card("s1-5.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-6"}}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-6"}}}))
 	h.clean("mid-flight")
 	s = h.snap()
 	for table, cols := range map[*sprint.Table][]string{
@@ -53,9 +53,12 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	t.Parallel()
 	h := midFlight(t)
 	before := h.snap()
-	stopped := false
-	h.st.Stop = func(context.Context) error { stopped = true; return nil }
+	if _, _, _, err := h.st.SetMachine(h.ctx, true); err != nil {
+		t.Fatal(err)
+	}
 	res, err := h.st.Clear(h.ctx)
+	m, _, merr := h.st.Machine(h.ctx)
+	stopped := merr == nil && res.Machine == Running && m.State == Stopped
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,4 +186,79 @@ func TestTeardownAfterClearsLeavesNoKey(t *testing.T) {
 	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
 		t.Fatalf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
 	}
+}
+
+// clearAtTick is the store as a tick sees it when a clear lands between the
+// tick's read and its first write: the clear runs, by another writer, just
+// before the tick's first part takes the fence.
+type clearAtTick struct {
+	Backend
+	kv    KV
+	clear func()
+	done  *bool
+}
+
+func (c clearAtTick) GetKey(ctx context.Context, name string) (string, bool, error) {
+	return c.kv.GetKey(ctx, name)
+}
+
+func (c clearAtTick) SetKey(ctx context.Context, name, value string) error {
+	return c.kv.SetKey(ctx, name, value)
+}
+
+func (c clearAtTick) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
+	if !*c.done && strings.HasPrefix(op.Verb, "tick ") {
+		*c.done = true
+		c.clear()
+	}
+	return c.Backend.Acquire(ctx, gen, op)
+}
+
+// A tick in flight at a clear is refused as stale and writes nothing; the
+// loop goes on at the new epoch, where the machine is STOPPED until start.
+func TestATickInFlightAtAClearIsRefusedAsStale(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(4)
+	h.startMachine()
+	var cleared ClearResult
+	done := false
+	loop := *h.st
+	loop.Actor = sprint.MachineActor
+	loop.B = clearAtTick{Backend: h.m, kv: h.m, done: &done, clear: func() {
+		var err error
+		if cleared, err = h.st.Clear(h.ctx); err != nil {
+			t.Errorf("clear: %v", err)
+		}
+	}}
+	res, err := loop.Tick(h.ctx)
+	if err != nil || !done || res.Stale == "" || len(res.Moved()) != 0 {
+		t.Fatalf("the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
+	}
+	if cleared.Machine != Running || cleared.To != 1 {
+		t.Fatalf("clear: %+v", cleared)
+	}
+	old := h.st.At(0)
+	s, err := old.Load(h.ctx, All, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(s.Work.Column(sprint.Working)); n != 0 {
+		t.Fatalf("the stale tick dealt %d cards at the old epoch", n)
+	}
+	// The loop goes on: the machine is STOPPED at the new epoch.
+	res, err = loop.Tick(h.ctx)
+	if err != nil || res.State != Stopped || len(res.Parts) != 0 {
+		t.Fatalf("the next tick: %+v %v", res, err)
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 4}))
+	h.startMachine()
+	res, err = loop.Tick(h.ctx)
+	if err != nil || res.Stale != "" || len(res.Moved()) == 0 {
+		t.Fatalf("the first tick at the new epoch: %+v %v", res, err)
+	}
+	if s := h.snap(); s.Epoch != 1 || len(s.Work.Column(sprint.Working)) == 0 {
+		t.Fatalf("nothing dealt at epoch %d", s.Epoch)
+	}
+	h.clean("after the stale tick")
 }

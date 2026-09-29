@@ -44,7 +44,7 @@ type Move struct {
 // (drop) is legal from every open state and is not a state.
 var Moves = []Move{
 	{Waiting, Ready, "resolve", Mechanical, "everything it needs has landed"},
-	{Ready, Working, "start", Mechanical, "a work card is cut and dealt"},
+	{Ready, Working, "deal", Mechanical, "a work card is cut and dealt"},
 	{Working, Review, "finish", Mechanical, "its work card finished, ok or failed"},
 	{Working, Ready, "fleet down", Mechanical, "its work card was withdrawn because no fleet member is up"},
 	{Review, Merging, "accept", Coordinator, "two different readers said ok at this head"},

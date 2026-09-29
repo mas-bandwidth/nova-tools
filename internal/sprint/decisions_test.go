@@ -14,7 +14,7 @@ import (
 func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	// The fleet phase of a start applied, the work phase not yet: a card dealt,
 	// its primary still ready.
 	pr := w.s.Work.Card("s1-2")
@@ -23,7 +23,7 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	if v := Check(w.s, nil); len(v) == 0 || v[0].Rule != 2 {
 		t.Fatalf("with no operation pending the partial state is a violation: %v", v)
 	}
-	v := Check(w.s, &Pending{ID: "start-x-1", Verb: "start"})
+	v := Check(w.s, &Pending{ID: "deal-x-1", Verb: "deal"})
 	if len(v) != 1 || v[0].Rule != 10 || !strings.Contains(v[0].Detail, "pending") {
 		t.Fatalf("with the start pending: %v", v)
 	}
@@ -31,7 +31,7 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	w.s.Fleet.Put(&Card{ID: "s1-2.w9", Row: "m2", Col: Ready, Score: pr.Score, Rev: 1,
 		Fields: map[string]string{"primary": "s1-2", "attempt": "9", "gen": "1"}})
 	found := false
-	for _, x := range Check(w.s, &Pending{ID: "start-x-1", Verb: "start"}) {
+	for _, x := range Check(w.s, &Pending{ID: "deal-x-1", Verb: "deal"}) {
 		found = found || x.Rule == 8
 	}
 	if !found {
@@ -45,7 +45,7 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	for _, id := range []string{"s1-1", "s1-2"} {
 		c := w.s.Fleet.Card(w.s.Work.Card(id).F("work"))
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
@@ -102,7 +102,7 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 func TestD3AssignmentGeneration(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}}))
 	c1 := w.s.Fleet.Card("s1-1.w1")
 	if c1.F("gen") != "1" || c1.F("member") != c1.Row {
 		t.Fatalf("a dealt card has generation %q member %q", c1.F("gen"), c1.F("member"))
@@ -151,7 +151,7 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.clean("withdrawn")
 	// Rule 2 is a bijection: two live cards for one working primary is caught.
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 1}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	live := w.s.Fleet.Column(Ready)[0]
 	w.s.Fleet.Put(&Card{ID: live.F("primary") + ".w9", Row: m, Col: Ready, Score: live.Score, Rev: 1, Fields: map[string]string{"primary": live.F("primary")}})
 	var rules []int
@@ -167,7 +167,7 @@ func TestD3AssignmentGeneration(t *testing.T) {
 func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 3}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 3}}))
 	for _, c := range w.s.Fleet.Column(Ready) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
@@ -197,7 +197,7 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 func TestD5AnswersDischargeOnlyWhatWasResolved(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 3}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 3}}))
 	var ids []string
 	for _, c := range w.s.Fleet.Column(Ready) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
@@ -311,7 +311,7 @@ func TestD7InboxDueTimesAndStalledStreams(t *testing.T) {
 func TestD8CIObservation(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 1}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	p := w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7", Source: "ci", Head: "old"}))
 	c := w.s.Work.Card("s1-1")
 	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "old" {
@@ -331,7 +331,7 @@ func TestD8CIObservation(t *testing.T) {
 func TestF2TheGenerationIsAlwaysNamed(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
 	c := w.s.Fleet.Card("s1-1.w1")
 	if p := Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}); len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "names no generation") {
 		t.Fatalf("a take by id with no generation: %+v", p)
@@ -386,7 +386,7 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
 		c := w.s.Fleet.Card(id)
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
@@ -421,7 +421,7 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 func TestG4StreamStateIsKeptTrue(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
 		c := w.s.Fleet.Card(id)
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
@@ -462,13 +462,13 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 func TestRule7IsJudgedAgainstAPendingRank(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 1}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	w.s.Fleet.Card("s1-1.w1").Score = -9 // the rank's fleet phase applied, its work phase not
 	if v := Check(w.s, &Pending{ID: "rank-1", Verb: "rank", Scores: map[string]float64{"s1-1": -9}}); len(v) != 1 || v[0].Rule != 10 {
 		t.Fatalf("a copy at the pending rank's score: %v", v)
 	}
 	w.s.Fleet.Card("s1-1.w1").Score = 42
-	v := Check(w.s, &Pending{ID: "start-1", Verb: "start"})
+	v := Check(w.s, &Pending{ID: "deal-1", Verb: "deal"})
 	if len(v) != 2 || v[0].Rule != 7 {
 		t.Fatalf("a copy at another score while another operation is pending: %v", v)
 	}
@@ -479,7 +479,7 @@ func TestRule7IsJudgedAgainstAPendingRank(t *testing.T) {
 func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
 	if len(w.s.Fleet.Column(Withdrawn)) != 2 {
@@ -508,7 +508,7 @@ func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
 func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 2}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
 		c := w.s.Fleet.Card(id)
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: gensOf(w.s, id)}))

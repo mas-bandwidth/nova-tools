@@ -46,7 +46,7 @@ func TestEverySubjectOfALargeJudgmentStaysOpen(t *testing.T) {
 	// one member up: the sixty cards are one member's, finished in one step
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 60}))
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 60}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 60}}))
 	var ids []string
 	for id, c := range h.snap().Work.Cards {
 		if c.Col == sprint.Working {
@@ -108,7 +108,7 @@ func (h *harness) cutStart(callerOp string) Step {
 	h.t.Helper()
 	st := *h.st
 	st.B = h.outsideWrite("s1-1")
-	step := StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}})
+	step := DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}})
 	step.CallerOp = callerOp
 	_, err := st.Run(h.ctx, step)
 	var cut *CutError
@@ -202,7 +202,7 @@ func TestEveryVerbRunsAfterASkippingRepair(t *testing.T) {
 	}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1}))
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s2-1"}}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s2-1"}}}))
 	if h.state("s2-1") != sprint.Working {
 		t.Fatalf("start after the repair: s2-1 is %s", h.state("s2-1"))
 	}

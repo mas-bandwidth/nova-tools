@@ -131,7 +131,7 @@ func TestAFirstManifestRefusedOnABoundIsNotRetried(t *testing.T) {
 	r := &refusing{Backend: h.m, table: "t-fleet"}
 	st.B = r
 	before := h.revisions()
-	res, err := st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 2}}))
+	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
 	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 2 || r.calls != 1 {
 		t.Fatalf("a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
 	}
