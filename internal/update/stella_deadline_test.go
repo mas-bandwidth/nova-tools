@@ -11,6 +11,8 @@ import (
 // but substantial stream and exits at once is drained in full, never cut short
 // by a drain allowance that only the deadline case may shrink.
 func TestDeadlineHealthyChildUnderLoadIsFullyDrained(t *testing.T) {
+	t.Parallel()
+
 	args, err := argv(command(t, "flood", strconv.Itoa(40)))
 	if err != nil {
 		t.Fatal(err)

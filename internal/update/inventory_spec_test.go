@@ -296,18 +296,21 @@ func TestDiffRefusesANonSnapshotFile(t *testing.T) {
 
 // 11. TestSnapshotIsBoundedByTheClock.
 func TestSnapshotIsBoundedByTheClock(t *testing.T) {
-	old := snapshotChildTimeout
-	snapshotChildTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { snapshotChildTimeout = old })
+	t.Parallel()
+
+	bound := 20 * time.Millisecond
 	bin := t.TempDir()
 	specScript(t, bin, "nova-slow", "sleep 5\nprintf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
 	out := filepath.Join(t.TempDir(), "s.tsv")
-	env := Environment{Now: func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) }}
+	env := Environment{
+		Now:                  func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) },
+		SnapshotChildTimeout: bound,
+	}
 	code, _, stderr := specRun(t, env, "snapshot", "--bin", bin, "--out", out)
 	if code != 2 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	need(t, stderr, "nova-slow", snapshotChildTimeout.String())
+	need(t, stderr, "nova-slow", bound.String())
 	if _, err := os.Stat(out); err == nil {
 		t.Fatalf("a partial --out was written")
 	}

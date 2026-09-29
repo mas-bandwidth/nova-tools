@@ -49,14 +49,15 @@ func treeOf(t *testing.T, root string) []string {
 // Rule 9: a verdict is not an action. check reads, prints and exits; it writes no
 // file, and the apply command of a STALE entry is never the thing it runs.
 func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	installed := printer(t, "1.0.0")
-	latest := printer(t, "2.0.0")
-	witness := filepath.Join(dir, "the-apply-ran")
 	calls := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_CALLS", calls)
+	installed := printerWithCalls(t, calls, "1.0.0")
+	latest := printerWithCalls(t, calls, "2.0.0")
+	witness := filepath.Join(dir, "the-apply-ran")
 	// The apply column is a command that would leave a file behind if it ran.
-	p := manifest(t, row("x", "tool", installed, "local:"+latest, command(t, "write", witness, "installed")))
+	p := manifest(t, row("x", "tool", installed, "local:"+latest, commandWithCalls(t, calls, "write", witness, "installed")))
 	before := treeOf(t, filepath.Dir(p))
 	c, out, errs := run(t, Environment{}, "check", "--file", p)
 	if c != 1 {
@@ -124,6 +125,8 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 // Rule 18: a refusal a person cannot act on is not a refusal. Every one of them
 // names a remedy, and the shape is the grammar's: REFUSED: <reason> (<remedy>).
 func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
+	t.Parallel()
+
 	good := row("x", "tool", printer(t, "1.0.0"), "npm:unused", "none")
 	p := manifest(t, good)
 	bad := manifest(t, strings.Replace(good, "tool", "weights", 1))
@@ -217,6 +220,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 // interrupted writer's bytes and a different writer's temporary. The later
 // reporter is the built CLI, with the ordinary production rename operation.
 func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "s.json")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
@@ -328,6 +332,8 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 // the writer has synced and closed its actual temporary but cannot rename it
 // until stdin is released. The parent instead kills this process at that point.
 func TestSnapshotRenameBarrierHelper(t *testing.T) {
+	t.Parallel()
+
 	ready := os.Getenv("NOVA_SNAPSHOT_BARRIER")
 	if ready == "" {
 		return
