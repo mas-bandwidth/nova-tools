@@ -51,6 +51,12 @@ directory holds:
   operation, the cause, the paths found of each shape and the next action: move
   either set out of the store so it keeps one shape. Nothing is written.
 
+A top-level `README.md`, in any case, is documentation and never a session file
+in either shape: it counts for no shape, `index` and the coverage ledger do not
+list it, and `README` (in any case) is refused as a session id by every verb
+with a message naming the reserved name. Any other top-level `<id>.md` beside
+`sessions/`, `entries/` or `log.jsonl` is a mixed store.
+
 On a bench store `open` creates `<store>/<id>.md` when none exists and is a
 no-op when one does. The new file holds a short header, fsynced before success
 is reported: a `# Cairn <first 8 characters of the id>` title line, a line
@@ -83,7 +89,8 @@ named record, in the shape the store already has.
 
 The lifecycle of a store (shape, open, append, duplicate, conflict, refusal) is
 modelled in `tla/CairnStore.tla`: one shape per store, an entry id maps to one
-text, and append never creates a session.
+text, and append never creates a session. The reserved name is outside the
+model, whose sessions are an abstract set of ids.
 
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
 --file <path|->) [--source <ptr>] --publish <policy>` files the friend's
@@ -176,3 +183,4 @@ New regression cases must demonstrate the defect before the repair.
 38. `TestBenchIndexAndReceiptSeeTheOpenedSession` — `index`, `receipt` and the coverage ledger see a session as soon as `open` has made its file.
 39. `TestEmptyAndAbsentStoresGetTheOwnShape` and `TestEmptyStoreOpenGetsTheOwnShapeAtTheCLI` — an empty or absent store directory gets the tool's own layout.
 40. `TestBenchStoreOpenRemedyKeepsTheBenchShape` and `TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb` — the same behaviour at the command line: exit codes, one-line refusals, the listing after each verb. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` runs the printed remedy on a bench store in the functional tier.
+41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.

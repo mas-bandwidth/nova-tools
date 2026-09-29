@@ -362,3 +362,108 @@ func TestStoreShapeFromContents(t *testing.T) {
 		t.Errorf("absent: %v %v", got, err)
 	}
 }
+
+// README.md, in any case, is documentation at the top of a store and never a
+// session file, in either shape.
+func TestReadmeIsNeverASessionFile(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"README.md", "readme.md", "Readme.md"} {
+		// An own-shape store with a README beside its markers is own, not mixed.
+		own := t.TempDir()
+		if err := os.WriteFile(filepath.Join(own, name), []byte("# about this store\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := storeShape("open", own); got != shapeOwn || err != nil {
+			t.Fatalf("%s alone: shape %v err %v, want own", name, got, err)
+		}
+		if err := Open(own, "s1", "", benchNow, PublishManual); err != nil {
+			t.Fatalf("%s: open in an own-shape store: %v", name, err)
+		}
+		if got, err := storeShape("append", own); got != shapeOwn || err != nil {
+			t.Fatalf("%s beside own-shape markers: shape %v err %v, want own", name, got, err)
+		}
+		if _, err := Append(own, "s1", "e1", "words", "", benchNow, PublishManual); err != nil {
+			t.Fatalf("%s: append in an own-shape store: %v", name, err)
+		}
+		if _, total, err := Index(own, "", 0); err != nil || total != 1 {
+			t.Fatalf("%s: index %d %v", name, total, err)
+		}
+		if got := Coverage(own).Sessions; got != 1 {
+			t.Fatalf("%s: coverage counted %d sessions in an own-shape store", name, got)
+		}
+
+		// A bench store with a README is bench, and index does not list it.
+		bench := t.TempDir()
+		text := "# about\n\n## 2026-09-29T08:00:00Z — not-an-entry\n\nwords\n"
+		if err := os.WriteFile(filepath.Join(bench, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(benchFile(bench, "s1"), []byte("# s1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := storeShape("open", bench); got != shapeBench || err != nil {
+			t.Fatalf("%s beside a bench file: shape %v err %v, want bench", name, got, err)
+		}
+		if _, err := Append(bench, "s1", "e1", "words", "", benchNow, PublishManual); err != nil {
+			t.Fatal(err)
+		}
+		rows, total, err := Index(bench, "", 0)
+		if err != nil || total != 1 || len(rows) != 1 || rows[0].Session != "s1" {
+			t.Fatalf("%s: index lists %v total %d err %v; the README is not a session", name, rows, total, err)
+		}
+		if got := Coverage(bench).Sessions; got != 1 {
+			t.Fatalf("%s: coverage counted %d sessions, want 1", name, got)
+		}
+
+		// A README alone is an empty store: the tool's own shape.
+		if got, err := storeShape("open", own); err != nil || got != shapeOwn {
+			t.Fatal(got, err)
+		}
+	}
+}
+
+func TestReadmeIsRefusedAsASessionIDByEveryVerb(t *testing.T) {
+	t.Parallel()
+	store, before := manySessionStore(t)
+	for _, id := range []string{"README", "readme", "ReadMe"} {
+		checks := map[string]error{
+			"open":    Open(store, id, "", benchNow, PublishManual),
+			"append":  func() error { _, err := Append(store, id, "e", "w", "", benchNow, PublishManual); return err }(),
+			"index":   func() error { _, _, err := Index(store, id, 0); return err }(),
+			"receipt": func() error { _, err := Receipt(store, id, "e"); return err }(),
+		}
+		for verb, err := range checks {
+			if err == nil || !strings.Contains(err.Error(), "is reserved") || !strings.Contains(err.Error(), "README.md") {
+				t.Errorf("%s --session %s: want a refusal naming the reserved name, got %v", verb, id, err)
+			}
+		}
+	}
+	if got := listing(t, store); !reflect.DeepEqual(got, before) {
+		t.Fatalf("a refused verb changed the store: %v", got)
+	}
+	// An entry may still be called README.
+	if err := Open(store, "NEW", "", benchNow, PublishManual); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(store, "NEW", "README", "words", "", benchNow, PublishManual); err != nil {
+		t.Fatalf("entry id README: %v", err)
+	}
+}
+
+func TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	for _, n := range []string{"README.md", "hand.md"} {
+		if err := os.WriteFile(filepath.Join(store, n), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(store, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := Open(store, "s", "", benchNow, PublishManual)
+	var me *MixedShapeError
+	if !errors.As(err, &me) || strings.Contains(err.Error(), "README") {
+		t.Fatalf("want a mixed refusal naming hand.md only, got %v", err)
+	}
+}

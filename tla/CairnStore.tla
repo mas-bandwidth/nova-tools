@@ -20,12 +20,14 @@
 \* are a person keeping the store by hand: HandBenchFile and HandOwnDir, either
 \* of which can make a store mixed; handed records that a person did.
 \*
+\* Reserved names are outside the model: a top-level README.md, in any case, is
+\* documentation and never a session file (internal/cairn reservedSession). The
+\* model's Sessions are an abstract set of ids that are all valid session names,
+\* so the rule changes nothing the model states.
+\*
 \* last is the name of the step just taken, so a property can say which step
 \* changed what.
 \*
-\* Unchecked: this module and its configurations have not been run through TLC.
-\* They are run on a bench host (tla/README.md), and the records in RUNS.tsv
-\* are refreshed there.
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness:
 \*   "openown"       open on a bench store writes the tool's own shape

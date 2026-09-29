@@ -64,7 +64,9 @@ flags:
                     the file; no sessions/, entries/, log.jsonl or index
                     appears beside it. A store holding both shapes is refused
                     by every verb, naming the paths found of each and the next
-                    action.
+                    action. A top-level README.md, in any case, is documentation
+                    and never a session file in either shape; README is refused
+                    as a session id.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:

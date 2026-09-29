@@ -12,12 +12,13 @@ import (
 
 // The store's shape is decided from its contents, once, here, and every verb
 // asks this file and nothing else. The model of the lifecycle that depends on
-// it is tla/CairnStore.tla (unchecked until run on the bench host); its
+// it is tla/CairnStore.tla (checked by TLC; the records are in tla/RUNS.tsv); its
 // "one shape per store" invariant is what MixedShapeError enforces and its
 // Open action is what openBench implements.
 //
 //	bench  at least one top-level <id>.md session file and no sessions/,
-//	       entries/ or log.jsonl
+//	       entries/ or log.jsonl; README.md, in any case, is documentation and
+//	       never a session file, so it counts for no shape
 //	own    anything with sessions/, entries/ or log.jsonl and no top-level
 //	       <id>.md; an empty or absent store directory is own too, so a new
 //	       store gets the tool's own shape
@@ -72,7 +73,7 @@ func storeShape(op, store string) (shape, error) {
 			own = append(own, name+"/")
 		case name == "log.jsonl" && !f.IsDir():
 			own = append(own, name)
-		case !f.IsDir() && strings.HasSuffix(name, ".md") && validID(strings.TrimSuffix(name, ".md")):
+		case !f.IsDir() && strings.HasSuffix(name, ".md") && sessionFileID(strings.TrimSuffix(name, ".md")):
 			bench = append(bench, name)
 		}
 	}

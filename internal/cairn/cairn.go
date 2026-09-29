@@ -28,7 +28,7 @@
 // section at the end of the file, with no sessions/, entries/ or log.jsonl
 // and no index appearing beside it. The tool adapts to the store; the store
 // is never converted to suit the tool. The lifecycle is modelled in
-// tla/CairnStore.tla (unchecked until run on the bench host).
+// tla/CairnStore.tla (checked by TLC; the records are in tla/RUNS.tsv).
 //
 // Each entry file is written atomically via internal/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename),
@@ -155,6 +155,31 @@ func validID(s string) bool {
 		}
 	}
 	return true
+}
+
+// reservedSession reports the one name a session may never take: README, in
+// any case. A top-level README.md is documentation for whoever reads the
+// store, in either shape, never a session record. The rule is outside
+// tla/CairnStore.tla, whose sessions are an abstract set of ids.
+func reservedSession(id string) bool {
+	return strings.EqualFold(id, "readme")
+}
+
+// sessionFileID reports whether a top-level <id>.md names a session record.
+func sessionFileID(id string) bool {
+	return validID(id) && !reservedSession(id)
+}
+
+// checkSession refuses a session id that cannot name a record, naming the
+// cause. Read verbs and write verbs share it.
+func checkSession(session string) error {
+	if !validID(session) {
+		return fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	}
+	if reservedSession(session) {
+		return fmt.Errorf("session id %q is reserved: README.md in a store is documentation, never a session record; choose another session id", session)
+	}
+	return nil
 }
 
 func sessionFile(store, session string) string {
@@ -392,8 +417,8 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if store == "" {
 		return errors.New("no store given; refusing to guess")
 	}
-	if !validID(session) {
-		return fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if err := checkSession(session); err != nil {
+		return err
 	}
 	if !validPublish(publish) {
 		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
@@ -466,8 +491,8 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if store == "" {
 		return res, errors.New("no store given; refusing to guess")
 	}
-	if !validID(session) {
-		return res, fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if err := checkSession(session); err != nil {
+		return res, err
 	}
 	if !validID(id) {
 		return res, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
@@ -715,7 +740,7 @@ func Coverage(store string) Ledger {
 			for _, f := range files {
 				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
 					id := strings.TrimSuffix(f.Name(), ".md")
-					if validID(id) {
+					if sessionFileID(id) {
 						names[id] = true
 					}
 				}

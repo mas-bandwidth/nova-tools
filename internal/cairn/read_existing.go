@@ -27,8 +27,8 @@ func existingStore(store string) error {
 // treating permission errors or a directory at the record path as evidence
 // that the session is absent.
 func recordForRead(store, session string, sh shape) (string, bool, error) {
-	if !validID(session) {
-		return "", false, fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if err := checkSession(session); err != nil {
+		return "", false, err
 	}
 	path, bench := sessionFile(store, session), false
 	if sh == shapeBench {
@@ -95,7 +95,7 @@ func flatIndexRows(store, session string) ([]IndexRow, map[string]bool, error) {
 			continue
 		}
 		id := strings.TrimSuffix(f.Name(), ".md")
-		if !validID(id) || (session != "" && id != session) {
+		if !sessionFileID(id) || (session != "" && id != session) {
 			continue
 		}
 		path, _, err := recordForRead(store, id, shapeBench)

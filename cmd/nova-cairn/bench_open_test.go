@@ -116,3 +116,15 @@ func TestEmptyStoreOpenGetsTheOwnShapeAtTheCLI(t *testing.T) {
 		t.Fatalf("empty store after open: %v", got)
 	}
 }
+
+func TestOpenReadmeRefusesAtExitTwo(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	code, out, errOut := runCode("", "open", "--store", store, "--session", "README", "--publish", "never")
+	if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 || !strings.Contains(errOut, "is reserved") {
+		t.Fatalf("exit=%d out=%q err=%q", code, out, errOut)
+	}
+	if got := names(t, store); len(got) != 0 {
+		t.Fatalf("refused open wrote %v", got)
+	}
+}
