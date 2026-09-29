@@ -43,6 +43,10 @@ type CheckReport struct {
 // when it is older.
 func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Snapshot, error) {
 	ctx = withBudget(ctx)
+	st, err := st.pin(ctx)
+	if err != nil {
+		return CheckReport{}, nil, err
+	}
 	var rep CheckReport
 	quiet := st.retry(ctx)
 	for i := 0; i < max(reads, 1); i++ {
@@ -102,6 +106,10 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 // unfinished work cards), and a stream's ci, state and since. They are
 // display only: the state is the control cards', written with the moves.
 func (st *Store) SyncMirrors(ctx context.Context) error {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
 	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet), st.Names.Table(sprint.Merge)})
 	if err != nil {
 		return err
@@ -110,7 +118,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		logical := st.Names.Logical(shape.Name)
 		var ids []string
 		for _, r := range shape.Rows {
-			ids = append(ids, sprint.CtlID(r.Key))
+			ids = append(ids, st.sid(sprint.CtlID(r.Key)))
 		}
 		if len(ids) == 0 {
 			continue
@@ -120,7 +128,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 			return err
 		}
 		for _, row := range shape.Rows {
-			ctl, _ := rs.Member(sprint.CtlID(row.Key))
+			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			want := map[string]string{}
 			if logical == sprint.Fleet {
 				ok, failed := atoi(ctl.Fields["ok"]), atoi(ctl.Fields["failed"])
@@ -190,7 +198,10 @@ type InboxView struct {
 // most max) and the streams' clocks, and groups them at the clock's reading.
 func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max int) (InboxView, error) {
 	var v InboxView
-	var err error
+	st, err := st.pin(ctx)
+	if err != nil {
+		return v, err
+	}
 	if v.Open, err = st.B.OpenNotes(ctx); err != nil {
 		return v, err
 	}
@@ -215,6 +226,10 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 
 // StreamClocks is every stream's state, since and progress.
 func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	name := st.Names.Table(sprint.Merge)
 	shapes, err := st.B.Shapes(ctx, []string{name})
 	if err != nil {
@@ -222,7 +237,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 	}
 	var ids []string
 	for _, r := range shapes[0].Rows {
-		ids = append(ids, sprint.CtlID(r.Key))
+		ids = append(ids, st.sid(sprint.CtlID(r.Key)))
 	}
 	if len(ids) == 0 {
 		return nil, nil
@@ -237,7 +252,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 	}
 	var out []sprint.StreamClock
 	for _, r := range shapes[0].Rows {
-		ctl, _ := rs.Member(sprint.CtlID(r.Key))
+		ctl, _ := rs.Member(st.sid(sprint.CtlID(r.Key)))
 		since := parseStamp(ctl.Fields["since"])
 		p := progress[r.Key]
 		if since.After(p) {

@@ -70,7 +70,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 // names and the ids: nothing is a pattern.
 func TestTeardownKeysAreExactNames(t *testing.T) {
 	t.Parallel()
-	keys := TeardownKeys(sprint.Names{Prefix: "p-"}, map[string][]string{sprint.Work: {"s1-1"}})
+	keys := TeardownKeys(sprint.Names{Prefix: "p-"}, map[string][]string{sprint.Work: {"s1-1"}}, Epochs{})
 	for _, want := range []string{"table:p-work:identity", "table:p-work:revision", "table:p-work:definition", "table:p-work:changes", "table:p-work:ops",
 		"table:p-fleet:changes", "p-sprint:w:s1-1", "p-sprint:fence", "p-sprint:fencegen", "p-sprint:inbox", "p-sprint:cursor", "p-sprint:done"} {
 		if !slices.Contains(keys, want) {

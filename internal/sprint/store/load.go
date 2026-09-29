@@ -44,7 +44,7 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 }
 
 func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	s := &sprint.Snapshot{Now: st.now()}
+	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch}
 	stored := make([]string, len(tables))
 	for i, t := range tables {
 		stored[i] = st.Names.Table(t)
@@ -58,6 +58,9 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		return nil, err
 	}
 	for i, shape := range shapes {
+		if st.pinned && shape.Epoch != st.epoch {
+			return nil, errCleared
+		}
 		t := sprint.NewTable(tables[i])
 		t.Epoch, t.Revision = shape.Epoch, shape.Revision
 		for _, r := range shape.Rows {
@@ -92,7 +95,7 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 					missing = append(missing, id)
 				}
 			}
-			if err := st.readInto(ctx, t, missing, false); err != nil {
+			if err := st.readInto(ctx, t, st.sids(missing), false); err != nil {
 				return nil, err
 			}
 		}
@@ -115,7 +118,7 @@ func (st *Store) readInto(ctx context.Context, t *sprint.Table, ids []string, pl
 			if placed && !m.Placed {
 				return &movedError{table: st.Names.Table(t.Name)}
 			}
-			c := &sprint.Card{ID: m.ID, Score: m.Score, Rev: m.Revision, Fields: m.Fields}
+			c := &sprint.Card{ID: sprint.CardID(m.ID), Score: m.Score, Rev: m.Revision, Fields: m.Fields}
 			if m.Placed {
 				c.Row, c.Col = m.Row, m.Col
 			}

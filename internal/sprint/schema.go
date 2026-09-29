@@ -94,6 +94,41 @@ func (n Names) MemberPrefix(logical string) string {
 // Key is a sprint key outside the tables (the inbox, the operation records).
 func (n Names) Key(name string) string { return n.Prefix + "sprint:" + name }
 
+// EpochKey is the sprint's epoch: one hash whose field n is the epoch every
+// one of the four tables is bound to (the table layer's epoch key). clear
+// advances it; its fields cleared and shape say when, and what to restore.
+func (n Names) EpochKey() string { return n.Key("epoch") }
+
+// KeyAt is a sprint key of one epoch: the key itself at epoch 0, with the
+// epoch after it at a later one. The sprint's own keys (the fence, the
+// notifications, the judgments, the cursor, the operation records) are per
+// epoch, so an epoch's inbox is its own and the old one stays readable.
+func (n Names) KeyAt(name string, epoch uint64) string {
+	if epoch == 0 {
+		return n.Key(name)
+	}
+	return n.Key(name) + "@" + strconv.FormatUint(epoch, 10)
+}
+
+// StoredID is a card's id as the table layer holds it at an epoch: the id at
+// epoch 0, the id and the epoch after it at a later one. The table layer
+// keeps a record of every id it held, bound to its epoch, so a card id is used
+// again in a later epoch under another stored id.
+func StoredID(id string, epoch uint64) string {
+	if epoch == 0 {
+		return id
+	}
+	return id + "~" + strconv.FormatUint(epoch, 10)
+}
+
+// CardID is the card's id of a stored id.
+func CardID(stored string) string {
+	if i := strings.LastIndexByte(stored, '~'); i > 0 {
+		return stored[:i]
+	}
+	return stored
+}
+
 // Logical maps a stored table name back to its logical name.
 func (n Names) Logical(stored string) string { return strings.TrimPrefix(stored, n.Prefix) }
 
@@ -104,7 +139,8 @@ func (n Names) Definitions() []ntable.Table {
 		if err != nil {
 			panic(fmt.Sprintf("sprint table %s: %v", logical, err))
 		}
-		return ntable.Table{Name: n.Table(logical), Columns: cols, Hidden: hidden, MemberPrefix: n.MemberPrefix(logical)}
+		return ntable.Table{Name: n.Table(logical), Columns: cols, Hidden: hidden, MemberPrefix: n.MemberPrefix(logical),
+			EpochKey: n.EpochKey(), EpochField: "n"}
 	}
 	return []ntable.Table{
 		mk(Work, "waiting,ready,working,review,merging,landed"),

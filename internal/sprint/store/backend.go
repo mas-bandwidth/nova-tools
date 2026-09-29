@@ -39,6 +39,20 @@ type Backend interface {
 	DropTable(ctx context.Context, table string) error
 	CheckTable(ctx context.Context, table string) error
 
+	// Epoch reads the sprint's epoch: its number, when it was last cleared,
+	// and the shape a clear still has to restore ("" when none).
+	Epoch(ctx context.Context) (EpochState, error)
+	// AdvanceEpoch moves the sprint from epoch from to from+1 atomically,
+	// recording the time and the shape to restore; false when the sprint is
+	// no longer at from.
+	AdvanceEpoch(ctx context.Context, from uint64, at time.Time, shape string) (bool, error)
+	// SettleEpoch records that the current epoch's shape is restored.
+	SettleEpoch(ctx context.Context) error
+	// AtEpoch is the backend pinned to an epoch: the sprint's keys of that
+	// epoch, and its writes at that epoch. With old, reads of the tables read
+	// that epoch as it was, not the active one.
+	AtEpoch(epoch uint64, old bool) Backend
+
 	// ReadFence reads the sprint-wide fence: its generation and the pending
 	// operation, if any, in one exchange.
 	ReadFence(ctx context.Context) (Fence, error)
@@ -71,6 +85,13 @@ type Backend interface {
 	RecordIDs(ctx context.Context, table string) ([]string, error)
 	// DeleteKeys deletes exactly the keys named, and counts those it deleted.
 	DeleteKeys(ctx context.Context, keys []string) (int, error)
+}
+
+// EpochState is the sprint's epoch as read.
+type EpochState struct {
+	N       uint64
+	Cleared time.Time
+	Shape   string
 }
 
 // Fence is the sprint-wide fence as read: its generation, advanced by every

@@ -68,6 +68,15 @@ type Store struct {
 	// Grace is how long an operation is taken as in flight (its writer alive)
 	// before a writer that finds its first manifest unapplied abandons it.
 	Grace time.Duration
+	// Stop, when set, is called first by clear: it stops the machine that
+	// moves the sprint on its own, and clear leaves it stopped.
+	Stop func(ctx context.Context) error
+
+	root    Backend   // the backend before pinning
+	epoch   uint64    // the epoch the store is pinned to
+	cleared time.Time // when the pinned epoch began
+	pinned  bool
+	old     bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads
@@ -79,6 +88,10 @@ type Step struct {
 	Plan     func(s *sprint.Snapshot) sprint.Plan
 	Mirrors  bool   // bring the fleet's and merge's display cells up to date after
 	CallerOp string // the caller's operation id: a retry returns the recorded result
+	// Epoch, when set, is the epoch the caller holds (a worker's card, a
+	// reader's read card, the driver's merge step): a sprint at another epoch
+	// refuses the step, naming the clear.
+	Epoch *uint64
 	// Args is the step's arguments in one canonical form (ArgsOf of its
 	// request): a caller's operation id replays only for the same verb and
 	// the same arguments.
@@ -238,6 +251,10 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	ctx = withBudget(ctx)
 	res := Result{Verb: step.Verb, Args: step.Args}
+	st, err := st.pin(ctx)
+	if err != nil {
+		return res, err
+	}
 	if step.CallerOp != "" {
 		if raw, ok, err := st.B.Done(ctx, step.CallerOp); err != nil {
 			return res, err
@@ -254,8 +271,25 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		snap, gen, err := st.Fenced(ctx, step.Load, step.Extras, &res.Repaired)
-		if err != nil {
+		if errors.Is(err, errCleared) && step.Epoch == nil {
+			// The sprint was cleared while this step read it: read the new
+			// epoch.
+			if st, err = st.repin(ctx); err != nil {
+				return res, err
+			}
+			continue
+		}
+		if err != nil && !errors.Is(err, errCleared) {
 			return res, err
+		}
+		if step.Epoch != nil && (err != nil || *step.Epoch != snap.Epoch) {
+			now, eerr := st.EpochNow(ctx)
+			if eerr != nil {
+				return res, eerr
+			}
+			why := (&ClearedError{Held: *step.Epoch, Now: now.N, At: now.Cleared}).Error()
+			res.Refused = []sprint.Refusal{{Key: "epoch " + strconv.FormatUint(*step.Epoch, 10), Why: why}}
+			return res, nil
 		}
 		if step.CallerOp != "" {
 			if raw, ok, err := st.B.Done(ctx, step.CallerOp); err == nil && ok {
@@ -492,7 +526,9 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 				}
 				continue
 			}
-			entries[c.Table] = append(entries[c.Table], c.Entry)
+			e := c.Entry
+			e.ID = sprint.StoredID(e.ID, snap.Epoch)
+			entries[c.Table] = append(entries[c.Table], e)
 			seen[k] = len(entries[c.Table])
 		}
 		for _, b := range u.Bumps {
@@ -516,7 +552,7 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 		for f, d := range bumps[k] {
 			set[f] = strconv.Itoa(c.Int(f) + d)
 		}
-		entries[k.table] = append(entries[k.table], ntable.BatchMemberEntry{ID: c.ID,
+		entries[k.table] = append(entries[k.table], ntable.BatchMemberEntry{ID: sprint.StoredID(c.ID, snap.Epoch),
 			Expect: &ntable.MemberExpect{Revision: strconv.FormatUint(c.Rev, 10), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}}, Set: set})
 	}
 	k := 0
@@ -1031,6 +1067,10 @@ func (st *Store) withSkips(op OpRecord, skips []Skip) OpRecord {
 
 // Repair finishes the pending operation, if any.
 func (st *Store) Repair(ctx context.Context) ([]RepairResult, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	f, err := st.B.ReadFence(ctx)
 	if err != nil || f.Pending == nil {
 		return nil, err

@@ -20,12 +20,93 @@ type Redis struct {
 	C     redis.UniversalClient
 	Names sprint.Names
 	Now   func() time.Time
+	// Pinned is the sprint epoch the backend is pinned to: the sprint keys it
+	// names and the epoch its writes carry. Old reads the tables at that epoch
+	// as it was, not the active one.
+	Pinned uint64
+	Old    bool
 }
 
-func (r *Redis) key(name string) string { return r.Names.Key(name) }
+func (r *Redis) key(name string) string { return r.Names.KeyAt(name, r.Pinned) }
 
-// Shapes reads every table in one pipeline.
+// AtEpoch is the backend pinned to an epoch.
+func (r *Redis) AtEpoch(epoch uint64, old bool) Backend {
+	c := *r
+	c.Pinned, c.Old = epoch, old
+	return &c
+}
+
+func (r *Redis) writeOpts() ntable.WriteOptions { return ntable.WriteOptions{Epoch: r.Pinned} }
+
+// Epoch reads the sprint's epoch hash in one exchange.
+func (r *Redis) Epoch(ctx context.Context) (EpochState, error) {
+	vals, err := r.C.HMGet(ctx, r.Names.EpochKey(), "n", "cleared", "shape").Result()
+	if err != nil {
+		return EpochState{}, err
+	}
+	var es EpochState
+	if v, ok := vals[0].(string); ok {
+		if es.N, err = strconv.ParseUint(v, 10, 64); err != nil {
+			return es, fmt.Errorf("the sprint's epoch %q is not a number", v)
+		}
+	}
+	if v, ok := vals[1].(string); ok {
+		es.Cleared, _ = time.Parse(time.RFC3339Nano, v)
+	}
+	if v, ok := vals[2].(string); ok {
+		es.Shape = v
+	}
+	return es, nil
+}
+
+// AdvanceEpoch is WATCH on the epoch hash, then one MULTI/EXEC.
+func (r *Redis) AdvanceEpoch(ctx context.Context, from uint64, at time.Time, shape string) (bool, error) {
+	key := r.Names.EpochKey()
+	moved := false
+	err := r.C.Watch(ctx, func(tx *redis.Tx) error {
+		v, err := tx.HGet(ctx, key, "n").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		n := uint64(0)
+		if v != "" {
+			n, _ = strconv.ParseUint(v, 10, 64)
+		}
+		if n != from {
+			moved = true
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.HSet(ctx, key, "n", strconv.FormatUint(from+1, 10), "cleared", at.UTC().Format(time.RFC3339Nano), "shape", shape)
+			return nil
+		})
+		return err
+	}, key)
+	if errors.Is(err, redis.TxFailedErr) || moved {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// SettleEpoch removes the shape a clear had to restore.
+func (r *Redis) SettleEpoch(ctx context.Context) error {
+	return r.C.HDel(ctx, r.Names.EpochKey(), "shape").Err()
+}
+
+// Shapes reads every table in one pipeline; pinned to an old epoch, each at
+// that epoch.
 func (r *Redis) Shapes(ctx context.Context, tables []string) ([]ntable.Table, error) {
+	if r.Old {
+		out := make([]ntable.Table, len(tables))
+		for i, t := range tables {
+			s, err := ntable.ReadAt(ctx, r.C, t, r.Pinned)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = s
+		}
+		return out, nil
+	}
 	pipe := r.C.Pipeline()
 	cmds := make([]*ntable.ReadCmd, len(tables))
 	for i, t := range tables {
@@ -98,6 +179,9 @@ func (r *Redis) CellIDs(ctx context.Context, shapes []ntable.Table) (map[string]
 }
 
 func (r *Redis) ReadSet(ctx context.Context, table string, ids []string) (ntable.ReadSetResult, error) {
+	if r.Old {
+		return ntable.ReadSetMembers(ctx, r.C, table, ids, r.Pinned)
+	}
 	return ntable.ReadSetMembers(ctx, r.C, table, ids)
 }
 
@@ -114,12 +198,12 @@ func (r *Redis) Create(ctx context.Context, t ntable.Table) error {
 }
 
 func (r *Redis) RowsAdd(ctx context.Context, table string, rows []string) error {
-	_, err := ntable.RowsAdd(ctx, r.C, table, rows)
+	_, err := ntable.RowsAdd(ctx, r.C, table, rows, r.writeOpts())
 	return err
 }
 
 func (r *Redis) RowSet(ctx context.Context, table, row string, texts map[string]string) error {
-	_, err := ntable.RowSet(ctx, r.C, table, row, texts)
+	_, err := ntable.RowSet(ctx, r.C, table, row, texts, r.writeOpts())
 	return err
 }
 
@@ -131,7 +215,7 @@ func (r *Redis) ViewDelete(ctx context.Context, name string) error {
 }
 
 func (r *Redis) DropTable(ctx context.Context, table string) error {
-	_, err := ntable.DropDefinition(ctx, r.C, table)
+	_, err := ntable.DropDefinition(ctx, r.C, table, r.writeOpts())
 	return err
 }
 
@@ -179,7 +263,7 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 	if err != nil {
 		return false, err
 	}
-	fence, genKey := r.key(keyFence), r.key(keyGen)
+	fence, genKey, epochKey := r.key(keyFence), r.key(keyGen), r.Names.EpochKey()
 	err = r.C.Watch(ctx, func(tx *redis.Tx) error {
 		vals, err := tx.MGet(ctx, fence, genKey).Result()
 		if err != nil {
@@ -192,13 +276,20 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 		if vals[0] != nil || g != gen {
 			return errFenceMoved
 		}
+		e, err := tx.HGet(ctx, epochKey, "n").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		if n, _ := strconv.ParseUint(e, 10, 64); n != r.Pinned {
+			return errFenceMoved // the sprint was cleared since the step read it
+		}
 		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 			p.Set(ctx, fence, body, 0)
 			p.Set(ctx, genKey, gen+1, 0)
 			return nil
 		})
 		return err
-	}, fence, genKey)
+	}, fence, genKey, epochKey)
 	if errors.Is(err, errFenceMoved) || errors.Is(err, redis.TxFailedErr) {
 		return false, nil
 	}
