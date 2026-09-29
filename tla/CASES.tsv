@@ -52,6 +52,8 @@ MCSprintBrokenFinishNoMove.cfg	MCSprintTables.tla	invariant	WorkingIsDelegated	i
 MCSprintBrokenInsertNoBack.cfg	MCSprintTables.tla	invariant	SentinelHolds	ignore-terminal	sprintw6	required	-
 MCSprintBrokenLandSkipsWork.cfg	MCSprintTables.tla	invariant	MergedIsLanded	ignore-terminal	sprintw2	required	-
 MCSprintBrokenLateSilent.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
+MCSprintBrokenLogNoMove.cfg	MCSprintTables.tla	invariant	LogReplays	ignore-terminal	sprintw8	required	-
+MCSprintBrokenMoveNoLog.cfg	MCSprintTables.tla	invariant	LogReplays	ignore-terminal	sprintw8	required	-
 MCSprintBrokenNoAutoAccept.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
 MCSprintBrokenNoAutoRework.cfg	MCSprintTables.tla	invariant	OwnersRule	ignore-terminal	sprintw7	required	-
 MCSprintBrokenNoDecision.cfg	MCSprintTables.tla	invariant	AnswerableJudgments	ignore-terminal	sprintw8	required	-
@@ -84,8 +86,8 @@ MCSprintBrokenStopIgnored.cfg	MCSprintTables.tla	action	TickOnlyWhileRunning	ign
 MCSprintBrokenStopSilent.cfg	MCSprintTables.tla	invariant	StoppedIsNotified	ignore-terminal	sprintw1	required	-
 MCSprintBrokenWithdrawLost.cfg	MCSprintTables.tla	invariant	NoCardLostOrTwice	ignore-terminal	sprintw2	required	-
 MCSprintCutDelegated.cfg	MCSprintTables.tla	invariant	AlwaysDelegated	ignore-terminal	sprintw8	required	-
-MCSprintCutMergeMatches.cfg	MCSprintTables.tla	invariant	AlwaysMergeMatches	ignore-terminal	sprintw8	required	-
-MCSprintCutMergedLanded.cfg	MCSprintTables.tla	invariant	AlwaysMergedLanded	ignore-terminal	sprintw8	required	-
+MCSprintCutMergeMatches.cfg	MCSprintTables.tla	invariant	AlwaysMergeMatches	ignore-terminal	sprintw9	required	-
+MCSprintCutMergedLanded.cfg	MCSprintTables.tla	invariant	AlwaysMergedLanded	ignore-terminal	sprintw9	required	-
 MCSprintCutReadsInReview.cfg	MCSprintTables.tla	invariant	AlwaysReadsInReview	ignore-terminal	sprintw8	required	-
 MCSprintFindingRawSkip.cfg	MCSprintTables.tla	invariant	WorkingIsDelegated	ignore-terminal	sprintw9	required	-
 MCSprintTablesClock.cfg	MCSprintTables.tla	pass	-	ignore-terminal	sprint-clock	required	-

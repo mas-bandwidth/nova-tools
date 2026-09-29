@@ -57,6 +57,8 @@
 \*   owed, oldstat, oldopen  a restore owed at the new epoch, the members'
 \*                     statuses at the advance, the judgments open then
 \*   extra[g]          the cards past a sentinel's stop when it was inserted
+\*   rp                the sprint log's replay: every card's place and
+\*                     generation as the log's lines give them
 \*   rt, age           running time, and each judgment's age in it (Clocked)
 \*   late, rec, lie    the slow writer's operation, the result repair recorded,
 \*                     TRUE once a writer reported other than the record
@@ -136,6 +138,9 @@
 \*                                                         (OwnersRule)
 \*   "nodecision"       a reached sentinel's decisions (release, drop) are
 \*                      guarded off                  (AnswerableJudgments)
+\*   "movenolog"        a take moves a card without appending (LogReplays)
+\*   "lognomove"        a line is appended for a deal that never moved the
+\*                      card                                   (LogReplays)
 \*   "ackanything"      ack closes a judgment whose decisions do not list it
 \*                                                     (AckOnlyListed)
 \*   "insertnoback"     an inserted sentinel leaves the ready cards behind it
@@ -220,14 +225,15 @@ VARIABLES added, dropped, work, fleet, readers, merge, sstate, mstatus,
           made, gone, twice, cause, need, open, op, crashed,
           bad, returnsN, ranks, waived, released, machine, stops, redstop,
           epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep,
-          rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals
+          rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals, rp
 
-vars == <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
+vars0 == <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
           score, attempt, head, pair, gen, held, fin, result,
           made, gone, twice, cause, need, open, op, crashed,
           bad, returnsN, ranks, waived, released, machine, stops, redstop,
           epoch, rheld, stale, acks, tp, tm, te, dirty, rev, late, rec, lie, mep,
           rt, age, clr, cshape, owed, oldstat, oldopen, extra, lateset, redeals>>
+vars == <<vars0, rp>>
 
 \* ------------------------------------------------------------------ views
 
@@ -235,6 +241,21 @@ InWork(p, c) == p \in work[StreamOf[p]][c]
 Cell(p) == IF \E c \in WorkCells : InWork(p, c)
            THEN CHOOSE c \in WorkCells : InWork(p, c) ELSE None
 Landed == {p \in Primaries : InWork(p, "landed")}
+\* THE SPRINT LOG. Every card's place (and a work card's generation): the
+\* state the log replays to. Keys: a primary's work place, its merge place,
+\* every work card and every read card.
+LogKeys == {<<"p", p>> : p \in Primaries} \cup {<<"m", p>> : p \in Primaries} \cup WorkCards \cup ReadCards
+MCellOf(p) == IF \E s \in Streams, c \in MergeCells : p \in merge[s][c]
+              THEN CHOOSE c \in MergeCells : \E s \in Streams : p \in merge[s][c] ELSE None
+FCellOf(w) == IF \E m \in Members, c \in FleetCells : w \in fleet[m][c]
+              THEN CHOOSE x \in Members \X FleetCells : w \in fleet[x[1]][x[2]] ELSE <<>>
+RCellOf(r) == IF \E x \in Readers, c \in ReadCells : r \in readers[x][c]
+              THEN CHOOSE c \in ReadCells : \E x \in Readers : r \in readers[x][c] ELSE None
+LogPlace(x) ==
+  CASE x[1] = "p" -> <<"work", Cell(x[2])>>
+    [] x[1] = "w" -> <<"fleet", FCellOf(x), gen[x]>>
+    [] x[1] = "r" -> <<"readers", RCellOf(x)>>
+    [] OTHER      -> <<"merge", MCellOf(x[2])>>
 \* NEEDS: every need has landed, or was dropped and waived by the coordinator.
 \* g. SENTINELS BY POSITION: a sentinel waits for every primary of its stream
 \* that sorts before it (and for the cards in flight behind it when it was
@@ -504,6 +525,7 @@ Init ==
   /\ clr = "none" /\ cshape = mstatus /\ owed = FALSE /\ oldstat = mstatus /\ oldopen = {}
   /\ extra = [p \in Primaries |-> {}]
   /\ lateset = {} /\ redeals = [p \in Primaries |-> 0]
+  /\ rp = [x \in LogKeys |-> LogPlace(x)]
 
 \* ------------------------------------------------------------------ verbs
 
@@ -1437,7 +1459,27 @@ MergeStep(s) ==
   \/ \E p \in Primaries, why \in CardCauses, q \in Primaries \cup {None} : MergeStop(s, p, why, q)
   \/ MergeRed(s)
 
-Next ==
+\* Every step that moves a card appends a line (card, from, to, generation)
+\* in the same step: the replay state takes each moved card's new place.
+\* (The model keeps the replay fold, not the sequence: a sequence would make
+\* every path a distinct state; the fold is what replaying from empty gives.)
+LogStep ==
+  rp' = [x \in LogKeys |-> IF (LogPlace(x))' # LogPlace(x) THEN (LogPlace(x))' ELSE rp[x]]
+
+\* The reversed witnesses of the log: a take that moves without appending;
+\* a line appended for a deal that never moved the card.
+MoveNoLog(m, c) == Br("movenolog") /\ Take(m, c) /\ UNCHANGED rp
+LogNoMove(p) ==
+  /\ Br("lognomove") /\ Fenced /\ InWork(p, "ready")
+  /\ rp' = [rp EXCEPT ![<<"p", p>>] = <<"work", "working">>]
+  /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
+                 score, attempt, head, pair, gen, held, fin, result, made, gone,
+                 twice, cause, need, open, op, crashed, bad, returnsN, ranks, waived,
+                 released, machine, stops, redstop, epoch, rheld, stale, acks,
+                 tp, tm, te, dirty, rev, late, rec, lie, mep, rt, age, clr, cshape,
+                 owed, oldstat, oldopen, extra, lateset, redeals>>
+
+NextCore ==
   \/ \E p \in Primaries :
        \/ Add(p) \/ Resolve(p) \/ Deal(p) \/ Ask(p) \/ Rework(p) \/ Drop(p)
        \/ Rank(p) \/ Return(p) \/ CiRed(p) \/ CiGreen(p)
@@ -1464,6 +1506,11 @@ Next ==
   \/ Continue \/ Crash \/ Repair \/ WriterWake \/ Abandon \/ CutBeforeFirst \/ MergerSync
   \/ \E p \in Primaries : RawWrite(p)
 
+Next ==
+  \/ NextCore /\ LogStep
+  \/ \E m \in Members, c \in WorkCards : MoveNoLog(m, c)
+  \/ \E p \in Primaries : LogNoMove(p)
+
 Spec == Init /\ [][Next]_vars
 
 \* Fairness: the mechanical moves run, workers and readers report, the merge
@@ -1483,46 +1530,46 @@ TickDuty ==
 \* process that finishes its own step, repair and restore. NO fairness on the
 \* coordinator (Answer, Accept, MachineStart).
 MechFairness ==
-  /\ \A p \in Primaries : WF_vars(Add(p))
+  /\ \A p \in Primaries : WF_vars0(Add(p))
   /\ \A m \in Members :
-       /\ WF_vars(\E c \in WorkCards : Take(m, c))
-       /\ WF_vars(\E h \in held[m] : FinishRefused(m, h) \/
+       /\ WF_vars0(\E c \in WorkCards : Take(m, c))
+       /\ WF_vars0(\E h \in held[m] : FinishRefused(m, h) \/
                     \E v \in {"ok", "failed"} : Finish(m, h, v))
   /\ \A r \in Readers :
-       /\ WF_vars(\E c \in ReadCards : ReadStart(r, c))
-       /\ WF_vars(\E h \in rheld[r] : ReadRefused(r, h) \/
+       /\ WF_vars0(\E c \in ReadCards : ReadStart(r, c))
+       /\ WF_vars0(\E h \in rheld[r] : ReadRefused(r, h) \/
                     \E v \in {"ok", "broken"} : Read(r, h, v))
-  /\ \A s \in Streams : WF_vars(MergeStep(s))
-  /\ WF_vars(\E m \in Members : FleetUp(m))
-  /\ WF_vars(Continue) /\ WF_vars(Repair) /\ WF_vars(WriterWake) /\ WF_vars(MergerSync)
-  /\ WF_vars(Restore) /\ WF_vars(TickBegin) /\ WF_vars(TickNext) /\ WF_vars(TickDuty)
-  /\ WF_vars(WatchStopped)
+  /\ \A s \in Streams : WF_vars0(MergeStep(s))
+  /\ WF_vars0(\E m \in Members : FleetUp(m))
+  /\ WF_vars0(Continue) /\ WF_vars0(Repair) /\ WF_vars0(WriterWake) /\ WF_vars0(MergerSync)
+  /\ WF_vars0(Restore) /\ WF_vars0(TickBegin) /\ WF_vars0(TickNext) /\ WF_vars0(TickDuty)
+  /\ WF_vars0(WatchStopped)
 
 Fairness ==
   /\ \A p \in Primaries :
-       /\ WF_vars(Add(p)) /\ WF_vars(Resolve(p)) /\ WF_vars(Deal(p))
-       /\ WF_vars(Ask(p))
+       /\ WF_vars0(Add(p)) /\ WF_vars0(Resolve(p)) /\ WF_vars0(Deal(p))
+       /\ WF_vars0(Ask(p))
   /\ \A m \in Members :
-       /\ WF_vars(\E c \in WorkCards : Take(m, c))
-       /\ WF_vars(\E h \in held[m] : FinishRefused(m, h) \/
+       /\ WF_vars0(\E c \in WorkCards : Take(m, c))
+       /\ WF_vars0(\E h \in held[m] : FinishRefused(m, h) \/
                     \E v \in {"ok", "failed"} : Finish(m, h, v))
   /\ \A r \in Readers :
-       /\ WF_vars(\E c \in ReadCards : ReadStart(r, c))
-       /\ WF_vars(\E h \in rheld[r] : ReadRefused(r, h) \/
+       /\ WF_vars0(\E c \in ReadCards : ReadStart(r, c))
+       /\ WF_vars0(\E h \in rheld[r] : ReadRefused(r, h) \/
                     \E v \in {"ok", "broken"} : Read(r, h, v))
-  /\ \A s \in Streams : WF_vars(MergeStep(s))
-  /\ WF_vars(\E m \in Members : FleetUp(m))
-  /\ WF_vars(Continue) /\ WF_vars(Repair) /\ WF_vars(WriterWake) /\ WF_vars(MergerSync)
-  /\ \A s \in Streams : WF_vars(TickResume(s))
-  /\ WF_vars(\E a, b \in Members : Level(a, b))
-  /\ WF_vars(MachineStart) /\ WF_vars(Restore)
-  /\ WF_vars(TickNoMember) /\ WF_vars(TickBegin) /\ WF_vars(TickNext)
-  /\ WF_vars(TickDuty)
-  /\ \A p \in Primaries : WF_vars(AutoRework(p)) /\ WF_vars(TickAccept(p)) /\ WF_vars(TickJudge(p))
-  /\ \A c \in Cards : WF_vars(TickRedealWork(c)) /\ WF_vars(TickReask(c))
-  /\ WF_vars(WatchStopped)
+  /\ \A s \in Streams : WF_vars0(MergeStep(s))
+  /\ WF_vars0(\E m \in Members : FleetUp(m))
+  /\ WF_vars0(Continue) /\ WF_vars0(Repair) /\ WF_vars0(WriterWake) /\ WF_vars0(MergerSync)
+  /\ \A s \in Streams : WF_vars0(TickResume(s))
+  /\ WF_vars0(\E a, b \in Members : Level(a, b))
+  /\ WF_vars0(MachineStart) /\ WF_vars0(Restore)
+  /\ WF_vars0(TickNoMember) /\ WF_vars0(TickBegin) /\ WF_vars0(TickNext)
+  /\ WF_vars0(TickDuty)
+  /\ \A p \in Primaries : WF_vars0(AutoRework(p)) /\ WF_vars0(TickAccept(p)) /\ WF_vars0(TickJudge(p))
+  /\ \A c \in Cards : WF_vars0(TickRedealWork(c)) /\ WF_vars0(TickReask(c))
+  /\ WF_vars0(WatchStopped)
 
-FairSpec == Spec /\ Fairness /\ \A n \in Notes : WF_vars(Answer(n))
+FairSpec == Spec /\ Fairness /\ \A n \in Notes : WF_vars0(Answer(n))
 MechSpec == Spec /\ MechFairness
 
 \* ------------------------------------------------------------------ rules
@@ -1730,6 +1777,10 @@ Unstuck(n) ==
          \/ n \notin open' /\ (RuleIn(n.p, open \ {n}, Cardinality(Primaries)))'
 AnswerableJudgments ==
   op = NoOp => \A n \in open : ENABLED (Answer(n) /\ Unstuck(n))
+
+\* THE LOG. Replaying the log from empty gives every card's place and
+\* generation.
+LogReplays == \A x \in LogKeys : rp[x] = LogPlace(x)
 
 \* THE DEFINITION OF DONE, with no coordinator fairness (MechSpec): every
 \* primary always eventually ends, or stands at an open judgment that names
