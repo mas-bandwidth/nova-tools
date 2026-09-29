@@ -186,6 +186,7 @@ type watchStream struct {
 	merge      map[string]string // land:merge:<stream>
 	cardState  string            // the merge card's state, reason, dest (when named)
 	cardReason string
+	cardDest   string
 	escState   string          // the escalation's state (when named)
 	stops      map[string]bool // after= sentinel -> landed
 	notes      []string        // ws:<stream>:notes
@@ -251,7 +252,7 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 			}
 		}
 		w.watchSlow(ctx, pipe, st, cfg.notify, &errs)
-		if err := w.watchCard(ctx, pipe, st, repo, sprint, paths, sprintNoteLines, now); err != nil {
+		if err := w.watchCard(ctx, pipe, st, repo, sprint, paths, sprintNoteLines, now, cfg.slow); err != nil {
 			errs = append(errs, st.name+": "+err.Error())
 		}
 	}
@@ -329,13 +330,41 @@ func (w *LandWatch) coordinator(ctx context.Context) (string, error) {
 }
 
 // heldStates block new work (friend.go): no merge card goes to such a friend.
-var heldStates = map[string]bool{friend.StateDown: true, friend.StateAway: true, friend.StateOutOfCredits: true,
-	friend.StateOfflineModel: true, friend.StateWakeMissed: true}
+var heldStates = map[string]bool{
+	"held":                   true,
+	friend.StateDown:         true,
+	friend.StateAway:         true,
+	friend.StateOutOfCredits: true,
+	friend.StateOfflineModel: true,
+	friend.StateWakeMissed:   true,
+}
+
+func (w *LandWatch) friendState(ctx context.Context, f string) string {
+	if f == "" || w.Client == nil {
+		return ""
+	}
+	st, err := w.Client.Get(ctx, friend.StateKey(f)).Result()
+	if err != nil {
+		st = w.Client.HGet(ctx, friend.StateKey(f), "state").Val()
+	}
+	return st
+}
+
+func (w *LandWatch) isFriendHeld(ctx context.Context, f string) bool {
+	return heldStates[w.friendState(ctx, f)]
+}
 
 // frontier is the friend a merge card goes to.
 func (w *LandWatch) frontier(ctx context.Context) (string, error) {
 	if w.Frontier != nil {
-		return w.Frontier(ctx)
+		f, err := w.Frontier(ctx)
+		if err != nil {
+			return "", err
+		}
+		if f != "" && !w.isFriendHeld(ctx, f) {
+			return f, nil
+		}
+		return w.coordinator(ctx)
 	}
 	names, err := w.Client.SMembers(ctx, "friends").Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -344,22 +373,22 @@ func (w *LandWatch) frontier(ctx context.Context) (string, error) {
 	sort.Strings(names)
 	pipe := w.Client.Pipeline()
 	tiers := make([]*redis.StringCmd, len(names))
-	states := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
 		tiers[i] = pipe.HGet(ctx, "friend:"+f+":desired", "tiers")
-		states[i] = pipe.Get(ctx, friend.StateKey(f))
 	}
 	if err := execPipe(ctx, pipe); err != nil {
 		return "", err
 	}
 	for i, f := range names {
-		if heldStates[states[i].Val()] {
-			continue
-		}
+		isFrontier := false
 		for _, t := range strings.Split(tiers[i].Val(), ",") {
 			if strings.TrimSpace(t) == "frontier" {
-				return f, nil
+				isFrontier = true
+				break
 			}
+		}
+		if isFrontier && !w.isFriendHeld(ctx, f) {
+			return f, nil
 		}
 	}
 	return w.coordinator(ctx)
@@ -375,7 +404,7 @@ const DefaultCardGrace = time.Minute
 // merging; otherwise the next card is cut. Every cut claims the stream
 // first: a live claim of another writer (the land duty building, a hand
 // run) cuts nothing this pass.
-func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, repo, sprint string, paths []string, sprintNotes []string, now time.Time) error {
+func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, repo, sprint string, paths []string, sprintNotes []string, now time.Time, slow time.Duration) error {
 	mid := st.merge["task"]
 	state, reason := "", ""
 	if mid != "" {
@@ -390,8 +419,73 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	card := MergeCard{Kind: string(LandMergeKind), Stream: st.name, Slug: st.slug, Repo: repo, Base: base, Sprint: sprint,
 		Paths: strings.Join(paths, " "), Members: members, Notes: notes, Now: now}
 	if mid != "" && state != "" && state != "closed" {
-		// A live card: nothing to cut. Its brief is a view (MergeBriefFor),
-		// rendered when the card is read, so the steady tick writes nothing.
+		dest := st.cardDest
+		if dest == "" {
+			dest = st.merge["to"]
+		}
+
+		redealReason := ""
+		if dest != "" && w.isFriendHeld(ctx, dest) {
+			redealReason = "held"
+		} else if state == "working" {
+			if slow <= 0 {
+				slow = w.Slow
+			}
+			if slow <= 0 {
+				slow = DefaultLandSlow
+			}
+			leaseStr := w.Client.HGet(ctx, "task:"+mid, "lease_until").Val()
+			leaseUntil, _ := strconv.ParseInt(leaseStr, 10, 64)
+			cutAt, _ := strconv.ParseInt(st.merge["cut_at"], 10, 64)
+			lapsed := false
+			if leaseUntil > 0 && now.UnixMilli() >= leaseUntil {
+				if now.UnixMilli() >= leaseUntil+slow.Milliseconds() || (cutAt > 0 && now.UnixMilli() >= cutAt+slow.Milliseconds()) {
+					lapsed = true
+				}
+			} else if leaseUntil == 0 && cutAt > 0 && now.UnixMilli() >= cutAt+slow.Milliseconds() {
+				lapsed = true
+			}
+			if lapsed {
+				redealReason = "lease-lapsed"
+			}
+		}
+
+		if redealReason == "" {
+			// A live card: nothing to cut. Its brief is a view (MergeBriefFor),
+			// rendered when the card is read, so the steady tick writes nothing.
+			return nil
+		}
+
+		// Re-deal: close old card, release stream claim, cut new card to next frontier friend (or coordinator).
+		taskKey := fmt.Sprintf("task:%s", mid)
+		if err := w.Client.HSet(ctx, taskKey, "state", "closed", "reason", "re-dealt").Err(); err != nil {
+			return fmt.Errorf("close re-dealt card %s: %w", mid, err)
+		}
+		if _, err := stream.Release(ctx, w.Client, []string{st.name}, stream.CardOwner(mid)); err != nil {
+			return fmt.Errorf("release re-dealt card claim %s: %w", mid, err)
+		}
+
+		to, err := w.frontier(ctx)
+		if err != nil {
+			return err
+		}
+		if to == "" {
+			return errors.New("merge card: no friend advertises frontier and there is no coordinator")
+		}
+		seq, _ := strconv.ParseInt(st.merge["seq"], 10, 64)
+		seq++
+		card.ID = fmt.Sprintf("merge-%s-%d", st.slug, seq)
+		card.To = to
+		if held, err := w.claim(ctx, st.name, card.ID, now); err != nil || held {
+			return err
+		}
+		id, err := w.push(ctx, card)
+		if err != nil {
+			return fmt.Errorf("merge card %s: %w", card.ID, err)
+		}
+		pipe.HSet(ctx, LandMergeKey(st.name), "seq", strconv.FormatInt(seq, 10), "task", id, "to", to,
+			"cut_at", strconv.FormatInt(now.UnixMilli(), 10), "members", memberIDs(members))
+		w.printf("LAND-REDEAL stream=%s old_card=%s new_card=%s to=%s reason=%s", oneline.Field(st.name), mid, id, to, redealReason)
 		return nil
 	}
 	if mid != "" && state == "closed" && st.merge["escalated"] != mid {
@@ -399,7 +493,7 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 		switch {
 		case strings.Contains(reason, "cross-stream"):
 			why = "cross"
-		case sameMembers(st.merge["members"], members):
+		case !strings.Contains(reason, "re-dealt") && sameMembers(st.merge["members"], members):
 			why = "stuck"
 		}
 		if why != "" {
@@ -827,7 +921,7 @@ func (st *watchStream) decode(r *rows, k string) error {
 		if err != nil {
 			return err
 		}
-		st.cardState, st.cardReason = v[1], v[2]
+		st.cardState, st.cardReason, st.cardDest = v[1], v[2], v[3]
 	case "escalation":
 		v, err := r.take(2)
 		if err != nil {

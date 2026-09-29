@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -375,5 +376,210 @@ func TestLandWatchCrossStreamWaitsOnTheOtherStreamsSentinel(t *testing.T) {
 	c.HSet(ctx, "task:beta-work:sentinel", "state", "landed", "where", "landed")
 	if pass(); len(*pushedp) != 3 || (*pushedp)[2].ID != "merge-alpha-2" {
 		t.Fatalf("after the sentinel landed: %+v", *pushedp)
+	}
+}
+
+// TestLandWatchRedealsWhenFriendHeld (nova-tools #4384): a live merge card whose
+// destination friend goes down or is held (friend:<f>:state held/down) is
+// re-dealt on the next pass: old card closed with reason re-dealt, stream claim
+// released, new card cut to the next frontier friend (or coordinator), and
+// LAND-REDEAL emitted without triggering a stuck escalation.
+func TestLandWatchRedealsWhenFriendHeld(t *testing.T) {
+	t.Parallel()
+	c, _, pushedp, _, pass := newWatchFixture(t)
+	ctx := context.Background()
+	const s = "swarm: cards"
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 10, Member: "t1"}, redis.Z{Score: 20, Member: "t2"})
+	o := pass()
+	p := *pushedp
+	if len(p) != 1 || p[0].ID != "merge-swarm-cards-1" || p[0].To != "stella" {
+		t.Fatalf("first card: %+v", p)
+	}
+	if !strings.Contains(o, "MERGE-CARD swarm:\\x20cards card=merge-swarm-cards-1 to=stella members=2") {
+		t.Fatalf("first pass output:\n%s", o)
+	}
+	if owner, _ := c.HGet(ctx, reconcile.LandMergeKey(s), "owner").Result(); owner != "card:merge-swarm-cards-1" {
+		t.Fatalf("stream owner before redeal = %q", owner)
+	}
+
+	// Destination friend stella goes into held state.
+	c.Set(ctx, "friend:stella:state", "held", 0)
+
+	// Next pass re-deals: closes merge-swarm-cards-1, releases claim, cuts merge-swarm-cards-2 to rowan.
+	o = pass()
+	p = *pushedp
+	if len(p) != 2 || p[1].ID != "merge-swarm-cards-2" || p[1].To != "rowan" {
+		t.Fatalf("re-dealt card: %+v", p)
+	}
+	wantLine := "LAND-REDEAL stream=swarm:\\x20cards old_card=merge-swarm-cards-1 new_card=merge-swarm-cards-2 to=rowan reason=held"
+	if !strings.Contains(o, wantLine) {
+		t.Fatalf("re-deal pass output:\n%s\nwant:\n%s", o, wantLine)
+	}
+
+	// Verify old card was closed with reason "re-dealt".
+	oldCard, err := c.HGetAll(ctx, "task:merge-swarm-cards-1").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldCard["state"] != "closed" || oldCard["reason"] != "re-dealt" {
+		t.Fatalf("old card state/reason: %v", oldCard)
+	}
+
+	// Verify stream owner is now the new card.
+	if owner, _ := c.HGet(ctx, reconcile.LandMergeKey(s), "owner").Result(); owner != "card:merge-swarm-cards-2" {
+		t.Fatalf("stream owner after redeal = %q", owner)
+	}
+	if mergeRec, _ := c.HGetAll(ctx, reconcile.LandMergeKey(s)).Result(); mergeRec["task"] != "merge-swarm-cards-2" || mergeRec["to"] != "rowan" {
+		t.Fatalf("land:merge after redeal: %v", mergeRec)
+	}
+
+	// Subsequent passes: new card is open, rowan is coordinator, no stuck escalation, no further re-deal.
+	for i := 0; i < 3; i++ {
+		o = pass()
+		if len(*pushedp) != 2 {
+			t.Fatalf("pass %d after redeal cut extra card: %+v", i+1, *pushedp)
+		}
+		if strings.Contains(o, "LAND-STUCK") || strings.Contains(o, "LAND-REDEAL") {
+			t.Fatalf("pass %d after redeal emitted unexpected line:\n%s", i+1, o)
+		}
+	}
+}
+
+// TestLandWatchRedealsWhenLeaseLapses (nova-tools #4384): a merge card in working
+// state whose lease lapsed past cfg:land slow is re-dealt with reason lease-lapsed.
+func TestLandWatchRedealsWhenLeaseLapses(t *testing.T) {
+	t.Parallel()
+	mr := testutil.StartStore(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	t0 := time.UnixMilli(1700000000000)
+	now := t0
+	const s = "swarm: cards"
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 10, Member: "t1"})
+	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "sp"})
+
+	var pushed []reconcile.MergeCard
+	var out bytes.Buffer
+	w := &reconcile.LandWatch{
+		Client: c, Now: func() time.Time { return now }, Out: &out, Repo: "mas-bandwidth/nova-tools",
+		Slow: 10 * time.Minute,
+		Push: func(_ context.Context, m reconcile.MergeCard) (string, error) {
+			pushed = append(pushed, m)
+			c.HSet(ctx, "task:"+m.ID, "state", "open", "kind", m.Kind, "dest", m.To)
+			return m.ID, nil
+		},
+		Coordinator: func(context.Context) (string, error) { return "rowan", nil },
+		Frontier:    func(context.Context) (string, error) { return "stella", nil },
+	}
+	passAt := func(at time.Duration) string {
+		t.Helper()
+		now = t0.Add(at)
+		out.Reset()
+		if _, err := w.Run(ctx, nil); err != nil {
+			t.Fatalf("pass at %s: %v", at, err)
+		}
+		return out.String()
+	}
+
+	// Pass 1 at 0m: card merge-swarm-cards-1 is cut to stella.
+	o := passAt(0)
+	if len(pushed) != 1 || pushed[0].ID != "merge-swarm-cards-1" || pushed[0].To != "stella" {
+		t.Fatalf("pass 1: %+v", pushed)
+	}
+	if !strings.Contains(o, "MERGE-CARD ") {
+		t.Fatalf("pass 1 output:\n%s", o)
+	}
+
+	// Worker takes the card and sets state=working with lease_until = t0 + 1m.
+	c.HSet(ctx, "task:merge-swarm-cards-1", "state", "working", "lease_until", strconv.FormatInt(t0.Add(time.Minute).UnixMilli(), 10))
+
+	// Pass 2 at 5m: lease has expired (1m < 5m), but duration is only 5m (< slow 10m).
+	// Nothing should be re-dealt yet.
+	o = passAt(5 * time.Minute)
+	if len(pushed) != 1 || strings.Contains(o, "LAND-REDEAL") {
+		t.Fatalf("pass 2 (5m) should not redeal: pushed=%d out=%s", len(pushed), o)
+	}
+
+	// Pass 3 at 11m: past cfg:land slow (10m). Re-deal triggers!
+	o = passAt(11 * time.Minute)
+	if len(pushed) != 2 || pushed[1].ID != "merge-swarm-cards-2" || pushed[1].To != "stella" {
+		t.Fatalf("pass 3 (11m): pushed=%+v", pushed)
+	}
+	wantLine := "LAND-REDEAL stream=swarm:\\x20cards old_card=merge-swarm-cards-1 new_card=merge-swarm-cards-2 to=stella reason=lease-lapsed"
+	if !strings.Contains(o, wantLine) {
+		t.Fatalf("pass 3 output:\n%s\nwant:\n%s", o, wantLine)
+	}
+
+	// Old card is closed with reason "re-dealt".
+	oldState := c.HGetAll(ctx, "task:merge-swarm-cards-1").Val()
+	if oldState["state"] != "closed" || oldState["reason"] != "re-dealt" {
+		t.Fatalf("old card after redeal: %v", oldState)
+	}
+
+	// Stream owner is now the new card.
+	if owner := c.HGet(ctx, reconcile.LandMergeKey(s), "owner").Val(); owner != "card:merge-swarm-cards-2" {
+		t.Fatalf("owner after redeal = %q", owner)
+	}
+	if strings.Contains(o, "LAND-STUCK") {
+		t.Fatalf("re-deal must not escalate to stuck:\n%s", o)
+	}
+}
+
+// TestLandWatchRedealsWhenFriendDownHash (nova-tools #4384): verify friend state stored
+// as a hash (friend:<f>:state with field state=down) triggers re-deal to the coordinator.
+func TestLandWatchRedealsWhenFriendDownHash(t *testing.T) {
+	t.Parallel()
+	c, _, pushedp, _, pass := newWatchFixture(t)
+	ctx := context.Background()
+	const s = "swarm: cards"
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 10, Member: "t1"})
+	pass()
+	p := *pushedp
+	if len(p) != 1 || p[0].ID != "merge-swarm-cards-1" || p[0].To != "stella" {
+		t.Fatalf("first card: %+v", p)
+	}
+
+	// Set stella state as a Redis hash with field state=down.
+	c.HSet(ctx, "friend:stella:state", "state", "down")
+
+	o := pass()
+	p = *pushedp
+	if len(p) != 2 || p[1].ID != "merge-swarm-cards-2" || p[1].To != "rowan" {
+		t.Fatalf("re-dealt card: %+v", p)
+	}
+	wantLine := "LAND-REDEAL stream=swarm:\\x20cards old_card=merge-swarm-cards-1 new_card=merge-swarm-cards-2 to=rowan reason=held"
+	if !strings.Contains(o, wantLine) {
+		t.Fatalf("re-deal pass output:\n%s\nwant:\n%s", o, wantLine)
+	}
+}
+
+// TestLandWatchRedealtCardDoesNotEscalateToStuck (nova-tools #4384): a merge card
+// closed with reason "re-dealt" when the same members are still merging must cut
+// a new merge card and NEVER escalate to LAND-STUCK.
+func TestLandWatchRedealtCardDoesNotEscalateToStuck(t *testing.T) {
+	t.Parallel()
+	c, _, pushedp, _, pass := newWatchFixture(t)
+	ctx := context.Background()
+	const s = "swarm: cards"
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 10, Member: "t1"})
+	pass()
+	if len(*pushedp) != 1 {
+		t.Fatalf("first card: %+v", *pushedp)
+	}
+
+	// Close card with reason re-dealt.
+	c.HSet(ctx, "task:merge-swarm-cards-1", "state", "closed", "reason", "re-dealt")
+	o := pass()
+	p := *pushedp
+	if len(p) != 2 || p[1].ID != "merge-swarm-cards-2" || p[1].Kind != "merge" {
+		t.Fatalf("after re-dealt card closed: %+v", p)
+	}
+	if strings.Contains(o, "LAND-STUCK") {
+		t.Fatalf("must not escalate to stuck:\n%s", o)
 	}
 }
