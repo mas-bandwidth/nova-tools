@@ -140,7 +140,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) 
 	// (#4396), refused before anything is posted or pushed, one REFUSED
 	// card-lint line per rule on stderr.
 	if *pushTo != "" {
-		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: string(body)}); rs != nil {
+		if rs := cardhdr.ValidateOneInvariant(cardhdr.Card{Text: string(body)}); rs != nil {
 			for _, r := range rs {
 				fmt.Fprintf(stderr, "%s card=%s\n", r, strconv.Quote(*bodyFile))
 			}

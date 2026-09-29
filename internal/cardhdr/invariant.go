@@ -124,6 +124,9 @@ type Card struct {
 	// tree PATHS is counted against. nil is a tree not read: a path is then
 	// counted by its shape (Packages).
 	Files []string
+	// Parent marks a parent card (e.g. cut as a parent with children): exempt
+	// from the single-invariant checks.
+	Parent bool
 }
 
 // abbreviations are the words whose period ends no sentence (lower case,
@@ -309,11 +312,13 @@ func (l cardLine) sentences() int {
 
 // lintCard is the card as the rules read it.
 type lintCard struct {
-	keys  map[string]cardLine // the first line of each key
-	lines []string            // every line, a quote prefix ("> ") dropped, fences dropped
-	all   []string            // every line, fenced lines kept (the fence lines dropped)
-	kind  string
-	files []string
+	keys       map[string]cardLine // the first line of each key
+	invariants []cardLine          // every INVARIANT line seen in the card
+	lines      []string            // every line, a quote prefix ("> ") dropped, fences dropped
+	all        []string            // every line, fenced lines kept (the fence lines dropped)
+	kind       string
+	parent     bool
+	files      []string
 }
 
 // unquote drops a Markdown quote prefix, so a card cut from an issue (which
@@ -326,7 +331,7 @@ func unquote(line string) string {
 }
 
 func readCard(c Card) *lintCard {
-	lc := &lintCard{keys: map[string]cardLine{}, files: c.Files}
+	lc := &lintCard{keys: map[string]cardLine{}, files: c.Files, parent: c.Parent}
 	fenced := false
 	cont := "" // the key whose continuation lines are being read
 	for _, raw := range strings.Split(strings.ReplaceAll(c.Text, "\r\n", "\n"), "\n") {
@@ -340,6 +345,15 @@ func readCard(c Card) *lintCard {
 			continue
 		}
 		lc.lines = append(lc.lines, line)
+		trimmedLine := strings.TrimSpace(line)
+		cleanLine := trimmedLine
+		if loc := listItemRE.FindStringIndex(line); loc != nil {
+			cleanLine = line[loc[1]-1:]
+		}
+		cleanLine = strings.TrimLeft(cleanLine, "-*+ \t")
+		if k, v, ok := KeyValue(cleanLine); ok && strings.EqualFold(k, KeyInvariant) {
+			lc.invariants = append(lc.invariants, cardLine{value: v, text: line})
+		}
 		if k, v, ok := KeyValue(line); ok {
 			cont = ""
 			if _, seen := lc.keys[k]; !seen {
@@ -362,7 +376,7 @@ func readCard(c Card) *lintCard {
 	return lc
 }
 
-func (lc *lintCard) plan() bool { return lc.kind == KindPlan }
+func (lc *lintCard) plan() bool { return lc.parent || lc.kind == KindPlan }
 
 // rule is one check: nil when the card keeps it.
 type rule struct {
@@ -402,6 +416,12 @@ var rules = []rule{
 		return nil
 	}},
 	{RuleInvariantSentences, func(lc *lintCard) *Refusal {
+		if lc.plan() {
+			return nil
+		}
+		if len(lc.invariants) > 1 {
+			return &Refusal{Line: lc.invariants[1].text, Remedy: RemedyParent}
+		}
 		if l, ok := lc.keys[KeyInvariant]; ok && l.sentences() > 1 {
 			return &Refusal{Line: l.text, Remedy: RemedyParent}
 		}
@@ -470,7 +490,7 @@ var rules = []rule{
 		return nil
 	}},
 	{RulePlanChildren, func(lc *lintCard) *Refusal {
-		if !lc.plan() {
+		if !lc.plan() || lc.parent {
 			return nil
 		}
 		if _, items := lc.buildList(); items == 0 {
@@ -512,9 +532,19 @@ func (lc *lintCard) buildList() (string, int) {
 // LintOneInvariant is every rule's refusal for card, in rule order; nil when
 // the card is one invariant. Every push path runs it before any write, on
 // every KIND (a KIND: stitch included); the stitch card cut --parent
-// generates is the one card no push path lints.
+// generates is the one card no push path lints. Parent cards (Parent == true
+// or KIND: plan) are exempt.
 func LintOneInvariant(c Card) Refusals {
+	if c.Parent {
+		return nil
+	}
 	return lintWith(c, rules)
+}
+
+// ValidateOneInvariant validates that a card contains at most one invariant (#4396).
+// It is an alias for LintOneInvariant.
+func ValidateOneInvariant(c Card) Refusals {
+	return LintOneInvariant(c)
 }
 
 func lintWith(c Card, rs []rule) Refusals {

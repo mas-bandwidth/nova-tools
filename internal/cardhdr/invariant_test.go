@@ -490,3 +490,125 @@ func TestLintTitleKind(t *testing.T) {
 		t.Errorf("merge = %q, want one build-issue", got)
 	}
 }
+
+// TestValidateOneInvariant tests the 5 invariant requirements: two-sentence
+// DONE-WHEN refused naming remedy, four packages in PATHS refused naming remedy,
+// multiple INVARIANTs in body refused naming remedy, single sentence DONE-WHEN
+// with <= 3 packages passing, and parent card passing regardless.
+func TestValidateOneInvariant(t *testing.T) {
+	t.Parallel()
+
+	baseCard := []string{
+		"RESULT: card-lint-test sha=0123456789ab",
+		"KIND: fix",
+		"INVARIANT: One invariant sentence here.",
+		"PATHS: pkg/a/a.go, pkg/b/b.go, pkg/c/c.go",
+		"CLASS-TEST: TestValidCard",
+		"PLATFORMS: darwin,linux",
+		"DONE-WHEN: The class test passes in under 2 s.",
+		"",
+		"BUILD: the implementation.",
+	}
+
+	t.Run("two-sentence DONE-WHEN refused naming remedy", func(t *testing.T) {
+		lines := append([]string{}, baseCard...)
+		lines[6] = "DONE-WHEN: The test passes. The CLI prints one line."
+		rs := ValidateOneInvariant(Card{Text: strings.Join(lines, "\n")})
+		if len(rs) == 0 {
+			t.Fatal("expected refusal for two-sentence DONE-WHEN, got nil")
+		}
+		found := false
+		for _, r := range rs {
+			if r.Rule == RuleDoneWhenSentences && r.Remedy == RemedyParent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("refusals %v did not contain %s with remedy %q", rs, RuleDoneWhenSentences, RemedyParent)
+		}
+	})
+
+	t.Run("four packages in PATHS refused naming remedy", func(t *testing.T) {
+		lines := append([]string{}, baseCard...)
+		lines[3] = "PATHS: pkg/a/a.go, pkg/b/b.go, pkg/c/c.go, pkg/d/d.go"
+		rs := ValidateOneInvariant(Card{Text: strings.Join(lines, "\n")})
+		if len(rs) == 0 {
+			t.Fatal("expected refusal for four packages in PATHS, got nil")
+		}
+		found := false
+		for _, r := range rs {
+			if r.Rule == RulePathsPackages && r.Remedy == RemedyParent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("refusals %v did not contain %s with remedy %q", rs, RulePathsPackages, RemedyParent)
+		}
+	})
+
+	t.Run("multiple INVARIANTs in body refused naming remedy", func(t *testing.T) {
+		lines := append([]string{}, baseCard...)
+		lines = append(lines, "INVARIANT: A second invariant in the card body.")
+		rs := ValidateOneInvariant(Card{Text: strings.Join(lines, "\n")})
+		if len(rs) == 0 {
+			t.Fatal("expected refusal for multiple INVARIANTs in body, got nil")
+		}
+		found := false
+		for _, r := range rs {
+			if r.Rule == RuleInvariantSentences && r.Remedy == RemedyParent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("refusals %v did not contain %s with remedy %q", rs, RuleInvariantSentences, RemedyParent)
+		}
+	})
+
+	t.Run("single sentence DONE-WHEN with <= 3 packages passes", func(t *testing.T) {
+		text := strings.Join(baseCard, "\n")
+		if rs := ValidateOneInvariant(Card{Text: text}); len(rs) != 0 {
+			t.Errorf("expected clean pass, got refusals: %v", rs)
+		}
+	})
+
+	t.Run("parent card passes regardless", func(t *testing.T) {
+		// A card that violates multiple single-invariant rules:
+		// 2-sentence DONE-WHEN, 4 packages, multiple INVARIANTs, BUILD list.
+		badLines := []string{
+			"RESULT: bad-card sha=0123456789ab",
+			"KIND: fix",
+			"INVARIANT: First invariant sentence.",
+			"PATHS: pkg/a/a.go, pkg/b/b.go, pkg/c/c.go, pkg/d/d.go",
+			"CLASS-TEST: TestBadCard",
+			"PLATFORMS: darwin,linux",
+			"DONE-WHEN: First sentence. Second sentence.",
+			"",
+			"BUILD:\n1. item one\n2. item two",
+			"",
+			"INVARIANT: Second invariant in body.",
+		}
+		badText := strings.Join(badLines, "\n")
+
+		// With Parent: true, passes regardless
+		if rs := ValidateOneInvariant(Card{Text: badText, Parent: true}); len(rs) != 0 {
+			t.Errorf("expected Parent: true to pass regardless, got refusals: %v", rs)
+		}
+
+		// Also verify KIND: plan parent card
+		planLines := []string{
+			"RESULT: plan-card sha=0123456789ab",
+			"KIND: plan",
+			"INVARIANT: Overarching invariant for the plan.",
+			"PATHS: pkg/a/a.go, pkg/b/b.go, pkg/c/c.go, pkg/d/d.go",
+			"BUILD:\n1. child-1\n2. child-2",
+			"",
+			"INVARIANT: Extra invariant detail.",
+		}
+		if rs := ValidateOneInvariant(Card{Text: strings.Join(planLines, "\n")}); len(rs) != 0 {
+			t.Errorf("expected KIND: plan to be exempt from package and invariant counts, got: %v", rs)
+		}
+	})
+}

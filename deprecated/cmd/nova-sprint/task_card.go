@@ -332,7 +332,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if spec != nil {
 			kind = firstOf(kind, spec.Kind)
 			repo := firstOf(*c.repo, spec.Repo)
-			rs = cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
+			rs = cardhdr.ValidateOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
 		}
 		if rs = rs.Merge(cardhdr.LintTitleKind(kind, *c.title, spec != nil)); rs != nil {
 			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())

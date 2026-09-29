@@ -54,6 +54,12 @@ func LintOneInvariant(repo, sha string, text []byte) cardhdr.Refusals {
 	return cardhdr.LintOneInvariant(cardhdr.Card{Text: string(text), Files: FilesAt(repo, sha)})
 }
 
+// ValidateOneInvariant validates that a card contains at most one invariant (#4396).
+// It is an alias for LintOneInvariant.
+func ValidateOneInvariant(repo, sha string, text []byte) cardhdr.Refusals {
+	return LintOneInvariant(repo, sha, text)
+}
+
 // LintLines is a card's refusals, one line each, each ending card=<name> when
 // the card is named (a file of a batch, or a cut's label).
 func LintLines(name string, rs cardhdr.Refusals) string {

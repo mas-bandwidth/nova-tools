@@ -2346,6 +2346,13 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `card-invariant` — every card push path verifies one invariant
+
+**The rule.** Every entry point that pushes or cuts a card (`internal/nsprint/card/cut.go`, `internal/nsprint/card/push.go`, `internal/nsprint/file/file.go`, and deprecated `cmdCardCutFrom` / `runTaskPush`) must validate that the card contains at most one invariant using `ValidateOneInvariant` (or `LintOneInvariant`) before storing or pushing the card.
+**The mistake it prevents.** Unbounded cards with multiple invariants or multiple sentences escape detection and cause downstream build failures or degraded execution.
+**The test.** `TestEveryCardPushPathLintsOneInvariant` (`internal/ci/card_cut_invariant_class_test.go`).
+**Its remedy lines.** `remedy="cut as a parent with children: card cut --parent"`.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

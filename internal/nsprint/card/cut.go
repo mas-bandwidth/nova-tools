@@ -332,7 +332,7 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 		return CutCard{}, VerbResult{}, err
 	}
 	// One card, one invariant (#4396): refused before the body is stored.
-	if rs := LintOneInvariant(in.Repo, contractSHA(c.Body), c.Body); rs != nil {
+	if rs := ValidateOneInvariant(in.Repo, contractSHA(c.Body), c.Body); rs != nil {
 		return c, VerbResult{}, rs
 	}
 	sum := sha256.Sum256(c.Body)

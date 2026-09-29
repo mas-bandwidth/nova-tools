@@ -408,7 +408,7 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 		}
 	}
 	if r.why == "" {
-		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: cutLintText(r), Files: o.files}); rs != nil {
+		if rs := cardhdr.ValidateOneInvariant(cardhdr.Card{Text: cutLintText(r), Files: o.files}); rs != nil {
 			r.lint = rs
 			fail("card-lint " + rs.Rules() + ": not one invariant")
 		}
