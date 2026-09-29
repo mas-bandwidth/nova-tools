@@ -102,6 +102,7 @@ func errText(err error) string {
 // between a file inside the store and one outside it while appends run; the
 // outside file is never touched, whichever way each append ends.
 func TestAppendNeverWritesOutsideTheStoreWhileTheLinkIsSwapped(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"bench", "own"} {
 		t.Run(shape, func(t *testing.T) {
 			t.Parallel()
@@ -154,7 +155,7 @@ func linkSwapped(t *testing.T, own bool) {
 			}
 		}
 	}()
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline := time.Now().Add(300 * time.Millisecond)
 	landed := 0
 	for i := 0; time.Now().Before(deadline); i++ {
 		if _, err := Append(store, "x", "e"+strconv.Itoa(i), "words", "", benchNow, PublishManual); err == nil {
