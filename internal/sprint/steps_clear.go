@@ -46,7 +46,7 @@ func RestoreShape(s *Snapshot, sh Shape) Plan {
 			continue
 		}
 		p.Units = append(p.Units, Unit{Key: CtlID(m), Changes: []Change{change(Fleet, createEntry(CtlID(m), m, Ctl, 0,
-			map[string]string{"kind": "member", "status": sh.Status[m], "since": now, "ok": "0", "failed": "0"}))}, Moved: "member " + m + " " + sh.Status[m]})
+			map[string]string{"kind": "member", "status": sh.Status[m], "since": now}))}, Moved: "member " + m + " " + sh.Status[m]})
 	}
 	return p
 }

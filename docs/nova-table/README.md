@@ -99,10 +99,11 @@ kinds of cell:
   *projection*: `count` (the set's size, Glenn's |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
   (the lowest and highest scored member), or `text` (a value per row, set
-  by `row set`, blank when none; no set). `pct(<count-column>)` is a formula
-  over count cells, with no set of its own.
+  by `row set`, blank when none; no set). `pct(<count-column>)`,
+  `pct(<count-column>/<a>+<b>)` and `sum(<a>+<b>)` are formulas over count
+  cells, with no set of their own.
 - **Footer cells.** One per column, the column's *fold* over the body:
-  `sum` (the default for a count), `max` or `avg` of the counts, `union` of the
+  `sum` (the default for a count and a `sum(...)`), `max` or `avg` of the counts, `union` of the
   members, `pooled` for percentages, or `none` (blank). The footer row carries the table's footer
   label (blank by default; use `--footer total` to name it). A table whose columns all fold `none` prints no
   footer row.
@@ -294,7 +295,7 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
 | `row sort` | `TABLE ROW SORT table=<t> by=<key> desc=<bool> keep=<bool>`, or `manual=true` |
 | `col add` | `TABLE COL ADD table=<t> col=<c> place=<...>`; last unless a place is named |
-| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a percentage reads it |
+| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a formula reads it |
 | `col move` | `TABLE COL MOVE table=<t> col=<c> place=<...>`; the other columns keep their order |
 | `cell add`, `cell remove` | `TABLE CELL table=<t> row=<r> col=<c> n=<count after>`; `--score` is the member's place (the unix ms when omitted) |
 | `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
@@ -336,8 +337,12 @@ owned set, changing it to text or a formula, or removing nonempty text is refuse
 move/remove members or clear text first. Bound external sets remain untouched.
 `row set` writes text values stored by column; later row metadata or binding
 edits retain those text values and row visibility. `pct(<count-column>)` computes
-the named count divided by all count columns in the row. Its default footer is
-`pooled`: sum the counts first, then divide. A percentage cannot fold `avg`.
+the named count divided by all count columns in the row; `pct(<count-column>/<a>+<b>)`
+the named count divided by the named count columns `a`, `b` of the row, for example
+`okpct:pct(ok/ok+failed):pooled:ok%`; `sum(<a>+<b>)` the named count columns of the
+row added, for example `done:sum(ok+failed)`. Every column a formula names is a
+count column of the table, hidden or not. A percentage's default footer is
+`pooled`: sum the numerators and the denominators first, then divide. A percentage cannot fold `avg`.
 A stored definition with the former `pct:avg` rule can be repaired using
 `set --columns`; replacement columns are validated under the current rules.
 
@@ -477,7 +482,7 @@ While a sort stands, `row move` and `row order` are refused and name
 `row sort <table> --manual`. `col del` refuses a column that holds members
 (naming all blocking rows and members, with one batch `cell remove` command per
 occupied cell), a text column with a value (clear
-it with `row set <table> <row> <col>=`), a column a `pct(...)` column reads
+it with `row set <table> <row> <col>=`), a column a `pct(...)` or `sum(...)` column reads
 (remove that one first) and the last column. Quote a column spec that has
 parentheses: the shell reads `pct(busy)` unquoted as a pattern.
 

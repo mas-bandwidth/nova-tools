@@ -42,12 +42,16 @@ NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
 
 A column is name[:projection[:fold[:label]]]: the projection is what a body
 cell prints, count (the set's size, the default), members (the members in
-score order), first, last, text (the value written by row set, no set), or pct(<count-column>)
-(the share of all count columns in the row). The row label is a separate cell.
-The fold is
-what the footer prints over the column, sum (the default for count), max,
-avg (of count cells), union (of members), pooled (the default for pct), or none.
-Known-empty percentages print 0.0%; unread inputs print ?.
+score order), first, last, text (the value written by row set, no set),
+pct(<count-column>) (the share of all count columns in the row),
+pct(<count-column>/<a>+<b>) (the share of the named count columns a, b of the
+row), or sum(<a>+<b>) (the named count columns of the row added). A formula
+names count columns of the same table, hidden or not. The row label is a
+separate cell. The fold is what the footer prints over the column, sum (the
+default for count and sum), max, avg (of count cells), union (of members),
+pooled (the default for pct: the numerators summed over the denominators
+summed), or none. Known-empty percentages print 0.0%; unread inputs print ?.
+Example: 'ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%'.
 set --hide/--show hides or shows columns without removing their data. A row's cells are owned by the table unless
 row add binds a column to a set another tool owns (<col>=<key>): a bound
 cell is a view, read freely, and cell add, cell remove, cell move and clear

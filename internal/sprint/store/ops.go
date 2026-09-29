@@ -101,10 +101,11 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 	return rep, nil, fmt.Errorf("the sprint kept changing through %d reads; run check again", rep.Reads)
 }
 
-// SyncMirrors brings the display cells up to date: a fleet member's status,
-// ok% (from the ok and failed counts on its control card) and load (its
-// unfinished work cards), and a stream's ci, state and since. They are
-// display only: the state is the control cards', written with the moves.
+// SyncMirrors brings the display cells up to date: a fleet member's status
+// and load (its unfinished work cards), and a stream's ci, state and since.
+// They are display only: the state is the control cards', written with the
+// moves. A fleet member's done and ok% are the table's own formulas over its
+// finished cells, never written here.
 func (st *Store) SyncMirrors(ctx context.Context) error {
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -131,11 +132,6 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			want := map[string]string{}
 			if logical == sprint.Fleet {
-				ok, failed := atoi(ctl.Fields["ok"]), atoi(ctl.Fields["failed"])
-				want[sprint.OkPct] = "-"
-				if ok+failed > 0 {
-					want[sprint.OkPct] = strconv.FormatFloat(100*float64(ok)/float64(ok+failed), 'f', 1, 64) + "%"
-				}
 				want[sprint.Status] = dash(ctl.Fields["status"])
 				want[sprint.Load] = strconv.FormatInt(count(shape, row, sprint.Ready)+count(shape, row, sprint.Working), 10)
 			} else {
@@ -158,8 +154,6 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 	}
 	return nil
 }
-
-func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 func dash(s string) string {
 	if s == "" {

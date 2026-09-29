@@ -251,6 +251,8 @@ func TestOrderRefusalsWriteNothing(t *testing.T) {
 	dup, _ := ntable.ParseColumn("a")
 	pct, _ := ntable.ParseColumn("r:pct(nope)")
 	text, _ := ntable.ParseColumn("r:pct(note)")
+	share, _ := ntable.ParseColumn("r:pct(a/a+nope)")
+	sumText, _ := ntable.ParseColumn("r:sum(a+note)")
 	cases := []struct {
 		name   string
 		change ntable.SetOpts
@@ -263,8 +265,10 @@ func TestOrderRefusalsWriteNothing(t *testing.T) {
 		{"column that is not there", ntable.SetOpts{ColMove: &ntable.Reorder{Item: "nope", Place: at("first", "")}}, `column "nope": no such column`},
 		{"column neighbour not there", ntable.SetOpts{ColMove: &ntable.Reorder{Item: "a", Place: at("before", "nope")}}, `column "nope": no such column`},
 		{"column already there", ntable.SetOpts{ColAdd: &dup}, "already there"},
-		{"percentage of no column", ntable.SetOpts{ColAdd: &pct}, "DEFINITION"},
-		{"percentage of a text column", ntable.SetOpts{ColAdd: &text}, "DEFINITION"},
+		{"percentage of no column", ntable.SetOpts{ColAdd: &pct}, `col add 't' 'nope'`},
+		{"percentage of a text column", ntable.SetOpts{ColAdd: &text}, `reads column "note", a text column`},
+		{"named denominator with no column", ntable.SetOpts{ColAdd: &share}, `col add 't' 'nope'`},
+		{"sum of a text column", ntable.SetOpts{ColAdd: &sumText}, `reads column "note", a text column`},
 		{"remove a column a percentage reads", ntable.SetOpts{ColDel: "a"}, `col del 't' 'p'`},
 		{"remove a column holding a member", ntable.SetOpts{ColDel: "b"}, `cell remove 't' 'c' 'b' 'x3'`},
 		{"remove a column holding text", ntable.SetOpts{ColDel: "note"}, "clear it with row set first"},

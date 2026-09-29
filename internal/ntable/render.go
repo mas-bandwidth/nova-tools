@@ -126,7 +126,7 @@ func Render(t Table, opts RenderOpts) string {
 	}
 	right := make([]bool, n)
 	for j, c := range cols {
-		right[j] = c.Projection == Count
+		right[j] = c.Projection == Count || IsSum(c.Projection)
 	}
 	var b, l strings.Builder
 	line := func(cells []string, footerRow bool) {
@@ -211,7 +211,7 @@ func CellText(cols []Column, r Row, j int) string {
 	}
 	c := cols[j]
 	if IsFormula(c.Projection) {
-		return formulaText(cols, c, r)
+		return formulaText(cols, c, r, j)
 	}
 	return cellText(c, r, j)
 }
@@ -254,25 +254,14 @@ func cellText(c Column, r Row, j int) string {
 	return "?"
 }
 
-// foldText is one footer cell as printed, over every row (hidden rows
-// included: a fold is the column's, not the screen's).
-// formulaValue is a pct(<col>) cell's value over the row: the named count
-// as a share of the row's count cells together; ok is false when the row
-// a cell it needs did not come back. A known empty row is zero percent.
+// formulaValue is a pct cell's value over the row: the numerator as a share
+// of the denominator (the named count columns of pct(<col>/<a>+<b>), or every
+// count column of the row for pct(<col>)); ok is false when a count it reads
+// did not come back. A known zero denominator is zero percent.
 func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
-	arg := FormulaArg(c.Projection)
-	var part, total int64
-	for k, o := range cols {
-		if o.Projection != Count {
-			continue
-		}
-		if k >= len(r.Cells) || r.Cells[k].Unread {
-			return 0, false
-		}
-		total += r.Cells[k].Count
-		if o.Name == arg {
-			part = r.Cells[k].Count
-		}
+	part, total, ok := shareCounts(cols, c, r)
+	if !ok {
+		return 0, false
 	}
 	if total == 0 {
 		return 0, true
@@ -280,14 +269,93 @@ func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 	return 100 * float64(part) / float64(total), true
 }
 
-// formulaText prints a formula cell: a percentage with one decimal
-// ("33.3%"), "0.0%" when the row has no tasks, "?" when a count it needs did
-// not come back (Stella's read of #4456: an unread dependency propagates).
-func formulaText(cols []Column, c Column, r Row) string {
+// shareCounts is a pct cell's numerator and denominator over one row; ok is
+// false when a count it reads did not come back.
+func shareCounts(cols []Column, c Column, r Row) (part, total int64, ok bool) {
+	f, err := ParseFormula(c.Projection)
+	if err != nil {
+		return 0, 0, false
+	}
+	if f.Over == nil {
+		for k, o := range cols {
+			if o.Projection != Count {
+				continue
+			}
+			if k >= len(r.Cells) || r.Cells[k].Unread {
+				return 0, 0, false
+			}
+			total += r.Cells[k].Count
+			if o.Name == f.Part {
+				part = r.Cells[k].Count
+			}
+		}
+		return part, total, true
+	}
+	part, ok = namedCount(cols, r, f.Part)
+	if !ok {
+		return 0, 0, false
+	}
+	for _, name := range f.Over {
+		n, ok := namedCount(cols, r, name)
+		if !ok {
+			return 0, 0, false
+		}
+		total += n
+	}
+	return part, total, true
+}
+
+// namedCount is the row's count in the named count column; ok is false when
+// the table has no such count column or its cell did not come back.
+func namedCount(cols []Column, r Row, name string) (int64, bool) {
 	for k, o := range cols {
-		if o.Projection == Count && (k >= len(r.Cells) || r.Cells[k].Unread) {
+		if o.Name != name {
+			continue
+		}
+		if o.Projection != Count || k >= len(r.Cells) || r.Cells[k].Unread {
+			return 0, false
+		}
+		return r.Cells[k].Count, true
+	}
+	return 0, false
+}
+
+// countValue is a count cell's value, or a sum(<a>+<b>) cell's (the named
+// counts added); ok is false when a count it reads did not come back.
+func countValue(cols []Column, r Row, j int) (int64, bool) {
+	c := cols[j]
+	if !IsSum(c.Projection) {
+		if j >= len(r.Cells) || r.Cells[j].Unread {
+			return 0, false
+		}
+		return r.Cells[j].Count, true
+	}
+	f, err := ParseFormula(c.Projection)
+	if err != nil {
+		return 0, false
+	}
+	var v int64
+	for _, name := range f.Over {
+		n, ok := namedCount(cols, r, name)
+		if !ok {
+			return 0, false
+		}
+		v += n
+	}
+	return v, true
+}
+
+// formulaText prints a formula cell: a sum as a count; a percentage with one
+// decimal ("33.3%"), "0.0%" when its denominator is known to be zero, "?"
+// when a count it reads did not come back (Stella's read of #4456: an unread
+// dependency propagates; pct(<col>) reads every count column of the row).
+func formulaText(cols []Column, c Column, r Row, j int) string {
+	if IsSum(c.Projection) {
+		v, ok := countValue(cols, r, j)
+		if !ok {
 			return "?"
 		}
+		return strconv.FormatInt(v, 10)
 	}
 	v, ok := formulaValue(cols, c, r)
 	if !ok {
@@ -308,23 +376,16 @@ func pctText(v float64) string {
 func foldText(cols []Column, c Column, rows []Row, j int) string {
 	switch c.Fold {
 	case Pooled:
-		// the share over every row together: the named counts summed over
-		// all counts summed, never the mean of the rows' percentages
-		arg := FormulaArg(c.Projection)
+		// the share over every row together: the numerators summed over the
+		// denominators summed, never the mean of the rows' percentages
 		var part, total int64
 		for _, r := range rows {
-			for k, o := range cols {
-				if o.Projection != Count {
-					continue
-				}
-				if k >= len(r.Cells) || r.Cells[k].Unread {
-					return "?"
-				}
-				total += r.Cells[k].Count
-				if o.Name == arg {
-					part += r.Cells[k].Count
-				}
+			p, t, ok := shareCounts(cols, c, r)
+			if !ok {
+				return "?"
 			}
+			part += p
+			total += t
 		}
 		if total == 0 {
 			return pctText(0)
@@ -334,10 +395,11 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		var sum float64
 		n := 0
 		for _, r := range rows {
-			if j >= len(r.Cells) || r.Cells[j].Unread {
+			v, ok := countValue(cols, r, j)
+			if !ok {
 				return "?"
 			}
-			sum += float64(r.Cells[j].Count)
+			sum += float64(v)
 			n++
 		}
 		if n == 0 {
@@ -347,10 +409,10 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 	case Sum, Max:
 		var v int64
 		for _, r := range rows {
-			if j >= len(r.Cells) || r.Cells[j].Unread {
+			n, ok := countValue(cols, r, j)
+			if !ok {
 				return "?"
 			}
-			n := r.Cells[j].Count
 			if c.Fold == Sum {
 				v += n
 			} else if n > v {

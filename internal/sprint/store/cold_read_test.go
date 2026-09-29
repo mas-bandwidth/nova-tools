@@ -135,8 +135,8 @@ func TestARedealThenBothFinishes(t *testing.T) {
 	if len(res.Moved) != 1 || p.card(sprint.Work, "s1-1").F("head") != "second-head" {
 		t.Errorf("the live finish: %+v head=%s", res, p.card(sprint.Work, "s1-1").F("head"))
 	}
-	if ctl := p.snap().MemberCtl(first); ctl.F("ok") != "0" {
-		t.Errorf("the first member was credited: %v", ctl.Fields)
+	if s := p.snap(); s.Fleet.Count(first, sprint.DoneOK)+s.Fleet.Count(first, sprint.DoneFailed) != 0 || s.Fleet.Count(second, sprint.DoneOK) != 1 {
+		t.Errorf("the first member was credited: first %d ok, second %d ok", s.Fleet.Count(first, sprint.DoneOK), s.Fleet.Count(second, sprint.DoneOK))
 	}
 }
 
@@ -260,7 +260,7 @@ func snapKey(p *probe) string {
 	s := p.snap()
 	var b []string
 	for _, t := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
-		for _, c := range t.Column(append(append([]string{}, sprint.States...), sprint.Asked, sprint.Reading, sprint.OK, sprint.Broken, sprint.Queued, sprint.Merged, sprint.Stuck, sprint.Returned, sprint.Done, sprint.Ctl)...) {
+		for _, c := range t.Column(append(append([]string{}, sprint.States...), sprint.Asked, sprint.Reading, sprint.OK, sprint.Broken, sprint.Queued, sprint.Merged, sprint.Stuck, sprint.Returned, sprint.DoneFailed, sprint.Ctl)...) {
 			b = append(b, fmt.Sprintf("%s/%s:%s:%d", t.Name, c.ID, c.Col, c.Rev))
 		}
 	}

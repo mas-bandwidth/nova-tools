@@ -42,13 +42,18 @@ where a primary sent back from merging waits (the table layer never places a
 removed member again, so an accept after a return moves it back), and `ctl`,
 where each stream's control card holds the stream's state, cause, ci and
 `since`. The fleet table has a hidden `ctl` column where each member's control
-card holds its status and its ok and failed counts, and a hidden `withdrawn`
+card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
-layer never places a removed member again). `done` holds a member's
-finished work cards, ok and failed; `ok%` (the column `okpct`, labelled `ok%`)
-is ok / (ok + failed) from the member's counts. The text cells (ci, state,
-since, ok%, status, load) are display copies of the control cards, written
-after each step; the control cards are written with the moves.
+layer never places a removed member again), and hidden `ok` and `failed`
+columns that hold a member's finished work cards, finished ok and finished
+failed. `done` and `ok%` are the table's own formulas over those two cells,
+computed at render and never written: `done:sum(ok+failed)` and
+`okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
+member with no finished card shows `0` and `0.0%`; the footer pools ok% over
+the members (every ok over every finished card, never a mean of the members'
+percentages). The text cells (ci, state, since, status, load) are display
+copies of the control cards, written after each step; the control cards are
+written with the moves.
 
 ## 2. The cards
 
@@ -128,9 +133,9 @@ and it is the coordinator's decision, receipted.
   generation; the attempt advances only on rework. A primary with a withdrawn
   card is ready, never working.
 - A member coming up: ready queues are levelled in one call; the newest cards move.
-- ok% is computed from the member's ok and failed counts behind done. load and
-  status are reported, never typed by the coordinator except `fleet up|down` to
-  override.
+- done and ok% are computed by the table from the member's `ok` and `failed`
+  cells. load and status are reported, never typed by the coordinator except
+  `fleet up|down` to override.
 
 Every work card carries an assignment generation bound to its identity, attempt
 and member. It is 1 when the card is cut and changes on every redeal, drain,
@@ -139,7 +144,7 @@ the worker holds (`<card>@<gen>`); one that names none is refused, and one
 whose generation is not the live one is refused as stale and changes nothing.
 A take by selection (`--as` and `--limit`) takes the live generation; a finish
 by selection without `--as` is refused. A finish that arrives first moves the card to
-done, which no redistribution touches. A retried finish with the same operation
+the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
 ## 6. The readers
