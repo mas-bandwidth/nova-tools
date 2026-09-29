@@ -178,7 +178,7 @@ func TestAConfigurationWithNoSourceIsRefused(t *testing.T) {
 	tr := newTree(t)
 	tr.write(t, ".nova-privacy", "background flat *.md journal\n")
 	code, _, errOut := runTool("text", "screen", "--root", tr.root, "-")
-	if code != exitCouldNotRun || !strings.Contains(errOut, "declares no source") || !strings.Contains(errOut, "run: nova-privacy corpus --root") {
+	if code != exitCouldNotRun || !strings.Contains(errOut, "declares no source") || !strings.Contains(errOut, "run: nova-privacy help") {
 		t.Errorf("exit %d stderr %q", code, errOut)
 	}
 }
@@ -639,5 +639,31 @@ func TestJSONRefusalsPrintAnObject(t *testing.T) {
 	}
 	if _, out, _ := runTool("", "screen", "--root", tr.root, "-"); out != "" {
 		t.Errorf("without --json a refusal prints nothing on stdout: %q", out)
+	}
+}
+
+// The run: line of a refusal names the corrected command, never the failing
+// one again.
+func TestARefusalNeverRepeatsTheFailingInput(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	cfg := tr.path(".nova-privacy")
+	for name, c := range map[string]struct {
+		args []string
+		run  string
+	}{
+		"root and config":  {[]string{"corpus", "--root", tr.root, "--config", cfg}, "run: nova-privacy corpus --root " + tr.root + "\n"},
+		"missing config":   {[]string{"corpus", "--root", tr.path("typo")}, "run: nova-privacy help\n"},
+		"missing --config": {[]string{"corpus", "--config", tr.path("gone.conf")}, "run: nova-privacy help\n"},
+		"bad pattern":      {[]string{"corpus", "--root", tr.root, "--background", tr.root, "--pattern", "["}, "run: nova-privacy corpus -h\n"},
+	} {
+		code, _, errOut := runTool("", c.args...)
+		if code != exitCouldNotRun || !strings.Contains(errOut, c.run) {
+			t.Errorf("%s: exit %d stderr %q, want %q", name, code, errOut, c.run)
+		}
+		failing := "run: nova-privacy " + strings.Join(c.args, " ")
+		if strings.Contains(errOut, failing) {
+			t.Errorf("%s: the run: line repeats the failing command: %q", name, errOut)
+		}
 	}
 }

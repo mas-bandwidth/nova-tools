@@ -282,6 +282,12 @@ CORPUS REMEDY <reason>: <remedy>; then run: nova-privacy corpus <the same inputs
 CORPUS WARN <warning>
 ```
 
+A refusal (exit 2) is one line, `nova-privacy <verb>: <what>; run: <next>`,
+and `<next>` is the corrected command, never the failing one again: the
+command without `--config` when `--root` and `--config` are both given, the
+verb's `-h` for a bad invocation or option value, and `nova-privacy help` (the
+configuration format) for a configuration that is missing or wrong.
+
 `checkable` is how many private entries could raise a flag at all; `private`
 minus `checkable` is the part of the corpus no payload could be caught against.
 A flag prints at most twelve shared terms, and `shared=` is always the whole

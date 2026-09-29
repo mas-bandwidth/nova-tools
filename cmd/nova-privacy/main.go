@@ -306,9 +306,18 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 func load(verb string, c *corpusFlags, stderr io.Writer) (privacy.Corpus, bool) {
 	spec, err := c.options().Spec()
 	if err != nil {
-		next := "nova-privacy " + verb + " -h"
-		if !errors.Is(err, privacy.ErrNoCorpus) {
-			next = "nova-privacy corpus " + c.corpusArgs()
+		// The next command is the corrected one, never the failing input
+		// again: the command without --config when both name a
+		// configuration, the verb's help for a bad option, and the
+		// configuration format for a configuration that is missing or wrong.
+		next := "nova-privacy help"
+		switch {
+		case errors.Is(err, privacy.ErrNoCorpus), errors.Is(err, privacy.ErrOption):
+			next = "nova-privacy " + verb + " -h"
+		case errors.Is(err, privacy.ErrRootAndConfig):
+			fixed := *c
+			fixed.opts.Config = ""
+			next = "nova-privacy corpus " + fixed.corpusArgs()
 		}
 		for i, line := range strings.Split(err.Error(), "\n") {
 			if i == 0 {

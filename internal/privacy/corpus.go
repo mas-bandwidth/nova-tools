@@ -441,6 +441,12 @@ type Options struct {
 // ErrNoCorpus is a corpus nobody named: no root, no configuration, no source.
 var ErrNoCorpus = errors.New("name the corpus with --root <dir>, --config <file> or --source <file>; refusing to guess")
 
+// ErrRootAndConfig is --root and --config given together.
+var ErrRootAndConfig = errors.New("--root and --config both name a configuration; give one")
+
+// ErrOption marks an option whose value is refused, such as a bad --pattern.
+var ErrOption = errors.New("option")
+
 // ConfigPath is the configuration file the options read, or "" for none.
 func (o Options) ConfigPath() string {
 	if o.Config != "" {
@@ -468,19 +474,19 @@ func (o Options) Spec() (Spec, error) {
 		return Spec{}, ErrNoCorpus
 	}
 	if o.Root != "" && o.Config != "" {
-		return Spec{}, errors.New("--root and --config both name a configuration; give one")
+		return Spec{}, ErrRootAndConfig
 	}
 	if o.Pattern == "" {
 		o.Pattern = DefaultPattern
 	}
 	if _, err := filepath.Match(o.Pattern, ""); err != nil {
-		return Spec{}, fmt.Errorf("--pattern %q: %w", o.Pattern, err)
+		return Spec{}, fmt.Errorf("%w --pattern %q: %w", ErrOption, o.Pattern, err)
 	}
 	if o.MaxDocs < 0 {
-		return Spec{}, fmt.Errorf("--max-docs wants a whole number of one or more, got %d", o.MaxDocs)
+		return Spec{}, fmt.Errorf("%w --max-docs wants a whole number of one or more, got %d", ErrOption, o.MaxDocs)
 	}
 	if o.MaxBytes < 0 {
-		return Spec{}, fmt.Errorf("--max-bytes wants a whole number of one or more, got %d", o.MaxBytes)
+		return Spec{}, fmt.Errorf("%w --max-bytes wants a whole number of one or more, got %d", ErrOption, o.MaxBytes)
 	}
 	var file File
 	cfg, base := o.ConfigPath(), ""
