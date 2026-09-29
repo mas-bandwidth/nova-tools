@@ -557,9 +557,25 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) int 
 		}
 		p.Notes = append(p.Notes, n)
 	}
+	closing := map[string]bool{}
 	for _, o := range held {
 		if contains(types, o.Note.Type) && !holds[condKey(o.Note.Type, o.Subject(), o.Note.What)] {
 			p.Closes = append(p.Closes, o)
+			closing[o.Note.ID] = true
+		}
+	}
+	// A primary in review whose last judgment the tick closes (its late read
+	// reported, say) gets the judgment it needs after it, as every step that
+	// leaves a primary in review does.
+	seen := map[string]bool{}
+	for _, o := range p.Closes {
+		pr := s.Work.Placed(o.Subject())
+		if pr == nil || seen[pr.ID] {
+			continue
+		}
+		seen[pr.ID] = true
+		if j, ok := reviewJudgment(s, pr, reviewStep{closing: closing, writes: p.Notes, who: who}); ok {
+			p.Notes = append(p.Notes, j)
 		}
 	}
 	return due
