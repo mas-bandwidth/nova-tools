@@ -101,3 +101,66 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 		t.Fatalf("bench work copy:\n%s", body)
 	}
 }
+
+// TestQuackPrimaryDealtToFriendRendersPersonsBriefAndRefusesMissingFields (nova-tools#4233):
+// a quack primary dealt to friend:rowan renders the person's brief with clone, branch,
+// commit inside PATHS, push under friend's own GitHub identity, and end command with PR;
+// missing required fields are refused without guessing.
+func TestQuackPrimaryDealtToFriendRendersPersonsBriefAndRefusesMissingFields(t *testing.T) {
+	t.Parallel()
+
+	c := card.CopyCard{
+		ID:       "quack-0926-233425~1",
+		Primary:  "quack-0926-233425",
+		Leg:      "work",
+		Kind:     "build",
+		Repo:     "mas-bandwidth/nova-tools",
+		Base:     "dev",
+		BaseSHA:  strings.Repeat("12", 20),
+		Paths:    "internal/nsprint/card/copy.go",
+		DoneWhen: "TestFriendCopy passes",
+		Title:    "quack friend copies",
+		Origin:   "issue:nova-tools#4233",
+		Consumer: "friend:rowan",
+		Body:     "quack primary text",
+	}
+
+	body, err := card.RenderCopy(c)
+	if err != nil {
+		t.Fatalf("RenderCopy: %v", err)
+	}
+
+	s := string(body)
+	if !strings.Contains(s, "FRIEND: friend:rowan owns this copy end to end (#4233)") {
+		t.Fatalf("missing friend ownership line: %s", s)
+	}
+	if !strings.Contains(s, "nova-friend done --as friend:rowan --id quack-0926-233425~1 --ok --pr nova-tools#<n> --head <sha>") {
+		t.Fatalf("missing friend done OK line: %s", s)
+	}
+	if !strings.Contains(s, "nova-friend done --as friend:rowan --id quack-0926-233425~1 --fail '<why>'") {
+		t.Fatalf("missing friend done fail line: %s", s)
+	}
+	if !strings.Contains(s, "git -C quack-0926-233425.c1 checkout -b nova/copies/quack-0926-233425-c1-a1") {
+		t.Fatalf("missing branch line: %s", s)
+	}
+
+	// Refuses missing required fields: repo, base, base_sha, paths, done_when
+	for _, field := range []string{"repo", "base", "base_sha", "paths", "done_when"} {
+		bad := c
+		switch field {
+		case "repo":
+			bad.Repo = ""
+		case "base":
+			bad.Base = ""
+		case "base_sha":
+			bad.BaseSHA = ""
+		case "paths":
+			bad.Paths = ""
+		case "done_when":
+			bad.DoneWhen = ""
+		}
+		if _, err := card.RenderCopy(bad); err == nil || !strings.Contains(err.Error(), "has no "+field) {
+			t.Fatalf("expected error for missing %s, got: %v", field, err)
+		}
+	}
+}
