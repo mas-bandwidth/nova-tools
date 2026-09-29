@@ -35,6 +35,7 @@ const (
 	DeclKey     = "config:decl"
 	FriendsKey  = "friends"
 	MachinesKey = "machines"
+	RoutesKey   = "routes"
 	CapLogKey   = "cap:log"
 )
 
@@ -45,6 +46,9 @@ func FleetKey(field string) string { return "fleet:" + field }
 // SprintKey is the plain key one sprint field is written to:
 // sprint:coordinator.
 func SprintKey(field string) string { return "sprint:" + field }
+
+// RouteKey is the route's registry hash.
+func RouteKey(r string) string { return "route:" + r }
 
 // FriendBeatKey is a friend's own heartbeat (nova-friend): its host field
 // is the machine she runs on now, what her desired slots are charged to.
@@ -99,6 +103,8 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readFriends(ctx)
 	case KindMachine:
 		return a.readMachines(ctx)
+	case KindRoute:
+		return a.readRoutes(ctx)
 	case KindFleet:
 		return a.readSingleton(ctx, KindFleet, FleetKey)
 	case KindSprint:
@@ -113,6 +119,8 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeFriend(ctx, row, prev, actor, idem)
 	case KindMachine:
 		return a.writeMachine(ctx, row, prev, actor, idem)
+	case KindRoute:
+		return a.writeRoute(ctx, row, prev, actor, idem)
 	case KindFleet:
 		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
 	case KindSprint:
@@ -127,6 +135,8 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeFriend(ctx, name, actor, idem)
 	case KindMachine:
 		return a.removeMachine(ctx, name, actor, idem)
+	case KindRoute:
+		return a.removeRoute(ctx, name, actor, idem)
 	case KindFleet, KindSprint:
 		return fmt.Errorf("apply: the %s row is never removed", kind)
 	}
@@ -473,6 +483,8 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 			case f.Name == "slots":
 			case f.Type == TypeInt:
 				v[f.Name] = intText(r[f.Name])
+			case f.Type == TypeList:
+				v[f.Name] = sortedList(r[f.Name])
 			default:
 				v[f.Name] = r[f.Name]
 			}
@@ -552,6 +564,65 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 		"kind": "config-remove", "subject": KindMachine + ":" + m, "actor": actor, "idem": idem, "at": strconv.FormatInt(a.now(), 10)}})
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: remove machine %s: %w", m, err)
+	}
+	return nil
+}
+
+// --- routes ----------------------------------------------------------------
+
+func (a *RedisApplier) readRoutes(ctx context.Context) (map[string]View, int64, error) {
+	names, err := a.Client.SMembers(ctx, RoutesKey).Result()
+	if err != nil {
+		return nil, 0, fmt.Errorf("redis: read %s: %w", RoutesKey, err)
+	}
+	sort.Strings(names)
+	pipe := a.Client.Pipeline()
+	reg := make([]*redis.MapStringStringCmd, len(names))
+	for i, r := range names {
+		reg[i] = pipe.HGetAll(ctx, RouteKey(r))
+	}
+	rev := pipe.HGet(ctx, DeclKey, revField(KindRoute))
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return nil, 0, fmt.Errorf("redis: read routes: %w", err)
+	}
+	k, _ := Lookup(KindRoute)
+	views := make(map[string]View, len(names))
+	for i, r := range names {
+		data := reg[i].Val()
+		v := View{}
+		for _, f := range k.Fields {
+			v[f.Name] = data[f.Name]
+		}
+		views[r] = v
+	}
+	return views, revValue(rev), nil
+}
+
+func (a *RedisApplier) writeRoute(ctx context.Context, row Row, prev View, actor, idem string) error {
+	r := row.Name
+	k, _ := Lookup(KindRoute)
+	rev, _ := strings.CutPrefix(idem, "config:"+KindRoute+":")
+	fields := []any{"rev", rev, "at", strconv.FormatInt(a.now(), 10)}
+	for _, f := range k.Fields {
+		fields = append(fields, f.Name, row.Fields[f.Name])
+	}
+	pipe := a.Client.TxPipeline()
+	pipe.SAdd(ctx, RoutesKey, r)
+	pipe.HSet(ctx, RouteKey(r), fields...)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis: route %s registry: %w", r, err)
+	}
+	return nil
+}
+
+func (a *RedisApplier) removeRoute(ctx context.Context, r, actor, idem string) error {
+	pipe := a.Client.TxPipeline()
+	pipe.SRem(ctx, RoutesKey, r)
+	pipe.Del(ctx, RouteKey(r))
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: CapLogKey, MaxLen: 100000, Approx: true, Values: map[string]any{
+		"kind": "config-remove", "subject": KindRoute + ":" + r, "actor": actor, "idem": idem, "at": strconv.FormatInt(a.now(), 10)}})
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis: remove route %s: %w", r, err)
 	}
 	return nil
 }

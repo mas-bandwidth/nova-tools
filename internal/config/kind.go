@@ -95,12 +95,13 @@ var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // any case.
 var namesPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
-// The four kinds of this cut (docs/SPEC-CONFIG.md lists the planned ones).
+// The five kinds of this cut (docs/SPEC-CONFIG.md lists the planned ones).
 const (
 	KindMachine = "machine"
 	KindFleet   = "fleet"
 	KindFriend  = "friend"
 	KindSprint  = "sprint"
+	KindRoute   = "route"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -119,8 +120,8 @@ const CoordinatorRole = "coordinator"
 
 // Kinds is the registry, in apply order: machines first, the fleet row next
 // (it names machines, and a friend's desired slots are charged to the
-// fleet's coordinator machine when her beat names none), friends, and the
-// sprint row last (it names a friend).
+// fleet's coordinator machine when her beat names none), friends, the
+// sprint row (it names a friend), and routes last.
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented (Glenn 2026-09-27: "I only want the
@@ -134,12 +135,13 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, and how many cards and runners it takes",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, how many cards and runners it takes, and the model tiers it advertises",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat (studio, swarm-hulk, ...)"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
+			{Name: "tiers", Type: TypeList, Enum: Tiers, Help: "which model tiers it advertises: comma list of " + strings.Join(Tiers, ", ")},
 		},
 	},
 	{
@@ -181,6 +183,17 @@ var Kinds = []*Kind{
 		Doc:       "the one row of sprint-global facts: which friend coordinates",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
+		},
+	},
+	{
+		Name:  KindRoute,
+		Table: "routes",
+		Doc:   "a model route: the provider, the model id, the seat, and the model tier",
+		Fields: []Field{
+			{Name: "provider", Type: TypeText, Required: true, Help: "the model provider (e.g. deepseek, opencode)"},
+			{Name: "model", Type: TypeText, Required: true, Help: "the provider model identifier"},
+			{Name: "seat", Type: TypeText, Required: true, Help: "the nova-secrets seat holding credentials for it"},
+			{Name: "tier", Type: TypeEnum, Enum: Tiers, Required: true, Help: "the model tier: one of " + strings.Join(Tiers, ", ")},
 		},
 	},
 }

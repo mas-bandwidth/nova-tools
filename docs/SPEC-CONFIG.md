@@ -120,6 +120,7 @@ nothing invented.
 | `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
 | `slots` | int | yes | the deal: how many cards it may run; 0 runs none | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
+| `tiers` | list: flash, frontier, pro | | which model tiers it advertises: flash, frontier, pro | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
 never typed and never columns: they come live from the machine's own
@@ -160,6 +161,15 @@ facts.
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 
+**`route`** (`config.routes`): a model route: the provider, the model id, the seat, and the model tier.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `provider` | text | yes | the dispatch layer: model provider (deepseek, opencode, ...) | `route:<r>` |
+| `model` | text | yes | the dispatch layer: provider model identifier | `route:<r>` |
+| `seat` | text | yes | nova-secrets: the seat holding credentials for it | `route:<r>` |
+| `tier` | enum: flash, frontier, pro | yes | the dispatch layer: model tier | `route:<r>` |
+
 ## The schema
 
 Migrations are numbered SQL files compiled into the binary
@@ -177,7 +187,7 @@ configuration straight from Postgres does it as that role.
 config.schema_migrations (version integer PK, applied_at timestamptz)
 config.history           (id bigserial PK, kind, name, op add|set|remove,
                           before jsonb, after jsonb, actor, at timestamptz)
-config.machines          (name PK, "user", seat, slots, runners,
+config.machines          (name PK, "user", seat, slots, runners, tiers,
                           created_at, updated_at)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, created_at, updated_at;
@@ -186,6 +196,8 @@ config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration)
+config.routes            (name PK, provider, model, seat, tier,
+                          created_at, updated_at)
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
@@ -255,7 +267,7 @@ each machine running its ceiling check before its write transaction).
 `CEILING` when the friends and benches on it already desire more than
 `slots`; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-rev, at; the set `machines`. slots is read back from the ceiling, the key the
+tiers, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
@@ -285,8 +297,12 @@ Never removed. The handover is `nova-config sprint set --coordinator
 stella --as rowan` then `apply`: the sprint kind's own revision moves and
 the friend kind's plan is two `SET ... changed=roles`, stella's first.
 
-`machine:<m>`, `machines`, `fleet:*` and `sprint:coordinator` are
-nova-config's own keys: no function in the library reads or writes them.
+**route:** the hash `route:<r>` with provider, model, seat, tier, rev, at; the set `routes`.
+Remove: `route:<r>` is deleted and the name leaves `routes`.
+
+`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `route:<r>` and
+`routes` are nova-config's own keys: no function in the library reads or
+writes them.
 
 ## Lines
 

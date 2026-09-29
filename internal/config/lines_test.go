@@ -23,9 +23,18 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 		t.Fatalf("%d tokens, want %d", n, 2+len(friend.Fields))
 	}
 	machine, _ := Lookup(KindMachine)
-	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0"}}
-	if got, want := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0`; got != want {
+	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0", "tiers": "frontier,pro"}}
+	if got, want := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 tiers=frontier,pro`; got != want {
 		t.Fatalf("escaped line\n got %s\nwant %s", got, want)
+	}
+	route, _ := Lookup(KindRoute)
+	routeRow := Row{Name: "deepseek-flash", Fields: map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "flash"}, CreatedAt: "2026-09-27T01:00:00Z", UpdatedAt: "2026-09-27T02:00:00Z"}
+	wantRoute := `ROUTE name=deepseek-flash provider=deepseek model=deepseek-chat seat=worker tier=flash`
+	if got := RowLine(route, routeRow); got != wantRoute {
+		t.Fatalf("route row line\n got %s\nwant %s", got, wantRoute)
+	}
+	if got := ShowLine(route, routeRow); got != wantRoute+" created=2026-09-27T01:00:00Z updated=2026-09-27T02:00:00Z" {
+		t.Fatalf("route show line %s", got)
 	}
 }
 
@@ -55,6 +64,10 @@ func TestOpAndKindLines(t *testing.T) {
 	if got, want := OpLine("CHECK", "machine", Op{Op: OpRemove, Name: "mini"}), "CHECK REMOVE kind=machine name=mini"; got != want {
 		t.Errorf("remove\n got %s\nwant %s", got, want)
 	}
+	machine, _ := Lookup(KindMachine)
+	if got, want := KindLine(machine), "CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners,tiers required=user,seat,slots rows=many"; got != want {
+		t.Errorf("machine kind\n got %s\nwant %s", got, want)
+	}
 	friend, _ := Lookup(KindFriend)
 	if got, want := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many"; got != want {
 		t.Errorf("kind\n got %s\nwant %s", got, want)
@@ -62,6 +75,10 @@ func TestOpAndKindLines(t *testing.T) {
 	fleet, _ := Lookup(KindFleet)
 	if got, want := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one"; got != want {
 		t.Errorf("fleet kind\n got %s\nwant %s", got, want)
+	}
+	routeKind, _ := Lookup(KindRoute)
+	if got, want := KindLine(routeKind), "CONFIG KIND name=route table=config.routes fields=provider,model,seat,tier required=provider,model,seat,tier rows=many"; got != want {
+		t.Errorf("route kind\n got %s\nwant %s", got, want)
 	}
 }
 

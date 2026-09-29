@@ -104,7 +104,7 @@ type harness struct {
 }
 
 func newHarness() *harness {
-	return &harness{store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{store: &memStore{Mem: config.NewMem(), version: 6}, redis: newFakeRedis(), env: map[string]string{}}
 }
 
 func (h *harness) deps() deps {
@@ -174,11 +174,11 @@ func TestKindsAndMigratePrintNeedNoStore(t *testing.T) {
 
 	h := newHarness()
 	code, out, errs := h.run(t, "kinds")
-	if code != 0 || errs != "" || !strings.HasPrefix(out, "CONFIG KIND name=machine ") || !strings.HasSuffix(out, "CONFIG KINDS count=4\n") {
+	if code != 0 || errs != "" || !strings.HasPrefix(out, "CONFIG KIND name=machine ") || !strings.HasSuffix(out, "CONFIG KINDS count=5\n") {
 		t.Fatalf("kinds: %d %q %q", code, out, errs)
 	}
 	code, out, errs = h.run(t, "migrate", "--print")
-	if code != 0 || errs != "" || !strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql ") || !strings.HasSuffix(out, "CONFIG MIGRATE print=5 pg=-\n") {
+	if code != 0 || errs != "" || !strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql ") || !strings.HasSuffix(out, "CONFIG MIGRATE print=6 pg=-\n") {
 		t.Fatalf("migrate --print: %d %q %q", code, out, errs)
 	}
 	if h.opens != 0 {
@@ -398,7 +398,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 		t.Fatalf("machine add hulk: %q", out)
 	}
 	out, _ = step(0, "machine", "list")
-	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1\nCONFIG LIST kind=machine rows=2\n" {
+	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 tiers=-\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 tiers=-\nCONFIG LIST kind=machine rows=2\n" {
 		t.Fatalf("machine list: %q", out)
 	}
 	if h.redis.opens != 0 {
@@ -406,17 +406,17 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	h.redis.beats["hulk"] = &config.Beat{Cores: "64", At: "2026-09-27T03:00:00Z"}
 	out, _ = step(0, "machine", "list", "--redis", "127.0.0.1:6379")
-	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none\nCONFIG LIST kind=machine rows=2\n" {
+	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 tiers=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 tiers=- beat=none\nCONFIG LIST kind=machine rows=2\n" {
 		t.Fatalf("machine list --redis: %q", out)
 	}
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n") {
+	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 tiers=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n") {
 		t.Fatalf("machine show with NOVA_SPRINT_REDIS: %q", out)
 	}
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	if out != "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n" {
+	if out != "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 tiers=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n" {
 		t.Fatalf("machine show without a Redis: %q", out)
 	}
 
@@ -485,11 +485,11 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 		t.Fatalf("status before migrate: %q %q", out, errs)
 	}
 	out, _ = step(0, "migrate")
-	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=5 applied=5\n" {
+	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=6 applied=6\n" {
 		t.Fatalf("migrate: %q", out)
 	}
 	out, _ = step(0, "migrate")
-	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=5 to=5 applied=0\n" {
+	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=6 to=6 applied=0\n" {
 		t.Fatalf("migrate twice: %q", out)
 	}
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
@@ -498,12 +498,12 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step(0, "fleet", "set", "--coordinator", "studio")
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=5 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0\n" || !strings.Contains(errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply") {
+	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=6 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 route=0 route_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 route_applied=0\n" || !strings.Contains(errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply") {
 		t.Fatalf("status behind: %q %q", out, errs)
 	}
 	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\n"
+	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\n"
 	if out != want {
 		t.Fatalf("apply --check without --as:\n%s\nwant:\n%s", out, want)
 	}
@@ -521,11 +521,11 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	}
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\n"
+	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\n"
 	if out != want {
 		t.Fatalf("apply:\n%s\nwant:\n%s", out, want)
 	}
-	if strings.Join(h.redis.log, " ") != "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint" || h.redis.revs["friend"] != 3 || h.redis.revs["machine"] != 1 || h.redis.revs["fleet"] != 4 || h.redis.revs["sprint"] != 5 {
+	if strings.Join(h.redis.log, " ") != "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint" || h.redis.revs["friend"] != 3 || h.redis.revs["machine"] != 1 || h.redis.revs["fleet"] != 4 || h.redis.revs["sprint"] != 5 || h.redis.revs["route"] != 0 {
 		t.Fatalf("redis after apply: %v %v", h.redis.log, h.redis.revs)
 	}
 	// The sprint's coordinator carries the role in what apply wrote; the
@@ -538,7 +538,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 		t.Fatalf("rowan's stored row: %q", out)
 	}
 	out, _ = step(0, "status")
-	if !strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5\n") {
+	if !strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 route_applied=0\n") {
 		t.Fatalf("status after apply: %q", out)
 	}
 	out, _ = step(0, "apply", "--kind", "friend")
@@ -549,5 +549,150 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	_, errs = step(1, "apply", "--kind", "friend")
 	if !strings.HasPrefix(errs, "nova-config apply: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status") {
 		t.Fatalf("conflict: %q", errs)
+	}
+}
+
+func TestMachineTiersAndRouteKindVerbsEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "emma"
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+
+	// 1. Machine --tiers support
+	out, _ := step(0, "machine", "add", "space", "--user", "glenn", "--seat", "space", "--slots", "32", "--runners", "0", "--tiers", "frontier,pro")
+	if out != "CONFIG ADD kind=machine name=space rev=1\n" {
+		t.Fatalf("machine add: %q", out)
+	}
+	out, _ = step(0, "machine", "show", "space")
+	if !strings.HasPrefix(out, "MACHINE name=space user=glenn seat=space slots=32 runners=0 tiers=frontier,pro created=") {
+		t.Fatalf("machine show: %q", out)
+	}
+	out, _ = step(0, "machine", "set", "space", "--tiers", "flash,frontier,pro")
+	if out != "CONFIG SET kind=machine name=space rev=2 changed=tiers\n" {
+		t.Fatalf("machine set tiers: %q", out)
+	}
+	out, _ = step(0, "machine", "show", "space")
+	if !strings.HasPrefix(out, "MACHINE name=space user=glenn seat=space slots=32 runners=0 tiers=flash,frontier,pro created=") {
+		t.Fatalf("machine show after set: %q", out)
+	}
+	_, errs := step(2, "machine", "set", "space", "--tiers", "bogus")
+	if !strings.Contains(errs, "want a comma list of flash, frontier, pro") {
+		t.Fatalf("invalid tiers refusal: %q", errs)
+	}
+	_, errs = step(2, "machine", "add", "badmach", "--user", "glenn", "--seat", "space", "--slots", "32", "--tiers", "bogus")
+	if !strings.Contains(errs, "want a comma list of flash, frontier, pro") {
+		t.Fatalf("invalid tiers on add refusal: %q", errs)
+	}
+
+	// 2. Route kind validation and CRUD verbs
+	_, errs = step(2, "route", "add", "badroute")
+	for _, req := range []string{"--provider is required", "--model is required", "--seat is required", "--tier is required"} {
+		if !strings.Contains(errs, req) {
+			t.Errorf("missing %q in route add refusal: %s", req, errs)
+		}
+	}
+	_, errs = step(2, "route", "add", "badroute", "--provider", "openai", "--model", "gpt-4o", "--seat", "studio", "--tier", "bogus")
+	if !strings.Contains(errs, "--tier \"bogus\": want one of flash, frontier, pro") {
+		t.Fatalf("invalid tier refusal: %q", errs)
+	}
+
+	out, _ = step(0, "route", "add", "claude", "--provider", "anthropic", "--model", "claude-3-opus", "--seat", "studio", "--tier", "frontier")
+	if out != "CONFIG ADD kind=route name=claude rev=3\n" {
+		t.Fatalf("route add claude: %q", out)
+	}
+	out, _ = step(0, "route", "add", "gpt", "--provider", "openai", "--model", "gpt-4o", "--seat", "studio", "--tier", "frontier")
+	if out != "CONFIG ADD kind=route name=gpt rev=4\n" {
+		t.Fatalf("route add gpt: %q", out)
+	}
+	_, errs = step(1, "route", "add", "claude", "--provider", "anthropic", "--model", "claude-3-opus", "--seat", "studio", "--tier", "frontier")
+	if errs != "nova-config route add: route claude exists; run: nova-config route set claude --<field> <value>\n" {
+		t.Fatalf("duplicate route: %q", errs)
+	}
+
+	out, _ = step(0, "route", "list")
+	wantList := "ROUTE name=claude provider=anthropic model=claude-3-opus seat=studio tier=frontier\nROUTE name=gpt provider=openai model=gpt-4o seat=studio tier=frontier\nCONFIG LIST kind=route rows=2\n"
+	if out != wantList {
+		t.Fatalf("route list:\n%s\nwant:\n%s", out, wantList)
+	}
+
+	out, _ = step(0, "route", "show", "claude")
+	if !strings.HasPrefix(out, "ROUTE name=claude provider=anthropic model=claude-3-opus seat=studio tier=frontier created=") {
+		t.Fatalf("route show: %q", out)
+	}
+
+	out, _ = step(0, "route", "set", "claude", "--tier", "pro")
+	if out != "CONFIG SET kind=route name=claude rev=5 changed=tier\n" {
+		t.Fatalf("route set: %q", out)
+	}
+	out, _ = step(0, "route", "show", "claude")
+	if !strings.HasPrefix(out, "ROUTE name=claude provider=anthropic model=claude-3-opus seat=studio tier=pro created=") {
+		t.Fatalf("route show after set: %q", out)
+	}
+
+	out, _ = step(0, "route", "history", "claude")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "HISTORY id=3 kind=route name=claude op=add actor=emma at=") || !strings.HasSuffix(lines[1], " tier=frontier>pro") || lines[2] != "CONFIG HISTORY kind=route name=claude changes=2" {
+		t.Fatalf("route history:\n%s", out)
+	}
+
+	out, _ = step(0, "route", "remove", "claude")
+	if out != "CONFIG REMOVE kind=route name=claude rev=6\n" {
+		t.Fatalf("route remove: %q", out)
+	}
+	out, _ = step(0, "route", "list")
+	wantListAfterRemove := "ROUTE name=gpt provider=openai model=gpt-4o seat=studio tier=frontier\nCONFIG LIST kind=route rows=1\n"
+	if out != wantListAfterRemove {
+		t.Fatalf("route list after remove:\n%s\nwant:\n%s", out, wantListAfterRemove)
+	}
+	_, errs = step(1, "route", "remove", "nobody")
+	if errs != "nova-config route remove: route nobody not found; run: nova-config route list\n" {
+		t.Fatalf("route remove nonexistent: %q", errs)
+	}
+
+	// 3. Route apply to Redis
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	out, _ = step(0, "apply", "--check", "--kind", "route")
+	wantCheck := "CHECK ADD kind=route name=gpt\nCONFIG CHECK kind=route add=1 set=0 remove=0 rev=6 applied=0\n"
+	if out != wantCheck {
+		t.Fatalf("route apply --check:\n%s\nwant:\n%s", out, wantCheck)
+	}
+	out, _ = step(0, "apply", "--kind", "route")
+	wantApply := "APPLY ADD kind=route name=gpt\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=6 ms=0\n"
+	if out != wantApply {
+		t.Fatalf("route apply:\n%s\nwant:\n%s", out, wantApply)
+	}
+	if view := h.redis.views["route"]["gpt"]; view["provider"] != "openai" || view["model"] != "gpt-4o" || view["seat"] != "studio" || view["tier"] != "frontier" {
+		t.Fatalf("redis route view: %v", view)
+	}
+	if h.redis.revs["route"] != 6 {
+		t.Fatalf("redis rev route: %d", h.redis.revs["route"])
+	}
+
+	// Update route and apply changes
+	step(0, "route", "set", "gpt", "--model", "gpt-5", "--tier", "pro")
+	out, _ = step(0, "apply", "--check", "--kind", "route")
+	wantCheckUpdate := "CHECK SET kind=route name=gpt changed=model,tier\nCONFIG CHECK kind=route add=0 set=1 remove=0 rev=7 applied=6\n"
+	if out != wantCheckUpdate {
+		t.Fatalf("route update apply --check:\n%s\nwant:\n%s", out, wantCheckUpdate)
+	}
+	step(0, "apply", "--kind", "route")
+	if view := h.redis.views["route"]["gpt"]; view["model"] != "gpt-5" || view["tier"] != "pro" {
+		t.Fatalf("redis route view after update: %v", view)
+	}
+
+	// Remove route and apply deletion
+	step(0, "route", "remove", "gpt")
+	step(0, "apply", "--kind", "route")
+	if _, ok := h.redis.views["route"]["gpt"]; ok {
+		t.Fatal("gpt route survived remove in redis")
 	}
 }

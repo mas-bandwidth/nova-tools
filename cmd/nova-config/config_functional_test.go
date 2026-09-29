@@ -84,11 +84,11 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("status before migrate: %q %q", out, errs)
 	}
 	out, _ = r.run(t, 0, "migrate")
-	if !strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:") || !strings.HasSuffix(out, " from=0 to=5 applied=5\n") {
+	if !strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:") || !strings.HasSuffix(out, " from=0 to=6 applied=6\n") {
 		t.Fatalf("migrate: %q", out)
 	}
 	out, _ = r.run(t, 0, "migrate")
-	if !strings.HasSuffix(out, " from=5 to=5 applied=0\n") {
+	if !strings.HasSuffix(out, " from=6 to=6 applied=0\n") {
 		t.Fatalf("migrate twice: %q", out)
 	}
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
@@ -116,7 +116,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("friend list: %q", out)
 	}
 	out, _ = r.run(t, 0, "machine", "show", "studio")
-	if !strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created=") {
+	if !strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 tiers=- created=") {
 		t.Fatalf("machine show: %q", out)
 	}
 	// The fleet row: there since migrate, set without a name, a machine it
@@ -259,11 +259,11 @@ func TestApplyEndToEnd(t *testing.T) {
 	// machine that has not beaten; nothing is stored.
 	r.client.HSet(ctx, config.BeatKey("hulk"), "host", "hulk", "at", "1790000000000", "load1", "0.5", "ncpu", "64", "cpu", "3")
 	out, _ = r.run(t, 0, "machine", "list")
-	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 beat=none\nCONFIG LIST kind=machine rows=2\n" {
+	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 tiers=- os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 tiers=- beat=none\nCONFIG LIST kind=machine rows=2\n" {
 		t.Fatalf("machine list with the live facts: %q", out)
 	}
 	out, _ = r.run(t, 0, "machine", "show", "hulk")
-	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 created=") || !strings.HasSuffix(out, " os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\n") {
+	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 tiers=- created=") || !strings.HasSuffix(out, " os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\n") {
 		t.Fatalf("machine show with the live facts: %q", out)
 	}
 	if got := r.client.HGet(ctx, "machine:hulk", "cores").Val(); got != "" {

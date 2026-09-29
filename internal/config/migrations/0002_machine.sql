@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS config.machines (
     seat       text NOT NULL,
     slots      integer NOT NULL DEFAULT 0 CHECK (slots >= 0),
     runners    integer NOT NULL DEFAULT 0 CHECK (runners >= 0),
+    tiers      text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );

@@ -46,25 +46,25 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	if strings.Join(names, ",") != "machine,fleet,friend,sprint" {
-		t.Fatalf("kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row last (it names a friend)", names)
+	if strings.Join(names, ",") != "machine,fleet,friend,sprint,route" {
+		t.Fatalf("kinds %v: machines first (ceilings), the fleet next, friends, sprint, routes last", names)
 	}
 }
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
 // only want the fleet to have actual defined useful things associated with
-// each machine, not invented rando stuff". Four declared fields, no address
+// each machine, not invented rando stuff". Five declared fields, no address
 // (the name is the tailnet host), no measured fact, no note.
 func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	t.Parallel()
 
 	machine, _ := Lookup(KindMachine)
-	if got := strings.Join(machine.FieldNames(), ","); got != "user,seat,slots,runners" {
-		t.Fatalf("machine fields %s, want user,seat,slots,runners", got)
+	if got := strings.Join(machine.FieldNames(), ","); got != "user,seat,slots,runners,tiers" {
+		t.Fatalf("machine fields %s, want user,seat,slots,runners,tiers", got)
 	}
 	for _, f := range machine.Fields {
-		if want := f.Name != "runners"; f.Required != want {
-			t.Errorf("--%s required=%v, want %v (runners defaults to 0; the rest are typed on add)", f.Name, f.Required, want)
+		if want := (f.Name != "runners" && f.Name != "tiers"); f.Required != want {
+			t.Errorf("--%s required=%v, want %v (runners defaults to 0, tiers defaults to empty; the rest are typed on add)", f.Name, f.Required, want)
 		}
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
@@ -74,6 +74,37 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	}
 	if machine.Singleton {
 		t.Error("machine is many rows")
+	}
+}
+
+// TestTheRouteRowIsProviderModelSeatTier: a model route has four declared
+// fields: provider, model, seat, tier. All four are required on add.
+func TestTheRouteRowIsProviderModelSeatTier(t *testing.T) {
+	t.Parallel()
+
+	route, ok := Lookup(KindRoute)
+	if !ok {
+		t.Fatal("route kind not found")
+	}
+	if got := strings.Join(route.FieldNames(), ","); got != "provider,model,seat,tier" {
+		t.Fatalf("route fields %s, want provider,model,seat,tier", got)
+	}
+	for _, f := range route.Fields {
+		if !f.Required {
+			t.Errorf("--%s required=%v, want true", f.Name, f.Required)
+		}
+	}
+	tierField, _ := route.Field("tier")
+	if tierField.Type != TypeEnum || strings.Join(tierField.Enum, ",") != "flash,frontier,pro" {
+		t.Errorf("route tier field %+v, want enum of flash,frontier,pro", tierField)
+	}
+	for _, invented := range []string{"key", "url", "harness", "note"} {
+		if _, ok := route.Field(invented); ok {
+			t.Errorf("route has invented field %s", invented)
+		}
+	}
+	if route.Singleton {
+		t.Error("route is many rows")
 	}
 }
 
@@ -214,9 +245,19 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 		{field(machine, "user"), "", "", ""},
 		{field(machine, "runners"), "2", "2", ""},
 		{field(machine, "runners"), "two", "", "non-negative integer"},
+		{field(machine, "tiers"), "pro,flash", "flash,pro", ""},
+		{field(machine, "tiers"), "", "", ""},
+		{field(machine, "tiers"), "unknown", "", "want a comma list of flash, frontier, pro"},
 		{field(fleet, "store"), "hulk", "hulk", ""},
 		{field(fleet, "store"), "", "", ""},
 		{field(fleet, "store"), "Hulk", "", "lower-case"},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("provider"); return f }(), " deepseek ", "deepseek", ""},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("model"); return f }(), "deepseek-chat", "deepseek-chat", ""},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("seat"); return f }(), "worker", "worker", ""},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("tier"); return f }(), "pro", "pro", ""},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("tier"); return f }(), "flash", "flash", ""},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("tier"); return f }(), "frontier", "frontier", ""},
+		{func() Field { r, _ := Lookup(KindRoute); f, _ := r.Field("tier"); return f }(), "ultra", "", "want one of flash, frontier, pro"},
 	}
 	for _, c := range cases {
 		got, err := c.f.Canonical(c.raw)
@@ -254,12 +295,19 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("a machine row with no user, no seat and two invented fields was accepted")
 	}
-	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
+	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners, tiers", "--os_arch is not a machine field"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the machine refusal does not name %q:\n%s", want, err)
 		}
 	}
-	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})
+	row, err := machine.NewRow("studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64", "tiers": "pro,flash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Fields["tiers"] != "flash,pro" {
+		t.Errorf("machine tiers %q, want flash,pro", row.Fields["tiers"])
+	}
+	row, err = friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +318,24 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	}
 	if row.Fields["roles"] != "" || row.Fields["slots"] != "64" || row.Int("slots") != 64 {
 		t.Errorf("row %+v", row.Fields)
+	}
+
+	route, _ := Lookup(KindRoute)
+	_, err = route.NewRow("Route-1", map[string]string{"tier": "ultra", "extra": "val"})
+	if err == nil {
+		t.Fatal("a route row with problems was accepted")
+	}
+	for _, want := range []string{"lower-case", "--provider is required", "--model is required", "--seat is required", "--tier \"ultra\"", "--extra is not a route field"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the route refusal does not name %q:\n%s", want, err)
+		}
+	}
+	routeRow, err := route.NewRow("deepseek-chat", map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "pro"})
+	if err != nil {
+		t.Fatalf("valid route row refused: %v", err)
+	}
+	if routeRow.Fields["provider"] != "deepseek" || routeRow.Fields["model"] != "deepseek-chat" || routeRow.Fields["seat"] != "worker" || routeRow.Fields["tier"] != "pro" {
+		t.Errorf("route row fields %+v", routeRow.Fields)
 	}
 }
 

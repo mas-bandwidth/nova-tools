@@ -678,19 +678,21 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config kinds
-CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners required=user,seat,slots rows=many
+CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners,tiers required=user,seat,slots rows=many
 CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
 CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
 CONFIG KIND name=sprint table=config.sprint fields=coordinator required=- rows=one
-CONFIG KINDS count=4
+CONFIG KIND name=route table=config.routes fields=provider,model,seat,tier required=provider,model,seat,tier rows=many
+CONFIG KINDS count=5
 
 $ nova-config migrate --print
 MIGRATION version=1 file=0001_schema.sql lines=23
-MIGRATION version=2 file=0002_machine.sql lines=16
+MIGRATION version=2 file=0002_machine.sql lines=17
 MIGRATION version=3 file=0003_friend.sql lines=13
 MIGRATION version=4 file=0004_fleet.sql lines=14
 MIGRATION version=5 file=0005_sprint.sql lines=12
-CONFIG MIGRATE print=5 pg=-
+MIGRATION version=6 file=0006_route.sql lines=13
+CONFIG MIGRATE print=6 pg=-
 ```
 
 `kinds` is one line per kind: its table under schema `config`, its fields in

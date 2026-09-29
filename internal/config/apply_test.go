@@ -371,7 +371,31 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
 	_, err := Apply(context.Background(), NewMem(), newFake(), "loop", "rowan", false, func(Op) {})
-	if err == nil || !strings.Contains(err.Error(), "unknown kind \"loop\"; the kinds are machine, fleet, friend, sprint") {
+	if err == nil || !strings.Contains(err.Error(), "unknown kind \"loop\"; the kinds are machine, fleet, friend, sprint, route") {
 		t.Fatalf("unknown kind: %v", err)
+	}
+}
+
+func TestApplyWritesRoutes(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := NewMem()
+	ap := newFake()
+	route, _ := Lookup(KindRoute)
+	r1, _ := route.NewRow("deepseek-flash", map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "flash"})
+	if _, err := st.Insert(ctx, KindRoute, r1, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	var reported []string
+	res, err := Apply(ctx, st, ap, KindRoute, "rowan", false, func(op Op) { reported = append(reported, op.Op+":"+op.Name) })
+	if err != nil || res.Add != 1 || res.Rev != 1 {
+		t.Fatalf("route apply: %+v %v", res, err)
+	}
+	if strings.Join(reported, " ") != "add:deepseek-flash" {
+		t.Fatalf("route reported: %v", reported)
+	}
+	if ap.views[KindRoute]["deepseek-flash"]["tier"] != "flash" {
+		t.Fatalf("route view: %v", ap.views[KindRoute])
 	}
 }

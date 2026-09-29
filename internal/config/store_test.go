@@ -203,6 +203,43 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 			t.Fatalf("fleet history %+v %v", hist, err)
 		}
 	})
+
+	t.Run("the route kind", func(t *testing.T) {
+		t.Parallel()
+		st := open(t)
+		route, _ := Lookup(KindRoute)
+		id, err := st.Insert(ctx, KindRoute, mk(route, "deepseek-flash", map[string]string{"provider": "deepseek", "model": "deepseek-chat", "seat": "worker", "tier": "flash"}), "rowan")
+		if err != nil || id != 1 {
+			t.Fatalf("add route: id %d err %v", id, err)
+		}
+		row, found, err := st.Get(ctx, KindRoute, "deepseek-flash")
+		if err != nil || !found || row.Fields["provider"] != "deepseek" || row.Fields["model"] != "deepseek-chat" || row.Fields["seat"] != "worker" || row.Fields["tier"] != "flash" {
+			t.Fatalf("get route: %+v %v %v", row, found, err)
+		}
+		rows, err := st.List(ctx, KindRoute)
+		if err != nil || len(rows) != 1 || rows[0].Name != "deepseek-flash" {
+			t.Fatalf("list route: %+v %v", rows, err)
+		}
+		after, id, err := st.Update(ctx, KindRoute, "deepseek-flash", map[string]string{"tier": "pro"}, "stella")
+		if err != nil || id != 2 || after.Fields["tier"] != "pro" {
+			t.Fatalf("set route: %+v id %d err %v", after, id, err)
+		}
+		rev, err := st.Rev(ctx, KindRoute)
+		if err != nil || rev != 2 {
+			t.Fatalf("rev route: %d %v", rev, err)
+		}
+		id, err = st.Delete(ctx, KindRoute, "deepseek-flash", "rowan")
+		if err != nil || id != 3 {
+			t.Fatalf("remove route: id %d err %v", id, err)
+		}
+		hist, err := st.History(ctx, KindRoute, "deepseek-flash")
+		if err != nil || len(hist) != 3 {
+			t.Fatalf("history route: %+v %v", hist, err)
+		}
+		if hist[1].Op != OpSet || hist[1].Before["tier"] != "flash" || hist[1].After["tier"] != "pro" {
+			t.Errorf("history set route %+v", hist[1])
+		}
+	})
 }
 
 func TestMemStoreKeepsTheContract(t *testing.T) {

@@ -85,7 +85,7 @@ the friend making the change (env NOVA_FRIEND); every write is a row in
 config.history with it (omitted on apply --check).
 
 A machine's row is the declared facts something reads (user, seat, slots,
-runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
+runners, tiers); its name is the tailnet host ssh reaches. Measured facts (os, arch,
 cores, memory) are never typed: machine list and show print them live from
 the machine's beat when --redis (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) is
 given, beat=none when it has none. A friend's row is what someone decides
