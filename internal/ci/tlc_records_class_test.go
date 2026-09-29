@@ -583,7 +583,7 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 	for _, in := range inputs {
 		got = append(got, in.Path)
 	}
-	want := []string{"internal/tlc/outcome.go", "internal/tlc/run.go", "internal/tlc/suite.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
+	want := []string{"internal/tlc/outcome.go", "internal/tlc/plan.go", "internal/tlc/run.go", "internal/tlc/suite.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("MCA.cfg reads %v, want %v", got, want)
 	}
