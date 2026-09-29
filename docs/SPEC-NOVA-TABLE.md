@@ -447,6 +447,16 @@ records remain in the store until an operator deletes the keys; nothing else
 removes a record. A replay is guaranteed only while its record exists, and the
 record of a reused operation id is replaced by the newer request's.
 
+A request is evaluated in this order, and stops at the first refusal: (1) its size
+is at most the manifest bound; (2) the table, epoch and operation id are read and
+the operation is looked up, so an identical recorded request returns its original
+result and a different request under a recorded id refuses `OPCONFLICT`, whatever
+a current rule says about either; (3) the manifest's own rules (UTF-8, schema,
+types, bounds, combinations); (4) the table exists and the epoch is the active
+one; (5) the expected table revision, then every member's state and guards; (6)
+the writes. The Go library and the CLI validate the manifest before they send it,
+so a replay through them is guaranteed only for a request the current rules accept.
+
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.
 The batch entry point's dedicated operation record supplies its replay contract.

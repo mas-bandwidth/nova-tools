@@ -1958,6 +1958,32 @@ do
     if type(raw_json) ~= 'string' then return T.refuse('ARGS', 'apply payload') end
     local over = T.over('manifest_bytes', #raw_json)
     if over then return over end
+
+    -- The operation is looked up first, before the request is judged: parse only
+    -- as far as the table, the epoch and the operation id, and find the record. An
+    -- identical recorded request returns its original result whatever rule a
+    -- newer server applies to it; a different one under the same id is a conflict.
+    local op_key, incarnation
+    local peek = T.decode(raw_json)
+    if peek and peek.table == table_name and T.word(peek.operation_id) and T.uint(peek.epoch) then
+      op_key = T.prefix(table_name, peek.epoch) .. ':op:' .. peek.operation_id
+      local op_kind = T.kind(op_key)
+      if op_kind ~= 'none' and op_kind ~= 'hash' then
+        return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
+      end
+      local op_record = T.hash(op_key)
+      -- A record written under an earlier incarnation of the table (before a drop)
+      -- is not this table's history: it neither replays nor conflicts.
+      incarnation = redis.call('HGET', 'table:' .. table_name .. ':revision', 'inc') or '0'
+      if next(op_record) and (op_record.incarnation or '0') == incarnation then
+        if op_record.request ~= raw_json then
+          return T.refuse('OPCONFLICT', peek.operation_id)
+        end
+        return cjson.decode(op_record.result)
+      end
+    end
+
+    -- Then the request is judged: the manifest's own rules, before the store is read.
     if not T.utf8(raw_json) then return T.refuse('MANIFEST', 'manifest is not valid UTF-8') end
     local manifest_err = T.validate_manifest_json(raw_json)
     if manifest_err then return manifest_err end
@@ -1974,23 +2000,9 @@ do
     if not T.arrayfield(raw_json, 'members') then return T.refuse('MANIFEST', 'members must be json array') end
     local static_err, changed_count, guard_count = T.static_entries(manifest)
     if static_err then return static_err end
-
-    -- Check operation replay first:
-    local op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
-    local op_kind = redis.call('TYPE', op_key)
-    op_kind = (type(op_kind) == 'table' and op_kind.ok) and op_kind.ok or op_kind
-    if op_kind ~= 'none' and op_kind ~= 'hash' then
-      return T.refuse('WRONGTYPE', op_key, op_kind, 'hash')
-    end
-    local op_record = T.hash(op_key)
-    -- A record written under an earlier incarnation of the table (before a drop)
-    -- is not this table's history: it neither replays nor conflicts.
-    local incarnation = redis.call('HGET', 'table:' .. table_name .. ':revision', 'inc') or '0'
-    if next(op_record) and (op_record.incarnation or '0') == incarnation then
-      if op_record.request ~= raw_json then
-        return T.refuse('OPCONFLICT', manifest.operation_id)
-      end
-      return cjson.decode(op_record.result)
+    if not op_key then
+      op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
+      incarnation = redis.call('HGET', 'table:' .. table_name .. ':revision', 'inc') or '0'
     end
 
     -- Open the table exactly as every ordinary write does; the batch commits
