@@ -26,6 +26,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -253,4 +255,257 @@ func Write(ctx context.Context, w Writer, r *cireceipt.Receipt, c Cost) (string,
 		return "", fmt.Errorf("XADD %s: %w", Stream, err)
 	}
 	return id, nil
+}
+
+// Entry is one run's record on the ci:cost stream.
+type Entry struct {
+	ID      string
+	Receipt cireceipt.Receipt
+	Cost    Cost
+}
+
+// Line returns the formatted COST line for this entry, ending with ev=<ID>.
+func (e Entry) Line() string {
+	return e.Cost.Line(e.Receipt, e.ID)
+}
+
+// unescapeField unescapes hex and unicode sequences produced by oneline.Field.
+func unescapeField(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\\' && i+3 < len(s) && s[i+1] == 'x' {
+			if bVal, err := strconv.ParseUint(s[i+2:i+4], 16, 8); err == nil {
+				b.WriteByte(byte(bVal))
+				i += 4
+				continue
+			}
+		} else if s[i] == '\\' && i+5 < len(s) && s[i+1] == 'u' {
+			if rVal, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil {
+				b.WriteRune(rune(rVal))
+				i += 6
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// ParseJobValue parses one job as stored in the ci:cost stream:
+// <name>:<seconds>:<conclusion>:<attempt>:<spin|ok>.
+func ParseJobValue(s string) (CostJob, error) {
+	parts := strings.Split(s, ":")
+	if len(parts) < 5 {
+		return CostJob{}, fmt.Errorf("malformed job value %q", s)
+	}
+	namePart := strings.Join(parts[:len(parts)-4], ":")
+	name := unescapeField(namePart)
+	secsPart := parts[len(parts)-4]
+	conclPart := unescapeField(parts[len(parts)-3])
+	attemptPart := parts[len(parts)-2]
+	spinPart := parts[len(parts)-1]
+
+	attempt, err := strconv.Atoi(attemptPart)
+	if err != nil {
+		return CostJob{}, fmt.Errorf("malformed attempt in job value %q: %w", s, err)
+	}
+	cj := CostJob{
+		Name:       name,
+		Conclusion: strings.ToLower(strings.TrimSpace(conclPart)),
+		Attempt:    attempt,
+	}
+	if secsPart != "-" {
+		secs, err := strconv.ParseInt(secsPart, 10, 64)
+		if err != nil {
+			return CostJob{}, fmt.Errorf("malformed seconds in job value %q: %w", s, err)
+		}
+		cj.Known = true
+		cj.Seconds = secs
+	}
+	if spinPart != "ok" && spinPart != "" {
+		cj.Spin = spinPart
+	}
+	return cj, nil
+}
+
+// ParseEntry reconstructs an Entry from a stream entry ID and field-value map.
+func ParseEntry(id string, values map[string]string) (Entry, error) {
+	r := cireceipt.Receipt{
+		Repo:       values["repo"],
+		SHA:        values["sha"],
+		RunID:      values["run_id"],
+		Workflow:   values["workflow"],
+		Conclusion: values["conclusion"],
+		PR:         values["pr"],
+		At:         values["at"],
+	}
+	total, _ := strconv.ParseInt(values["total"], 10, 64)
+	spin, _ := strconv.ParseInt(values["spin"], 10, 64)
+	unknown, _ := strconv.Atoi(values["unknown"])
+
+	var jobs []CostJob
+	for k, v := range values {
+		if strings.HasPrefix(k, "job:") {
+			cj, err := ParseJobValue(v)
+			if err != nil {
+				return Entry{}, err
+			}
+			jobs = append(jobs, cj)
+		}
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].Name == jobs[j].Name {
+			return jobs[i].Attempt < jobs[j].Attempt
+		}
+		return jobs[i].Name < jobs[j].Name
+	})
+
+	return Entry{
+		ID:      id,
+		Receipt: r,
+		Cost: Cost{
+			Jobs:    jobs,
+			Total:   total,
+			Spin:    spin,
+			Unknown: unknown,
+		},
+	}, nil
+}
+
+// ParseValues reconstructs an Entry from a stream entry ID and map[string]any.
+func ParseValues(id string, values map[string]any) (Entry, error) {
+	m := make(map[string]string, len(values))
+	for k, v := range values {
+		m[k] = fmt.Sprint(v)
+	}
+	return ParseEntry(id, m)
+}
+
+// Reader is the Redis interface needed to read entries from ci:cost stream.
+type Reader interface {
+	XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd
+}
+
+// ReadRecent reads up to count entries from ci:cost stream, newest first.
+func ReadRecent(ctx context.Context, r Reader, count int) ([]Entry, error) {
+	if r == nil {
+		return nil, errors.New("no redis reader")
+	}
+	if count <= 0 {
+		count = 50
+	}
+	msgs, err := r.XRevRangeN(ctx, Stream, "+", "-", int64(count)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("XREVRANGE %s: %w", Stream, err)
+	}
+	var entries []Entry
+	for _, m := range msgs {
+		e, err := ParseValues(m.ID, m.Values)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+// ReadHead scans recent ci:cost entries for a given repo and commit SHA.
+func ReadHead(ctx context.Context, r Reader, repo, sha string) (*Entry, error) {
+	entries, err := ReadRecent(ctx, r, 200)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if (repo == "" || e.Receipt.Repo == repo) && strings.HasPrefix(e.Receipt.SHA, sha) {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
+// ReadPR scans recent ci:cost entries for a given repo and PR number.
+func ReadPR(ctx context.Context, r Reader, repo string, pr int) (*Entry, error) {
+	prStr := strconv.Itoa(pr)
+	entries, err := ReadRecent(ctx, r, 200)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if (repo == "" || e.Receipt.Repo == repo) && (e.Receipt.PR == prStr || e.Receipt.PR == "#"+prStr) {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
+// ReadRun scans recent ci:cost entries for a given repo and run ID.
+func ReadRun(ctx context.Context, r Reader, repo, runID string) (*Entry, error) {
+	entries, err := ReadRecent(ctx, r, 200)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if (repo == "" || e.Receipt.Repo == repo) && e.Receipt.RunID == runID {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
+// LoadSpinCeiling reads the spin ceiling (maximum allowable spin seconds) from path.
+func LoadSpinCeiling(path string) (int64, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(string(raw), "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		fields := strings.Fields(l)
+		valStr := fields[len(fields)-1]
+		val, err := strconv.ParseInt(valStr, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse spin ceiling %q in %s: %w", l, path, err)
+		}
+		return val, nil
+	}
+	return 0, fmt.Errorf("no spin ceiling value found in %s", path)
+}
+
+// CheckSpinCeiling verifies that no entry has spin exceeding the ceiling.
+func CheckSpinCeiling(entries []Entry, ceiling int64) error {
+	for _, e := range entries {
+		if e.Cost.Spin > ceiling {
+			return fmt.Errorf("run %s (%s@%s) spin %ds exceeds ceiling %ds",
+				e.Receipt.RunID, e.Receipt.Repo, e.Receipt.SHA, e.Cost.Spin, ceiling)
+		}
+	}
+	return nil
+}
+
+// CheckDevSpin verifies that the most recent dev runs (PR == "" or "-") do not exceed ceiling.
+func CheckDevSpin(entries []Entry, ceiling int64, devRunsCount int) error {
+	checked := 0
+	for _, e := range entries {
+		if e.Receipt.PR != "" && e.Receipt.PR != "-" {
+			continue
+		}
+		if e.Cost.Spin > ceiling {
+			return fmt.Errorf("dev run %s (%s@%s) spin %ds exceeds ceiling %ds",
+				e.Receipt.RunID, e.Receipt.Repo, e.Receipt.SHA, e.Cost.Spin, ceiling)
+		}
+		checked++
+		if devRunsCount > 0 && checked >= devRunsCount {
+			break
+		}
+	}
+	return nil
 }
