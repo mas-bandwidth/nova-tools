@@ -618,6 +618,16 @@ func appendTarget(store, session, publish string) (d *dirs, path string, bench b
 	if !ok {
 		return nil, "", false, noRecord(store, session, publish)
 	}
+	// A link at entries/, the entry directory or log.jsonl is a refusal too, and
+	// like the others it is decided without the lock and leaves nothing behind.
+	if !bench {
+		if err := d.checkEntryDirs(store, session); err != nil {
+			return nil, "", false, err
+		}
+		if li, err := os.Lstat(filepath.Join(store, "log.jsonl")); err == nil && isLink(li) {
+			return nil, "", false, linkRefusal("append", filepath.Join(store, "log.jsonl"))
+		}
+	}
 	return d, path, bench, nil
 }
 
