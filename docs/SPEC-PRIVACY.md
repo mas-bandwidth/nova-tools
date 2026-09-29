@@ -190,7 +190,7 @@ max-bytes 64M
 | `marker` | the text that declares an entry private; at most once |
 | `entry` | a token that opens an entry when followed by a blank; the list replaces `##` and `-` |
 | `stop` | extra stop words |
-| `refuse`, `warn` | a class name and a regular expression (RE2) |
+| `refuse`, `warn` | a class name and a regular expression (RE2) that needs at least one character; one that matches the empty string matches every payload and is refused |
 | `allow` | a specimen that never fires, matched case-insensitively |
 | `max-docs` | background documents read, at most; one or more |
 | `max-bytes` | background bytes read, at most; one or more, with an optional `K`, `M` or `G` (KiB, MiB, GiB) |

@@ -140,6 +140,10 @@ func ParseConfig(text string) (File, error) {
 				bad(n, "%s %s: %v", key, class, err)
 				continue
 			}
+			if p.RE.MatchString("") {
+				bad(n, "%s %s: %q matches the empty string, so it matches every payload; make it need at least one character", key, class, expr)
+				continue
+			}
 			if key == "refuse" {
 				f.Refuse = append(f.Refuse, p)
 			} else {

@@ -1,6 +1,8 @@
 package privacy_test
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -127,5 +129,36 @@ func TestABadEntryTokenFailsToResolve(t *testing.T) {
 	f := privacy.File{EntryTokens: []string{"a b"}}
 	if _, err := f.Resolve(t.TempDir(), "cfg"); err == nil {
 		t.Error("an entry token with a blank resolved")
+	}
+}
+
+// A shape that matches the empty string matches every payload, so it is
+// refused where it is written.
+func TestAShapeMatchingTheEmptyStringIsRefused(t *testing.T) {
+	t.Parallel()
+	_, err := privacy.ParseConfig("source a.md\nrefuse anything x*\nwarn nothing (?:)\nrefuse fine /home/[a-z]+\n")
+	if err == nil || !strings.Contains(err.Error(), "line 2:") || !strings.Contains(err.Error(), "line 3:") || !strings.Contains(err.Error(), "empty string") {
+		t.Errorf("err %v, want lines 2 and 3 refused for matching the empty string", err)
+	}
+	if strings.Contains(fmt.Sprint(err), "line 4:") {
+		t.Errorf("a shape that needs text was refused: %v", err)
+	}
+}
+
+// The corpus verb judges the corpus alone: no shape runs against it, so a
+// shape cannot turn an unreadable corpus into a flag.
+func TestTheCorpusJudgesNoShapes(t *testing.T) {
+	t.Parallel()
+	p, err := privacy.CompilePattern("anything", "x*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := privacy.NewRules("", nil, nil, []privacy.Pattern{p}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := privacy.Corpus{Rules: rules, Sources: []privacy.SourceLoad{{Path: "gone.md", Err: errors.New("missing")}}}
+	if r := privacy.JudgeCorpus(c); r.Outcome != privacy.CorpusUnreadable || len(r.Structure) != 0 {
+		t.Errorf("outcome %s structure %v", r.Outcome, r.Structure)
 	}
 }
