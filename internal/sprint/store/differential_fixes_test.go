@@ -64,3 +64,22 @@ func TestAnAllDroppedSprintIsDoneAndItsStreamEmpty(t *testing.T) {
 	}
 	h.clean("all dropped")
 }
+
+// 4. A judgment is open per card and cause: a second ci red on the same card
+// writes no second judgment, and one ack closes it.
+func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
+	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2"}))
+	open := h.openOf(sprint.NCIRed)
+	if len(open) != 1 {
+		t.Fatalf("ci red open %d times on s1-1", len(open))
+	}
+	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "a flaky runner"}))
+	if n := len(h.openOf(sprint.NCIRed)); n != 0 {
+		t.Fatalf("ci red still open after its ack: %d", n)
+	}
+	h.clean("acked")
+}

@@ -313,3 +313,52 @@ func otherEpochAnswer(s *Snapshot, id string, e uint64) string {
 	}
 	return fmt.Sprintf("--answers %s names a judgment of epoch %d; the sprint was cleared at %s and its epoch is now %d; the whole step is refused and nothing was changed; run: nova-sprint inbox", id, e, when, s.Epoch)
 }
+
+// OnePerCause keeps a judgment open once per card and cause: a note of a
+// plan that would open a judgment of a type already open on a subject (and
+// not closed by the plan) leaves that subject out; a note left with no
+// subject is not written. A stream's and the sprint's judgments are as they
+// are written.
+func OnePerCause(s *Snapshot, p Plan) Plan {
+	closing := map[string]bool{}
+	for _, u := range p.Units {
+		for _, o := range u.Closes {
+			closing[o.Key] = true
+		}
+	}
+	for _, o := range p.Closes {
+		closing[o.Key] = true
+	}
+	open := map[string]bool{} // type | subject
+	for _, o := range s.Open {
+		if o.Note.Kind == Judgment && !closing[o.Key] {
+			open[o.Note.Type+"|"+o.Subject()] = true
+		}
+	}
+	keep := func(notes []Note) []Note {
+		var out []Note
+		for _, n := range notes {
+			if n.Kind != Judgment || n.StreamLevel || n.SprintLevel || len(n.Primaries) == 0 {
+				out = append(out, n)
+				continue
+			}
+			var subs []string
+			for _, sub := range n.Primaries {
+				if !open[n.Type+"|"+sub] {
+					subs = append(subs, sub)
+				}
+			}
+			if len(subs) == 0 {
+				continue
+			}
+			n.Primaries, n.Count = subs, len(subs)
+			out = append(out, n)
+		}
+		return out
+	}
+	for i := range p.Units {
+		p.Units[i].Notes = keep(p.Units[i].Notes)
+	}
+	p.Notes = keep(p.Notes)
+	return p
+}

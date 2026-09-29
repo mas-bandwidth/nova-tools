@@ -40,14 +40,15 @@ func TestAckOfBrokenReadsIsRefused(t *testing.T) {
 	for _, o := range p.openOn("s1-1") {
 		nids = append(nids, o.Note.ID)
 	}
-	if len(nids) != 2 {
+	// open per card and cause: the second broken read writes no second
+	if len(nids) != 1 {
 		t.Fatalf("open %v", nids)
 	}
-	r := p.do("ack both", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
-	if len(r.Moved) != 0 || len(r.Refused) != 2 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework --group") {
-		t.Errorf("ack of two broken reads: %+v", r)
+	r := p.do("ack", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
+	if len(r.Moved) != 0 || len(r.Refused) != 1 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework --group") {
+		t.Errorf("ack of the broken reads: %+v", r)
 	}
-	if o := p.openOn("s1-1"); len(o) != 2 {
+	if o := p.openOn("s1-1"); len(o) != 1 {
 		t.Errorf("after the refused ack: %v", o)
 	}
 }

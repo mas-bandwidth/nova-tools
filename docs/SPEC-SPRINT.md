@@ -367,7 +367,9 @@ the batch; its decisions include resume with what was done. Marked ones (repeats
 A primary that came back a second time for the same cause is marked on the
 notification of that cause, and "stop and look" is added to its decisions.
 
-A judgment is open per card and per cause. A verb discharges only the
+A judgment is open per card and per cause: a step that would open one of a
+type already open on the card writes no second (a second ci red on the same
+card is the one already open). A verb discharges only the
 obligations it actually resolved: rework resolves a failure, a broken read and
 a red CI on the primaries it reworks; drop resolves everything on the primaries
 it drops, and accept every card judgment of the primaries it accepts; ask --another resolves a broken read; a green CI on the current head

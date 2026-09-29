@@ -302,7 +302,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
-		plan := sprint.Lawful(step.Plan(snap))
+		plan := sprint.OnePerCause(snap, sprint.Lawful(step.Plan(snap)))
 		// The fence is free: a stuck operation's judgment rides with this
 		// step, once.
 		stuck, isStuck, err := st.stuck(ctx)

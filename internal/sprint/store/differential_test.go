@@ -118,28 +118,6 @@ var dKnown = []dKnownDiff{
 		}
 		return sigHas("another", "open.accept=yes/no", "primary.pair")(f)
 	}},
-	// ENGINE or SPEC. Section 8: "a judgment is open per card and per
-	// cause"; the model's open is a set of (type, primary). The engine
-	// keeps one open judgment per notification, so two red CI runs or two
-	// broken reads on one primary are two obligations, and one ack leaves
-	// the other open (and so writes no exhausted or stranded judgment).
-	{"ENGINE/SPEC a judgment is open per notification, not per card and cause", func(f dFinding) bool {
-		a := f.Seq[len(f.Seq)-1]
-		if a.Kind != "ack" || f.Kind != "state" {
-			return false
-		}
-		again := false
-		for _, d := range f.Diffs {
-			switch {
-			case d.Table == "open" && d.Field == a.Type && d.ID == a.Subject && d.Engine == "yes":
-				again = true
-			case d.Table == "open" && (d.Field == "reads" || d.Field == "stranded") && d.Model == "yes":
-			default:
-				return false
-			}
-		}
-		return again
-	}},
 }
 
 func dClassify(f dFinding) (string, bool) {
