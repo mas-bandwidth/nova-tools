@@ -615,14 +615,15 @@ packets, logs and `suite.json`. Preserve the executed binary and TLC JAR hashes
 alongside those outputs. A record applies only to its captured inputs and finite
 histories.
 
-The 2026-09-29 Linux container run on `spacegame.losangeles` completed all six
-declared histories; `corrupt-observation` failed exactly `MatchesExecution` as
-expected. The captured Lua hash is
-`a0c21236e54eadaecf73c5843db99376976a27896b4a649c7933756c4043645a`,
+After merging runtime base `e94c2b54e3f1c544a5f7b0ae02530d9cc7c9fe94`, the
+2026-09-29 Linux container run on `spacegame.losangeles` completed all six
+declared histories from decoder source `19bbe44099c68d0df7cfe86c7e82bc1ac15d1156`;
+`corrupt-observation` failed exactly `MatchesExecution` as expected. The captured Lua hash is
+`e97d6a1528a4cfb6762c10ee404004919a7b954dd4db32fb851ac3bd26caf85b`,
 the TLC JAR hash is
 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`,
 and the generated `suite.json` hash is
-`d8b29d3fc485e5cf77313af55845b05fc7fc3f3c666005f671b9c12283b0a48d`.
+`d7e1571086ef02cb6ba121be93631d3f67de139d8c7c9c749c400ff080bd5943`.
 This execution used `go run`; it did not retain a standalone executable hash.
 These six finite captures establish only the listed histories, not general
 runtime refinement or behavior at the new 16 MiB batch field-value bound.
