@@ -161,6 +161,15 @@ func (w *world) clean(when string) {
 
 func (w *world) state(id string) State { return w.s.StateOf(id) }
 
+// gens is the live generation of each work card, as its worker holds it.
+func (w *world) gens(ids ...string) map[string]int {
+	out := map[string]int{}
+	for _, id := range ids {
+		out[id] = w.s.Fleet.Card(id).Int("gen")
+	}
+	return out
+}
+
 func (w *world) notesOf(typ string) []Note {
 	var out []Note
 	for _, n := range w.notes {

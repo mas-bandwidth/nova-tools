@@ -106,9 +106,11 @@ and it is the coordinator's decision, receipted.
 
 Every work card carries an assignment generation bound to its identity, attempt
 and member. It is 1 when the card is cut and changes on every redeal, drain,
-level move and withdrawal. `take` and `finish` name the generation the worker
-holds (`<card>@<gen>`); a finish whose generation is not the live one is refused
-as stale and changes nothing. A finish that arrives first moves the card to
+level move and withdrawal. A take by id and every finish name the generation
+the worker holds (`<card>@<gen>`); one that names none is refused, and one
+whose generation is not the live one is refused as stale and changes nothing.
+A take by selection (`--as` and `--limit`) takes the live generation; a finish
+by selection without `--as` is refused. A finish that arrives first moves the card to
 done, which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 

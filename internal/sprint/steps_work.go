@@ -275,9 +275,10 @@ func shortest(names []string, q map[string]int) string {
 	return best
 }
 
-// TakeReq is a worker taking its work cards. Gens names the generation the
-// worker holds for a named card; a card whose live generation differs has
-// been dealt again, and the take is refused as stale.
+// TakeReq is a worker taking its work cards. A take by id names, in Gens, the
+// generation dealt for every card; one naming none is refused, and one whose
+// live generation differs (the card was dealt again) is refused as stale. A
+// take by selection (--as and a limit) takes the live generation.
 type TakeReq struct {
 	Sel
 	As   string
@@ -312,7 +313,11 @@ func Take(s *Snapshot, r TakeReq) Plan {
 		}
 		return p
 	}
+	named := len(sel.IDs) > 0 || sel.Only != nil
 	chosen := pick(&p, sel, s.Fleet.Cell(r.As, Ready), fieldStream, func(c *Card) string {
+		if _, ok := r.Gens[c.ID]; named && !ok {
+			return "names no generation: take " + c.ID + "@<gen>, the generation dealt (nova-sprint queue --as " + r.As + ")"
+		}
 		if why := liveGen(c, r.Gens); why != "" {
 			return why
 		}
@@ -328,7 +333,10 @@ func Take(s *Snapshot, r TakeReq) Plan {
 	return p
 }
 
-// FinishReq is a worker finishing work cards, ok or failed.
+// FinishReq is a worker finishing work cards, ok or failed. A finish always
+// names, in Gens, the generation the worker holds for every card: one naming
+// none is refused, and one whose generation is not the live one is refused as
+// stale and changes nothing.
 type FinishReq struct {
 	Sel
 	As     string
@@ -343,6 +351,10 @@ type FinishReq struct {
 // review. Fixed work that comes back ok is asked of the same readers again.
 func Finish(s *Snapshot, r FinishReq) Plan {
 	var p Plan
+	if r.As == "" && len(r.IDs) == 0 && r.Only == nil {
+		p.refuse("finish", "a finish by selection wants --as <member>, and every card its generation: <card>@<gen>")
+		return p
+	}
 	var all []*Card
 	if r.As != "" {
 		all = s.Fleet.Cell(r.As, Working)
@@ -350,6 +362,9 @@ func Finish(s *Snapshot, r FinishReq) Plan {
 		all = s.Fleet.Column(Working)
 	}
 	chosen := pick(&p, r.Sel, all, fieldStream, func(c *Card) string {
+		if _, ok := r.Gens[c.ID]; !ok {
+			return "names no generation: finish " + c.ID + "@<gen>, the generation the worker holds"
+		}
 		if why := liveGen(c, r.Gens); why != "" {
 			return why
 		}
