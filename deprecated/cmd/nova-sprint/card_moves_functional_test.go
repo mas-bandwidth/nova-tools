@@ -249,3 +249,46 @@ func TestCardSessionCLI(t *testing.T) {
 		t.Fatalf("primary where=%s after the give-back, want waiting", w)
 	}
 }
+
+// TestCardConsumersRemoveCLI (#4203): `card consumers --remove <consumer>`
+// un-enrolls a consumer.
+func TestCardConsumersRemoveCLI(t *testing.T) {
+	t.Parallel()
+	addr, c := silentRedis(t)
+	ctx := context.Background()
+
+	// Usage checks
+	if code, _, errOut := runCLI("card", "consumers", "--redis", addr, "--actor", "rowan", "--add", "bench:b", "--remove", "bench:b"); code != 2 || !strings.Contains(errOut, "at most one of --add and --remove") {
+		t.Fatalf("both add and remove code=%d, errOut=%q", code, errOut)
+	}
+	if code, _, errOut := runCLI("card", "consumers", "--redis", addr, "--actor", "rowan", "--rm", "bench:b1", "--remove", "bench:b2"); code != 2 || !strings.Contains(errOut, "--remove or --rm, not both") {
+		t.Fatalf("both rm and remove with different values code=%d, errOut=%q", code, errOut)
+	}
+
+	// Add bench:b
+	if code, out, errOut := runCLI("card", "consumers", "--redis", addr, "--actor", "rowan", "--add", "bench:b"); code != 0 || !strings.Contains(out, "bench:b") {
+		t.Fatalf("add code=%d, out=%q, errOut=%q", code, out, errOut)
+	}
+	if isMem := c.SIsMember(ctx, "consumers", "bench:b").Val(); !isMem {
+		t.Fatalf("bench:b not in consumers set after --add")
+	}
+
+	// Remove bench:b with --remove
+	if code, out, errOut := runCLI("card", "consumers", "--redis", addr, "--actor", "rowan", "--remove", "bench:b"); code != 0 || strings.Contains(out, "bench:b") {
+		t.Fatalf("remove code=%d, out=%q, errOut=%q", code, out, errOut)
+	}
+	if isMem := c.SIsMember(ctx, "consumers", "bench:b").Val(); isMem {
+		t.Fatalf("bench:b still in consumers set after --remove")
+	}
+
+	// Re-add and remove with --rm as alias
+	if code, _, _ := runCLI("card", "consumers", "--redis", addr, "--actor", "rowan", "--add", "bench:b"); code != 0 {
+		t.Fatalf("re-add failed")
+	}
+	if code, out, _ := runCLI("card", "consumers", "--redis", addr, "--actor", "rowan", "--rm", "bench:b"); code != 0 || strings.Contains(out, "bench:b") {
+		t.Fatalf("rm code=%d, out=%q", code, out)
+	}
+	if isMem := c.SIsMember(ctx, "consumers", "bench:b").Val(); isMem {
+		t.Fatalf("bench:b still in consumers set after --rm")
+	}
+}

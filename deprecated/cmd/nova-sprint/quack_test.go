@@ -180,3 +180,31 @@ func TestQuackRun(t *testing.T) {
 		}
 	}
 }
+
+// TestQuackRefusesWhenEveryBenchEnrolled (#4203): quack probe refuses up front
+// when every registered bench is enrolled in consumers, naming the remedy.
+func TestQuackRefusesWhenEveryBenchEnrolled(t *testing.T) {
+	t.Parallel()
+
+	const S = "quack-enrolled"
+	client, addr := quackFixture(t, S)
+	ctx := context.Background()
+	client.SAdd(ctx, "benches", "b1", "b2")
+	client.SAdd(ctx, "consumers", "bench:b1", "bench:b2")
+
+	// quack cut refuses up front
+	code, out, _ := runSprint("quack", "cut", "--redis", addr, "--n", "2", "--repo", "mas-bandwidth/quack",
+		"--stream", "quack", "--sprint", S, "--base-sha", quackBase, "--actor", "rowan")
+	want := "CUT REFUSED sprint=quack-enrolled why=all-benches-enrolled remedy=\"un-enroll benches with nova-sprint card consumers --remove bench:<b>\"\n"
+	if code != 1 || out != want {
+		t.Fatalf("quack cut with all benches enrolled = code %d, out %q; want code 1, out %q", code, out, want)
+	}
+
+	// quack run also refuses up front
+	code, out, _ = runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "b1=4,b2=4", "--actor", "rowan")
+	wantRun := "RUN REFUSED sprint=quack-enrolled why=all-benches-enrolled remedy=\"un-enroll benches with nova-sprint card consumers --remove bench:<b>\"\n"
+	if code != 1 || out != wantRun {
+		t.Fatalf("quack run with all benches enrolled = code %d, out %q; want code 1, out %q", code, out, wantRun)
+	}
+}
+

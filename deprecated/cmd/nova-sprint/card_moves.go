@@ -21,7 +21,7 @@
 //	card expire [--as <consumer>]...
 //	card fsck  [--repair]                 (no --sprint: the copy links; --sprint is the sprint card fsck)
 //	card table [--as <consumer>]...       the consumer cells: ready working done ok fail ok%
-//	card consumers [--add <consumer>] [--rm <consumer>]
+//	card consumers [--add <consumer>] [--remove <consumer>] [--rm <consumer>]
 //	card render --id <copy>               the copy's card file (the bench runs it)
 //	card session --as bench:<b> [--wrapper <path>]   the bench harness's session start (#3998):
 //	                                      card work --fill, then one detached nova-card copy per copy
@@ -95,7 +95,7 @@ func isCardMove(sub string, args []string) bool {
 type moveCmd struct {
 	redis, actor, to, as, stream, ids, id, why, sha *string
 	pr, head, doneAlready, score, gates, finding    *string
-	reader, fail, add, rm, token, wrapper           *string
+	reader, fail, add, rm, remove, token, wrapper *string
 	harness, child, checkout, findingTest           *string
 	// parent is the caller's context: the spec gate at card end --ok --pr
 	// runs under it, not under the store's 30 s
@@ -135,6 +135,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.fail = fs.String("fail", "", "")
 	m.add = fs.String("add", "", "")
 	m.rm = fs.String("rm", "", "")
+	m.remove = fs.String("remove", "", "")
 	m.token = fs.String("token", "", "")
 	m.wrapper = fs.String("wrapper", "", "")
 	m.harness = fs.String("harness", "", "")
@@ -271,8 +272,15 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 			return "assign wants --id <primary> --to bench:<b>|friend:<f> [--revoke]"
 		}
 	case "consumers":
-		if *m.add != "" && *m.rm != "" {
-			return "consumers wants at most one of --add and --rm"
+		rm := *m.rm
+		if *m.remove != "" {
+			if rm != "" && rm != *m.remove {
+				return "consumers takes --remove or --rm, not both"
+			}
+			rm = *m.remove
+		}
+		if *m.add != "" && rm != "" {
+			return "consumers wants at most one of --add and --remove"
 		}
 	case "session":
 		if !strings.HasPrefix(*m.as, "bench:") {
@@ -548,10 +556,14 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		fmt.Fprintf(out, "CARD TABLE consumers=%d ms=%d\n", len(rows), ms())
 		return 0
 	case "consumers":
+		rmVal := *m.rm
+		if *m.remove != "" {
+			rmVal = *m.remove
+		}
 		for _, s := range []struct {
 			v  string
 			on bool
-		}{{*m.add, true}, {*m.rm, false}} {
+		}{{*m.add, true}, {rmVal, false}} {
 			if s.v == "" {
 				continue
 			}

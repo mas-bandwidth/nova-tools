@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +36,15 @@ func (d *cardDealDuty) Run(ctx context.Context, _ *reconcile.Lease) (reconcile.C
 	out := d.out
 	if out == nil {
 		out = os.Stdout
+	}
+	benches, berr := d.st.Client().SMembers(ctx, "benches").Result()
+	if berr == nil && len(benches) > 0 {
+		sort.Strings(benches)
+		for _, b := range benches {
+			if d.st.Client().SIsMember(ctx, "consumers", "bench:"+b).Val() {
+				res.Lines = append(res.Lines, fmt.Sprintf("DEAL bench:%s SKIP why=NONE enrolled", b))
+			}
+		}
 	}
 	var refused []string
 	for _, l := range res.Lines {

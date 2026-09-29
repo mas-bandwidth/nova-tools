@@ -150,6 +150,38 @@ func TestDealDutySaysWhichConsumerItSkipped(t *testing.T) {
 	}
 }
 
+// TestCardDealDutyPrintsNoneEnrolledWhenBenchEnrolled (#4203): when a registered
+// bench is enrolled in consumers, the deal duty prints DEAL bench:<b> SKIP why=NONE enrolled
+// and carries the refusal into the DUTY receipt instead of skipping silently.
+func TestCardDealDutyPrintsNoneEnrolledWhenBenchEnrolled(t *testing.T) {
+	t.Parallel()
+	addr, c := silentRedis(t)
+	ctx := context.Background()
+	c.SAdd(ctx, "benches", "batman")
+	c.HSet(ctx, "bench:batman:desired", "slots", "4")
+	c.SAdd(ctx, "consumers", "bench:batman")
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var dutyOut, errb, report bytes.Buffer
+	d := &cardDealDuty{st: st, out: &dutyOut}
+	named := &namedDuties{errOut: &errb}
+	duties := named.wrap([]reconcile.Duty{d.Run}, []string{"card-deal"})
+	want := "DEAL bench:batman SKIP why=NONE enrolled"
+	if _, err := duties[0](ctx, nil); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("deal duty err = %v; want %q in it", err, want)
+	}
+	if !strings.Contains(dutyOut.String(), "DEAL-DUTY "+want+"\n") {
+		t.Fatalf("deal duty stdout %q lacks the pass line", dutyOut.String())
+	}
+	named.report(&report, true)
+	if !strings.Contains(report.String(), "DUTY card-deal dealt=0") || !strings.Contains(report.String(), "err=deal pass: 1 refused: "+want) {
+		t.Fatalf("DUTY line %q does not carry the refusal", report.String())
+	}
+}
+
 // TestCapacityRefusesWhenTheDesiredHashCannotBeRead: with no --machine the
 // verb reads the consumer's desired hash; a store that does not answer used
 // to read as "machine is required; pass --machine", a usage error. It is the

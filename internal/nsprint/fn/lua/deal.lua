@@ -164,6 +164,9 @@ local function card_deal(keys, args)
   if redis.call('SISMEMBER', 'benches', bench) == 0 then
     return { 'NONE', 'unregistered' }
   end
+  if redis.call('SISMEMBER', 'consumers', 'bench:' .. bench) == 1 then
+    return { 'NONE', 'enrolled' }
+  end
   if redis.call('EXISTS', 'bench:' .. bench .. ':reset') == 1 then
     return { 'NONE', 'resetting' }
   end
@@ -477,3 +480,43 @@ redis.register_function('ns_card_gate', card_gate)
 redis.register_function('ns_card_undeal', card_undeal)
 redis.register_function('ns_card_deal_fail', card_deal_fail)
 redis.register_function('ns_bench_ssh', bench_ssh)
+
+-- ns_deal_status_list(S) is `deal status` list mode (#3605, #4203): one row per
+-- member of benches, sorted by name, each {bench, beat exists, desired slots,
+-- desired paused, ready, working, sprint queue, ssh state, ssh at, enrolled}: ready
+-- and working are ZCARDs of bench:<b>:cards:ready|working (#3998). enrolled is 1
+-- if bench:<b> is in consumers, else 0 (#4203). Read
+-- only (no-writes, called with FCALL_RO), so the bench seat, which may FCALL
+-- but never EVAL, runs it.
+redis.register_function{
+  function_name = 'ns_deal_status_list',
+  flags = { 'no-writes' },
+  callback = function(keys, args)
+    local S = args[1]
+    local e = NS.card.epoch()
+    local benches = redis.call('SMEMBERS', 'benches')
+    table.sort(benches)
+    local res = {}
+    for _, b in ipairs(benches) do
+      local des = redis.call('HMGET', 'bench:' .. b .. ':desired', 'slots', 'paused', 'legs')
+      local ssh = redis.call('HMGET', 'bench:' .. b .. ':ssh', 'state', 'at')
+      local enrolled = 0
+      local ok, is_enr = pcall(redis.call, 'SISMEMBER', 'consumers', 'bench:' .. b)
+      if ok and is_enr == 1 then enrolled = 1 end
+      res[#res + 1] = {
+        b,
+        redis.call('EXISTS', 'bench:' .. b .. ':beat'),
+        des[1] or '0',
+        des[2] or '',
+        redis.call('ZCARD', NS.card.ckey(e, 'bench:' .. b, 'ready')),
+        redis.call('ZCARD', NS.card.ckey(e, 'bench:' .. b, 'working')),
+        redis.call('ZCARD', 's:' .. S .. ':bench:' .. b .. ':queue'),
+        ssh[1] or '',
+        ssh[2] or '',
+        enrolled,
+      }
+    end
+    return res
+  end,
+}
+

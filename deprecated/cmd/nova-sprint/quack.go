@@ -161,6 +161,25 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 	defer func() { _ = st.Close() }()
 	cl := st.Client()
 
+	benches, err := cl.SMembers(ctx, "benches").Result()
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if len(benches) > 0 {
+		allEnrolled := true
+		for _, b := range benches {
+			if !cl.SIsMember(ctx, "consumers", "bench:"+b).Val() {
+				allEnrolled = false
+				break
+			}
+		}
+		if allEnrolled {
+			fmt.Fprintf(out, "CUT REFUSED sprint=%s why=all-benches-enrolled remedy=%s\n", S,
+				oneline.Quote("un-enroll benches with nova-sprint card consumers --remove bench:<b>"))
+			return 1
+		}
+	}
+
 	// The stop first, so nothing deals a card before the whole run is in.
 	stop, err := pitstop.Set(ctx, cl, *name, who, fmt.Sprintf("quack cut: cutting %d quack cards into %s", *n, *stream), false, "quack-cut-"+*name)
 	if err != nil {
@@ -245,6 +264,29 @@ func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int 
 	defer func() { _ = st.Close() }()
 	cl := st.Client()
 	S := oneline.Field(*name)
+
+	var checkBenches []string
+	if len(benches) > 0 {
+		for _, b := range benches {
+			checkBenches = append(checkBenches, b.name)
+		}
+	} else {
+		checkBenches, _ = cl.SMembers(ctx, "benches").Result()
+	}
+	if len(checkBenches) > 0 {
+		allEnrolled := true
+		for _, b := range checkBenches {
+			if !cl.SIsMember(ctx, "consumers", "bench:"+b).Val() {
+				allEnrolled = false
+				break
+			}
+		}
+		if allEnrolled {
+			fmt.Fprintf(out, "RUN REFUSED sprint=%s why=all-benches-enrolled remedy=%s\n", S,
+				oneline.Quote("un-enroll benches with nova-sprint card consumers --remove bench:<b>"))
+			return 1
+		}
+	}
 
 	refused := 0
 	for _, b := range benches {
