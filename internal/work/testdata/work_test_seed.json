@@ -12,7 +12,7 @@
       "state": "open",
       "locked": false,
       "user": {
-        "login": "rowan",
+        "login": "reporter",
         "id": 1002,
         "type": "User",
         "site_admin": false,
@@ -64,7 +64,7 @@
         {
           "id": 6002,
           "user": {
-            "login": "glenn",
+            "login": "maintainer",
             "id": 1001,
             "type": "User",
             "site_admin": true,
@@ -76,7 +76,7 @@
         {
           "id": 6003,
           "user": {
-            "login": "emma-antigravity",
+            "login": "contributor",
             "id": 1003,
             "type": "Bot",
             "site_admin": false,
@@ -88,7 +88,7 @@
         {
           "id": 6004,
           "user": {
-            "login": "stella-codex",
+            "login": "reviewer",
             "id": 1004,
             "type": "User",
             "site_admin": false,
@@ -135,7 +135,7 @@
           "id": 5001,
           "issue_number": 1,
           "user": {
-            "login": "glenn",
+            "login": "maintainer",
             "id": 1001,
             "type": "User",
             "site_admin": true,
@@ -160,7 +160,7 @@
             {
               "id": 6001,
               "user": {
-                "login": "rowan",
+                "login": "reporter",
                 "id": 1002,
                 "type": "User",
                 "site_admin": false,
@@ -197,7 +197,7 @@
       "state_reason": "completed",
       "locked": false,
       "user": {
-        "login": "glenn",
+        "login": "maintainer",
         "id": 1001,
         "type": "User",
         "site_admin": true,
@@ -230,7 +230,7 @@
       "updated_at": "2026-09-16T08:00:00Z",
       "closed_at": "2026-09-16T08:00:00Z",
       "closed_by": {
-        "login": "glenn",
+        "login": "maintainer",
         "id": 1001,
         "type": "User",
         "site_admin": true,
@@ -251,7 +251,7 @@
         {
           "id": 6009,
           "user": {
-            "login": "glenn",
+            "login": "maintainer",
             "id": 1001,
             "type": "User",
             "site_admin": true,
@@ -263,7 +263,7 @@
         {
           "id": 6010,
           "user": {
-            "login": "rowan",
+            "login": "reporter",
             "id": 1002,
             "type": "User",
             "site_admin": false,
@@ -306,7 +306,7 @@
           "id": 5002,
           "issue_number": 2,
           "user": {
-            "login": "stella-codex",
+            "login": "reviewer",
             "id": 1004,
             "type": "User",
             "site_admin": false,
@@ -332,7 +332,7 @@
             {
               "id": 6005,
               "user": {
-                "login": "glenn",
+                "login": "maintainer",
                 "id": 1001,
                 "type": "User",
                 "site_admin": true,
@@ -344,7 +344,7 @@
             {
               "id": 6006,
               "user": {
-                "login": "rowan",
+                "login": "reporter",
                 "id": 1002,
                 "type": "User",
                 "site_admin": false,
@@ -356,7 +356,7 @@
             {
               "id": 6007,
               "user": {
-                "login": "emma-antigravity",
+                "login": "contributor",
                 "id": 1003,
                 "type": "Bot",
                 "site_admin": false,
@@ -368,7 +368,7 @@
             {
               "id": 6008,
               "user": {
-                "login": "stella-codex",
+                "login": "reviewer",
                 "id": 1004,
                 "type": "User",
                 "site_admin": false,
@@ -391,7 +391,7 @@
           "id": 5003,
           "issue_number": 2,
           "user": {
-            "login": "rowan",
+            "login": "reporter",
             "id": 1002,
             "type": "User",
             "site_admin": false,
@@ -440,7 +440,7 @@
       "state_reason": "not_planned",
       "locked": false,
       "user": {
-        "login": "stella-codex",
+        "login": "reviewer",
         "id": 1004,
         "type": "User",
         "site_admin": false,
@@ -467,7 +467,7 @@
       "updated_at": "2026-09-15T20:00:00Z",
       "closed_at": "2026-09-15T20:00:00Z",
       "closed_by": {
-        "login": "glenn",
+        "login": "maintainer",
         "id": 1001,
         "type": "User",
         "site_admin": true,
@@ -488,7 +488,7 @@
         {
           "id": 6011,
           "user": {
-            "login": "rowan",
+            "login": "reporter",
             "id": 1002,
             "type": "User",
             "site_admin": false,
@@ -500,7 +500,7 @@
         {
           "id": 6012,
           "user": {
-            "login": "emma-antigravity",
+            "login": "contributor",
             "id": 1003,
             "type": "Bot",
             "site_admin": false,
@@ -512,7 +512,7 @@
         {
           "id": 6013,
           "user": {
-            "login": "stella-codex",
+            "login": "reviewer",
             "id": 1004,
             "type": "User",
             "site_admin": false,
@@ -540,7 +540,7 @@
           "id": 5004,
           "issue_number": 3,
           "user": {
-            "login": "glenn",
+            "login": "maintainer",
             "id": 1001,
             "type": "User",
             "site_admin": true,
@@ -579,7 +579,7 @@
       "state": "open",
       "locked": false,
       "user": {
-        "login": "emma-antigravity",
+        "login": "contributor",
         "id": 1003,
         "type": "Bot",
         "site_admin": false,
@@ -631,7 +631,7 @@
       "locked": true,
       "active_lock_reason": "too heated",
       "user": {
-        "login": "rowan",
+        "login": "reporter",
         "id": 1002,
         "type": "User",
         "site_admin": false,
@@ -653,7 +653,7 @@
       "updated_at": "2026-09-16T00:00:00Z",
       "closed_at": "2026-09-16T00:00:00Z",
       "closed_by": {
-        "login": "glenn",
+        "login": "maintainer",
         "id": 1001,
         "type": "User",
         "site_admin": true,
@@ -674,7 +674,7 @@
         {
           "id": 6016,
           "user": {
-            "login": "rowan",
+            "login": "reporter",
             "id": 1002,
             "type": "User",
             "site_admin": false,
@@ -702,7 +702,7 @@
           "id": 5005,
           "issue_number": 5,
           "user": {
-            "login": "glenn",
+            "login": "maintainer",
             "id": 1001,
             "type": "User",
             "site_admin": true,
@@ -727,7 +727,7 @@
             {
               "id": 6014,
               "user": {
-                "login": "rowan",
+                "login": "reporter",
                 "id": 1002,
                 "type": "User",
                 "site_admin": false,
@@ -739,7 +739,7 @@
             {
               "id": 6015,
               "user": {
-                "login": "stella-codex",
+                "login": "reviewer",
                 "id": 1004,
                 "type": "User",
                 "site_admin": false,
@@ -793,7 +793,7 @@
         "created_at": "2026-09-05T08:00:00Z",
         "due_on": "2026-10-15T08:00:00Z"
       },
-      "body": "> **Note**\n> This issue was transferred from mas-bandwidth/legacy-network#456 by @glenn on 2026-09-16T02:00:00Z.\n\n### Original Description\nConnection pool leaks 4KB socket handles on abrupt client disconnection.\n\nRelated PR: mas-bandwidth/work-test#7.\nCross-ref: #1.\n",
+      "body": "> **Note**\n> This issue was transferred from mas-bandwidth/legacy-network#456 by @maintainer on 2026-09-16T02:00:00Z.\n\n### Original Description\nConnection pool leaks 4KB socket handles on abrupt client disconnection.\n\nRelated PR: mas-bandwidth/work-test#7.\nCross-ref: #1.\n",
       "comments_count": 0,
       "created_at": "2026-09-16T02:00:00Z",
       "updated_at": "2026-09-16T02:00:00Z",
@@ -812,7 +812,7 @@
         {
           "id": 6017,
           "user": {
-            "login": "stella-codex",
+            "login": "reviewer",
             "id": 1004,
             "type": "User",
             "site_admin": false,
@@ -824,7 +824,7 @@
         {
           "id": 6018,
           "user": {
-            "login": "rowan",
+            "login": "reporter",
             "id": 1002,
             "type": "User",
             "site_admin": false,
@@ -866,7 +866,7 @@
         "original_issue_number": 456,
         "transferred_at": "2026-09-16T02:00:00Z",
         "transferred_by": {
-          "login": "glenn",
+          "login": "maintainer",
           "id": 1001,
           "type": "User",
           "site_admin": true,
@@ -883,7 +883,7 @@
       "state": "open",
       "locked": false,
       "user": {
-        "login": "glenn",
+        "login": "maintainer",
         "id": 1001,
         "type": "User",
         "site_admin": true,
@@ -935,7 +935,7 @@
         {
           "id": 6024,
           "user": {
-            "login": "glenn",
+            "login": "maintainer",
             "id": 1001,
             "type": "User",
             "site_admin": true,
@@ -963,7 +963,7 @@
           "id": 5006,
           "issue_number": 7,
           "user": {
-            "login": "emma-antigravity",
+            "login": "contributor",
             "id": 1003,
             "type": "Bot",
             "site_admin": false,
@@ -989,7 +989,7 @@
             {
               "id": 6019,
               "user": {
-                "login": "glenn",
+                "login": "maintainer",
                 "id": 1001,
                 "type": "User",
                 "site_admin": true,
@@ -1001,7 +1001,7 @@
             {
               "id": 6020,
               "user": {
-                "login": "rowan",
+                "login": "reporter",
                 "id": 1002,
                 "type": "User",
                 "site_admin": false,
@@ -1013,7 +1013,7 @@
             {
               "id": 6021,
               "user": {
-                "login": "stella-codex",
+                "login": "reviewer",
                 "id": 1004,
                 "type": "User",
                 "site_admin": false,
@@ -1036,7 +1036,7 @@
           "id": 5007,
           "issue_number": 7,
           "user": {
-            "login": "stella-codex",
+            "login": "reviewer",
             "id": 1004,
             "type": "User",
             "site_admin": false,
@@ -1061,7 +1061,7 @@
             {
               "id": 6022,
               "user": {
-                "login": "glenn",
+                "login": "maintainer",
                 "id": 1001,
                 "type": "User",
                 "site_admin": true,
@@ -1073,7 +1073,7 @@
             {
               "id": 6023,
               "user": {
-                "login": "emma-antigravity",
+                "login": "contributor",
                 "id": 1003,
                 "type": "Bot",
                 "site_admin": false,
@@ -1117,7 +1117,7 @@
       "locked": true,
       "active_lock_reason": "spam",
       "user": {
-        "login": "rowan",
+        "login": "reporter",
         "id": 1002,
         "type": "User",
         "site_admin": false,
@@ -1138,7 +1138,7 @@
       "updated_at": "2026-09-16T07:00:00Z",
       "closed_at": "2026-09-16T07:00:00Z",
       "closed_by": {
-        "login": "glenn",
+        "login": "maintainer",
         "id": 1001,
         "type": "User",
         "site_admin": true,
