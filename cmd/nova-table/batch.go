@@ -21,7 +21,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	addr := app.redisFlag(fs)
 	epoch := fs.Uint64("epoch", app.defaults.Epoch, "the epoch this write observed; it must equal the manifest epoch for every named table")
 	actor := fs.String("actor", app.defaults.Actor, "actor recorded with the change; it must equal the manifest's actor when the manifest names one")
-	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID and outcome")
+	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID, outcome, epoch and revision details")
 	asJSON := fs.Bool("json", false, "print the receipt as one JSON object instead of the lines")
 	_ = fs.Set("receipt", "true")
 	if app.shared != nil && !app.receipts {

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TEST-COMMAND ACCEPTS MORE THAN ONE VOCABULARY (issue #1994).
@@ -248,5 +250,26 @@ func TestLintAcceptsMakeWithPathTarget(t *testing.T) {
 	stdout, exit, _ := lintCmdCard(t, "path.card", "make ./scripts/test.sh")
 	if exit != 0 {
 		t.Fatalf("`make ./scripts/test.sh` is a valid gate, got exit %d\n%s", exit, stdout)
+	}
+}
+
+// A lint with no input is refused (exit 2) and the refusal names the three ways to give it
+// one, the same three the verb's help names: --card, --fleet and --rules.
+func TestLintWithNoInputNamesFleetAndRules(t *testing.T) {
+	t.Parallel()
+	var out, errb bytes.Buffer
+	code := run([]string{"lint"}, strings.NewReader(""), &out, &errb, time.Now().UTC())
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"--card is required", "--fleet", "--rules"} {
+		if !strings.Contains(errb.String(), want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, errb.String())
+		}
+	}
+	var help bytes.Buffer
+	run([]string{"help"}, strings.NewReader(""), &help, &errb, time.Now().UTC())
+	if !strings.Contains(help.String(), "nova-swarm lint      --card <file>") || !strings.Contains(help.String(), "| --fleet <file>") || !strings.Contains(help.String(), "| --rules") {
+		t.Errorf("the help does not name --card, --fleet and --rules:\n%s", help.String())
 	}
 }

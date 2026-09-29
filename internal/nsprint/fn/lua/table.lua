@@ -2835,7 +2835,10 @@ do
     local ds, order = {}, {}
     for _, spec in ipairs(m.tables) do
       local d, err = T.open(spec.name)
-      if not d then return err end
+      if not d then
+        if err[2] == 'NOTABLE' then return T.refuse('NOTABLE', spec.name) end
+        return err
+      end
       if not d.present then return T.refuse('NOTABLE', spec.name) end
       if spec.epoch ~= d.active then
         if T.uintgt(spec.epoch, d.active) then return T.refuse('EPOCHAHEAD', spec.name, spec.epoch, d.active) end

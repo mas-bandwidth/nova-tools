@@ -151,7 +151,7 @@ func TestNativeReportsAFenceRejection(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-FENCE-REJECT /Users/glenn/rowan-working/swarm-root/1/jobs/*\n"), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte("FAKE-FENCE-REJECT /workspace/swarm-root/1/jobs/*\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
@@ -161,7 +161,7 @@ func TestNativeReportsAFenceRejection(t *testing.T) {
 	if rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now()); rc != 0 {
 		t.Fatalf("the run exits 0, got %d:\n%s", rc, stderr.String())
 	}
-	want := " fence=rejected path=/Users/glenn/rowan-working/swarm-root/1/jobs/*"
+	want := " fence=rejected path=/workspace/swarm-root/1/jobs/*"
 	if !strings.Contains(stdout.String(), want) {
 		t.Fatalf("the NATIVE OK line carries%s:\n%s", want, stdout.String())
 	}

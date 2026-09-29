@@ -1,0 +1,17 @@
+# container-runtime.yml: rootless, daemonless podman on a Linux runner, so the
+# functional tier runs in a container that owns every process, port, System V
+# shared memory segment and temp file the run makes.
+#
+#   ansible-playbook -i fleet/inventory.container-runtime.example.ini fleet/container-runtime.yml --check --diff
+#   ansible-playbook -i fleet/inventory.container-runtime.example.ini fleet/container-runtime.yml
+#
+# Copy the example inventory, put your runners in it, and run the play from a
+# control node through a pipe (| cat): ansible needs blocking stdio. The play
+# connects as the runner user; container_runtime_user names another. The last
+# tasks probe the runtime: they fail the play when a limit a run relies on is
+# not enforced.
+- name: rootless podman for the functional tier
+  hosts: functional_runners
+  gather_facts: true
+  roles:
+    - container-runtime

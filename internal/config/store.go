@@ -30,6 +30,9 @@ type Store interface {
 	Delete(ctx context.Context, kind, name string, actor string) (int64, error)
 	// History reads the change rows of one row, oldest first.
 	History(ctx context.Context, kind, name string) ([]Change, error)
+	// MachinesAndFleet reads every machine row and the fleet row from one
+	// snapshot: one transaction on Postgres, one lock hold on Mem.
+	MachinesAndFleet(ctx context.Context) (machines []Row, fleet Row, err error)
 	// Rev is the kind's revision: the greatest history id of the kind, 0
 	// when it has none. apply stamps it into Redis.
 	Rev(ctx context.Context, kind string) (int64, error)
@@ -181,6 +184,21 @@ func (m *Mem) List(_ context.Context, kind string) ([]Row, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (m *Mem) MachinesAndFleet(_ context.Context) ([]Row, Row, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var machines []Row
+	for _, r := range m.rows[KindMachine] {
+		machines = append(machines, r.Clone())
+	}
+	sort.Slice(machines, func(i, j int) bool { return machines[i].Name < machines[j].Name })
+	var fleet Row
+	if r, ok := m.rows[KindFleet][KindFleet]; ok {
+		fleet = r.Clone()
+	}
+	return machines, fleet, nil
 }
 
 func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {
