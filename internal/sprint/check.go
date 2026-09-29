@@ -134,6 +134,17 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	if quiet {
 		out = append(out, diff(4, merging, inMerge, "work merging", "merge queued+stuck")...)
 	}
+	// 4. A merge card names a card it needs (need_card) only while it is
+	// stuck in a stream stopped for a cross: a return, a conflict and a
+	// resume each clear it.
+	for _, c := range sortedCards(s.Merge) {
+		if !c.Placed() || c.F("need_card") == "" {
+			continue
+		}
+		if ctl := s.StreamCtl(c.Row); c.Col != Stuck || ctl.F("state") != StreamStopped || ctl.F("cause") != "cross" {
+			out = append(out, Violation{4, fmt.Sprintf("%s is %s in stream %s (%s, cause %s) and still names %s as a card it needs, which only a cross stop's stuck card does", c.ID, c.Col, c.Row, orDash(ctl.F("state")), orDash(ctl.F("cause")), c.F("need_card"))})
+		}
+	}
 	// 5. Merge merged = work landed.
 	landed, merged := primarySet{}, primarySet{}
 	for _, c := range s.Work.Column(Landed) {

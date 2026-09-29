@@ -4,9 +4,11 @@ package store
 // model, each as the sequence that showed it.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -166,4 +168,52 @@ func TestAReleaseWithABadAnswerReleasesNothing(t *testing.T) {
 	if h.state("stop") != sprint.Waiting || h.snap().Work.Card("stop").F("reached") == "" {
 		t.Fatalf("the refused release moved stop: %s", h.state("stop"))
 	}
+}
+
+// persistNeed writes need_card onto a merge card as a store written before
+// the need was cleared everywhere would hold it.
+func (h *harness) persistNeed(id, need, stream string) {
+	h.t.Helper()
+	s := h.snap()
+	m := s.Merge.Card(id)
+	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-merge", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Merge.Revision),
+		OperationID: "persisted-need-" + id, Members: []ntable.BatchMemberEntry{{ID: m.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(m.Rev)},
+			Set: map[string]string{"need_card": need, "need_stream": stream}}}}); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// Item 1a, the conflict's guard alone (reader finding 5): a queued card
+// carrying a need (persisted) stopped by a conflict is stuck with no need.
+func TestAConflictStopClearsANeed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"x"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"y"}}))
+	h.through("x")
+	h.persistNeed("x", "y", "s2")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "x"}))
+	if m := h.snap().Merge.Card("x"); m.Col != sprint.Stuck || m.F("need_card") != "" {
+		t.Fatalf("x stopped by a conflict: %s need=%q", m.Col, m.F("need_card"))
+	}
+	h.clean("conflict")
+}
+
+// Item 1a, resume's guard alone: a conflict stop's stuck card carrying a
+// need (persisted) does not hold the resume; only a cross stop waits.
+func TestResumeWaitsForANeedOnlyAfterACross(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"x"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"y"}}))
+	h.through("x")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "x"}))
+	h.persistNeed("x", "y", "s2")
+	res := h.run(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "rebased x"}))
+	if len(res.Refused) != 0 || h.snap().StreamCtl("s1").F("state") != sprint.StreamMerging {
+		t.Fatalf("resume after a conflict, a need persisted on its card: %+v", res)
+	}
+	h.clean("resumed")
 }

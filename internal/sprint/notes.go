@@ -95,7 +95,7 @@ var Decisions = map[string][]string{
 	NStreamStale:     {"look"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
-	NStalled:         {"look at the card", "ack"}, // each stall names its own
+	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second

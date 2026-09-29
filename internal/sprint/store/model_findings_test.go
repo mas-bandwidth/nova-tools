@@ -291,3 +291,86 @@ func TestAnAckOfSeveralIsAllOrNothing(t *testing.T) {
 	}
 	h.clean("all or nothing")
 }
+
+// Stalled is answered by wait, never by ack (reader finding 5): a stalled
+// judgment's decisions do not list ack, and an ack of it is refused as a
+// condition the tick keeps, whatever else would refuse it.
+func TestAStalledJudgmentIsNeverAckable(t *testing.T) {
+	t.Parallel()
+	h, _ := orphanInMerging(t)
+	skip := h.openOf(sprint.NRepairSkipped)
+	h.must(Step{Verb: "persisted", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{Closes: skip} }})
+	for _, f := range sprint.Unheld(sprint.HeldState{Snap: h.snap(), Running: true}, h.now) {
+		if contains(f.Decisions, "ack") || !contains(f.Decisions, "wait") {
+			t.Fatalf("a stall's decisions: %v", f.Decisions)
+		}
+	}
+	h.startMachine()
+	h.machine()
+	stalled := h.openOf(sprint.NStalled)
+	if len(stalled) != 1 || contains(stalled[0].Note.Decisions, "ack") {
+		t.Fatalf("the stalled judgment: %+v", stalled)
+	}
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{stalled[0].Note.ID}, Reason: "looked"}))
+	if len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "a condition the tick keeps; wait sets when it is shown again") {
+		t.Fatalf("an ack of stalled: %+v", res)
+	}
+}
+
+// Waivers apply once per primary (reader finding 5): a sentinel with two
+// needs dropped at two times has two blocked judgments; one ack of both
+// waives both needs in one change and writes one "sentinel reached".
+func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(0)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"a", "b"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"stop"}, Sentinel: true, Needs: []string{"a", "b"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"a"}}, Reason: "gone"}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"b"}}, Reason: "gone"}))
+	var ids []string
+	for _, o := range h.openOn("stop") {
+		if o.Note.Type == sprint.NBlocked {
+			ids = append(ids, o.Note.ID)
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("blocked judgments on stop: %+v", h.openOn("stop"))
+	}
+	// the plan itself, before the engine's one-per-cause: one change of stop
+	// and one reached note
+	s, err := h.st.Load(h.ctx, All, tickExtras)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Coordinator, s.Actor = "tester", "tester"
+	plan := sprint.Ack(s, sprint.AckReq{Notes: ids, Reason: "not needed", Who: "tester"})
+	changes, planned := 0, 0
+	for _, u := range plan.Units {
+		for _, c := range u.Changes {
+			if c.Entry.ID == "stop" {
+				changes++
+			}
+		}
+		for _, n := range u.Notes {
+			if n.Type == sprint.NSentinelReached {
+				planned++
+			}
+		}
+	}
+	if len(plan.Refused) != 0 || changes != 1 || planned != 1 {
+		t.Fatalf("the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
+	}
+	h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "not needed"}))
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+	reached := 0
+	for _, n := range notes {
+		if n.Type == sprint.NSentinelReached {
+			reached++
+		}
+	}
+	if reached != 1 {
+		t.Fatalf("%d sentinel-reached notes after one ack of both", reached)
+	}
+	h.clean("waived once")
+}

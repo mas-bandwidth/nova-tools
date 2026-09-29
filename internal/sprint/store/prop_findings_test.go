@@ -103,3 +103,41 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.clean("the late read closed")
 	h.quiet("the tick again")
 }
+
+// The path TestTheTickClosingALateReadWritesWhatThePrimaryNeeds reached
+// before broken reads stopped taking an ack (reader finding 5): the late
+// read is the one judgment open on a primary in review when its reader
+// reports ok after the other read's broken judgment was closed (a store
+// written before the rule, closed by a raw step here as the ack then did).
+// Nothing is outstanding and one ok is not two: the tick closing the late
+// read writes reads exhausted, the judgment the primary needs.
+func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p2"}}))
+	h.startMachine()
+	h.machine() // deals p2
+	h.takeAndFinish(false, "p2")
+	h.machine() // asks two readers
+	cards := h.snap().Readers.Of("p2")
+	if len(cards) != 2 {
+		t.Fatalf("asked: %d read cards", len(cards))
+	}
+	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
+	broken := h.openOf(sprint.NReadBroken)
+	h.must(Step{Verb: "persisted", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{Closes: broken} }})
+	h.tick(sprint.DeadlineUnbegun + time.Minute)
+	h.machine() // the second read is late
+	if got := h.judgmentsOn("p2"); len(got) != 1 || len(h.openOf(sprint.NReadLate)) != 1 {
+		t.Fatalf("the late read is not the one judgment open on p2: %v", got)
+	}
+	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
+	h.tick(time.Second)
+	h.machine() // closes the late read
+	if got := h.openOf(sprint.NReadsExhausted); len(got) != 1 || len(h.openOf(sprint.NReadLate)) != 0 {
+		t.Fatalf("after the late read closed, reads exhausted: %v; open on p2: %v", got, h.judgmentsOn("p2"))
+	}
+	h.clean("the late read closed")
+	h.quiet("the tick again")
+}

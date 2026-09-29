@@ -453,7 +453,9 @@ exactly, member by member, never by their counts.
    bijection: each primary in working has exactly one live work card, the one it
    names, and each live work card has exactly one primary in working.
 3. Primaries with read cards in asked or reading are in review.
-4. Primaries in merge queued + stuck = primaries in work merging.
+4. Primaries in merge queued + stuck = primaries in work merging. A merge
+   card names a card it needs only while it is stuck in a stream stopped for a
+   cross: a return, a conflict stop and a resume each clear the need.
 5. Primaries in merge merged = primaries in work landed.
 6. No primary enters merging without ok read cards from two different readers at its head.
 7. A score never changes except by rank: every copy has its primary's score.
