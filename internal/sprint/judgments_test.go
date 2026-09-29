@@ -158,3 +158,23 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	}
 	w2.clean("done")
 }
+
+// H10: the merge step that lands a card moves every waiting primary whose
+// needs have all now landed to ready in the same step, in any stream.
+func TestLandingResolvesWhatWaitsOnIt(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1"}}))
+	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1", "s1-2"}}))
+	accepted(w, "s1-1", "s1-2")
+	p := w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	if w.state("b") != Ready || w.state("c") != Waiting {
+		t.Fatalf("after s1-1 landed: b %s, c %s (%+v)", w.state("b"), w.state("c"), p.Units)
+	}
+	w.clean("b ready")
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	if w.state("c") != Ready {
+		t.Fatalf("after s1-2 landed: c %s", w.state("c"))
+	}
+	w.clean("c ready")
+}

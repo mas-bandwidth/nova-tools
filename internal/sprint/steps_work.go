@@ -239,6 +239,26 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	return p
 }
 
+// resolveAfter is resolve as a trigger of a step that lands primaries
+// (landing, by id): every waiting primary whose needs have all landed, with
+// this step's, moves to ready in the same step.
+func resolveAfter(s *Snapshot, landing map[string]bool) []Unit {
+	var out []Unit
+	for _, c := range s.Work.Column(Waiting) {
+		ready := true
+		for _, n := range Split(c.F("needs")) {
+			if s.StateOf(n) != Landed && !landing[n] {
+				ready = false
+			}
+		}
+		if ready {
+			out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+				Moved: c.ID + " waiting -> ready (its needs landed)"})
+		}
+	}
+	return out
+}
+
 // StartReq cuts and deals work cards for ready primaries.
 type StartReq struct {
 	Sel
