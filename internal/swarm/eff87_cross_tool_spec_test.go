@@ -17,7 +17,7 @@ import (
 func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the cross-tool efficiency card's contract is the spec's: %s", err)
 	}

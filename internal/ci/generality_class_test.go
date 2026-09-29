@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -129,6 +130,38 @@ func isBoundaryAfter(text string, end int) bool {
 	return true
 }
 
+var candidateTokens = []string{
+	"mas-bandwidth", "alex", "antman", "batman", "captainamerica",
+	"emma", "freddy", "glenn", "hetzner", "hulk", "johnny",
+	"macbook", "mini", "rowan", "space", "spacegame", "stella",
+	"studio", "superman", "vision",
+}
+
+func fileMayContainGenerality(cleanSrc []byte) bool {
+	lower := bytes.ToLower(cleanSrc)
+	for _, tok := range candidateTokens {
+		if bytes.Contains(lower, []byte(tok)) {
+			return true
+		}
+	}
+	return false
+}
+
+func lineMayContainGenerality(line string) bool {
+	lower := strings.ToLower(line)
+	for _, tok := range candidateTokens {
+		if strings.Contains(lower, tok) {
+			return true
+		}
+	}
+	return false
+}
+
+func mayContainDocExample(src []byte) bool {
+	lower := bytes.ToLower(src)
+	return bytes.Contains(lower, []byte("example")) || bytes.Contains(lower, []byte("e.g."))
+}
+
 // cleanSourceForGenerality returns a copy of src where real AST import specs and
 // real AST comments with marked documentation examples have been replaced with spaces.
 // Newline characters are preserved to ensure 1-based line numbers remain exact.
@@ -144,8 +177,14 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 		offsetShift = len("package fixture\n")
 	}
 
+	mode := parser.ImportsOnly
+	hasDocExample := mayContainDocExample(src)
+	if hasDocExample {
+		mode = parser.ParseComments
+	}
+
 	fset := token.NewFileSet()
-	file, _ := parser.ParseFile(fset, rel, parseSrc, parser.ParseComments)
+	file, _ := parser.ParseFile(fset, rel, parseSrc, mode)
 	if file == nil {
 		return clean
 	}
@@ -170,21 +209,23 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 	}
 
 	// 2. Blank out real AST comments containing marked documentation examples
-	for _, cg := range file.Comments {
-		for _, c := range cg.List {
-			if isMarkedDocExample(c.Text) {
-				start := fset.Position(c.Pos()).Offset - offsetShift
-				end := fset.Position(c.End()).Offset - offsetShift
-				if start < 0 {
-					start = 0
-				}
-				if end > len(clean) {
-					end = len(clean)
-				}
-				if start < end {
-					for i := start; i < end; i++ {
-						if clean[i] != '\n' {
-							clean[i] = ' '
+	if hasDocExample {
+		for _, cg := range file.Comments {
+			for _, c := range cg.List {
+				if isMarkedDocExample(c.Text) {
+					start := fset.Position(c.Pos()).Offset - offsetShift
+					end := fset.Position(c.End()).Offset - offsetShift
+					if start < 0 {
+						start = 0
+					}
+					if end > len(clean) {
+						end = len(clean)
+					}
+					if start < end {
+						for i := start; i < end; i++ {
+							if clean[i] != '\n' {
+								clean[i] = ' '
+							}
 						}
 					}
 				}
@@ -286,8 +327,14 @@ func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[
 	for _, f := range files {
 		rel := f.Rel
 		cleanSrc := cleanSourceForGenerality(rel, f.Src)
+		if !fileMayContainGenerality(cleanSrc) {
+			continue
+		}
 		lines := strings.Split(string(cleanSrc), "\n")
 		for lineNum, line := range lines {
+			if !lineMayContainGenerality(line) {
+				continue
+			}
 			tokens := extractTokensFromText(line)
 			for _, tok := range tokens {
 				key := rel + ":" + tok
@@ -332,8 +379,14 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 	for _, f := range files {
 		rel := f.Rel
 		cleanSrc := cleanSourceForGenerality(rel, f.Src)
+		if !fileMayContainGenerality(cleanSrc) {
+			continue
+		}
 		lines := strings.Split(string(cleanSrc), "\n")
 		for lineNum, line := range lines {
+			if !lineMayContainGenerality(line) {
+				continue
+			}
 			tokens := extractTokensFromText(line)
 			for _, tok := range tokens {
 				key := rel + ":" + tok

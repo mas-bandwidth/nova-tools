@@ -55,12 +55,11 @@ func TestVersionLineShape(t *testing.T) {
 // The stamp is the ONE field of this line that comes from outside the toolchain, and a
 // release workflow's ${TAG} is a shell variable.
 func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v1.2.3\nnova-check v9.9.9 linux/amd64 go1.0 extra"
+	t.Parallel()
+	const ver = "v1.2.3\nnova-check v9.9.9 linux/amd64 go1.0 extra"
 
 	var out, errOut bytes.Buffer
-	if code := cmdVersion(nil, &out, &errOut); code != 0 {
+	if code := cmdVersionWith(nil, &out, &errOut, ver); code != 0 {
 		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	line := out.String()
@@ -78,11 +77,10 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 // A stamped build says the tag and an unstamped one says what the toolchain recorded:
 // either way field two is an identity, never a dotted number this file made up.
 func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v9.9.9"
+	t.Parallel()
+	const ver = "v9.9.9"
 	var out, errOut bytes.Buffer
-	if code := cmdVersion(nil, &out, &errOut); code != 0 {
+	if code := cmdVersionWith(nil, &out, &errOut, ver); code != 0 {
 		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	if got := strings.Fields(out.String())[1]; got != "v9.9.9" {

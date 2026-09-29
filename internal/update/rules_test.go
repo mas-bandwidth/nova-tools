@@ -204,11 +204,11 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	// run by a fixed grace begun at cancellation.
 	hanging := manifest(t, row("h", "tool", command(t, "hang"), "npm:unused", "none"))
 	started := time.Now()
-	if c, _, _ = run(t, env, "check", "--file", hanging, "--budget", "300ms", "--timeout", "200ms"); c != 1 {
+	if c, _, _ = run(t, env, "check", "--file", hanging, "--budget", "50ms", "--timeout", "20ms"); c != 1 {
 		t.Fatalf("a hanging read was not a finding: %d", c)
 	}
 	if took := time.Since(started); took > 30*time.Second {
-		t.Fatalf("a 300ms budget took %s", took)
+		t.Fatalf("a 50ms budget took %s", took)
 	}
 }
 
@@ -217,13 +217,12 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 // interrupted writer's bytes and a different writer's temporary. The later
 // reporter is the built CLI, with the ordinary production rename operation.
 func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
-	bin := filepath.Join(buildTreeBinaries(t), exeName("nova-update"))
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "s.json")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
-	good := exec.Command(bin, "report", "--file", first, "--snapshot", snapshot)
-	if out, err := good.CombinedOutput(); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	var goodOut bytes.Buffer
+	if rc := Run("nova-update", []string{"report", "--file", first, "--snapshot", snapshot}, "test", &goodOut, &goodOut, Environment{}); rc != 0 {
+		t.Fatalf("exit %d\n%s", rc, goodOut.String())
 	}
 	settled, err := os.ReadFile(snapshot)
 	if err != nil {
@@ -306,9 +305,9 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	assertBytes(interrupted, inFlight)
 	assertBytes(foreign, foreignBytes)
 
-	final := exec.Command(bin, "report", "--file", second, "--snapshot", snapshot)
-	if out, err := final.CombinedOutput(); err != nil {
-		t.Fatalf("a later reporter could not use the surviving snapshot: %v\n%s", err, out)
+	var finalOut bytes.Buffer
+	if rc := Run("nova-update", []string{"report", "--file", second, "--snapshot", snapshot}, "test", &finalOut, &finalOut, Environment{}); rc != 0 {
+		t.Fatalf("a later reporter could not use the surviving snapshot: exit %d\n%s", rc, finalOut.String())
 	}
 	state, err := readSnapshot(snapshot)
 	if err != nil || len(state.Observed) != 1 {

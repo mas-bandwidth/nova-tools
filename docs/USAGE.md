@@ -214,6 +214,42 @@ warmly it is worded and whoever signs it.
 **It may not help if** you already have a channel everyone actually reads, or you
 are the only one here.
 
+### nova-swarm — more work at once
+
+**Try it when** you have bounded, independent jobs and workers configured to run
+them, and doing them one after another is what is slowing you down.
+
+**What it does.** Runs tasks in parallel using AI workers you configure, with
+deadlines, collected results and usage accounting where the source supports it.
+
+**You need** a card, a job directory under an explicit root, and a working
+harness and provider setup. A batch also needs a TSV naming its cards.
+**Native runs use `nova-sandbox` on every supported platform.** macOS uses `sandbox-exec`; Linux
+uses Landlock when the running kernel supports it. Windows has no containment
+backend yet.
+
+**First trial.** `nova-swarm template --name read-pr` prints the read-pr
+template. `nova-swarm lint --rules` prints the lint rules. Neither starts a
+worker nor spends a token. See the
+[first-run transcript](TESTS.md#nova-swarm) and
+[nova-swarm in the command reference](CLI.md#nova-swarm).
+
+**It worked if** several jobs finished inside their deadlines and you could read
+each result and the evidence behind it.
+
+**Limits and side effects.** It runs other programs, writes job directories, and
+spends real tokens once workers start. A worker exiting `0` means the process
+succeeded, **not** that the requested work is complete — read the evidence. A
+free worker helps only if its capabilities fit the task. The development branch
+adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
+refuses. On macOS, starting it from inside an existing sandbox may fail while
+creating its APFS volume because the outer wall does not permit the mount. Start
+the disposable volume from outside the existing wall; retrying the same nested
+command does not grant the missing mount access.
+
+**It may not help if** your work is mostly sequential, or you have no worker setup
+to point it at yet.
+
 ### nova-tokens — where the tokens went
 
 **Try it when** you cannot answer "how many tokens did this month use, by model

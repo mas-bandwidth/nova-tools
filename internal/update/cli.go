@@ -25,8 +25,12 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
-	Now    func() time.Time
-	Client *http.Client
+	Now         func() time.Time
+	Client      *http.Client
+	Context     context.Context
+	WorkerStart func(id int)
+	JobAttempt  func(index int)
+	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
 }
 type options struct {
 	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
@@ -351,7 +355,14 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	sort.Strings(kinds)
 	started := env.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), o.budget)
+	baseCtx := env.Context
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	if env.DrainTimer != nil {
+		baseCtx = WithDrainTimer(baseCtx, env.DrainTimer)
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, o.budget)
 	defer cancel()
 	if verb == "report" {
 		return report(ctx, entries, selected, o, strings.Join(kinds, ","), started, out, errs, env)
@@ -412,10 +423,16 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 	rs := make([]entryRead, len(entries))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
+	var started sync.WaitGroup
 	for w := 0; w < 4; w++ {
 		wg.Add(1)
-		go func() {
+		started.Add(1)
+		go func(workerID int) {
 			defer wg.Done()
+			if env.WorkerStart != nil {
+				env.WorkerStart(workerID)
+			}
+			started.Done()
 			for i := range jobs {
 				e := entries[i]
 				r := entryRead{Entry: e, Installed: Installed(ctx, e, o.timeout, report), Latest: Read{Source: e.Latest}}
@@ -426,9 +443,13 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 				}
 				rs[i] = r
 			}
-		}()
+		}(w)
 	}
+	started.Wait()
 	for i := range entries {
+		if env.JobAttempt != nil {
+			env.JobAttempt(i)
+		}
 		jobs <- i
 	}
 	close(jobs)

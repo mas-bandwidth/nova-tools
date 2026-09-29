@@ -44,10 +44,10 @@ The mutation controls must fail with the named property and TLC exit code. Forge
 Run with a locally installed Java and `tla2tools.jar` (validated with release v1.7.4 / TLC 2.19):
 
 ```sh
-python3 tla/check_member.py --jar /absolute/path/to/tla2tools.jar --out /tmp/member-results
+go run ./tools/tlacheck member --jar /absolute/path/to/tla2tools.jar --dir /tmp/member-results
 ```
 
-The runner has a **single 120-second wall-clock budget**, including all selected checks; timeout is exit 124, never green. It defaults to four TLC workers for the positive cases and one for counterexamples. `--suite member`, `--suite epoch` and `--suite small` select diagnostic subsets and retain the same total cap. Deadlock checking is enabled; bounded cases have an explicit terminal stutter. No download, server, production Redis or external account is used.
+The runner has a **single 120-second wall-clock budget**, including all selected checks; a timeout is a failure (exit 1, `verdict=timeout`), never green. It defaults to four TLC workers for the positive cases and one for counterexamples. `--suite member`, `--suite epoch` and `--suite small` select diagnostic subsets and retain the same total cap. Deadlock checking is enabled; bounded cases have an explicit terminal stutter. No download, server, production Redis or external account is used.
 
 ## Implementation acceptance still owed
 
@@ -61,7 +61,7 @@ The final default suite completed in **83.96 seconds**, all queues exhausted in 
 ## Implementation trace check
 
 The implementation in the table member-contract change is exercised by
-`check_member_replay.py`. Its generated harness applies the existing named
+`tlacheck replay`. Its generated harness applies the existing named
 `EpochMemberTable` actions, compares each abstract state to actual Redis
 record/set/shape snapshots, and replays the captured receipts into a fresh
 store. It covers selected accepted, refused and no-op actions in two epochs;

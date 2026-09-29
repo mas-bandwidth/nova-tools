@@ -47,7 +47,7 @@ All start with `m1` at score 1 in `t1/r1/c1`; both tables have rows `r1,r2` and 
 
 The last two are distinct from ordinary external-owner updates. The same table accepted an alias to its owned storage, so its own permitted actions mutate/delete a bound target. An implementation must either reject these ownership conflicts or state a narrower view contract. Bound aliases also mean visible copies cannot be counted as separate owned placements.
 
-`check_lua_witnesses.py` retains these concrete reproductions, plus positive controls: successful move keeps the score, bound add/remove/move and whole-table clear refuse, refusal leaves the other owned member intact, drop preserves a disjoint external set, and successful clear removes owned rows/members while retaining the definition. The script owns only its temporary Unix-socket Redis process; it accepts a pinned source file, never a store address.
+`tlacheck witnesses` retains these concrete reproductions, plus positive controls: successful move keeps the score, bound add/remove/move and whole-table clear refuse, refusal leaves the other owned member intact, drop preserves a disjoint external set, and successful clear removes owned rows/members while retaining the definition. The command owns only its temporary Unix-socket Redis process; it accepts a pinned source file, never a store address.
 
 RowAdd also rewrites binding metadata without deleting the physical set; any lossless-reshape repair must cover that path as well as Bind.
 
@@ -58,14 +58,14 @@ ONE PLACE should be “at most one owned location per member within the chosen n
 Use the official [TLA+ tools v1.7.4 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4), `tla2tools.jar` SHA-1 `bee4a54f3ee3d4afc347c3240ec2d9e93b075104`. It identifies itself as TLC 2.19. The local run used OpenJDK 27, 2 TLC workers, a 2 GiB heap and no remote services. Java's local RMI listener may require the normal local-execution permission in a sandbox. The runner does not download anything.
 
 ```sh
-python3 tla/check_table.py --jar /path/to/tla2tools.jar --mode all --out /tmp/table-model-results
-python3 tla/check_table.py --jar /path/to/tla2tools.jar --mode strict --out /tmp/table-model-strict
+go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode all --dir /tmp/table-model-results
+go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode strict --dir /tmp/table-model-strict
 # Extract the exact pin in a nova-tools checkout, then replay locally:
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
-python3 tla/check_lua_witnesses.py /tmp/table-f7745885.lua
+go run ./tools/tlacheck witnesses /tmp/table-f7745885.lua
 ```
 
-`all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to return TLC exit 12 today. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.
+`all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to fail today: exit 1, with a `TABLE FAIL` line naming the first finding the table code still has. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.
 
 Measured September 27: the larger three-call check generated 11,230,481 states, found 693,619 distinct states, exhausted its queue in about 32 seconds; the smaller fixed-point run generated 49,752 states, found 1,157 distinct states and exhausted its queue in under a second. Five expected counterexamples, the cross-table scope control and both positive configurations finished together in about 40 seconds on the Studio. These are bounded-instance results and machine-specific timings. Retained raw logs are the evidence; counts should be refreshed when semantics or configurations change.
 

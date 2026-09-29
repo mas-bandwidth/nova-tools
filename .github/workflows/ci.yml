@@ -1354,14 +1354,15 @@ jobs:
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
         # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
         # leg the cap cancelled at 123 s, and a count-only deal kept them together
-        # at eight. cmd/nova-merge has since moved to deprecated/, so the list is
-        # cmd/nova-bus alone. Then every other package round-robin in go list order
-        # (stable: go list sorts), continuing after the heavy ones. One line of
+        # at eight. cmd/nova-merge is under deprecated/ and in no deal; cmd/nova-swarm
+        # is the reader's other named heavy command. Then every other package
+        # round-robin in go list order (stable: go list sorts), continuing after the
+        # heavy ones. One line of
         # space-separated packages, so vet and test below read the same deal.
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          heavy="cmd/nova-bus"
+          heavy="cmd/nova-bus cmd/nova-swarm"
           deal='
             BEGIN { h = split(heavy, hv, " ") }
             {

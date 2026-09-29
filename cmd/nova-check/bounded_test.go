@@ -5,9 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+)
+
+var (
+	largeSelf500Dir  string
+	largeSelf500Once sync.Once
 )
 
 // largeSelf builds the state the audit measured this binary at: a self repo with n broken
@@ -15,6 +21,25 @@ import (
 // a stranger first runs quickstart against it.
 func largeSelf(t *testing.T, n int) string {
 	t.Helper()
+	if n == 500 {
+		largeSelf500Once.Do(func() {
+			dir, err := os.MkdirTemp("", "large-self-500-*")
+			if err != nil {
+				panic(err)
+			}
+			for i := 0; i < 500; i++ {
+				md := fmt.Sprintf("# page %d\n\nA [link](./no-such-page-%d.md) that does not resolve.\n", i, i)
+				if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("page-%04d.md", i)), []byte(md), 0o644); err != nil {
+					panic(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("tool-%04d.py", i)), []byte("print(1)\n"), 0o644); err != nil {
+					panic(err)
+				}
+			}
+			largeSelf500Dir = dir
+		})
+		return largeSelf500Dir
+	}
 	dir := t.TempDir()
 	for i := 0; i < n; i++ {
 		md := fmt.Sprintf("# page %d\n\nA [link](./no-such-page-%d.md) that does not resolve.\n", i, i)

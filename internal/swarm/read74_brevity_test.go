@@ -41,7 +41,7 @@ func TestReadPRTemplateAsksForBoundedFindingsOnly(t *testing.T) {
 	// AND THE SPEC SAYS THE SAME. The read-pr section is the read-pr template's own
 	// contract, and a condition that lives in the binary but not in the spec is a
 	// condition the next reader cannot review.
-	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the template's contract is the spec's: %s", err)
 	}
