@@ -117,8 +117,8 @@ func TestNoVerbFollowsASymbolicLink(t *testing.T) {
 	}
 }
 
-// The store as given may be named relative or absolute. The answer is the same,
-// because nothing is resolved.
+// The store as given may be named any way: relative or absolute, in any letter
+// case the disk folds. The answer is the same, because nothing is resolved.
 func TestTheSpellingOfTheStoreDoesNotChangeTheAnswer(t *testing.T) {
 	t.Parallel()
 	store := filepath.Join(t.TempDir(), "St")
@@ -142,6 +142,10 @@ func TestTheSpellingOfTheStoreDoesNotChangeTheAnswer(t *testing.T) {
 		t.Skipf("no relative spelling: %v", err)
 	}
 	spelled := map[string]string{"absolute": store, "relative": rel}
+	if foldsCase(t) {
+		spelled["upper"] = filepath.Join(filepath.Dir(store), "ST")
+		spelled["lower"] = filepath.Join(filepath.Dir(store), "st")
+	}
 	answer := func(s string) string {
 		res, err := IndexAll(s, "", 0)
 		var flagged []string
