@@ -46,6 +46,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
@@ -138,6 +139,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	if err := yield.ToCI(); err != nil {
 		return refuse(stderr, " local", "yield to CI: "+oneline.Err(err))
 	}
+	testredis.SweepOrphans(stderr)
 	cores := []string{"GOMAXPROCS=" + localCores}
 	nice := []string{"nice", "-n", localNice}
 

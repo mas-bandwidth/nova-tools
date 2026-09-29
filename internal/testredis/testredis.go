@@ -123,13 +123,14 @@ func User(name, password string) []string {
 
 // Server is one running throwaway redis-server.
 type Server struct {
-	addr   string
-	dir    string
-	cmd    *exec.Cmd
-	out    *tail
-	exited chan struct{}
-	ended  error // what the process ended with; read only after exited is closed
-	stop   sync.Once
+	addr       string
+	dir        string
+	cmd        *exec.Cmd
+	out        *tail
+	exited     chan struct{}
+	ended      error // what the process ended with; read only after exited is closed
+	stop       sync.Once
+	unregister func()
 }
 
 // Addr is the server's address, 127.0.0.1 and its port. It stays the same
@@ -143,6 +144,10 @@ func (s *Server) PID() int { return s.cmd.Process.Pid }
 // command to its address is refused at once: the unreachable store of a test.
 // The test's cleanup calls it too; a second call only waits.
 func (s *Server) Stop() {
+	if s.unregister != nil {
+		s.unregister()
+		s.unregister = nil
+	}
 	s.stop.Do(func() {
 		// An error here is a process that has already ended, which is the
 		// state Stop is asked for; the wait below is the proof either way.
@@ -226,6 +231,7 @@ func freePort(listen func(network, address string) (net.Listener, error)) (strin
 func (l launch) start(t testing.TB, extra []string) *Server {
 	t.Helper()
 	l.refuse()
+	SweepOrphans(os.Stderr)
 	if err := check(extra); err != nil {
 		t.Fatalf("testredis: %v", err)
 	}
@@ -268,6 +274,7 @@ func (l launch) run(t testing.TB, bin, dir, port string, extra []string, group i
 	if err := s.cmd.Start(); err != nil {
 		t.Fatalf("testredis: %s did not start: %v\narguments: %s", bin, err, commandLine(redact(args)))
 	}
+	s.unregister = Register(s.cmd.Process.Pid, port, os.Getpid())
 	go func() {
 		s.ended = s.cmd.Wait()
 		close(s.exited)
@@ -277,6 +284,7 @@ func (l launch) run(t testing.TB, bin, dir, port string, extra []string, group i
 	defer bound.Stop()
 	select {
 	case <-s.exited:
+		s.Stop()
 		return s, false
 	case <-bound.C:
 		s.Stop()

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -951,5 +952,46 @@ func TestASentryThatSaysNothingIsKilledAtTheBound(t *testing.T) {
 	if pid := fakePID(t, err.Error()); alive(pid) {
 		kill(pid)
 		t.Fatalf("a sentry that does not stand was left alive, pid %d", pid)
+	}
+}
+
+func TestRedisServerRegistersPIDAndCleansUp(t *testing.T) {
+	t.Parallel()
+
+	s := StartServer(t)
+	pid := s.PID()
+	_, portStr, err := net.SplitHostPort(s.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entryPath := filepath.Join(RegistryDir(), fmt.Sprintf("%d.json", pid))
+	data, err := os.ReadFile(entryPath)
+	if err != nil {
+		t.Fatalf("expected registry file %s to exist: %v", entryPath, err)
+	}
+
+	var entry Entry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatalf("failed to parse registry entry: %v", err)
+	}
+
+	if entry.PID != pid {
+		t.Errorf("entry.PID = %d, want %d", entry.PID, pid)
+	}
+	if entry.Port != portStr {
+		t.Errorf("entry.Port = %q, want %q", entry.Port, portStr)
+	}
+	if entry.PPID != os.Getpid() {
+		t.Errorf("entry.PPID = %d, want %d", entry.PPID, os.Getpid())
+	}
+	if entry.StartedAt.IsZero() {
+		t.Error("entry.StartedAt is zero")
+	}
+
+	s.Stop()
+
+	if _, err := os.Stat(entryPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected registry file to be removed after Stop, got err: %v", err)
 	}
 }

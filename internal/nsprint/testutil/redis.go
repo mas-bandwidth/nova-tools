@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -47,6 +48,7 @@ func Absent(t *testing.T, cause error) {
 // not a dial to a bench.
 func Start(t *testing.T, extra ...string) string {
 	t.Helper()
+	testredis.SweepOrphans(os.Stderr)
 	bin := Program(t)
 	// THE PORT IS TAKEN, CLOSED AND HANDED OVER, so another process can bind it
 	// in between: with the package's tests in parallel that is another test's
@@ -85,9 +87,11 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("redis-server did not start: %v", err)
 	}
+	unregister := testredis.Register(cmd.Process.Pid, port, os.Getpid())
 	exited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(exited) }()
 	t.Cleanup(func() {
+		unregister()
 		_ = cmd.Process.Kill()
 		<-exited
 	})
@@ -97,6 +101,7 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 	for {
 		select {
 		case <-exited:
+			unregister()
 			body, _ := os.ReadFile(logPath)
 			return "", false, string(body)
 		default:
