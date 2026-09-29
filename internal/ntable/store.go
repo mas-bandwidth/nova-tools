@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -180,37 +181,38 @@ func (o operation) refused(reply []any) error {
 	reason := fmt.Sprint(reply[1])
 	var cause error
 	remedy := o.remedy()
-	switch reason {
-	case "STALE":
+	refusal := typedrec.ParseTableRefusal(reason)
+	switch refusal {
+	case typedrec.TableRefusalStale:
 		cause = fmt.Errorf("%w: observed %v, active %v", ErrStale, reply[2], reply[3])
-	case "MEMBEREPOCH":
+	case typedrec.TableRefusalMemberEpoch:
 		cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
-	case "MEMBEREXISTS":
+	case typedrec.TableRefusalMemberExists:
 		cause = ErrMemberExists
-	case "PLACED":
+	case typedrec.TableRefusalPlaced:
 		cause = fmt.Errorf("%w: %v", ErrPlaced, reply[2:])
-	case "DRIFT":
+	case typedrec.TableRefusalDrift:
 		cause = fmt.Errorf("%w: %v", ErrDrift, reply[2:])
-	case "NOTABLE":
+	case typedrec.TableRefusalNoTable:
 		cause = ErrNoTable
 		remedy = "nova-table create " + shellWord(o.table) + " --columns <columns>"
-	case "EXISTS":
+	case typedrec.TableRefusalExists:
 		cause = ErrExists
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
-	case "NOROW":
+	case typedrec.TableRefusalNoRow:
 		cause = errors.New("no such row")
 		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
-	case "NOCOL":
+	case typedrec.TableRefusalNoCol:
 		cause = errors.New("no such column")
-	case "TEXT":
+	case typedrec.TableRefusalText:
 		cause = errors.New("text column holds no ordered set; choose a body column")
-	case "NOTMEMBER":
+	case typedrec.TableRefusalNotMember:
 		cause = ErrNotMember
 		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
-	case "OCCUPIEDVALUE":
+	case typedrec.TableRefusalOccupiedValue:
 		o.row, o.col = fmt.Sprint(reply[2]), fmt.Sprint(reply[3])
 		cause = fmt.Errorf("%w: text cell is nonempty; clear it with row set first", ErrOccupied)
-	case "OCCUPIED":
+	case typedrec.TableRefusalOccupied:
 		if len(reply) != 5 {
 			return fmt.Errorf("%s: malformed occupied-cell refusal", o.location())
 		}
@@ -225,7 +227,7 @@ func (o operation) refused(reply []any) error {
 		}
 		cause = fmt.Errorf("%w: %s; move each member to a retained owned cell or remove it first", ErrOccupied, strings.Join(names, ", "))
 		remedy = removeMembersCommand(o.table, o.row, o.col, members)
-	case "OCCUPIEDCELLS":
+	case typedrec.TableRefusalOccupiedCells:
 		if len(reply) != 3 {
 			return fmt.Errorf("%s: malformed occupied-cells refusal", o.location())
 		}
@@ -249,56 +251,56 @@ func (o operation) refused(reply []any) error {
 		}
 		cause = fmt.Errorf("%w: %s; move the members or remove them first", ErrOccupied, strings.Join(blockers, "; "))
 		remedy = strings.Join(commands, "; ")
-	case "OWNEDALIAS":
+	case typedrec.TableRefusalOwnedAlias:
 		if len(reply) != 5 {
 			return fmt.Errorf("%s: malformed owned-alias refusal", o.location())
 		}
 		o.row, o.col = fmt.Sprint(reply[2]), fmt.Sprint(reply[3])
 		cause = fmt.Errorf("%w: %q; choose a set owned outside nova-table", ErrOwnedAlias, reply[4])
-	case "NOMEMBER":
+	case typedrec.TableRefusalNoMember:
 		cause = errors.New("wants at least one member")
-	case "NOVIEW":
+	case typedrec.TableRefusalNoView:
 		cause = errors.New("no such view")
 		remedy = "nova-table view set " + shellWord(o.table) + " --tables <a,b,...>"
-	case "VIEWTABLE":
+	case typedrec.TableRefusalViewTable:
 		if len(reply) != 3 {
 			return fmt.Errorf("%s: malformed view-table refusal", o.location())
 		}
 		cause = fmt.Errorf("referenced table %q does not exist", reply[2])
 		remedy = "nova-table create " + shellWord(fmt.Sprint(reply[2])) + " --columns <columns>"
-	case "SUMMARY":
+	case typedrec.TableRefusalSummary:
 		if len(reply) != 4 {
 			return fmt.Errorf("%s: malformed summary refusal", o.location())
 		}
 		cause = fmt.Errorf("summary wants a count column in table %q; %q is not one", reply[2], reply[3])
 		remedy = "nova-table show " + shellWord(fmt.Sprint(reply[2]))
-	case "SELF":
+	case typedrec.TableRefusalSelf:
 		cause = fmt.Errorf("%v cannot go before or after itself", reply[2])
-	case "WHERE":
+	case typedrec.TableRefusalWhere:
 		cause = errors.New("a place is --first, --last, --before <x> or --after <x>")
-	case "COLEXISTS":
+	case typedrec.TableRefusalColExists:
 		o.col = fmt.Sprint(reply[2])
 		cause = errors.New("the column is already there")
 		remedy = "nova-table col move " + shellWord(o.table) + " " + shellWord(o.col) + " --last"
-	case "DEPENDS":
+	case typedrec.TableRefusalDepends:
 		o.col = fmt.Sprint(reply[2])
 		cause = fmt.Errorf("column %q is a percentage of it; remove that column first", reply[3])
 		remedy = "nova-table col del " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[3]))
-	case "LASTCOL":
+	case typedrec.TableRefusalLastCol:
 		o.col = fmt.Sprint(reply[2])
 		cause = errors.New("a table keeps at least one column")
 		remedy = "nova-table drop " + shellWord(o.table)
-	case "SORTED":
+	case typedrec.TableRefusalSorted:
 		cause = fmt.Errorf("the rows are kept sorted by %v, so no row is placed by hand; end the standing sort first", reply[2])
 		remedy = "nova-table row sort " + shellWord(o.table) + " --manual"
-	case "SORTKEY":
+	case typedrec.TableRefusalSortKey:
 		cause = fmt.Errorf("rows sort by name, label, a count column or a text column, not %v", reply[2])
-	case "SORTKEEP":
+	case typedrec.TableRefusalSortKeep:
 		cause = fmt.Errorf("a standing sort is by name or label; by %v the rows are sorted once, without --keep", reply[2])
 		remedy = "nova-table row sort " + shellWord(o.table) + " --by " + shellWord(fmt.Sprint(reply[2]))
-	case "NOTTEXT":
+	case typedrec.TableRefusalNotText:
 		cause = errors.New("not a text column; row set writes text columns only")
-	case "BOUND":
+	case typedrec.TableRefusalBound:
 		if len(reply) < 6 {
 			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
 		}
@@ -307,20 +309,20 @@ func (o operation) refused(reply []any) error {
 			return fmt.Errorf("%s: %w; changed=no", o.location(), boundErr)
 		}
 		return fmt.Errorf("%s: %w", o.location(), boundErr)
-	case "REVISION":
+	case typedrec.TableRefusalRevision:
 		if len(reply) >= 4 {
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrRevisionMismatch, reply[2], reply[3])
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrRevisionMismatch, reply[2:])
 		}
-	case "MEMBERREVISION":
+	case typedrec.TableRefusalMemberRevision:
 		if len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: expected %v, observed %v", ErrMemberRevision, reply[3], reply[4])
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberRevision, reply[2:])
 		}
-	case "FIELDGUARD":
+	case typedrec.TableRefusalFieldGuard:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
@@ -333,67 +335,67 @@ func (o operation) refused(reply []any) error {
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrFieldGuard, reply[2:])
 		}
-	case "OPCONFLICT":
+	case typedrec.TableRefusalOpConflict:
 		cause = fmt.Errorf("%w: %v", ErrOpConflict, reply[2:])
-	case "LIMIT":
+	case typedrec.TableRefusalLimit:
 		cause = fmt.Errorf("%w: %v", ErrLimit, reply[2:])
-	case "RESERVEDFIELD":
+	case typedrec.TableRefusalReservedField:
 		if len(reply) >= 4 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: member %q field %q", ErrReservedField, reply[2], reply[3])
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrReservedField, reply[2:])
 		}
-	case "TWICE":
+	case typedrec.TableRefusalTwice:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
 		cause = fmt.Errorf("%w (TWICE): %v", ErrDuplicateMember, reply[2:])
-	case "SCORE":
+	case typedrec.TableRefusalScore:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
 		cause = fmt.Errorf("%w: %v", ErrInvalidScore, reply[2:])
-	case "OVERFLOW":
+	case typedrec.TableRefusalOverflow:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
 		cause = fmt.Errorf("%w: %v", ErrCounterOverflow, reply[2:])
-	case "MUTATION":
+	case typedrec.TableRefusalMutation:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
 		cause = fmt.Errorf("%w: %v", ErrMutation, reply[2:])
-	case "MANIFEST":
+	case typedrec.TableRefusalManifest:
 		cause = fmt.Errorf("%w: %v", ErrMalformedManifest, reply[2:])
-	case "STREAMFULL":
+	case typedrec.TableRefusalStreamFull:
 		cause = fmt.Errorf("%w: stream %v is full", ErrCounterOverflow, reply[2:])
-	case "SCHEMA":
+	case typedrec.TableRefusalSchema:
 		cause = fmt.Errorf("schema: %v", reply[2:])
-	case "OPERATION":
+	case typedrec.TableRefusalOperation:
 		cause = fmt.Errorf("operation: %v", reply[2:])
-	case "MEMBER":
+	case typedrec.TableRefusalMember:
 		if len(reply) >= 3 {
 			o.member = fmt.Sprint(reply[2])
 		}
 		cause = fmt.Errorf("member: %v", reply[2:])
-	case "WRONGTYPE":
+	case typedrec.TableRefusalWrongType:
 		if len(reply) >= 5 {
 			cause = fmt.Errorf("%w: key %v is %v, expected %v", ErrWrongType, reply[2], reply[3], reply[4])
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrWrongType, reply[2:])
 		}
-	case "STREAMTYPE":
+	case typedrec.TableRefusalStreamType:
 		cause = fmt.Errorf("%w: stream %v is not a stream", ErrWrongType, reply[2:])
 	default:
 		cause = fmt.Errorf("%s %v", reason, reply[2:])
 	}
 	// The server can identify a different column (e.g. the move destination).
-	if (reason == "NOCOL" || reason == "TEXT") && len(reply) >= 4 {
+	if (refusal == typedrec.TableRefusalNoCol || refusal == typedrec.TableRefusalText) && len(reply) >= 4 {
 		o.row = fmt.Sprint(reply[2])
 		o.col = fmt.Sprint(reply[3])
 	}
-	if reason == "NOROW" && len(reply) >= 3 {
+	if refusal == typedrec.TableRefusalNoRow && len(reply) >= 3 {
 		o.row = fmt.Sprint(reply[2])
 		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
 	}
