@@ -404,6 +404,7 @@ with this table:
 | value bytes per batch | 16777216 |
 
 The 128 set-fields and 1000 unset-fields limits are intentionally different.
+The field-value byte limit applies to each value in `set`.
 The read-set member limit counts unique IDs in a selection. Manifest size
 counts the encoded bytes supplied to the server, including whitespace and JSON
 escaping; ID and field-value sizes count decoded UTF-8 bytes.
@@ -435,8 +436,9 @@ near its bound (128 members, 48 fields each), 0.05 to 0.07 s; refused for its re
 (a manifest of 886,533 bytes), 0.40 s, which is the time to decode and check the
 manifest; refused for its value bytes over a store holding 256 MiB in the named
 fields, 0.013 s. Decoding and checking a manifest of about 1 MiB is most of the time of
-the larger figures. A create or move of an unplaced member also checks the table's
-cells for a stray placement, so the time of such a batch grows with the table's size,
+the larger figures. A batch entry whose member has no recorded placement also checks
+the table's cells for a stray placement, so the time of such a batch grows with the
+table's size,
 which the value bounds do not limit: 128 creates held the store 0.36 s on a table of
 1,000 rows and 4.1 s on a table of 10,000 rows. The figures above are for a table of
 two rows.
@@ -455,9 +457,9 @@ next request, accepting the separately identified transaction scope.
 
 ### Validation, atomicity and replay
 
-Validation checks the raw request envelope, then locates a recorded operation
-using only the identity needed for lookup. A matching record returns its
-original result before decoded static or state checks; different bytes under
+Validation checks the raw request envelope, then permissively decodes the full
+payload and extracts the identity needed to locate a recorded operation. A
+matching record returns its original result before decoded static or state checks; different bytes under
 the same identity refuse. For an unrecorded request, static checks reject
 malformed canonical encoding, repeated IDs/keys, an empty members array,
 incompatible changes, nonfinite scores, invalid paths/names and bounds before
