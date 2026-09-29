@@ -3,14 +3,12 @@ package ci
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -240,13 +238,7 @@ func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 	if want := `heavy="` + strings.Join(hostedHeavy, " ") + `"`; !strings.Contains(job.Steps[deal].Run, want) {
 		t.Errorf("the deal step does not spell %s", want)
 	}
-	cmd := exec.Command("go", "list", "./...")
-	cmd.Dir = repoRoot(t)
-	cmd.Env = goenv.Clean(os.Environ())
-	list, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	list := repoGoList(t)
 	listFile := filepath.Join(t.TempDir(), "pkgs")
 	if err := os.WriteFile(listFile, list, 0o644); err != nil {
 		t.Fatal(err)
