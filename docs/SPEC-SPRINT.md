@@ -169,8 +169,9 @@ card is a barrier: the merge step never passes an earlier stuck or queued card.
 | landed | every primary of the stream has landed |
 
 Every step that changes what is queued keeps the stream's state true: accept
-makes a waiting stream merging; the merge step, return and drop make a merging
-stream with nothing queued or stuck waiting, and a stream landed when every
+makes a waiting stream merging; the merge step (when it lands the last queued
+card of a stream not done), return and drop make a merging stream with nothing
+queued or stuck waiting, with `since` then, and a stream landed when every
 primary of it left on the table has landed. A stopped stream stays stopped
 until it resumes. accept closes the open card judgments of the primaries it
 accepts.

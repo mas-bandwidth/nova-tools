@@ -186,8 +186,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			return p
 		}
 		ctlSet["ci"], ctlSet["moved"] = "green", now
-		if streamDone(s, r.Stream, len(landing)) {
+		switch {
+		case streamDone(s, r.Stream, len(landing)):
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
+		case s.Merge.Count(r.Stream, Queued)+s.Merge.Count(r.Stream, Stuck) == len(landing):
+			// The last queued card lands and the stream is not done: nothing
+			// is queued or stuck, so the stream is waiting.
+			if state == StreamWaiting {
+				delete(ctlSet, "state")
+				delete(ctlSet, "since")
+				notes = nil
+			} else {
+				ctlSet["state"], ctlSet["since"] = StreamWaiting, now
+			}
 		}
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}

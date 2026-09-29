@@ -5,6 +5,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -63,4 +64,54 @@ func TestCIGreenClosingTheLastJudgmentExhaustsTheReads(t *testing.T) {
 	if len(o) != 1 || o[0].Note.Type != sprint.NReadsExhausted {
 		t.Errorf("ci green closed the last judgment of s1-1 (review, one ok, one broken, nothing outstanding) and open is %v", o)
 	}
+}
+
+// the stream's state and since through a stream's life.
+func TestTheStreamStateThroughAStreamsLife(t *testing.T) {
+	t.Parallel()
+	p := newProbe(t)
+	p.setup(3)
+	st := func(when, want string) {
+		t.Helper()
+		c := p.ctl("s1")
+		t.Logf("%-34s state=%s since=%s", when, c.F("state"), c.F("since"))
+		if c.F("state") != want {
+			t.Errorf("after %s the stream is %s, want %s", when, c.F("state"), want)
+		}
+		p.tick(time.Minute)
+	}
+	st("add", sprint.StreamWaiting)
+	p.through("s1-1")
+	st("accept s1-1", sprint.StreamMerging)
+	p.do("return s1-1", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")}))
+	st("return s1-1", sprint.StreamWaiting)
+	p.do("rework s1-1", ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "f"}))
+	st("rework s1-1", sprint.StreamWaiting)
+	p.through("s1-2")
+	st("accept s1-2", sprint.StreamMerging)
+	p.do("merge s1-2", MergeStep(sprint.MergeReq{Stream: "s1"}))
+	st("merge s1-2 (lands)", sprint.StreamWaiting)
+	// s1-1's fixed work
+	c := p.snap().Fleet.Card("s1-1.w2")
+	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
+	p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
+	for _, rc := range p.snap().Readers.Of("s1-1") {
+		if rc.Col == sprint.Asked {
+			p.read(rc.F("reader"), rc.ID, "ok")
+		}
+	}
+	p.do("accept s1-1", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
+	st("accept s1-1 again", sprint.StreamMerging)
+	p.do("merge conflict", MergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-1"}))
+	st("conflict", sprint.StreamStopped)
+	p.do("return from stuck", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")}))
+	st("return from stuck (stopped stays)", sprint.StreamStopped)
+	p.do("resume", ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "x"}))
+	st("resume, nothing queued", sprint.StreamWaiting)
+	p.do("drop s1-1", DropStep(sprint.DropReq{Sel: ids("s1-1"), Reason: "x"}))
+	st("drop s1-1 (s1-3 still ready)", sprint.StreamWaiting)
+	p.do("drop s1-3", DropStep(sprint.DropReq{Sel: ids("s1-3"), Reason: "x"}))
+	st("drop the last open primary", sprint.StreamLanded)
+	p.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	st("add to a landed stream", sprint.StreamWaiting)
 }

@@ -447,8 +447,8 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 	}
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
-	if st := w.s.StreamCtl("s1").F("state"); st != StreamMerging {
-		t.Fatalf("with s1-3 still open the stream is %s", st)
+	if st := w.s.StreamCtl("s1").F("state"); st != StreamWaiting {
+		t.Fatalf("the last queued card landed, s1-3 still open: the stream is %s, want waiting", st)
 	}
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-3"}}, Reason: "not needed"}))
 	if st := w.s.StreamCtl("s1").F("state"); st != StreamLanded || len(w.notesOf(NStreamLanded)) != 1 {
