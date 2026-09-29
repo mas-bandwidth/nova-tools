@@ -72,7 +72,6 @@ internal/bus/ops.go:studio 2
 internal/bus/protocol.go:glenn 1
 internal/bus/protocol.go:space 1
 internal/bus/reply.go:space 2
-internal/cairn/cairn.go:rowan 1
 internal/cardhdr/cardhdr.go:glenn 2
 internal/cardhdr/invariant.go:glenn 1
 internal/cardhdr/invariant.go:space 3

@@ -25,41 +25,185 @@ existing and no friend's practice is renamed by adopting it.
 
 **`open --store <dir> --session <id> [--source <ptr>] --publish <policy>`
 starts one session record.** The store is caller-named and holds plain
-files (`sessions/<id>.md`, `entries/<id>/<entry>.json`, one append-only
-`log.jsonl`); there is no default store, no environment variable and no
-discovery. The session identifier is stable: retries and recoveries address
-the same record by this name, and concurrent records coexist untouched by
-each other. Re-opening an open session is a no-op. The session file's
-header is convention only and is never parsed, so alternate
-directory/header conventions survive: the entry files are the source of
-truth and the readable record links to them.
+files; there is no default store, no environment variable and no discovery.
+The session identifier is stable: retries and recoveries address the same
+record by this name, and concurrent records coexist untouched by each other.
+Re-opening an open session is a no-op. The record is created in the store's
+shape (below): `sessions/<id>.md` with `entries/<id>/<entry>.json` and one
+append-only `log.jsonl` in the tool's own shape, `<id>.md` directly under the
+store in a bench store. The session file's header is convention only and is
+never parsed, so alternate directory/header conventions survive: in the tool's
+own shape the entry files are the source of truth and the readable record links
+to them.
 
-**The store's shape is read, never imposed.** Beside the layout above, a
-store may keep **one markdown file per session directly under it** —
-`<store>/<session>.md`, which is how a friend appending by hand already
-keeps a record. Both verbs read it: `open` on such a record is a no-op, and
-`append` lands a dated `## <stamp> — <entry>` section at the end of the
+**The store's shape is read from its contents, once, and never imposed.** A
+store is in one of three shapes, decided by one function from what the
+directory holds:
+
+- **bench**: at least one top-level `<id>.md` session file and no `sessions/`,
+  `entries/` or `log.jsonl`. This is how a friend appending by hand keeps a
+  record.
+- **own**: the tool's own layout, `sessions/<id>.md`, `entries/<id>/<entry>.json`
+  and `log.jsonl`. An empty directory and a directory that does not exist yet
+  are also this shape, so a new store gets the tool's own layout.
+- **mixed**: a top-level `<id>.md` together with any of `sessions/`, `entries/`
+  or `log.jsonl`. Every verb refuses it at exit 2 with one line naming the
+  operation, the cause (the store holds two shapes), the paths found of each
+  shape (the top-level files as a bounded list, then "and N more") and the next
+  action in words: keep one shape by moving the other shape's paths out of the
+  store, then run the same command again. Nothing is written, and the tool
+  moves and deletes nothing: it prints no command that does.
+
+**Mixed versions.** A store is written by one version family. A `nova-cairn`
+older than this one, run on a bench store, writes the own shape beside the
+records when `open` is called for a new session; this version then refuses the
+store as mixed until those paths are moved out. A `nova-cairn` older than the
+one that takes the store's lock takes none, so it is not serialised with this
+one: two appends of one entry id, one from each, can both read "new" and both
+write. In the own shape several different texts can each report a new entry
+while only one survives; in a bench store two sections can be written for one
+id, which `receipt` and `index` then refuse as a duplicate. Every writer of a
+shared store upgrades together.
+
+A top-level `README.md`, in any case, is documentation and never a session file
+in either shape: it counts for no shape, `index` and the coverage ledger do not
+list it, and `README` (in any case) is refused as a session id by every verb
+with a message naming the reserved name. Any other top-level `<id>.md` beside
+`sessions/`, `entries/` or `log.jsonl` is a mixed store.
+
+**nova-cairn does not follow a symbolic link.** A link at the store directory's
+own name as given, at `sessions/`, `entries/`, a session's entry directory,
+`log.jsonl`, or at a record (`<id>.md`, `sessions/<id>.md`, an entry file) is
+refused by every verb that reaches it, for a read and for a write, in both
+shapes. The refusal is one text at exit 2: it names the path, says it is a
+symbolic link and that nova-cairn does not follow links, and gives a command
+that shows where it leads and writes nothing (`ls -ld -- <path>`). Nothing is
+created or written through the link. For the shape rule a link named `sessions`,
+`entries` or `log.jsonl` still counts as an own-shape marker and a link named
+`<id>.md` as a session file; the verb then meets it and refuses. A link in a
+directory above the store is part of the path given and is not judged. The
+check is made on the open file or directory: after the open the handle is
+compared with the name, and the directories already looked at are compared again,
+so a swap between the check and the use is refused. The answer is the same however
+`--store` is spelled, relative or absolute or in another letter case, because
+nothing is resolved.
+
+nova-cairn defends a store against links that are there when a command starts.
+It does not defend against someone who can write inside the store directory and
+replaces a directory while a command runs: in that case an append can report OK
+with its entry file created through the replaced directory, and temporary files
+can remain there.
+
+**A defect in one session's record is that session's.** Two kinds, and each
+has its own answer.
+
+- The record's path holds no record (a directory, a link, a device): the verbs
+  addressed to that session (`open`, `append`, `receipt`, `index --session`)
+  refuse at exit 2 naming the path, what is there and the next action.
+- The record is a file whose headings are damaged (an invalid stamp or entry
+  id, a repeated entry heading): `index --session` prints that session's
+  flagged row and exits 1, and `receipt` and `append` refuse at exit 2. The
+  `append` refusal names the damage, the record, and a command that lists its
+  headings (`grep -n '^## ' -- <path>`); it stores nothing, because a section
+  added to a damaged record could not be read back. `open` is a no-op.
+
+In both, `index` reports the session as one flagged row, `INDEX FLAGGED
+session=<id> cause=<why>`, while every other session is listed; `index` prints
+all its rows and the coverage line first and then exits 1 when any row was
+flagged. In the tool's own shape a session file that is a directory or a link,
+and an entry directory that is a link, are flagged the same way; a damaged
+entry file (not JSON) refuses the whole call at exit 2. Only a store-level
+condition (two shapes, a store path that is not a directory, a link at the store
+directory, `sessions/` or `entries/`, an unreadable directory) refuses every
+verb.
+
+In a bench store a top-level directory named `<id>.md`, and `<id>.MD`, are not
+session files: `index` and the coverage ledger skip them and flag nothing. A verb
+addressed to the directory refuses, as above.
+
+Only the exact name `<id>.md` is a session file: `s1.MD` is not one on any
+file system, and `index` and the coverage ledger skip it. On a disk that folds
+letter case, a verb addressing session `s1` (or `S1`) that would reach an
+existing `s1.MD` (or `s1.md`) through the fold refuses at exit 2 naming both
+names, and writes nothing through it; on a disk that keeps case they are two
+different names.
+
+On a bench store `open` creates `<store>/<id>.md` when none exists and is a
+no-op when one does. The new file holds a short header, fsynced before success
+is reported: a `# Cairn <first 8 characters of the id>` title line, a line
+naming the full session id and the open stamp in RFC 3339 UTC, and a `Source:`
+line when `--source` is given (escaped to one line, so a pointer never forms a
+section heading). It creates no `sessions/`, `entries/` or `log.jsonl`, and the
+flat format stores no publication policy, so `--publish` is validated and not
+written. `append` lands a dated `## <stamp> — <entry>` section at the end of the
 file in the file's own shape, one blank line between sections, the words
-byte-for-byte beneath the heading. Nothing appears beside the file — no
-`entries/`, no `log.jsonl`, no index — because the file IS the record; the
-duplicate and conflict rules below read that section instead of an entry
-file. `index` and `receipt` read those same dated sections. Their byte counts
-measure the whitespace-trimmed section body, matching duplicate detection;
-they do not reconstruct the original append's trailing newlines. The flat
-format stores no source or publication policy: receipts print `source=-`
-and `publish=unknown`. Ordinary prose without machine-form entry headings
-is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
-entry headings refuse rather than produce an ambiguous receipt. The nested
-record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
-(2026-09-18): an append into a bench store refused `no such session
-"b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
-named remedy would have written a second record and split one session in
-two. **A refusal names the remedy verb whole** — `open first: nova-cairn
-open --store <dir> --session <id> --publish <policy>` — rather than a verb
-the reader must reconstruct. The remedy quotes the caller's store and session
-for a POSIX shell. Control bytes use octal decoding inside a subshell with a
-sentinel to preserve trailing newlines, so the printed command stays one line
-and opens exactly the named record.
+byte-for-byte beneath the heading, less its trailing newlines. A section is
+read back, and compared for duplicate and conflict, whitespace-trimmed: the same
+id with the same words up to leading and trailing whitespace is a duplicate. Words
+that are empty after that trimming are refused as an empty note and file nothing;
+in the tool's own shape, which stores the words exactly, words of whitespace only
+are stored, and only no words at all is refused.
+An append to a session with no file refuses with the remedy verb, and appends
+only after that `open`. Nothing appears beside the file but the store's lock
+(below): no `entries/`, no `log.jsonl`, no index. The duplicate and conflict
+rules below read the section instead of an entry file.
+
+**An append is one critical section.** Reading what the entry id already
+holds, deciding duplicate, conflict or new, and writing happen holding an
+exclusive lock on the store, `<store>/.cairn.lock`, taken through
+`internal/filelock` and waited for at most ten seconds. Of N appends of one
+entry id at once with different words exactly one writes and the rest refuse as
+conflicts; with the same words one writes and the rest answer `duplicate=true`.
+When the wait runs out the append refuses at exit 2 naming the process that
+holds the lock (its pid, host and start) and the next action, and writes
+nothing; the lock is released when that process exits. The lock file appears
+beside the records in either shape, is empty when free, is never deleted, and is
+neither a session file nor a shape marker; it appears only when a write takes it
+(a bench `open`, a refusal and the read verbs leave none; an own-shape `open`
+and an `append` take it). A store kept in git lists it in its ignore file with
+the one line `.cairn.lock`. When the store directory cannot be written the lock
+file cannot be made, and `append` refuses at exit 2 naming the cause ("cannot
+create the lock file ...: permission denied on <dir>") and the next action (make
+the directory writable, or write from an account that can). A link or a
+directory at `.cairn.lock` refuses the same way, naming the path and saying to
+move or remove it. The lock has a
+cost: taking and releasing it writes and syncs its holder note twice, so an
+append takes about twice as long as it would with no lock on a disk whose sync
+is slow, and appends to one store take turns whichever sessions they name, so a
+burst of concurrent appends takes several times as long. The lock serialises
+writers on ONE machine. Two machines writing one store synced through git are
+outside it: each appends to its own session file, and concurrent appends to the
+same session from two machines conflict in git, which is visible. `index` and
+`receipt` read the dated sections; they see a session as soon as `open` has
+made its file. Their byte counts measure the whitespace-trimmed section body,
+matching duplicate detection; they do not reconstruct the original append's
+trailing newlines. The flat format stores no publication policy, so receipts
+print `publish=unknown`, and it stores a source only in the header `open` writes:
+`open --source <ptr>` prints the pointer it recorded, an `append` with no
+`--source` carries it, and `receipt` and `index` report it. A section stores no
+pointer of its own, so what an `append` and its receipt print is the session's
+(`source=-` for a hand-kept record with no header pointer). Ordinary prose without
+machine-form entry headings is not an indexed entry. Invalid stamps, invalid
+entry identifiers and duplicate entry headings refuse rather than produce an
+ambiguous receipt. The coverage ledger counts the session files of the store's
+shape.
+
+**A refusal names the remedy verb whole** — `open first: nova-cairn open --store
+<dir> --session <id> --publish <policy>` — rather than a verb the reader must
+reconstruct. The remedy quotes the caller's store and session for a POSIX shell.
+Control bytes use octal decoding inside a subshell with a sentinel to preserve
+trailing newlines, so the printed command stays one line and opens exactly the
+named record, in the shape the store already has. Where that open would itself be refused (a
+`log.jsonl` that is a link, say), the append repeats the open's refusal and its
+own next command instead.
+
+The lifecycle of a store (shape, open, append, duplicate, conflict, refusal) is
+modelled in `tla/CairnStore.tla`: one shape per store, an entry id maps to one
+text (append is three steps by concurrent writers on one machine: take the lock,
+read and decide, write; without the lock two writers both write), and append
+never creates a session. Outside the model: torn writes, an older-version writer,
+and two machines. The reserved name is outside the
+model, whose sessions are an abstract set of ids.
 
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
 --file <path|->) [--source <ptr>] --publish <policy>` files the friend's
@@ -67,7 +211,7 @@ chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an
 RFC 3339 UTC replay for tests), the stable entry/session identifiers and
 the source pointers, which are recorded and never opened. An append with no
 `--source` carries the session's `open --source`, read back from the open
-record in `log.jsonl`; a log that exists and cannot be read, or an open record
+record in `log.jsonl` (in a bench store, from the header `open` wrote); a log or a bench header that exists and cannot be read, or an open record
 for the session that does not decode, refuses at exit 2 naming the log before
 anything is written, because corrupt provenance never reads as none. So the entry, its index row and its receipt name where
 it came from; every line prints `source=<ptr>`, and `source=-` is an entry with
@@ -94,7 +238,8 @@ at exit 2; an existing empty store or session is a successful empty index.
 Every listing takes `--max` (default 20, 0 prints all) and
 prints one `MORE` line with its remedy; the count is never capped and the
 `INDEX COVERAGE sessions=<n> entries=<n>` line carries the total whether
-the run passed or failed.
+the run passed or failed. The store's directory is read once per verb, not
+once per record.
 
 **`receipt --store <dir> --session <id> --entry <id>` names what was
 preserved for one entry**: its stamp, source pointers, size and the same
@@ -122,8 +267,8 @@ New regression cases must demonstrate the defect before the repair.
 9. `TestAppendToTheBenchFileRetriesAsADuplicate` — the duplicate rule reads the bench section instead of an entry file: a retry of the same request is `duplicate=true` and adds no second section.
 10. `TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID` — the conflict rule reads the bench section instead of an entry file: the same entry id carrying different prose is a conflict.
 11. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
-12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataOrderingAndNestedPrecedence` checks ordering, metadata and the shared coverage count.
-13. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
+12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataAndOrdering` checks ordering, metadata and the shared coverage count.
+13. `TestMixedShapeStoreIsRefusedByEveryVerb` — a store holding a top-level `<id>.md` together with `sessions/`, `entries/` or `log.jsonl` is refused by `open`, `append`, `index` and `receipt` with one line naming the operation, the cause, the paths of each shape and the next action, and nothing is written. `TestMixedShapeMessageNamesThePathsOfEachShape` fixes the wording; `TestStoreShapeFromContents` fixes the shape rule.
 14. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`). `TestAppendOpenRemedyRoundTripsThroughShell` executes the printed command through a POSIX shell and verifies the exact store and session.
 15. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
 16. `TestAppendViaFileAndStdinKeepsExactBytes` — words named by `--file <path|->`, from a file or from stdin, are filed byte-for-byte.
@@ -145,3 +290,24 @@ New regression cases must demonstrate the defect before the repair.
 31. `TestReadCommandsRefuseMissingStoreAndSession` — absent inputs refuse, while existing empty stores and sessions succeed.
 32. `TestFlatReadersRefuseCorruptAndAmbiguousHeadings` — invalid stamps, invalid identifiers and duplicate entry headings refuse.
 33. `TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct` — ordinary prose is preserved without inventing entries.
+34. `TestBenchStoreOpenThenAppendKeepsTheBenchShape` — on a bench store holding several sessions and none for a new one, `append` refuses with the `open` remedy, `open` creates `<id>.md` and nothing else (the exact directory listing is asserted), and the next `append` lands the dated section with no `sessions/`, `entries/` or `log.jsonl`.
+35. `TestBenchOpenWritesTheHeader` — the header is the title line, the session line with the open stamp, and the `Source:` line when given; a source never forms a section heading.
+36. `TestBenchOpenTwiceIsANoOp` — a second `open` changes nothing.
+37. `TestBenchAppendBeforeOpenRefusesWithTheRemedy` and `TestBenchLifecycleDuplicateAndConflict` — the refusal names the remedy and writes nothing; after `open`, the same id with the same words is a duplicate and the same id with different words is a conflict.
+38. `TestBenchIndexAndReceiptSeeTheOpenedSession` — `index`, `receipt` and the coverage ledger see a session as soon as `open` has made its file.
+39. `TestEmptyAndAbsentStoresGetTheOwnShape` and `TestEmptyStoreOpenGetsTheOwnShapeAtTheCLI` — an empty or absent store directory gets the tool's own layout.
+40. `TestBenchStoreOpenRemedyKeepsTheBenchShape` and `TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb` — the same behaviour at the command line: exit codes, one-line refusals, the listing after each verb. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` runs the printed remedy on a bench store in the functional tier.
+41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.
+42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory and a link at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlinked own-shape marker is a marker.
+43. `TestBenchSourceIsRecordedInheritedAndReported` — on a bench store `open --source` prints the pointer it recorded, an `append` with no `--source` carries it, and `receipt` and `index` report it; a hand-kept record reports `source=-`; a source never forms a section.
+    `TestSessionSourceRefusesALinkAndAnUnreadableHeader` reads the header through the same check as every read of a record, and refuses a header that exists and cannot be read.
+44. `TestMixedShapeMessageNamesThePathsOfEachShape` and `TestIDRefusalsNameTheRuleBroken` — the mixed-store refusal names the paths of each shape and the next action in words, and prints no `mv`, `rm` or `find`; an identifier refusal names the rule broken (empty, over 128 bytes, a directory name, `..`, whitespace, a control character, a slash) and never echoes an over-long id whole.
+45. `TestCaseFoldedRecordNamesAreNotSessionFiles` — a file named `s1.MD` is not a session file: the store-wide readers skip it, and on a case-folding disk `open`, `append`, `receipt` and `index --session` refuse naming the fold and write nothing through it (on a case-keeping disk `open s1` creates `s1.md` beside it; the test probes the disk and asserts the outcome for whichever it is).
+46. `TestStoreHoldingOnlyReadmeIsAnEmptyStore` and `TestConcurrentBenchOpensWriteOneHeader` — a store holding only a `README.md` is an empty store in the tool's own shape; many concurrent `open`s of one new bench session write exactly one header and leave no temporary file. `TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile` (functional tier) builds the binary and runs the printed remedy through `sh -c` with it first on `PATH`.
+49. `TestNoVerbFollowsASymbolicLink` — a link at the store as given, `sessions/`, `entries/`, an entry directory, `log.jsonl` or a record, in either shape, is refused with the one text and nothing is written where it leads. `TestARecordSwappedForALinkNeverCarriesAWriteOutside`, `TestAnAncestorOfTheStoreSwappedUnderAppendsLosesAndInventsNothing` and `TestAStoreSwappedForALinkNeverCarriesAWriteOutside` run the swaps of a record, of an ancestor and of the store while a fixed number of appends run, in a temp directory each; `TestADirectoryThatChangesAfterItWasCheckedIsRefused` fixes the check on a directory looked at earlier; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs one store named relative, absolute and in other letter cases.
+50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
+51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
+    `TestADamagedRecordIsFlaggedByIndexAndRefusedByReceiptAndAppend` fixes the two kinds of damage, `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` what a bench index skips, `TestAnOwnShapeDamagedEntryRefusesTheIndex` and `TestAnOwnShapeSessionThatIsADirectoryOrALinkIsFlagged` the own shape, and `TestARefusedOwnAppendStoresNothing` that a refused own-shape append (a record or `log.jsonl` that is a link, a directory or read-only, `entries/` a link) leaves no entry file, no pointer line and no log line: the record and the log are opened before the entry is stored, and the pointer and the log line are written through those handles. `TestAppendForAnUnopenedSessionRepeatsTheRefusalOfOpen` fixes that an append for an unopened session repeats the refusal of an open that would be refused instead of suggesting it.
+52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.
+53. `TestAppendRefusesNamingTheHolderWhenTheLockStaysHeld`, `TestAppendWaitsForTheHolderAndThenReadsWhatItWrote`, `TestAppendRefusesNamingTheCauseInAReadOnlyStoreDirectory` and `TestTheLockFileIsCreatedByAWriteAndByNothingElse` — with an injected clock, so no real wait: a held lock refuses after the bounded wait naming the holder, and the wait ends when the holder lets go; a read-only store directory refuses naming the cause; the lock file appears only by a write. `TestWordsEmptyAfterTrimmingAreRefusedOnTheBenchShape` — words empty after trimming are refused as an empty note. `TestWhitespaceOnlyWordsAreStoredInTheOwnShapeAndNoWordsAreRefused` — the own shape stores whitespace-only words exactly and refuses only no words. `TestABadLockFileIsRefusedWithMoveOrRemoveNotWritable` — a link or a directory at the lock's name refuses saying to move or remove it, not to make the directory writable. `TestALockRefusalIsNotSentToTheHelpBanner` — a lock refusal is one line at exit 2 and does not end by pointing at the help.
+54. `TestConcurrentAppendsOfOneIDWithDifferentWordsHaveOneWinner`, `TestConcurrentAppendsOfOneIDWithTheSameWordsWriteOnce` and `TestConcurrentProcessAppendsOfOneIDHaveOneWinner` (functional tier) — of twelve concurrent appends of one id, in goroutines and in real processes for twelve rounds, in each shape, exactly one writes (different words) or one writes and eleven are duplicates (same words).

@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
@@ -52,4 +54,62 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The remedy the refusal prints, run through a shell with the built binary
+// first on PATH, opens the named session as <id>.md on a bench store and
+// creates nothing else.
+func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	bin := builtBinary(t, root)
+	store := filepath.Join(root, "cairns")
+	if err := os.Mkdir(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if err := os.WriteFile(filepath.Join(store, id+".md"), []byte("# "+id+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, _, errOut := runCode("", "append", "--store", store, "--session", "NEW", "--entry", "e", "--text", "note", "--publish", "manual")
+	_, remedy, ok := strings.Cut(errOut, "open first: ")
+	if code != 2 || !ok {
+		t.Fatalf("append=%d %q", code, errOut)
+	}
+	remedy = strings.TrimSuffix(remedy, "; run: nova-cairn help\n")
+	cmd := exec.Command("/bin/sh", "-c", remedy)
+	cmd.Dir = root
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.HasPrefix(string(out), "OPEN OK session=NEW ") {
+		t.Fatalf("the remedy %q: %v: %s", remedy, err, out)
+	}
+	entries, err := os.ReadDir(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if !reflect.DeepEqual(got, []string{"NEW.md", "a.md", "b.md"}) {
+		t.Fatalf("store after the remedy: %v", got)
+	}
+	// And the append that refused now lands.
+	runOK(t, "", "append", "--store", store, "--session", "NEW", "--entry", "e", "--text", "note", "--publish", "manual")
+}
+
+// builtBinary builds nova-cairn into <root>/bin and returns that directory.
+func builtBinary(t *testing.T, root string) string {
+	t.Helper()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(bin, "nova-cairn"), ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v: %s", err, out)
+	}
+	return bin
 }
