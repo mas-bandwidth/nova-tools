@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -88,7 +89,7 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"1. t1 pr=no-pr order=10", "2. t2 pr=nova-tools#2 order=20", "--dry-run", "MERGE-NOTE by=rowan at=1 the moves API changed", "BLOCKED cross-stream"} {
+	for _, want := range []string{"1. t1 pr=no-pr head=- ci=- behind=- order=10", "2. t2 pr=nova-tools#2 head=- ci=- behind=- order=20", "--dry-run", "MERGE-NOTE by=rowan at=1 the moves API changed", "BLOCKED cross-stream"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("brief lacks %q:\n%s", want, body)
 		}
@@ -104,7 +105,7 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if o := pass(5 * time.Minute); len(pushed) != 1 || strings.Contains(o, "LAND-SLOW") {
 		t.Fatalf("pass 2: pushed=%d out=%s", len(pushed), o)
 	}
-	if body, _ := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-1", cardRec, now); !strings.Contains(body, "2. t2 pr=nova-tools#2 order=20 merging_for=3m0s") {
+	if body, _ := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-1", cardRec, now); !strings.Contains(body, "2. t2 pr=nova-tools#2 head=- ci=- behind=- order=20 merging_for=3m0s") {
 		t.Fatalf("brief after the move's stamp:\n%s", body)
 	}
 	// Pass 3 at eleven: LAND-SLOW, one note; pass 4 at twelve: the line
@@ -375,5 +376,92 @@ func TestLandWatchCrossStreamWaitsOnTheOtherStreamsSentinel(t *testing.T) {
 	c.HSet(ctx, "task:beta-work:sentinel", "state", "landed", "where", "landed")
 	if pass(); len(*pushedp) != 3 || (*pushedp)[2].ID != "merge-alpha-2" {
 		t.Fatalf("after the sentinel landed: %+v", *pushedp)
+	}
+}
+
+// TestMergeBriefCarryHeadCIBehind (nova-tools #4385): merge card brief
+// carries PR head, CI word at head, and commits behind dev per member.
+func TestMergeBriefCarryHeadCIBehind(t *testing.T) {
+	t.Parallel()
+	mr := testutil.StartStore(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	now := time.UnixMilli(1700000000000)
+	const s = "swarm: cards"
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging",
+		redis.Z{Score: 10, Member: "t1"},
+		redis.Z{Score: 20, Member: "t2"},
+		redis.Z{Score: 30, Member: "t3"},
+		redis.Z{Score: 40, Member: "t4"},
+	)
+	// t1 has no PR -> pr=no-pr head=- ci=- behind=1 (inherited from stream)
+	c.HSet(ctx, "task:t1", "paths", "a")
+
+	// t2 has PR with head, ci, behind in pr:<repo>:<n>
+	c.HSet(ctx, "task:t2", "pr", "nova-tools#2", "paths", "b")
+	c.HSet(ctx, "pr:nova-tools:2", "head", "abcdef1234567890", "ci", "green", "behind", "3")
+
+	// t3 has PR whose CI is looked up in ci:<repo>:<head>
+	c.HSet(ctx, "task:t3", "pr", "nova-tools#3", "paths", "c")
+	c.HSet(ctx, "pr:nova-tools:3", "head", "9876543210abcdef")
+	c.HSet(ctx, "ci:nova-tools:9876543210abcdef", "ci", "pending")
+
+	// t4 has PR with CI red, behind from stream-refresh duty record
+	c.HSet(ctx, "task:t4", "pr", "#4", "paths", "d")
+	c.HSet(ctx, "pr:nova-tools:4", "head", "1122334455667788", "ci", "red")
+
+	// Stream refresh record with behind
+	c.HSet(ctx, "stream-refresh:"+s, "behind", "1")
+
+	cardRec := map[string]string{"stream": s, "repo": "mas-bandwidth/nova-tools", "ref": "dev"}
+	body, err := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-1", cardRec, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantT1 := "1. t1 pr=no-pr head=- ci=- behind=1 order=10"
+	wantT2 := "2. t2 pr=nova-tools#2 head=abcdef12 ci=green behind=3 order=20"
+	wantT3 := "3. t3 pr=nova-tools#3 head=98765432 ci=pending behind=1 order=30"
+	wantT4 := "4. t4 pr=#4 head=11223344 ci=red behind=1 order=40"
+
+	for _, want := range []string{wantT1, wantT2, wantT3, wantT4} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("brief lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestMergeBriefBehindFromBaseSHAMatchingDevTip (nova-tools #4385):
+// when stream-refresh duty record is absent, behind is derived from
+// base_sha versus the dev tip seen in land:<repo>:<base>:tip or ci:pool.
+func TestMergeBriefBehindFromBaseSHAMatchingDevTip(t *testing.T) {
+	t.Parallel()
+	mr := testutil.StartStore(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	now := time.UnixMilli(1700000000000)
+	const s = "swarm: cards"
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 10, Member: "t1"})
+	c.HSet(ctx, "task:t1", "pr", "nova-tools#1", "paths", "a")
+	c.HSet(ctx, "pr:nova-tools:1", "head", "feedface1234", "ci", "green")
+
+	// Set base_sha on land:swarm: cards matching dev tip
+	const devTip = "c0ffee123456"
+	c.HSet(ctx, "land:"+s, "base_sha", devTip)
+	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", devTip)
+
+	cardRec := map[string]string{"stream": s, "repo": "mas-bandwidth/nova-tools", "ref": "dev"}
+	body, err := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-1", cardRec, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantT1 := "1. t1 pr=nova-tools#1 head=feedface ci=green behind=0 order=10"
+	if !strings.Contains(body, wantT1) {
+		t.Fatalf("brief lacks %q:\n%s", wantT1, body)
 	}
 }

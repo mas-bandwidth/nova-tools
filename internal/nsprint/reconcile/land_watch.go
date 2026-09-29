@@ -80,8 +80,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
@@ -116,6 +118,9 @@ func LandGenKey(stream string) string     { return "land:gen:" + stream } // the
 type MergeMember struct {
 	Task      string
 	PR        string
+	Head      string
+	CI        string
+	Behind    string
 	Paths     string  // the record's PATHS
 	Order     float64 // the ws:<stream>:merging score: the work order
 	MergingAt time.Time
@@ -663,11 +668,23 @@ func MergeBrief(m MergeCard) string {
 		if pr == "" {
 			pr = "no-pr"
 		}
+		head := short8(mm.Head)
+		if head == "" {
+			head = "-"
+		}
+		ci := mm.CI
+		if ci == "" {
+			ci = "-"
+		}
+		behind := mm.Behind
+		if behind == "" {
+			behind = "-"
+		}
 		age := "-"
 		if !mm.MergingAt.IsZero() && !m.Now.IsZero() {
 			age = m.Now.Sub(mm.MergingAt).Truncate(time.Second).String()
 		}
-		fmt.Fprintf(&b, "  %d. %s pr=%s order=%.0f merging_for=%s\n", i+1, mm.Task, pr, mm.Order, age)
+		fmt.Fprintf(&b, "  %d. %s pr=%s head=%s ci=%s behind=%s order=%.0f merging_for=%s\n", i+1, mm.Task, pr, head, ci, behind, mm.Order, age)
 	}
 	b.WriteString("\nRules (all hard; nova-tools #4324):\n")
 	b.WriteString("- One branch per work stream, members in work order, ONE PR into " + m.Base + ", never one member at a time and never a member merged by hand: `gh pr merge` on a member is refused; members land only through nova-sprint land stream.\n")
@@ -996,9 +1013,273 @@ func MergeBriefFor(ctx context.Context, c redis.Cmdable, id string, rec map[stri
 			}
 		}
 	}
+
+	// Read PR records for head, ci, behind and stream records for behind.
+	pipe := c.Pipeline()
+	refreshCmd1 := pipe.HGetAll(ctx, "stream-refresh:"+streamName)
+	refreshCmd2 := pipe.HGetAll(ctx, "stream-refresh:"+repo+":"+slug)
+	refreshCmd4 := pipe.HGetAll(ctx, "stream-refresh:"+prkey.Name(repo)+":"+slug)
+	refreshCmd3 := pipe.HGetAll(ctx, "stream:refresh:"+streamName)
+	landStreamCmd := pipe.HGetAll(ctx, "land:"+streamName)
+	landRepoSlugCmd := pipe.HGetAll(ctx, "land:"+repo+":"+slug)
+	landBareSlugCmd := pipe.HGetAll(ctx, "land:"+prkey.Name(repo)+":"+slug)
+	tipCmd1 := pipe.HGet(ctx, civerdict.TipKey(repo, base), "sha")
+	tipCmd2 := pipe.HGet(ctx, civerdict.TipKey(prkey.Name(repo), base), "sha")
+	procCICmd := pipe.HGetAll(ctx, "proc:ci")
+	ciPoolCmd := pipe.ZRevRange(ctx, "ci:pool", 0, 10)
+
+	type memberPRInfo struct {
+		repo string
+		num  string
+		cmd  *redis.SliceCmd
+	}
+	prCmds := make([]memberPRInfo, len(st.members))
+	for i, m := range st.members {
+		mRepo, mNum, ok := parseMemberPR(m.PR, repo)
+		if ok {
+			prCmds[i] = memberPRInfo{
+				repo: mRepo,
+				num:  mNum,
+				cmd:  pipe.HMGet(ctx, prkey.KeyText(mRepo, mNum), "head", "ci", "ci_sha", "base_sha", "behind"),
+			}
+		}
+	}
+	_ = execPipe(ctx, pipe)
+
+	var streamBehind, streamBaseSHA string
+	readStreamFields := func(m map[string]string) {
+		if streamBehind == "" {
+			if b := strings.TrimSpace(m["behind"]); b != "" {
+				streamBehind = b
+			} else if b := strings.TrimSpace(m["commits_behind"]); b != "" {
+				streamBehind = b
+			}
+		}
+		if streamBaseSHA == "" {
+			if s := strings.TrimSpace(m["base_sha"]); s != "" {
+				streamBaseSHA = s
+			}
+		}
+	}
+	readStreamFields(refreshCmd1.Val())
+	readStreamFields(refreshCmd2.Val())
+	readStreamFields(refreshCmd4.Val())
+	readStreamFields(refreshCmd3.Val())
+	readStreamFields(landStreamCmd.Val())
+	readStreamFields(landRepoSlugCmd.Val())
+	readStreamFields(landBareSlugCmd.Val())
+
+	devTip := strings.TrimSpace(tipCmd1.Val())
+	if devTip == "" {
+		devTip = strings.TrimSpace(tipCmd2.Val())
+	}
+	if devTip == "" {
+		procCI := procCICmd.Val()
+		if s := strings.TrimSpace(procCI["tip"]); s != "" {
+			devTip = s
+		} else if s := strings.TrimSpace(procCI["sha"]); s != "" {
+			devTip = s
+		} else if s := strings.TrimSpace(procCI["head"]); s != "" {
+			devTip = s
+		}
+	}
+	if devTip == "" {
+		for _, item := range ciPoolCmd.Val() {
+			if r, sha, ok := strings.Cut(item, ":"); ok {
+				if prkey.Name(r) == prkey.Name(repo) && sha != "" {
+					devTip = sha
+					break
+				}
+			}
+		}
+	}
+	if devTip == "" {
+		for _, info := range prCmds {
+			if info.cmd != nil {
+				vals := info.cmd.Val()
+				if len(vals) > 3 && vals[3] != nil {
+					if s := strings.TrimSpace(vals[3].(string)); s != "" {
+						devTip = s
+						break
+					}
+				}
+			}
+		}
+	}
+
+	type resolvedMember struct {
+		head    string
+		ci      string
+		behind  string
+		needsCI bool
+		ciRepo  string
+	}
+	resMembers := make([]resolvedMember, len(st.members))
+	for i := range st.members {
+		info := prCmds[i]
+		if info.cmd == nil {
+			b := streamBehind
+			if b == "" && streamBaseSHA != "" && devTip != "" && streamBaseSHA == devTip {
+				b = "0"
+			}
+			if b == "" {
+				b = "-"
+			}
+			resMembers[i] = resolvedMember{head: "-", ci: "-", behind: b}
+			continue
+		}
+		vals := info.cmd.Val()
+		var head, ci, ciSHA, baseSHA, behind string
+		if len(vals) > 0 && vals[0] != nil {
+			head, _ = vals[0].(string)
+		}
+		if len(vals) > 1 && vals[1] != nil {
+			ci, _ = vals[1].(string)
+		}
+		if len(vals) > 2 && vals[2] != nil {
+			ciSHA, _ = vals[2].(string)
+		}
+		if len(vals) > 3 && vals[3] != nil {
+			baseSHA, _ = vals[3].(string)
+		}
+		if len(vals) > 4 && vals[4] != nil {
+			behind, _ = vals[4].(string)
+		}
+
+		head = strings.TrimSpace(head)
+		ci = strings.TrimSpace(ci)
+		ciSHA = strings.TrimSpace(ciSHA)
+		baseSHA = strings.TrimSpace(baseSHA)
+		behind = strings.TrimSpace(behind)
+
+		if behind == "" {
+			if streamBehind != "" {
+				behind = streamBehind
+			} else {
+				bSHA := baseSHA
+				if bSHA == "" {
+					bSHA = streamBaseSHA
+				}
+				if bSHA != "" && devTip != "" && bSHA == devTip {
+					behind = "0"
+				}
+			}
+		}
+		if behind == "" {
+			behind = "-"
+		}
+
+		if ciSHA != "" && head != "" && ciSHA != head {
+			ci = ""
+		}
+
+		needsCI := false
+		if ci == "" && head != "" && head != "-" {
+			needsCI = true
+		}
+		if head == "" {
+			head = "-"
+		}
+
+		resMembers[i] = resolvedMember{
+			head:    head,
+			ci:      ci,
+			behind:  behind,
+			needsCI: needsCI,
+			ciRepo:  info.repo,
+		}
+	}
+
+	var anyNeedsCI bool
+	for _, rm := range resMembers {
+		if rm.needsCI {
+			anyNeedsCI = true
+			break
+		}
+	}
+	if anyNeedsCI {
+		pipe2 := c.Pipeline()
+		type ciReq struct {
+			idx int
+			cmd *redis.MapStringStringCmd
+		}
+		var ciReqs []ciReq
+		for i, rm := range resMembers {
+			if rm.needsCI {
+				ciReqs = append(ciReqs, ciReq{
+					idx: i,
+					cmd: pipe2.HGetAll(ctx, "ci:"+rm.ciRepo+":"+rm.head),
+				})
+				if prkey.Name(rm.ciRepo) != rm.ciRepo {
+					ciReqs = append(ciReqs, ciReq{
+						idx: i,
+						cmd: pipe2.HGetAll(ctx, "ci:"+prkey.Name(rm.ciRepo)+":"+rm.head),
+					})
+				}
+			}
+		}
+		_ = execPipe(ctx, pipe2)
+		for _, req := range ciReqs {
+			if resMembers[req.idx].ci != "" && resMembers[req.idx].ci != "-" {
+				continue
+			}
+			ciMap := req.cmd.Val()
+			if len(ciMap) > 0 {
+				if w := strings.TrimSpace(ciMap["ci"]); w != "" {
+					resMembers[req.idx].ci = w
+				} else if v := strings.ToUpper(strings.TrimSpace(ciMap["verdict"])); v == "OK" {
+					resMembers[req.idx].ci = "green"
+				} else if v := strings.ToUpper(strings.TrimSpace(ciMap["final"])); v == "OK" {
+					resMembers[req.idx].ci = "green"
+				} else if v == "FAIL" {
+					resMembers[req.idx].ci = "red"
+				}
+			}
+		}
+	}
+
+	for i := range resMembers {
+		if resMembers[i].ci == "" {
+			resMembers[i].ci = "-"
+		}
+		st.members[i].Head = resMembers[i].head
+		st.members[i].CI = resMembers[i].ci
+		st.members[i].Behind = resMembers[i].behind
+	}
+
 	card := MergeCard{ID: id, Kind: string(LandMergeKind), Stream: streamName, Slug: slug, Repo: repo, Base: base, Sprint: sprint,
 		Paths: strings.Join(paths, " "), Members: st.members, Notes: append(append([]string(nil), st.notes...), sprintNotes...), Now: now}
 	return MergeBrief(card), nil
+}
+
+func parseMemberPR(pr, defaultRepo string) (repo, num string, ok bool) {
+	pr = strings.TrimSpace(pr)
+	if pr == "" || pr == "no-pr" {
+		return "", "", false
+	}
+	repo = defaultRepo
+	if i := strings.LastIndex(pr, "/pull/"); i >= 0 {
+		parts := strings.Split(strings.Trim(pr[:i], "/"), "/")
+		if len(parts) >= 2 {
+			repo = parts[len(parts)-2] + "/" + parts[len(parts)-1]
+		}
+		num = strings.Trim(pr[i+len("/pull/"):], "/")
+	} else if left, right, cut := strings.Cut(pr, "#"); cut {
+		if left != "" {
+			repo = left
+		}
+		num = right
+	} else {
+		num = pr
+	}
+	num = strings.TrimSpace(num)
+	if num == "" {
+		return "", "", false
+	}
+	if _, err := strconv.Atoi(num); err != nil {
+		return "", "", false
+	}
+	return prkey.Name(repo), num, true
 }
 
 func execPipe(ctx context.Context, pipe redis.Pipeliner) error {
