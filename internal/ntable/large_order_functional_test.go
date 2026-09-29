@@ -38,7 +38,7 @@ func largeOrderFixture(t *testing.T, n int) (*redis.Client, []string) {
 
 func TestLargeRowOrdersKeepRanksTripsAndReceipts(t *testing.T) {
 	t.Parallel()
-	for _, n := range []int{255, 256, 257, 4100} {
+	for _, n := range []int{255, 256, 257, 4100, 4500, 5000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			t.Parallel()
 			c, rows := largeOrderFixture(t, n)
