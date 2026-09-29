@@ -58,6 +58,12 @@ type CheckReport struct {
 // reported: in flight when it is younger than the grace, cut (a violation)
 // when it is older.
 func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Snapshot, error) {
+	return st.check(ctx, reads, true)
+}
+
+// check is Check, with the log's rules (13, 14) read whole or left to a
+// caller that holds them itself as the log grows (the property test).
+func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckReport, *sprint.Snapshot, error) {
 	ctx = withBudget(ctx)
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -103,7 +109,7 @@ func (st *Store) Check(ctx context.Context, reads int) (CheckReport, *sprint.Sna
 			ops = pendingOf(*pending, st.Names)
 		}
 		rep.Violations = sprint.Check(s, ops)
-		if pending == nil {
+		if pending == nil && streams {
 			lines, err := st.logUpTo(ctx, logTail)
 			if err != nil {
 				return rep, nil, err

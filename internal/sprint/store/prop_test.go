@@ -226,28 +226,30 @@ func (b *propBackend) Acquire(ctx context.Context, gen uint64, op OpRecord) (boo
 
 // propRun is one run: the store, the clock, and what the checks remember.
 type propRun struct {
-	cfg       propConfig
-	m         *Mem
-	st        *Store
-	ctx       context.Context
-	now       time.Time
-	ids       []string           // every primary admitted, in order
-	tried     map[string]bool    // every id an add named: a cut add may land at a later repair
-	score     map[string]float64 // each primary's score, as admitted or ranked
-	ranked    map[string]bool    // the primaries a rank since the last quiet check ranks
-	log       []string           // the verbs run
-	cut       string             // the store call failing now
-	stopAfter int                // the parts of the tick that take the fence before the machine stops (-1 none)
-	rng       *rand.Rand         // the fair coordinator's choices
-	known     map[string]int     // the known findings met, by name
-	stats     map[string]int     // what the run did, for the log
-	acked     map[string]bool    // the subjects the coordinator acknowledged a judgment on
-	seq       int
-	errs      []error
-	tickRes   *TickResult
-	cutUsed   bool
-	logAfter  string                 // the last log line the check has read
-	raised    map[string]sprint.Note // the judgments the log raised, by id
+	cfg        propConfig
+	m          *Mem
+	st         *Store
+	ctx        context.Context
+	now        time.Time
+	ids        []string           // every primary admitted, in order
+	tried      map[string]bool    // every id an add named: a cut add may land at a later repair
+	score      map[string]float64 // each primary's score, as admitted or ranked
+	ranked     map[string]bool    // the primaries a rank since the last quiet check ranks
+	log        []string           // the verbs run
+	cut        string             // the store call failing now
+	stopAfter  int                // the parts of the tick that take the fence before the machine stops (-1 none)
+	rng        *rand.Rand         // the fair coordinator's choices
+	known      map[string]int     // the known findings met, by name
+	stats      map[string]int     // what the run did, for the log
+	acked      map[string]bool    // the subjects the coordinator acknowledged a judgment on
+	seq        int
+	errs       []error
+	tickRes    *TickResult
+	cutUsed    bool
+	logAfter   string                  // the last log line the check has read
+	inboxAfter string                  // the last inbox entry the check has read
+	raised     map[string]sprint.Note  // the judgments the log raised, by id
+	replay     map[string]sprint.Place // the log replayed so far (rule 13)
 }
 
 var errCut = errors.New("cut by the test")
@@ -763,7 +765,7 @@ func (r *propRun) check(i int, a pAct) *propFail {
 	fail := func(kind, format string, args ...any) *propFail {
 		return &propFail{Step: i, Kind: kind, Detail: fmt.Sprintf(format, args...)}
 	}
-	rep, s, err := r.st.Check(r.ctx, 1)
+	rep, s, err := r.st.check(r.ctx, 1, false) // rules 13 and 14 held below, as the log grows
 	if err != nil {
 		return fail("error", "check: %v", err)
 	}
@@ -812,14 +814,22 @@ func (r *propRun) check(i int, a pAct) *propFail {
 	// lateness the machine closed while its cause stands is a finding.
 	if !pending {
 		if r.raised == nil {
-			r.raised = map[string]sprint.Note{}
+			r.raised, r.replay = map[string]sprint.Note{}, map[string]sprint.Place{}
 		}
+		// The log's new lines: the lateness rule, the replay (rule 13) and
+		// the agreement with the inbox's new entries (rule 14), each held
+		// as the log grows.
+		var logged []sprint.Note
 		for {
 			lines, ids, err := r.st.B.LogSince(r.ctx, r.logAfter, logPage)
 			if err != nil {
 				return fail("error", "log: %v", err)
 			}
 			for _, l := range lines {
+				r.replay = sprint.ReplayOnto(r.replay, l)
+				if l.Note != nil && l.Verb != "updated" {
+					logged = append(logged, *l.Note)
+				}
 				if l.Note != nil && l.Note.Kind == sprint.Judgment {
 					r.raised[l.Note.ID] = *l.Note
 				}
@@ -836,6 +846,23 @@ func (r *propRun) check(i int, a pAct) *propFail {
 			if len(ids) < logPage {
 				break
 			}
+		}
+		if v := sprint.PlaceViolations(s, r.replay); len(v) > 0 {
+			return fail("invariant", "%s", v[0])
+		}
+		inbox, ids, err := r.st.B.NotesSince(r.ctx, r.inboxAfter, 1<<30)
+		if err != nil {
+			return fail("error", "inbox: %v", err)
+		}
+		if len(ids) > 0 {
+			r.inboxAfter = ids[len(ids)-1]
+		}
+		var asLines []sprint.Line
+		for i := range logged {
+			asLines = append(asLines, sprint.Line{Note: &logged[i]})
+		}
+		if v := sprint.StreamViolations(asLines, inbox); len(v) > 0 {
+			return fail("invariant", "%s", v[0])
 		}
 	}
 	// Scores change only by rank.

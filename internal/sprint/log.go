@@ -96,18 +96,23 @@ type Place struct {
 func Replay(lines []Line) map[string]Place {
 	out := map[string]Place{}
 	for _, l := range lines {
-		if l.Kind != LineMove || l.Card == "" {
-			continue
-		}
-		k := l.Table + "/" + l.Card
-		if l.Removed {
-			delete(out, k)
-			continue
-		}
-		row, col, ok := strings.Cut(l.To, ":")
-		if !ok {
-			continue // a change of an unplaced card's fields
-		}
+		out = ReplayOnto(out, l)
+	}
+	return out
+}
+
+// ReplayOnto is the places after one more line: a replay held as the log
+// grows.
+func ReplayOnto(out map[string]Place, l Line) map[string]Place {
+	if l.Kind != LineMove || l.Card == "" {
+		return out
+	}
+	k := l.Table + "/" + l.Card
+	if l.Removed {
+		delete(out, k)
+		return out
+	}
+	if row, col, ok := strings.Cut(l.To, ":"); ok {
 		out[k] = Place{Row: row, Col: col, Gen: l.Gen}
 	}
 	return out
@@ -118,7 +123,12 @@ func Replay(lines []Line) map[string]Place {
 // hold a row's state and no card, aside). Judged only when no operation is
 // pending.
 func LogViolations(s *Snapshot, lines []Line) []Violation {
-	placed := Replay(lines)
+	return PlaceViolations(s, Replay(lines))
+}
+
+// PlaceViolations is rule 13 over an observed state and the places its
+// log replays to.
+func PlaceViolations(s *Snapshot, placed map[string]Place) []Violation {
 	var out []Violation
 	seen := map[string]bool{}
 	for _, t := range []*Table{s.Work, s.Readers, s.Merge, s.Fleet} {
