@@ -485,3 +485,63 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+
+## Atomic batches across tables
+
+`MCMultiTableBatch.tla` is a finite schema-2 model over three tables, two physical
+member identities, two scopes, one application field, bounded revisions and at
+most four scenario steps. `multitablebatch` declares 12 positive/refusal/replay
+scenarios and four deliberate faulty variants. The latter must fail exactly
+`RefusalFullImageUnchanged`, `AcceptedPrestateGuards`,
+`SharedMemberRevisionSemantics` and `ReplayIsIdentity`, respectively.
+
+The scenarios cover three-table commit, one shared record with two placements,
+no-op revisions, stale last-table guards, shared field/place guards, duplicate
+physical members, independent operation scopes, changed/reordered request bytes,
+receipt-bound refusal and historical replay after a table becomes unavailable.
+Normal scenario progress uses weak fairness; counterexamples exercise concrete
+incorrect transitions rather than weakening the correct operation.
+
+Physical member identities abstract prefix-plus-ID resolution. Request-byte
+identities are distinct symbolic values; receipt size is a separate bounded
+unit count, not an assertion about JSON encoding length. Drop/recreate abstract
+only table availability: lifecycle cleanup, revision/event increments, numeric
+scores, Redis types and ACLs are outside this model. Runtime functional tests
+cover those store concerns separately. These finite scenarios and named fault
+witnesses do not establish an implementation refinement proof.
+
+The repository runner records this group using `make tlc` with
+`TLC_GROUP=multitablebatch`, an explicit installed jar and an owned output path.
+
+On 2026-09-29, the standalone repository runner checked all 16 declarations
+from source commit `f9024299ace7e167f93f096ac3c4d44ae636a730`, after integrating
+dev `abdc7a23026316fc4e31435c75ff5df9d959eb54`, in an owned Linux container.
+Twelve normal scenarios passed and all four faulty variants violated their
+exact declared action properties. `RUNS.tsv` contains their measured per-case
+input fingerprints, the `linux-amd64` platform and actual logical CPU count;
+the container was limited to two CPUs and 4 GiB, with one TLC worker and a
+110-second group budget. The standalone runner SHA-256 was
+`0c3a9fd4f32c443f20b2eb204b83a5299fdfa1c70d685d87be57a59d37113e95`
+and the TLC jar SHA-256 was
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+All 4,439 archived source-file hashes matched before and after the checks.
+
+A separate owned Redis 8.0.5 container replayed six schema-1 runtime histories
+against the merged Lua SHA-256
+`382720351ec9037dc15833892c467e7db44c45695d686355b0e20a5f77aada31`.
+Five histories passed; the deliberate corrupt observation violated exactly
+`MatchesExecution`. This used the separately frozen decoder and models from
+`8fc37bcf7620695f5903891d8a5516b890fea035` (#4618), whose standalone binary
+SHA-256 was `b99c07886cb789e827b68579d33eb256e85371db102c4466304a098f4ad2d011`.
+The captured replay suite SHA-256 was
+`5adabdac125f9190929054dddc69cf82c5118bfaa77212ba7c1f665d6a68374e`.
+These histories check schema-1 behavior against the new Lua; they do not add a
+schema-2 implementation refinement claim. Full functional-tag runs of
+`internal/ntable` and `cmd/nova-table` passed 197 and 94 top-level tests,
+respectively, with no skips, in separate owned containers. All owned containers
+were removed after execution.
+
+The other 76 model records are retained unchanged from dev in the current
+per-case layout, for 92 records total. Their recorded outcomes, including the
+existing CardMachine/LandWatch bench debt, have not been relabeled or rerun.

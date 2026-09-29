@@ -63,6 +63,7 @@ func specLimits(t *testing.T) map[string]int {
 func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 	t.Parallel()
 	goSide := map[string]int{
+		limitNameMultiTables:  LimitMultiTables,
 		limitNameManifest:     LimitManifestBytes,
 		limitNameChanged:      LimitChangedEntries,
 		limitNameGuardEntries: LimitGuardEntries,

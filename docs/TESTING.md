@@ -112,3 +112,15 @@ the lists now match the tree.
 `TestEveryAllowlistIsReadThroughTheOneHelper` holds the table's promise: every
 list file there is loaded through the helper, and nothing anywhere in the tree
 reads one with `os.ReadFile`, `os.Open` or `readFile`.
+
+## Atomic multi-table batch validation
+
+The multi-table acceptance gate includes a successful three-table operation;
+last-table stale guard and late type/permission refusals with the entire store
+image unchanged; one physical record with two placements and one member revision
+advance; conflicting physical-member entries; aggregate receipt-bound refusal;
+byte-identical replay with one recorded receipt; and compatibility with ordinary
+per-table reads. The bounded model includes positive multi-table traces and named
+reversed witnesses for early writes, a missed later guard, repeated member revision
+increments and duplicated replay effects. Passing the schema-1 model alone does
+not satisfy this gate.
