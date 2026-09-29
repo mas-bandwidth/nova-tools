@@ -111,9 +111,9 @@ func TestRefusalClaimsNoCauseItCannotProve(t *testing.T) {
 // as the diagnosis. The roots are still worked out for the coordinator rather than left to a
 // guess.
 func TestWalledRefusalOffersTheReadRootsAsOnePossibility(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
-	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
 	if err := os.WriteFile(cardPath, []byte("FAKE-EXEC-REFUSED /opt/sdk tool/bin/go\n"), 0o644); err != nil {

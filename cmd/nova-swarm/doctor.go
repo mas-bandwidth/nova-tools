@@ -65,20 +65,47 @@ func readVersionLine(path string) (string, error) {
 	return strings.TrimRight(line, "\r"), nil
 }
 
+// doctorDeps packages the seams for resolving and reading binaries.
+type doctorDeps struct {
+	lookPath    func(string) (string, error)
+	homeDir     func() (string, error)
+	readVersion func(string) (string, error)
+}
+
+func defaultDoctorDeps() doctorDeps {
+	return doctorDeps{
+		lookPath:    doctorLookPath,
+		homeDir:     doctorHomeDir,
+		readVersion: doctorReadVersion,
+	}
+}
+
 // resolveDoctorBinaries answers the two questions in one place: which nova-swarm comes
 // first on PATH, and where the literal ~/.local/bin copy is. The overrides are the verb's
 // --path and --local; empty means resolve. A name that cannot be resolved is the empty
 // string, which the comparison reads as "nothing to compare" rather than as a mismatch.
 func resolveDoctorBinaries(pathOverride, localOverride string) (onPath, local string) {
+	return resolveDoctorBinariesWith(pathOverride, localOverride, defaultDoctorDeps())
+}
+
+func resolveDoctorBinariesWith(pathOverride, localOverride string, deps doctorDeps) (onPath, local string) {
 	onPath = strings.TrimSpace(pathOverride)
 	if onPath == "" {
-		if found, err := doctorLookPath("nova-swarm"); err == nil {
+		look := deps.lookPath
+		if look == nil {
+			look = exec.LookPath
+		}
+		if found, err := look("nova-swarm"); err == nil {
 			onPath = found
 		}
 	}
 	local = strings.TrimSpace(localOverride)
 	if local == "" {
-		if home, err := doctorHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		homeFn := deps.homeDir
+		if homeFn == nil {
+			homeFn = os.UserHomeDir
+		}
+		if home, err := homeFn(); err == nil && strings.TrimSpace(home) != "" {
 			local = filepath.Join(home, ".local", "bin", "nova-swarm")
 		}
 	}
@@ -101,12 +128,20 @@ type doctorReport struct {
 // binary cannot be read -- in every one there is no second stamp to disagree with, and a
 // guard that invented a refusal there would stop launches it cannot justify.
 func compareDoctorBinaries(pathBinary, localBinary string) doctorReport {
+	return compareDoctorBinariesWith(pathBinary, localBinary, defaultDoctorDeps())
+}
+
+func compareDoctorBinariesWith(pathBinary, localBinary string, deps doctorDeps) doctorReport {
 	r := doctorReport{
 		pathBinary:  pathBinary,
 		localBinary: localBinary,
 	}
+	read := deps.readVersion
+	if read == nil {
+		read = readVersionLine
+	}
 	if pathBinary != "" {
-		if line, err := doctorReadVersion(pathBinary); err == nil {
+		if line, err := read(pathBinary); err == nil {
 			r.pathLine = strings.TrimRight(line, "\n")
 		}
 	}
@@ -114,7 +149,7 @@ func compareDoctorBinaries(pathBinary, localBinary string) doctorReport {
 		r.stamp = r.pathLine
 		return r
 	}
-	if line, err := doctorReadVersion(localBinary); err == nil {
+	if line, err := read(localBinary); err == nil {
 		r.localLine = strings.TrimRight(line, "\n")
 	}
 	switch {
@@ -163,13 +198,18 @@ func doctorStamp(line string) string {
 // cmdDoctor is the verb. `--path` and `--local` override the two resolutions so the check
 // is runnable against fixed binaries; with no flags it reads the machine it is on.
 func cmdDoctor(args []string, stdout, stderr io.Writer) int {
+	return cmdDoctorWith(args, stdout, stderr, defaultDoctorDeps())
+}
+
+func cmdDoctorWith(args []string, stdout, stderr io.Writer, deps doctorDeps) int {
 	f := newFlags("doctor")
 	pathFlag := f.fs.String("path", "", "")
 	localFlag := f.fs.String("local", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	r := compareDoctorBinaries(resolveDoctorBinaries(*pathFlag, *localFlag))
+	onPath, local := resolveDoctorBinariesWith(*pathFlag, *localFlag, deps)
+	r := compareDoctorBinariesWith(onPath, local, deps)
 	if !r.shadowed {
 		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", oneline.Escape(doctorStamp(r.stamp)))
 		return 0
@@ -201,11 +241,16 @@ func doctorLaunchVerb(v string) bool { return v == "batch" || v == "native" }
 // stops the launch with exit 2 before run() is reached; every other verb, and an
 // unresolvable pair, proceeds untouched.
 func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
+	return preflightDoctorWith(args, stderr, defaultDoctorDeps())
+}
+
+func preflightDoctorWith(args []string, stderr io.Writer, deps doctorDeps) (int, bool) {
 	// -h is a question about the verb, not a launch: the preflight stands aside for it.
 	if len(args) == 0 || !doctorLaunchVerb(args[0]) || verbflag.Asked(args[1:]) {
 		return 0, false
 	}
-	r := compareDoctorBinaries(resolveDoctorBinaries("", ""))
+	onPath, local := resolveDoctorBinariesWith("", "", deps)
+	r := compareDoctorBinariesWith(onPath, local, deps)
 	if !r.shadowed {
 		return 0, false
 	}
