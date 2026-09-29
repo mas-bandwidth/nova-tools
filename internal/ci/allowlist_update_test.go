@@ -9,9 +9,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -113,29 +115,67 @@ func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[stri
 		listBytes = append(listBytes, []byte(name))
 	}
 
+	dirs := make([]string, 0, len(pkgs))
+	for dir := range pkgs {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+
+	type pkgResult struct {
+		loaded map[string]bool
+		raw    []string
+	}
+	results := make([]pkgResult, len(dirs))
+
+	workers := min(8, runtime.GOMAXPROCS(0))
+	if workers < 1 {
+		workers = 1
+	}
+
+	var wg sync.WaitGroup
+	ch := make(chan int, len(dirs))
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range ch {
+				files := pkgs[dirs[idx]]
+				hasName := false
+				for _, f := range files {
+					if len(f.Src) == 0 {
+						continue
+					}
+					for _, lb := range listBytes {
+						if bytes.Contains(f.Src, lb) {
+							hasName = true
+							break
+						}
+					}
+					if hasName {
+						break
+					}
+				}
+				if !hasName {
+					continue
+				}
+				l, r := helperReadsTree(t, tree.Root, tree.FSet, files, lists)
+				results[idx] = pkgResult{loaded: l, raw: r}
+			}
+		}()
+	}
+	for i := range dirs {
+		ch <- i
+	}
+	close(ch)
+	wg.Wait()
+
 	loaded := map[string]bool{}
 	var raw []string
-	for _, files := range pkgs {
-		hasName := false
-		for _, f := range files {
-			for _, lb := range listBytes {
-				if bytes.Contains(f.Src, lb) {
-					hasName = true
-					break
-				}
-			}
-			if hasName {
-				break
-			}
-		}
-		if !hasName {
-			continue
-		}
-		l, r := helperReadsTree(t, tree.Root, tree.FSet, files, lists)
-		for name := range l {
+	for _, res := range results {
+		for name := range res.loaded {
 			loaded[name] = true
 		}
-		raw = append(raw, r...)
+		raw = append(raw, res.raw...)
 	}
 	sort.Strings(raw)
 	return loaded, raw

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -146,18 +147,38 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	for n, runner := range counts {
 		seen := map[string]int{}
 		home := map[string]int{}
+		type shardResult struct {
+			line string
+			err  error
+		}
+		shardResults := make([]shardResult, n)
+		var wg sync.WaitGroup
 		for i := 1; i <= n; i++ {
-			s := strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			s = strings.ReplaceAll(s, "${{ matrix.shard }}", strconv.Itoa(i))
-			s = strings.ReplaceAll(s, "go list ./...", "cat "+listFile)
-			s = strings.ReplaceAll(s, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, s, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
-			if err != nil {
-				t.Fatal(err)
+			wg.Add(1)
+			go func(shard int) {
+				defer wg.Done()
+				s := strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
+				s = strings.ReplaceAll(s, "${{ matrix.shard }}", strconv.Itoa(shard))
+				s = strings.ReplaceAll(s, "go list ./...", "cat "+listFile)
+				s = strings.ReplaceAll(s, ".github/scripts/live-packages.sh", liveScript(t))
+				env := filepath.Join(t.TempDir(), "env")
+				runStep(t, s, "GITHUB_ENV="+env)
+				b, err := os.ReadFile(env)
+				if err != nil {
+					shardResults[shard-1] = shardResult{err: err}
+					return
+				}
+				shardResults[shard-1] = shardResult{line: strings.TrimSpace(string(b))}
+			}(i)
+		}
+		wg.Wait()
+
+		for i := 1; i <= n; i++ {
+			res := shardResults[i-1]
+			if res.err != nil {
+				t.Fatal(res.err)
 			}
-			line := strings.TrimSpace(string(b))
+			line := res.line
 			if !strings.HasPrefix(line, "HOSTED_PKGS=") || strings.Contains(line, "\n") {
 				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, i, line)
 			}
