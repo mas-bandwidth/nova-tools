@@ -277,3 +277,46 @@ func TestTheInboxCountsRunningTimeOnly(t *testing.T) {
 		t.Fatalf("past the deadline in running time: %+v", v.Groups)
 	}
 }
+
+// A judgment the tick wrote, acknowledged while its condition holds, is not
+// written again until the condition has cleared and come back; the
+// acknowledgement is held on the condition and shows in no inbox.
+func TestAnAcknowledgedConditionIsNotWrittenAgainUntilItComesBack(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	h.startMachine()
+	h.machine()
+	open := h.openOf(sprint.NNoMember)
+	if len(open) != 1 || h.written(sprint.NNoMember) != 1 {
+		t.Fatalf("no member: open %d written %d", len(open), h.written(sprint.NNoMember))
+	}
+	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "members come up later"}))
+	for i := 0; i < 3; i++ {
+		h.tick(time.Minute)
+		h.machine()
+	}
+	if h.written(sprint.NNoMember) != 1 {
+		t.Fatalf("written again while acknowledged: %d", h.written(sprint.NNoMember))
+	}
+	if held := h.openOf(sprint.NNoMember); len(held) != 1 || held[0].Note.Kind != sprint.Acknowledged {
+		t.Fatalf("the acknowledgement is not held: %+v", held)
+	}
+	v, _ := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
+	for _, g := range v.Groups {
+		if g.Kind != sprint.Happened && g.Kind != sprint.Decided {
+			t.Fatalf("the inbox after the acknowledgement: %+v", g)
+		}
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.machine()
+	if held := h.openOf(sprint.NNoMember); len(held) != 0 {
+		t.Fatalf("the condition cleared and the acknowledgement is held: %+v", held)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
+	h.machine()
+	if h.written(sprint.NNoMember) != 2 || len(h.openOf(sprint.NNoMember)) != 1 {
+		t.Fatalf("the condition came back: written %d open %d", h.written(sprint.NNoMember), len(h.openOf(sprint.NNoMember)))
+	}
+	h.clean("after the acknowledgement")
+}

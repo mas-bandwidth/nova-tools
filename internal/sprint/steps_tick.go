@@ -389,9 +389,12 @@ func (c cond) subjects() []string {
 // TickMaxNotes), and closes every open judgment of the types whose condition
 // no longer holds: each judgment is written once and never every tick.
 func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) {
+	// A condition is open while its judgment is, or while the coordinator's
+	// acknowledgement of it is held: either way it is not written again.
+	held := append(append([]Open(nil), s.Open...), s.Acked...)
 	open := map[string]bool{}
-	for _, o := range s.Open {
-		if o.Note.Kind == Judgment && contains(types, o.Note.Type) {
+	for _, o := range held {
+		if contains(types, o.Note.Type) {
 			open[condKey(o.Note.Type, o.Subject(), o.Note.What)] = true
 		}
 	}
@@ -416,8 +419,8 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, who string) {
 		}
 		p.Notes = append(p.Notes, n)
 	}
-	for _, o := range s.Open {
-		if o.Note.Kind == Judgment && contains(types, o.Note.Type) && !holds[condKey(o.Note.Type, o.Subject(), o.Note.What)] {
+	for _, o := range held {
+		if contains(types, o.Note.Type) && !holds[condKey(o.Note.Type, o.Subject(), o.Note.What)] {
 			p.Closes = append(p.Closes, o)
 		}
 	}

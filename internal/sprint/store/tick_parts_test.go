@@ -43,7 +43,7 @@ func (h *harness) written(typ string) int {
 	}
 	n := 0
 	for _, x := range notes {
-		if x.Type == typ && x.Kind != sprint.Decided {
+		if x.Type == typ && x.Kind != sprint.Decided && x.Kind != sprint.Acknowledged {
 			n++
 		}
 	}

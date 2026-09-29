@@ -87,9 +87,11 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 			s.Fleet = t
 		}
 	}
-	if s.Open, err = st.B.OpenNotes(ctx); err != nil {
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
 		return nil, err
 	}
+	s.Open, s.Acked = sprint.SplitOpen(open)
 	if extras != nil {
 		for table, want := range extras(s) {
 			t := s.T(table)

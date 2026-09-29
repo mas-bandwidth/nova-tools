@@ -658,7 +658,7 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			n = n.Bound()
 			m.seq++
 			l.inbox = append(l.inbox, memNote{fmt.Sprintf("%d-0", m.seq), n})
-			if n.Kind == sprint.Judgment {
+			if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
 				l.notes[n.ID] = n
 				for _, s := range subjects {
 					l.open[sprint.OpenKey(n.ID, s)] = n.ID

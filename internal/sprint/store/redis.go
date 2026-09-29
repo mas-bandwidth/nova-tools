@@ -389,7 +389,7 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 			return err
 		}
 		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyInbox), Values: []any{"note", string(body)}})
-		if n.Kind == sprint.Judgment {
+		if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
 			p.HSet(ctx, r.key(keyNotes), n.ID, string(body))
 			for _, s := range n.Subjects() {
 				p.HSet(ctx, r.key(keyOpen), sprint.OpenKey(n.ID, s), n.ID)

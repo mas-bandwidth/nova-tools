@@ -202,8 +202,8 @@ func Inbox(r InboxReq) []Group {
 	at = map[string]int{}
 	restMembers := map[int]map[string]bool{}
 	for _, n := range r.Recent {
-		if n.Kind == Judgment {
-			continue // judgments are shown while open, above
+		if n.Kind == Judgment || n.Kind == Acknowledged {
+			continue // judgments are shown while open, above; an acknowledgement is its decided note
 		}
 		k := n.Kind + "\x00" + n.Type + "\x00" + n.Stream
 		i, ok := at[k]

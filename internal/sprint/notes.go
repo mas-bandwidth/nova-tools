@@ -11,7 +11,25 @@ const (
 	Happened = "happened" // no decision
 	Judgment = "judgment" // needs the coordinator
 	Decided  = "decided"  // a judgment answered
+	// Acknowledged is a judgment of the tick the coordinator acknowledged
+	// while its condition held: kept on the condition's subjects, it is no
+	// judgment and shows in no inbox; it stops the tick from writing the
+	// judgment again until the condition has cleared (the tick then closes
+	// it) and come back.
+	Acknowledged = "acknowledged"
 )
+
+// SplitOpen is the open set as judgments and acknowledged conditions.
+func SplitOpen(all []Open) (judgments, acked []Open) {
+	for _, o := range all {
+		if o.Note.Kind == Acknowledged {
+			acked = append(acked, o)
+		} else {
+			judgments = append(judgments, o)
+		}
+	}
+	return judgments, acked
+}
 
 // Notification types. A type is what happened; judgment types name the
 // decisions open to the coordinator.

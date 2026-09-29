@@ -161,6 +161,9 @@ type Snapshot struct {
 	Epoch                       uint64 // the sprint's epoch the tables were read at
 	Work, Readers, Merge, Fleet *Table
 	Open                        []Open
+	// Acked is the tick's conditions the coordinator acknowledged, held
+	// while they hold (Acknowledged).
+	Acked []Open
 }
 
 // T is the loaded table by logical name.

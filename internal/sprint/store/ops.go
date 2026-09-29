@@ -205,6 +205,7 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	if v.Open, err = st.B.OpenNotes(ctx); err != nil {
 		return v, err
 	}
+	v.Open, _ = sprint.SplitOpen(v.Open)
 	if v.Cursor, err = st.B.Cursor(ctx); err != nil {
 		return v, err
 	}

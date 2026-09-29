@@ -1,6 +1,9 @@
 package sprint
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // AckReq is the coordinator saying it looked at judgments and nothing is to
 // be done.
@@ -43,6 +46,12 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		closing[id] = true
 		u := Unit{Key: id, Stream: n.Stream, Closes: entries, Moved: fmt.Sprintf("%s (%s) acknowledged: %s", id, n.Type, r.Reason)}
 		u.Notes = append(u.Notes, decided(entries[0], "ack: "+r.Reason, r.Who, s.Now))
+		if _, ticks := TickDecisions[n.Type]; ticks {
+			// The tick's condition may still hold: the acknowledgement is
+			// kept on it, so the tick does not write it again until it has
+			// cleared and come back.
+			u.Notes = append(u.Notes, acknowledged(n, entries, r.Who, s.Now))
+		}
 		p.Units = append(p.Units, u)
 	}
 	// A primary whose last open judgment this call closes, with its reads
@@ -78,4 +87,18 @@ func exhaustedAfter(s *Snapshot, pr *Card, closing map[string]bool, who string) 
 	j := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
 	j.Who, j.Attempt = who, pr.Int("attempt")
 	return j, true
+}
+
+// acknowledged is the record of an acknowledged tick judgment on the subjects
+// it closes: the judgment's type, stream and what, so the tick's condition
+// finds it.
+func acknowledged(n Note, entries []Open, who string, now time.Time) Note {
+	a := Note{Kind: Acknowledged, Type: n.Type, Stream: n.Stream, What: n.What, StreamLevel: n.StreamLevel, Who: who, At: now}
+	if !n.StreamLevel {
+		for _, o := range entries {
+			a.Primaries = append(a.Primaries, o.Subject())
+		}
+		a.Count = len(a.Primaries)
+	}
+	return a
 }

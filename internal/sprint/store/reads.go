@@ -111,6 +111,7 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 	if err != nil {
 		return v, err
 	}
+	open, _ = sprint.SplitOpen(open)
 	for _, o := range open {
 		if o.Subject() == id || contains(o.Note.Primaries, id) {
 			v.Open = append(v.Open, o)
