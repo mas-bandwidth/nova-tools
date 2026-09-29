@@ -283,7 +283,9 @@ Other valid cards retain per-card partial acceptance. A stored waiting primary
 or sentinel whose need has no record gets one missing-need judgment from
 resolve or the tick, naming those needs. Acknowledging it waives only its
 named needs that are still missing; it never waives a live prerequisite or a
-missing need discovered later. When the named prerequisites exist again,
+missing need discovered later. Acknowledging several dependency judgments for
+the same primary combines their named waivers in one guarded card change.
+When the named prerequisites exist again,
 resolve closes that missing-need judgment and still waits for them to land.
 
 A primary in review is never silent. With ok reads from two different readers
