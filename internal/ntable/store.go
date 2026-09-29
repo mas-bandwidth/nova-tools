@@ -584,6 +584,12 @@ func (o operation) refused(reply []any) error {
 	return &Refusal{Code: reason, Location: o.location(), Sentence: cause.Error(), Next: remedy, Guarded: o.guarded(), cause: cause}
 }
 
+// checkedBeforeSending is what a refusal made before anything is sent says of
+// itself. The store looks an operation up before it judges the request, so a
+// manifest that the current rules refuse can still have been applied earlier, under
+// looser rules: this refusal is about this call only.
+const checkedBeforeSending = "checked before sending, so this call changed nothing; it says nothing about an earlier call with the same operation id"
+
 // beforeSending turns what the validator found into the refusal the store would
 // have made, or the manifest error a reader is told.
 func (o operation) beforeSending(err error) error {
@@ -595,12 +601,12 @@ func (o operation) beforeSending(err error) error {
 	switch {
 	case errors.As(err, &re):
 		o.member = re.Member
-		return &Refusal{Code: re.Code, Location: o.location(), Sentence: re.Detail, Next: o.remedy(), Guarded: true, cause: re}
+		return &Refusal{Code: re.Code, Location: o.location(), Sentence: re.Detail + "; " + checkedBeforeSending, Next: o.remedy(), Guarded: true, cause: re}
 	case errors.As(err, &le):
 		o.member = le.Member
-		return &Refusal{Code: "LIMIT", Location: o.location(), Sentence: le.Error() + "; " + le.Advice(), Next: o.remedy(), Guarded: true, cause: le}
+		return &Refusal{Code: "LIMIT", Location: o.location(), Sentence: le.Error() + "; " + le.Advice() + "; " + checkedBeforeSending, Next: o.remedy(), Guarded: true, cause: le}
 	case errors.As(err, &me):
-		return fmt.Errorf("%s: invalid batch manifest: %w; changed=no; run: %s", o.location(), me, o.remedy())
+		return fmt.Errorf("%s: invalid batch manifest: %w; %s; changed=no; run: %s", o.location(), me, checkedBeforeSending, o.remedy())
 	}
 	return err
 }

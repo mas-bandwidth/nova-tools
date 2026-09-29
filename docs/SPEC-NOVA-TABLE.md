@@ -450,6 +450,14 @@ a stale epoch refuses. Original result epoch/revisions remain visible, so retry
 cannot masquerade as a new current-epoch action. No retry loop in transport may
 silently invent a new operation ID.
 
+The library and the command judge a request before they send it, so a request that the
+current rules refuse never reaches the store, and they guarantee a replay only for a
+request the current rules accept. A request that was applied under looser rules and is
+sent again is refused by the library and the command with a refusal that says it was
+checked before sending, that this call changed nothing and that it says nothing about an
+earlier call with the same operation id; the store, asked directly, returns the recorded
+receipt.
+
 Operation records do not expire. A table's operation records, of every epoch, are
 one hash, `table:<t>:ops`, whose fields are `<epoch>:<operation id>` and whose values
 are the records (the request bytes, at most 1 MiB, and the receipt). One key keeps the

@@ -2053,7 +2053,9 @@ holds. A batch whose receipt would exceed 1 MiB (`receipt bytes`, the manifest b
 `code=LIMIT` and `changed=no`, naming the bound and the computed size; change fewer members or fields in one
 manifest. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes
 nothing prints `outcome=noop` and, like any accepted batch, advances the table revision by one. Running the same
-manifest again applies nothing and prints the original receipt with `replay=yes`.
+manifest again applies nothing and prints the original receipt with `replay=yes`. The command checks a manifest against the
+current rules before it sends it, so it replays only a request the current rules accept; a refusal made before
+sending says that, says this call changed nothing and says nothing about an earlier call with the same operation id.
 
 `--json` prints the receipt as one line of JSON for a program: `table`, `operation_id`, `epoch`,
 `table_revision` (`{"before", "after"}`), `outcome`, `selected`, `guards`, `changed`, `event`, `replay` (a
