@@ -392,6 +392,14 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 	if h.state("s1-1") != sprint.Ready {
 		t.Fatalf("an abandoned start moved its primary")
 	}
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
+	found := false
+	for _, n := range notes {
+		found = found || n.Type == sprint.NAbandoned && strings.Contains(n.What, "(start) by tester, 2m0s old")
+	}
+	if !found {
+		t.Fatalf("abandoned silently: %+v", notes)
+	}
 }
 
 // D3: a retried finish with the same operation id returns the original

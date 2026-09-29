@@ -25,6 +25,7 @@ const (
 	NMemberDown     = "fleet member down"
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
+	NAbandoned      = "an operation was abandoned"
 
 	NWorkFailed     = "work came back failed"
 	NReadBroken     = "a reader found it broken"

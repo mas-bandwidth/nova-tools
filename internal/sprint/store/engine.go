@@ -622,7 +622,7 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 			if st.Now().Sub(op.At) < st.grace() {
 				return RepairResult{Op: op.ID, Verb: op.Verb, Done: "open", Detail: "in flight: its first manifest has not applied yet"}, nil
 			}
-			if err := st.B.Release(ctx, op, false); err != nil {
+			if err := st.B.Release(ctx, abandonment(op, st.Actor, st.Now()), true); err != nil {
 				return r, err
 			}
 			return RepairResult{Op: op.ID, Verb: op.Verb, Done: "abandoned", Detail: "its first manifest never applied: " + err.Error()}, nil
@@ -646,4 +646,17 @@ func (st *Store) Repair(ctx context.Context) ([]RepairResult, error) {
 		return nil, err
 	}
 	return []RepairResult{r}, nil
+}
+
+// abandonment is the release of an operation that never started: nothing of it
+// is written but one notification that it was abandoned, which verb, by whom,
+// how old, and who abandoned it.
+func abandonment(op OpRecord, by string, now time.Time) OpRecord {
+	who := ""
+	if len(op.Manifests) > 0 {
+		who = op.Manifests[0].Actor
+	}
+	n := sprint.Note{ID: op.ID + ".abandoned", Kind: sprint.Happened, Type: sprint.NAbandoned, At: now, Who: by,
+		What: fmt.Sprintf("operation %s (%s) by %s, %s old: its first manifest never applied", op.ID, op.Verb, who, now.Sub(op.At).Round(time.Second))}
+	return OpRecord{ID: op.ID, Verb: op.Verb, At: op.At, Notes: []sprint.Note{n}}
 }

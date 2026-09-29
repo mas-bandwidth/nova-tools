@@ -189,7 +189,8 @@ from the coordinator's cursor. Two kinds.
 
 **happened**: no decision. stream started merging; batch landed; stream landed;
 two readers said ok (ready to accept); work came back ok; fleet member up or down;
-cards returned to ready because no member is up; ci green on a primary.
+cards returned to ready because no member is up; ci green on a primary; an
+operation was abandoned.
 
 **judgment**: needs the coordinator. Each names the decisions open to it.
 
@@ -296,7 +297,8 @@ streams' progress and the caller's result, and empties the fence.
 only the phases not yet applied (an applied phase replays its receipt), each
 still guarded by its own expectations, so it can never overwrite newer work.
 An operation whose first phase never applied is abandoned after the grace:
-nothing of it happened. `check` and `where` show a pending operation. The model
+nothing of it happened, and a notification says so (happened: an operation was
+abandoned, which verb, by whom, how old). Nothing is abandoned silently. `check` and `where` show a pending operation. The model
 includes the cut between every two phases. A multi-table batch in the table
 layer retires this section.
 
