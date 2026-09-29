@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-drill2-admit-10",
+  "admissions": [
+    {"id": "card-01", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-01.card"},
+    {"id": "card-02", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-02.card"},
+    {"id": "card-03", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-03.card"},
+    {"id": "card-04", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-04.card"},
+    {"id": "card-05", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-05.card"},
+    {"id": "card-06", "stream": "stream-2", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-06.card"},
+    {"id": "card-07", "stream": "stream-2", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-07.card"},
+    {"id": "card-08", "stream": "stream-2", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-08.card"},
+    {"id": "card-09", "stream": "stream-2", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-09.card"},
+    {"id": "card-10", "stream": "stream-2", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-10.card"}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-drill2-resolve-10",
+  "members": [
+    "card-01", "card-02", "card-03", "card-04", "card-05",
+    "card-06", "card-07", "card-08", "card-09", "card-10"
+  ]
+}

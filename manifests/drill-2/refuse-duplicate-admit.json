@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-refuse-duplicate-admit",
+  "admissions": [
+    {"id": "card-11", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-01.card"},
+    {"id": "card-11", "stream": "stream-1", "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-01.card"}
+  ]
+}

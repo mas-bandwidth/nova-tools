@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-refuse-duplicate-event",
+  "events": [
+    {"id": "card-07", "to": "working"},
+    {"id": "card-07", "to": "done"}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "expected_table_revision": "1",
+  "operation_id": "op-refuse-stale-rev",
+  "events": [
+    {"id": "card-07", "to": "working", "expect_place": "stream-2:ready", "expect_revision": "2"}
+  ]
+}

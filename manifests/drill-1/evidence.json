@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-evidence",
+  "evidence": [
+    {
+      "card_id": "card-alpha",
+      "head": "56015ede581dd951250627999a49c04489a9eca1",
+      "digest": "c7908cc3c9a89b9c327b1031ff7494e12b366ac54e40ad6014c625f2f451a8ce",
+      "reader": "reviewer-alpha-1",
+      "disposition": "accepted",
+      "ci_status": "pass"
+    },
+    {
+      "card_id": "card-alpha",
+      "head": "56015ede581dd951250627999a49c04489a9eca1",
+      "digest": "c7908cc3c9a89b9c327b1031ff7494e12b366ac54e40ad6014c625f2f451a8ce",
+      "reader": "reviewer-alpha-2",
+      "disposition": "accepted",
+      "ci_status": "pass"
+    }
+  ]
+}

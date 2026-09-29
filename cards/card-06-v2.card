@@ -1,0 +1,16 @@
+card-06-v2
+SCHEMA: v2
+ID: card-06-v2
+ENTRY: work/stream-2/card-06-v2
+TITLE: Drill 2 batch card 06 successor
+KIND: fix-red
+PATHS: internal/drill/card_06_v2.go
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/drill:TestCard06V2
+DONE-WHEN: Successor verified test execution
+DOORS: none
+PROBES: none
+
+# Brief
+Replacement card for card-06 in Drill 2.

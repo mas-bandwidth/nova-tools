@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-refuse-terminal-replace",
+  "replacements": [
+    {
+      "old_id": "card-04",
+      "new_id": "card-04-v2",
+      "new_file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-04.card",
+      "stream": "stream-1"
+    }
+  ]
+}

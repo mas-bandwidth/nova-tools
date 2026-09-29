@@ -1,0 +1,17 @@
+card-beta
+SCHEMA: v2
+ID: card-beta
+ENTRY: work/stream-1/beta
+TITLE: Guard evaluation and dependency resolver
+KIND: fix-red
+PATHS: internal/card/guard.go, internal/card/guard_test.go
+DEPENDS-ON: card-alpha
+TIER: flash
+TEST: internal/card:TestGuardEvaluation
+DONE-WHEN: Dependency resolution validates prerequisites correctly
+DOORS: none
+PROBES: none
+
+# Brief
+Evaluates preconditions and guards against the single pre-state snapshot.
+Remains blocked in waiting state until card-alpha lands.

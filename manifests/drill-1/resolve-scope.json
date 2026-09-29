@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-resolve-1",
+  "members": ["card-alpha", "card-beta", "card-gamma", "card-gamma-v2"]
+}

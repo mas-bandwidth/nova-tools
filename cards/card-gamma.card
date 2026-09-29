@@ -1,0 +1,17 @@
+card-gamma
+SCHEMA: v2
+ID: card-gamma
+ENTRY: work/stream-2/gamma
+TITLE: Initial audit report for stream-2 architecture
+KIND: report
+PATHS: docs/reports/stream-2-audit.md
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/audit:TestReportStructure
+DONE-WHEN: Documented architectural assessment accepted by reader
+DOORS: none
+PROBES: none
+
+# Brief
+Architectural survey and memory boundary analysis for stream-2.
+Non-PR kind completing via reader verdict rather than code merge.

@@ -1,0 +1,16 @@
+card-05
+SCHEMA: v2
+ID: card-05
+ENTRY: work/stream-1/card-05
+TITLE: Drill 2 batch card 05
+KIND: probe
+PATHS: internal/drill/card_05.go
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/drill:TestCard05
+DONE-WHEN: Verified test execution and report acceptance
+DOORS: none
+PROBES: none
+
+# Brief
+Automated test fixture card 05 for Drill 2 multi-card atomic operations.

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-landed",
+  "events": [
+    {
+      "id": "card-alpha",
+      "to": "landed",
+      "expect_place": "stream-1:merging",
+      "expect_revision": "5",
+      "landing_sha": "56015ede581dd951250627999a49c04489a9eca1"
+    }
+  ]
+}

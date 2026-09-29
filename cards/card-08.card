@@ -1,0 +1,16 @@
+card-08
+SCHEMA: v2
+ID: card-08
+ENTRY: work/stream-2/card-08
+TITLE: Drill 2 batch card 08
+KIND: fix-red
+PATHS: internal/drill/card_08.go
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/drill:TestCard08
+DONE-WHEN: Verified test execution and report acceptance
+DOORS: none
+PROBES: none
+
+# Brief
+Automated test fixture card 08 for Drill 2 multi-card atomic operations.

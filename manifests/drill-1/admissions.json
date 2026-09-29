@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-admit",
+  "admissions": [
+    {
+      "id": "card-alpha",
+      "stream": "stream-1",
+      "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-alpha.card"
+    },
+    {
+      "id": "card-beta",
+      "stream": "stream-1",
+      "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-beta.card"
+    },
+    {
+      "id": "card-gamma",
+      "stream": "stream-2",
+      "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-gamma.card"
+    },
+    {
+      "id": "card-gamma-v2",
+      "stream": "stream-2",
+      "file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-gamma-v2.card"
+    }
+  ]
+}

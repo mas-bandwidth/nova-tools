@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-result",
+  "events": [
+    {
+      "id": "card-alpha",
+      "to": "review",
+      "expect_place": "stream-1:working",
+      "expect_revision": "3",
+      "outcome": "result_bound"
+    }
+  ]
+}

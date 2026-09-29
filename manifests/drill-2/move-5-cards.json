@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-drill2-move-5",
+  "events": [
+    {"id": "card-01", "to": "working", "expect_place": "stream-1:ready", "expect_revision": "2"},
+    {"id": "card-02", "to": "working", "expect_place": "stream-1:ready", "expect_revision": "2"},
+    {"id": "card-03", "to": "working", "expect_place": "stream-1:ready", "expect_revision": "2"},
+    {"id": "card-04", "to": "done", "expect_place": "stream-1:ready", "expect_revision": "2", "outcome": "cancelled"},
+    {"id": "card-05", "to": "done", "expect_place": "stream-1:ready", "expect_revision": "2", "outcome": "completed"}
+  ]
+}

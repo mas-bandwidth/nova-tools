@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "table": "drill2_cards",
+  "epoch": "0",
+  "operation_id": "op-drill2-replace-06",
+  "replacements": [
+    {
+      "old_id": "card-06",
+      "new_id": "card-06-v2",
+      "new_file": "/Users/glenn/emma-working/scratch/wt-card-seed/cards/card-06-v2.card",
+      "stream": "stream-2"
+    }
+  ]
+}

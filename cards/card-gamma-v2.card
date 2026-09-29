@@ -1,0 +1,17 @@
+card-gamma-v2
+SCHEMA: v2
+ID: card-gamma-v2
+ENTRY: work/stream-2/gamma-v2
+TITLE: Revised audit report for stream-2 architecture
+KIND: report
+PATHS: docs/reports/stream-2-audit-v2.md
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/audit:TestReportStructure
+DONE-WHEN: Revised architectural assessment incorporating memory bounds
+DOORS: none
+PROBES: none
+
+# Brief
+Successor report replacing card-gamma with expanded memory bounds audit.
+Retains original definition digests while admitting a fresh waiting member.

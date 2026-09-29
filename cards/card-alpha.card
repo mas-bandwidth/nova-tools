@@ -1,0 +1,17 @@
+card-alpha
+SCHEMA: v2
+ID: card-alpha
+ENTRY: work/stream-1/alpha
+TITLE: Core batch manifest parser
+KIND: fix-red
+PATHS: internal/card/manifest.go, internal/card/manifest_test.go
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/card:TestManifestParser
+DONE-WHEN: All unit tests pass and code compiles cleanly
+DOORS: none
+PROBES: none
+
+# Brief
+Implements the batch manifest parser for card admission and events.
+Exercises JSON unmarshaling, duplicate key rejection, and schema validation.

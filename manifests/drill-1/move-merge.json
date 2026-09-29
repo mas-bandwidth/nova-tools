@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-merge",
+  "events": [
+    {
+      "id": "card-alpha",
+      "to": "merging",
+      "expect_place": "stream-1:review",
+      "expect_revision": "4"
+    }
+  ]
+}

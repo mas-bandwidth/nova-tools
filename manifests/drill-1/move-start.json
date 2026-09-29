@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "table": "drill1_cards",
+  "epoch": "0",
+  "operation_id": "op-drill1-start",
+  "events": [
+    {
+      "id": "card-alpha",
+      "to": "working",
+      "expect_place": "stream-1:ready",
+      "expect_revision": "2"
+    }
+  ]
+}

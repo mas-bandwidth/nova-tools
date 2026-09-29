@@ -1,0 +1,16 @@
+card-01
+SCHEMA: v2
+ID: card-01
+ENTRY: work/stream-1/card-01
+TITLE: Drill 2 batch card 01
+KIND: fix-red
+PATHS: internal/drill/card_01.go
+DEPENDS-ON: -
+TIER: flash
+TEST: internal/drill:TestCard01
+DONE-WHEN: Verified test execution and report acceptance
+DOORS: none
+PROBES: none
+
+# Brief
+Automated test fixture card 01 for Drill 2 multi-card atomic operations.
