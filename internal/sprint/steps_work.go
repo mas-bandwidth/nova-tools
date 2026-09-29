@@ -276,8 +276,10 @@ func shortest(names []string, q map[string]int) string {
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the
-// worker holds for a named card; a card whose live generation differs has
-// been dealt again, and the take is refused as stale.
+// worker holds for a named card; a take by id names one for every card, and
+// a card whose live generation differs has been dealt again, so the take is
+// refused as stale. A take by selection takes the member's oldest ready cards
+// and reports each one's generation.
 type TakeReq struct {
 	Sel
 	As   string
@@ -285,9 +287,17 @@ type TakeReq struct {
 	Who  string
 }
 
-// liveGen is the refusal of a named generation that is not the card's live one.
-func liveGen(c *Card, gens map[string]int) string {
-	if g, ok := gens[c.ID]; ok && g != c.Int("gen") {
+// named says the selection names its cards by id.
+func named(sel Sel) bool { return len(sel.IDs) > 0 || sel.Only != nil }
+
+// liveGen is the refusal of a card whose generation the request does not
+// name, or names and is not the card's live one.
+func liveGen(verb string, c *Card, gens map[string]int) string {
+	g, ok := gens[c.ID]
+	switch {
+	case !ok:
+		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", c.Int("gen"), verb, c.ID, c.Int("gen"))
+	case g != c.Int("gen"):
 		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, c.Int("gen"), orDash(c.Row))
 	}
 	return ""
@@ -297,7 +307,7 @@ func liveGen(c *Card, gens map[string]int) string {
 func Take(s *Snapshot, r TakeReq) Plan {
 	var p Plan
 	sel := r.Sel
-	if len(sel.IDs) == 0 && sel.Only == nil && sel.Limit == 0 {
+	if !named(sel) && sel.Limit == 0 {
 		sel.Limit = 1
 	}
 	if !s.Fleet.HasRow(r.As) {
@@ -312,9 +322,12 @@ func Take(s *Snapshot, r TakeReq) Plan {
 		}
 		return p
 	}
+	byID := named(sel)
 	chosen := pick(&p, sel, s.Fleet.Cell(r.As, Ready), fieldStream, func(c *Card) string {
-		if why := liveGen(c, r.Gens); why != "" {
-			return why
+		if byID {
+			if why := liveGen("take", c, r.Gens); why != "" {
+				return why
+			}
 		}
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
@@ -341,17 +354,27 @@ type FinishReq struct {
 
 // Finish moves work cards working -> done and their primaries working ->
 // review. Fixed work that comes back ok is asked of the same readers again.
+// A finish always names the generation it holds for every card it finishes:
+// a card without one is refused, naming the live generation, and a finish
+// by selection without --as is refused outright.
 func Finish(s *Snapshot, r FinishReq) Plan {
 	var p Plan
+	if !named(r.Sel) && r.As == "" {
+		p.refuse("finish", "a finish by selection names its member: --as <member>; better, name each card: finish <card>@<gen>")
+		return p
+	}
 	var all []*Card
 	if r.As != "" {
 		all = s.Fleet.Cell(r.As, Working)
 	} else {
 		all = s.Fleet.Column(Working)
 	}
-	chosen := pick(&p, r.Sel, all, fieldStream, func(c *Card) string {
-		if why := liveGen(c, r.Gens); why != "" {
-			return why
+	byID := named(r.Sel)
+	picked := pick(&p, r.Sel, all, fieldStream, func(c *Card) string {
+		if byID {
+			if why := liveGen("finish", c, r.Gens); why != "" {
+				return why
+			}
 		}
 		if !c.Placed() || c.Col != Working {
 			return "not working (it is " + placeWord(c) + ")"
@@ -364,6 +387,14 @@ func Finish(s *Snapshot, r FinishReq) Plan {
 		}
 		return ""
 	}, s.Fleet.Card)
+	var chosen []*Card
+	for _, c := range picked {
+		if why := liveGen("finish", c, r.Gens); why != "" {
+			p.refuse(c.ID, why)
+			continue
+		}
+		chosen = append(chosen, c)
+	}
 	who := r.As
 	if who == "" {
 		who = r.Who

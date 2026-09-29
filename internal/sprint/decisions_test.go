@@ -48,8 +48,8 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	for _, id := range []string{"s1-1", "s1-2"} {
 		c := w.s.Fleet.Card(w.s.Work.Card(id).F("work"))
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(Ask(w.s, AskReq{}))
 	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
@@ -75,8 +75,8 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 		t.Fatalf("the refusal does not name the retirement: %+v", late.Refused)
 	}
 	// The fixed work returns: both readers asked again at the new head.
-	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Head: "h2"}))
+	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID), Head: "h2"}))
 	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
 	if len(again) != 2 || again[0].F("head") != "h2" || again[1].F("head") != "h2" {
 		t.Fatalf("not asked again at the new head: %v", again)
@@ -169,8 +169,8 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 	w := setup(t, 3)
 	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 3}}))
 	for _, c := range w.s.Fleet.Column(Ready) {
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
@@ -200,10 +200,10 @@ func TestD5AnswersDischargeOnlyWhatWasResolved(t *testing.T) {
 	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 3}}))
 	var ids []string
 	for _, c := range w.s.Fleet.Column(Ready) {
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		ids = append(ids, c.ID)
 	}
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: ids}, Failed: true}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: ids}, Gens: gensOf(w.s, ids...), Failed: true}))
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	failed := w.openOn("s1-1")
 	if len(failed) != 2 {

@@ -224,7 +224,7 @@ func TestD1NotificationsAtTheCommitOnly(t *testing.T) {
 		}
 		return nil
 	}
-	_, err := h.st.Run(h.ctx, FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Failed: true}))
+	_, err := h.st.Run(h.ctx, FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
 	if !errors.Is(err, ErrUnknown) {
 		t.Fatalf("a lost commit: %v", err)
 	}
@@ -492,10 +492,10 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 2}}))
 	s := h.snap()
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
-		h.must(TakeStep(sprint.TakeReq{As: s.Fleet.Card(id).Row, Sel: sprint.Sel{IDs: []string{id}}}))
+		h.must(TakeStep(sprint.TakeReq{As: s.Fleet.Card(id).Row, Sel: sprint.Sel{IDs: []string{id}}, Gens: map[string]int{id: 1}}))
 	}
-	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Failed: true}))
-	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-2.w1"}}}))
+	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
+	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-2.w1"}}, Gens: map[string]int{"s1-2.w1": 1}}))
 	v, err := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	if err != nil {
 		t.Fatal(err)

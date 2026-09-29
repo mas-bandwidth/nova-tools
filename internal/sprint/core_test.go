@@ -67,8 +67,8 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	w.clean("start")
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 10}}))
 	w.must(Take(w.s, TakeReq{As: "m2", Sel: Sel{Limit: 10}}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}}}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-4.w1"}}, Failed: true, Report: "tests red"}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}}, Gens: gensOf(w.s, "s1-1.w1", "s1-2.w1", "s1-3.w1")}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-4.w1"}}, Gens: gensOf(w.s, "s1-4.w1"), Failed: true, Report: "tests red"}))
 	w.clean("finish")
 	if len(w.notesOf(NWorkOK)) != 3 || len(w.notesOf(NWorkFailed)) != 1 {
 		t.Fatalf("notes: %d ok, %d failed", len(w.notesOf(NWorkOK)), len(w.notesOf(NWorkFailed)))
@@ -132,8 +132,8 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 		t.Fatalf("the next attempt's card is %s", card)
 	}
 	member := w.s.Fleet.Card(card).Row
-	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}}))
-	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}}))
+	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
+	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
 	if len(again) != 2 || again[0].F("reader") != second[0].F("reader") && again[1].F("reader") != second[0].F("reader") {
 		t.Fatalf("fixed work not asked of the same readers: %v", again)
@@ -278,8 +278,8 @@ func accepted(w *world, ids ...string) {
 	w.must(Start(w.s, StartReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
 		c := w.s.Fleet.Card(w.s.Work.Card(id).F("work"))
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}}))
+		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
