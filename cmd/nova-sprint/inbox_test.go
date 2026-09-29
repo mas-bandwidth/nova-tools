@@ -355,3 +355,26 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 		})
 	}
 }
+
+// I7: help and help inbox show the worked example: reading the inbox and an
+// answer to each judgment type.
+func TestHelpShowsTheWorkedExample(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	for _, line := range []string{"help", "help inbox"} {
+		out := ta.ok(line)
+		for _, want := range []string{"reading the inbox and answering a judgment:", "$ nova-sprint inbox",
+			"nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1", "a group number is refused",
+			"one answer to each judgment"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%s lacks %q:\n%s", line, want, out)
+			}
+		}
+		if n := strings.Count(out[strings.Index(out, "one answer to each judgment"):], "\n  "); n != len(sprint.Decisions)+1 {
+			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, len(sprint.Decisions))
+		}
+	}
+	if out := ta.ok("help inbox"); !strings.HasPrefix(out, "usage: nova-sprint inbox [flags]") || !strings.Contains(out, "--open <string>") {
+		t.Fatalf("help inbox: %s", out)
+	}
+}

@@ -86,11 +86,11 @@ Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
 NOVA_REDIS_ADDR), --prefix <p> (else NOVA_SPRINT_PREFIX: every table, view and
 key of this sprint carries it), --actor, --op <id> (the same id again returns
 the recorded result), --json and --max <n> (listed items; 0 is all). A set is
-ids, a stream, a column, --limit n, or an inbox group (--group <id>, the id
-inbox prints, which does not move; --expect <n>, the size it printed, refuses
-a group that has changed). Each verb
-prints what moved (MOVED), what did not and why (REFUSED, on stderr), its
-summary line, and the sprint's line: landed/all percent -> ETA.
+ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
+inbox prints, which does not move, with --expect <n>, the size it printed,
+which refuses a group that has changed. Each verb prints what moved (MOVED),
+what did not and why (REFUSED, on stderr), its summary line, and the sprint's
+line: landed/all percent -> ETA.
 
 A work card is named with its generation, <card>@<gen>: the generation the
 worker holds, from queue --as <member> (--json: "gen"). take by id and finish
@@ -99,11 +99,57 @@ generation, and a generation that is not the live one is refused as stale.
 take with no card takes the member's oldest ready cards (--limit n, default 1)
 and prints each one's generation.
 
+` + inboxExample + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
 `)
 	return b.String()
 }
+
+// inboxExample is the worked example of reading the inbox and answering it,
+// in nova-sprint help and nova-sprint help inbox.
+const inboxExample = `reading the inbox and answering a judgment:
+
+  $ nova-sprint inbox
+  JUDGMENT finish-0314a1b2-1.1   work came back failed  stream=s1  size=2  waited=4m0s  due=10:14:00  (s1-3,s1-7)  the tests went red
+    rework with a fix:
+      nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1
+    drop:
+      nova-sprint drop --group finish-0314a1b2-1.1 --expect 2 --reason '<why>' --answers finish-0314a1b2-1.1
+  JUDGMENT merge-0315c3d4-1.1   stream stopped: stream branch red  stream=s2  size=10  waited=1m0s  due=10:25:00  (s2-1,s2-2,s2-3,s2-4,s2-5,s2-6,s2-7,s2-8,... all: nova-sprint inbox --open merge-0315c3d4-1.1)  suspects: s2-4 (of the batch of 10)
+    take the suspect off and resume:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint resume --stream s2 --did 'returned s2-4' --answers merge-0315c3d4-1.1
+    rework the suspect:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint rework s2-4 --fix '<fix>'
+      nova-sprint resume --stream s2 --did 'returned s2-4 for rework' --answers merge-0315c3d4-1.1
+    resume with what you did:
+      nova-sprint resume --stream s2 --did '<what you did>' --answers merge-0315c3d4-1.1
+  HAPPENED ask-0316e5f6-1.1   two readers said ok  stream=s1  size=5  (s1-1,s1-2,s1-4,s1-5,s1-6)
+  INBOX OK judgments=2 happened=1 cursor=-
+
+A group is named by its id (its oldest notification's), which does not move
+as groups come and go; a group number is refused. size is what --expect
+takes: when the group has another size now the verb is refused, names what
+was added or is gone, and changes nothing. Each decision is its commands, one
+per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
+lists every member of a group; card <id> is everything about one primary.
+
+one answer to each judgment (every one prints its own, filled in):
+  work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
+  a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
+  conflict on a card          resume --stream <s> --did 'rebased <card>' --answers <note>
+  stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
+  needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
+  merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
+  ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
+  blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
+  reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
+  a repeat: stop and look     card <primary>
+  overdue: act                a decision above, or wait <note> --for 30m
+  a stream not moving: look   where, then queue --stream <s>
+`
 
 func versionLine() string { return buildinfo.Line(prog, version) }
 
@@ -124,7 +170,14 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 	}
 	for _, v := range verbs {
 		if v.name == name {
-			return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
+			code := func() (code int) {
+				defer verbflag.Recover(stdout, prog, banner(), &code)
+				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
+			}()
+			if name == "inbox" && code == 0 {
+				fmt.Fprint(stdout, "\n"+inboxExample)
+			}
+			return code
 		}
 	}
 	return refuse(stderr, "help", "unknown verb "+oneline.Escape(name)+"; run: nova-sprint help")
