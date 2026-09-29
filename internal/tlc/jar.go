@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -83,31 +84,28 @@ func FindHelper(name, override string, lookPath func(string) (string, error)) (s
 // LookPath is exec.LookPath, named so callers pass one seam.
 var LookPath = exec.LookPath
 
+// javaVersionLine matches the line `java -version` prints for the version: it
+// starts with openjdk version or java version, then the quoted version. A line
+// that only contains version " (the "Picked up JAVA_TOOL_OPTIONS: ..." lines a
+// JVM prints first echo the variable's text) is not one. The version is digits
+// first, then letters, digits and . _ + -.
+var javaVersionLine = regexp.MustCompile(`^\s*(?:openjdk|java) version "([0-9][0-9A-Za-z._+-]*)"`)
+
 // JavaVersion reads the version out of what `java -version` prints (it goes to
-// standard error): the quoted token of the first line that has `version "`, for
-// example 21.0.12.1. Lines before it are skipped: a JVM prints a line such as
-// "Picked up JAVA_TOOL_OPTIONS: ..." first when that variable is set, and the
-// bench must still run. It is an error when no line has one, so a record never
-// names a java of no version.
+// standard error): the quoted token of the first line that starts with
+// `openjdk version "` or `java version "`, for example 21.0.12.1. Lines before
+// it are skipped, so a "Picked up JAVA_TOOL_OPTIONS" line never gives the
+// version. It is an error when no line is one, so a record never names a java
+// of no version.
 func JavaVersion(output string) (string, error) {
 	trimmed := strings.TrimSpace(output)
 	first, _, _ := strings.Cut(trimmed, "\n")
-	line := ""
-	for _, l := range strings.Split(trimmed, "\n") {
-		if strings.Contains(l, `version "`) {
-			line = l
-			break
+	for _, line := range strings.Split(trimmed, "\n") {
+		if m := javaVersionLine.FindStringSubmatch(line); m != nil {
+			return m[1], nil
 		}
 	}
-	if line == "" {
-		return "", fmt.Errorf("java -version printed no quoted version: %q", strings.TrimSpace(first))
-	}
-	rest := line[strings.Index(line, `version "`)+len(`version "`):]
-	last := strings.Index(rest, `"`)
-	if last <= 0 || strings.ContainsAny(rest[:last], " \t") {
-		return "", fmt.Errorf("java -version printed no usable version: %q", strings.TrimSpace(line))
-	}
-	return rest[:last], nil
+	return "", fmt.Errorf("java -version printed no line of the form openjdk version \"...\" or java version \"...\": %q", strings.TrimSpace(first))
 }
 
 // ReadJavaVersion runs `java -version`, bounded by ctx, and returns its
