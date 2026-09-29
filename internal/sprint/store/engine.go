@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -337,7 +338,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
+		// Every operation's result is recorded at its commit, under the
+		// caller's operation id or its own: a writer whose operation another
+		// writer finished reads it there.
 		op.CallerOp = step.CallerOp
+		if op.CallerOp == "" {
+			op.CallerOp = op.ID
+		}
 		res.Op = op.ID
 		res.Notes = len(op.Notes) + len(op.Decided)
 		body, _ := json.Marshal(res)
@@ -354,6 +361,15 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		applied, err := st.apply(ctx, op)
 		var bound *boundError
+		var cut *CutError
+		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
+			// Another writer (the tick, another verb, repair) finished this
+			// operation: its recorded result is this step's, as a replay.
+			raw, _, _ := st.B.Done(ctx, op.CallerOp)
+			if rec, rerr := replay(step, raw); rerr == nil {
+				return st.after(ctx, step, rec)
+			}
+		}
 		if err != nil && !errors.As(err, &bound) {
 			res.Pending = op.ID
 			return res, err
@@ -417,6 +433,18 @@ func (st *Store) callerOp(ctx context.Context, step Step, res Result) (Result, b
 	res.Refused = []sprint.Refusal{{Key: "op " + step.CallerOp, Why: fmt.Sprintf("the sprint was cleared at %s: operation %s belongs to epoch %d, and the sprint's epoch is now %d; it is not run again as new work; nothing was changed; read the sprint again (nova-sprint queue, where) and give new work a fresh --op",
 		now.Cleared.UTC().Format(time.RFC3339), step.CallerOp, e, now.N)}}
 	return res, true, nil
+}
+
+// finishedElsewhere says the fence no longer holds the operation and its
+// result is recorded: another writer finished it. An operation released
+// without a record was abandoned: nothing of it happened.
+func (st *Store) finishedElsewhere(ctx context.Context, op OpRecord) bool {
+	f, err := st.B.ReadFence(ctx)
+	if err != nil || f.Pending != nil && f.Pending.ID == op.ID {
+		return false
+	}
+	_, ok, err := st.B.Done(ctx, op.CallerOp)
+	return err == nil && ok
 }
 
 // after brings the display cells up to date after a step. A step finished at
@@ -908,13 +936,18 @@ func (k Skip) String() string {
 
 // finish completes a pending operation from its record: each manifest sent
 // again in order (an applied one replays), then the release with its
-// notifications. When its first manifest never applied, nothing of it
-// happened: past the grace it is abandoned, within it it is left to its
-// writer. A later manifest whose expectations no longer all hold (a writer
+// notifications. A first manifest refused within the grace is left to its
+// writer; past it, it is applied entry by entry as a later one is, and only
+// when none of its changes applied, nor its writer's own send of it, nothing
+// of the operation happened and it is abandoned. A later manifest whose expectations no longer all hold (a writer
 // outside the fence changed a member) is applied entry by entry: every entry
 // whose expectation holds applies, every other is skipped, never overwriting
 // newer state, and the release writes one judgment listing the skips (the
-// model's Repair: a move applies only where its expectation holds). One the
+// model's Repair: a move applies only where its expectation holds). Before
+// the first manifest goes entry by entry, the entries left are judged
+// together by the lifecycle (sprint.Lawful) against a fresh read, the skipped
+// ones counted as not happening: an entry it refuses (a waiter whose landing
+// is skipped) is skipped too, and the one judgment lists it with why. One the
 // store does not answer stays pending, and says why.
 func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r, err := st.finishOp(ctx, op)
@@ -927,7 +960,32 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
 	var skips []Skip
+	// barred is the work-table entries the lifecycle refuses, judged once,
+	// when the first manifest goes entry by entry: a later manifest holding
+	// one goes entry by entry too, so it is skipped, never applied.
+	var barred map[string]string
+	byEntry := func(i int, man ntable.BatchManifest) *RepairResult {
+		if barred == nil {
+			b, err := st.rejudge(ctx, op, i)
+			if err != nil {
+				return &RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot be judged: %v", man.Table, err)}
+			}
+			barred = b
+		}
+		sk, err := st.applyEntries(ctx, man, barred)
+		if err != nil {
+			return &RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, err)}
+		}
+		skips = append(skips, sk...)
+		return nil
+	}
 	for i, man := range op.Manifests {
+		if st.bars(man, barred) {
+			if open := byEntry(i, man); open != nil {
+				return *open, nil
+			}
+			continue
+		}
 		_, err := st.send(ctx, man)
 		if err == nil || refusalCode(err) == "OPCONFLICT" {
 			continue
@@ -945,11 +1003,9 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 			}
 		}
 		if i > 0 {
-			sk, err := st.applyEntries(ctx, man)
-			if err != nil {
-				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s cannot finish: %v", man.Table, err)}, nil
+			if open := byEntry(i, man); open != nil {
+				return *open, nil
 			}
-			skips = append(skips, sk...)
 			continue
 		}
 		if i == 0 {
@@ -957,6 +1013,29 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 			// it is abandoned at once, whoever its writer is
 			if st.now().Sub(op.At) < st.grace() && curable(err, man) {
 				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "in flight: its first manifest has not applied yet"}, nil
+			}
+			// Past the grace its writer may still be alive: the first manifest
+			// goes entry by entry, as a later one does. When none of its
+			// changes applies, the table layer's record says whether its
+			// writer applied it whole (a refreshed send): then it counts as
+			// applied; else nothing of the operation happened, and it is
+			// abandoned.
+			if curable(err, man) {
+				before := len(skips)
+				if open := byEntry(0, man); open != nil {
+					return *open, nil
+				}
+				if changedAny(man, skips[before:]) {
+					continue
+				}
+				sent, perr := st.sentBefore(ctx, man)
+				if perr != nil {
+					return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: fmt.Sprintf("table %s: the store did not answer: %v", man.Table, perr)}, nil
+				}
+				skips = skips[:before]
+				if sent {
+					continue
+				}
 			}
 			if err := st.B.Release(ctx, abandonment(op, st.Actor, st.now()), true); err != nil {
 				return r, err
@@ -984,8 +1063,9 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 // another table revision) and counts as applied. An entry the table layer
 // refuses on its own expectations is skipped, with what it expected and what
 // the store holds; so is one refused on a bound or a rule, with the store's
-// own text.
-func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]Skip, error) {
+// own text; so is one the lifecycle refuses (barred, by stored id), with why,
+// and it is never sent.
+func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, barred map[string]string) ([]Skip, error) {
 	var skips []Skip
 	for j, e := range man.Members {
 		one := man
@@ -996,6 +1076,13 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]
 			rs, err := st.B.ReadSet(ctx, man.Table, []string{e.ID})
 			if err != nil {
 				return nil, err
+			}
+			if why, ok := barred[e.ID]; ok && man.Table == st.Names.Table(sprint.Work) {
+				k := skipOf(man.Table, e, rs)
+				k.Refused = "the lifecycle, judged against a fresh read with the skipped entries not happening: " + why
+				skips = append(skips, k)
+				outcome = "skipped"
+				break
 			}
 			one.ExpectedTableRevision = strconv.FormatUint(rs.Revision, 10)
 			_, err = st.send(ctx, one)
@@ -1019,6 +1106,109 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]
 		}
 	}
 	return skips, nil
+}
+
+// rejudge holds the entries of the operation's manifests from the from-th on
+// to the lifecycle, together (sprint.Rejudge), against a fresh read of the
+// work table: an entry whose expectation no longer holds there is skipped by
+// the table layer, so it counts as not happening, as do the entries already
+// skipped. It returns each work-table entry the lifecycle refuses, by stored
+// id, with why.
+func (st *Store) rejudge(ctx context.Context, op OpRecord, from int) (map[string]string, error) {
+	pre, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return nil, err
+	}
+	work := st.Names.Table(sprint.Work)
+	stored := map[string]string{}
+	var changes []sprint.Change
+	for _, man := range op.Manifests[from:] {
+		if man.Table != work {
+			continue
+		}
+		for _, e := range man.Members {
+			if !holds(e, pre.Work) {
+				continue
+			}
+			id := sprint.CardID(e.ID)
+			stored[id] = e.ID
+			e.ID = id
+			changes = append(changes, sprint.Change{Table: sprint.Work, Entry: e})
+		}
+	}
+	out := map[string]string{}
+	for _, r := range sprint.Rejudge(pre, op.Verb, changes) {
+		out[stored[r.Key]] = r.Why
+	}
+	return out, nil
+}
+
+// holds says an entry's expectation holds in the table as read: its card
+// absent when it expects absent, else present at the revision and place it
+// expects.
+func holds(e ntable.BatchMemberEntry, t *sprint.Table) bool {
+	c := t.Placed(sprint.CardID(e.ID))
+	x := e.Expect
+	switch {
+	case x == nil:
+		return true
+	case x.Absent:
+		return t.Card(sprint.CardID(e.ID)) == nil
+	case c == nil:
+		return false
+	case x.Revision != "" && x.Revision != strconv.FormatUint(c.Rev, 10):
+		return false
+	case x.Place != nil && (c.Row != x.Place.Row || c.Col != x.Place.Col):
+		return false
+	}
+	return true
+}
+
+// changedAny says an entry of the manifest that changes its member applied:
+// it is not among the skips.
+func changedAny(man ntable.BatchManifest, skips []Skip) bool {
+	skipped := map[string]bool{}
+	for _, k := range skips {
+		skipped[k.Card] = true
+	}
+	for _, e := range man.Members {
+		if hasChanges(e) && !skipped[e.ID] {
+			return true
+		}
+	}
+	return false
+}
+
+// sentBefore says the table layer records the manifest's operation id as
+// applied (its writer sent it, perhaps against a refreshed revision): a send
+// of it against a revision no table reaches is answered from that record (a
+// replay, or a conflict with the other bytes) before the revision is judged,
+// and is refused on the revision, applying nothing, when there is none.
+func (st *Store) sentBefore(ctx context.Context, man ntable.BatchManifest) (bool, error) {
+	probe := man
+	probe.ExpectedTableRevision = strconv.FormatUint(math.MaxUint64, 10)
+	_, err := st.send(ctx, probe)
+	switch {
+	case err == nil, refusalCode(err) == "OPCONFLICT":
+		return true, nil
+	case errors.Is(err, ErrUnknown):
+		return false, err
+	}
+	return false, nil
+}
+
+// bars says the manifest is the work table's and holds an entry the
+// lifecycle refused.
+func (st *Store) bars(man ntable.BatchManifest, barred map[string]string) bool {
+	if man.Table != st.Names.Table(sprint.Work) {
+		return false
+	}
+	for _, e := range man.Members {
+		if _, ok := barred[e.ID]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // skipOf describes a skipped entry: what it expected and what the store holds.

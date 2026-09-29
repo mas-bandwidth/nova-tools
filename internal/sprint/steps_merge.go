@@ -295,9 +295,6 @@ func sprintDone(s *Snapshot, landing, leaving map[string]bool, who string) (Note
 		}
 	}
 	landed := len(s.Work.Column(Landed)) + len(landing)
-	if landed == 0 {
-		return Note{}, false
-	}
 	dropped := len(leaving)
 	for _, st := range s.Work.Rows {
 		dropped += s.StreamCtl(st).Int("dropped")

@@ -505,6 +505,12 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		waived := ""
 		if n.Waived {
 			waived = " waived"
+			if n.WaivedBy != "" {
+				waived += " by " + oneline.Escape(n.WaivedBy)
+			}
+			if n.WaivedAt != "" {
+				waived += " at " + oneline.Escape(n.WaivedAt)
+			}
 		}
 		fmt.Fprintf(stdout, "NEEDS %s %s%s\n", oneline.Escape(n.ID), oneline.Escape(n.State), waived)
 	}

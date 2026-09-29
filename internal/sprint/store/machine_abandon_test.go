@@ -4,56 +4,13 @@ package store
 // that has in fact applied: its notes are lost and "abandoned" is written.
 
 import (
-	"context"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-type hooked struct {
-	*Mem
-	onApply   func(n int)
-	onReadSet func(n int)
-	onRelease func(before bool)
-	na, nr    int
-	mu        sync.Mutex
-}
-
-func (x *hooked) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Receipt, error) {
-	x.mu.Lock()
-	x.na++
-	n := x.na
-	x.mu.Unlock()
-	if x.onApply != nil {
-		x.onApply(n)
-	}
-	return x.Mem.Apply(ctx, m)
-}
-
-func (x *hooked) ReadSet(ctx context.Context, table string, ids []string) (ntable.ReadSetResult, error) {
-	x.mu.Lock()
-	x.nr++
-	n := x.nr
-	x.mu.Unlock()
-	if x.onReadSet != nil {
-		x.onReadSet(n)
-	}
-	return x.Mem.ReadSet(ctx, table, ids)
-}
-
-func (x *hooked) Release(ctx context.Context, op OpRecord, commit bool) error {
-	if x.onRelease != nil {
-		x.onRelease(true)
-	}
-	err := x.Mem.Release(ctx, op, commit)
-	if x.onRelease != nil {
-		x.onRelease(false)
-	}
-	return err
-}
+// hooked is finished_op_test.go's.
 
 func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 	skipUntilEngineRepair(t)
@@ -184,7 +141,7 @@ func TestCRWriterToldCutWhenTheTickFinishedItsOperation(t *testing.T) {
 // the tick finished that it succeeded: the read's findings 3 and 6, fixed in
 // the engine by another change. Until that change is merged the tests of
 // those findings skip; set it true at integration.
-const engineRepairFixed = false
+const engineRepairFixed = true
 
 func skipUntilEngineRepair(t *testing.T) {
 	t.Helper()
