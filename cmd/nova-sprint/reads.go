@@ -290,6 +290,12 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			other++
 		}
 		fmt.Fprintln(stdout, groupLine(g, now))
+		for _, cmd := range g.Commands {
+			fmt.Fprintf(stdout, "  %s:\n", oneline.Escape(cmd.Decision))
+			for _, l := range cmd.Lines {
+				fmt.Fprintf(stdout, "    %s\n", oneline.Escape(l))
+			}
+		}
 		if opened != nil && g.ID == opened.ID {
 			for _, m := range g.Members {
 				fmt.Fprintf(stdout, "  %s\n", oneline.Escape(m))
@@ -351,6 +357,9 @@ func groupLine(g sprint.Group, now time.Time) string {
 	}
 	if g.What != "" {
 		l += "  " + g.What
+	}
+	if len(g.Commands) > 0 {
+		return oneline.Escape(l) // the decisions follow, as commands
 	}
 	if len(g.Decisions) > 0 {
 		l += "  -> " + strings.Join(g.Decisions, " | ")

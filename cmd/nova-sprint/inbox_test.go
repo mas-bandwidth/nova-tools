@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -206,4 +207,151 @@ func TestRedNamesWhatItKnows(t *testing.T) {
 		t.Fatalf("no suspect: %+v", g)
 	}
 	ta.clean()
+}
+
+// I3: every judgment prints its decisions as commands, filled in and ready
+// to copy; the ones with no placeholder run as printed and answer it.
+func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 3")
+	ta.ok("add --stream s2 --count 2")
+	ta.ok("start --limit 100")
+	ta.ok("take --as m1 --limit 100")
+	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1 s2-2.w1@1")
+	ta.a.sleep(time.Second)
+	ta.ok("finish --as m1 s2-1.w1@1 --failed --report 'the tests went red'")
+	ta.ok("ask --limit 100")
+	ta.a.sleep(time.Second)
+	ta.ok("read --as reader-a --broken --finding 'the empty case is not handled' s2-2.r1.reader-a")
+	ta.ok("read --as reader-a --ok --limit 100")
+	ta.ok("read --as reader-b --ok --limit 100")
+	ta.ok("accept --read-ok")
+	ta.a.sleep(time.Second)
+	ta.ok("merge --stream s1 --red --suspect s1-2")
+	ta.a.sleep(time.Minute)
+	gs := ta.inboxGroups()
+	out := ta.ok("inbox")
+	// the golden text, with the notification ids named in the order found
+	golden := out
+	for i, g := range gs {
+		for _, n := range g.Notes {
+			golden = strings.ReplaceAll(golden, n, "N"+strconv.Itoa(i+1))
+		}
+	}
+	golden = regexp.MustCompile(`due=\d\d:\d\d:\d\d`).ReplaceAllString(golden, "due=HH:MM:SS") // the local zone
+	want := `JUDGMENT N1   work came back failed  stream=s2  size=1  waited=1m2s  due=HH:MM:SS  (s2-1)  the tests went red
+  rework with a fix:
+    nova-sprint rework --group N1 --expect 1 --answers N1
+  drop:
+    nova-sprint drop --group N1 --expect 1 --reason '<why>' --answers N1
+JUDGMENT N2   a reader found it broken  stream=s2  size=1  waited=1m1s  due=HH:MM:SS  (s2-2)  the empty case is not handled
+  rework with the finding:
+    nova-sprint rework --group N2 --expect 1 --answers N2
+  ask another reader:
+    nova-sprint ask --group N2 --expect 1 --another --answers N2
+  drop:
+    nova-sprint drop --group N2 --expect 1 --reason '<why>' --answers N2
+JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)  suspects: s1-2 (of the batch of 3)
+  take the suspect off and resume:
+    nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3
+    nova-sprint resume --stream s1 --did 'returned s1-2' --answers N3
+  rework the suspect:
+    nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3
+    nova-sprint rework s1-2 --fix '<fix>'
+    nova-sprint resume --stream s1 --did 'returned s1-2 for rework' --answers N3
+  resume with what you did:
+    nova-sprint resume --stream s1 --did '<what you did>' --answers N3
+`
+	if !strings.HasPrefix(golden, want) {
+		t.Fatalf("the inbox:\n%s\nwant it to begin:\n%s", golden, want)
+	}
+	// the commands with nothing to fill in run as printed
+	run := func(g sprint.Group, decision string) {
+		for _, c := range g.Commands {
+			if c.Decision != decision {
+				continue
+			}
+			for _, l := range c.Lines {
+				ta.ok(strings.TrimPrefix(l, "nova-sprint "))
+			}
+			return
+		}
+		t.Fatalf("no decision %q in %+v", decision, g.Commands)
+	}
+	run(gs[0], "rework with a fix")
+	run(gs[1], "rework with the finding")
+	run(gs[2], "take the suspect off and resume")
+	if out := ta.ok("inbox"); strings.Contains(out, "JUDGMENT") {
+		t.Fatalf("a judgment is still open after its commands ran:\n%s", out)
+	}
+	ta.clean()
+}
+
+// I3: a repeat's "stop and look" lists its cards, cut at MaxLook with the
+// command that lists them all.
+func TestStopAndLookListsTheCardsThenTheWholeGroup(t *testing.T) {
+	t.Parallel()
+	g := sprint.Inbox(sprint.InboxReq{Now: t0, Open: func() []sprint.Open {
+		var out []sprint.Open
+		for i := 1; i <= 7; i++ {
+			n := sprint.Note{ID: "n1", Kind: sprint.Judgment, Type: sprint.NWorkFailed, Stream: "s1", At: t0, Marked: true,
+				Decisions: []string{"rework with a fix", "drop", sprint.RepeatDecision}}
+			out = append(out, sprint.Open{Key: sprint.OpenKey("n1", "s1-"+strconv.Itoa(i)), Note: n})
+		}
+		return out
+	}()})
+	look := g[0].Commands[2]
+	if look.Decision != sprint.RepeatDecision || len(look.Lines) != sprint.MaxLook+1 || look.Lines[0] != "nova-sprint card s1-1" ||
+		look.Lines[sprint.MaxLook] != "nova-sprint inbox --open n1" {
+		t.Fatalf("stop and look: %+v", look)
+	}
+}
+
+// I3: a stopped stream's decisions run as printed once the placeholders are
+// filled, and each one answers the stop.
+func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ fact, typ, decision string }{
+		{"--conflict s1-2", sprint.NConflict, "rework"},
+		{"--conflict s1-2", sprint.NConflict, "drop"},
+		{"--conflict s1-2", sprint.NConflict, "resolve and resume"},
+		{"--cross s1-1=s2-1", sprint.NCross, "return"},
+		{"--cross s1-1=s2-1", sprint.NCross, "drop"},
+		{"--rejected", sprint.NRejected, "return"},
+		{"--rejected", sprint.NRejected, "drop"},
+		{"--rejected", sprint.NRejected, "resume"},
+		{"--red", sprint.NRed, "rework the suspect"},
+		{"--red", sprint.NRed, "resume with what you did"},
+	} {
+		t.Run(c.typ+"/"+c.decision, func(t *testing.T) {
+			t.Parallel()
+			ta := newTestApp(t)
+			ta.toMerging("s1", "s2")
+			ta.ok("merge --stream s1 " + c.fact)
+			g := ta.group(c.typ, "s1")
+			fill := strings.NewReplacer("'<fix>'", "x", "'<why>'", "x", "'<what you did>'", "x", "'<suspect>'", "s1-3")
+			found := false
+			for _, cmd := range g.Commands {
+				if cmd.Decision != c.decision {
+					continue
+				}
+				found = true
+				for _, l := range cmd.Lines {
+					if strings.Contains(l, " queue ") {
+						continue
+					}
+					ta.ok(fill.Replace(strings.TrimPrefix(l, "nova-sprint ")))
+				}
+			}
+			if !found {
+				t.Fatalf("no decision %q: %+v", c.decision, g.Commands)
+			}
+			if out := ta.ok("inbox"); strings.Contains(out, "JUDGMENT") {
+				t.Fatalf("still open:\n%s", out)
+			}
+			ta.clean()
+		})
+	}
 }

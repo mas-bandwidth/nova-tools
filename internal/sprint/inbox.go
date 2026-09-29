@@ -56,6 +56,9 @@ type Group struct {
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
 	Suspects  []string      `json:"suspects,omitempty"` // a red branch: the suspects named
+	// Commands is every decision open to the coordinator as the commands
+	// that make it, filled in: the group's id, --expect and --answers.
+	Commands []Command `json:"commands,omitempty"`
 	// Members is every subject a verb given --group acts on: the open
 	// subjects of its judgments (a stopped stream's: the cards it stopped
 	// on), or the primaries of its notifications; sorted, unbounded.
@@ -148,6 +151,7 @@ func Inbox(r InboxReq) []Group {
 		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
 		sort.Strings(judg[i].Notes)
+		judg[i].Commands = commands(judg[i], first[i])
 	}
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
@@ -160,9 +164,11 @@ func Inbox(r InboxReq) []Group {
 		if !st.Stalled(r.Now, r.Stale) {
 			continue
 		}
-		out = append(out, Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
+		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
 			Oldest: st.Progress, Due: st.Progress.Add(r.Stale), Waited: r.Now.Sub(st.Progress), Decisions: Decisions[NStreamStale],
-			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)})
+			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)}
+		g.Commands = commands(g, Note{})
+		out = append(out, g)
 	}
 	var rest []Group
 	at = map[string]int{}
@@ -216,5 +222,128 @@ func sortedSet(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// Command is one decision open to the coordinator as the commands that make
+// it, in order, one per line, ready to copy.
+type Command struct {
+	Decision string   `json:"decision"`
+	Lines    []string `json:"lines"`
+}
+
+// MaxLook bounds the cards "look" lists; past it, the command that lists the
+// whole group.
+const MaxLook = 5
+
+// A placeholder is free text only the coordinator can give.
+const (
+	whyText  = "'<why>'"
+	fixText  = "'<fix>'"
+	didText  = "'<what you did>'"
+	noneText = "'<why nothing is to be done>'"
+)
+
+// commands is the group's decisions as commands, from its oldest note (a
+// stopped stream's card and the card it needs). A decision about cards takes
+// the group with its size and the notifications it answers; a decision about
+// a stopped stream names the cards and resumes the stream.
+func commands(g Group, first Note) []Command {
+	const cmd = "nova-sprint "
+	grp := " --group " + g.ID + " --expect " + itoa(g.Size)
+	ans := " --answers " + strings.Join(g.Notes, ",")
+	s := g.Stream
+	resume := func(did string) string { return cmd + "resume --stream " + s + " --did " + did + ans }
+	look := func() []string {
+		var out []string
+		for i, m := range g.Members {
+			if i == MaxLook {
+				return append(out, cmd+"inbox --open "+g.ID)
+			}
+			out = append(out, cmd+"card "+m)
+		}
+		return out
+	}
+	card, other := "", ""
+	if len(first.Primaries) > 0 {
+		card = first.Primaries[0]
+	}
+	if len(first.Primaries) > 1 {
+		other = first.Primaries[1]
+	}
+	suspects, listBatch := "'<suspect>'", []string{cmd + "queue --stream " + s + " --max " + itoa(g.Size)}
+	if len(g.Suspects) > 0 {
+		suspects, listBatch = strings.Join(g.Suspects, " "), nil
+	}
+	var out []Command
+	add := func(d string, lines ...string) { out = append(out, Command{Decision: d, Lines: lines}) }
+	for _, d := range g.Decisions {
+		switch {
+		case d == RepeatDecision:
+			add(d, look()...)
+		case d == "act" && first.StreamLevel:
+			add(d, cmd+"wait "+first.ID+" --for 30m")
+		case d == "act":
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+g.ID+" --for 30m")
+		case g.Type == NStreamStale:
+			add(d, cmd+"where", cmd+"queue --stream "+s)
+		case g.Type == NConflict:
+			switch d {
+			case "resolve and resume":
+				add(d, resume(didText))
+			case "rework":
+				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
+			case "drop":
+				add(d, cmd+"drop "+card+" --reason "+whyText, resume("'dropped "+card+"'"))
+			}
+		case g.Type == NRed:
+			ret := cmd + "return " + suspects + " --reason 'suspect of the red batch'" + ans
+			switch d {
+			case "take the suspect off and resume":
+				add(d, append(listBatch, ret, resume("'returned "+strings.Trim(suspects, "'")+"'"))...)
+			case "rework the suspect":
+				add(d, append(listBatch, ret, cmd+"rework "+suspects+" --fix "+fixText, resume("'returned "+strings.Trim(suspects, "'")+" for rework'"))...)
+			}
+		case g.Type == NCross:
+			switch d {
+			case "rank that card first":
+				add(d, cmd+"rank "+other+" --first")
+			case "wait":
+				add(d, cmd+"wait "+first.ID+" --for 30m")
+			case "look at both":
+				add(d, cmd+"card "+card, cmd+"card "+other)
+			case "return":
+				add(d, cmd+"return "+card+" --reason "+whyText, resume("'returned "+card+"'"))
+			case "drop":
+				add(d, cmd+"drop "+card+" --reason "+whyText, resume("'dropped "+card+"'"))
+			}
+		case g.Type == NRejected:
+			switch d {
+			case "resume":
+				add(d, resume(didText))
+			case "return":
+				add(d, cmd+"return"+grp+" --reason "+whyText+ans, resume("'returned the batch'"))
+			case "drop":
+				add(d, cmd+"drop"+grp+" --reason "+whyText, resume("'dropped the batch'"))
+			}
+		case d == "rework with the finding" || d == "rework with a fix" && g.Type == NWorkFailed:
+			add(d, cmd+"rework"+grp+ans) // each takes its own finding or report
+		case d == "rework with a fix" || d == "rework":
+			add(d, cmd+"rework"+grp+" --fix "+fixText+ans)
+		case d == "ask another reader":
+			add(d, cmd+"ask"+grp+" --another"+ans)
+		case d == "drop":
+			add(d, cmd+"drop"+grp+" --reason "+whyText+ans)
+		case d == "return":
+			add(d, cmd+"return"+grp+" --reason "+whyText+ans)
+		case d == "look":
+			add(d, append(look(), cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)...)
+		case d == "replace":
+			add(d, cmd+"drop"+grp+" --reason 'replaced by <new id>'"+ans, cmd+"add --stream "+s+" '<new id>' --brief '<brief>'")
+		}
+	}
+	if g.Type == NRed {
+		add("resume with what you did", resume(didText))
+	}
 	return out
 }
