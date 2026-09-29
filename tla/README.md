@@ -570,25 +570,26 @@ member in its old cell, delete its record on removal, or spuriously increment it
 revision on a same-cell no-op. Other reversed cases force acceptance of
 the malformed remove and set/unset forms; a third forces removal of an already
 unplaced member. `CASES.tsv` names each exact expected property.
-`BATCH-SOURCES.tsv` records the batch model,
-configuration, inherited model and runner hashes. `RUNS.tsv` records measured results,
-combined input hashes and the TLC executable hash;
-timeouts and unexpected diagnostics are failures. `RUNS.tsv` retains the
-host field emitted by the runner. A configurable portable platform label remains
-a runner follow-up; publication must not replace measured fields by hand.
+`BATCH-SOURCES.tsv` records the batch model, configurations, inherited models and
+runner source hashes, including the per-case input parser and case-plan parser.
+`RUNS.tsv` records each case's measured result, its own input fingerprint and the
+TLC executable hash; timeouts and unexpected diagnostics are failures. The runner
+emits the platform label `linux-amd64` rather than a machine name.
 
-On 2026-09-29, the required group ran on `spacegame.losangeles` inside an
-isolated Linux container: all 39 cases passed their declared outcomes (12
-positive, 22 action rejections and 5 invariant rejections). The runner emitted
-container hostname `48df7887e27b`, retained in those `RUNS.tsv` rows. Their
-combined input fingerprint is
-`dada986a0c5453b3df9ccabde9ea41c59cd04e256a15e6d63e68530adabe0eee`;
-the TLC JAR hash is
+On 2026-09-29, after integrating dev `abdc7a23026316fc4e31435c75ff5df9d959eb54`,
+frozen source `8fc37bcf7620695f5903891d8a5516b890fea035` ran all 39 required batch
+cases in an isolated Linux container. All reached their declared outcomes: 12
+positive, 22 action rejections and 5 invariant rejections. Each used one TLC worker
+under the shared 110-second budget. The container had a two-CPU quota and 4 GiB
+memory limit; the records retain the runtime's reported logical CPU count.
+The TLC JAR hash is
 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
-The other 76 `RUNS.tsv` rows retain an older global input fingerprint, so the
-current global-fingerprint record gate still sees them as stale. The per-case
-fingerprint change merged as #4705 is a separate integration dependency; these
-batch measurements do not claim an all-case gate pass.
+
+The per-case runner is now integrated. Its `merge --keep` joined those 39 fresh
+rows with the 76 unchanged current rows from dev, yielding 115 records. The older
+global-fingerprint batch measurements remain in Git history; none was relabelled
+as a fresh per-case run. All 4,480 source-file hashes matched before and after the
+container runs, and the owned containers were removed.
 
 This is a finite request-template model, not a JSON parser, Redis rollback proof or
 implementation refinement proof. Its three-action main bound is explicit; the
@@ -656,15 +657,17 @@ packets, logs and `suite.json`. Preserve the executed binary and TLC JAR hashes
 alongside those outputs. A record applies only to its captured inputs and finite
 histories.
 
-After merging runtime base `e94c2b54e3f1c544a5f7b0ae02530d9cc7c9fe94`, the
-2026-09-29 Linux container run on `spacegame.losangeles` completed all six
-declared histories from decoder source `19bbe44099c68d0df7cfe86c7e82bc1ac15d1156`;
-`corrupt-observation` failed exactly `MatchesExecution` as expected. The captured Lua hash is
+From the same frozen source `8fc37bcf7620695f5903891d8a5516b890fea035`, the
+2026-09-29 `linux-amd64` container run completed all six declared histories on
+Redis 8.0.5; `corrupt-observation` failed exactly `MatchesExecution` as expected.
+The captured Lua hash is
 `e97d6a1528a4cfb6762c10ee404004919a7b954dd4db32fb851ac3bd26caf85b`,
 the TLC JAR hash is
 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`,
 and the generated `suite.json` hash is
-`d7e1571086ef02cb6ba121be93631d3f67de139d8c7c9c749c400ff080bd5943`.
-This execution used `go run`; it did not retain a standalone executable hash.
+`227778b4f7303fb4e019e93edf1d52d3ff530e09ab592e37e2a3db008c4a62d0`.
+The standalone `tlacheck` executable was retained with SHA-256
+`b99c07886cb789e827b68579d33eb256e85371db102c4466304a098f4ad2d011`;
+both the model and replay containers built the same executable bytes.
 These six finite captures establish only the listed histories, not general
-runtime refinement or behavior at the new 16 MiB batch field-value bound.
+runtime refinement or behavior at the 16 MiB batch field-value bound.
