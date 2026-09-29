@@ -9,20 +9,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "comms, capacity and status of friends: tell, ask, tiers, slots, pause, resume",
+		Summary: "comms, capacity and status of friends: tell, ask, tiers, slots, pause, resume, beat",
 		Run:     runFriend,
 	})
 }
@@ -33,7 +37,7 @@ func friendFlags(name string) *flag.FlagSet {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want tell, ask, tiers, slots, pause or resume")
+		return refuse(errOut, "friend", "want tell, ask, tiers, slots, pause, resume or beat")
 	}
 	switch args[0] {
 	case "tell":
@@ -48,8 +52,10 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFriendPause(ctx, args[1:], true, out, errOut)
 	case "resume":
 		return runFriendPause(ctx, args[1:], false, out, errOut)
+	case "beat":
+		return runFriendBeat(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want tell, ask, tiers, slots, pause or resume", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want tell, ask, tiers, slots, pause, resume or beat", args[0]))
 	}
 }
 
@@ -221,6 +227,81 @@ func runFriendPause(ctx context.Context, args []string, pause bool, out, errOut 
 	}
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
+	}
+	fmt.Fprintln(out, res.Line())
+	return 0
+}
+
+func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "friend beat"
+	fs := friendFlags(verb)
+	redisAddr := fs.String("redis", redisDefault(), "")
+	as := fs.String("as", "", "")
+	seat := fs.String("seat", "", "")
+	host := fs.String("host", "", "")
+	harness := fs.String("harness", "", "")
+	daemon := fs.Bool("daemon", false, "")
+	interval := fs.Duration("interval", 10*time.Second, "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	target := *as
+	if target == "" {
+		target = *seat
+	}
+	if target == "" {
+		target = seatcred.Process().Selected()
+	}
+	if target == "" && fs.NArg() > 0 {
+		target = fs.Arg(0)
+	}
+	if target == "" {
+		target = os.Getenv("NOVA_FRIEND")
+	}
+	if target == "" {
+		target = os.Getenv("NOVA_SEAT")
+	}
+	if target == "" {
+		return refuse(errOut, verb, "want friend beat --as friend:<name> [--daemon] [--interval <d>]")
+	}
+	seatVal := *seat
+	if seatVal == "" {
+		seatVal = seatcred.Process().Selected()
+	}
+	st, err := store.Open(ctx, taskAddr(*redisAddr))
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	defer st.Close()
+
+	req := friend.BeatRequest{
+		Friend:   target,
+		Seat:     seatVal,
+		Host:     *host,
+		Harness:  *harness,
+		Interval: *interval,
+		Daemon:   *daemon,
+	}
+
+	if *daemon {
+		err = friend.BeatLoop(ctx, st.Client(), req, func(res *friend.BeatResult) {
+			for _, r := range res.Reassigned {
+				fmt.Fprintln(out, r.Line())
+			}
+			fmt.Fprintln(out, res.Line())
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return refuse(errOut, verb, err.Error())
+		}
+		return 0
+	}
+
+	res, err := friend.Beat(ctx, st.Client(), req)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	for _, r := range res.Reassigned {
+		fmt.Fprintln(out, r.Line())
 	}
 	fmt.Fprintln(out, res.Line())
 	return 0

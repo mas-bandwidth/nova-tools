@@ -95,4 +95,22 @@ func TestFriendCLI(t *testing.T) {
 	if len(askMsgs) == 0 || askMsgs[0].Values["card"] != cardID || askMsgs[0].Values["to"] != f {
 		t.Fatalf("ev:friend stream entry for ask mismatch: %v", askMsgs)
 	}
+
+	// 7. friend beat
+	code, out, errOut = runVerb(t, "friend", "beat", "--redis", addr, "--as", "friend:"+f)
+	if code != 0 || !strings.Contains(out, "BEAT friend=f1") || errOut != "" {
+		t.Fatalf("friend beat = %d %q %q", code, out, errOut)
+	}
+
+	// 8. friend beat with positional arg
+	code, out, errOut = runVerb(t, "friend", "beat", "--redis", addr, f)
+	if code != 0 || !strings.Contains(out, "BEAT friend=f1") || errOut != "" {
+		t.Fatalf("friend beat positional = %d %q %q", code, out, errOut)
+	}
+
+	// 9. friend beat missing friend
+	code, out, errOut = runVerb(t, "friend", "beat", "--redis", addr)
+	if code == 0 || !strings.Contains(errOut, "want friend beat --as friend:<name>") {
+		t.Fatalf("friend beat missing arg expected failure, got code=%d out=%q errOut=%q", code, out, errOut)
+	}
 }
