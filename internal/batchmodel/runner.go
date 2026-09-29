@@ -97,8 +97,8 @@ func RunFiniteTrace(ctx context.Context, a RedisCapture, builders []RequestBuild
 				if prior == nil {
 					return nil, base, fmt.Errorf("replay lacks validated original")
 				}
-				decoded, err := DecodeAcceptedReply(reply, prior.Request, prior.Before)
-				if err != nil || !reflect.DeepEqual(*decoded, prior.Receipt) {
+				decoded, err := decodeReplayedReply(wire, *before.Recorded, *prior)
+				if err != nil {
 					return nil, base, fmt.Errorf("replay lost original receipt: %v", err)
 				}
 				receipt = decoded
@@ -155,6 +155,35 @@ func RunFiniteTrace(ctx context.Context, a RedisCapture, builders []RequestBuild
 		control = next
 	}
 	return steps, base, nil
+}
+
+// A replay carries the saved result plus a third marker. Decode the durable
+// original as a new receipt against its original prestate, then require the
+// returned payload to match it exactly. The replay's current prestate cannot
+// explain the original receipt.
+func decodeReplayedReply(wire []any, record OperationRecord, prior AcceptedEvidence) (*Receipt, error) {
+	if len(wire) != 3 || wire[0] != "OK" || wire[2] != "REPLAY" {
+		return nil, fmt.Errorf("replay marker missing or malformed")
+	}
+	if !reflect.DeepEqual(record, prior.Record) || !sameOperation(record, prior.Request, prior.Receipt) {
+		return nil, fmt.Errorf("durable replay record differs from validated original")
+	}
+	var stored any
+	if err := json.Unmarshal(record.ResultJSON, &stored); err != nil {
+		return nil, fmt.Errorf("durable result decode: %w", err)
+	}
+	storedWire, err := replyList(stored)
+	if err != nil || !reflect.DeepEqual(wire[:2], storedWire) {
+		return nil, fmt.Errorf("replay payload differs from durable result")
+	}
+	decoded, err := DecodeAcceptedReply(stored, prior.Request, prior.Before)
+	if err != nil {
+		return nil, err
+	}
+	if !reflect.DeepEqual(*decoded, prior.Receipt) {
+		return nil, fmt.Errorf("durable result differs from validated receipt")
+	}
+	return decoded, nil
 }
 
 func peekFiniteRequest(raw []byte) (Request, error) {

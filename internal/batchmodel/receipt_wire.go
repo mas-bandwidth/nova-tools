@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // The runtime emits these exact fields in one batch_delta JSON value.
@@ -44,10 +46,8 @@ type wireFieldChange struct {
 	AfterSHA1   *string      `json:"after_sha1"`
 }
 
-// Keep this bound aligned with the runtime's T.receipt_value_bytes. The
-// adapter checkout can lag the source checkout, so the wire contract is pinned
-// here to Rowan's 64-byte runtime revision.
-const receiptValueBytes = 64
+// The ntable unit suite checks this value against T.receipt_value_bytes in Lua.
+const receiptValueBytes = ntable.ReceiptValueBytes
 
 func nullableShape(inner wireShape) wireShape {
 	return func(raw json.RawMessage) error {

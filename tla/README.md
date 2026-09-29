@@ -536,6 +536,19 @@ timeouts and unexpected diagnostics are failures. `RUNS.tsv` retains the
 host field emitted by the runner. A configurable portable platform label remains
 a runner follow-up; publication must not replace measured fields by hand.
 
+On 2026-09-29, the required group ran on `spacegame.losangeles` inside an
+isolated Linux container: all 39 cases passed their declared outcomes (12
+positive, 22 action rejections and 5 invariant rejections). The runner emitted
+container hostname `48df7887e27b`, retained in those `RUNS.tsv` rows. Their
+combined input fingerprint is
+`dada986a0c5453b3df9ccabde9ea41c59cd04e256a15e6d63e68530adabe0eee`;
+the TLC JAR hash is
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+The other 76 `RUNS.tsv` rows retain an older global input fingerprint, so the
+current global-fingerprint record gate still sees them as stale. The per-case
+fingerprint change merged as #4705 is a separate integration dependency; these
+batch measurements do not claim an all-case gate pass.
+
 This is a finite request-template model, not a JSON parser, Redis rollback proof or
 implementation refinement proof. Its three-action main bound is explicit; the
 second positive trace separately exercises successful new-epoch mutation and old
@@ -601,3 +614,15 @@ configuration and captured evidence hashes. The run directory retains capture
 packets, logs and `suite.json`. Preserve the executed binary and TLC JAR hashes
 alongside those outputs. A record applies only to its captured inputs and finite
 histories.
+
+The 2026-09-29 Linux container run on `spacegame.losangeles` completed all six
+declared histories; `corrupt-observation` failed exactly `MatchesExecution` as
+expected. The captured Lua hash is
+`0f5c8decb8a93beb559f0f394a1f75cb4ee7de9da84f82c7a32b260c91da6a54`,
+the TLC JAR hash is
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`,
+and the generated `suite.json` hash is
+`99b83203fc86f529db84026591fd9c2ee480fe02bf714054ce85f4a1057ddf84`.
+This execution used `go run`; it did not retain a standalone executable hash.
+These six finite captures establish only the listed histories, not general
+runtime refinement.

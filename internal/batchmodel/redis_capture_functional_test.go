@@ -200,7 +200,7 @@ func TestRecord(t *testing.T) {
 		corrupt := step
 		corrupt.After = cloneSnapshot(corrupt.After)
 		corrupt.After.Recorded.BeforeRevision = "0"
-		if err := ValidateStep(corrupt); err == nil || !strings.Contains(err.Error(), "durable operation record") {
+		if err := ValidateStep(corrupt); err == nil || !strings.Contains(err.Error(), "new durable operation differs from captured hash field") {
 			t.Fatalf("durable rev_before corruption escaped: %v", err)
 		}
 		corrupt = step

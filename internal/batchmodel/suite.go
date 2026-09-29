@@ -206,23 +206,23 @@ func sealSuiteCase(name string, b Bundle, expected, fingerprint string) (SuiteCa
 func seedSuiteRuntime(r *tablemodel.Store, source []byte, name string, withGuard bool) error {
 	r.Cmd("FUNCTION", "LOAD", "REPLACE", "#!lua name=batch_suite_"+strings.ReplaceAll(name, "-", "_")+"\n"+string(source))
 	r.Cmd("HSET", "replay:epoch", "n", "1")
-	call := func(name string, args ...any) any {
-		return r.Cmd(append([]any{"FCALL", "ns_table_" + name, 0}, args...)...)
+	call := func(function string, args ...any) any {
+		return r.Cmd(append([]any{"FCALL", function, 0}, args...)...)
 	}
-	if got := call("create", "t1", finiteFields, `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[OK ") {
+	if got := call("ns_table_create", "t1", finiteFields, `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[OK ") {
 		return fmt.Errorf("create: %v", got)
 	}
 	for _, row := range []string{"r1", "r2"} {
-		if got := call("row_add", "t1", row, "{}", `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[ROW ") {
+		if got := call("ns_table_row_add", "t1", row, "{}", `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[ROW ") {
 			return fmt.Errorf("row %s: %v", row, got)
 		}
 	}
-	if got := call("cell_add", "t1", "r1", "c1", 1, "m1", `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[OK ") {
+	if got := call("ns_table_cell_add", "t1", "r1", "c1", 1, "m1", `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[OK ") {
 		return fmt.Errorf("m1 seed: %v", got)
 	}
 	r.Cmd("HSET", ntable.MemberKey("m1"), "status", "ready")
 	if withGuard {
-		if got := call("cell_add", "t1", "r1", "c2", 2, "m3", `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[OK ") {
+		if got := call("ns_table_cell_add", "t1", "r1", "c2", 2, "m3", `{"epoch":"1"}`); !strings.HasPrefix(fmt.Sprint(got), "[OK ") {
 			return fmt.Errorf("m3 seed: %v", got)
 		}
 		r.Cmd("HSET", ntable.MemberKey("m3"), "token", "permit")
