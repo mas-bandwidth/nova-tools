@@ -398,6 +398,83 @@ func TestQueueIntegrationWithMockedGH(t *testing.T) {
 	}
 }
 
+func TestQueueSubtestFailureExtraction(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeQueueForge{
+		nodes: []ci.QueueNode{
+			{PR: 4605, Position: 0, State: "AWAITING_CHECKS", HeadSHA: "abc1234"},
+		},
+		runs: []ci.MergeGroupRun{
+			{
+				ID:         777,
+				HeadBranch: "gh-readonly-queue/dev/pr-4605-abc1234",
+				HeadSHA:    "abc1234",
+				Status:     "completed",
+				Conclusion: "failure",
+			},
+		},
+		jobs: map[int64][]ci.FailedJob{
+			777: {{ID: 88, Name: "test (linux)", Conclusion: "failure"}},
+		},
+		logs: map[int64]string{
+			88: `
+=== RUN   TestEveryCommandMeetsTheOnboardingStandard
+=== RUN   TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue
+    standard_test.go:123: queue does not have -h
+    standard_test.go:124: command failed
+--- FAIL: TestEveryCommandMeetsTheOnboardingStandard (0.00s)
+    --- FAIL: TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue (0.00s)
+        standard_test.go:123: queue does not have -h
+        standard_test.go:124: command failed
+FAIL
+`,
+		},
+	}
+
+	code, stdout, stderr := runQueue([]string{"--repo", "mas-bandwidth/nova-tools", "--branch", "dev"}, fake)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "standard_test.go:123") || !strings.Contains(stdout, "TestEveryCommandMeetsTheOnboardingStandard/nova-ci_queue") {
+		t.Errorf("stdout = %q, expected subtest failure line and _test.go:123", stdout)
+	}
+}
+
+func TestQueueRefusalsNameCauseNotQuery(t *testing.T) {
+	t.Parallel()
+
+	// 1. Unknown repo names the cause and strips the query
+	fakeUnknown := ci.NewGHQueueForge("unknown/repo", 5*time.Second, func(ctx context.Context, args ...string) (string, error) {
+		return "GraphQL: Could not resolve to a Repository with the name 'unknown/repo' (query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}})", errors.New("exit status 1")
+	})
+	code, _, stderr := runQueue([]string{"--repo", "unknown/repo"}, fakeUnknown)
+	if code != 2 {
+		t.Errorf("code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "repository unknown/repo not found") {
+		t.Errorf("stderr = %q, want 'repository unknown/repo not found'", stderr)
+	}
+	if strings.Contains(stderr, "query($") {
+		t.Errorf("stderr = %q, leaked query string", stderr)
+	}
+
+	// 2. No credentials names the cause and strips the query
+	fakeNoAuth := ci.NewGHQueueForge("mas-bandwidth/nova-tools", 5*time.Second, func(ctx context.Context, args ...string) (string, error) {
+		return "To get started with GitHub CLI, please run:  gh auth login\n(query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}})", errors.New("exit status 1")
+	})
+	code, _, stderr = runQueue([]string{"--repo", "mas-bandwidth/nova-tools"}, fakeNoAuth)
+	if code != 2 {
+		t.Errorf("code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "not authenticated to forge: run gh auth login") {
+		t.Errorf("stderr = %q, want 'not authenticated to forge: run gh auth login'", stderr)
+	}
+	if strings.Contains(stderr, "query($") {
+		t.Errorf("stderr = %q, leaked query string", stderr)
+	}
+}
+
 // TestTheCommandReferenceQueueIsWhatTheToolPrints executes the fenced
 // transcript under docs/CLI.md's `### queue` line for line through
 // onboarding.CompareTranscript.
