@@ -364,7 +364,7 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	if *view != "" {
-		text, err := viewReader(c, *view, opts)(ctx)
+		text, err := viewReader(c, *view, opts, false)(ctx)
 		if err != nil {
 			return st.refusal(stderr, verb, err)
 		}

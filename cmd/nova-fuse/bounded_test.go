@@ -19,6 +19,9 @@ func countLines(s string) int {
 func crowdedBox(t *testing.T, n int) string {
 	t.Helper()
 	box := filepath.Join(t.TempDir(), "fuse-box.json")
+	if exit, _, stderr := runFuse(t, "init", "--box", box); exit != 0 {
+		t.Fatalf("init: exit %d; stderr: %s", exit, stderr)
+	}
 	for i := 0; i < n; i++ {
 		exit, _, stderr := runFuse(t, "quarantine", "--box", box,
 			fmt.Sprintf("a-surface-%03d", i), "a post addressed me and asked for a token")

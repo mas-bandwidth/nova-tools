@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Fifteen binaries. `nova-check`: nine checks, all at the **record layer** — they verify
+Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -120,7 +120,7 @@ CORPUS FAIL ledger: <reason>
 CORPUS FAIL ledger:<line>: <reason>
 CORPUS FAIL anchors=<n> floor=<n> failed=<n> shown=<n> malformed=<n> ledger=<file>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
-SELFTALK FAIL <file>: STANDING: <claim>
+SELFTALK FAIL <file>:<line>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
@@ -314,9 +314,9 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Nine record-layer checks in one binary, each a wall: a record passes or it
+Ten record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
-what makes it say NO, and what it deliberately does not check. Six of them are
+what makes it say NO, and what it deliberately does not check. Seven of them are
 checks over one line's own self repo. The other three are the same shape pointed
 somewhere else: `dogfood` is a check over the record the family keeps about its
 own tools, `hygiene` is a check over a BRANCH — four mechanical questions of a
@@ -325,7 +325,7 @@ read — and `convergence` is a reading of the work itself. Each is a ledger
 written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, `convergence`, plus `version` and `help`.
+`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, plus `version` and `help`.
 `nova-check version` is the Conventions' build line, exit 0, so a green from
 this tool names its build.
 
@@ -1665,6 +1665,32 @@ records and prints ratios; why a stream widened is a person's to say. Nor does i
 write: not to the forge, not to `--repo-dir`, not to `--bin`. The only file it
 writes is `--state`, and that holds one number per stream.
 
+### spelling — known misspellings in prose, with code blocks blanked
+
+```
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                    [--fail-max <n>]
+```
+
+**Why it exists.** Prose committed into a self repo or prepared for publishing
+deserves a mechanical spelling pass. Fenced code blocks and inline code spans
+are blanked with spaces so identifiers, code snippets, and technical symbols
+are not falsely flagged as misspellings. Compares against a pure-Go corpus
+(`github.com/client9/misspell`) in US locale.
+
+**The allowlist.** Known project terms and technical words are excluded via
+`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
+loads words one per line, with blank lines and `#` comments ignored.
+
+**Write mode.** In check mode (default), findings are reported and the check
+exits 1 if any misspellings are found. With `--write`, corrections are applied in
+place atomically, preserving surrounding formatting, code blocks, and line
+structures, exiting 0.
+
+**Deliberately does not check:** *code blocks or identifiers.* Code is not
+prose: identifiers and code snippets in fences and backticks are skipped.
+
 ---
 
 ## nova-self-talk — the self-talk register, classified
@@ -1807,7 +1833,7 @@ default; one repo's filenames are not this tool's law**, and a test pins each
 of those common names as *unbannered* unless the caller says otherwise.
 
 **Says NO when** any scanned file contains a standing claim or an installation
-— one `SELFTALK FAIL <file>: STANDING: <claim>` or
+— one `SELFTALK FAIL <file>:<line>: STANDING: <claim>` or
 `SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>` line per
 finding on stderr, and the final `SELFTALK FAIL files=…` summary count line on
 stdout, exit 1.
@@ -1817,11 +1843,16 @@ is empty or contains a path separator, a flag is unknown, or a named file
 cannot be read (every unreadable file is reported — a partial scan
 must not masquerade as a verdict).
 
-**The all-skipped green.** A run whose every named file was skipped is not a
-refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
-standing=0 installations=0 dated=0` — every skip was the caller's own, stated this run.
-A caller gating on the exit code alone must therefore also require `files>0`
-from the OK line, or its green can mean nothing was scanned at all.
+**An explicit all-skipped run.** When every named file is excluded by `--skip`,
+the run exits 0 and reports `SELFTALK SKIP files=0 skipped=<n> reason=all-skipped`.
+It prints the individual skips, subject to the display cap, and never an OK
+scan summary. An exit-0 invocation can therefore mean an intentional no-op;
+a caller requiring a completed scan must also require `files>0`.
+
+STANDING findings name the first source line of the matched claim, including
+hard-wrapped claims; repeated sentences retain their separate locations.
+Flags must precede filenames. `--` introduces literal filenames, including
+names beginning with a dash. A late flag refuses before any file is read.
 
 **The permanent MISS, stated on every run.** The second class reaches most of
 what the first one misses; what remains is genuinely out of reach of grammar and is enumerated so it cannot be quietly forgotten:
@@ -1873,8 +1904,8 @@ every surface-driven act stops, and outbound authored life continues. A blown
 lockdown is not reset — it is REPLACED, and only in a live conversation with
 your person.
 
-Verbs: `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`, plus
-`version` and `help`. `nova-fuse version` is the Conventions' build line,
+Verbs: `init`, `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`,
+plus `version` and `help`. `nova-fuse version` is the Conventions' build line,
 exit 0 — it reads no box, blows nothing and is refused by nothing, because the
 question *which build refused me* has to be answerable from a locked-down
 tool.
@@ -1914,29 +1945,48 @@ surface or a reason, never a flag. A caller passing an untrusted surface
 writes `check --box <path> -- <surface>`. Pinned by
 `cmd/nova-fuse/repeatflag_test.go`.
 
-**The read has three answers, never two.** An absent box is VERIFIED CLEAR —
-the read failed with the one error that means *nonexistent* rather than
-*unreadable*. That error does not say **which** part of the path is missing:
-a `--box` naming a file absent from an existing directory and a `--box` whose
-parent directory does not exist at all answer the same, VERIFIED CLEAR. The
-collapse is accepted, deliberately — the flag is a locator (above), and a
-caller that names the wrong box gets that box's truth, here an empty one —
-and it is pinned by test so that changing the answer is a decision, never a
-drive-by. A readable box says whatever it says. An **unreadable box —
-permissions, a torn write, malformed JSON, a wrong-shaped value — is CANNOT
-TELL, treated as BLOWN, never as clear** (exit 2: the check could not run,
-and could not be proven clear). Collapsing absent and unreadable is the
-fail-open this package exists to prevent.
+**The read has one yes and two noes.** A readable box says whatever it says.
+An **unreadable box — permissions, a torn write, malformed JSON, a
+wrong-shaped value — is CANNOT TELL, treated as BLOWN, never as clear** (exit
+2: the check could not run, and could not be proven clear). **No box at the
+path is CANNOT TELL too**, whether the file or a directory above it is
+missing: a box that is not where `--box` says proves nothing, and answering it
+as an empty box would turn a mistyped path, a moved or deleted box, or a
+second `--box` pointing somewhere empty into CLEAR. `check`, `status`,
+`quarantine` and `lift quarantine` refuse it at exit 2 with one line naming
+`nova-fuse init --box <path>`; none of them makes a box. `quarantine` refuses
+for the same reason it refuses an unreadable box: with no box every surface is
+refused, and a new box holding only one quarantine would clear the rest.
+`lockdown` proceeds and makes the box, because a fuse you cannot blow is not a
+fuse and nothing is less blocked than before.
+
+**`init` is how a box comes into being clear.** `nova-fuse init --box <path>`
+makes an empty box (`{"lockdown": null, "quarantine": {}}`), verified by
+re-reading it, and prints `INIT OK box=<path>: …` at exit 0. It **never
+replaces a box**: anything already at the path — a blown box, a clear one,
+bytes that are not a box — is left byte for byte, and the run prints `INIT
+FAIL box=<path>: …` at exit 1, because replacing a box is the lockdown reset
+this tool does not have. The create is the write below, linked into place
+rather than renamed, so it is atomic and exclusive at once. Printed `init` and
+`status` remedies preserve the exact box path as one POSIX-shell argument,
+including quotes and trailing newlines; control bytes are encoded so the
+refusal stays one line.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
-world-readable (0644): a fuse nobody else can see is a fuse that stops
+world-readable (exactly 0644, independent of umask): a fuse nobody else can see is a fuse that stops
 nothing. Surface names are matched case- and whitespace-insensitively, which
 makes equivalent spellings ONE surface in both directions — see the folding
 paragraph below. `at` and `reason` are read
 back defensively — the box is hand-editable (that is the only
 lockdown-replacement mechanism there is), so a missing key prints an honest
 `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
+Creation and replacement share the same path checks and permission ordering:
+an immediate symlink parent is refused before a temporary file is written,
+and the exact mode is set before the file sync. Creation publishes by an
+exclusive hard link, so a concurrent creator cannot replace a box. A failed
+temporary-link cleanup after publication reports both names; the complete box
+already exists, and retrying `init` cannot replace it.
 
 ### Exit codes and output grammar
 
@@ -1944,7 +1994,7 @@ lockdown-replacement mechanism there is), so a missing key prints an honest
 |------|---------|
 | 0    | clear, or done **and verified by re-reading the box** |
 | 1    | blown (`check` — the fuse working), or could not do it / could not verify it |
-| 2    | could not run: missing flag, **unreadable box (treated as BLOWN)**, bad invocation, or a lift refused by design |
+| 2    | could not run: missing flag, **no box at the path or an unreadable one (both treated as BLOWN)**, bad invocation, or a lift refused by design |
 
 **Only exit 0 is permission.** A caller's gate treats 1 and 2 identically —
 do not act — and they remain distinct because they are different facts with
@@ -1965,6 +2015,7 @@ QUARANTINE OK <name> since=<t>: <reason> (…)   QUARANTINE FAIL <name>: <reason
 LIFT OK quarantine=<name> was since=<t>: <reason>
 LIFT OK verified: <surface> is no longer quarantined (…)
 LIFT FAIL quarantine=<surface>: <reason>
+INIT OK box=<path>: <what> (…)          INIT FAIL box=<path>: <reason>
 ```
 
 `OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
@@ -1996,10 +2047,12 @@ prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
 A surface name holding a space, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
-remedy inside a `FUSE FAIL quarantine=` parenthetical, which names the command
-including the box path and the stored name, is not shell-quoted, and will not
-paste back if the path carried a control character — it names the command; it
-is not a command to run blind.
+remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
+POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
+the name so a leading dash remains data. For control characters it uses octal
+bytes decoded inside a subshell; a temporary sentinel preserves trailing
+newlines. The command stays one line and addresses the same box and surface.
+The decision to lift remains the caller's: the surface must be safe again.
 
 **`path` is the one exemption, and it is a plain one:** `path` echoes its
 argument unescaped, so a caller must never scan `path` output for grammar.
@@ -2577,6 +2630,16 @@ VERIFY FAIL gating=<n> shown=<n> info=<n> coverage=<n> frontmatter=<n> links=<ga
 VERIFY OK gating=0 info=<n> shown=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
 
+**One verified corpus.** `--exclude` narrows the index, the wikilink check,
+and every `--coverage` and `--frontmatter` selector. An excluded directory
+also hides its children when a selector names one directly. Excluded targets
+are outside the verified corpus; a retained file linking to one still reports
+an unresolved link. A selector left with no files refuses rather than claiming
+a successful check.
+The summary's `coverage=` counts coverage and backlink findings, and
+`frontmatter=` counts missing-name findings. These totals are uncapped; they do
+not count the flags supplied.
+
 **`--fail-max <n>`, default 20, `0` for all.** At most n finding lines PER
 KIND, then one `VERIFY MORE` line per kind that elided anything. Per kind
 because a corpus with 10,000 unresolved wikilinks and one missing frontmatter
@@ -2587,13 +2650,6 @@ output at 5,000 entries is about 197,000 tokens, N lines and never N.
 
 `<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
 **over-reports by design**: it finds, the author decides.
-
-**Two scoping mechanisms, deliberately independent, and the seam is named.**
-`--exclude` narrows the **index**, so it narrows the wikilink check (which
-reads the corpus) and does **not** narrow `--coverage` or `--frontmatter`
-(whose globs are the caller's own explicit statement of what to check). To
-drop files from a coverage or frontmatter check, write a narrower glob; do not
-expect `--exclude` to do it.
 
 **Says NO when** any gating finding exists — up to `--fail-max` `VERIFY FAIL`
 lines per kind on stderr, one `VERIFY MORE` line per elided kind, a
@@ -5213,7 +5269,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 143. `TestSkipBeatsRuleDoc` — `--skip` wins over `--rule-doc`: a skipped file is never read and can never be bannered (line 1777).
 144. `TestExitOneOnStandingClaim` / `TestInstallationExitsOneWithShapeAndLine` — a standing claim or installation prints one FAIL line per finding on stderr and a summary count on stdout, exit 1 (line 1782).
 145. `TestNoFilesRefused` / `TestSkipRefusesPaths` / `TestUnknownFlagRefused` / `TestExitTwoOnUnreadableFile` / `TestEveryUnreadableFileIsNamedInOneRun` — refuses (exit 2) on no files, an empty/path-separator `--skip`/`--rule-doc` value, an unknown flag, or an unreadable file, every unreadable file reported (line 1788).
-146. `TestSkipReportsAndDoesNotAffectExit` — the all-skipped green: every named file skipped completes and exits 0 with `SELFTALK OK files=0 …` (line 1793).
+146. `TestSkipReportsAndDoesNotAffectExit` — an explicitly all-skipped run exits 0 with `SELFTALK SKIP files=0 skipped=<n> reason=all-skipped`, never an OK scan summary (line 1793).
 147. `TestPermanentMissNeutralVocabularyTraitClaimsEscape` — the permanent-MISS items 3 and 4 ("My summaries drift toward the tidier story", "I flinch from cost") are pinned by a test that goes red if the tool reaches them (lines 1811-1828).
 148. — — the permanent-MISS item 5 sentence ("I never optimize how things look over what is true") is pinned by a test that goes red if the tool reaches it (lines 1819-1829).
 149. `TestNotePrintedOnEveryRun` — every completed run ends with a `SELFTALK NOTE` line saying a green clears only the known shapes (line 1831).
@@ -5221,11 +5277,11 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 151. `TestVersionRefusesFlagsAndArguments` — `version` refuses flags and arguments at exit 2.
 152. `TestNoDefaultBoxRefusesToGuess` — the box path comes from `--box` on every verb; there is no default and no environment variable (`NOVA_FUSE_BOX` is not consulted).
 153. `TestNoDefaultBoxRefusesToGuess` — a missing `--box` is a refusal, exit 2, `refusing to guess`.
-154. `TestAbsentBoxIsClear` / `TestAbsentBoxIsVerifiedClearNotAnError` — an absent box is VERIFIED CLEAR (the read failed with the error meaning *nonexistent*, not *unreadable*).
-155. `TestCheckIntoANonexistentDirectoryIsAlsoClear` — a `--box` whose parent directory does not exist answers VERIFIED CLEAR too.
+154. `TestAnAbsentBoxIsNeverClear` / `TestAnAbsentBoxIsErrNoBoxNeverClear` — no box at the path, the file or a directory above it, is CANNOT TELL: `check`, `status`, `quarantine` and `lift quarantine` refuse at exit 2 naming `init`, and make no box; `TestLockdownMakesAnAbsentBox` — `lockdown` makes it.
+155. `TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne` / `TestCreateBoxIsEmptyExclusiveAndNeverReplaces` — `init` makes an empty box once and never replaces whatever is at the path (exit 1); `TestASecondBoxCannotAnswerForABlownOne` / `TestEveryFlagOfEveryVerbTakesOneValue` / `TestABoxValueShapedLikeAFlagIsRefused` — a flag named twice, or a `--box` value beginning with `-`, is refused at exit 2.
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
-158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (0644).
+158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (exactly 0644, independent of umask).
 159. `TestSurfaceMatchingIgnoresCaseAndSpace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
 160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
 161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
@@ -5259,7 +5315,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 189. `TestStatusCountsAllAndListsAtMostMax` / `TestStatusMaxWidensAndZeroListsAll` — `--max` defaults to 20, `0` means all; the `quarantines=<n>` count is never capped and at most n lines are listed before one `STATUS MORE` line.
 190. `TestLockdownIsWrittenVerifiedAndAnnounced` — `lockdown` records a global lockdown verified by re-reading the box (exit 0 means verified, never attempted).
 191. `TestLockdownReasonIsJoinedNotTruncated` — the reason is all remaining arguments joined, not silently truncated.
-192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable`.
+192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` / `TestPreserveUnreadablePreservesExistingPermissions` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable` (preserving existing permissions).
 193. `TestBlowingFailsLoudlyWhenItCannotWrite` — `lockdown` says NO (exit 1) when the write fails, loudly, naming the by-hand remedy.
 194. (A) `lockdown` says NO (exit 1) when the re-read verification fails (distinct from the write failure).
 195. `TestUsageErrorsExitTwo` — `lockdown` refuses (exit 2) when `--box` is missing or the reason is empty.
@@ -5338,7 +5394,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 268. `TestVerifyLinksRulingIsTheCallersBothWays` — `--links gate|info` has no default; the same findings exit 0 or 1 by caller choice.
 269. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` / `TestVerifyFailMaxWidensAndZeroPrintsAll` / `TestVerifyCapsEachKindSeparately` — `--fail-max` defaults to 20, `0` means all, and the cap is per kind.
 270. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` — the `gating=` count is never capped and prints on failure as well as success.
-271. `-` — `--exclude` narrows the index (and the wikilink check that reads it) but not `--coverage` or `--frontmatter`.
+271. `TestVerifyExcludesEveryCheck` / `TestVerifyLinksToExcludedTargetsRemainFindings` — `--exclude` narrows the whole verified corpus: the index, wikilinks, and every coverage and frontmatter selector; retained links to excluded targets remain findings.
 272. `TestVerifySaysNoOnPlantedFaults` / `TestVerifyDoesNotFlagLinksThatResolve` — verify says NO (exit 1, VERIFY FAIL lines, no OK) on any gating finding; informational findings don't touch the exit.
 273. `TestRefusesToGuess` / `TestVerifyRefusesAnEmptyCheck` — verify refuses a missing root/links, a non-gate/info `--links`, a coverage value not `A:B`, an empty glob side, `--exempt` without `--frontmatter`, or no gating check at all.
 274. `TestEvalOnTheShippedExampleGold` / `TestEvalRefusesABrokenGoldFile` — the gold file is `query<TAB>expected-substrings` per line; a row hits when any expected substring appears in a top-k path.

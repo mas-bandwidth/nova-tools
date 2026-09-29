@@ -7,7 +7,7 @@ below is solid: every tool is tested, its documentation describes it as it is,
 and every friend has audited 1.0.0 on `main` at the candidate sha and given a
 last review OK. A green CI run alone is not that bar.
 
-The 1.0.0 set is fifteen tools. Nothing outside it ships in 1.0.0.
+The set is sixteen tools. Nothing outside it ships.
 
 | Tool | What it does |
 |---|---|
@@ -22,6 +22,7 @@ The 1.0.0 set is fifteen tools. Nothing outside it ships in 1.0.0.
 | [nova-sandbox](docs/CLI.md#nova-sandbox) | filesystem restrictions for a command |
 | [nova-secrets](docs/CLI.md#nova-secrets) | encrypted storage, and selected credentials delivered to a child command |
 | [nova-self-talk](docs/CLI.md#nova-self-talk) | flagged sentence patterns in how you write about yourself |
+| [nova-swarm](docs/CLI.md#nova-swarm) | native card runs inside the sandbox wall, bench slot leases and card lint |
 | [nova-table](docs/CLI.md#nova-table) | tables over Redis, every cell an ordered set, and their live views |
 | [nova-tokens](docs/CLI.md#nova-tokens) | token usage by model and repository, with gaps shown |
 | [nova-update](docs/CLI.md#nova-update) | declared versions checked, and one chosen update applied |

@@ -282,7 +282,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 		return err
 	}
 	tmp := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".new")
-	if err := os.WriteFile(tmp, body, 0o755); err != nil {
+	if err := writeNoFollow("install", tmp, body, 0o755); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {

@@ -51,7 +51,7 @@ func TestExitOneOnStandingClaim(t *testing.T) {
 	if got := run([]string{f}, &stdout, &stderr); got != 1 {
 		t.Errorf("want exit 1, got %d\nstdout: %s", got, stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+": STANDING: I cannot check my own work.") {
+	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+":1: STANDING: I cannot check my own work.") {
 		t.Errorf("stderr = %q, want a SELFTALK FAIL line naming the file, verdict, and claim", stderr.String())
 	}
 	if strings.Contains(stdout.String(), "SELFTALK OK") {
@@ -126,7 +126,7 @@ func TestSkipReportsAndDoesNotAffectExit(t *testing.T) {
 	if !strings.Contains(stdout.String(), "SELFTALK SKIP "+f+" (--skip)") {
 		t.Errorf("the skip must be reported, not silent:\n%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "SELFTALK OK files=0 claims=0 standing=0") {
+	if !strings.Contains(stdout.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped") {
 		t.Errorf("a skipped file must not count as scanned:\n%s", stdout.String())
 	}
 }
@@ -408,7 +408,7 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
 		}
 		noForgedLine(t, stdout.String(), stderr.String())
-		if !strings.Contains(stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+": STANDING: I cannot check my own work.") {
+		if !strings.Contains(stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+":1: STANDING: I cannot check my own work.") {
 			t.Errorf("stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
 		}
 

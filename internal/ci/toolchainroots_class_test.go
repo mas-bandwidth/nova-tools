@@ -103,8 +103,23 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		if _, granted := kind["go/bin"]; granted {
 			t.Errorf("%s: the wall grants the toolchain root ~/go/bin: it is granted under neither kind (Johnny's security read of #1364)", goos)
 		}
-		// The roots were also held against docs/SPEC-SWARM.md here; that spec moved to
-		// deprecated/docs/ with nova-swarm, and deprecated docs are not tested.
+		// And the roots are documented where a reader of the wall looks for them, under the
+		// spelling the doc uses: `~/name` for a home root, the path itself for a system one.
+		for _, doc := range []string{"docs/SPEC-SWARM.md", "docs/CLI.md"} {
+			body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(doc)))
+			if err != nil {
+				t.Fatalf("reading %s: %v", doc, err)
+			}
+			for _, r := range swarm.ToolchainRootList(goos) {
+				spelled := r.Name
+				if r.Home() {
+					spelled = "~/" + r.Name
+				}
+				if !strings.Contains(string(body), spelled) {
+					t.Errorf("%s does not name the %s toolchain root %s the wall grants", doc, goos, spelled)
+				}
+			}
+		}
 	}
 	// The LINUX standard must also CHECK its roots, not merely declare them: a bench missing
 	// one has to drift before a card discovers it. (A darwin root is reported and never

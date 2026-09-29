@@ -267,7 +267,7 @@ func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
 			t.Fatalf("%v: %s", args, stderr)
 		}
 	}
-	read := viewReader(c, "v", ntable.RenderOpts{})
+	read := viewReader(c, "v", ntable.RenderOpts{}, false)
 	trips := redisconn.CountTrips(c)
 	// Establish the connection before counting application exchanges.
 	if err := c.Ping(ctx).Err(); err != nil {

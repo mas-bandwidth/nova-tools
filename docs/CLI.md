@@ -21,6 +21,7 @@ nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir>
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--fail-max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
 ### First run
@@ -256,7 +257,7 @@ cp -R cmd/nova-self-talk/testdata/example-pages ./pages
 
 ```
 $ nova-self-talk ./pages/journal.md
-SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
 SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
@@ -280,6 +281,7 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to
 ## nova-fuse
 
 ```
+nova-fuse init --box <path>                              make an empty box where none is; never replaces one
 nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
 nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
 nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
@@ -291,7 +293,7 @@ nova-fuse path --box <path>                              echo the box path this 
 
 ### First run
 
-One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a path of yours; a path that does not exist yet reads as CLEAR, and the first `quarantine` or `lockdown` creates it. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
+One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a box of yours, made once with `nova-fuse init --box ./fuse-box.json`; every verb except init, lockdown, and path refuses a path with no box, never read as CLEAR. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
 
 ```
 $ nova-fuse status --box ./fuse-box.json
@@ -299,13 +301,13 @@ STATUS OK lockdown=clear quarantines=1
 STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box ./fuse-box.json a-public-issue-tracker)
+FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box ./fuse-box.json a-forum)
+FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
@@ -702,6 +704,157 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 MIT, see [LICENSE](../LICENSE).
 
+## nova-swarm
+
+```
+nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+
+usage:
+  nova-swarm version    print this build identity (--version also accepted)
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+                        --force frees it anyway and can oversubscribe the bench: an operator's act,
+                        never a card's and never a manager's default)
+  nova-swarm slots list --store <dir>
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
+
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO; 2 could not run:
+a missing flag, an unreadable pool or worker description, a key file that is
+absent or empty, a bad invocation.
+
+NO GUESSED ANYTHING. There is no default pool, no default worker description, no
+default number of workers, no default deadline, no default file budget and no
+default token budget. --files is required because a budget this tool supplied
+would be a guess about somebody else's task; --tokens is required for the same
+reason, and --tokens unmetered is a caller's statement that this provider has
+no live accounting and the deadline is the only stop. Zero is refused for both.
+
+THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
+description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
+never an argument, never a log line, never in a file this tool writes. The
+harness config this tool writes carries the variable's NAME, never its value.
+
+EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md). The job directory and
+its data home are the only writable paths; the slot directory and whatever
+read_roots names in the worker description are readable; the key file, ~/.ssh and
+the gh configuration are in neither list and the kernel denies them.
+A command that runs outside the wall and dies
+inside it is missing a read_roots entry.
+
+Every listing is a cap and a count: --max, default 20, 0 for all, one MORE line
+naming the remedy. The counts are the truth about the POOL,
+never about the output.
+
+example:
+  nova-swarm template --name read-pr
+```
+
+### First run
+
+`template` prints a card template:
+
+```
+$ nova-swarm template --name read-pr
+read-pr — read one pull request against the rules
+
+1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
+   finding you report, say whether it is already on that list. A finding that
+   is already owed is marked `dup:` and is not a new finding.
+   [batch 1: 25 of 67 findings were duplicates of the owed list]
+2. QUOTE EVERY RULE VERBATIM, with `file:line`. Never paraphrase a rule from
+   memory, and never assert a rule you did not open.
+   [batch 1: 5 of 67 findings were wrong, each a paraphrase]
+3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
+   You may be killed at your deadline; what is on disk is what you found.
+4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+   is spent, write what you have and stop. Say in RESULT.md which files you
+   did not open.
+   [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
+5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
+   the top, before the work; the findings are the work. A finished read that
+   found nothing is NOT a failed task: write the `## Head` with `findings: 0`.
+   Never report a finding to have something to report.
+6. If a board was supplied, check it before reporting: a card that already names
+   this is a `dup:`. Do not search for an unspecified board.
+7. A SEVERITY FLOOR: emit only findings at or above `HIGH`. A finding below the
+   floor is not emitted at all. State the floor in RESULT.md's `## Head`
+   paragraph as `floor: HIGH`, and mark each emitted finding with its
+   severity. The floor decides which findings are emitted, not how they are
+   written: every emitted finding still quotes its rule verbatim with `file:line`.
+
+Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
+separate summary. Each finding keeps its proof in compact form: severity, `file:line`,
+the exact quoted rule, the fix, and `dup:` status when applicable. Retain every valid
+finding, its context and evidence, and any coverage limitation; do not drop context or
+evidence by default. Brevity is a soft target: never hard-truncate findings or proof; if
+the report overflows, preserve the proof and say so. Preserve the complete RESULT.md
+shape and its mandatory `## Head`, `## Findings`, `## Per item`, `## Gates`,
+`## Left owed`, and `## One line` sections.
+In Gates, distinguish source checks from tests and report-writing commands.
+Mark only checks actually performed as pass; no tests run does not mean no commands run.
+
+BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
+restated task, no praise, no summary. One line per finding: `file:line`, the
+rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
+under 40 lines and every line under 300 characters, and no pipe inside backticks:
+a `|` in a quote broke the table grammar twice (D12), so quote the rule without
+it. Put the verdict line last. When there is nothing to report, write
+`findings: 0`.
+```
+
+### The harness contract
+
+Every job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md). `native` proves the wall
+before launching: the job directory and its data home are the only writable paths, the
+slot directory and whatever `read_roots` names in the worker description are readable; the
+key file, `~/.ssh` and the `gh` configuration are in neither list and the kernel denies them.
+
+A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
+
+- **Its working directory is the JOB directory**, and `NOVA_SWARM_JOB` is the job directory — the only place the worker writes. `XDG_DATA_HOME` is that job's own data home.
+- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model, `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where `harness_args` names no `{prompt}`, the prompt file is appended LAST.
+- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and renaming it: a report is a revision, and a half-written one is never read.
+- **Its stdout and stderr are `<job>/harness-output.log`**, capturing all harness output.
+
+`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
+hundred lines of Go, and the whole test suite runs against it with no provider, no network
+and no key worth anything. It is the shortest way to see the contract, and to test a pool
+of your own before a real model touches it.
+
+**`native` takes directory leases (`.lease`, `.slot-lease`), but no bench slot lease (#3877).** A bench's capacity is one number,
+`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
+is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
+reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
+card. The file ledger it used to lease from was a second answer to the same question.
+`--slots-store` and `--owner` flags are accepted for compatibility with callers built before
+#3877, but are read by nothing in `native`.
+
+**The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
+own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
+toolchain roots on the wall's argv, read-only and skipped when one is not there:
+- On every bench: `~/sdk` (Go and sbcl) as `--read` (carries execute), and `~/go/pkg/mod` as `--read-noexec` (read without execute).
+- On Darwin: `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, and `/usr/local/share/dotnet`.
+- Launcher directories (`~/go/bin`, `/opt/homebrew/bin`) are never granted as toolchain roots.
+
+**Token budget.** Every launch requires `--tokens <n>` or `--tokens unmetered`.
+`unmetered` is the caller's statement that this provider has no live accounting and the deadline is the only stop.
+
+**Deadline and process group.** The harness runs as the leader of its own process group. At
+`--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
+and records the outcome.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
@@ -765,16 +918,16 @@ SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egr
 Prove the wall before the first job:
 
 ```
-$ mkdir -p /Users/me/pool/jobs/j1/home
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
-               --secret /Users/me/.config/anthropic/env
-PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
-PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
-PROBE STEP name=read_root expect=allow got=allow path=/Users/me/.local/bin/nova-sandbox
-PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+$ mkdir -p /path/to/pool/jobs/j1/home
+$ HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox probe --write /path/to/pool/jobs/j1 \
+               --secret /path/to/.config/anthropic/env
+PROBE STEP name=write_outside_control expect=allow got=allow path=/path/to/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=write_outside expect=deny got=deny path=/path/to/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=read_secret expect=deny got=deny path=/path/to/.config/anthropic/env
+PROBE STEP name=write_inside expect=allow got=allow path=/path/to/pool/jobs/j1/.nova-sandbox-probe-inside
+PROBE STEP name=read_root expect=allow got=allow path=/path/to/.local/bin/nova-sandbox
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 ```
 
 `probe` runs **five** checks under the real policy for this platform, not two: a
@@ -786,12 +939,19 @@ misconfiguration rather than a failed check. The `HOME=` prefix is not
 decoration: rule 9's check runs before the policy is built, so a probe run with
 the dispatcher's own `HOME` is refused before it starts.
 
-Then wrap the command:
+Then wrap the command. This example uses an empty repository initialized on
+branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
 
 ```
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox --read /opt/homebrew --write /Users/me/pool/jobs/j1 \
-               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
+$ HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
+               -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
+! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none
+On branch main
+
+No commits yet
+
+nothing to commit (create/copy files and use "git add" to track)
 ```
 
 What a first run gets wrong, and what each one wants:
@@ -1486,6 +1646,57 @@ nova-ci github receipt: --repo wants owner/name, got "nova-tools"; run: nova-ci 
 $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
 nova-ci github receipt: --conclusion wants success, failure or cancelled (job.status), got "skipped"; run: nova-ci help
 ```
+
+### cost
+
+`nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
+--conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>] [--redis <addr>]
+< jobs.json` is the one COST line of a CI run: where the run's job-seconds went.
+It reads the forge's job listing for the run on stdin (the body of
+`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
+array holds exactly `total_count` jobs, whether a single complete page or pages
+combined into one object; raw concatenated pages are refused), prices it, and
+prints one line: the receipt's identity (the flags are `github receipt`'s, spelt
+the same, so the `ci-ok` step writes both from the same context), then
+`jobs=<n> total=<s> spin=<s> unknown=<n>` and one
+`job=<name>:<seconds>:<conclusion>:<attempt>:<why>` field per job in the
+listing's order. A job's seconds are its `completed_at` minus its `started_at`
+as the forge stamped them; `spin` is the seconds that bought no verdict, the
+jobs whose `why` is `failed`, `cancelled`, `rerun` (attempt above one) or
+`superseded` (an earlier attempt the listing also holds a later one of); a job
+with no `completed_at` yet has unknown seconds, printed `-` and counted in
+`unknown=`, never summed as zero. The verb makes no call of its own: what
+fetched the listing is the caller's business (internal/cicost).
+
+A complete listing is required: if `total_count` exceeds the jobs read, or if
+the counts mismatch, the command refuses before any dial (exit 2) naming the
+jobs read, expected count, and pagination guidance (`listing is partial (<n>
+jobs read, <m> expected); page through the forge's listing, or pass every page`).
+
+`--redis <addr>` appends the same entry to the `ci:cost` stream first (one
+entry per run: the receipt's fields, the totals, one `job:<name>:<attempt>`
+field per job; a reader joins it to the run's `ev:github` row by `repo`, `sha`
+and `run_id`) and the line ends in the entry's id; without it the line ends in
+`ev=-`. The store is dialled as the environment's seat, the receipt's way. Exit
+0 with the line; 1 when the store would not take the entry, one line on stderr
+ending `the COST entry was not written: fix the store or the bench seat and
+rerun ci-ok`. If an XADD write succeeds but closing the connection subsequently
+fails, the COST line with its event id is printed on stdout, the close failure
+is reported on stderr (`nova-ci cost: close: <err>`), and the command exits 1
+without instructing the caller to rerun the write (preventing duplicate entries);
+2 a refusal before any dial, for a flag the receipt refuses, an empty stdin, a
+listing that is not the forge's JSON, a listing holding no jobs, or a partial or
+count-mismatched listing.
+
+```
+$ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json
+COST repo=mas-bandwidth/nova-tools sha=0123456789abcdef0123456789abcdef01234567 run=777 workflow=ci conclusion=failure pr=4328 jobs=5 total=150 spin=75 unknown=0 job=lint:15:success:1:ok job=test\x20(linux):42:failure:1:failed job=functional:33:success:2:rerun job=docs:0:skipped:1:ok job=test-hosted:60:success:1:ok ev=-
+```
+
+The fixture is five jobs of one run: `lint` 15 s green, `test (linux)` 42 s
+red, `functional` 33 s green in its second attempt, `docs` skipped, `test-hosted`
+60 s green; so `total=150` and `spin=75`, the red job's 42 s and the rerun's
+33 s. A job name is one token: the space in `test (linux)` prints as `\x20`.
 
 ## nova-config
 

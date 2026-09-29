@@ -50,6 +50,7 @@ const (
 
 // Claim is one classified sentence.
 type Claim struct {
+	Line    int // first source line of the matched claim, before markdown flattening
 	Verdict Verdict
 	Text    string
 }
@@ -96,9 +97,10 @@ func Flatten(text string) string {
 // vocabulary. Widening the pattern to reach them flags half of any file.
 // A green from this means ONE CLASS IS CLEAR, never that the file is.
 func Scan(text string) []Claim {
-	flat := Flatten(text)
+	flat, lines := flattenWithLines(text)
 	var out []Claim
-	for _, m := range claim.FindAllString(flat, -1) {
+	for _, span := range claim.FindAllStringIndex(flat, -1) {
+		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
 		if !negative.MatchString(s) {
 			continue
@@ -107,7 +109,7 @@ func Scan(text string) []Claim {
 		if dated.MatchString(s) {
 			v = Dated
 		}
-		out = append(out, Claim{Verdict: v, Text: s})
+		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s})
 	}
 	return out
 }
@@ -117,4 +119,36 @@ func Scan(text string) []Claim {
 // name it is made on cannot drift apart.
 func Base(p string) string {
 	return path.Base(strings.ReplaceAll(p, `\`, "/"))
+}
+
+// flattenWithLines performs Flatten's byte transformations while retaining the
+// original line for each output byte. Repeated sentences and hard wraps keep
+// their own locations; searching the original text for a flattened match cannot.
+func flattenWithLines(text string) (string, []int) {
+	var flat []byte
+	var lines []int
+	line := 1
+	for i := 0; i < len(text); i++ {
+		b := text[i]
+		originalLine := line
+		if b == '\n' {
+			line++
+		}
+		if strings.ContainsRune("*_`>#|", rune(b)) {
+			continue
+		}
+		switch b {
+		case ' ', '\t', '\n', '\r', '\f':
+			if len(flat) > 0 && flat[len(flat)-1] == ' ' {
+				continue
+			}
+			b = ' '
+		}
+		flat = append(flat, b)
+		lines = append(lines, originalLine)
+	}
+	raw := string(flat)
+	trimmed := strings.TrimSpace(raw)
+	start := strings.Index(raw, trimmed)
+	return trimmed, lines[start : start+len(trimmed)]
 }

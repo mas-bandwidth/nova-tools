@@ -69,6 +69,99 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	}
 }
 
+func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run("out"+suffix, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := mkdir(t, filepath.Join(dir, "target"))
+			link := filepath.Join(dir, "out")
+			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
+			write(t, filepath.Join(target, tokens.LockName), "original lock\n")
+			write(t, filepath.Join(target, "2026-09-11.tsv"), "original day\n")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			result := invoke(t, "fold", "--out", link+suffix, "--day", "2026-09-11",
+				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
+			wantExit(t, result, 2)
+			wantContains(t, result.stderr, "symlink")
+			if got := read(t, filepath.Join(target, tokens.LockName)); got != "original lock\n" {
+				t.Errorf("lock changed: %q", got)
+			}
+			if got := read(t, filepath.Join(target, "2026-09-11.tsv")); got != "original day\n" {
+				t.Errorf("day changed: %q", got)
+			}
+		})
+	}
+}
+
+func TestFoldRefusesParentSymlinkedOutputBeforeWritingLock(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run("out"+suffix, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := mkdir(t, filepath.Join(dir, "target"))
+			child := mkdir(t, filepath.Join(target, "child"))
+			link := filepath.Join(dir, "parent_link")
+			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
+			write(t, filepath.Join(child, tokens.LockName), "original lock\n")
+			write(t, filepath.Join(child, "2026-09-11.tsv"), "original day\n")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			outPath := filepath.Join(link, "child") + suffix
+			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
+				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
+			wantExit(t, result, 2)
+			wantContains(t, result.stderr, "symlink")
+			if got := read(t, filepath.Join(child, tokens.LockName)); got != "original lock\n" {
+				t.Errorf("lock changed: %q", got)
+			}
+			if got := read(t, filepath.Join(child, "2026-09-11.tsv")); got != "original day\n" {
+				t.Errorf("day changed: %q", got)
+			}
+		})
+	}
+}
+
+func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run("out"+suffix, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := mkdir(t, filepath.Join(dir, "target"))
+			child := mkdir(t, filepath.Join(target, "child"))
+			link := filepath.Join(dir, "parent_link")
+			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			outPath := filepath.Join(link, "child") + suffix
+			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
+				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
+			wantExit(t, result, 2)
+			wantContains(t, result.stderr, "symlink")
+			if _, err := os.Stat(filepath.Join(child, tokens.LockName)); !os.IsNotExist(err) {
+				t.Errorf("fold.lock created in referent child: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(child, "2026-09-11.tsv")); !os.IsNotExist(err) {
+				t.Errorf("day file created in referent child: %v", err)
+			}
+			entries, err := os.ReadDir(child)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("referent child has %d entries, want 0: %v", len(entries), entries)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------- rule 2: sources are declared, rows name them
 
 func TestRule2EveryRowNamesItsSources(t *testing.T) {
@@ -536,9 +629,9 @@ func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- rule 8: one temp name, one lock
+// ---------------------------------------------------------------- rule 8: atomic write, random-sibling temp, one lock
 
-func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
+func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -549,8 +642,10 @@ func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
 	before := read(t, filepath.Join(out, "2026-09-11.tsv"))
 
-	// What a fold killed between the write and the rename leaves behind.
+	// What a fold killed between the write and the rename leaves behind:
+	// either a legacy .tsv.tmp or an atomicfile .<day>.tsv.tmp-%08x. Neither is a stray.
 	stranded := write(t, filepath.Join(out, "2026-09-11.tsv.tmp"), "half a file\n")
+	strandedAtomic := write(t, filepath.Join(out, ".2026-09-11.tsv.tmp-1a2b3c4d"), "partial atomic file\n")
 	if got := read(t, filepath.Join(out, "2026-09-11.tsv")); got != before {
 		t.Error("the day file was not left entire")
 	}
@@ -558,10 +653,23 @@ func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
 	wantExit(t, c, 0)
 	wantNotContains(t, c.all(), "CHECK STRAY")
 
-	// The next fold writes over the temp and renames.
+	// An unrelated dotfile is not recognized as this day's temp; check reports it as a stray.
+	unrelated := write(t, filepath.Join(out, ".unrelated.txt.tmp-12345678"), "foreign temp\n")
+	cUnrelated := invoke(t, "check", "--out", out)
+	wantContains(t, cUnrelated.all(), "CHECK STRAY")
+	wantContains(t, cUnrelated.all(), ".unrelated.txt.tmp-12345678")
+	if err := os.Remove(unrelated); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next fold writes the day file atomically via internal/atomicfile.
+	// Stale random-sibling temporaries from an interrupted run are preserved.
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
-	if _, err := os.Stat(stranded); err == nil {
-		t.Error("the temp name survived the next fold")
+	if _, err := os.Stat(stranded); err != nil {
+		t.Errorf("legacy stranded temp was unexpectedly removed: %v", err)
+	}
+	if _, err := os.Stat(strandedAtomic); err != nil {
+		t.Errorf("stranded atomic temp was unexpectedly removed: %v", err)
 	}
 }
 

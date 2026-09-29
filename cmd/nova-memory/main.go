@@ -125,6 +125,7 @@ example:
   nova-memory quickstart --root ./corpus
   nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
   nova-memory check  --root ./corpus --channels bm25 --k 3 draft.md
+  nova-memory verify --root ./corpus --links info --coverage notes/lantern.md:notes/index-notes.md
 `
 
 // The three hints below turn this binary's three most-hit refusals into a next
@@ -152,6 +153,8 @@ func hintFor(name string) string {
 		return "  " + channelsHint + "\n"
 	case "k":
 		return "  " + kHint + "\n"
+	case "links":
+		return "  --links gate makes unresolved wikilinks fail; --links info reports them without failing.\n"
 	}
 	return ""
 }
@@ -291,24 +294,25 @@ func addRootFlags(fs *flag.FlagSet) *rootFlags {
 	return r
 }
 
+func (r *rootFlags) excluded(p string) bool {
+	for _, e := range r.excludes {
+		if p == e || strings.HasPrefix(p, e+"/") {
+			return true
+		}
+		// path.Match, not filepath.Match: corpus paths are always
+		// slash-separated, on every platform.
+		if ok, _ := path.Match(e, p); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // build derives the index, or explains why it could not. Every failure here
 // is exit 2: the check could not run. With several roots each is built on its
 // own filesystem and the corpuses merged, so one ranking spans them and each
 // chunk remembers which root it came from.
 func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time.Duration, bool) {
-	exclude := func(p string) bool {
-		for _, e := range r.excludes {
-			if p == e || strings.HasPrefix(p, e+"/") {
-				return true
-			}
-			// path.Match, not filepath.Match: corpus paths are always
-			// slash-separated, on every platform.
-			if ok, _ := path.Match(e, p); ok {
-				return true
-			}
-		}
-		return false
-	}
 	t0 := time.Now()
 	parts := make([]*memindex.Corpus, 0, len(r.root))
 	for _, root := range r.root {
@@ -317,7 +321,7 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 			refuse(stderr, " "+name, fmt.Sprintf("--root %s is not a readable directory", oneline.Escape(root)))
 			return nil, 0, false
 		}
-		c, err := memindex.Build(os.DirFS(root), exclude)
+		c, err := memindex.Build(os.DirFS(root), r.excluded)
 		if err != nil {
 			refuse(stderr, " "+name, fmt.Sprintf("building the index over %s: %s", oneline.Escape(root), oneline.Err(err)))
 			return nil, 0, false
@@ -1102,9 +1106,10 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	fsys := os.DirFS(rf.root[0])
+	fsys := memindex.Excluding(os.DirFS(rf.root[0]), rf.excluded)
 
 	var gating, info []memindex.Finding
+	coverageFindings, frontmatterFindings := 0, 0
 	for _, pair := range coverage {
 		a, b, found := strings.Cut(pair, ":")
 		if !found || a == "" || b == "" {
@@ -1114,6 +1119,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, " verify", oneline.Err(err))
 		}
+		coverageFindings += len(fnds)
 		gating = append(gating, fnds...)
 	}
 	for _, g := range front {
@@ -1121,6 +1127,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, " verify", oneline.Err(err))
 		}
+		frontmatterFindings += len(fnds)
 		gating = append(gating, fnds...)
 	}
 	wl, err := memindex.Wikilinks(fsys, c)
@@ -1154,11 +1161,11 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	// and the output was capped from here on, which would have made counting it a lie.
 	if fails.Total() > 0 {
 		fmt.Fprintf(stderr, "VERIFY FAIL gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
-			fails.Total(), fails.Shown(), infos.Total(), len(coverage), len(front), *links)
+			fails.Total(), fails.Shown(), infos.Total(), coverageFindings, frontmatterFindings, *links)
 		return 1
 	}
 	fmt.Fprintf(stdout, "VERIFY OK gating=0 info=%d shown=%d coverage=%d frontmatter=%d links=%s\n",
-		infos.Total(), infos.Shown(), len(coverage), len(front), *links)
+		infos.Total(), infos.Shown(), coverageFindings, frontmatterFindings, *links)
 	return 0
 }
 

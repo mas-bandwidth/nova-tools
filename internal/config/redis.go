@@ -7,9 +7,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -65,6 +67,13 @@ type RedisApplier struct {
 	Client *redis.Client
 	// Now is the stamp's clock (time.Now when nil).
 	Now func() time.Time
+
+	prepareOnce sync.Once
+	prepareErr  error
+
+	coordinator     string
+	coordinatorRead bool
+	friendHosts     map[string]string // friend name -> beat host
 }
 
 func (a *RedisApplier) now() int64 {
@@ -75,9 +84,13 @@ func (a *RedisApplier) now() int64 {
 }
 
 // Prepare installs the nova_sprint function library when the store has none
-// (fn.LoadMissing: never replaces a deployed one).
+// (fn.LoadMissing: never replaces a deployed one). It runs at most once per
+// process (RedisApplier).
 func (a *RedisApplier) Prepare(ctx context.Context) error {
-	return fn.LoadMissing(ctx, a.Client)
+	a.prepareOnce.Do(func() {
+		a.prepareErr = fn.LoadMissing(ctx, a.Client)
+	})
+	return a.prepareErr
 }
 
 func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, int64, error) {
@@ -187,14 +200,23 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	pipe := a.Client.Pipeline()
 	desired := make([]*redis.SliceCmd, len(names))
 	roles := make([]*redis.StringCmd, len(names))
+	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
 		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
+		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
+	coordCmd := pipe.Get(ctx, FleetKey("coordinator"))
 	rev := pipe.HGet(ctx, DeclKey, revField(KindFriend))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read friends: %w", err)
 	}
+	a.friendHosts = make(map[string]string, len(names))
+	for i, f := range names {
+		a.friendHosts[f] = beats[i].Val()
+	}
+	a.coordinator = coordCmd.Val()
+	a.coordinatorRead = true
 	views := make(map[string]View, len(names))
 	for i, f := range names {
 		d := desired[i].Val()
@@ -205,6 +227,47 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 		}
 	}
 	return views, revValue(rev), nil
+}
+
+// PrefetchFriends pipelines the per-friend beat reads and fleet coordinator
+// lookup across all friends being applied (redis.go:255, 262).
+func (a *RedisApplier) PrefetchFriends(ctx context.Context, names []string) error {
+	var missing []string
+	for _, f := range names {
+		if a.friendHosts == nil {
+			missing = append(missing, f)
+			continue
+		}
+		if _, ok := a.friendHosts[f]; !ok {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) == 0 && a.coordinatorRead {
+		return nil
+	}
+	pipe := a.Client.Pipeline()
+	beats := make([]*redis.StringCmd, len(missing))
+	for i, f := range missing {
+		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
+	}
+	var coordCmd *redis.StringCmd
+	if !a.coordinatorRead {
+		coordCmd = pipe.Get(ctx, FleetKey("coordinator"))
+	}
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return fmt.Errorf("redis: prefetch friends: %w", err)
+	}
+	if a.friendHosts == nil {
+		a.friendHosts = make(map[string]string, len(missing))
+	}
+	for i, f := range missing {
+		a.friendHosts[f] = beats[i].Val()
+	}
+	if coordCmd != nil {
+		a.coordinator = coordCmd.Val()
+		a.coordinatorRead = true
+	}
+	return nil
 }
 
 func str(vals []any, i int) string {
@@ -251,21 +314,38 @@ func replyWords(reply any) []string {
 // coordinator machine as the default charge, else a refusal naming the
 // fleet set that fixes it.
 func (a *RedisApplier) charge(ctx context.Context, f string) (string, error) {
-	host, err := a.Client.HGet(ctx, FriendBeatKey(f), "host").Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return "", fmt.Errorf("redis: read %s: %w", FriendBeatKey(f), err)
+	var host string
+	if a.friendHosts != nil {
+		host = a.friendHosts[f]
+	}
+	if host == "" {
+		if a.friendHosts == nil || func() bool { _, ok := a.friendHosts[f]; return !ok }() {
+			h, err := a.Client.HGet(ctx, FriendBeatKey(f), "host").Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return "", fmt.Errorf("redis: read %s: %w", FriendBeatKey(f), err)
+			}
+			host = h
+			if a.friendHosts == nil {
+				a.friendHosts = make(map[string]string)
+			}
+			a.friendHosts[f] = host
+		}
 	}
 	if host != "" {
 		return host, nil
 	}
-	coordinator, err := a.Client.Get(ctx, FleetKey("coordinator")).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return "", fmt.Errorf("redis: read %s: %w", FleetKey("coordinator"), err)
+	if !a.coordinatorRead {
+		coord, err := a.Client.Get(ctx, FleetKey("coordinator")).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return "", fmt.Errorf("redis: read %s: %w", FleetKey("coordinator"), err)
+		}
+		a.coordinator = coord
+		a.coordinatorRead = true
 	}
-	if coordinator == "" {
+	if a.coordinator == "" {
 		return "", &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("friend %s has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>, then apply", f)}
 	}
-	return coordinator, nil
+	return a.coordinator, nil
 }
 
 // tiersArg is the twelfth argument of ns_capacity_desired: the list, or
@@ -378,7 +458,7 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 		reg[i] = pipe.HGetAll(ctx, MachineKey(m))
 	}
 	rev := pipe.HGet(ctx, DeclKey, revField(KindMachine))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read machines: %w", err)
 	}
 	k, _ := Lookup(KindMachine)
@@ -444,12 +524,19 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 		if err != nil {
 			return fmt.Errorf("redis: read %ss: %w", kind, err)
 		}
-		for _, n := range names {
-			on, err := a.Client.HGet(ctx, kind+":"+n+":desired", "machine").Result()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				return fmt.Errorf("redis: read %s %s: %w", kind, n, err)
-			}
-			if on == m {
+		if len(names) == 0 {
+			continue
+		}
+		pipe := a.Client.Pipeline()
+		cmds := make([]*redis.StringCmd, len(names))
+		for i, n := range names {
+			cmds[i] = pipe.HGet(ctx, kind+":"+n+":desired", "machine")
+		}
+		if err := redisconn.Exec(ctx, pipe); err != nil {
+			return fmt.Errorf("redis: read %ss: %w", kind, err)
+		}
+		for i, n := range names {
+			if cmds[i].Val() == m {
 				users = append(users, kind+":"+n)
 			}
 		}
@@ -482,7 +569,7 @@ func (a *RedisApplier) readSingleton(ctx context.Context, kind string, key func(
 		vals[i] = pipe.Get(ctx, key(f.Name))
 	}
 	rev := pipe.HGet(ctx, DeclKey, revField(kind))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read %s: %w", kind, err)
 	}
 	v := View{}
@@ -533,7 +620,7 @@ func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*B
 	for i, m := range names {
 		cmds[i] = pipe.HGetAll(ctx, BeatKey(m))
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("redis: read beats: %w", err)
 	}
 	out := make(map[string]*Beat, len(names))

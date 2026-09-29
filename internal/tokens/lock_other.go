@@ -8,6 +8,11 @@ import (
 	"path/filepath"
 )
 
+// openFoldLock performs the path and opened-file checks around this call.
+func openFoldLockFile(path string, flags int) (*os.File, error) {
+	return os.OpenFile(path, flags, 0o644)
+}
+
 // The lock where there is no flock: Windows, which this repo publishes a binary for.
 // LockFileEx lives outside the standard library, so the lock is an EXCLUSIVE CREATE of a
 // sibling file. Same mutual exclusion; it gives up the property that makes flock better —

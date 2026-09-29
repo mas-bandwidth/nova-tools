@@ -176,6 +176,22 @@ func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check 
 		}
 		res.PreparedForWritesOK = true
 	}
+	type friendPrefetcher interface {
+		PrefetchFriends(ctx context.Context, names []string) error
+	}
+	if pf, ok := ap.(friendPrefetcher); ok && kind == KindFriend {
+		var names []string
+		for _, op := range res.Ops {
+			if op.Op == OpAdd || op.Op == OpSet {
+				names = append(names, op.Name)
+			}
+		}
+		if len(names) > 0 {
+			if err := pf.PrefetchFriends(ctx, names); err != nil {
+				return res, err
+			}
+		}
+	}
 	idem := Idem(kind, rev)
 	for _, op := range res.Ops {
 		report(op)
@@ -190,8 +206,10 @@ func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check 
 			return res, err
 		}
 	}
-	if err := ap.Stamp(ctx, kind, redisRev, rev); err != nil {
-		return res, err
+	if len(res.Ops) > 0 || redisRev != rev {
+		if err := ap.Stamp(ctx, kind, redisRev, rev); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
 }

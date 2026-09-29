@@ -1,24 +1,38 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // ledgerRedis is the Redis the ledger/report verbs are pointed at for the test: a miniredis
-// on loopback, reached through the real client and the real --redis flag, no seam.
+// on loopback, reached through the real client and the real --redis flag.
 func ledgerRedis(t *testing.T) (string, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	mr.Server().SetPreHook(ledgerFixtureACL)
 	return mr.Addr(), mr
+}
+
+// Miniredis lacks acl_check_cmd. These unrestricted fixtures permit the two
+// ledger write commands; denied permissions are covered by real-Redis functional
+// tests in internal/record. Production never substitutes this implementation.
+func ledgerFixtureACL(_ *server.Peer, cmd string, args ...string) bool {
+	if cmd == "EVAL" && len(args) > 0 {
+		args[0] = "redis.acl_check_cmd = function(command) return command == 'DEL' or command == 'HSET' end\n" + args[0]
+	}
+	return false
 }
 
 // foldedTuples is the monthly report computed from the day TSVs alone: every row of every
@@ -302,5 +316,109 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	wantContains(t, r.stderr, "--user bench but LEDGER_EMPTY_PW is empty; run under nova-secrets exec --only LEDGER_EMPTY_PW")
 	if strings.Contains(r.stderr+r.stdout, "sesame") {
 		t.Fatal("a refusal printed the password")
+	}
+}
+
+// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins rowan-7fbdefecf56e:
+// `ledger --month` pipelines day hash writes in one round trip and openLedger drops
+// the superfluous PING that report --redis and ledger --day previously paid.
+func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
+	t.Parallel()
+
+	addr, mr := ledgerRedis(t)
+	var mu sync.Mutex
+	var seenCmds []string
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
+		mu.Lock()
+		seenCmds = append(seenCmds, strings.ToUpper(cmd))
+		mu.Unlock()
+		return ledgerFixtureACL(peer, cmd, args...)
+	})
+
+	out := t.TempDir()
+	for i := 1; i <= 3; i++ {
+		dayStr := fmt.Sprintf("2026-09-%02d", i)
+		var c tokens.Counts
+		c.Set(tokens.Input, int64(10*i))
+		c.Set(tokens.Output, int64(20*i))
+		day := tokens.DayFile{
+			Day: dayStr, At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
+			Sources: []string{"openai:o"},
+			Rows: []tokens.DayRow{
+				{Date: dayStr, Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+			},
+		}
+		if err := day.Save(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. Indexing month writes all 3 days in one pipeline and sends no PING.
+	// Before rowan-7fbdefecf56e, openLedger sent a superfluous PING
+	// and ran a transaction per day in a loop (24 trips for 23 days).
+	r := invoke(t, "ledger", "--out", out, "--month", "2026-09", "--redis", addr)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "LEDGER OK month=2026-09 days=3 rows=3 bad=0")
+
+	// Verify all 3 days are stored.
+	if keys := mr.Keys(); len(keys) != 3 {
+		t.Fatalf("expected 3 keys in ledger, got %v", keys)
+	}
+
+	mu.Lock()
+	cmds := append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	sawEval := false
+	for _, cmd := range cmds {
+		if cmd == "PING" {
+			t.Fatalf("ledger --month sent superfluous PING: saw %v", cmds)
+		}
+		if cmd == "EVAL" {
+			sawEval = true
+		}
+	}
+	if !sawEval {
+		t.Fatalf("ledger --month did not use EVAL: saw %v", cmds)
+	}
+
+	// 2. report --redis sends no PING.
+	rep := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--by", "day")
+	wantExit(t, rep, 0)
+	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=3 rows=3 indexed=3 missing=27")
+
+	mu.Lock()
+	cmds = append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	for _, cmd := range cmds {
+		if cmd == "PING" {
+			t.Fatalf("report --redis sent superfluous PING: saw %v", cmds)
+		}
+	}
+
+	// 3. ledger --day sends no PING.
+	rDay := invoke(t, "ledger", "--out", out, "--day", "2026-09-01", "--redis", addr)
+	wantExit(t, rDay, 0)
+	wantContains(t, rDay.stdout, "LEDGER OK day=2026-09-01 days=1 rows=1 bad=0")
+
+	mu.Lock()
+	cmds = append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	sawEval = false
+	for _, cmd := range cmds {
+		if cmd == "PING" {
+			t.Fatalf("ledger --day sent superfluous PING: saw %v", cmds)
+		}
+		if cmd == "EVAL" {
+			sawEval = true
+		}
+	}
+	if !sawEval {
+		t.Fatalf("ledger --day did not use EVAL: saw %v", cmds)
 	}
 }

@@ -59,3 +59,4 @@ internal/pulse/recut.go internal/pulse deleted 2026-09-25 (#3969); cited as hist
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 docs/roadmaps/nova-work.sexp a path in the repository the parked nova-sprint lander classifies (internal/nsprint/land); this tree holds none
 docs/LESSONS-ARCHIVE.md the archive the parked nova-sprint lesson verb writes into the repository it is run on (internal/nsprint/lessons)
+cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there

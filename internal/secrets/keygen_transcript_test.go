@@ -66,8 +66,8 @@ func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
 	}
 
 	printed := keygenLines(
-		"rowan",
-		"/Users/me/.config/nova-secrets/rowan.key",
+		"example",
+		"/path/to/home/.config/nova-secrets/example.key",
 		"age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk",
 		"age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata",
 		false,

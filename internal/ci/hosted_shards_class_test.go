@@ -32,10 +32,10 @@ const hostedDealStep = "deal this shard's packages"
 // hostedHeavy are the packages the deal places first, one per shard, before the
 // round-robin: cmd/nova-bus (46.4 s -short on the Studio) and cmd/nova-merge
 // (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
-// (reader measurement, #4421 round 2). cmd/nova-merge, and cmd/nova-swarm (the reader's
-// other named heavy command), moved to deprecated/ and are in no deal. ci.yml's deal step
-// spells the same list.
-var hostedHeavy = []string{"cmd/nova-bus"}
+// (reader measurement, #4421 round 2); cmd/nova-swarm is the reader's other named heavy
+// command. cmd/nova-merge is under deprecated/ and in no deal. ci.yml's deal step spells
+// the same list.
+var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-swarm"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
@@ -85,6 +85,24 @@ func hostedLegs(t *testing.T, m hostedMatrix) map[string]map[int]int {
 	return out
 }
 
+// hostedWorkflowLegs reads the actual expanded matrix. The minimum shard counts
+// are lower bounds checked separately, never the counts used to test a deal.
+func hostedWorkflowLegs(t *testing.T) map[string]map[int]int {
+	t.Helper()
+	raw := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	var wf struct {
+		Jobs map[string]struct {
+			Strategy struct {
+				Matrix hostedMatrix `yaml:"matrix"`
+			} `yaml:"strategy"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
+		t.Fatal(err)
+	}
+	return hostedLegs(t, wf.Jobs["test-hosted"].Strategy.Matrix)
+}
+
 // TestHostedShardsUnderTheCap: every ci.yml job declares timeout-minutes 2;
 // test-hosted keeps both hosted OSes; each OS runs exactly shards 1..n with n
 // at least hostedMinShards and every leg carrying that n; the deal step reads
@@ -98,18 +116,7 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 		}
 	}
 
-	raw := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	var wf struct {
-		Jobs map[string]struct {
-			Strategy struct {
-				Matrix hostedMatrix `yaml:"matrix"`
-			} `yaml:"strategy"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatal(err)
-	}
-	legs := hostedLegs(t, wf.Jobs["test-hosted"].Strategy.Matrix)
+	legs := hostedWorkflowLegs(t)
 	for runner, min := range hostedMinShards {
 		shards, ok := legs[runner]
 		if !ok {
@@ -171,7 +178,7 @@ func liveScript(t *testing.T) string {
 }
 
 // TestHostedDealPartitionsTheTree runs the deal step itself over a stand-in
-// package list at each OS's shard count: every package lands in exactly one
+// package list at each OS's actual shard count: every package lands in exactly one
 // shard, so more shards never drops a package.
 func TestHostedDealPartitionsTheTree(t *testing.T) {
 	t.Parallel()
@@ -182,7 +189,8 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 		t.Fatalf("test-hosted has no %q step", hostedDealStep)
 	}
 	const packages = 23
-	for runner, n := range hostedMinShards {
+	for runner, shards := range hostedWorkflowLegs(t) {
+		n := len(shards)
 		seen := make(map[string]int)
 		for i := 1; i <= n; i++ {
 			script := job.Steps[deal].Run
@@ -219,7 +227,7 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 }
 
 // TestHostedDealSplitsTheHeavyPackages runs the deal step over the real
-// `go list ./...` at each OS's shard count (reader repro, #4421 round 2): no two
+// `go list ./...` at each OS's actual shard count (reader repro, #4421 round 2): no two
 // hostedHeavy packages share a shard, every heavy package is in the tree, and
 // the step's heavy list is hostedHeavy.
 func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
@@ -243,7 +251,8 @@ func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 	if err := os.WriteFile(listFile, list, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for runner, n := range hostedMinShards {
+	for runner, shards := range hostedWorkflowLegs(t) {
+		n := len(shards)
 		home := map[string]int{}
 		for i := 1; i <= n; i++ {
 			script := job.Steps[deal].Run

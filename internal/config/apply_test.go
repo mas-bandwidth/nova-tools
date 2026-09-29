@@ -194,7 +194,7 @@ func TestApplyWritesEveryDifferenceThenStamps(t *testing.T) {
 	// A second apply is a no-op: nothing written, the stamp unchanged.
 	ap.log = nil
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, report)
-	if err != nil || res.Add+res.Set+res.Remove != 0 || len(ap.log) != 1 || ap.log[0] != "stamp friend 4" || ap.revs[KindFriend] != 4 {
+	if err != nil || res.Add+res.Set+res.Remove != 0 || len(ap.log) != 0 || ap.revs[KindFriend] != 4 {
 		t.Fatalf("second apply: %+v %v log %v", res, err, ap.log)
 	}
 	if ap.prepared != 2 {
@@ -277,7 +277,7 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	if err != nil || res.Add+res.Set+res.Remove != 0 || res.Rev != 0 || len(reported) != 0 {
 		t.Fatalf("empty fleet: %+v %v reported %v", res, err, reported)
 	}
-	if strings.Join(ap.log, " ") != "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6 stamp fleet 0" {
+	if strings.Join(ap.log, " ") != "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6" {
 		t.Fatalf("empty fleet wrote %v", ap.log)
 	}
 	ap.log = nil

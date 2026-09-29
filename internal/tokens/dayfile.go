@@ -8,24 +8,27 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The day file: one file per day, twelve columns, every one written on every row.
 //
 // It is WRITTEN WHOLE every time and never appended to, never edited in place: the write
-// goes to one fixed temp name in the same directory and lands by one atomic rename. Whole
-// is not the same as recomputed -- a fold recomputes the rows ITS OWN declared sources
-// wrote and carries the rest of the file's rows over unchanged (MergeDay, #268). The fixed name is safe because one fold runs per output directory (the
-// lock in lock.go), and a stranded temp is then a name a person can see rather than a
-// scatter of `.tmp.<pid>` files nobody can tell apart. `check` steps over exactly that
-// name, so the wreckage of a killed fold is not reported as a stray.
+// goes through internal/atomicfile to a unique temporary sibling in the same directory
+// and lands by one atomic rename, with best-effort parent-directory fsync. Whole is not
+// the same as recomputed -- a fold recomputes the rows ITS OWN declared sources wrote and
+// carries the rest of the file's rows over unchanged (MergeDay, #268). Unique temporary
+// sibling files guarantee that temporary files never collide; fold locking (lock.go)
+// serializes concurrent final updates. A stranded temporary left by an interrupted fold is
+// preserved, and `check` steps over valid day-file temporaries so wreckage of a killed
+// fold is not reported as a stray.
 
 // Version is the first token of every day file's first line. A file whose first line is
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the one fixed temp name, per rule 8.
+// TempSuffix is the legacy fixed temp name, recognized by check for earlier files.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.
@@ -119,14 +122,43 @@ func orDashStr(s string) string {
 	return s
 }
 
-// Save writes the file whole: the bytes to the fixed temp name in the same directory,
-// then one rename. Nothing is appended and nothing is edited in place.
+// Save writes the file whole atomically via internal/atomicfile (exclusive
+// temporary file beside target, explicit mode, fsync to media, atomic rename).
+// Nothing is appended and nothing is edited in place.
 func (d *DayFile) Save(out string) error {
-	tmp := TempPath(out, d.Day)
-	if err := os.WriteFile(tmp, []byte(d.Render()), 0o644); err != nil {
+	if err := checkOutputDirectory(out); err != nil {
 		return err
 	}
-	return os.Rename(tmp, Path(out, d.Day))
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	return atomicfile.WriteFile(Path(out, d.Day), []byte(d.Render()), 0o644)
+}
+
+// checkOutputDirectory inspects the named directory itself and its parent
+// directory before a writer opens or creates anything below it. Clean first
+// so a trailing separator or /. cannot turn Lstat into a lookup through a
+// directory symlink.
+func checkOutputDirectory(out string) error {
+	cleanDir := filepath.Clean(out)
+	parent := filepath.Dir(cleanDir)
+	if parent != cleanDir {
+		pinfo, err := os.Lstat(parent)
+		if err == nil && pinfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("output parent directory %q for %q is a symlink; use a real directory", parent, out)
+		}
+	}
+	info, err := os.Lstat(cleanDir)
+	if err != nil {
+		return fmt.Errorf("output directory %q: %w", out, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("output directory %q is a symlink; use a real directory", out)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("output directory %q is not a directory", out)
+	}
+	return nil
 }
 
 // Totals is the day's per-type totals, and whether any row reported each type. It is what

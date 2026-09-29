@@ -96,17 +96,14 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The copy under --scratch, made from the live database this run and read there;
 		// the live file is never opened for writing.
 		"internal/tokens/opencode.go": {"os.Create("},
-		// The fixed `<day>.tsv.tmp` a day is written through before the one rename, the
-		// name `check` steps over by rule 9's own last sentence.
-		"internal/tokens/dayfile.go": {"os.WriteFile("},
-		// The same, for the report `report` writes.
+		// The temporary file atomicfile writes through before rename; on error or
+		// cleanup, atomicfile removes the temporary file this run created.
+		"internal/atomicfile/atomicfile.go": {"os.Remove"},
+		// The report `report` writes.
 		"cmd/nova-tokens/main.go": {"os.WriteFile("},
 		// The ledger's own `<ledger>.tsv.tmp`, written through before the one rename that
 		// lands the day's rows; the ledger the caller names is the file this verb maintains.
 		"cmd/nova-tokens/sumswarm.go": {"os.WriteFile("},
-		// The pool ledger's own `<ledger>.tsv.tmp` for fold-pool, same shape: this run's
-		// staged ledger landing by one rename.
-		"internal/tokens/foldpool.go": {"os.WriteFile("},
 		// ExpandDir, nova-work's card writer: it makes a card directory and writes the
 		// card INSIDE it, and returns early on a directory that already exists, so it
 		// never truncates a file this tool or anybody else was given. nova-tokens imports

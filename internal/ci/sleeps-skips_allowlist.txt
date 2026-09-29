@@ -114,3 +114,4 @@ internal/update	TestRule25SnapshotSurvivesAReporterKilledWhileWriting	seed #4413
 internal/update	fakeBus	seed #4413: time.Sleep at delivery_test.go:72
 internal/update	joinWrapper	seed #4413: time.Sleep at join_test.go:424 and 1 more
 internal/update	reporter.killReporterWhen	seed #4413: time.Sleep at join_test.go:848 and 2 more
+
