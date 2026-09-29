@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # revert-on-red.sh: the mechanical revert of the push that turned main red.
 #
-# Run by revert-on-red.yml on the checked-out head_sha of a failed `ci`
-# workflow_run on main. One of three guards stops it with a notice and exit 0
+# Run by revert-on-red.yml on the checked-out head_sha of a failed or cancelled
+# `ci` workflow_run on main. One of three guards stops it with a notice and exit 0
 # (never a failure -- a skip is not a red):
 #   * the head commit is itself a revert        -> no revert loops
 #   * the parent commit's ci run was not green  -> the red predates this push
