@@ -63,9 +63,9 @@ fi
 printf "==> Verifying raw capture hashes in %s...\n" "$CAPTURES_DIR"
 cd "$CAPTURES_DIR"
 shasum -a 256 -c <<'EOF'
-b14fedb624be76178600a4431b97931031a9b141353fb6245208c9de00bbdc8d  issues.json
-b29306699b7fc16f8bec5c24693aff0e616e4dbc757e35f95358d887ca21a364  comments-2.json
-18db666c45a95cf096456404f4f4429a6c98565bd8b6eab625b3b1cd0ada9a87  comments-7.json
+11307d78edf54b88d394ea5c8c428d4507c0a7b9274c5ee642e604807c84d827  issues.json
+b3ac2c6407b04fe38b5158fd0f5914794bf0f12fc7a7822d68dd9eafcb3e481d  comments-2.json
+8a9bd824af57f0c57bbef0e38326fa24f2e9b7e6927f5f296f0c44686b50535c  comments-7.json
 EOF
 
 printf "==> Raw capture hashes verified byte-exact.\n"
