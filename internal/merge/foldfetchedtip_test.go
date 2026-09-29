@@ -44,16 +44,6 @@ func tipRead(who, head string) []byte {
 	return []byte(fmt.Sprintf(`{"who":%q,"verdict":"hold","note":"","at":"2026-09-14T01:02:03Z","head":%q}`+"\n", who, head))
 }
 
-// noReReadPause holds this package's Sleep still, so a test that asserts a malformed record
-// is retried does not spend the 50 ms pause between the two reads. The tests that use it are
-// not parallel; they replace the same seam foldreadonly_test.go replaces to drive the reread.
-func noReReadPause(t *testing.T) {
-	t.Helper()
-	old := Sleep
-	Sleep = func(time.Duration) {}
-	t.Cleanup(func() { Sleep = old })
-}
-
 func fetchedTipLab(t *testing.T) (lane, tip, recordPath string) {
 	t.Helper()
 	lane = t.TempDir()

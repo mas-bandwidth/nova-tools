@@ -43,6 +43,14 @@ type Events struct {
 // wiring. A test swaps it for a buffer; nil silences it.
 var DefaultEvents = &Events{Sink: os.Stderr}
 
+// defaultEvents returns the first Events sink provided, or DefaultEvents if none was passed.
+func defaultEvents(events ...*Events) *Events {
+	if len(events) > 0 {
+		return events[0]
+	}
+	return DefaultEvents
+}
+
 // emit writes one event line. A nil Events or a nil Sink is silent: the
 // emitter is additive, never a replacement.
 func (e *Events) emit(fields map[string]any) {

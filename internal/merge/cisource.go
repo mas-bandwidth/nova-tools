@@ -168,10 +168,15 @@ func redisAddrFromEnv() string {
 	return redisAddrFromLookup(os.Getenv)
 }
 
-func redisAddrFromLookup(getenv func(string) string) string {
-	if getenv == nil {
-		getenv = os.Getenv
+func redisGetenv(lookup func(string) string) func(string) string {
+	if lookup != nil {
+		return lookup
 	}
+	return os.Getenv
+}
+
+func redisAddrFromLookup(getenv func(string) string) string {
+	getenv = redisGetenv(getenv)
 	if addr := strings.TrimSpace(getenv("REDIS_ADDR")); addr != "" {
 		return addr
 	}

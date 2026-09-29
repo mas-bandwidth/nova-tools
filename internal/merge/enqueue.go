@@ -124,11 +124,7 @@ type Enqueuer struct {
 // nova-pulse's ledger and GHSweep.Enqueue -- so each one emits its `enqueue`
 // line; a caller wanting another sink sets Events after.
 func NewEnqueuer(host EnqueueHost, events ...*Events) *Enqueuer {
-	ev := DefaultEvents
-	if len(events) > 0 {
-		ev = events[0]
-	}
-	return &Enqueuer{Host: host, Events: ev}
+	return &Enqueuer{Host: host, Events: defaultEvents(events...)}
 }
 
 // Enqueue admits one pull request to its base's merge queue, or refuses and says why.

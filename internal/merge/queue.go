@@ -228,11 +228,7 @@ func SaveQueue(lane string, q *Queue) error {
 // is where production parks land -- the queue sweep's poison detector writes q.Parked
 // inside this change -- so the line needs no wiring at the call site.
 func UpdateQueue(lane string, s *State, wait time.Duration, change func(*Queue) error, events ...*Events) (*Queue, error) {
-	ev := DefaultEvents
-	if len(events) > 0 {
-		ev = events[0]
-	}
-	return updateQueue(lane, s, wait, change, time.Now().UTC(), ev)
+	return updateQueue(lane, s, wait, change, time.Now().UTC(), defaultEvents(events...))
 }
 
 // updateQueue is UpdateQueue with the clock and the sink named.

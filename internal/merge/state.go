@@ -477,12 +477,23 @@ func replaceState(tmp, path string) error {
 	return replaceStateWait(tmp, path, Now, Sleep)
 }
 
+type stateUpdater struct {
+	refusal func(error) bool
+}
+
+func (u *stateUpdater) saveToWaitRefusal() func(error) bool {
+	if u != nil && u.refusal != nil {
+		return u.refusal
+	}
+	return replaceRefusal
+}
+
 // replaceStateWait is replaceState with its clock injected: now says when the writer's
 // window has run out and sleep is the wait between renames. A test that must run the bounded
 // retry to its end advances the injected clock through sleep, so the window is exercised in
 // full with no wall time and no assertion against elapsed seconds.
 func replaceStateWait(tmp, path string, now func() time.Time, sleep func(time.Duration)) error {
-	return replaceStateWaitRefusal(tmp, path, now, sleep, replaceRefusal)
+	return replaceStateWaitRefusal(tmp, path, now, sleep, (&stateUpdater{}).saveToWaitRefusal())
 }
 
 func replaceStateWaitRefusal(tmp, path string, now func() time.Time, sleep func(time.Duration), refusal func(error) bool) error {
@@ -550,7 +561,7 @@ func (s *State) SaveTo(lane string) error {
 
 // saveToWait is SaveTo with its clock injected, so the replace retry is the caller's seam.
 func (s *State) saveToWait(lane string, now func() time.Time, sleep func(time.Duration)) error {
-	return s.saveToWaitRefusal(lane, now, sleep, replaceRefusal)
+	return s.saveToWaitRefusal(lane, now, sleep, (&stateUpdater{}).saveToWaitRefusal())
 }
 
 func (s *State) saveToWaitRefusal(lane string, now func() time.Time, sleep func(time.Duration), refusal func(error) bool) error {

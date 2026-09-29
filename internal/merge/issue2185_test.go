@@ -212,16 +212,6 @@ func TestIssue2185ParkAgeFromStandingRecord(t *testing.T) {
 	}
 }
 
-// swapDefaultEvents points the production sink at a buffer for one test.
-func swapDefaultEvents(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	saved := DefaultEvents
-	DefaultEvents = &Events{Sink: &buf}
-	t.Cleanup(func() { DefaultEvents = saved })
-	return &buf
-}
-
 // TestIssue2185ProductionSinkIsStderr: the production sink is stderr (docs/SPEC-LOGS.md),
 // and the one door's constructor carries it, so every production enqueue -- nova-merge
 // land, nova-pulse's ledger, GHSweep.Enqueue -- is built with a sink, not a nil.
@@ -242,9 +232,9 @@ func TestIssue2185ProductionSinkIsStderr(t *testing.T) {
 	}
 }
 
-// TestIssue2185ProductionEnqueueEmits: a door built by NewEnqueuer, with no Events set by
-// the caller (land.go's and the ledger's shape), writes the enqueue line after the
-// mutation lands; a refused admission (the sweep's card branch) writes none.
+// TestIssue2185ProductionEnqueueEmits: a door built by NewEnqueuer writes the
+// enqueue line after the mutation lands; a refused admission (the sweep's card
+// branch) writes none.
 func TestIssue2185ProductionEnqueueEmits(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer

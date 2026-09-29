@@ -60,6 +60,8 @@ type Runner interface {
 	Run(ctx context.Context, dir, name string, args ...string) (string, error)
 }
 
+// Exec is the production runner: the command, in a directory, under the context's
+// deadline.
 type Exec struct {
 	Env      []string
 	LookPath func(file string) (string, error)

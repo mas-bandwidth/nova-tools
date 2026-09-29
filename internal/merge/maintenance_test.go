@@ -64,7 +64,7 @@ func TestNoGitThisToolRunsStartsABackgroundGit(t *testing.T) {
 
 	started, files := gitChildrenStarted(t, trace)
 	if files == 0 {
-		t.Skip("this git wrote no trace2 events, so this bench cannot see the children git starts")
+		t.Fatalf("this git wrote no trace2 events, so this bench cannot see the children git starts")
 	}
 	var background []string
 	for _, argv := range started {
@@ -235,7 +235,7 @@ func TestAPushThisToolMakesLeavesNoGitInTheReceivingRepository(t *testing.T) {
 
 	started, files := gitChildrenStarted(t, trace)
 	if files == 0 {
-		t.Skip("this git wrote no trace2 events, so this bench cannot see the children git starts")
+		t.Fatalf("this git wrote no trace2 events, so this bench cannot see the children git starts")
 	}
 	var background []string
 	for _, argv := range started {

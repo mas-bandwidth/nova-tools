@@ -70,7 +70,11 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	if os.Geteuid() == 0 {
 		return ExitRefused, refuse("sandbox_failed", "this tool does not run as root: rule 2 is that the wall holds for an ordinary unprivileged user, and a root child is outside what this policy was measured against")
 	}
-	backend, ok := Available()
+	availFn := Available
+	if p.Available != nil {
+		availFn = p.Available
+	}
+	backend, ok := availFn()
 	if !ok {
 		return ExitRefused, refuse("no_sandbox", "sandbox-exec is on no PATH entry and is not at %s; this tool does not run a command it cannot contain", sandboxExecPath)
 	}

@@ -61,13 +61,6 @@ func reportTipLab(t *testing.T) (lane, tip, fetchHeadPath, trackingRef string) {
 	return lane, tip, fetchHeadPath, trackingRef
 }
 
-func reportNonce(t *testing.T, nonce string) {
-	t.Helper()
-	old := newReportFetchNonce
-	newReportFetchNonce = func() (string, error) { return nonce, nil }
-	t.Cleanup(func() { newReportFetchNonce = old })
-}
-
 func reportRefNames(t *testing.T, lane string) []string {
 	t.Helper()
 	out := tipGit(t, lane, "for-each-ref", "--format=%(refname)", reportFetchedRefPrefix)

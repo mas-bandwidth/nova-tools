@@ -35,6 +35,8 @@ func TestLinuxReadRootsIncludeTheResolverDirectory(t *testing.T) {
 // TCP by IP still works. The read set the backend applies must follow the resolver's own
 // config through its symlinks and grant the directory it resolves to.
 func TestLinuxWallGrantsTheResolvedResolverConfigDirectory(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	targetDir := filepath.Join(base, "mnt", "wsl")
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
@@ -49,11 +51,7 @@ func TestLinuxWallGrantsTheResolvedResolverConfigDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	saved := resolvConfPath
-	resolvConfPath = link
-	defer func() { resolvConfPath = saved }()
-
-	roots := linuxRoots()
+	roots := linuxRootsAt(link)
 	for _, r := range roots {
 		if r == targetDir {
 			return
