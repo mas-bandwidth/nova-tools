@@ -42,12 +42,17 @@ type Redis struct {
 // than completed, because the fleet store's port is 6380 and the default is
 // 6379, and a tool that guesses that wrong reports a friend as away.
 func Open(ctx context.Context, addr, user string) (*Redis, error) {
+	return OpenWith(ctx, addr, user, os.Getenv)
+}
+
+// OpenWith dials addr as user, using lookup to obtain the password when no seat is active.
+func OpenWith(ctx context.Context, addr, user string, lookup func(string) string) (*Redis, error) {
 	a, err := Addr(addr)
 	if err != nil {
 		return nil, err
 	}
 	opts := &redis.Options{Addr: a}
-	u, pw, err := Login(user)
+	u, pw, err := LoginWith(user, lookup)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +81,14 @@ func (r *Redis) fail(err error) error {
 // otherwise it is user (DefaultUser when blank) with PasswordEnv's value, and
 // an empty password means dial with no credentials at all.
 func Login(user string) (string, string, error) {
+	return LoginWith(user, os.Getenv)
+}
+
+// LoginWith is Login with an explicit lookup for environment variables.
+func LoginWith(user string, lookup func(string) string) (string, string, error) {
+	if lookup == nil {
+		lookup = os.Getenv
+	}
 	if c, ok, err := seatcred.Active(); ok {
 		if err != nil {
 			return "", "", err
@@ -84,7 +97,7 @@ func Login(user string) (string, string, error) {
 		_ = c.Password.Use(func(v string) error { pw = v; return nil })
 		return c.User, pw, nil
 	}
-	pw := os.Getenv(PasswordEnv)
+	pw := lookup(PasswordEnv)
 	if strings.TrimSpace(user) == "" {
 		user = DefaultUser
 	}

@@ -178,6 +178,10 @@ func outsideTheWall(denied []deniedPath, allowed []string) []deniedPath {
 // The remedy names a DIRECTORY, because that is what the flags take: the path itself when
 // it is one, and its parent when it is a file.
 func printDenied(stderr io.Writer, denied []deniedPath, max int) {
+	printDeniedStat(stderr, denied, max, denialStat)
+}
+
+func printDeniedStat(stderr io.Writer, denied []deniedPath, max int, stat func(string) (os.FileInfo, error)) {
 	if len(denied) == 0 {
 		return
 	}
@@ -198,7 +202,7 @@ func printDenied(stderr io.Writer, denied []deniedPath, max int) {
 		}
 		fmt.Fprintf(stderr, "SANDBOX DENIED path=%s op=%s remedy=%s\n",
 			oneline.Field(d.Path), oneline.Field(d.Op),
-			oneline.Quote(flag+" "+remedyDir(d.Path)))
+			oneline.Quote(flag+" "+remedyDirStat(d.Path, stat)))
 	}
 	if rest := len(denied) - len(shown); rest > 0 {
 		fmt.Fprintf(stderr, "SANDBOX NOTE and %d more denied paths; the lines above are the first %d, and one --read of a shared parent usually answers several\n", rest, len(shown))
@@ -221,7 +225,14 @@ func insidePosix(p, dir string) bool {
 // directory, its parent when it is a file, and its parent when it is neither — a path that
 // was denied may not exist, and the parent is the flag a caller can actually pass.
 func remedyDir(p string) string {
-	if fi, err := denialStat(p); err == nil && fi.IsDir() {
+	return remedyDirStat(p, denialStat)
+}
+
+func remedyDirStat(p string, stat func(string) (os.FileInfo, error)) string {
+	if stat == nil {
+		stat = denialStat
+	}
+	if fi, err := stat(p); err == nil && fi.IsDir() {
 		return p
 	}
 	dir := path.Dir(p)

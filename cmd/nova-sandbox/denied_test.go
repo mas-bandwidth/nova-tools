@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// posixStat returns a stat function that treats dirs as directories and anything else as not existing.
+func posixStat(dirs ...string) func(string) (os.FileInfo, error) {
+	set := map[string]bool{}
+	for _, d := range dirs {
+		set[d] = true
+	}
+	return func(p string) (os.FileInfo, error) {
+		if set[p] {
+			return fakeDirInfo{}, nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
 // posixDirs makes the local stat answer the same question on every platform. These are
 // macOS's own log paths, and whether `/opt` is a directory is not a fact about the machine
 // running the test — without this, the suite was asserting that the READER has an /opt,
@@ -16,16 +30,7 @@ func posixDirs(t *testing.T, dirs ...string) {
 	t.Helper()
 	old := denialStat
 	t.Cleanup(func() { denialStat = old })
-	set := map[string]bool{}
-	for _, d := range dirs {
-		set[d] = true
-	}
-	denialStat = func(p string) (fs.FileInfo, error) {
-		if set[p] {
-			return fakeDirInfo{}, nil
-		}
-		return nil, os.ErrNotExist
-	}
+	denialStat = posixStat(dirs...)
 }
 
 // fakeDirInfo is a directory, and remedyDir asks it exactly one question.
@@ -113,12 +118,13 @@ func TestDenialsInsideTheAllowedSetAreNotReported(t *testing.T) {
 
 // The line is the contract, and the remedy on it is a line to RUN, not a thing to work out.
 func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
-	posixDirs(t, "/opt")
+	t.Parallel()
+	stat := posixStat("/opt")
 	var errb bytes.Buffer
-	printDenied(&errb, []deniedPath{
+	printDeniedStat(&errb, []deniedPath{
 		{Path: "/opt", Op: "read", PID: 10},
 		{Path: "/Users/me/notes/out.txt", Op: "write", PID: 11},
-	}, 10)
+	}, 10, stat)
 	out := errb.String()
 	if !strings.Contains(out, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`) {
 		t.Errorf("the denied line for a directory does not name the directory as the remedy:\n%s", out)
@@ -134,8 +140,9 @@ func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
 // means `\`. Both halves are asserted here directly, with no fixture and no machine: the
 // windows leg went red on exactly these two (run 35367602664).
 func TestTheDenialReaderUsesPosixPathsOnEveryPlatform(t *testing.T) {
-	posixDirs(t) // nothing is a directory: every answer below is path arithmetic
-	if got := remedyDir("/Users/me/notes/out.txt"); got != "/Users/me/notes" {
+	t.Parallel()
+	stat := posixStat() // nothing is a directory: every answer below is path arithmetic
+	if got := remedyDirStat("/Users/me/notes/out.txt", stat); got != "/Users/me/notes" {
 		t.Errorf("remedyDir gave %q; a seatbelt log path is separated by / on every platform, so this is `path` and never `path/filepath`", got)
 	}
 	if !insidePosix("/Volumes/nova-j1/work/inside.txt", "/Volumes/nova-j1") {

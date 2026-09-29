@@ -32,9 +32,8 @@ func fakeServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 
 // New refuses when the env var is unset, naming it.
 func TestNewRefusesWhenEnvUnset(t *testing.T) {
-	t.Setenv("CARD8331_JEV_KEY", "")
-	t.Setenv("TYPESAFE_API_KEY", "")
-	_, err := New("http://example.invalid", "CARD8331_JEV_KEY")
+	t.Parallel()
+	_, err := NewWithLookup("http://example.invalid", "CARD8331_JEV_KEY", func(string) string { return "" })
 	if err == nil {
 		t.Fatal("expected error when key env var is unset")
 	}
@@ -45,10 +44,10 @@ func TestNewRefusesWhenEnvUnset(t *testing.T) {
 
 // The request carries the documented body and the key on the header.
 func TestRequestSendsDocumentedBody(t *testing.T) {
-	t.Setenv("CARD8331_JEV_KEY", "sekret")
-	c, err := New("http://example.invalid", "CARD8331_JEV_KEY")
+	t.Parallel()
+	c, err := NewWithKey("http://example.invalid", "sekret")
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewWithKey: %v", err)
 	}
 	qs := map[string]Question{
 		"gate":  {Instructions: "go or wait?", Choice: map[string]string{"go": "proceed", "wait": "hold"}},
@@ -224,6 +223,7 @@ func TestDecideRefusesOn500(t *testing.T) {
 // Decide sends the documented body and parses choice/score/noul answers,
 // against an httptest fake returning the documented response shape.
 func TestDecideSendsBodyAndParses(t *testing.T) {
+	t.Parallel()
 	var gotBody map[string]any
 	var gotAuth string
 	srv := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -240,10 +240,9 @@ func TestDecideSendsBodyAndParses(t *testing.T) {
 	})
 	defer srv.Close()
 
-	t.Setenv("CARD8331_JEV_KEY", "sekret")
-	c, err := New(srv.URL, "CARD8331_JEV_KEY")
+	c, err := NewWithKey(srv.URL, "sekret")
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewWithKey: %v", err)
 	}
 	qs := map[string]Question{
 		"gate":  {Instructions: "go or wait?", Choice: map[string]string{"go": "proceed", "wait": "hold"}},
