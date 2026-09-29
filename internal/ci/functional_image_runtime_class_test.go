@@ -51,34 +51,75 @@ func (k roleTask) text() string {
 
 // TestContainerRuntimeRefusesRootBeforeItsFirstChange: the role's default user
 // is the connecting user, so a connection made as root (or become in
-// ansible.cfg) names root. An assert that root and system uids are refused
-// comes before every task that changes the host or includes one that does.
+// ansible.cfg) names root. One assert refuses root and system uids, reading the
+// account's uid from the getent fact and not from a variable an extra variable
+// can override; it cannot be skipped, ignored or failed softly; and only reads
+// (stat, getent, set_fact, assert) come before it: no become, no include or
+// import of a file that changes something.
 func TestContainerRuntimeRefusesRootBeforeItsFirstChange(t *testing.T) {
 	t.Parallel()
+	const uid = "ansible_facts['getent_passwd'][container_runtime_user][1] | int"
+	wantThat := []string{
+		uid + " != 0",
+		uid + " >= container_runtime_min_uid | int",
+		"container_runtime_uid | int == " + uid,
+	}
 	tasks := roleTasks(t, "tasks/main.yml")
-	guard, first := -1, -1
+	guard := -1
 	for i, k := range tasks {
-		if _, ok := k.module("ansible.builtin.assert"); ok && strings.Contains(k.text(), "container_runtime_uid") &&
-			strings.Contains(k.text(), "!= 0") && strings.Contains(k.text(), "container_runtime_min_uid") {
-			if guard < 0 {
-				guard = i
-			}
-		}
-		_, becomes := k["become"]
-		_, includes := k.module("ansible.builtin.include_tasks")
-		if (becomes || includes) && first < 0 {
-			first = i
+		if k.name() == "the runner user is an ordinary user, never root" {
+			guard = i
+			break
 		}
 	}
 	if guard < 0 {
-		t.Fatalf("%s/tasks/main.yml has no assert that container_runtime_uid is not 0 and is at least container_runtime_min_uid", containerRuntimeRole)
+		t.Fatalf("%s/tasks/main.yml has no task \"the runner user is an ordinary user, never root\"", containerRuntimeRole)
 	}
-	if first >= 0 && first < guard {
-		t.Errorf("%s/tasks/main.yml: %q (task %d) changes or includes a change before the uid assert (task %d); the role must refuse root before its first change", containerRuntimeRole, tasks[first].name(), first+1, guard+1)
+	g := tasks[guard]
+	for key := range g {
+		if key != "name" && key != "ansible.builtin.assert" {
+			t.Errorf("%s/tasks/main.yml: the root guard has a %q key; it takes no when, ignore_errors, failed_when, become or loop", containerRuntimeRole, key)
+		}
+	}
+	m := g.args("ansible.builtin.assert")
+	var got []string
+	if l, ok := m["that"].([]any); ok {
+		for _, e := range l {
+			got = append(got, fold(e.(string)))
+		}
+	}
+	if len(got) != len(wantThat) {
+		t.Fatalf("%s/tasks/main.yml: the root guard asserts %v, want exactly %v", containerRuntimeRole, got, wantThat)
+	}
+	for i := range wantThat {
+		if got[i] != fold(wantThat[i]) {
+			t.Errorf("%s/tasks/main.yml: guard line %d is %q, want %q", containerRuntimeRole, i+1, got[i], fold(wantThat[i]))
+		}
+	}
+	allowed := []string{"ansible.builtin.stat", "ansible.builtin.assert", "ansible.builtin.getent", "ansible.builtin.set_fact"}
+	for i, k := range tasks[:guard] {
+		modules := 0
+		for key := range k {
+			switch key {
+			case "name", "register", "when", "loop", "loop_control":
+			default:
+				ok := false
+				for _, a := range allowed {
+					ok = ok || key == a
+				}
+				if !ok {
+					t.Errorf("%s/tasks/main.yml: task %d (%q) before the root guard has %q; only stat, getent, set_fact and assert, with no become, ignore_errors, block, include or import, may come before it", containerRuntimeRole, i+1, k.name(), key)
+				}
+				modules++
+			}
+		}
+		if modules != 1 {
+			t.Errorf("%s/tasks/main.yml: task %d (%q) before the root guard is not one plain read", containerRuntimeRole, i+1, k.name())
+		}
 	}
 	defaults := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/defaults/main.yml")))
-	m := regexp.MustCompile(`(?m)^container_runtime_min_uid:\s*(\d+)\s*$`).FindStringSubmatch(defaults)
-	if m == nil || m[1] == "0" {
+	dm := regexp.MustCompile(`(?m)^container_runtime_min_uid:\s*(\d+)\s*$`).FindStringSubmatch(defaults)
+	if dm == nil || dm[1] == "0" {
 		t.Errorf("%s/defaults/main.yml: container_runtime_min_uid is missing or 0; it is the floor for the runner's uid and root is never allowed", containerRuntimeRole)
 	}
 }

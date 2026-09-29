@@ -35,13 +35,17 @@
 # The first change this role makes is below this task. The role never acts for
 # root (its default user is the connecting user, and a connection made as root,
 # or `become` set in ansible.cfg so that facts are gathered as root, would name
-# root here) and never for a system account.
+# root here) and never for a system account. The guard reads the account's own
+# uid from getent, not container_runtime_uid: an extra variable outranks a fact,
+# so `-e container_runtime_uid=1001 -e container_runtime_user=root` must not
+# get past it, and the last line refuses any uid that is not the account's.
 - name: the runner user is an ordinary user, never root
   ansible.builtin.assert:
     quiet: true
     that:
-      - container_runtime_uid | int != 0
-      - container_runtime_uid | int >= container_runtime_min_uid | int
+      - ansible_facts['getent_passwd'][container_runtime_user][1] | int != 0
+      - ansible_facts['getent_passwd'][container_runtime_user][1] | int >= container_runtime_min_uid | int
+      - container_runtime_uid | int == ansible_facts['getent_passwd'][container_runtime_user][1] | int
     fail_msg: >-
       container-runtime role: {{ container_runtime_user }} has uid
       {{ container_runtime_uid }}; rootless podman is for an ordinary user (uid
