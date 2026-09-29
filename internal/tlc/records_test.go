@@ -41,6 +41,12 @@ func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {
 		t.Error("a field with a tab was written")
 	}
 	good := strings.Join(RecordsHeader, "\t") + "\n"
+	// The plain forms are read, the exit's negative sign included.
+	for _, exit := range []string{"0", "12", "124", "-1"} {
+		if _, err := ReadRecords(strings.NewReader(good + badRow("10", "2", exit))); err != nil {
+			t.Errorf("exit %s refused: %v", exit, err)
+		}
+	}
 	for name, text := range map[string]string{
 		"a wrong header":         "config\tmodule\n",
 		"a short row":            good + "MCA.cfg\tMCA.tla\n",
@@ -50,6 +56,15 @@ func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {
 		"no cpus":                good + strings.Replace(badRow("3", "2", "0"), "\t8\t", "\t0\t", 1),
 		"a bad count of workers": good + badRow("3", "two", "0"),
 		"a bad exit":             good + badRow("3", "2", "abc"),
+		"files with text after":  good + badRow("10x", "2", "0"),
+		"files with a sign":      good + badRow("+10", "2", "0"),
+		"files with a zero":      good + badRow("010", "2", "0"),
+		"files with an exponent": good + badRow("1e1", "2", "0"),
+		"files with a space":     good + badRow(" 10", "2", "0"),
+		"workers with text":      good + badRow("3", "2x", "0"),
+		"cpus with text":         good + strings.Replace(badRow("3", "2", "0"), "\t8\t", "\t8x\t", 1),
+		"an exit with text":      good + badRow("3", "2", "12x"),
+		"an exit with a sign":    good + badRow("3", "2", "+12"),
 	} {
 		if _, err := ReadRecords(strings.NewReader(text)); err == nil {
 			t.Errorf("%s was read", name)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -60,8 +61,9 @@ func WriteRecords(w io.Writer, records []Record) error {
 }
 
 // ReadRecords reads a records file and refuses a header that is not the
-// current layout (naming the layout it found and the one expected) and a short
-// row.
+// current layout (naming the layout it found and the one expected), a short
+// row, and a count or exit cell that is not a plain integer (no trailing text,
+// sign or leading zero).
 func ReadRecords(r io.Reader) ([]Record, error) {
 	cr := csv.NewReader(r)
 	cr.Comma = '\t'
@@ -90,8 +92,8 @@ func ReadRecords(r io.Reader) ([]Record, error) {
 	var out []Record
 	for _, f := range rows[1:] {
 		count := func(name string) (int, error) {
-			var n int
-			if _, err := fmt.Sscanf(f[col[name]], "%d", &n); err != nil || n < 1 {
+			n, err := strconv.Atoi(f[col[name]])
+			if err != nil || n < 1 || strconv.Itoa(n) != f[col[name]] {
 				return 0, fmt.Errorf("record %s has %s %q, not a count", f[0], name, f[col[name]])
 			}
 			return n, nil
@@ -108,8 +110,8 @@ func ReadRecords(r io.Reader) ([]Record, error) {
 		if err != nil {
 			return nil, err
 		}
-		var code int
-		if _, err := fmt.Sscanf(f[col["exit"]], "%d", &code); err != nil {
+		code, err := strconv.Atoi(f[col["exit"]])
+		if err != nil || strconv.Itoa(code) != f[col["exit"]] {
 			return nil, fmt.Errorf("record %s has exit %q, not a number", f[0], f[col["exit"]])
 		}
 		g := func(name string) string { return f[col[name]] }
