@@ -88,8 +88,9 @@ func TestMultiBatchAggregateTouchedValuesRefuseBeforeAnyWrite(t *testing.T) {
 		}}
 	before := storeImage(t, c)
 	_, err := ntable.ApplyMultiBatch(ctx, c, m)
-	if !errors.Is(err, ntable.ErrLimit) || !strings.Contains(err.Error(), "value bytes per batch") {
-		t.Fatalf("aggregate value bound: %v", err)
+	var limit *ntable.LimitError
+	if !errors.Is(err, ntable.ErrLimit) || !errors.As(err, &limit) || !limit.AtLeast || limit.Observed != ntable.LimitBatchValueBytes+1 || !strings.Contains(err.Error(), "observed at least") {
+		t.Fatalf("aggregate value bound must report its lower-bound count: %v", err)
 	}
 	assertMultiStoreUnchanged(t, c, before)
 	if c.HExists(ctx, "table::batch:test.values:ops", "over").Val() {

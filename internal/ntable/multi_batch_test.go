@@ -219,6 +219,7 @@ func TestApplyMultiBatchSchema2RefusalText(t *testing.T) {
 		{"unplaced move", `table "b" batch "op-1" member "m"`, "expected a placed member to move, observed unplaced", "nova-table member read 'b' 'm'", []any{"REFUSED", "NOTMEMBER", "m", "b", "a placed member to move"}, ErrNotMember},
 		{"duplicate physical member", `table "b" batch "op-1" member "m"`, `duplicate manifest member: member "m" appears more than once`, "nova-table show 'b'", []any{"REFUSED", "TWICE", "m", "b"}, ErrDuplicateMember},
 		{"stored score", `table "b" batch "op-1" member "m"`, "expected a finite JSON number, observed stored score is not finite", "nova-table show 'b'", []any{"REFUSED", "SCORE", "m", "b", "stored score is not finite"}, ErrInvalidScore},
+		{"counted lower bound", `multi batch scope "release" operation "op-1" member "m"`, "bound 16777216, observed at least 16777217", "nova-table list", []any{"REFUSED", "LIMIT", "value bytes per batch", "16777216", "16777217", "m", "at least"}, ErrLimit},
 		{"scope operation conflict", `multi batch scope "release" operation "op-1"`, `operation "op-1" already holds a different request`, "nova-table list", []any{"REFUSED", "OPCONFLICT", "op-1"}, ErrOpConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

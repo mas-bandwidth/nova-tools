@@ -494,10 +494,11 @@ func (o operation) refused(reply []any) error {
 			limit := &LimitError{Name: fmt.Sprint(reply[2])}
 			limit.Bound, _ = strconv.Atoi(fmt.Sprint(reply[3]))
 			limit.Observed, _ = strconv.Atoi(fmt.Sprint(reply[4]))
-			if len(reply) >= 6 {
+			if len(reply) >= 6 && fmt.Sprint(reply[5]) != "" {
 				limit.Member = fmt.Sprint(reply[5])
 				o.member = limit.Member
 			}
+			limit.AtLeast = len(reply) >= 7 && fmt.Sprint(reply[6]) == "at least"
 			cause = say(limit, "%s; %s", limit.Error(), limit.Advice())
 		} else {
 			cause = fmt.Errorf("%w: %s", ErrLimit, words(reply[2:]))

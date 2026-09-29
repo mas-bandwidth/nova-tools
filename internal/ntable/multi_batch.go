@@ -419,6 +419,10 @@ func multiRefused(reply []any, m MultiBatchManifest) error {
 	if table == "" {
 		if refusal, ok := err.(*Refusal); ok {
 			refusal.Location = multiScopeLocation(m)
+			var limit *LimitError
+			if errors.As(err, &limit) && limit.Member != "" {
+				refusal.Location += fmt.Sprintf(" member %q", limit.Member)
+			}
 			refusal.Next = "nova-table list"
 		}
 	}
