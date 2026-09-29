@@ -18,6 +18,7 @@
 # Containerfile must still carry them.
 
 age-keygen	source	age
+ansible-inventory	absent	the one test that runs it reads only a wrapper script and skips when it is not installed; ansible is a control-node tool, not carried by the runner image
 bash	base	bash
 c++	absent	only the macOS sandbox tests compile with it; the darwin body is skipped on Linux by design
 cat	base	coreutils

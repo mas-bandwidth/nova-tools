@@ -312,6 +312,11 @@ func TestContainerRuntimeTasksCannotHideAWeakening(t *testing.T) {
 	}
 	// main.yml writes only what the role means to write: one drop-in directory
 	// and one drop-in file, no other file, copy, template or line.
+	for _, k := range roleTasks(t, "tasks/main.yml") {
+		if v, ok := k["ansible.builtin.include_tasks"]; ok && v != "subid.yml" {
+			t.Errorf("%s/tasks/main.yml: %q includes %v; the only file the role includes is subid.yml, which is pinned above", containerRuntimeRole, k.name(), v)
+		}
+	}
 	counts := map[string]int{}
 	for _, k := range roleTasks(t, "tasks/main.yml") {
 		for key := range k {
@@ -446,7 +451,19 @@ func TestFunctionalImageReadmeRunCommandCarriesEveryFlag(t *testing.T) {
 // restriction depends on.
 func TestContainerRuntimeProbeValuesAreNumbers(t *testing.T) {
 	t.Parallel()
-	_, argv, script := probeTask(t)
+	task, argv, script := probeTask(t)
+	wantKeys := map[string]bool{"name": true, "become": true, "become_user": true, "environment": true, "ansible.builtin.command": true, "register": true, "changed_when": true, "when": true}
+	for key := range task {
+		if !wantKeys[key] {
+			t.Errorf("%s/tasks/main.yml: the probe task has the key %q; it takes only %v (no failed_when, loop, ignore_errors or the like that could make a failed probe pass)", containerRuntimeRole, key, wantKeys)
+		}
+	}
+	if w := fold(fmt.Sprint(task["when"])); w != "not ansible_check_mode" {
+		t.Errorf("%s/tasks/main.yml: the probe runs when %q; it runs whenever the play is not in check mode, and always then", containerRuntimeRole, w)
+	}
+	if task["changed_when"] != false {
+		t.Errorf("%s/tasks/main.yml: the probe's changed_when is %v, want false", containerRuntimeRole, task["changed_when"])
+	}
 	joined := strings.Join(argv[:len(argv)-1], " ")
 	line := regexp.MustCompile(`WANT_CPU=\{\{ (.*?) \}\} 100000`).FindStringSubmatch(joined)
 	if line == nil {
