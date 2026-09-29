@@ -371,8 +371,21 @@ const (
 // runStep runs a step and reports it: exit 0 when everything named moved, 1
 // when a card was refused or the step was cut, 2 when the store did not
 // confirm.
+// reportVerbs are the outside actors' reports: each names the epoch it was
+// handed its cards at (--epoch, from queue), so a worker, reader or merger
+// from before a clear never reports on the new epoch's card of the same name.
+var reportVerbs = map[string]bool{"finish": true, "read": true, "merge": true, "ci": true, "take by id": true}
+
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
+	if reportVerbs[verbName] && c.epoch < 0 {
+		now := "the sprint's epoch"
+		if es, err := st.EpochNow(ctx); err == nil {
+			now = fmt.Sprintf("the sprint's epoch is %d", es.N)
+		}
+		name := strings.TrimSuffix(verbName, " by id")
+		return refuse(stderr, name, fmt.Sprintf("a report names the epoch its cards were handed at: --epoch <n> (queue and card print it); %s; nothing was changed", now))
+	}
 	step.CallerOp = c.op
 	if c.epoch >= 0 {
 		e := uint64(c.epoch)
@@ -762,7 +775,11 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "take", err.Error())
 	}
-	return a.runStep("take", *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
+	name := "take"
+	if len(ids) > 0 {
+		name = "take by id" // a report on named cards
+	}
+	return a.runStep(name, *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {

@@ -532,7 +532,11 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if held != nil {
 		fmt.Fprintf(stdout, "HELD %s\n", oneline.Escape(held.String()))
 	}
-	fmt.Fprintf(stdout, "CARD OK id=%s work_cards=%d read_cards=%d open=%d\n", oneline.Escape(id), len(v.Work), len(v.Reads), len(v.Open))
+	epoch := uint64(0)
+	if pinned, err := st.Pinned(ctx); err == nil {
+		epoch = pinned.PinnedEpoch()
+	}
+	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open))
 	return 0
 }
 

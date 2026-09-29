@@ -598,10 +598,13 @@ command that loads it.
 The read verbs (queue, where, inbox, card, check) have `--json`, one object for a
 program; `queue --stream <s> --col waiting` lists a stream's waiting cards;
 `card` shows each need with its state and what needs the card; where, inbox and card take `--at-epoch <n>` to read an earlier epoch as
-it was. Every store verb takes `--epoch <n>`, the epoch the caller holds (a
-worker's cards, from `queue`; the driver passes it on every worker's, reader's
-and merge verb): a sprint at another epoch refuses the step, saying when it was
-cleared and naming the new epoch.
+it was. Every store verb takes `--epoch <n>`, the epoch the caller holds. Every
+report of an outside actor (take by id, finish, read, a merge step, ci) must
+name it: `queue`, `card` and the inbox's printed merge commands print it, and
+a report without it, or with an epoch the sprint has left, is refused naming
+the clear, so a worker, reader or merger from before a clear never reports on
+the new epoch's card of the same name. The coordinator's own verbs read the
+current epoch.
 
 ## 12. The driver
 

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -425,7 +426,10 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"fleet beat '<member>'")
 		case d == "ask --another":
 			add(d, cmd+"ask"+grp+" --another"+ans)
-		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "merge --stream ") || strings.HasPrefix(d, "goal "):
+		case strings.HasPrefix(d, "merge --stream "):
+			// a merge step is a report: it names its epoch, the judgment's
+			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
+		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
