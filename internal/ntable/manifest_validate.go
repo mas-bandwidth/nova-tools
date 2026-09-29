@@ -113,6 +113,9 @@ func ValidateBatchManifestRaw(raw []byte) (*BatchManifest, error) {
 	if !utf8.Valid(raw) {
 		return nil, errors.New("manifest is not valid UTF-8")
 	}
+	if err := checkEscapes(raw); err != nil {
+		return nil, err
+	}
 
 	// 1. Strict exact-case, path-aware tokenization pass: duplicate keys, null checks, and type checks.
 	decToken := json.NewDecoder(bytes.NewReader(raw))
@@ -560,7 +563,12 @@ func validateManifestSemantics(m *BatchManifest) error {
 				return fmt.Errorf("member %q: field names are nonempty strings without control characters", e.ID)
 			}
 		}
+		namedUnset := map[string]bool{}
 		for _, f := range e.Unset {
+			if namedUnset[f] {
+				return fmt.Errorf("member %q: unset names field %q twice", e.ID, f)
+			}
+			namedUnset[f] = true
 			if reservedField(f) {
 				return fmt.Errorf("member %q: %w: field %q", e.ID, ErrReservedField, f)
 			}
@@ -581,9 +589,16 @@ func validateManifestSemantics(m *BatchManifest) error {
 		if x.Revision != "" && !uintString(x.Revision) {
 			return fmt.Errorf("member %q: expect revision must be a decimal string", e.ID)
 		}
-		for name := range x.Fields {
+		for name, g := range x.Fields {
 			if !word(name) {
 				return fmt.Errorf("member %q: field guard names are nonempty strings without control characters", e.ID)
+			}
+			seen := map[string]bool{}
+			for _, o := range g.OneOf {
+				if seen[o] {
+					return fmt.Errorf("member %q: field %q: one_of names an option twice", e.ID, name)
+				}
+				seen[o] = true
 			}
 		}
 		if e.Create != nil {
@@ -607,4 +622,56 @@ func validateManifestSemantics(m *BatchManifest) error {
 		}
 	}
 	return nil
+}
+
+// checkEscapes refuses a \u escape the JSON decoder would silently replace with
+// U+FFFD: a high surrogate not followed by a low one, or a low one alone. The
+// server refuses the same text; nothing is coerced.
+func checkEscapes(raw []byte) error {
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		switch {
+		case !inString:
+			if raw[i] == '"' {
+				inString = true
+			}
+		case raw[i] == '"':
+			inString = false
+		case raw[i] == '\\' && i+1 < len(raw):
+			if raw[i+1] != 'u' {
+				i++
+				continue
+			}
+			unit, ok := hex4(raw, i+2)
+			if !ok {
+				return nil // malformed escapes are the decoder's to refuse, with its own words
+			}
+			i += 5
+			switch {
+			case unit >= 0xd800 && unit < 0xdc00:
+				low, ok := uint16(0), false
+				if i+2 < len(raw) && raw[i+1] == '\\' && raw[i+2] == 'u' {
+					var v int
+					if v, ok = hex4(raw, i+3); ok {
+						low = uint16(v)
+					}
+				}
+				if !ok || low < 0xdc00 || low > 0xdfff {
+					return errors.New("a high surrogate escape is not followed by a low surrogate escape")
+				}
+				i += 6
+			case unit >= 0xdc00 && unit <= 0xdfff:
+				return errors.New("a low surrogate escape has no high surrogate before it")
+			}
+		}
+	}
+	return nil
+}
+
+func hex4(raw []byte, at int) (int, bool) {
+	if at+4 > len(raw) {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(string(raw[at:at+4]), 16, 16)
+	return int(v), err == nil
 }

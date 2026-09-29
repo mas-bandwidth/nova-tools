@@ -1853,9 +1853,12 @@ do
         if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array', id) end
         over = T.over('unset_fields', #entry.unset, id)
         if over then return over end
+        local named = {}
         for _, f in ipairs(entry.unset) do
           if type(f) == 'string' and reserved(f) then return T.refuse('RESERVEDFIELD', id, f) end
           if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name', id) end
+          if named[f] then return T.refuse('ARGS', 'unset names a field twice', id) end
+          named[f] = true
         end
       end
       if entry.set ~= nil and entry.unset ~= nil then
@@ -1902,8 +1905,11 @@ do
             if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
               return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
             end
+            local options = {}
             for _, opt in ipairs(guard.one_of) do
               if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
+              if options[opt] then return T.refuse('FIELDGUARD', id, f, 'one_of names an option twice') end
+              options[opt] = true
             end
           end
         end

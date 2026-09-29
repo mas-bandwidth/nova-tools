@@ -296,7 +296,7 @@ type and nothing is coerced: ids, rows, columns, field names and values,
 member `revision` guard are canonical decimal strings; `schema` is the integer
 1; `absent` and `remove` are the boolean `true` only; a `score` is a finite JSON
 number, and a string never is, whatever a parser would read from it (`"0x10"`,
-`" 7 "`, `"1e3"`). The server and the Go validator accept the same manifests.
+`" 7 "`, `"1e3"`). A JSON string is well-formed UTF-8 and holds no lone surrogate escape; a name repeated in `unset` or an option repeated in `one_of` refuses. The server and the Go validator accept the same manifests.
 
 ```json
 {
