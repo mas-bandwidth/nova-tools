@@ -1708,14 +1708,16 @@ nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] 
 nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
 nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
 nova-config <kind> remove <name> --as <friend>                           # delete the row
-nova-config <kind> list                                                  # one typed line per row
+nova-config <kind> list [--max <n>]                                      # one typed line per row (default 20, 0 for unlimited)
 nova-config <kind> show <name>                                           # one line with every field and the stamps
-nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
+nova-config <kind> history <name> [--max <n>]                            # every change to the row: who, when, what changed (default 20, 0 for unlimited)
 nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
-nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
+nova-config machine list [--max <n>] [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
+nova-config machine show <name> [--redis <addr>]                         # with a Redis, ends in the live measured facts
 nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
-nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
+nova-config fleet|sprint show                                            # the one row, its stamps
+nova-config fleet|sprint history [--max <n>]                             # the one row, its changes
 ```
 
 `nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles) and `sprint` (one row: the coordinating friend); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
@@ -1742,7 +1744,7 @@ nova-config apply --check --redis 127.0.0.1:6379
 nova-config apply --redis 127.0.0.1:6379 --as rowan
 ```
 
-**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write (omitted on `apply --check`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
+**What the flags want.** `--max <n>` (default 20, 0 for unlimited) bounds the item lines printed by `machine list`, `friend list`, and `history`; when items exceed `--max`, a summary line `... and <N> more (use --max 0 to see all)` is printed. `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write (omitted on `apply --check`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
 
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 

@@ -16,10 +16,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	conn := []string{"--redis", "{addr}"}
 	var cases []testverbhelp.Case
-	for _, v := range []string{"version", "kinds", "migrate", "status", "apply"} {
+	for _, v := range []string{"version", "kinds", "migrate", "status", "apply", "history"} {
 		cases = append(cases, testverbhelp.Case{Verb: v})
 	}
-	for _, v := range []string{"machine", "machine list", "machine show", "machine history", "machine remove", "machine add", "machine set", "friend add", "fleet set", "fleet show", "sprint set"} {
+	for _, v := range []string{"machine", "machine list", "machine show", "machine history", "machine remove", "machine add", "machine set", "friend add", "friend list", "fleet set", "fleet show", "fleet history", "sprint set", "sprint history"} {
 		cases = append(cases, testverbhelp.Case{Verb: v})
 	}
 	cases = append(cases, testverbhelp.Case{Verb: "machine list", Flags: conn})

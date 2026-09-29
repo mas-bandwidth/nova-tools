@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -66,15 +67,17 @@ usage:
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
-  nova-config <kind> list
+  nova-config <kind> list [--max <n>]
   nova-config <kind> show <name>
-  nova-config <kind> history <name>
+  nova-config <kind> history <name> [--max <n>]
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
-  nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
+  nova-config machine list [--max <n>] [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
+  nova-config machine show <name> [--redis <addr>]
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
   nova-config fleet|sprint show
-  nova-config fleet|sprint history
+  nova-config fleet|sprint history [--max <n>]
+  nova-config history [<kind>] <name> [--max <n>]
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
@@ -224,6 +227,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return runStatus(ctx, args[1:], stdout, stderr, d)
 	case "apply":
 		return runApply(ctx, args[1:], stdout, stderr, d)
+	case "history":
+		return runHistory(ctx, args[1:], stdout, stderr, d)
 	}
 	if k, ok := config.Lookup(args[0]); ok {
 		return runKind(ctx, k, args[1:], stdout, stderr, d)
@@ -584,11 +589,15 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
 	redisFlag := liveFlag(fs, k)
+	maxFlag := fs.Int("max", bounded.Default, "maximum items to list (default 20, 0 = all)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "list takes no name; want "+verb)
+	}
+	if *maxFlag < 0 {
+		return refuse(stderr, verb, fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", *maxFlag))
 	}
 	dsn, err := pgDSN(*pg, d.getenv)
 	if err != nil {
@@ -613,10 +622,14 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 			return refuse(stderr, verb, err.Error())
 		}
 	}
+	list := bounded.Capped(stdout, *maxFlag, "", "", "")
 	for _, row := range rows {
-		fmt.Fprintln(stdout, config.RowLine(k, row)+liveSuffix(bs, row.Name))
+		list.Line(config.RowLine(k, row) + liveSuffix(bs, row.Name))
 	}
-	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
+	if list.Elided() > 0 {
+		fmt.Fprintf(stdout, "... and %d more (use --max 0 to see all)\n", list.Elided())
+	}
+	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, list.Total())
 	return 0
 }
 
@@ -627,6 +640,10 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	var redisFlag *string
 	if which == "show" {
 		redisFlag = liveFlag(fs, k)
+	}
+	var maxFlag *int
+	if which == "history" {
+		maxFlag = fs.Int("max", bounded.Default, "maximum items to list (default 20, 0 = all)")
 	}
 	name, rest := nameAndRest(k, args)
 	if err := fs.Parse(rest); err != nil {
@@ -639,6 +656,9 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		name = fs.Arg(0)
 	case fs.NArg() > 0:
 		return refuse(stderr, verb, "want "+verb+" <name>")
+	}
+	if maxFlag != nil && *maxFlag < 0 {
+		return refuse(stderr, verb, fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", *maxFlag))
 	}
 	var problems []string
 	if err := config.ValidateName(name); err != nil {
@@ -682,11 +702,73 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if len(changes) == 0 && !k.Singleton {
 		return refused(stderr, verb, k.Name+" "+name+" has no history: it was never added", tool+" "+k.Name+" list")
 	}
-	for _, c := range changes {
-		fmt.Fprintln(stdout, config.HistoryLine(c))
+	max := bounded.Default
+	if maxFlag != nil {
+		max = *maxFlag
 	}
-	fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes))
+	list := bounded.Capped(stdout, max, "", "", "")
+	for _, c := range changes {
+		list.Line(config.HistoryLine(c))
+	}
+	if list.Elided() > 0 {
+		fmt.Fprintf(stdout, "... and %d more (use --max 0 to see all)\n", list.Elided())
+	}
+	fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), list.Total())
 	return 0
+}
+
+func runHistory(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
+	const verb = "history"
+	if len(args) > 0 && verbflag.IsHelp(args[0]) {
+		fs := verbflag.New(verb)
+		connFlags(fs, false, false)
+		fs.Int("max", bounded.Default, "maximum items to list (default 20, 0 = all)")
+		_ = fs.Parse(args)
+		return 0
+	}
+	if len(args) == 0 {
+		return refuse(stderr, verb, "want history <kind> <name> or <kind> history <name>")
+	}
+	for i, a := range args {
+		if k, ok := config.Lookup(a); ok {
+			kindArgs := append(append([]string(nil), args[:i]...), args[i+1:]...)
+			return runKindRead(ctx, k, "history", kindArgs, stdout, stderr, d)
+		}
+	}
+	fs := verbflag.New(verb)
+	pg, _, _ := connFlags(fs, false, false)
+	maxFlag := fs.Int("max", bounded.Default, "maximum items to list (default 20, 0 = all)")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if *maxFlag < 0 {
+		return refuse(stderr, verb, fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", *maxFlag))
+	}
+	if fs.NArg() == 0 {
+		return refuse(stderr, verb, "want history <kind> <name> or <kind> history <name>")
+	}
+	name := fs.Arg(0)
+	dsn, err := pgDSN(*pg, d.getenv)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	st, err := d.openStore(ctx, dsn)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	defer st.Close()
+	for _, k := range config.Kinds {
+		if k.Singleton && k.Name == name {
+			return runKindRead(ctx, k, "history", args, stdout, stderr, d)
+		}
+		if _, found, _ := st.Get(ctx, k.Name, name); found {
+			return runKindRead(ctx, k, "history", args, stdout, stderr, d)
+		}
+		if hist, _ := st.History(ctx, k.Name, name); len(hist) > 0 {
+			return runKindRead(ctx, k, "history", args, stdout, stderr, d)
+		}
+	}
+	return refused(stderr, verb, name+" not found", tool+" kinds")
 }
 
 // --- migrate, status, apply -------------------------------------------------
