@@ -1530,7 +1530,7 @@ type inboxOpts struct {
 	// onNote is `wait --on-note`: on a note arrival exit 0 with the note, on an empty
 	// tick print WAIT TIMEOUT and the rearm line so the harness can re-arm. Prints no
 	// INBOX OPEN frame. `inbox` leaves it false.
-	onNote bool
+	onNote   bool
 	lockWait time.Duration
 }
 
