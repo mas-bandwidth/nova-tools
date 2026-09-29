@@ -399,6 +399,9 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 	if len(op.Closes) > 0 {
 		p.HDel(ctx, r.key(keyOpen), op.Closes...)
 	}
+	if op.Stuck != "" {
+		p.Del(ctx, r.Names.Key(keyStuck))
+	}
 	for _, s := range op.Streams {
 		p.HSet(ctx, r.key(keyProgress), s, op.At.UTC().Format(time.RFC3339))
 	}

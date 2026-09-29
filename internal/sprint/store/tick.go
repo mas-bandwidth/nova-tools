@@ -392,9 +392,23 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		}
 		for _, r := range rr {
 			if r.Done == RepairOpen {
+				if err := st.markStuck(ctx, *f.Pending, r.Detail); err != nil {
+					return last, err
+				}
 				return last, fmt.Errorf("operation %s (%s) is pending past its grace and the tick could not finish it: %s; run: nova-sprint repair", r.Op, r.Verb, r.Detail)
 			}
 		}
+	}
+	if _, ok, err := st.stuck(ctx); err != nil {
+		return last, err
+	} else if ok {
+		// A stuck operation repaired since: its judgment, once, by a step
+		// that writes nothing else.
+		r, err := st.Run(ctx, Step{Verb: "tick stuck", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
+		if err != nil {
+			return last, fmt.Errorf("tick stuck: %w", err)
+		}
+		res.Parts = append(res.Parts, PartResult{Name: "stuck", Result: r})
 	}
 	seen, err := st.look(ctx)
 	if err != nil {

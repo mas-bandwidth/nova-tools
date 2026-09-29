@@ -296,6 +296,15 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Lawful(step.Plan(snap))
+		// The fence is free: a stuck operation's judgment rides with this
+		// step, once.
+		stuck, isStuck, err := st.stuck(ctx)
+		if err != nil {
+			return res, err
+		}
+		if isStuck {
+			plan.Notes = append(plan.Notes, stuckNote(stuck, snap.Now, st.Actor))
+		}
 		res.Refused = plan.Refused
 		res.Moved = nil
 		for _, u := range plan.Units {
@@ -306,6 +315,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		op, err := st.operation(step.Verb, family+"-"+strconv.Itoa(res.Attempts), plan, snap)
 		if err != nil {
 			return res, err
+		}
+		if isStuck {
+			op.Stuck = stuck.Op
 		}
 		if why := unwritable(plan, op); why != "" {
 			return refuseWhole(res, plan, why)
@@ -867,6 +879,14 @@ func (k Skip) String() string {
 // model's Repair: a move applies only where its expectation holds). One the
 // store does not answer stays pending, and says why.
 func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) {
+	r, err := st.finishOp(ctx, op)
+	if err != nil {
+		return r, err
+	}
+	return r, st.repaired(ctx, r)
+}
+
+func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
 	var skips []Skip
 	for i, man := range op.Manifests {

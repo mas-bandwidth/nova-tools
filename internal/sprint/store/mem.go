@@ -668,6 +668,9 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		for _, k := range op.Closes {
 			delete(l.open, k)
 		}
+		if op.Stuck != "" {
+			delete(m.kv, keyStuck)
+		}
 		for _, s := range op.Streams {
 			l.progress[s] = op.At
 		}

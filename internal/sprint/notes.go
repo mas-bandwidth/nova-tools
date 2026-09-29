@@ -55,6 +55,7 @@ const (
 	NCIRed          = "ci red"
 	NReadsExhausted = "reads exhausted"
 	NRepairSkipped  = "repair skipped changes the store refused as recorded"
+	NOpStuck        = "an operation was stuck"
 	NOverdue        = "a judgment notification has waited past its deadline"
 	NStreamStale    = "a stream has not changed state or count past its deadline"
 	NRepeatSuffix   = "; a second time for the same cause"
@@ -72,6 +73,7 @@ var Decisions = map[string][]string{
 	NCIRed:          {"rework with a fix", "return", "drop", "look"},
 	NReadsExhausted: {"ask another reader", "rework", "drop"},
 	NRepairSkipped:  {"look at the card", "return", "drop", "rework", "ack"},
+	NOpStuck:        {"check", "ack"},
 	NOverdue:        {"act"},
 	NStreamStale:    {"look"},
 }

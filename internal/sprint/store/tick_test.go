@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -319,4 +320,57 @@ func TestAnAcknowledgedConditionIsNotWrittenAgainUntilItComesBack(t *testing.T) 
 		t.Fatalf("the condition came back: written %d open %d", h.written(sprint.NNoMember), len(h.openOf(sprint.NNoMember)))
 	}
 	h.clean("after the acknowledgement")
+}
+
+// An operation pending that the tick cannot finish: the tick fails and says
+// why, and keeps a stuck record; the first step that writes once repair has
+// freed the fence writes one judgment: the operation, how long it was stuck,
+// and what repair did.
+func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.m.Fail = func(p string) error {
+		if strings.HasPrefix(p, "apply ") {
+			return errors.New("no answer")
+		}
+		return nil
+	}
+	if _, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}})); err == nil || h.m.Pending() == nil {
+		t.Fatalf("an operation left pending: %v", err)
+	}
+	h.tick(10 * time.Minute)
+	if _, err := h.st.Tick(h.ctx); err == nil || !strings.Contains(err.Error(), "could not finish it") {
+		t.Fatalf("the tick with an operation it cannot finish: %v", err)
+	}
+	if line := h.st.MachineLine(h.ctx); !strings.Contains(line, "last tick failed") {
+		t.Fatalf("the machine line: %s", line)
+	}
+	h.m.Fail = nil
+	h.tick(5 * time.Minute)
+	rr, err := h.st.Repair(h.ctx)
+	if err != nil || len(rr) != 1 || rr[0].Done != RepairFinished {
+		t.Fatalf("repair: %+v %v", rr, err)
+	}
+	if n := len(h.openOf(sprint.NOpStuck)); n != 0 {
+		t.Fatalf("written by the repair itself: %d", n)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
+	open := h.openOf(sprint.NOpStuck)
+	if len(open) != 1 || !strings.Contains(open[0].Note.What, "(deal) was stuck 15m0s") || !strings.Contains(open[0].Note.What, "repair: finished") {
+		t.Fatalf("the stuck judgment: %+v", open)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m3"}))
+	h.machine()
+	if h.written(sprint.NOpStuck) != 1 {
+		t.Fatalf("written %d times", h.written(sprint.NOpStuck))
+	}
+	v, _ := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
+	for _, g := range v.Groups {
+		if g.Type == sprint.NOpStuck && (len(g.Commands) != 2 || g.Commands[0].Lines[0] != "nova-sprint check") {
+			t.Fatalf("its commands: %+v", g.Commands)
+		}
+	}
+	h.clean("after the stuck operation")
 }

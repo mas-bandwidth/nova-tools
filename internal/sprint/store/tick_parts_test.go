@@ -144,7 +144,7 @@ func TestTheTickLevelsUnevenQueues(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 5}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 5}})) // five on m1, dealt by hand
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))    // up levels: 3 and 2
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))  // up levels: 3 and 2
 	// a member's queue grows by hand past the other's by more than one
 	s := h.snap()
 	c := s.Fleet.Cell("m2", sprint.Ready)[0]

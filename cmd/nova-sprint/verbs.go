@@ -152,6 +152,7 @@ one answer to each judgment (every one prints its own, filled in):
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
   reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
   repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
+  an operation was stuck      check, then ack <note> --reason '<what you found>'
   a repeat: stop and look     card <primary>
   overdue: act                a decision above, or wait <note> --for 30m
   a stream not moving: look   where, then queue --stream <s>

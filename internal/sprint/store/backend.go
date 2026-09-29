@@ -116,6 +116,9 @@ type OpRecord struct {
 	Streams   []string               `json:"streams,omitempty"` // streams whose progress it is
 	CallerOp  string                 `json:"caller_op,omitempty"`
 	Result    string                 `json:"result,omitempty"` // the result, recorded under CallerOp
+	// Stuck is the stuck operation this one reports (its judgment is among
+	// Notes): its commit deletes the stuck record.
+	Stuck string `json:"stuck,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.
