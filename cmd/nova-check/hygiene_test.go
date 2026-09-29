@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
@@ -43,14 +44,91 @@ func hygWrite(t *testing.T, dir, rel, body string) {
 	}
 }
 
+var (
+	hygLabGoldenDir  string
+	hygLabGoldenOnce sync.Once
+)
+
+func initHygLabGolden() {
+	dir, err := os.MkdirTemp("", "hyglab-golden-*")
+	if err != nil {
+		panic(err)
+	}
+	cmd := exec.Command("git", "init", "-q", "-b", "main")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Rowan", "GIT_AUTHOR_EMAIL=rowan@example.com",
+		"GIT_COMMITTER_NAME=Rowan", "GIT_COMMITTER_EMAIL=rowan@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic(fmt.Sprintf("git init: %v\n%s", err, out))
+	}
+	p := filepath.Join(dir, "sign", "sign.go")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(p, []byte("package sign\n"), 0o644); err != nil {
+		panic(err)
+	}
+	for _, args := range [][]string{
+		{"add", "-A"},
+		{"commit", "-q", "-m", "base"},
+		{"checkout", "-q", "-b", "card"},
+	} {
+		cmd = exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Rowan", "GIT_AUTHOR_EMAIL=rowan@example.com",
+			"GIT_COMMITTER_NAME=Rowan", "GIT_COMMITTER_EMAIL=rowan@example.com",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			panic(fmt.Sprintf("git %v: %v\n%s", args, err, out))
+		}
+	}
+	hygLabGoldenDir = dir
+}
+
+func copyDirHyg(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDirHyg(s, d); err != nil {
+				return err
+			}
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(s)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(d, data, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func hygLab(t *testing.T) string {
 	t.Helper()
+	hygLabGoldenOnce.Do(initHygLabGolden)
 	dir := t.TempDir()
-	hygGit(t, dir, "init", "-q", "-b", "main")
-	hygWrite(t, dir, "sign/sign.go", "package sign\n")
-	hygGit(t, dir, "add", "-A")
-	hygGit(t, dir, "commit", "-q", "-m", "base")
-	hygGit(t, dir, "checkout", "-q", "-b", "card")
+	if err := copyDirHyg(hygLabGoldenDir, dir); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -544,11 +622,15 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 		t.Fatal("the tool declares no kinds at all")
 	}
 	for _, kind := range kinds {
-		var out, errb bytes.Buffer
-		if code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
-			"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb); code != 0 {
-			t.Errorf("--kind %q: exit %d, want 0\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
-		}
+		kind := kind
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			var out, errb bytes.Buffer
+			if code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
+				"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb); code != 0 {
+				t.Errorf("--kind %q: exit %d, want 0\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
+			}
+		})
 	}
 	// No --kind at all stays what it was: the flag is optional, and only a kind that
 	// was GIVEN and is not declared is a refusal.

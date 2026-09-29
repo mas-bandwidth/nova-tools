@@ -2,9 +2,6 @@ package ci
 
 import (
 	"fmt"
-	"go/parser"
-	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,67 +85,8 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 		Key:     parseDeprecatedImportEdgeKey,
 	})
 
-	fset := token.NewFileSet()
-	measured := map[string]bool{}
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "vendor" || name == "testdata" || path == filepath.Join(root, "deprecated") {
-				return filepath.SkipDir
-			}
-			rel, err := filepath.Rel(root, path)
-			if err == nil {
-				relSlash := filepath.ToSlash(rel)
-				if relSlash == "deprecated" || strings.HasPrefix(relSlash, "deprecated/") {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if !strings.HasSuffix(d.Name(), ".go") {
-			return nil
-		}
-
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		relSlash := filepath.ToSlash(rel)
-		pkgPath := filepath.ToSlash(filepath.Dir(relSlash))
-		if pkgPath == "." {
-			pkgPath = ""
-		}
-		if isDroppedDeprecated(lt, pkgPath) {
-			return nil
-		}
-
-		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatalf("parse %s: %v", relSlash, err)
-		}
-
-		for _, spec := range file.Imports {
-			if spec.Path == nil {
-				continue
-			}
-			importedPkg, err := strconv.Unquote(spec.Path.Value)
-			if err != nil {
-				t.Fatalf("unquote import path %s in %s: %v", spec.Path.Value, relSlash, err)
-			}
-			if isDroppedDeprecated(lt, importedPkg) {
-				edge := pkgPath + " -> " + cleanPkgPath(importedPkg)
-				measured[edge] = true
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk source tree: %v", err)
-	}
+	tree := repoTree(t)
+	measured := measureLivingDeprecatedImports(t, tree.Files, lt)
 
 	res := allowlist.Check(t, allow, measured)
 	for _, row := range res.Stale {
@@ -381,5 +319,82 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 	added, _, seed, err := deprecatedImportsAllowlistGrowth(root)
 	if err != nil || seed || len(added) != 1 || added[0] != "cmd/b -> internal/nsprint/card" {
 		t.Fatalf("restored origin/dev: added %v seed %v err %v; want [cmd/b -> internal/nsprint/card]", added, seed, err)
+	}
+}
+
+// measureLivingDeprecatedImports scans files in living packages (excluding .git, vendor, testdata,
+// and root deprecated/) for imports of dropped deprecated packages.
+func measureLivingDeprecatedImports(t *testing.T, files []*treeFile, lt *liveTree) map[string]bool {
+	t.Helper()
+	measured := map[string]bool{}
+
+	for _, f := range files {
+		if !f.Go || f.AST == nil {
+			continue
+		}
+		if f.HasDirNamed(".git") || f.HasDirNamed("vendor") || f.HasDirNamed("testdata") || f.InDir("deprecated") {
+			continue
+		}
+		relSlash := f.Rel
+		pkgPath := filepath.ToSlash(filepath.Dir(relSlash))
+		if pkgPath == "." {
+			pkgPath = ""
+		}
+		if isDroppedDeprecated(lt, pkgPath) {
+			continue
+		}
+
+		for _, spec := range f.AST.Imports {
+			if spec.Path == nil {
+				continue
+			}
+			importedPkg, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				t.Fatalf("unquote import path %s in %s: %v", spec.Path.Value, relSlash, err)
+			}
+			if isDroppedDeprecated(lt, importedPkg) {
+				edge := pkgPath + " -> " + cleanPkgPath(importedPkg)
+				measured[edge] = true
+			}
+		}
+	}
+	return measured
+}
+
+// TestDeprecatedImportsRatchetExaminesNestedDeprecatedDirectories verifies that
+// the deprecated imports ratchet does not exclude nested directories named "deprecated"
+// (like cmd/live/deprecated/), only the root deprecated/ directory.
+func TestDeprecatedImportsRatchetExaminesNestedDeprecatedDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for rel, body := range map[string]string{
+		"deprecated/cmd/old/main.go":    "package old\n",
+		"cmd/live/deprecated/nested.go": "package nested\n\nimport _ \"github.com/mas-bandwidth/nova-tools/deprecated/cmd/old\"\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tree, err := loadRepoTree(root)
+	if err != nil {
+		t.Fatalf("loadRepoTree: %v", err)
+	}
+
+	lt := &liveTree{
+		root: root,
+		drop: []string{"deprecated"},
+		keep: map[string]bool{},
+	}
+
+	measured := measureLivingDeprecatedImports(t, tree.Files, lt)
+	wantEdge := "cmd/live/deprecated -> deprecated/cmd/old"
+	if !measured[wantEdge] {
+		t.Errorf("measured = %v, want edge %q; nested deprecated directories must be examined", measured, wantEdge)
 	}
 }

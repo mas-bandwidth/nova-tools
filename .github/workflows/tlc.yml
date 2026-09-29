@@ -18,6 +18,23 @@ jobs:
       groups: ${{ steps.plan.outputs.groups }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go; the runner and the checkers are Go
+        # (tools/tlacheck). The toolchain go.mod names wins when ~/sdk holds it,
+        # else the newest under ~/sdk, else the bench's own Go on the path.
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
       - name: Check runner controls without starting Java
         run: make tlc-test
       - id: plan
@@ -38,6 +55,23 @@ jobs:
       TLC_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go; the runner and the checkers are Go
+        # (tools/tlacheck). The toolchain go.mod names wins when ~/sdk holds it,
+        # else the newest under ~/sdk, else the bench's own Go on the path.
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
       - name: Check the required model group
         shell: bash
         run: |

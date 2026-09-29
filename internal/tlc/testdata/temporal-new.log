@@ -1,0 +1,149 @@
+TLC2 Version 2026.09.25.163503 (rev: 8f4bc8b)
+Running breadth-first search Model-Checking with fp 16 and seed 6641540158861688930 with 1 worker on 2 cores with 1926MB heap and 64MB offheap memory [pid: 4032529] (Linux 7.0.0-31-generic amd64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/port-tlc.GlG0Wb/tt/MCTableSession.tla
+Parsing file /tmp/port-tlc.GlG0Wb/tt/TableSession.tla
+Parsing file /tmp/tlc-4141916314011342785/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-4141916314011342785/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-4141916314011342785/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-4141916314011342785/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-4141916314011342785/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-4141916314011342785/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-4141916314011342785/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module TableSession
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module MCTableSession
+Linting of module TableSession
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module MCTableSession
+Starting... (2026-09-28 21:38:44)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Computed 32 initial states...
+Computed 64 initial states...
+Computed 128 initial states...
+Computed 256 initial states...
+Computed 512 initial states...
+Computed 1024 initial states...
+Computed 2048 initial states...
+Computed 4096 initial states...
+Computed 8192 initial states...
+Finished computing initial states: 9330 distinct states generated at 2026-09-28 21:38:45.
+Progress(10) at 2026-09-28 21:38:47: 358,995 states generated, 105,110 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 105110 total distinct states at (2026-09-28 21:38:47)
+Error: Temporal property TermEnds was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ exit = 0
+/\ falseAlarm = FALSE
+/\ cur = "-"
+/\ stopped = FALSE
+/\ how = "-"
+/\ conn = "none"
+/\ store = "refusing"
+/\ pc = "read"
+/\ afterFail = FALSE
+/\ pending = "none"
+/\ wrongCode = FALSE
+/\ high = 0
+/\ input = <<"watch">>
+/\ kept = "none"
+/\ twice = FALSE
+/\ keep = FALSE
+/\ afterStop = FALSE
+
+State 2: <ReadLine line 113, col 2 to line 131, col 37 of module TableSession>
+/\ exit = 0
+/\ falseAlarm = FALSE
+/\ cur = "watch"
+/\ stopped = FALSE
+/\ how = "-"
+/\ conn = "none"
+/\ store = "refusing"
+/\ pc = "watch"
+/\ afterFail = FALSE
+/\ pending = "none"
+/\ wrongCode = FALSE
+/\ high = 0
+/\ input = <<>>
+/\ kept = "none"
+/\ twice = FALSE
+/\ keep = FALSE
+/\ afterStop = FALSE
+
+State 3: <Term line 215, col 2 to line 217, col 63 of module TableSession>
+/\ exit = 0
+/\ falseAlarm = FALSE
+/\ cur = "watch"
+/\ stopped = TRUE
+/\ how = "-"
+/\ conn = "none"
+/\ store = "refusing"
+/\ pc = "watch"
+/\ afterFail = FALSE
+/\ pending = "term"
+/\ wrongCode = FALSE
+/\ high = 0
+/\ input = <<>>
+/\ kept = "none"
+/\ twice = FALSE
+/\ keep = FALSE
+/\ afterStop = FALSE
+
+State 4: <WatchStops line 193, col 2 to line 199, col 46 of module TableSession>
+/\ exit = 0
+/\ falseAlarm = FALSE
+/\ cur = "-"
+/\ stopped = TRUE
+/\ how = "-"
+/\ conn = "none"
+/\ store = "refusing"
+/\ pc = "read"
+/\ afterFail = FALSE
+/\ pending = "none"
+/\ wrongCode = FALSE
+/\ high = 0
+/\ input = <<>>
+/\ kept = "none"
+/\ twice = FALSE
+/\ keep = FALSE
+/\ afterStop = FALSE
+
+State 5: <StoreUp line 229, col 2 to line 231, col 74 of module TableSession>
+/\ exit = 0
+/\ falseAlarm = FALSE
+/\ cur = "-"
+/\ stopped = TRUE
+/\ how = "-"
+/\ conn = "none"
+/\ store = "up"
+/\ pc = "read"
+/\ afterFail = FALSE
+/\ pending = "none"
+/\ wrongCode = FALSE
+/\ high = 0
+/\ input = <<>>
+/\ kept = "none"
+/\ twice = FALSE
+/\ keep = FALSE
+/\ afterStop = FALSE
+
+Back to state 4: <StoreDown line 223, col 2 to line 227, col 46 of module TableSession>
+
+Finished checking temporal properties in 00s at 2026-09-28 21:38:48
+358995 states generated, 105110 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 10.
+Finished in 03s at (2026-09-28 21:38:48)
+Trace exploration spec path: ./MCTableSession_TTrace_1790631524.tla
