@@ -2040,3 +2040,25 @@ for an isolated store and the function-library loading command.
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
 connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
 the last good frame and one stale-age line until recovery; Ctrl-C exits 0.
+
+## nova-sprint
+
+Dual-table card lifecycle and sprint journal CLI. Supports sprint journal initialization,
+frame status reporting, step appending, replay verification, and integrity checks.
+
+```
+nova-sprint init --dir <path>                           # initialize a sprint journal directory
+nova-sprint status --dir <path> [--max <n>]             # report journal status and inspect frames
+nova-sprint step --dir <path> --action <action-json>    # append an action frame to the journal
+nova-sprint replay --dir <path>                         # replay and verify all journal frames
+nova-sprint check --dir <path>                          # gate: verify directory and journal integrity
+nova-sprint version                                     # print build identity
+nova-sprint help                                        # print usage text
+```
+
+`nova-sprint` manages append-only sprint journal streams and dual-table state machine
+actions on disk. The journal guarantees crash consistency via CRC32 and SHA-256 frame
+checksums, monotonic sequence numbers, and automatic trailing truncation recovery.
+
+Exit codes: 0 success / ok, 1 domain refusal / check fail, 2 usage error / bad argument.
+
