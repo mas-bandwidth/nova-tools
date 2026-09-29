@@ -146,3 +146,24 @@ func TestAMergeStepWithNothingQueuedIsRefused(t *testing.T) {
 		t.Fatalf("the refused step wrote")
 	}
 }
+
+// A verb that is refused has written nothing: a release naming an answer
+// that is no judgment is refused whole, and the sentinel stays reached.
+func TestAReleaseWithABadAnswerReleasesNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
+	if h.snap().Work.Card("stop").F("reached") == "" {
+		t.Fatalf("stop is not reached")
+	}
+	res := h.run(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "done", Coordinator: "tester", Who: "tester", Answers: []string{"no-such-note.1"}}))
+	if len(res.Refused) == 0 || len(res.Moved) != 0 {
+		t.Fatalf("a release with a bad answer: %+v", res)
+	}
+	if h.state("stop") != sprint.Waiting || h.snap().Work.Card("stop").F("reached") == "" {
+		t.Fatalf("the refused release moved stop: %s", h.state("stop"))
+	}
+}

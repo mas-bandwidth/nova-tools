@@ -193,6 +193,7 @@ func answered(p *Plan, s *Snapshot, ids []string) {
 		*p = Plan{Refused: other}
 		return
 	}
+	var bad []Refusal
 	for _, id := range ids {
 		known, resolved := false, false
 		for _, o := range s.Open {
@@ -216,10 +217,15 @@ func answered(p *Plan, s *Snapshot, ids []string) {
 		}
 		switch {
 		case !known:
-			p.refuse(id, noJudgment(s, id))
+			bad = append(bad, Refusal{Key: id, Why: noJudgment(s, id) + "; the whole step is refused and nothing was changed"})
 		case !resolved:
-			p.refuse(id, "this step resolves no obligation of "+id)
+			bad = append(bad, Refusal{Key: id, Why: "this step resolves no obligation of " + id + "; the whole step is refused and nothing was changed"})
 		}
+	}
+	// A verb refused has written nothing: one refused answer refuses the
+	// whole step.
+	if len(bad) > 0 {
+		*p = Plan{Refused: append(p.Refused, bad...)}
 	}
 }
 
