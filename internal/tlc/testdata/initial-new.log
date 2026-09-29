@@ -1,0 +1,36 @@
+TLC2 Version 2026.09.25.163503 (rev: 8f4bc8b)
+Running breadth-first search Model-Checking with fp 95 and seed 6618990821851837276 with 1 worker on 2 cores with 1926MB heap and 64MB offheap memory [pid: 4061729] (Linux 7.0.0-31-generic amd64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/work/MCFuseBox.tla
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/work/FuseBox.tla
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/final/runs/fusebox/tlc-4261375/tlc-17306887799108305744/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module FuseBox
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module MCFuseBox
+Linting of module FuseBox
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module MCFuseBox
+Starting... (2026-09-28 22:03:41)
+Computing initial states...
+Error: Invariant GateAnswersOnlyFromEveryNamedBox is violated by the initial state:
+/\ quar = (b1 :> {} @@ b2 :> {})
+/\ pquar = (b1 :> {} @@ b2 :> {})
+/\ st = (b1 :> "absent" @@ b2 :> "absent")
+/\ lock = (b1 :> FALSE @@ b2 :> FALSE)
+/\ plock = (b1 :> FALSE @@ b2 :> FALSE)
+/\ last = <<"start">>
+/\ pst = (b1 :> "absent" @@ b2 :> "absent")
+
+Finished in 00s at (2026-09-28 22:03:41)

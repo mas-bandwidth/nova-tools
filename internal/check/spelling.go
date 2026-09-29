@@ -239,8 +239,8 @@ func matchListItemMarker(s string) (markerLen int, ok bool) {
 // Backtick characters escaped by an odd number of preceding backslashes outside a code span
 // do not start or end a code span.
 func StripCode(text string) string {
-	if text == "" {
-		return ""
+	if text == "" || (strings.IndexByte(text, '`') < 0 && strings.IndexByte(text, '~') < 0) {
+		return text
 	}
 	out := []byte(text)
 
@@ -447,15 +447,17 @@ func StripCode(text string) string {
 			}
 			if sp <= 3 && sp < len(rem) {
 				fenceStr := rem[sp:]
-				if m := fenceRE.FindStringSubmatch(fenceStr); m != nil {
-					delim := m[1]
-					info := m[2]
-					if delim[0] != '`' || !strings.ContainsRune(info, '`') {
-						inFence = true
-						fenceChar = delim[0]
-						fenceLen = len(delim)
-						fenceDepth = len(openContainers)
-						fencedLine[idx] = true
+				if len(fenceStr) > 0 && (fenceStr[0] == '`' || fenceStr[0] == '~') {
+					if m := fenceRE.FindStringSubmatch(fenceStr); m != nil {
+						delim := m[1]
+						info := m[2]
+						if delim[0] != '`' || !strings.ContainsRune(info, '`') {
+							inFence = true
+							fenceChar = delim[0]
+							fenceLen = len(delim)
+							fenceDepth = len(openContainers)
+							fencedLine[idx] = true
+						}
 					}
 				}
 			}
