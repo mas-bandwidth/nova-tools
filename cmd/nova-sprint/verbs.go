@@ -51,6 +51,7 @@ func init() {
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"ci", "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait start-x-1.2 --for 30m", (*app).cmdWait},
+		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"inbox", "[--open <n>] [--read] [--deadline <duration>] [--stale <duration>]", "inbox", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"check", "", "check", (*app).cmdCheck},
@@ -822,6 +823,23 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "WAIT OK note=%s review=%s\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 	return 0
+}
+
+func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("ack")
+	reason := fs.String("reason", "", "why nothing is to be done")
+	notes, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "ack", err.Error())
+	}
+	if len(notes) == 0 || *reason == "" {
+		return refuse(stderr, "ack", "wants notification ids and --reason <text>")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "ack", err.Error())
+	}
+	return a.runStep("ack", *c, st, store.AckStep(sprint.AckReq{Notes: notes, Reason: *reason, Who: c.actor}), stdout, stderr)
 }
 
 func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {

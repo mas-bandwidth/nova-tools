@@ -302,7 +302,7 @@ func TestReturnThenAcceptAgainMovesTheMergePlace(t *testing.T) {
 	p := w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	var merge Change
 	for _, c := range p.Units[0].Changes {
-		if c.Table == Merge {
+		if c.Table == Merge && c.Entry.ID == "s1-1" {
 			merge = c
 		}
 	}

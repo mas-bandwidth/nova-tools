@@ -720,7 +720,6 @@ var _ = context.Background
 // on the card; the judgment stays open and --answers naming it is refused.
 func TestReturnAnswersCIRed(t *testing.T) {
 	t.Parallel()
-	t.Skip("F3: return answers the judgment it is a decision for")
 	p := newProbe(t)
 	p.setup(1)
 	p.through("s1-1")

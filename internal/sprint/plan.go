@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
@@ -162,8 +163,9 @@ func closesFor(open []Open, types []string, subject string) []Open {
 }
 
 // answered checks --answers: every named notification must be one the step
-// resolves some obligation of; one it does not is refused by its id. Naming a
-// notification closes nothing by itself.
+// resolves some obligation of (it closes, or records a decided answer to it);
+// one it does not is refused by its id. Naming a notification closes nothing
+// by itself.
 func answered(p *Plan, open []Open, ids []string) {
 	for _, id := range ids {
 		known, resolved := false, false
@@ -177,6 +179,14 @@ func answered(p *Plan, open []Open, ids []string) {
 		}
 		for _, c := range p.Closes {
 			resolved = resolved || c.Note.ID == id
+		}
+		for _, u := range p.Units {
+			for _, n := range u.Notes {
+				resolved = resolved || n.Kind == Decided && n.Answers == id
+			}
+		}
+		for _, n := range p.Notes {
+			resolved = resolved || n.Kind == Decided && n.Answers == id
 		}
 		switch {
 		case !known:
@@ -195,4 +205,11 @@ func hasOpen(open []Open, typ, subject string) bool {
 		}
 	}
 	return false
+}
+
+// decided is the answer to a judgment that stays open (a stopped stream's,
+// until it resumes): recorded, not closed.
+func decided(o Open, what, who string, now time.Time, primaries ...string) Note {
+	return Note{Kind: Decided, Type: o.Note.Type, Stream: o.Note.Stream, Answers: o.Note.ID, What: what, Who: who, At: now,
+		Primaries: primaries, Count: len(primaries)}
 }

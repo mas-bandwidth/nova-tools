@@ -211,7 +211,12 @@ A judgment is open per card and per cause. A verb discharges only the
 obligations it actually resolved: rework resolves a failure, a broken read and
 a red CI on the primaries it reworks; drop resolves everything on the primaries
 it drops; ask --another resolves a broken read; a green CI on the current head
-resolves a red one; resume resolves the stream's stop. Acting on one card of a
+resolves a red one; return resolves a red CI on the primaries it returns, and
+answers its stream's red or rejected batch (recorded; that judgment stays open
+while the stream is stopped); resume resolves the stream's stop.
+`ack <notification> --reason <text>` says the coordinator looked and nothing is
+to be done ("look", "act"): it closes that judgment and records the reason. It
+is refused for the judgment of a stopped stream while the stream is stopped. Acting on one card of a
 group leaves the rest of the group open. A stopped stream keeps an open
 judgment until it is no longer stopped. `--answers <notification>` names what a
 verb answers and is refused for a notification the verb resolves nothing of;
@@ -309,6 +314,7 @@ id again returns the recorded result), `--json` and `--max`.
 | reader add | declares readers |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
+| ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open n`, `--read` |
 | card | everything about one primary |
 | check, repair | section 9 and section 10 |

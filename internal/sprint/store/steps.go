@@ -109,3 +109,9 @@ func CIStep(r sprint.CIReq) Step {
 	return Step{Verb: "ci", Load: tables(sprint.Work),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordCI(s, r) }}
 }
+
+// AckStep is the coordinator closing judgments it looked at.
+func AckStep(r sprint.AckReq) Step {
+	return Step{Verb: "ack", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ack(s, r) }}
+}

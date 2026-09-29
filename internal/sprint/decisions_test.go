@@ -348,3 +348,34 @@ func TestF2TheGenerationIsAlwaysNamed(t *testing.T) {
 	}
 	w.must(Finish(w.s, FinishReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
 }
+
+// F3: return answers the judgments it is a decision for: a red CI on the
+// primary is closed; a stream's red batch is answered and stays open while the
+// stream is stopped. ack closes a judgment the coordinator looked at, and is
+// refused for a stopped stream's.
+func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	accepted(w, "s1-1", "s1-2")
+	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
+	nid := w.openOn("s1-1")[0].Note.ID
+	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Answers: []string{nid}}))
+	if len(w.openOn("s1-1")) != 0 {
+		t.Fatalf("return left the red CI open")
+	}
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Red: true}))
+	red := w.openOn(StreamSubject("s1"))[0].Note.ID
+	p := w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-2"}}, Answers: []string{red}, Reason: "the suspect"}))
+	if len(w.openOn(StreamSubject("s1"))) != 1 || !answeredIn(p.Units[0].Notes, red) {
+		t.Fatalf("the stream's red judgment: open %v, answered %v", w.openOn(StreamSubject("s1")), p.Units[0].Notes)
+	}
+	if p := Ack(w.s, AckReq{Notes: []string{red}, Reason: "x"}); len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "stopped") {
+		t.Fatalf("ack of a stopped stream's judgment: %+v", p)
+	}
+	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2"}))
+	ci := w.openOn("s1-1")[0].Note.ID
+	p = w.must(Ack(w.s, AckReq{Notes: []string{ci}, Reason: "a flaky runner"}))
+	if len(w.openOn("s1-1")) != 0 || p.Units[0].Notes[0].What != "ack: a flaky runner" {
+		t.Fatalf("ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
+	}
+}

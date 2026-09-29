@@ -385,6 +385,20 @@ type ReturnReq struct {
 	Who     string
 }
 
+// ReturnResolves is the judgments a return is a decision for: a red CI on the
+// primary is discharged; a stream's red or rejected batch is answered and stays
+// open while the stream is stopped.
+var ReturnResolves = []string{NCIRed, NRed, NRejected}
+
+func answeredIn(notes []Note, id string) bool {
+	for _, n := range notes {
+		if n.Kind == Decided && n.Answers == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Return moves merging -> review: off the merge queue (or stuck), into the
 // merge table's hidden returned column, so a later accept moves it back.
 func Return(s *Snapshot, r ReturnReq) Plan {
@@ -404,10 +418,18 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 			change(Merge, moveEntry(m, c.Row, Returned, nil)),
 			change(Work, moveEntry(c, c.Row, Review, set)),
-		}, Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)})
+		}, Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)}
+		// The stream's red or rejected judgment names return as a decision: the
+		// answer is recorded; the judgment stays open while the stream is stopped.
+		for _, o := range s.Open {
+			if o.Note.StreamLevel && o.Note.Stream == c.Row && contains(r.Answers, o.Note.ID) && contains(ReturnResolves, o.Note.Type) && !answeredIn(u.Notes, o.Note.ID) {
+				u.Notes = append(u.Notes, decided(o, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID))
+			}
+		}
+		p.Units = append(p.Units, u)
 	}
 	answered(&p, s.Open, r.Answers)
 	return p
