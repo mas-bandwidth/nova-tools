@@ -289,20 +289,11 @@ func mustCerts(t *testing.T, path string) []fleet.Certificate {
 	return certs
 }
 
-// armHostGuard turns NOVA_TEST_NO_HOST on for one test, as the Makefile does for the whole
-// run. The Reload cleanup is registered BEFORE t.Setenv, so it runs AFTER t.Setenv restores
-// the environment and the cached value always matches what the environment says.
-func armHostGuard(t *testing.T) {
-	t.Helper()
-	t.Cleanup(testguard.Reload)
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
-}
-
 // The adapter starts no child, so an injected fake SSH must answer under the host guard:
 // guarding the adapter as well refused every certify test before its fake could speak.
 func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
-	armHostGuard(t)
+	t.Parallel()
+
 	s := &certifySSH{perClass: map[string]string{"go": "ok\n"}}
 	r := scriptRemote{ssh: s, parent: context.Background()}
 	out, err := r.Run(context.Background(), "hulk", "# nova-certify workload go\ntrue\n")
@@ -317,8 +308,10 @@ func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
 // The real seam stays refused: the same adapter over ExecSSH panics at the edge that
 // starts ssh, naming it, before any host is reached.
 func TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard(t *testing.T) {
-	armHostGuard(t)
-	r := scriptRemote{ssh: ExecSSH{Path: "ssh"}, parent: context.Background()}
+	t.Parallel()
+
+	g := testguard.NewGuard(true)
+	r := scriptRemote{ssh: ExecSSH{Path: "ssh", guard: g}, parent: context.Background()}
 	defer func() {
 		v := recover()
 		msg, _ := v.(string)
