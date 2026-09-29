@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "operation": "record_evidence",
+  "table": "work",
+  "epoch": "3",
+  "expected_table_revision": "12",
+  "operation_id": "op-record_evidence",
+  "actor": "coordinator",
+  "evidence": [
+    {
+      "id": "card-01",
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expect": {
+        "revision": "4",
+        "place": {
+          "row": "build",
+          "col": "review"
+        }
+      },
+      "records": [
+        {
+          "evidence_id": "ev-1",
+          "kind": "read",
+          "disposition": "accept",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "issuer": "reader-1",
+          "source": "review/1"
+        },
+        {
+          "evidence_id": "ev-2",
+          "kind": "read",
+          "disposition": "reject",
+          "issuer": "reader-2",
+          "source": "review/2"
+        },
+        {
+          "evidence_id": "ev-3",
+          "kind": "ci",
+          "disposition": "green",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "issuer": "ci",
+          "source": "run/9"
+        }
+      ]
+    }
+  ]
+}

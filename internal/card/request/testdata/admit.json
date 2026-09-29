@@ -1,0 +1,29 @@
+{
+  "admissions": [
+    {
+      "row": "build",
+      "path": "cards/card-alpha.md",
+      "repository": "example.org/team/repo",
+      "commit": "cccccccccccccccccccccccccccccccccccccccc",
+      "object_id": "cccccccccccccccccccccccccccccccccccccccc",
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": "card-alpha"
+    },
+    {
+      "id": "card-beta",
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "object_id": "cccccccccccccccccccccccccccccccccccccccc",
+      "commit": "cccccccccccccccccccccccccccccccccccccccc",
+      "repository": "example.org/team/repo",
+      "path": "cards/card-beta.md",
+      "row": "docs"
+    }
+  ],
+  "actor": "coordinator",
+  "operation_id": "op-admit-1",
+  "expected_table_revision": "12",
+  "epoch": "3",
+  "table": "work",
+  "operation": "admit",
+  "schema": 1
+}

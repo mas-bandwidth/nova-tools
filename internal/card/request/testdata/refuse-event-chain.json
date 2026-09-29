@@ -1,0 +1,4 @@
+{"schema": 1, "operation": "apply_events", "table": "work", "epoch": "3", "expected_table_revision": "12", "operation_id": "op-1", "actor": "coordinator",
+ "events": [
+  {"id": "a", "type": "start", "expect": {"revision": "2", "place": {"row": "build", "col": "ready"}}, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "issuer": "i", "source": "s"},
+  {"id": "a", "type": "result", "result": "success", "expect": {"revision": "2", "place": {"row": "build", "col": "working"}}, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "issuer": "i", "source": "s"}]}

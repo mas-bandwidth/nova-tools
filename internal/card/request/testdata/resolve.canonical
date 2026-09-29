@@ -1,0 +1,1 @@
+{"actor":"coordinator","epoch":"3","expected_table_revision":"12","operation":"resolve","operation_id":"op-resolve","schema":1,"scope":{"bound":100,"col":"waiting","row":"build"},"table":"work"}

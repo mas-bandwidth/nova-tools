@@ -1,0 +1,1 @@
+batch apply_events op=op-17 table=work epoch=3 rev 12->13 actor=coordinator result=changed: selected=7 eligible=3 changed=3 blocked=1 ineligible=1 missing=1 guards=2; c1 ready r2 -> working r3; c2 review r5 -> done/completed r6; c3 new -> waiting r1; blocked c4: waits on c9

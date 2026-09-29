@@ -1,0 +1,11 @@
+refused replace field=table: duplicate-key; found "table"; limit each key once; remedy: remove the repeated key
+refused replace field=epoch: wrong-type; found a number; limit a string; remedy: send a string
+refused replace field=surprise: unknown-field; found "surprise"; limit the fields of the schema; remedy: remove the field
+refused replace field=schema: bad-value; found 2; limit 1; remedy: send schema 1
+refused replace field=table: bad-value; found "bad table"; limit letters, digits, underscore, dot and hyphen, starting with a letter, digit or underscore; remedy: send a value of that form
+refused replace field=expected_table_revision: bad-value; found "1.5"; limit a decimal integer within uint64; remedy: send a value of that form
+refused replace[0] card=a field=old.expect.revision: bad-value; found "0"; limit a decimal integer from 1 within uint64; remedy: send a value of that form
+refused replace[0] card=a field=old.expect.place.col: not-eligible; found "working"; limit waiting or ready; remedy: only a card that is waiting or ready is replaced; end a card in any other state with an event
+refused replace[0] card=a field=new.digest: bad-value; found "nope"; limit 64 lowercase hexadecimal characters (SHA-256); remedy: send a value of that form
+refused replace[0] card=a field=new.path: bad-value; found "../p.md"; limit a clean repository-relative path: slash separated, no empty, . or .. segment, no backslash; remedy: send a value of that form
+refused replace[0] card=a field=new.id: repeated-id; found "a"; limit each card ID once per request across old and new; remedy: a card is either replaced or admitted once in a request

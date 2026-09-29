@@ -1,0 +1,1 @@
+refused apply_events op=op-17 card c1: stale-card-revision; expected revision 2; observed revision 3; changed=no; next: read the card again and send the event with the observed revision

@@ -1,0 +1,2 @@
+{"schema": 1, "operation": "apply_events", "table": "work", "epoch": "3", "expected_table_revision": "12", "operation_id": "op-1", "actor": "coordinator",
+ "events": [{"id": "a", "type": "ci-green", "head": "cccccccccccccccccccccccccccccccccccccccc", "expect": {"revision": "2", "place": {"row": "build", "col": "review"}}, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "issuer": "ci", "source": "run/1"}]}
