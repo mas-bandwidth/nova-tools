@@ -74,20 +74,38 @@ outside the directory it was given. The check is made on the open file, not
 only on the path: a record link re-pointed between the check and the open
 is refused before anything is read or written through it. (Only the record is
 confined. A symlinked `log.jsonl` or `entries/` is an own-shape marker and is
-followed.) The store is named the same way however `--store` is spelled,
-relative or absolute. Where a verb finds anything else at a session's record path (a directory,
-a symlink to a directory, to nothing or to somewhere outside the store, a
-device), it refuses at exit 2 naming the path, what is there and the next action
-(move or remove it, or choose another session id); `open` never reports success
-over it, and no verb answers "no such session" for it.
+followed.) The answer is the same however `--store` is spelled, relative or
+absolute. Where a verb finds anything else at a session's record path (a
+directory, a symlink to a directory, to nothing or to somewhere outside the
+store, a device), it refuses at exit 2 naming the path, what is there and the
+next action (move or remove it, or choose another session id); `open` never
+reports success over it, and no verb answers "no such session" for it.
 
-**A defect in one session's record is that session's.** It refuses the verbs
-addressed to that session (`open`, `append`, `receipt`, `index --session`), and
-`index` over the store reports it as one flagged row, `INDEX FLAGGED
-session=<id> cause=<why>`, while every other session is listed; `index` prints
-all its rows and the coverage line first and then exits 1 when any row was
-flagged. Only a store-level condition (two shapes, a store path that is not a
-directory, an unreadable directory) refuses every verb.
+**A defect in one session's record is that session's.** Two kinds, and each
+has its own answer.
+
+- The record's path holds no record (a directory, a dangling or outside link,
+  a device): the verbs addressed to that session (`open`,
+  `append`, `receipt`, `index --session`) refuse at exit 2.
+- The record is a file but its content is damaged (an invalid heading, a
+  duplicate entry): `index --session` prints that session's flagged row and exits
+  1, `receipt` for it refuses at exit 2, and `open` and `append` still work,
+  because they read the record only to find their own entry and add a section
+  after it; they rewrite nothing.
+
+In both, `index` over a bench store reports the session as one flagged row,
+`INDEX FLAGGED session=<id> cause=<why>`, while every other session is listed;
+`index` prints all its rows and the coverage line first and then exits 1 when any
+row was flagged. In the tool's own shape `index` reads the entry files, a damaged
+one refuses the whole call at exit 2, and a session file that is a dangling link
+is met by the verbs addressed to it, not by a flagged row. Only a store-level
+condition (two shapes, a store path that is not a directory, an unreadable
+directory) refuses every verb.
+
+A directory named `<id>.md` is not a session file, and neither is `<id>.MD`:
+`index` and the coverage ledger skip them and flag nothing. A verb addressed to
+the directory refuses, as above. Two links inside the store to one file are two
+sessions over one record, and its entries are listed under both.
 
 Only the exact name `<id>.md` is a session file: `s1.MD` is not one on any
 file system, and `index` and the coverage ledger skip it. On a disk that folds
@@ -238,4 +256,5 @@ New regression cases must demonstrate the defect before the repair.
     `TestAppendNeverWritesOutsideTheStoreWhileTheLinkIsSwapped` re-points a record link between a file inside and a file outside while appends run, in both shapes, and the outside file is never touched; `TestAnOpenedRecordMustBeTheFileTheNameLeadsToInsideTheStore` fixes the check on the open file; `TestTheSpellingOfTheStoreDoesNotChangeTheAnswer` runs the same store named relative and absolute.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
+    `TestADamagedRecordIsFlaggedByIndexRefusedByReceiptAndStillAppendable` fixes the two kinds of damage (a path with no record refuses; a damaged file is flagged, refused by `receipt`, and still opened and appended), `TestADirectoryAndACaseTwinAreNotSessionsAndAreNotFlagged` fixes what index skips, and `TestAnOwnShapeDamagedEntryRefusesTheIndex` fixes the own shape.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.

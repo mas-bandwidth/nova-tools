@@ -689,10 +689,13 @@ type IndexResult struct {
 	Rows     []IndexRow // at most max, in stamp order
 	Total    int        // every entry found, never capped
 	Sessions int        // session records counted
-	// Flagged holds one row per session whose record could not be read: the
-	// session's own defect (a record path that is a directory, a dangling or
-	// outside link, a case-folded twin, a damaged heading). Every other session
-	// is listed.
+	// Flagged holds one row per bench session whose record could not be read:
+	// the session's own defect (a record path that is a dangling or outside
+	// link or not a regular file, an invalid heading, a duplicate entry).
+	// Every other session is listed. A directory named <id>.md and a file
+	// named <id>.MD are not session files, so they are neither listed nor
+	// flagged. In the tool's own shape the entry files are what index reads,
+	// and a damaged entry file is an error for the whole call.
 	Flagged []FlaggedSession
 }
 

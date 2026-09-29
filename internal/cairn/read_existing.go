@@ -107,7 +107,9 @@ func flatIndexRows(d *dirs, store, session string) (rows []IndexRow, flat map[st
 		}
 		if err != nil {
 			// This session's own defect: flag it and go on to the next.
-			flagged = append(flagged, FlaggedSession{Session: id, Cause: err.Error()})
+			// The cause is the session's; "cannot index the store" is not.
+			cause := strings.TrimPrefix(err.Error(), "cannot "+opPhrase("index")+": ")
+			flagged = append(flagged, FlaggedSession{Session: id, Cause: cause})
 		}
 	}
 	return rows, flat, flagged, sessions, nil
