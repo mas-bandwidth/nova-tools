@@ -114,6 +114,19 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
+// refuseErr is refuse for an error from the store. A refusal that already
+// names its own next action is not sent back to the help banner, which would
+// say nothing more about it.
+func refuseErr(stderr io.Writer, where string, err error) int {
+	var mixed *cairn.MixedShapeError
+	var path *cairn.RecordPathError
+	if errors.As(err, &mixed) || errors.As(err, &path) {
+		fmt.Fprintf(stderr, "nova-cairn%s: %s\n", oneline.Escape(where), oneline.Err(err))
+		return 2
+	}
+	return refuse(stderr, where, oneline.Err(err))
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
@@ -218,11 +231,11 @@ func cmdOpen(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := cairn.Open(*store, *session, *source, stamp, *publish); err != nil {
-		return refuse(stderr, " open", oneline.Err(err))
+		return refuseErr(stderr, " open", err)
 	}
 	stored, err := cairn.SessionSource(*store, *session)
 	if err != nil {
-		return refuse(stderr, " open", oneline.Err(err))
+		return refuseErr(stderr, " open", err)
 	}
 	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s source=%s publish=%s stamp=%s\n",
 		oneline.Field(*session), oneline.Escape(*store), sourceField(stored), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
@@ -284,7 +297,7 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				oneline.Field(*session), oneline.Field(*entry), oneline.Escape(err.Error()))
 			return 1
 		}
-		return refuse(stderr, " append", oneline.Err(err))
+		return refuseErr(stderr, " append", err)
 	}
 	dup := "false"
 	if res.Duplicate {
@@ -337,7 +350,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	}
 	all, total, err := cairn.Index(*store, *session, 0)
 	if err != nil {
-		return refuse(stderr, " index", oneline.Err(err))
+		return refuseErr(stderr, " index", err)
 	}
 	led := cairn.Coverage(*store)
 	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
@@ -370,7 +383,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer) int {
 	}
 	rc, err := cairn.Receipt(*store, *session, *entry)
 	if err != nil {
-		return refuse(stderr, " receipt", oneline.Err(err))
+		return refuseErr(stderr, " receipt", err)
 	}
 	fmt.Fprintf(stdout, "RECEIPT OK session=%s entry=%s stamp=%s bytes=%d source=%s persisted=true published=false publish=%s\n",
 		oneline.Field(rc.Session), oneline.Field(rc.ID),

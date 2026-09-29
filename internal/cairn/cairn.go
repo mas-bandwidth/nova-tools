@@ -139,22 +139,41 @@ type entryFile struct {
 // validID keeps identifiers stable and file-safe: nonempty, bounded, and
 // free of separators, escapes and whitespace, so an id is one token on every
 // output line and one file under entries/.
-func validID(s string) bool {
-	if s == "" || len(s) > 128 {
-		return false
-	}
-	if s == "." || s == ".." || strings.Contains(s, "..") {
-		return false
+func validID(s string) bool { return idProblem(s) == "" }
+
+// idProblem names the rule an identifier breaks, or "" when it breaks none.
+func idProblem(s string) string {
+	switch {
+	case s == "":
+		return "is empty"
+	case len(s) > 128:
+		return fmt.Sprintf("is %d bytes long; the limit is 128", len(s))
+	case s == "." || s == "..":
+		return "is a directory name"
+	case strings.Contains(s, ".."):
+		return `contains ".."`
 	}
 	for _, r := range s {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return false
-		}
-		if r == '/' || r == '\\' {
-			return false
+		switch {
+		case unicode.IsSpace(r):
+			return "contains whitespace"
+		case unicode.IsControl(r):
+			return "contains a control character"
+		case r == '/' || r == '\\':
+			return "contains a slash or backslash"
 		}
 	}
-	return true
+	return ""
+}
+
+// badID is the refusal for an identifier that breaks a rule, naming the rule.
+func badID(kind, s string) error {
+	shown := s
+	if len(shown) > 40 {
+		shown = shown[:40] + "..."
+	}
+	return fmt.Errorf("bad %s id %q: it %s; an id is a file name of 1 to 128 bytes with no whitespace, control characters, slashes or \"..\"",
+		kind, shown, idProblem(s))
 }
 
 // reservedSession reports the one name a session may never take: README, in
@@ -174,7 +193,7 @@ func sessionFileID(id string) bool {
 // cause. Read verbs and write verbs share it.
 func checkSession(session string) error {
 	if !validID(session) {
-		return fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+		return badID("session", session)
 	}
 	if reservedSession(session) {
 		return fmt.Errorf("session id %q is reserved: README.md in a store is documentation, never a session record; choose another session id", session)
@@ -504,7 +523,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		return res, err
 	}
 	if !validID(id) {
-		return res, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+		return res, badID("entry", id)
 	}
 	if !validPublish(publish) {
 		return res, fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
@@ -620,7 +639,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		return rc, err
 	}
 	if !validID(id) {
-		return rc, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+		return rc, badID("entry", id)
 	}
 	sh, err := storeShape("receipt", store)
 	if err != nil {

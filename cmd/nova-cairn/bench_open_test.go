@@ -97,7 +97,10 @@ func TestMixedShapeStoreIsRefusedAtExitTwoByEveryVerb(t *testing.T) {
 		if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 {
 			t.Errorf("%v: exit=%d out=%q err=%q", args, code, out, errOut)
 		}
-		for _, want := range []string{"cannot " + args[0] + ":", "hand.md", "sessions/", "keep one shape"} {
+		if strings.Contains(errOut, "run: nova-cairn help") {
+			t.Errorf("%v: the refusal is sent to the help banner, which does not help: %q", args, errOut)
+		}
+		for _, want := range []string{"cannot ", "hand.md", "sessions/", "to keep the bench shape run: mkdir -p ", "to keep the own shape run: mkdir -p "} {
 			if !strings.Contains(errOut, want) {
 				t.Errorf("%v: refusal lacks %q: %q", args, want, errOut)
 			}

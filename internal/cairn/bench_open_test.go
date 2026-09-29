@@ -7,8 +7,10 @@ package cairn
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -266,7 +268,7 @@ func TestMixedShapeStoreIsRefusedByEveryVerb(t *testing.T) {
 				continue
 			}
 			msg := err.Error()
-			for _, want := range []string{"cannot " + verb + ":", "hand.md", "own shape:", "keep one shape", store} {
+			for _, want := range []string{"cannot " + opPhrase(verb) + ":", "hand.md", "own shape:", "to keep the bench shape run: mkdir -p ", "to keep the own shape run: mkdir -p ", store} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("%s/%s: message lacks %q: %s", name, verb, want, msg)
 				}
@@ -295,11 +297,95 @@ func TestMixedShapeMessageNamesThePathsOfEachShape(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(store, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	aside := "'" + store + ".aside'"
 	err := Open(store, "s", "", benchNow, PublishManual)
-	want := "cannot open: store " + `"` + store + `"` + " holds two shapes at once (bench files: a.md, b.md, c.md and 2 more; own shape: log.jsonl, sessions/); " +
-		"keep one shape: move the top-level <id>.md files out of the store, or move sessions/, entries/ and log.jsonl out of it"
+	want := "cannot open a session: store " + `"` + store + `"` + " holds two shapes at once (bench files: a.md, b.md, c.md and 2 more; own shape: log.jsonl, sessions/); " +
+		"to keep the bench shape run: mkdir -p " + aside + " && mv '" + store + "/log.jsonl' '" + store + "/sessions' " + "'" + store + ".aside/'" +
+		"; to keep the own shape run: mkdir -p " + aside + " && mv '" + store + "/a.md' '" + store + "/b.md' '" + store + "/c.md' '" + store + "/d.md' '" + store + "/e.md' '" + store + ".aside/'"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got  %v\nwant %s", err, want)
+	}
+}
+
+// The next actions the refusal prints work: run through a POSIX shell, each
+// leaves the store in one shape and moves nothing but the named paths.
+func TestMixedShapeNextActionsRun(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the next actions are POSIX shell lines")
+	}
+	for _, keep := range []string{"bench", "own"} {
+		store := filepath.Join(t.TempDir(), "my store's cairns")
+		if err := os.Mkdir(store, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"a", "b"} {
+			if err := os.WriteFile(benchFile(store, id), []byte("# "+id+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(store, "README.md"), []byte("about\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(store, "sessions"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(store, "log.jsonl"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := Open(store, "s", "", benchNow, PublishManual)
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		_, rest, ok := strings.Cut(msg, "to keep the "+keep+" shape run: ")
+		if !ok {
+			t.Fatalf("%s: no command in %q", keep, msg)
+		}
+		cmdline, _, _ := strings.Cut(rest, "; to keep the ")
+		if out, err := exec.Command("/bin/sh", "-c", cmdline).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %q: %v: %s", keep, cmdline, err, out)
+		}
+		if got, err := storeShape("open", store); err != nil || (keep == "bench") != (got == shapeBench) {
+			t.Fatalf("%s: after the command the store is %v (%v)", keep, got, err)
+		}
+		if _, err := os.Stat(filepath.Join(store, "README.md")); keep == "own" && err != nil {
+			t.Fatalf("README.md moved with the session files: %v", err)
+		}
+		if err := Open(store, "s", "", benchNow, PublishManual); err != nil {
+			t.Fatalf("%s: open after the command: %v", keep, err)
+		}
+	}
+}
+
+func TestIDRefusalsNameTheRuleBroken(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ id, want string }{
+		{"x..y", `contains ".."`},
+		{strings.Repeat("a", 129), "is 129 bytes long; the limit is 128"},
+		{"a b", "contains whitespace"},
+		{"a/b", "contains a slash or backslash"},
+		{"a\x01b", "contains a control character"},
+		{"..", "is a directory name"},
+		{"", "is empty"},
+	} {
+		store := t.TempDir()
+		for name, err := range map[string]error{
+			"session": Open(store, tc.id, "", benchNow, PublishManual),
+			"entry":   func() error { _, err := Append(store, "s", tc.id, "w", "", benchNow, PublishManual); return err }(),
+		} {
+			if tc.id == "" && name == "session" {
+				continue
+			}
+			if err == nil || !strings.Contains(err.Error(), "it "+tc.want) || !strings.Contains(err.Error(), "bad "+name+" id") || strings.Contains(err.Error(), "no slashes, no whitespace") {
+				t.Errorf("%s %q: %v", name, tc.id, err)
+			}
+		}
+		if len(tc.id) > 128 {
+			if _, err := Receipt(store, "s", tc.id); err == nil || strings.Contains(err.Error(), tc.id) {
+				t.Errorf("receipt with a long id: %v", err)
+			}
+		}
 	}
 }
 

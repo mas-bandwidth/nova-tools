@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -49,9 +50,42 @@ func (e *MixedShapeError) Error() string {
 		more = fmt.Sprintf(" and %d more", len(shown)-3)
 		shown = shown[:3]
 	}
-	return fmt.Sprintf("cannot %s: store %q holds two shapes at once (bench files: %s%s; own shape: %s); "+
-		"keep one shape: move the top-level <id>.md files out of the store, or move sessions/, entries/ and log.jsonl out of it",
-		e.Op, e.Store, strings.Join(shown, ", "), more, strings.Join(e.Own, ", "))
+	return fmt.Sprintf("cannot %s: store %q holds two shapes at once (bench files: %s%s; own shape: %s); %s",
+		opPhrase(e.Op), e.Store, strings.Join(shown, ", "), more, strings.Join(e.Own, ", "), e.nextAction())
+}
+
+// nextAction names the two ways out, each as one command line that runs in a
+// POSIX shell: move the own-shape paths aside to keep the bench shape, or move
+// the bench files aside to keep the own shape. Nothing is deleted. A path with
+// bytes that cannot survive a one-line message gets the instruction without the
+// command.
+func (e *MixedShapeError) nextAction() string {
+	store := filepath.Clean(e.Store)
+	aside := store + ".aside"
+	plain := oneline.Escape(store) == store
+	for _, n := range append(append([]string(nil), e.Bench...), e.Own...) {
+		plain = plain && oneline.Escape(n) == n
+	}
+	if !plain {
+		return "keep one shape: move the top-level <id>.md files out of the store, or move sessions/, entries/ and log.jsonl out of it"
+	}
+	join := func(names []string) string {
+		var w []string
+		for _, n := range names {
+			w = append(w, openShellWord(filepath.Join(store, strings.TrimSuffix(n, "/"))))
+		}
+		return strings.Join(w, " ")
+	}
+	move := func(names string) string {
+		return "mkdir -p " + openShellWord(aside) + " && mv " + names + " " + openShellWord(aside+"/")
+	}
+	keepBench := move(join(e.Own))
+	keepOwn := move(join(e.Bench))
+	if len(e.Bench) > 20 {
+		keepOwn = "mkdir -p " + openShellWord(aside) + " && find " + openShellWord(store) +
+			" -maxdepth 1 -type f -name '*.md' -exec mv {} " + openShellWord(aside+"/") + " \\;"
+	}
+	return "to keep the bench shape run: " + keepBench + "; to keep the own shape run: " + keepOwn
 }
 
 // storeShape reads the store's contents and names its shape. A directory that
@@ -186,11 +220,17 @@ func recordState(op, path string) (bool, error) {
 		found = fmt.Sprintf("not a regular file (%s)", li.Mode().Type())
 	}
 	if found != "" {
-		return false, fmt.Errorf("cannot %s: the session record %q is %s; move or remove it, or choose another session id",
-			opPhrase(op), path, found)
+		return false, &RecordPathError{Msg: fmt.Sprintf("cannot %s: the session record %q is %s; move or remove it, or choose another session id",
+			opPhrase(op), path, found)}
 	}
 	return true, nil
 }
+
+// RecordPathError is the refusal for a session record path holding something
+// that is not a record. Its message carries its own next action.
+type RecordPathError struct{ Msg string }
+
+func (e *RecordPathError) Error() string { return e.Msg }
 
 // opPhrase is the verb as it reads in a refusal sentence.
 func opPhrase(op string) string {

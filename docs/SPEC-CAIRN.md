@@ -48,8 +48,12 @@ directory holds:
   are also this shape, so a new store gets the tool's own layout.
 - **mixed**: a top-level `<id>.md` together with any of `sessions/`, `entries/`
   or `log.jsonl`. Every verb refuses it at exit 2 with one line naming the
-  operation, the cause, the paths found of each shape and the next action: move
-  either set out of the store so it keeps one shape. Nothing is written.
+  operation, the cause, the paths found of each shape and the next action,
+  as one runnable POSIX shell line per shape: `to keep the bench shape run:
+  mkdir -p <store>.aside && mv <sessions/, entries/, log.jsonl> <store>.aside/`,
+  or `to keep the own shape run: mkdir -p <store>.aside && mv <the <id>.md
+  files> <store>.aside/`. Nothing is written and nothing is deleted; the
+  refusal is not sent to the help banner.
 
 A top-level `README.md`, in any case, is documentation and never a session file
 in either shape: it counts for no shape, `index` and the coverage ledger do not
@@ -199,3 +203,4 @@ New regression cases must demonstrate the defect before the repair.
 41. `TestReadmeIsNeverASessionFile`, `TestReadmeIsRefusedAsASessionIDByEveryVerb`, `TestReadmeBesideOwnMarkersAndAnotherSessionFileStaysMixed` and `TestOpenReadmeRefusesAtExitTwo` — a top-level `README.md` in any case is ignored by the shape function in both shapes, is not an indexed or counted session, and is refused as a session id at exit 2; another `<id>.md` beside own-shape markers stays a mixed store; an entry may be called README.
 42. `TestNonRegularRecordPathIsRefusedByEveryVerb`, `TestIndexOfAStoreHoldingADanglingLinkRefusesNamingIt`, `TestSymlinkToARegularFileIsARecord`, `TestSymlinkedOwnShapeMarkersCountAsMarkers` and `TestOpenOverADanglingSymlinkRefusesAtExitTwo` — a directory, a symlink to a directory and a dangling symlink at a record path are refused by `open`, `append`, `index` and `receipt` naming the path and what is there; a symlink to a regular file is a record; a symlinked own-shape marker is a marker.
 43. `TestBenchSourceIsRecordedInheritedAndReported` — on a bench store `open --source` prints the pointer it recorded, an `append` with no `--source` carries it, and `receipt` and `index` report it; a hand-kept record reports `source=-`; a source never forms a section.
+44. `TestMixedShapeMessageNamesThePathsOfEachShape`, `TestMixedShapeNextActionsRun` and `TestIDRefusalsNameTheRuleBroken` — the mixed-store refusal reads as a sentence for each verb and carries the two next actions, which run in a shell and leave one shape; an identifier refusal names the rule broken (empty, over 128 bytes, a directory name, `..`, whitespace, a control character, a slash) and never echoes an over-long id whole.
