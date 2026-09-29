@@ -269,6 +269,70 @@ What Redis refuses, apply reports and stops at, stamping nothing:
 when the store has none, every registry is written from Postgres, and the
 stamps are set. Nothing about the fleet's configuration lives only in Redis.
 
+## Ansible inventory
+
+```
+export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
+nova-config inventory
+```
+
+`inventory` reads Postgres and prints an Ansible dynamic JSON inventory: the
+groups `all` and `benches` (every machine row), `coordinator` and `store`
+(the machines the fleet row names; empty when it names none) and `runners`
+(every machine with at least one runner), and every host's variables under
+`_meta.hostvars`. On a store that is not migrated, or is at an older schema,
+the verb exits 1 with `run: nova-config migrate`. On a store
+migrated ahead of the binary it exits 1 with
+`this nova-config is older than the store` and names the schema version a
+`nova-config` must reach. The machine rows are the one machine list;
+there is no second one. Each host's variables are `ansible_host`,
+`ansible_user` (the row's user, the name ansible reads for the login),
+`nova_seat` (the row's seat), `slots`, `runners` and `kind=machine`; each value
+has one name, and a user or seat that is empty is left out. A deployment maps
+`nova_seat` to its own variable name in its `group_vars`. The machine rows and
+the fleet row are read in one transaction.
+
+The machine the command runs on is named by the env `NOVA_MACHINE` (an empty value counts as unset), matched by
+exact machine name; when no machine row has that name the verb exits 1 with
+the known names. When `NOVA_MACHINE` is unset, the lower-cased first label of
+the hostname (machine names are lower-case) is matched the same way, and nothing is marked local when no row has it. The
+matched row gets `ansible_connection=local`, so ansible reaches it without
+ssh.
+
+`--list` prints all of it and is the default when no flag is given. `--host
+<name>` prints one machine's variables; a name with no machine row exits 1 with
+the known names, and `--list` with `--host` is refused.
+`--timeout` (a Go duration, default `10s`) bounds the wait for the store, so an
+unattended ansible run never blocks on a locked table: on expiry, at the connection,
+the schema check or the read, the verb exits 2 with `timed out after <d>
+waiting for the store while <stage>`, what to check, and the command to repeat
+with a longer timeout; a connection the store refuses outright keeps the
+generic refusal.
+
+Ansible's `-i` wants an executable file whose first line, `#!/bin/sh`, is at
+column one. These two commands write the two-line wrapper and make it
+executable, and the third lets ansible read the inventory:
+
+```
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
+chmod +x nova-inventory
+ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
+```
+
+The variable matters: without it, ansible hides a failing inventory script.
+When the wrapper exits non-zero (`nova-config` missing from the PATH, a
+`nova-config` without the verb, an unknown `NOVA_MACHINE`, a store that is
+down, a timeout, an unmigrated schema), `ansible-inventory` and
+`ansible-playbook` log a warning, use an empty inventory and exit 0, so a
+playbook does nothing. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the
+environment, or `[inventory] unparsed_is_failed = True` in `ansible.cfg`, makes
+the same run exit non-zero.
+
+Ansible starts the script with `--list`. Every host's variables are in the
+`_meta.hostvars` of that output, so ansible does not call `--host <name>`. The
+script reads `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` from the environment
+ansible passes it, and `NOVA_MACHINE`.
+
 ## What is deliberately not here
 
 Runtime state (beats, states, copies, leases, the table), what a friend
