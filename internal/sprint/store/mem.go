@@ -529,12 +529,14 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 	}
 	if commit {
 		for _, n := range append(append([]sprint.Note{}, op.Notes...), op.Decided...) {
+			// every subject stays open; only the note's listing is bounded
+			subjects := n.Subjects()
 			n = n.Bound()
 			m.seq++
 			m.inbox = append(m.inbox, memNote{fmt.Sprintf("%d-0", m.seq), n})
 			if n.Kind == sprint.Judgment {
 				m.notes[n.ID] = n
-				for _, s := range n.Subjects() {
+				for _, s := range subjects {
 					m.open[sprint.OpenKey(n.ID, s)] = n.ID
 				}
 			}
