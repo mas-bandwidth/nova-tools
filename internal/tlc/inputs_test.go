@@ -42,6 +42,11 @@ func TestModuleReferencesReadsEveryFormAndNothingElse(t *testing.T) {
 		{"text before the first header is not read", "EXTENDS Hidden\n---- MODULE A ----\nEXTENDS Shown\n====\n", []string{"Shown"}},
 		{"a header inside a comment opens nothing", "---- MODULE A ----\n(* ---- MODULE Fake ---- *)\nEXTENDS Shown\n====\nEXTENDS Hidden\n", []string{"Shown"}},
 		{"nothing", "---- MODULE A ----\nVARIABLE x\n====\n", nil},
+		{"an inner header split over two lines", "---- MODULE Outer ----\nEXTENDS A\n---- MODULE Inner\n----\nEXTENDS B\n====\nI == INSTANCE C\n====\n", []string{"A", "B", "C"}},
+		{"an outer header split over two lines", "---- MODULE Outer\n----\nEXTENDS A\n====\nEXTENDS Hidden\n", []string{"A"}},
+		{"a header with no closing dashes and text after the name", "---- MODULE Outer ----\n---- MODULE Inner EXTENDS B\n====\nEXTENDS C\n====\n", []string{"B", "C"}},
+		{"a reference on the header's own line", "---- MODULE Outer ---- EXTENDS A\n====\n", []string{"A"}},
+		{"a reference after the closing line's dashes", "---- MODULE Outer ----\n---- MODULE Inner ----\n==== INSTANCE C\n====\n", []string{"C"}},
 	}
 	for _, tc := range tests {
 		got := ModuleReferences([]byte(tc.text))

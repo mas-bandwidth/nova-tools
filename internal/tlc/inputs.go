@@ -205,7 +205,10 @@ func planRow(plan []byte, config string) (head, row, module string, err error) {
 var (
 	extendsRE  = regexp.MustCompile(`\bEXTENDS\b\s*([A-Za-z0-9_]+(?:\s*,\s*[A-Za-z0-9_]+)*)`)
 	instanceRE = regexp.MustCompile(`\bINSTANCE\s+([A-Za-z0-9_]+)`)
-	moduleOpen = regexp.MustCompile(`^\s*-{4,}\s*MODULE\s+([A-Za-z0-9_]+)\s*-{4,}`)
+	// moduleOpen matches the start of a module header: a run of dashes, MODULE
+	// and the name. The dashes that close the header may be on the same line
+	// or on the next, so they are not part of the match.
+	moduleOpen = regexp.MustCompile(`^\s*-{4,}\s*MODULE\s+([A-Za-z0-9_]+)`)
 	moduleEnd  = regexp.MustCompile(`^\s*={4,}`)
 )
 
@@ -214,8 +217,10 @@ var (
 // `F(x) == INSTANCE M WITH ...`), each once, in order of appearance, at every
 // depth of nesting: a module may hold modules (`---- MODULE X ----` opens one
 // and a line of `=` signs closes it), and each of them names modules of its
-// own. A name that a module of the same text declares is not a file and is left
-// out. Comments and strings are not read, neither is text before the first
+// own. A header may be split over two lines (`---- MODULE Inner` and the closing
+// dashes on the next), and what follows a header or an inner module's closing
+// line on its own line is read. A name that a module of the same text declares
+// is not a file and is left out. Comments and strings are not read, neither is text before the first
 // module header, nor anything after the line that closes the outermost module.
 // A text with no module header is read up to its first closing line.
 func ModuleReferences(text []byte) []string {
@@ -232,17 +237,22 @@ func ModuleReferences(text []byte) []string {
 	depth := 0
 	for i := max(first, 0); i < len(lines); i++ {
 		line := lines[i]
-		switch m := moduleOpen.FindStringSubmatch(line); {
+		switch m, end := moduleOpen.FindStringSubmatchIndex(line), moduleEnd.FindStringIndex(line); {
 		case m != nil:
+			// What follows the name on the line is read: a reference is never
+			// dropped because of where the header's closing dashes are.
 			depth++
-			declared[m[1]] = true
+			declared[line[m[2]:m[3]]] = true
+			body.WriteString(line[m[1]:])
 			body.WriteByte('\n')
-		case moduleEnd.MatchString(line):
+		case end != nil:
 			depth--
-			body.WriteByte('\n')
 			if depth <= 0 {
 				i = len(lines)
+			} else {
+				body.WriteString(line[end[1]:])
 			}
+			body.WriteByte('\n')
 		default:
 			body.WriteString(line)
 			body.WriteByte('\n')
