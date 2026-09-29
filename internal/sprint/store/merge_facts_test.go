@@ -77,6 +77,30 @@ func TestCrossStopOffersReturnAndDrop(t *testing.T) {
 	h.clean("returned and resumed")
 }
 
+// A stream stopped for a red branch resumes only when the coordinator says
+// what was done.
+func TestResumeAfterRedWantsWhatWasDone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.through("s1-1", "s1-2")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
+	for _, did := range []string{"", "  "} {
+		res := h.run(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: did}))
+		if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "--did") {
+			t.Fatalf("resume after red with did %q: moved %v refused %v", did, res.Moved, res.Refused)
+		}
+	}
+	if h.snap().StreamCtl("s1").F("state") != sprint.StreamStopped {
+		t.Fatalf("a refused resume moved the stream")
+	}
+	h.must(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "reverted the suspect"}))
+	if s := h.snap().StreamCtl("s1"); s.F("state") != sprint.StreamMerging || s.F("did") != "reverted the suspect" {
+		t.Fatalf("resume with did: state %s did %q", s.F("state"), s.F("did"))
+	}
+	h.clean("resumed")
+}
+
 func hasString(xs []string, x string) bool {
 	for _, y := range xs {
 		if y == x {

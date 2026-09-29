@@ -711,7 +711,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
 	stream := fs.String("stream", "", "the stopped stream")
-	did := fs.String("did", "", "what the coordinator did about the cause")
+	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	pos, err := parse(fs, args)
 	if err != nil {

@@ -225,7 +225,8 @@ type ResumeReq struct {
 // stuck card that needs a card of another stream waits until that card has
 // landed (ranking it is not landing it). The other causes (a conflict, a red
 // branch, a rejected batch) are resolved by the coordinator, who says what
-// was done. It answers every judgment open on the stream.
+// was done; after a red branch saying it is required. It answers every
+// judgment open on the stream.
 func Resume(s *Snapshot, r ResumeReq) Plan {
 	var p Plan
 	ctl := s.StreamCtl(r.Stream)
@@ -235,6 +236,10 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	if ctl.F("state") != StreamStopped {
 		p.refuse(r.Stream, "not stopped (it is "+orDash(ctl.F("state"))+")")
+		return p
+	}
+	if ctl.F("cause") == "red" && strings.TrimSpace(r.Did) == "" {
+		p.refuse(r.Stream, "stopped for a red branch; say what was done: nova-sprint resume --stream "+r.Stream+" --did <text>")
 		return p
 	}
 	stuck := s.Merge.Cell(r.Stream, Stuck)
