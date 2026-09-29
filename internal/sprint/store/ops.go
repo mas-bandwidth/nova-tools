@@ -309,7 +309,11 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 		return sprint.Group{ID: id, Kind: sprint.Judgment, Type: typ, Count: 1, Marked: true, Oldest: now, Due: now, What: what, Commands: cmds}
 	}
 	if m.Running() {
-		if gap := now.Sub(hb.Alive()); gap > MachineSilence {
+		last := hb.Alive() // silent from its start when it never ticked since
+		if m.Since.After(last) {
+			last = m.Since
+		}
+		if gap := now.Sub(last); gap > MachineSilence {
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: its run loop is not running", int(gap/time.Second)),
 				sprint.Command{Decision: "run the loop", Lines: []string{"nova-sprint run"}},

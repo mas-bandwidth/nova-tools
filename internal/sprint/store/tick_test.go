@@ -727,3 +727,26 @@ func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
 		}
 	}
 }
+
+// A machine started and never ticked is silent from its start: the inbox
+// says for how long since then, never the time since the zero clock.
+func TestAMachineThatNeverTickedIsSilentFromItsStart(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.tick(20 * time.Second)
+	v, err := h.st.Inbox(h.ctx, time.Hour, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range v.Groups {
+		if g.ID == "machine:silent" {
+			if !strings.Contains(g.What, "for 20s") {
+				t.Fatalf("the silent machine: %s", g.What)
+			}
+			return
+		}
+	}
+	t.Fatalf("no machine:silent group: %+v", v.Groups)
+}
