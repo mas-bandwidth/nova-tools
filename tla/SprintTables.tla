@@ -786,6 +786,14 @@ MergeMatchesWork == op = NoOp => MergeMatches
 MergedLanded == \A s \in Streams : merge[s]["merged"] = work[s]["landed"]
 MergedIsLanded == op = NoOp => MergedLanded
 
+\* The same four stated for every state, pending operation or not: the cut
+\* between a step's writes breaks each of them (the configurations
+\* MCSprintCut*), which is why they hold only when nothing is pending.
+AlwaysDelegated == Delegated
+AlwaysReadsInReview == ReadsInReview
+AlwaysMergeMatches == MergeMatches
+AlwaysMergedLanded == MergedLanded
+
 \* 6. No primary enters merging without ok read cards from two different
 \* readers at its head (and they stay: landed keeps them).
 AcceptedHadTwoReaders ==
