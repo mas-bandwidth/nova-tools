@@ -239,7 +239,53 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 			return err
 		}
 	}
+	// The fence kept moving through every attempt, as Acquire takes it: read
+	// it once more; an operation it no longer holds was released by the
+	// writer that finished it, which is success. Only a true store error, or
+	// the fence still holding it, is unknown.
+	held, herr := r.heldOp(ctx)
+	if herr != nil {
+		return herr
+	}
+	recorded := false
+	if commit && op.CallerOp != "" {
+		_, ok, derr := r.Done(ctx, op.CallerOp)
+		if derr != nil {
+			return derr
+		}
+		recorded = ok
+	}
+	if released(op, commit, held, recorded) {
+		return nil
+	}
 	return err
+}
+
+// heldOp is the id of the operation the fence holds, "" when it is empty.
+func (r *Redis) heldOp(ctx context.Context) (string, error) {
+	cur, err := r.C.Get(ctx, r.key(keyFence)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var held OpRecord
+	if json.Unmarshal([]byte(cur), &held) != nil {
+		return "", fmt.Errorf("the fence holds an unreadable operation record")
+	}
+	return held.ID, nil
+}
+
+// released says a release whose transaction kept failing is done: the fence
+// no longer holds the operation (held is the id it holds, "" when empty) and,
+// for a commit with a caller's operation id, its result is recorded, so the
+// writer that released it finished it.
+func released(op OpRecord, commit bool, held string, recorded bool) bool {
+	if held == op.ID {
+		return false
+	}
+	return !commit || op.CallerOp == "" || recorded
 }
 
 func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) error {
