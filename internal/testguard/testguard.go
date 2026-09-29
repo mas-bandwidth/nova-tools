@@ -47,26 +47,53 @@ import (
 // test running anywhere on the CI path runs under the guard.
 const EnvNoHost = "NOVA_TEST_NO_HOST"
 
-// refusing is the guard's state, read once from the environment at start and
-// again whenever Reload is called. An atomic bool so the load is free and the
-// race detector stays quiet across the goroutines a seam may run on.
-var refusing atomic.Bool
+// Guard holds the state and seams for refusing host calls in tests.
+type Guard struct {
+	refusing  atomic.Bool
+	forced    atomic.Int64
+	allowed   atomic.Int64
+	lookPath  func(string) (string, error)
+	tempRoots func() []string
+}
 
-// allowed counts the AllowHosts scopes standing open. A counter rather than a
-// flag so nested scopes -- a helper that allows, inside a test that allows --
-// restore correctly.
-var allowed atomic.Int64
+// defaultGuard is the process-wide guard, armed from the environment at start
+// and re-read whenever Reload is called.
+var defaultGuard = NewGuard(false)
+
+// NewGuard constructs an isolated guard with its armed state explicitly configured.
+func NewGuard(armed bool) *Guard {
+	g := &Guard{
+		lookPath:  exec.LookPath,
+		tempRoots: tempRoots,
+	}
+	g.refusing.Store(armed)
+	return g
+}
 
 func init() { Reload() }
 
 // Reload re-reads the environment. Tests that set the variable with t.Setenv
 // after start call it, and call it again on cleanup; nothing on a production
 // path needs it.
-func Reload() { refusing.Store(os.Getenv(EnvNoHost) == "1") }
+func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
 // Refusing reports whether the guard is armed. It exists so a test can say
 // what it is testing without reading the environment itself.
-func Refusing() bool { return refusing.Load() }
+func Refusing() bool { return defaultGuard.Refusing() }
+
+// Refusing reports whether the guard is armed. It exists so a test can say
+// what it is testing without reading the environment itself.
+func (g *Guard) Refusing() bool { return g.refusing.Load() || g.forced.Load() > 0 }
+
+// Arm forces the guard to refuse host access until the returned function is called.
+func Arm() func() { return defaultGuard.Arm() }
+
+// Arm forces the guard to refuse host access until the returned function is called.
+func (g *Guard) Arm() func() {
+	g.forced.Add(1)
+	var once sync.Once
+	return func() { once.Do(func() { g.forced.Add(-1) }) }
+}
 
 // AllowHosts opens a scope in which a seam may run a child, and returns the
 // function that closes it. The one honest use is a test that has installed its
@@ -79,9 +106,15 @@ func Refusing() bool { return refusing.Load() }
 // written down rather than left to be discovered: the guard catches the
 // UNFAKED seam, and a test that fakes a seam declares it.
 func AllowHosts() func() {
-	allowed.Add(1)
+	return defaultGuard.AllowHosts()
+}
+
+// AllowHosts opens a scope in which a seam may run a child, and returns the
+// function that closes it.
+func (g *Guard) AllowHosts() func() {
+	g.allowed.Add(1)
 	var once sync.Once
-	return func() { once.Do(func() { allowed.Add(-1) }) }
+	return func() { once.Do(func() { g.allowed.Add(-1) }) }
 }
 
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
@@ -94,10 +127,23 @@ func AllowHosts() func() {
 // panic names the test, the seam and the command in one stack, which is the
 // cheapest possible read of the hurt above.
 func RefuseHosts(program string, args ...string) {
-	if !refusing.Load() || allowed.Load() > 0 {
+	defaultGuard.RefuseHosts(program, args...)
+}
+
+// RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
+// command line it is about to run. Under the guard, and outside an AllowHosts
+// scope, it panics naming that command line; otherwise it returns immediately.
+//
+// It panics rather than returning an error on purpose. An error would travel
+// up a path that already handles "the bench was unreachable" and would be
+// reported as exactly that -- an infrastructure story for a code defect. A
+// panic names the test, the seam and the command in one stack, which is the
+// cheapest possible read of the hurt above.
+func (g *Guard) RefuseHosts(program string, args ...string) {
+	if (!g.refusing.Load() && g.forced.Load() <= 0) || g.allowed.Load() > 0 {
 		return
 	}
-	if isFakeProgram(program) {
+	if g.isFakeProgram(program) {
 		return
 	}
 	panic(fmt.Sprintf(
@@ -123,8 +169,12 @@ func RefuseHosts(program string, args ...string) {
 // A program that cannot be resolved at all is NOT treated as a fake: the seam
 // was about to run something this machine does not have, and the panic says so
 // more clearly than the exec error would.
-func isFakeProgram(program string) bool {
-	path, err := exec.LookPath(program)
+func (g *Guard) isFakeProgram(program string) bool {
+	look := g.lookPath
+	if look == nil {
+		look = exec.LookPath
+	}
+	path, err := look(program)
 	if err != nil {
 		return false
 	}
@@ -135,7 +185,11 @@ func isFakeProgram(program string) bool {
 		}
 		path = abs
 	}
-	for _, root := range tempRoots() {
+	rootsFn := g.tempRoots
+	if rootsFn == nil {
+		rootsFn = tempRoots
+	}
+	for _, root := range rootsFn() {
 		if under(path, root) {
 			return true
 		}
