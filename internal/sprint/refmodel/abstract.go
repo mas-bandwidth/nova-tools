@@ -21,7 +21,9 @@ type Observed struct {
 // nothing more: each field of State from the one record that holds it.
 //
 // The mapping's conventions: a primary's attempt is its work card's attempt,
-// 1 before its first card is cut (the model's attempt starts at 1); its head
+// 1 before its first card is cut (the model's attempt starts at 1), and the
+// next one while it is ready or waiting after its card was finished (rework
+// with no member up); its head
 // is the attempt of the work card its head names (the differential test
 // finishes with no head of its own, so the head is the card); an unplaced
 // record is a primary off the table, a work card gone, a read card retired, a
@@ -72,6 +74,19 @@ func Abstract(o Observed) State {
 			}
 		}
 		a.Primaries[id] = p
+	}
+	// A primary ready or waiting whose card at its attempt field is not
+	// withdrawn has that attempt behind it: its next card is the next
+	// attempt (the engine's attempt field names the last card cut).
+	for id, p := range a.Primaries {
+		if p.State != Ready && p.State != Waiting {
+			continue
+		}
+		c := s.Fleet.Card(WC(id, p.Attempt))
+		if c != nil && !(c.Placed() && c.Col == sprint.Withdrawn) {
+			p.Attempt++
+			a.Primaries[id] = p
+		}
 	}
 	for id, c := range s.Fleet.Cards {
 		if c.F("kind") != "work" {

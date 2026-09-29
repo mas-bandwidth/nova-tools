@@ -201,7 +201,8 @@ func (s State) defaultPair(p string) []string {
 // reached sentinels (waiting -> landed, the only step that may), and in the
 // same step moves every waiting primary whose needs are all met to ready and
 // marks reached every sentinel now due; it closes the judgments open on each
-// sentinel. From the spec, not yet in the model.
+// sentinel; the stream's state follows (section 7: landed when every primary
+// of it on the table has landed). From the spec, not yet in the model.
 func Release(s State, ids []string, who string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -221,6 +222,10 @@ func Release(s State, ids []string, who string) (State, error) {
 	doneBefore := s.sprintDone()
 	n := s.Clone()
 	for _, id := range ids {
+		st := n.Primaries[id].Stream
+		x := n.Streams[st]
+		x.State = n.streamAfter(st, x.State, []string{id}, nil)
+		n.Streams[st] = x
 		n.setPrimary(id, func(x *Primary) { x.State = Landed })
 		n.closeOn(id)
 	}

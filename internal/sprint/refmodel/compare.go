@@ -94,7 +94,9 @@ func Compare(e, m State) []Difference {
 			continue
 		}
 		add("merge", id, "place", em.Place, mm.Place)
-		if em.Place != Gone && mm.Place != Gone {
+		// The need is compared where it acts: on a stuck card, which
+		// resume holds until the need has landed (D6).
+		if em.Place == Stuck || mm.Place == Stuck {
 			add("merge", id, "need", em.Need, mm.Need)
 		}
 	}

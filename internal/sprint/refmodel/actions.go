@@ -67,7 +67,10 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 		}
 	}
 	n := s.Clone()
-	if _, ok := n.Streams[a.Stream]; !ok {
+	// Section 7: a stream is landed when every primary of it on the
+	// table has landed; a card admitted into a landed stream makes it
+	// waiting again. The model's Add leaves sstate as it was.
+	if st, ok := n.Streams[a.Stream]; !ok || st.State == SLanded {
 		n.Streams[a.Stream] = Stream{State: SWaiting}
 	}
 	for _, id := range a.IDs {
@@ -186,6 +189,10 @@ func (n *State) placeSentinel(id string) {
 		switch qp.State {
 		case Waiting:
 			qp.Needs = addSorted(qp.Needs, id)
+			if qp.Reached {
+				qp.Reached = false
+				delete(n.Open, Judgment{JReached, q})
+			}
 		case Ready:
 			qp.State = Waiting
 			qp.Needs = addSorted(qp.Needs, id)
@@ -198,12 +205,13 @@ func (n *State) placeSentinel(id string) {
 }
 
 // placeBehindSentinel is the spec's section 16 for a card just admitted: it
-// waits on the latest unlanded sentinel before it, and is a need of every
-// unlanded sentinel after it, which it un-reaches. From the spec, not yet in
-// the model.
+// waits on the latest unlanded sentinel before it, and is a need of the first
+// unlanded sentinel after it ("a card added --before a sentinel is a need of
+// it"), which it un-reaches; the sentinels after that one wait on it through
+// their chain. From the spec, not yet in the model.
 func (n *State) placeBehindSentinel(id string) {
 	me := n.Primaries[id]
-	latest := ""
+	latest, next := "", ""
 	for _, q := range n.StreamOrder(me.Stream) {
 		qp := n.Primaries[q]
 		if q == id || qp.Kind != KindSentinel || qp.State == Landed {
@@ -213,12 +221,18 @@ func (n *State) placeBehindSentinel(id string) {
 			latest = q
 			continue
 		}
+		if next == "" {
+			next = q
+		}
+	}
+	if next != "" {
+		qp := n.Primaries[next]
 		qp.Needs = addSorted(qp.Needs, id)
 		if qp.Reached {
 			qp.Reached = false
-			delete(n.Open, Judgment{JReached, q})
+			delete(n.Open, Judgment{JReached, next})
 		}
-		n.Primaries[q] = qp
+		n.Primaries[next] = qp
 	}
 	if latest != "" {
 		me.Needs = addSorted(me.Needs, latest)
@@ -667,10 +681,13 @@ func Drop(s State, p string) (State, error) {
 	doneBefore := s.sprintDone()
 	n := s.Clone()
 	st := n.Primaries[p].Stream
-	for _, id := range n.UnfinishedOf(p) {
-		w := n.Work[id]
-		w.Place = Gone
-		n.Work[id] = w
+	for _, id := range Keys(n.Work) {
+		// Unfinished, and a card withdrawn (already off the table in
+		// the model: its gone set).
+		if w := n.Work[id]; w.Primary == p && (w.Place == FReady || w.Place == FWorking || w.Place == FWithdrawn) {
+			w.Place = Gone
+			n.Work[id] = w
+		}
 	}
 	for _, id := range n.OutOf(p) {
 		rc := n.Reads[id]
@@ -1217,4 +1234,40 @@ func Repair(post State) State {
 	n := post.Clone()
 	n.Pending = ""
 	return n
+}
+
+// DefaultScore is a score the model allows for the k-th id of an add: after
+// every card of its stream, or between the neighbours of --before/--after.
+func DefaultScore(s State, a AddArgs, k int, prev float64) float64 {
+	anchor := a.Before + a.After
+	ap, ok := s.Primaries[anchor]
+	if anchor == "" || !ok {
+		hi := 0.0
+		for _, p := range s.Primaries {
+			if p.Score > hi {
+				hi = p.Score
+			}
+		}
+		if prev > hi {
+			hi = prev
+		}
+		return hi + 1
+	}
+	lo, hi := ap.Score-1, ap.Score
+	if a.After != "" {
+		lo, hi = ap.Score, ap.Score+1
+	}
+	for _, q := range s.StreamOrder(ap.Stream) {
+		if sc := s.Primaries[q].Score; sc > lo && sc < hi {
+			if a.After != "" {
+				hi = sc
+			} else {
+				lo = sc
+			}
+		}
+	}
+	if k > 0 && prev > lo {
+		lo = prev
+	}
+	return lo + (hi-lo)/2
 }

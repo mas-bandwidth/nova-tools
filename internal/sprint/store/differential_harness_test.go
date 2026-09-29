@@ -548,14 +548,17 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	switch a.Kind {
 	case "add":
 		scores := map[string]float64{}
-		for _, id := range a.IDs {
-			if p, ok := post.Primaries[id]; ok {
+		args := refmodel.AddArgs{Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After}
+		prev := 0.0
+		for k, id := range a.IDs {
+			if p, ok := post.Primaries[id]; ok && pre.Primaries[id].Stream == "" {
 				scores[id] = p.Score
 			} else {
-				scores[id] = nextScore(s)
+				scores[id] = refmodel.DefaultScore(s, args, k, prev)
 			}
+			prev = scores[id]
 		}
-		next, err = refmodel.Add(s, refmodel.AddArgs{Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After}, scores)
+		next, err = refmodel.Add(s, args, scores)
 	case "tick":
 		next, err = refmodel.Tick(s, tickChoices(pre, post))
 	case "start", "stop":
@@ -651,16 +654,6 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 		next = refmodel.Repair(next)
 	}
 	return next, nil
-}
-
-func nextScore(s refmodel.State) float64 {
-	hi := 0.0
-	for _, p := range s.Primaries {
-		if p.Score > hi {
-			hi = p.Score
-		}
-	}
-	return hi + 1
 }
 
 func minScore(s refmodel.State, p string) float64 {
