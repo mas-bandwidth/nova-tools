@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,13 +210,6 @@ func TestTwinRefusesLikeLayerOne(t *testing.T) {
 	})
 }
 
-// skipUntilS15 skips a test that needs Layer 1 to grant the twin a plan that
-// writes nothing (errata E7.1; Layer 1's item S15: Mem.Plan, then Mem.Commit).
-func skipUntilS15(t *testing.T) {
-	t.Helper()
-	t.Skip("S15: needs Mem.Plan/Commit")
-}
-
 // refusingLog is a log twin that refuses every plan, for a refusal of the log
 // phase, and serves everything else as the stub does.
 type refusingLog struct {
@@ -229,11 +223,10 @@ func (l *refusingLog) Plan(LogInput) (LogPlan, LogApply, *Refusal) { return LogP
 // (the log's LIMIT or OVERFLOW, a part's Cmds, prepare's foreign key, its
 // WRONGTYPE and its shared bounds), with every writer active, is a refusal
 // that leaves the Mem's exported state, the sprint's keys and the log
-// byte-equal, as the store's plan-then-commit leaves them (errata E6, E7.1).
-// It cannot hold on the twin until Layer 1 grants Mem.Plan and Mem.Commit: the
-// Mem writes its tables at plan, so today such a refusal is a DivergedError,
-// which TestTwinDivergesAfterPlanRefusal and TestTwinPrepareRefusesAForeignKey
-// pin for now. Each case is skipped (S15); remove skipUntilS15 with S15.
+// byte-equal, as the store's plan-then-commit leaves them (errata E6, E7.1):
+// the twin plans Layer 1 with Mem.Plan and commits with Mem.Commit only after
+// every later phase passed (S15). No commit hook runs, the twin is not left
+// broken, and the next step applies.
 func TestTwinRefusalAfterPlanLeavesNothing(t *testing.T) {
 	t.Parallel()
 	many := func(prefix string, n int) []Cmd {
@@ -282,58 +275,106 @@ func TestTwinRefusalAfterPlanLeavesNothing(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			skipUntilS15(t)
 			tw, m, log, tr := writingTwin(t)
 			c.set(tw, log)
 			req := withWriters(moveRequest("waiting", "ready"))
 			if c.phase == PhaseXPlan {
 				req.Beat = &BeatPart{Members: []BeatMember{{Member: "m1"}}}
 			}
-			img := image(t, tw, m, log)
+			before := capture(t, tw, m, log)
 			res, err := Step(context.Background(), tw, req)
-			var diverged *DivergedError
-			if errors.As(res.Err, &diverged) {
-				t.Fatalf("the twin diverged in %s (Mem.Plan and Mem.Commit are not granted yet): %v", diverged.Phase, diverged)
-			}
-			if err != nil || res.Refusal == nil || res.Refusal.Code != c.code || res.Refusal.Phase != c.phase {
+			if err != nil || res.Err != nil || res.Refusal == nil || res.Refusal.Code != c.code || res.Refusal.Phase != c.phase {
 				t.Fatalf("result %+v, err %v; want %s from %s", res, err, c.code, c.phase)
 			}
-			if got := image(t, tw, m, log); string(got) != string(img) {
-				t.Fatalf("a refusal of %s changed the twin (trace %v)", c.name, tr.list())
+			unchanged(t, "a refusal of "+c.name, before, capture(t, tw, m, log))
+			if ranAny(tr.list(), []string{PhaseCommit}) {
+				t.Fatalf("a refusal of %s reached commit: %v", c.name, tr.list())
 			}
+			// The twin still stands for the store: the same move, with nothing
+			// refusing, applies.
+			restoreWriters(tw, log)
+			mustStep(t, tw, withWriters(moveRequest("waiting", "ready")))
 		})
 	}
 }
 
-// TestTwinDivergesAfterPlanRefusal: tset.Mem has no plan-only call (errata
-// E7.1), so a phase that refuses after plan finds the tables already
-// written. The twin does not report that as a refusal ("nothing was
-// changed" would be false): it returns a DivergedError, and every later call
-// returns it too.
-func TestTwinDivergesAfterPlanRefusal(t *testing.T) {
+// restoreWriters undoes what a case of TestTwinRefusalAfterPlanLeavesNothing
+// set: the log stub back, X's commands back to the traced ones, and the
+// refusing beat part out of the registry.
+func restoreWriters(tw *Twin, log *LogStub) {
+	tw.log = log
+	tw.phases.XCmds = tracedPhases(&tracer{}).XCmds
+	tw.parts.mu.Lock()
+	delete(tw.parts.parts, PartBeat)
+	tw.parts.mu.Unlock()
+}
+
+// bigX is X whose commands fill the shared argv bound to within room bytes of
+// its end, counting the log's bytes, which X is handed: one HSET whose value
+// takes up the rest.
+func bigX(room int) Phases {
+	phases := passX()
+	phases.XCmds = func(st *State, tp TablePlan, lp LogPlan) []Cmd {
+		key := st.Prefix + "sprint:big"
+		size := tset.MaxPlannedArgvBytes - room - lp.ArgvBytes - len("HSET") - len(key) - len("f")
+		return []Cmd{Command("HSET", key, kindHash, "f", strings.Repeat("v", size))}
+	}
+	return phases
+}
+
+// TestTwinSharedBoundCountsLayerOneAtCommit: the one case the twin cannot
+// refuse before it writes. Prepare's shared bound holds Layer 1's planned
+// argv bytes with the log's and the sprint's (L1 6); tset.MemPlan does not
+// carry Layer 1's counts, which arrive with Mem.Commit. So a step whose log
+// and sprint bytes fit, and which only Layer 1's bytes put over the bound, is
+// found after the commit: the store refuses it and writes nothing, the twin
+// has written its tables, and it says so with a DivergedError that names the
+// store's refusal, on that call and every later one. A step that fits with
+// Layer 1's bytes counted applies; one that the log's and the sprint's bytes
+// alone put over the bound is refused before anything is written.
+func TestTwinSharedBoundCountsLayerOneAtCommit(t *testing.T) {
 	t.Parallel()
-	tw, _, _ := newTestTwin(t, passX())
-	mustStep(t, tw, seedRequest())
-	refusing := PartFuncs{
-		PreFunc: func(*State, *Request, *Before) (any, *Refusal) { return "plan", nil },
-		CmdsFunc: func(*State, any, LogPlan) ([]Cmd, *Refusal) {
-			return nil, refuse("", CodeLimit, RefusalDetail{})
-		},
-	}
-	if err := tw.parts.Register(PartBeat, refusing); err != nil {
-		t.Fatal(err)
-	}
-	req := moveRequest("waiting", "ready")
-	req.Beat = &BeatPart{Members: []BeatMember{{Member: "m1"}}}
-	res, err := Step(context.Background(), tw, req)
-	var diverged *DivergedError
-	if err != nil || !errors.As(res.Err, &diverged) || diverged.Phase != PhaseXPlan || diverged.Refusal.Code != CodeLimit {
-		t.Fatalf("result %+v, err %v; want a DivergedError from X.plan", res, err)
-	}
-	next, err := Read(context.Background(), tw, &ReadRequest{Epoch: "0", Tset: []tset.ReadQuery{{Kind: "rows", Table: sprint.Work}}})
-	if err != nil || !errors.As(next.Err, &diverged) {
-		t.Fatalf("the call after divergence: %+v, %v", next, err)
-	}
+
+	t.Run("fits with Layer 1's share", func(t *testing.T) {
+		t.Parallel()
+		tw, _, _ := newTestTwin(t, bigX(4096))
+		mustStep(t, tw, seedRequest())
+	})
+
+	t.Run("over without Layer 1's share", func(t *testing.T) {
+		t.Parallel()
+		tw, m, log := newTestTwin(t, bigX(-1))
+		before := capture(t, tw, m, log)
+		res, err := Step(context.Background(), tw, seedRequest())
+		if err != nil || res.Refusal == nil || res.Refusal.Code != CodeLimit || res.Refusal.Detail.Budget != "argv_bytes" ||
+			*res.Refusal.Detail.Actual != int64(tset.MaxPlannedArgvBytes+1) || *res.Refusal.Detail.Limit != int64(tset.MaxPlannedArgvBytes) {
+			t.Fatalf("result %+v, err %v; want LIMIT argv_bytes one over the bound, before the commit", res, err)
+		}
+		unchanged(t, "a step over the bound without Layer 1's share", before, capture(t, tw, m, log))
+	})
+
+	t.Run("over only with Layer 1's share", func(t *testing.T) {
+		t.Parallel()
+		tw, m, _ := newTestTwin(t, bigX(1))
+		res, err := Step(context.Background(), tw, seedRequest())
+		var diverged *DivergedError
+		if err != nil || res.Refusal != nil || !errors.As(res.Err, &diverged) || diverged.Phase != PhasePrepare ||
+			diverged.Reason.Code != CodeLimit || diverged.Reason.Detail.Budget != "argv_bytes" {
+			t.Fatalf("result %+v, err %v; want a DivergedError naming LIMIT argv_bytes", res, err)
+		}
+		var ref *Refusal
+		if errors.As(res.Err, &ref) {
+			t.Fatal("a DivergedError unwraps to a refusal, which would read as nothing was changed")
+		}
+		snap, err := m.Snapshot(testPrefix)
+		if err != nil || snap.Epochs["0"].Tables[sprint.Work].Records["p1"].Revision == "" {
+			t.Fatalf("the Mem has not written the step (%v): the case does not reach Layer 1's share", err)
+		}
+		next, err := Read(context.Background(), tw, &ReadRequest{Epoch: "0", Tset: []tset.ReadQuery{{Kind: "rows", Table: sprint.Work}}})
+		if err != nil || !errors.As(next.Err, &diverged) {
+			t.Fatalf("the call after divergence: %+v, %v", next, err)
+		}
+	})
 }
 
 // TestReadOneSnapshot: an atomic read on the twin answers every query from
@@ -523,21 +564,24 @@ func TestTwinRefusesAMissingPhase(t *testing.T) {
 }
 
 // TestTwinPrepareRefusesAForeignKey: a command of X.plan, J or a part on a
-// key that is not the sprint's own (a table's, the log's, a receipt) is
-// refused in prepare; tset.Mem has already applied the table plan, so the
-// twin diverges rather than claim nothing changed.
+// key that is not the sprint's own (a table's, the log's, a receipt, the
+// epoch marker, a member, another deployment's) is refused REQUEST in
+// prepare, and the twin is as it was: Layer 1's plan was never committed.
 func TestTwinPrepareRefusesAForeignKey(t *testing.T) {
 	t.Parallel()
 	for _, key := range []string{testPrefix + "sprint:log@0", testPrefix + "sprint:done@0", testPrefix + "sprint:epoch",
 		testPrefix + "table:work:rows", testPrefix + "member:work:p1", "other:sprint:x"} {
 		phases := passX()
 		phases.XCmds = func(*State, TablePlan, LogPlan) []Cmd { return []Cmd{Command("HSET", key, kindHash, "f", "v")} }
-		tw, _, _ := newTestTwin(t, phases)
+		tw, m, log := newTestTwin(t, phases)
+		before := capture(t, tw, m, log)
 		res, err := Step(context.Background(), tw, seedRequest())
-		var diverged *DivergedError
-		if err != nil || !errors.As(res.Err, &diverged) || diverged.Phase != PhasePrepare || diverged.Refusal.Code != CodeRequest {
-			t.Fatalf("a write of %s: %+v, %v", key, res, err)
+		if err != nil || res.Err != nil || res.Refusal == nil || res.Refusal.Phase != PhasePrepare || res.Refusal.Code != CodeRequest {
+			t.Fatalf("a write of %s: %+v, %v; want REQUEST from prepare", key, res, err)
 		}
+		unchanged(t, "a write of "+key, before, capture(t, tw, m, log))
+		tw.phases = passX()
+		mustStep(t, tw, seedRequest())
 	}
 }
 
@@ -545,5 +589,71 @@ func TestTwinPrepareRefusesAForeignKey(t *testing.T) {
 // same images over 10,000 random steps. It needs the store.
 func TestTwinEqualsLua10000(t *testing.T) {
 	t.Parallel()
-	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again), the sprint profile loaded in a container, and items E6 and E7; and S15: the twin needs Mem.Plan/Commit to refuse after plan as the store does")
+	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) and the sprint profile loaded in a container")
+}
+
+// TestTwinTablePlanCountsMatchTheReply: tset.MemPlan carries no counts, so the
+// twin counts what X.plan's table plan says (changed, guarded, changed per
+// entry) from the plan and the step; the reply Mem.Commit gives afterwards
+// says the same, for a step with a rows entry, a move, a guard, a remove and
+// a create of two cards.
+func TestTwinTablePlanCountsMatchTheReply(t *testing.T) {
+	t.Parallel()
+	var seen TablePlan
+	phases := passX()
+	phases.XCmds = func(_ *State, tp TablePlan, _ LogPlan) []Cmd { seen = tp; return nil }
+	tw, m, _ := newTestTwin(t, phases)
+	mustStep(t, tw, seedRequest())
+	mustStep(t, tw, &Request{Epoch: "0", Meta: Meta{Verb: "add", Actor: "coordinator"}, Body: Body{Entries: []tset.Entry{
+		{Kind: "create", Table: sprint.Work, To: "s1:waiting", IDs: []string{"p3"}, Scores: []string{"3"}, About: []string{"p3"}}}}})
+	snap, err := m.Snapshot(testPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := snap.Epochs["0"].Tables[sprint.Work].Records["p2"].Revision
+	req := &Request{Epoch: "0", Meta: Meta{Rule: "test", Tick: true}, Body: Body{Entries: []tset.Entry{
+		{Kind: "rows", Table: sprint.Work, Add: []string{"s2"}},
+		{Kind: "move", Table: sprint.Work, From: "s1:waiting", To: "s1:ready", IDs: []string{"p1"}, About: []string{"p1"}},
+		{Kind: "guard", Table: sprint.Work, From: "s1:waiting", IDs: []string{"p2"}, Revs: []tset.Decimal{rev}},
+		{Kind: "remove", Table: sprint.Work, From: "s1:waiting", IDs: []string{"p3"}, About: []string{"p3"}},
+		{Kind: "create", Table: sprint.Work, To: "s2:waiting", IDs: []string{"p4", "p5"}, Scores: []string{"1", "2"}, About: []string{"p4", "p5"}},
+	}}}
+	got := mustStep(t, tw, req)
+	if seen.Changed != got.Reply.Changed || seen.Guarded != got.Reply.Guarded || !reflect.DeepEqual(seen.ChangedPerEntry, got.Reply.ChangedPerEntry) {
+		t.Fatalf("the table plan counted changed %d, guarded %d, per entry %v; the reply says %d, %d, %v",
+			seen.Changed, seen.Guarded, seen.ChangedPerEntry, got.Reply.Changed, got.Reply.Guarded, got.Reply.ChangedPerEntry)
+	}
+	if seen.Changed != 4 || seen.Guarded != 1 || !reflect.DeepEqual(seen.ChangedPerEntry, []int{0, 1, 0, 1, 2}) {
+		t.Fatalf("counts %d, %d, %v; want 4 changed, 1 guarded, [0 1 0 1 2]", seen.Changed, seen.Guarded, seen.ChangedPerEntry)
+	}
+}
+
+// TestTwinAdvanceNeedsAnOpAndLogsAtTheNewEpoch: an advance without an op and
+// an intent is refused REQUEST before anything runs (Layer 1's static rule of
+// S15's amendment); with both, the twin plans the log at the epoch the step
+// writes, the successor, which the plan does not state and the twin works out
+// before the commit, and the reply's epoch after is that epoch.
+func TestTwinAdvanceNeedsAnOpAndLogsAtTheNewEpoch(t *testing.T) {
+	t.Parallel()
+	tw, m, log := newTestTwin(t, passX())
+	mustStep(t, tw, seedRequest())
+	advance := func() *Request {
+		return &Request{Epoch: "0", Meta: Meta{Verb: "clear", Actor: "coordinator"}, Body: Body{Entries: []tset.Entry{
+			{Kind: "advance", AdvanceFrom: "0"}}}}
+	}
+	before := capture(t, tw, m, log)
+	_, err := Step(context.Background(), tw, advance())
+	var ref *Refusal
+	if !errors.As(err, &ref) || ref.Code != CodeRequest {
+		t.Fatalf("an advance without an op: %v; want REQUEST before anything runs", err)
+	}
+	unchanged(t, "an advance without an op", before, capture(t, tw, m, log))
+
+	req := advance()
+	req.Body.Op = &Op{ID: "clear-1", Intent: "clear"}
+	got := mustStep(t, tw, req)
+	if got.Reply.EpochAfter != "1" || len(log.Lines(testPrefix, "1")) != 1 || len(log.Lines(testPrefix, "0")) != 2 {
+		t.Fatalf("advance: epoch after %s, lines at 1: %d, at 0: %d; want 1, the advance line at the new epoch, and the seed's two",
+			got.Reply.EpochAfter, len(log.Lines(testPrefix, "1")), len(log.Lines(testPrefix, "0")))
+	}
 }

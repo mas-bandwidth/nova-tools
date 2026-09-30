@@ -73,23 +73,29 @@ var defaultPhases Phases
 // S.before and S.plan (L1 6: 6,000 (table, stored ID)).
 const beforeRecordsMax = 6000
 
-// DivergedError is a twin that can no longer stand for the store. A phase
-// after plan refused, and tset.Mem, which exposes no plan-only call (errata
-// E7.1), had already applied the step's table plan: the store would have
-// written nothing, the twin has written the tables. Every later call returns
-// this error, so no test goes on over a state the store could not reach.
+// DivergedError is a twin that can no longer stand for the store. Since
+// Layer 1's S15 (Mem.Plan, then Mem.Commit) a refusal of any phase after plan
+// leaves the twin as it was, so one case is left: prepare's shared bound
+// (L1 6) holds Layer 1's planned commands and argv bytes together with the
+// log's and the sprint's, and tset.MemPlan does not carry Layer 1's counts;
+// they arrive in the reply of Mem.Commit. The twin checks the log's and the
+// sprint's commands before the commit and the total after it, and a total
+// over the bound that only Layer 1's counts push over is this error: the store
+// would have refused the step and written nothing, the twin has written the
+// tables. Every later call returns it, so no test goes on over a state the
+// store could not reach. It goes when MemPlan carries Layer 1's counts.
 type DivergedError struct {
-	Phase   string
-	Refusal *Refusal
+	Phase string
+	// Reason is the refusal the store gives the step. It is not unwrapped: the
+	// twin has written, so no caller may read it as "nothing was changed".
+	Reason *Refusal
 }
 
-// Error names the phase and its refusal.
+// Error names the phase and the store's refusal.
 func (e *DivergedError) Error() string {
-	return fmt.Sprintf("sprintfn twin: %s refused after the table plan applied (%v); the twin no longer stands for the store", e.Phase, e.Refusal)
+	return fmt.Sprintf("sprintfn twin: the store refuses this step in %s (%s, budget %s), and Layer 1's share of the bound was known only after Mem.Commit had written the tables; the twin no longer stands for the store",
+		e.Phase, e.Reason.Code, e.Reason.Detail.Budget)
 }
-
-// Unwrap is the refusal.
-func (e *DivergedError) Unwrap() error { return e.Refusal }
 
 // Twin is the composed in-memory write path: Layer 1's twin (tset.Mem), Layer
 // 2's log twin and the sprint's own keys, driven through the phases of 1.0 in
@@ -230,7 +236,7 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 		// E5: a fence returns at open. Layer 1 writes its receipt alone.
 		t.enter(PhasePrepare)
 		t.enter(PhaseCommit)
-		return t.layerOneOnly(ctx, enc.step)
+		return t.layerOneOnly(enc.step)
 	}
 	if req.Body.Op != nil {
 		found, ref := t.receiptFound(ctx, enc.step)
@@ -238,7 +244,7 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 			return Result{Refusal: ref}
 		}
 		if found { // a replay, or OPCONFLICT: no phase runs (L1 1.4)
-			return t.layerOneOnly(ctx, enc.step)
+			return t.layerOneOnly(enc.step)
 		}
 	}
 	if c := compareDecimal(req.Epoch, t.active); c != 0 {
@@ -309,9 +315,10 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 		plans = append(plans, partPlan{name: name, part: p, plan: plan})
 	}
 
-	// plan: Layer 1 over the combined entries. J's notes stay out of the Mem,
-	// whose encoder asks an op of any note-bearing step, which a preplan's
-	// notes do not need (errata, the addendum); their bounds are checked here.
+	// plan: Layer 1 over the combined entries, planned and not written
+	// (Mem.Plan, S15). J's notes stay out of the Mem, whose encoder asks an op
+	// of any note-bearing step, which a preplan's notes do not need (errata 2,
+	// item 9; S15 keeps this route); their bounds are checked here.
 	t.enter(PhasePlan)
 	if ref := checkAbout(PhasePlan, derived); ref != nil {
 		return Result{Refusal: ref}
@@ -321,34 +328,36 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	if ref := checkNotes(combined.Entries, notes); ref != nil {
 		return Result{Refusal: ref}
 	}
-	reply, err := t.tab.Step(ctx, combined)
+	mp, lref := t.tab.Plan(combined)
+	if lref != nil {
+		return Result{Refusal: fromTset(PhasePlan, lref)}
+	}
+	if mp.Replay {
+		// A captured replay commits at once, and no later planner runs (S15).
+		// Open found no receipt, so under the twin's lock this does not happen.
+		return t.commitAtOnce(mp, combined)
+	}
+	tp := tablePlanOf(combined, mp)
+	writeEpoch, err := writeEpochOf(combined)
 	if err != nil {
-		var lref *tset.Refusal
-		if errors.As(err, &lref) {
-			return Result{Refusal: fromTset(PhasePlan, lref)}
-		}
-		return Result{Err: err}
+		return Result{Refusal: refuse(PhasePlan, "OVERFLOW", RefusalDetail{})}
 	}
-	if reply.Replay || reply.MemPlan == nil {
-		return t.diverge(PhasePlan, refuse(PhasePlan, CodeConfig, RefusalDetail{}))
-	}
-	t.active = reply.EpochAfter
-	tp := tablePlanOf(reply)
 
-	// From here the Mem has applied the table plan; a refusal diverges.
+	// Nothing is written before commit: a refusal from here on leaves the Mem,
+	// the log and the sprint's keys as they were.
 	t.enter(PhaseLog)
-	lp, appendLog, ref := t.log.Plan(LogInput{Prefix: t.prefix, Epoch: reply.EpochAfter, NowMS: nowMS, Table: tp, Notes: notes})
+	lp, appendLog, ref := t.log.Plan(LogInput{Prefix: t.prefix, Epoch: writeEpoch, NowMS: nowMS, Table: tp, Notes: notes})
 	if ref != nil {
-		return t.diverge(PhaseLog, ref)
+		return Result{Refusal: withPhase(ref, PhaseLog)}
 	}
 	t.enter(PhaseXPlan)
 	if t.phases.XCmds == nil {
-		return t.diverge(PhaseXPlan, refuse(PhaseXPlan, CodeConfig, RefusalDetail{}))
+		return Result{Refusal: refuse(PhaseXPlan, CodeConfig, RefusalDetail{})}
 	}
 	cmds := t.phases.XCmds(st, tp, lp)
 	if ranJ {
 		if t.phases.JCmds == nil {
-			return t.diverge(PhaseXPlan, refuse(PhaseXPlan, CodeConfig, RefusalDetail{}))
+			return Result{Refusal: refuse(PhaseXPlan, CodeConfig, RefusalDetail{})}
 		}
 		cmds = append(cmds, t.phases.JCmds(st, jp, lp)...)
 	}
@@ -356,24 +365,40 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	for _, p := range plans {
 		pc, ref := p.part.Cmds(st, p.plan, lp)
 		if ref != nil {
-			return t.diverge(PhaseXPlan, ref)
+			return Result{Refusal: withPhase(ref, PhaseXPlan)}
 		}
 		cmds = append(cmds, pc...)
 		b, err := json.Marshal(p.plan)
 		if err != nil {
-			return t.diverge(PhaseXPlan, refuse(PhaseXPlan, CodeRequest, RefusalDetail{}))
+			return Result{Refusal: refuse(PhaseXPlan, CodeRequest, RefusalDetail{})}
 		}
 		parts[p.name] = b
 	}
 	t.enter(PhasePrepare)
 	cost, ref := t.keys.check(t.prefix, cmds)
 	if ref != nil {
-		return t.diverge(PhasePrepare, ref)
+		return Result{Refusal: ref}
 	}
-	if ref := sharedBounds(reply, lp, cost); ref != nil {
-		return t.diverge(PhasePrepare, ref)
+	// The shared bound over what the twin can see before the commit: the log's
+	// commands and the sprint's. Layer 1's share arrives with Mem.Commit.
+	if ref := sharedBounds(0, 0, lp, cost); ref != nil {
+		return Result{Refusal: ref}
 	}
 	t.enter(PhaseCommit)
+	reply, lref := t.tab.Commit(mp)
+	if lref != nil {
+		// Commit refuses before it writes: a state moved since the plan
+		// (REVISION), which the twin's lock rules out, or a plan used twice.
+		return Result{Refusal: fromTset(PhaseCommit, lref)}
+	}
+	l1Commands, l1Bytes, ok := layerOneCounts(reply)
+	if !ok {
+		return t.diverge(PhaseCommit, refuse(PhaseCommit, CodeConfig, RefusalDetail{}))
+	}
+	if ref := sharedBounds(l1Commands, l1Bytes, lp, cost); ref != nil {
+		return t.diverge(PhasePrepare, ref)
+	}
+	t.active = reply.EpochAfter
 	appendLog()
 	t.keys.apply(cmds)
 	reply.FirstSeq, reply.LastSeq, reply.Lines = lp.FirstSeq, lp.LastSeq, lp.LineCount
@@ -384,16 +409,29 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	return Result{Step: &StepReply{Reply: reply, Parts: parts}}
 }
 
-// layerOneOnly is a step Layer 1 settles alone: a fence, a replay, or an op
-// whose receipt has another intent.
-func (t *Twin) layerOneOnly(ctx context.Context, st tset.Step) Result {
-	reply, err := t.tab.Step(ctx, st)
-	if err != nil {
-		var lref *tset.Refusal
-		if errors.As(err, &lref) {
-			return Result{Refusal: fromTset(PhaseOpen, lref)}
-		}
-		return Result{Err: err}
+// layerOneOnly is a step Layer 1 settles alone at open: a fence, a replay, or
+// an op whose receipt has another intent. It is planned (Mem.Plan) and, for a
+// fence or a replay, committed at once (S15): no log, sprint or other planner
+// runs. Open found a receipt for an op that is not a fence, so a plan that is
+// neither a replay nor a refusal means the done read and the plan disagree,
+// and nothing is committed.
+func (t *Twin) layerOneOnly(st tset.Step) Result {
+	mp, lref := t.tab.Plan(st)
+	if lref != nil {
+		return Result{Refusal: fromTset(PhaseOpen, lref)}
+	}
+	if !mp.Replay && !st.Fence {
+		return Result{Err: errors.New("sprintfn twin: the done read found a receipt that Layer 1's plan did not; nothing was committed")}
+	}
+	return t.commitAtOnce(mp, st)
+}
+
+// commitAtOnce commits a plan that runs no later phase: a fence, or a replay
+// (S15). A replay's seqs are the ones its step wrote, which the twin keeps.
+func (t *Twin) commitAtOnce(mp *tset.MemPlan, st tset.Step) Result {
+	reply, lref := t.tab.Commit(mp)
+	if lref != nil {
+		return Result{Refusal: fromTset(PhaseCommit, lref)}
 	}
 	if !reply.Replay {
 		t.active = reply.EpochAfter
@@ -539,9 +577,11 @@ func (t *Twin) before(ctx context.Context, st *State, req *Request) (*Before, *R
 	return obs, nil
 }
 
-// diverge marks the twin as no longer standing for the store (DivergedError).
+// diverge marks the twin as no longer standing for the store (DivergedError):
+// only after Mem.Commit, when Layer 1's own counts put the step over prepare's
+// shared bound.
 func (t *Twin) diverge(phase string, ref *Refusal) Result {
-	err := &DivergedError{Phase: phase, Refusal: withPhase(ref, phase)}
+	err := &DivergedError{Phase: phase, Reason: withPhase(ref, phase)}
 	t.broken = err
 	return Result{Err: err}
 }
@@ -728,33 +768,71 @@ func checkNotes(entries []tset.Entry, notes []tset.Note) *Refusal {
 	return nil
 }
 
-// sharedBounds holds the table's, the log's and the sprint's commands
-// together to the step's planned command and argv byte bounds (L1 6).
-func sharedBounds(reply tset.Reply, lp LogPlan, cost cmdCost) *Refusal {
-	var counters struct {
-		PlannedCommands int `json:"planned_commands"`
-		PlannedBytes    int `json:"planned_argv_bytes"`
+// sharedBounds holds Layer 1's planned commands and argv bytes, the log's and
+// the sprint's together to the step's bounds (L1 6), as S.prepare does, with
+// its refusal: LIMIT, the budget "commands" or "argv_bytes", the actual count
+// and the bound. Before the commit the twin passes zero for Layer 1's share,
+// which tset.MemPlan does not carry (see DivergedError).
+func sharedBounds(l1Commands, l1Bytes int, lp LogPlan, cost cmdCost) *Refusal {
+	over := func(budget string, actual, bound int) *Refusal {
+		a, b := int64(actual), int64(bound)
+		return refuse(PhasePrepare, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: budget, Actual: &a, Limit: &b}})
 	}
-	if len(reply.Counters) != 0 && json.Unmarshal(reply.Counters, &counters) != nil {
-		return refuse(PhasePrepare, CodeConfig, RefusalDetail{})
+	if commands := l1Commands + lp.Commands + cost.commands; commands > tset.MaxPlannedCommands {
+		return over("commands", commands, tset.MaxPlannedCommands)
 	}
-	if commands := counters.PlannedCommands + lp.Commands + cost.commands; commands > tset.MaxPlannedCommands {
-		return refuse(PhasePrepare, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "planned_commands"}})
-	}
-	if bytes := counters.PlannedBytes + lp.ArgvBytes + cost.argvBytes; bytes > tset.MaxPlannedArgvBytes {
-		return refuse(PhasePrepare, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "planned_argv_bytes"}})
+	if bytes := l1Bytes + lp.ArgvBytes + cost.argvBytes; bytes > tset.MaxPlannedArgvBytes {
+		return over("argv_bytes", bytes, tset.MaxPlannedArgvBytes)
 	}
 	return nil
 }
 
-// tablePlanOf is the Go table plan of a Mem step's reply.
-func tablePlanOf(r tset.Reply) TablePlan {
-	tp := TablePlan{Before: r.MemPlan.Before, Changed: r.Changed, Guarded: r.Guarded, ChangedPerEntry: r.ChangedPerEntry}
-	for _, e := range r.MemPlan.Entries {
+// layerOneCounts are Layer 1's planned commands and argv bytes, from the
+// counters of a committed reply.
+func layerOneCounts(reply tset.Reply) (commands, bytes int, ok bool) {
+	var counters struct {
+		PlannedCommands *int `json:"planned_commands"`
+		PlannedBytes    *int `json:"planned_argv_bytes"`
+	}
+	if json.Unmarshal(reply.Counters, &counters) != nil || counters.PlannedCommands == nil || counters.PlannedBytes == nil {
+		return 0, 0, false
+	}
+	return *counters.PlannedCommands, *counters.PlannedBytes, true
+}
+
+// tablePlanOf is the Go table plan of a Mem plan (S15): the plan's entries,
+// aligned with the step's, and the counts the reply will carry, which the
+// plan does not: a create, move or remove entry changed each id it keeps (the
+// plan keeps the effective ids only), and a guard guarded each of its ids.
+func tablePlanOf(st tset.Step, mp *tset.MemPlan) TablePlan {
+	tp := TablePlan{Before: mp.Before, ChangedPerEntry: make([]int, len(mp.Entries))}
+	for i, e := range mp.Entries {
 		tp.Entries = append(tp.Entries, PlannedEntry{Entry: e.Entry, Before: e.Before, After: e.After,
 			FieldChanges: e.FieldChanges, Added: e.Added})
+		switch e.Entry.Kind {
+		case "create", "move", "remove":
+			tp.ChangedPerEntry[i] = len(e.Entry.IDs)
+			tp.Changed += len(e.Entry.IDs)
+		}
+	}
+	for _, e := range st.Entries {
+		if e.Kind == "guard" {
+			tp.Guarded += len(e.IDs)
+		}
 	}
 	return tp
+}
+
+// writeEpochOf is the epoch a planned step writes at: its successor when the
+// step advances (the plan has checked where the advance stands), else its own
+// (L1 3; L2 0).
+func writeEpochOf(st tset.Step) (tset.Decimal, error) {
+	for _, e := range st.Entries {
+		if e.Kind == "advance" {
+			return tset.NextDecimal(st.Epoch)
+		}
+	}
+	return st.Epoch, nil
 }
 
 // compareDecimal orders two canonical decimals: -1, 0 or 1.

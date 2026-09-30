@@ -46,7 +46,7 @@ func TestPipelineAligned(t *testing.T) {
 		t.Parallel()
 		fake := &fakeConn{replies: []fakeReply{{val: okEnvelope("1", "2", 2, `{}`)}, {val: refusedPlace}, {val: countReply},
 			{val: pageReply}, {val: okEnvelope("3", "3", 1, `{}`)}}}
-		results, err := NewRedis(fake, testNames).Pipeline(context.Background(), items)
+		results, err := newRedisWithClient(fake, testNames).Pipeline(context.Background(), items)
 		if err != nil {
 			t.Fatal(err)
 		}

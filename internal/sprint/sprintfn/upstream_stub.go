@@ -1,60 +1,33 @@
 package sprintfn
 
-import "github.com/mas-bandwidth/nova-tools/internal/tset"
+import (
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/tset"
+)
 
-// The shapes in this file stand in for types two other items own, until they
-// merge (upper design version 2.1, 8.0: "an item that needs another item's
-// code builds against these signatures and a stub until that item merges").
+// IT05's shared types (internal/sprint, plan_types.go) have merged: the
+// write path takes them as they are, by alias, as errata 2 (item 11) says.
 //
-//   - Intent, XGuard, NoteReq and Quarantined are IT05's (internal/sprint,
-//     plan_types.go), copied field for field from that item's pull request.
-//     When it merges, each becomes an alias (type Intent = sprint.Intent) and
-//     nothing that uses it changes.
-//   - Body, Op and Meta are the step package's of 8.0 (IT04). The step
-//     builder's pull request builds another package, of another shape (the
-//     stepbuild package, with its own Entry), so the request body 8.0 fixes
-//     has no home yet; these are 8.0's block as written, and they move when
-//     IT04's owner names the home.
-//
-// This file is deleted when both have merged.
+// Body, Op and Meta stand in for the step package's of 8.0 (IT04). The step
+// builder landed as another package, of another shape (internal/sprint/
+// stepbuild, with its own Entry), so the request body 8.0 fixes has no home
+// yet; these are 8.0's block as written, and they move when IT04's owner
+// names the home. This file is deleted then.
 
 // Intent is an effect a rule cannot plan from its read, decided in Lua from
-// the real before-state by the derive phase (1.3.3). IT05's shape.
-type Intent struct {
-	Kind    string   // waitfor, needmet, needgone or waive
-	Card    string   // the waiter
-	Need    string   // needmet, needgone
-	Needs   []string // waitfor, waive
-	Waiters []string // needmet, needgone
-}
+// the real before-state by the derive phase (1.3.3).
+type Intent = sprint.Intent
 
 // XGuard is a guard on a sprint key that X checks at apply (1.3.5, 2.3).
-// IT05's shape.
-type XGuard struct {
-	Kind   string // memberup, beatstale, due, hold, clock, coordinator or stranger
-	Member string
-	Key    string
-	Score  int64
-}
+type XGuard = sprint.XGuard
 
 // NoteReq is a request to J for a note (1.3.4), turned into notes in the pre
-// stage, one per cause. IT05's shape.
-type NoteReq struct {
-	Op        string // open, close, update, hold, unhold, know or request
-	Type      string
-	Cause     string
-	Subjects  []string
-	Text      string
-	Decisions []string
-	Until     int64 // a hold's R, or the review time
-}
+// stage, one per cause.
+type NoteReq = sprint.NoteReq
 
 // Quarantined is a card a lower layer refused, whose quarantine rides the
-// next step the tick sends (1.3.5). IT05's shape.
-type Quarantined struct {
-	ID, Stream, Code, Rule string
-	Cells                  []string // from the refusal's detail
-}
+// next step the tick sends (1.3.5).
+type Quarantined = sprint.Quarantined
 
 // Body is what the step builder hands the write path (8.0, package step):
 // the Layer 1 entries a plan made, and everything the sprint's phases act on
