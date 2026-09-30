@@ -50,7 +50,7 @@ func TestAPartThatLostATryLocksAndWrites(t *testing.T) {
 	epoch := h.st.PinnedEpoch()
 	step := TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Who: sprint.MachineActor}, &epoch, nil, nil)
 	step.Twin, step.Halts, step.Pump = NewTwin(), true, true // the pump's part
-	st := &Store{B: loseFirstAcquire{Mem: h.m, h: h, acquired: &acquired}, Names: h.st.Names, Actor: sprint.MachineActor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
+	st := &Store{B: loseFirstAcquire{Mem: h.m, h: h, acquired: &acquired}, Names: h.st.Names, Actor: sprint.MachineActor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep, LockAfterLoss: true}
 	relocks := h.m.Calls["relock"]
 	res, err := st.Run(h.ctx, step)
 	if err != nil {

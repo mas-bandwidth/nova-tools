@@ -237,7 +237,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		f2.Gen = f.Gen
 		tw.last = snap
 		if st.CheckTwin != nil {
-			if err := st.checkTwin(ctx, snap, f.Gen, load, extras); err != nil {
+			if err := st.checkTwin(ctx, snap, f.Gen, load, extras, held); err != nil {
 				return nil, Fence{}, err
 			}
 		}
@@ -248,12 +248,24 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 
 // checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
 // same generation (its own read, not counted).
-func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, extras func(*sprint.Snapshot) map[string][]string) error {
+func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, extras func(*sprint.Snapshot) map[string][]string, held string) error {
 	chk := *st
 	chk.Stats, chk.CheckTwin, chk.tw = &Stats{}, nil, nil
-	fresh, at, err := chk.Fenced(ctx, load, extras, nil)
-	if err != nil || at != gen {
-		return err
+	var fresh *sprint.Snapshot
+	var err error
+	if held != "" {
+		// the step holds the fence (its lock): no other writer writes a record
+		// until it lets go, so a read of the tables is of the generation held
+		if fresh, err = chk.Load(ctx, load, extras); err != nil {
+			return err
+		}
+		fresh.QueueLen, fresh.Running = snap.QueueLen, snap.Running
+	} else {
+		var at uint64
+		fresh, at, err = chk.Fenced(ctx, load, extras, nil)
+		if err != nil || at != gen {
+			return err
+		}
 	}
 	if err := st.CheckTwin(snap, fresh); err != nil {
 		return fmt.Errorf("the tick's twin differs from a fresh read at generation %d: %w", gen, err)

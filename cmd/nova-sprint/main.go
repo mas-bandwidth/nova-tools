@@ -220,6 +220,7 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		a.twins[c.redis] = store.NewTwin()
 	}
 	st.ShareTwin(a.twins[c.redis])
+	st.LockAfterLoss = true // a part that lost a try locks (store/lock.go)
 	if st, err = st.Pinned(ctx); err != nil {
 		return nil, err
 	}

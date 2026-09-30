@@ -80,12 +80,17 @@ type Store struct {
 	// from the tick's twin with a fresh read of the same generation: an error
 	// fails the step (twin.go).
 	CheckTwin func(twin, fresh *sprint.Snapshot) error
-	tw        *Twin     // the store's twin (twin.go): kept from one tick to the next
-	root      Backend   // the backend before pinning
-	epoch     uint64    // the epoch the store is pinned to
-	cleared   time.Time // when the pinned epoch began
-	pinned    bool
-	old       bool // pinned to an earlier epoch, for reading
+	tw        *Twin // the store's twin (twin.go): kept from one tick to the next
+	// LockAfterLoss has a part of the tick that lost a try take the fence
+	// before its next read (lock.go). The program's stores set it; a test
+	// harness whose other writers write from inside a part's plan (a writer
+	// that would wait on the lock its own caller holds) leaves it off.
+	LockAfterLoss bool
+	root          Backend   // the backend before pinning
+	epoch         uint64    // the epoch the store is pinned to
+	cleared       time.Time // when the pinned epoch began
+	pinned        bool
+	old           bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads
@@ -556,7 +561,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if !ok {
 			// lost to another writer: a part of the tick with a twin takes
 			// the fence before its next read, once (tla/DirtyTickRead.tla, Lock)
-			if _, can := st.B.(Relocker); can && tw != nil && step.Halts {
+			if _, can := st.B.(Relocker); can && st.LockAfterLoss && tw != nil && step.Halts {
 				wantLock = true
 				continue
 			}
@@ -1556,6 +1561,18 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 
 func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
+	if op.Lock {
+		// a part's lock (lock.go): its writer holds the fence within the
+		// grace, as any operation in flight; past it the lock is a dead
+		// writer's, released unwritten
+		if st.now().Sub(op.At) < st.grace() {
+			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "a part of the tick holds the fence"}, nil
+		}
+		if err := st.B.Release(ctx, op, false); err != nil {
+			return r, err
+		}
+		return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairAbandoned, Detail: "a lock past its grace, released unwritten"}, nil
+	}
 	var skips []Skip
 	// barred is the work-table entries the lifecycle refuses, judged once,
 	// when the first manifest goes entry by entry: a later manifest holding

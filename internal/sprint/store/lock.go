@@ -18,7 +18,9 @@ import (
 // ends any other way releases the lock unwritten. At most one lock a step, and
 // only after a lost try: the world is not held up while nothing contends. A
 // lock left by a writer that died is an operation past its grace with no
-// manifests, which repair abandons (engine.go). The model is
+// manifests: another writer that finds it waits while it is in its grace, as
+// behind any operation in flight, and releases it unwritten past it
+// (finishOp). The model is
 // tla/DirtyTickRead.tla (Lock, and LockedApplyNotLost).
 
 // Relocker is a store whose fence, held by one operation, can be handed to
@@ -34,7 +36,7 @@ func (st *Store) takeLock(ctx context.Context, step Step, family string) (*OpRec
 	if err != nil || f.Pending != nil {
 		return nil, err
 	}
-	lock := OpRecord{ID: strings.ReplaceAll(family, "~", "-") + "-lock", Verb: step.Verb + " lock", At: st.now()}
+	lock := OpRecord{ID: strings.ReplaceAll(family, "~", "-") + "-lock", Verb: step.Verb + " lock", At: st.now(), Lock: true}
 	ok, err := st.B.Acquire(ctx, f.Gen, lock)
 	if err != nil || !ok {
 		return nil, err

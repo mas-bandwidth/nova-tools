@@ -136,7 +136,10 @@ type Fence struct {
 // logical commit, the release: the notifications, the answers, the streams it
 // moved, and its result under the caller's operation id.
 type OpRecord struct {
-	ID        string                 `json:"id"`
+	ID string `json:"id"`
+	// Lock says the operation is a part's lock (lock.go): no manifests, in
+	// flight within its grace, released unwritten past it.
+	Lock      bool                   `json:"lock,omitempty"`
 	Verb      string                 `json:"verb"`
 	At        time.Time              `json:"at"`
 	Manifests []ntable.BatchManifest `json:"manifests"`
