@@ -26,7 +26,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	}{
 		{[]string{"create", "--redis", addr}, "wants one table name: create <table> --columns"},
 		{[]string{"create", "demo", "--redis", addr}, "--columns wants the columns, name[:projection[:fold[:label]]] each"},
-		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
+		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text, pct(<count column>), pct(<count column>/<a>+<b>) or sum(<a>+<b>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
 		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del, move, order, sort"},
