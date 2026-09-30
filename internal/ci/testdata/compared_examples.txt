@@ -44,3 +44,6 @@ cmd/nova-swarm/firstrun_test.go:TestUsageBannerExamplesRunThroughTheComparator e
 cmd/nova-sandbox/examples_functional_test.go:TestSandboxCLISetupAndCommandsMatchOutput $ mkdir -p /path/to/pool/jobs/j1/home
 cmd/nova-sandbox/examples_functional_test.go:TestSandboxCLISetupAndCommandsMatchOutput $ HOME=/path/to/pool/jobs/j1/home \
 cmd/nova-sandbox/examples_functional_test.go:TestHelpCheckExampleMatchesTranscript example: nova-sandbox check
+cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatSealDryRunPrints example: nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
+cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatSeatInjectDryRunPrints example: nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
+cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatPlaceDryRunPrints example: nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run

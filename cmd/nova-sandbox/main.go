@@ -489,12 +489,10 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 	}
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: flag %q; run: nova-sandbox check -h\n", a)
-			return sandbox.ExitCannotRun
-		}
-		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: unexpected argument %q; run: nova-sandbox check -h\n", a)
+	for i := range args {
+		// the first argument is the refusal: an unknown flag, or a word where none goes
+		text, _ := unknownArg(args, i, "check")
+		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: %s\n", text)
 		return sandbox.ExitCannotRun
 	}
 	backend, ok := sandbox.Available()
@@ -525,6 +523,15 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// together, and the probe runs only when none of them spoke.
 	var bad []sandbox.Refusal
 	bad = append(bad, f.bad...)
+	// A flag this verb does not have is refused alone, at the first refusal: the flags that
+	// were meant may be the ones misspelled, so a list of what else is "missing" beside it
+	// is a list of consequences (`probe --wrte x` also said --write was missing).
+	if len(f.bad) > 0 {
+		for _, r := range f.bad {
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
+		}
+		return sandbox.ExitCannotRun
+	}
 	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
 	// an internal verb, never a shell. os.Executable() is the resolved command of that
 	// wrapped run, so its directory is the root "the directory of the resolved command"

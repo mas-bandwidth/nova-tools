@@ -25,7 +25,7 @@ func TestBannerStatesTheRosterAndLanes(t *testing.T) {
 		}
 	}
 	help := invoke(t, "", "help").stdout
-	for _, want := range []string{"ROSTER AND LANES", "a lane", "git init -b main bus", "nova-bus send --bus . --file d.md --as Ada --remote origin --branch main --no-push"} {
+	for _, want := range []string{"ROSTER AND LANES", "a lane", "git init -b main bus", "nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("the banner's roster paragraph does not say %q", want)
 		}

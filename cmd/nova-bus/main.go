@@ -260,13 +260,15 @@ git_name and git_email are required beside a lane: they are the commit identity,
 git -c. "aliases" are other names that resolve to the participant; a group
 is a name that stands for several participants and is never a sender. The roster is strict: an
 unknown key, a duplicate name and a lane shared by two participants are each refused by name.
-From nothing to a first send, in a scratch directory, with the roster above saved as
-participants.json in ./bus:
+From nothing to a first send, in a scratch directory, with git's user.name and user.email set
+(the first commit needs them) and the draft kept OUTSIDE the checkout (an untracked file in it
+is "changes that are not this note", and send refuses):
 
-  git init -b main bus && cd bus && git add participants.json && git commit -m roster
-  nova-bus draft --bus . --as Ada --to Bo --subject hello > d.md     (replace the placeholder body)
-  nova-bus send --bus . --file d.md --as Ada --remote origin --branch main --no-push
-  nova-bus inbox --bus . --as Bo --receipt-max-words 20
+  git init -b main bus && cd bus      (save the roster above as participants.json here)
+  git add participants.json && git commit -m roster
+  nova-bus draft --bus . --as Ada --to Bo --subject hello > ../d.md     (replace the placeholder body)
+  nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push
+  nova-bus inbox --bus . --as Ada --receipt-max-words 20
 
 A FIRST SEND, end to end. draft prints a skeleton and NOTHING else, so its
 standard output is a file:

@@ -561,8 +561,10 @@ writes.
 cards whose output exceeded their own card budget line) and one `PROFILES OK`
 line, exit 0 whenever it ran. `session --claude-session <jsonl>` prints one
 `SESSION` line (the weighted fresh-input equivalent and average context) and,
-with `--out`, folds the coordinator's turns into the day file as model
-`claude-fable-5-1/coordinator` beside retained rows. `fold-pool --pool <dir>
+with `--out`, folds the coordinator's turns into the day file as one row per
+model the transcript names, `<model>/coordinator`, beside retained rows; a
+transcript that names no model on some turn is refused, never booked under a
+guess. `fold-pool --pool <dir>
 --ledger <file>` folds a pool's `usage/*.tsv` into the monthly ledger and
 prints one `FOLD OK` line. Their lines are in the output grammar; a scanner
 that reads the grammar parses them.

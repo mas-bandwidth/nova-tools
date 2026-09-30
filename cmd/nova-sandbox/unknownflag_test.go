@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -68,4 +69,30 @@ func reapBad(f reapFlags) []string {
 		out = append(out, r.Text)
 	}
 	return out
+}
+
+// `probe --bogus` is refused at the unknown flag alone: the lines that follow from it (the
+// --write the misspelled flag was meant to be, reported missing) are not printed.
+func TestProbeStopsAtAnUnknownFlag(t *testing.T) {
+	t.Parallel()
+	var out, errb bytes.Buffer
+	code := probeVerb([]string{"--bogus"}, &out, &errb, nil)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if got, want := errb.String(), "PROBE REFUSED reason=check: unknown flag --bogus; run: nova-sandbox help probe\n"; got != want {
+		t.Errorf("probe --bogus printed %q, want exactly %q", got, want)
+	}
+}
+
+// `check` words an unknown flag the same way as every other verb.
+func TestCheckUnknownFlagIsTheSameLine(t *testing.T) {
+	t.Parallel()
+	var out, errb bytes.Buffer
+	if code := checkVerb([]string{"--wrte", "./x"}, &out, &errb); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if got, want := errb.String(), "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n"; got != want {
+		t.Errorf("check --wrte printed %q, want %q", got, want)
+	}
 }

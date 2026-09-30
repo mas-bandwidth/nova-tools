@@ -35,6 +35,10 @@ func TestLintHelpExplainsEveryFlag(t *testing.T) {
 	if flags < 12 {
 		t.Errorf("lint -h lists %d flags, want at least the twelve lint has:\n%s", flags, stdout)
 	}
+	// a flag's placeholder is its type word, not the first backquoted words of its text
+	if !strings.Contains(stdout, "--child-rules-file <file>  ") || strings.Contains(stdout, "<[name]") {
+		t.Errorf("--child-rules-file's placeholder is not <file>:\n%s", stdout)
+	}
 	for _, want := range []string{"--base-check", "--legs", "--p95", "--repo", "--child-rules-file"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("lint -h does not list %s", want)

@@ -9,7 +9,7 @@ import (
 //
 // The typed-header rules live in internal/swarm and the PATHS: validator in
 // internal/hygiene. These four are the card writer's half: `lint --card` names the
-// escape on a LINT DRIFT line and exits 2, so a card that would have printed
+// escape on a LINT DRIFT line and exits 1, so a card that would have printed
 // `LINT OK checks=16` is refused before any spend. One test per class.
 
 func lintEscapeCard(t *testing.T, name string, header ...string) (string, int) {
@@ -33,7 +33,7 @@ func TestLintCardRefusesAWindowsDriveLetterPath(t *testing.T) {
 		"PATHS: C:/foo/bar",
 		"TEST: ./internal/x TestA",
 	)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("a drive-letter PATHS: is a drift, exit %d\n%s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "paths-declared") {
@@ -55,7 +55,7 @@ func TestLintCardRefusesMoreThanEightPathGlobs(t *testing.T) {
 		"PATHS: "+nine,
 		"TEST: ./internal/x TestA",
 	)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("nine PATHS: globs are a drift, exit %d\n%s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "paths-declared") {
@@ -83,7 +83,7 @@ func TestLintCardRefusesACommaOnlyPathsLine(t *testing.T) {
 		"PATHS: , , ",
 		"TEST: ./internal/x TestA",
 	)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("a comma-only PATHS: is a drift, exit %d\n%s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "paths-declared") {
@@ -102,7 +102,7 @@ func TestLintCardRefusesAnUnknownKind(t *testing.T) {
 		"PATHS: internal/hygiene/glob.go",
 		"TEST: internal/hygiene TestValidatePathsRefusesAWindowsDriveLetter",
 	)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("an unknown KIND: is a drift, exit %d\n%s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "kind-declared") {

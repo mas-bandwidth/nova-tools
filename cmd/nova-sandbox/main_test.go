@@ -2155,25 +2155,25 @@ func TestCheckFlagParsing(t *testing.T) {
 			name:     "check with max flag refused",
 			args:     []string{"check", "--max", "10"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--max\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unknown flag --max; run: nova-sandbox help check",
 		},
 		{
 			name:     "unrecognized double-dash flag",
 			args:     []string{"check", "--bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--bogus\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unknown flag --bogus; run: nova-sandbox help check",
 		},
 		{
 			name:     "unrecognized single-dash flag",
 			args:     []string{"check", "-bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"-bogus\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unknown flag -bogus; run: nova-sandbox help check",
 		},
 		{
 			name:     "unexpected positional argument",
 			args:     []string{"check", "extra"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: unexpected argument \"extra\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unexpected argument extra; run: nova-sandbox help check",
 		},
 		{
 			name:     "check -h",
@@ -2199,8 +2199,8 @@ func TestCheckFlagParsing(t *testing.T) {
 			if tc.wantErr != "" && !strings.Contains(errOut, tc.wantErr) {
 				t.Errorf("stderr %q does not contain %q", errOut, tc.wantErr)
 			}
-			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox check -h") {
-				t.Errorf("stderr %q does not contain door 'run: nova-sandbox check -h'", errOut)
+			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox help check") {
+				t.Errorf("stderr %q does not contain door 'run: nova-sandbox help check'", errOut)
 			}
 		})
 	}

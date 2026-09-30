@@ -721,10 +721,10 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// card this is, the way `--typed` does. `nova-sprint add` holds every brief to them
 	// without being asked.
 	childRules := f.fs.Bool("child-rules", false, "also hold the card to the child rules: the built-in general rules, or the sentences of --child-rules-file")
-	childRulesFile := f.fs.String("child-rules-file", "", "the rules file to hold the card to instead of the built-in general rules (it implies --child-rules), one required sentence per line, `[name] sentence` to name the token")
+	childRulesFile := f.fs.String("child-rules-file", "", "the rules `file` to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token")
 	repoDir := f.fs.String("repo", ".", "with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)")
 	legsPath := f.fs.String("legs", "", "with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg")
-	p95Path := f.fs.String("p95", "", "with --base-check: a table of `<kind> <seconds>` rows, the p95 wall of each kind's finished cards (`*` answers for any kind)")
+	p95Path := f.fs.String("p95", "", "with --base-check: a `file` of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -784,7 +784,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "LINT MORE script=%s findings=%d remedy=nova-swarm lint --fleet %s --max 0\n",
 				oneline.Field(name), len(findings), oneline.Field(*fleet))
 		}
-		return 2
+		return 1
 	}
 	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; give --fleet <file> instead to lint a launcher script, or --rules to print every rule and what it wants")
 	if f.refused(stderr) {
@@ -894,7 +894,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
-	// a defect and exits 2, which a caller refuses on; a note is advice and changes no
+	// a defect and exits 1 (the verb ran and said NO), which a caller refuses on; a note is advice and changes no
 	// verdict. The two are told apart here, once, so neither the writer nor the caller has
 	// to read the check's name to know what happened to the card.
 	var drifts, notes []cardFinding
@@ -946,5 +946,5 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// exactly the writer who needs to know how close to the ceiling the card already is --
 	// and `advisory=true` is the answer to the question two managers asked on one day.
 	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d advisory=true\n", oneline.Field(name), len(raw), cardMaxBytes)
-	return 2
+	return 1
 }

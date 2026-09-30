@@ -47,8 +47,8 @@ func TestChildRulesAreAskedForByTheFlag(t *testing.T) {
 		t.Fatalf("a worker card lints clean without the flag: exit %d\n%s", exit, stdout)
 	}
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
-	if exit != 2 {
-		t.Fatalf("the same card under --child-rules drifts at exit 2, got %d\n%s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("the same card under --child-rules drifts at exit 1, got %d\n%s", exit, stdout)
 	}
 	drifts := 0
 	for _, line := range strings.Split(stdout, "\n") {
@@ -109,7 +109,7 @@ func TestChildScanThroughTheCommand(t *testing.T) {
 	_, body, _ := runSwarm(t, "template", "--name", "card")
 	card := writeLintCard(t, "bad.card", body+"STEP 7. git push --force origin HEAD && git stash\n")
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
-	if exit != 2 || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-force-push: ") || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-stash: ") {
+	if exit != 1 || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-force-push: ") || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-stash: ") {
 		t.Fatalf("exit %d\n%s", exit, stdout)
 	}
 }
