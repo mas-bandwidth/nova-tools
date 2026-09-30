@@ -1,7 +1,6 @@
 package refmodel_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -137,6 +136,22 @@ func (w *world) fresh() map[string]time.Duration {
 	return out
 }
 
+// applyPart runs a part of the tick on the sprint with the clock after t0, and
+// applies what it plans, as the store does: the judgments it raises are open
+// afterwards, and what it moves has moved.
+func (w *world) applyPart(t *testing.T, part string, after time.Duration) {
+	t.Helper()
+	for _, p := range sprint.TickParts {
+		if p.Name == part {
+			w.s.Now = later(after)
+			plan, _ := p.Fn(w.s, sprint.TickReq{Who: sprint.MachineActor})
+			w.must(t, sprint.Applied(w.s, plan))
+			return
+		}
+	}
+	t.Fatalf("the tick has no part %s", part)
+}
+
 // later is the sprint with the clock d on: a duty decides at that time.
 func later(d time.Duration) time.Time { return t0.Add(d) }
 
@@ -160,8 +175,6 @@ func show(ms []refmodel.Move) string {
 	}
 	return s
 }
-
-var _ = fmt.Sprint
 
 // land puts a merging primary in landed without the step that lands it, which
 // would also move what waited on it: those are left for the tick to move.

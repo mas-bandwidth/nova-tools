@@ -39,11 +39,12 @@ func briefs(ms []refmodel.Move) []string {
 }
 
 // expect fails the test unless the moves are exactly the lines, in canonical
-// order.
+// order. It stops the test there: what a test reads of the moves after it is
+// read only of moves that are the ones expected.
 func expect(t *testing.T, got []refmodel.Move, want ...string) {
 	t.Helper()
 	if !slices.Equal(briefs(got), want) {
-		t.Errorf("moves:\n got %q\nwant %q\nfull:%s", briefs(got), want, show(got))
+		t.Fatalf("moves:\n got %q\nwant %q\nfull:%s", briefs(got), want, show(got))
 	}
 }
 
@@ -232,21 +233,35 @@ func TestDealTellsOnceWhenNoMemberIsUp(t *testing.T) {
 	if got[0].Stream != "" || !slices.Contains(got[0].Attrs, "stream_level=yes") || !strings.HasPrefix(got[0].Words, "2 primaries wait to be dealt") {
 		t.Errorf("the judgment is about the sprint, and counts what waits: %+v", got[0])
 	}
+	if want := []string{"fleet beat", "fleet up", "wait"}; !slices.Equal(got[0].Decisions, want) {
+		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
+	}
 }
 
+// A card is dealt again after its member goes down up to three times: at three
+// redeals the tick deals it no more and says so, and at two it is still dealt
+// (here no member is up, so it waits, and the sprint is told there is none).
 func TestDealStopsAtTheRedealBound(t *testing.T) {
 	t.Parallel()
-	w := sprintOf(t, "m1", "m2")
-	w.add(t, "s1", 1)
-	w.deal(t, "s1-1")
-	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m1", Who: coordinator}))
-	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m2", Who: coordinator}))
-	// no member up: the card is withdrawn; make it the one that has been redealt to the bound
-	wc := w.s.Fleet.Card("s1-1.w1")
-	wc.Fields["redeals"] = fmt.Sprint(sprint.MaxRedeals)
-	w.s.Fleet.Put(wc)
-	got := refmodel.DealMoves(w.snapshot(nil), later(0))
-	expect(t, got, "open a card reached its bound [s1-1]")
+	for redeals, want := range map[string]string{
+		"2": "open no fleet member is up [stream:]",
+		"3": "open a card reached its bound [s1-1]",
+	} {
+		w := sprintOf(t, "m1", "m2")
+		w.add(t, "s1", 1)
+		w.deal(t, "s1-1")
+		w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m1", Who: coordinator}))
+		w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m2", Who: coordinator}))
+		// no member up: the card is withdrawn; make it the one that has been redealt that many times
+		wc := w.s.Fleet.Card("s1-1.w1")
+		wc.Fields["redeals"] = redeals
+		w.s.Fleet.Put(wc)
+		got := refmodel.DealMoves(w.snapshot(nil), later(0))
+		expect(t, got, want)
+		if redeals == "3" && !slices.Equal(got[0].Decisions, []string{"rework with a fix", "drop", "wait"}) {
+			t.Errorf("the decisions offered at the bound: %q", got[0].Decisions)
+		}
+	}
 }
 
 func TestLevelMovesTheNewestFromTheLongestToTheShortest(t *testing.T) {
@@ -323,11 +338,14 @@ func TestDeadlinesJudgeAWorkCardNotTakenPastFifteenMinutes(t *testing.T) {
 	w.add(t, "s1", 1)
 	w.deal(t, "s1-1")
 	snap := w.snapshot(nil)
-	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DeadlineUntaken)))
-	got := refmodel.DeadlineMoves(snap, later(sprint.DeadlineUntaken+time.Second))
+	expect(t, refmodel.DeadlineMoves(snap, later(15*time.Minute)))
+	got := refmodel.DeadlineMoves(snap, later(15*time.Minute+time.Second))
 	expect(t, got, "open a work card is past its deadline [s1-1]")
 	if got[0].Card != "s1-1.w1" || !strings.Contains(got[0].Words, "not taken") {
 		t.Errorf("the judgment names the card and what is late: %+v", got[0])
+	}
+	if want := []string{"fleet down m1", "wait", "drop"}; !slices.Equal(got[0].Decisions, want) {
+		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
 	}
 }
 
@@ -340,7 +358,9 @@ func TestDeadlinesCountRunningTimeOnly(t *testing.T) {
 	snap.Stopped = []sprint.Span{{From: t0.Add(time.Minute), To: t0.Add(20 * time.Minute)}}
 	// 20 minutes of the clock, 19 of them STOPPED: one minute has run
 	expect(t, refmodel.DeadlineMoves(snap, later(20*time.Minute)))
-	expect(t, refmodel.DeadlineMoves(snap, later(20*time.Minute+sprint.DeadlineUntaken)),
+	// 15 minutes of running time are 34 of the clock: not past the deadline, and a second more is
+	expect(t, refmodel.DeadlineMoves(snap, later(34*time.Minute)))
+	expect(t, refmodel.DeadlineMoves(snap, later(34*time.Minute+time.Second)),
 		"open a work card is past its deadline [s1-1]")
 }
 
@@ -350,10 +370,15 @@ func TestDeadlinesJudgeAReadCardNotBegun(t *testing.T) {
 	w.add(t, "s1", 1)
 	w.drive(t, "s1-1", sprint.Review)
 	w.ask(t, "s1-1")
-	got := refmodel.DeadlineMoves(w.snapshot(nil), later(sprint.DeadlineUnbegun+time.Second))
+	snap := w.snapshot(nil)
+	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
+	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
 	expect(t, got,
 		"open a read card is past its deadline [s1-1]",
 		"open a read card is past its deadline [s1-1]")
+	if want := []string{"ask --another", "wait", "drop"}; !slices.Equal(got[0].Decisions, want) {
+		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
+	}
 }
 
 func TestDeadlinesJudgeAStreamWithNoMergeStep(t *testing.T) {
@@ -361,8 +386,13 @@ func TestDeadlinesJudgeAStreamWithNoMergeStep(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.drive(t, "s1-1", sprint.Merging)
-	got := refmodel.DeadlineMoves(w.snapshot(nil), later(sprint.DeadlineMergeIdle+time.Second))
+	snap := w.snapshot(nil)
+	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
+	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
 	expect(t, got, "open a stream has had no merge step past its deadline [stream:s1]")
+	if want := []string{"merge --stream s1", "look", "wait"}; !slices.Equal(got[0].Decisions, want) {
+		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
+	}
 }
 
 func TestOverdueMarksAJudgmentOncePastTenMinutes(t *testing.T) {
@@ -379,8 +409,8 @@ func TestOverdueMarksAJudgmentOncePastTenMinutes(t *testing.T) {
 		t.Fatalf("the fixture: %d open", len(w.s.Open))
 	}
 	snap := w.snapshot(nil)
-	expect(t, refmodel.OverdueMoves(snap, later(sprint.DeadlineJudgment)))
-	got := refmodel.OverdueMoves(snap, later(sprint.DeadlineJudgment+time.Second))
+	expect(t, refmodel.OverdueMoves(snap, later(10*time.Minute)))
+	got := refmodel.OverdueMoves(snap, later(10*time.Minute+time.Second))
 	expect(t, got,
 		"hold a judgment notification has waited past its deadline [stream:]",
 		"notice a judgment notification has waited past its deadline []")
@@ -392,8 +422,9 @@ func TestRemindPushesEachPersonDueAndRaisesAFailingRoute(t *testing.T) {
 	snap := w.snapshot(w.fresh())
 	snap.Goals = sprint.Goals{People: []sprint.Goal{
 		{Name: "ann", Text: "keep going", Route: "file:/x/ann", Last: t0.Add(-time.Minute), Count: 2},         // pushed a minute ago: not due
-		{Name: "bob", Text: "keep going", Route: "file:/x/bob", Last: t0.Add(-sprint.RemindEvery), Count: 4},  // due
+		{Name: "bob", Text: "keep going", Route: "file:/x/bob", Last: t0.Add(-5 * time.Minute), Count: 4},     // due at five minutes
 		{Name: "cyd", Text: "keep going", Route: "file:/x/cyd", Last: t0.Add(-time.Minute), Fail: "no route"}, // its route fails
+		{Name: "dee", Text: "keep going", Route: "file:/x/dee", Last: t0.Add(-5*time.Minute + time.Second)},   // a second short of five minutes: not due
 	}}
 	got := refmodel.RemindMoves(snap, later(0))
 	expect(t, got,
@@ -402,9 +433,27 @@ func TestRemindPushesEachPersonDueAndRaisesAFailingRoute(t *testing.T) {
 	if got[1].Words != "REMINDER 5 to bob over file:/x/bob" || got[1].To != "file:/x/bob" {
 		t.Errorf("the push: %+v", got[1])
 	}
+	if want := []string{"goal set cyd --to <route>", "goal drop cyd", "ack"}; !slices.Equal(got[0].Decisions, want) {
+		t.Errorf("the decisions offered of the failing route: %q, want %q", got[0].Decisions, want)
+	}
 	// once the judgment is written the record says so, and the tick has nothing more to write
 	snap.Goals.Noted = snap.Goals.Failing()
 	expect(t, refmodel.RemindMoves(snap, later(0)), "push bob")
+}
+
+// The time the machine was STOPPED does not count toward a reminder: five
+// minutes of running time, not of the clock. The snapshot's Since stays before
+// the span, as it does in the deadline fixtures: the reference is asked what
+// running time is, and not what a machine that started again would say.
+func TestRemindCountsRunningTimeOnly(t *testing.T) {
+	t.Parallel()
+	w := sprintOf(t, "m1")
+	snap := w.snapshot(w.fresh())
+	snap.Goals = sprint.Goals{People: []sprint.Goal{{Name: "ann", Text: "keep going", Route: "file:/x/ann", Last: t0.Add(-6 * time.Minute)}}}
+	snap.Stopped = []sprint.Span{{From: t0.Add(-330 * time.Second), To: t0.Add(-30 * time.Second)}} // five of the six minutes
+	expect(t, refmodel.RemindMoves(snap, later(0)))                                                 // one minute has run
+	expect(t, refmodel.RemindMoves(snap, later(4*time.Minute-time.Second)))                         // four minutes and fifty-nine seconds
+	expect(t, refmodel.RemindMoves(snap, later(4*time.Minute)), "push ann")                         // five
 }
 
 func TestAStoppedMachineMovesNothing(t *testing.T) {

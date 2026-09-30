@@ -167,6 +167,15 @@ func TestDecideIsDeterministicAndLeavesItsSnapshotAlone(t *testing.T) {
 		if after := dump(s.snap); after != before {
 			t.Fatalf("snapshot %d: deciding changed the snapshot:\n%s", i, firstDifference(before, after))
 		}
+		// Decide copies the snapshot once for every duty; each duty asked alone
+		// copies it for itself, and the moves are the same
+		var alone []refmodel.Move
+		for _, d := range refmodel.Duties {
+			alone = append(alone, d.Moves(s.snap, s.now)...)
+		}
+		if ok, diff := refmodel.Equal(got, alone); !ok {
+			t.Fatalf("snapshot %d: Decide, on one copy of the snapshot, is not the duties each on a copy of its own: %s", i, diff)
+		}
 		if !slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }) {
 			t.Fatalf("snapshot %d: the duties are out of the tick's order:%s", i, show(got))
 		}

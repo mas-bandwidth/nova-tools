@@ -68,6 +68,33 @@ func TestEqualNamesACardOneSideDoesNotMove(t *testing.T) {
 	}
 }
 
+func TestEqualNamesAMoveOfNoCardByItsDutyAndKind(t *testing.T) {
+	t.Parallel()
+	due := refmodel.Move{Duty: refmodel.DutyPresence, Kind: refmodel.KindDue, Attrs: []string{"due=1"}}
+	ok, diff := refmodel.Equal([]refmodel.Move{due}, nil)
+	if ok || !strings.HasPrefix(diff, "the presence due move differs: the first has ") || strings.Contains(diff, "  ") || strings.Contains(diff, "card") {
+		t.Errorf("a count left due, by its duty and kind: %v %q", ok, diff)
+	}
+	notice := refmodel.Move{Duty: refmodel.DutyStrangers, Kind: refmodel.KindNotice, Type: sprint.NUnknownMachine}
+	if _, diff := refmodel.Equal(nil, []refmodel.Move{notice}); !strings.HasPrefix(diff, "the strangers notice "+sprint.NUnknownMachine+" move differs: the second has ") ||
+		!strings.HasSuffix(diff, "the first has no such move") {
+		t.Errorf("a notice of no card, by its duty and kind: %q", diff)
+	}
+}
+
+func TestEqualSeesWhichJudgmentAnUpdateRewrites(t *testing.T) {
+	t.Parallel()
+	update := func(id string) refmodel.Move {
+		return refmodel.Move{Duty: refmodel.DutyDeadlines, Kind: refmodel.KindUpdate, Card: "s1-1.w1", Type: sprint.NWorkLate, Subjects: []string{"s1-1"}, Attrs: []string{"id=" + id}, Words: "late"}
+	}
+	if ok, _ := refmodel.Equal([]refmodel.Move{update("n1")}, []refmodel.Move{update("n2")}); ok {
+		t.Error("updates of two judgments are equal")
+	}
+	if ok, diff := refmodel.Equal([]refmodel.Move{update("n1")}, []refmodel.Move{update("n1")}); !ok {
+		t.Errorf("updates of one judgment differ: %s", diff)
+	}
+}
+
 func TestEqualNamesANoteBySubject(t *testing.T) {
 	t.Parallel()
 	open := refmodel.Move{Duty: refmodel.DutyDeal, Kind: refmodel.KindOpen, Type: sprint.NBound, Subjects: []string{"p7", "p8"}}

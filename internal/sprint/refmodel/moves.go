@@ -40,8 +40,8 @@ type Move struct {
 	Duty string
 	Kind string
 	// Table is the logical table of a change to a card, empty for the rest,
-	// and Card is that card. For a note, Card is the card it is about where
-	// it names one; for a close and an update, the note's id; for a
+	// and Card is that card. For a note (an update too), Card is the card it
+	// is about where it names one; for a close, the note's id; for a
 	// reminder, the person; for a refusal, the card refused.
 	Table string
 	Card  string
@@ -56,9 +56,12 @@ type Move struct {
 	// Type, Stream, Subjects, Decisions, Attrs and Words are a note's: its
 	// type, its stream, the cards (or the stream, or the sprint) it is open
 	// on in name order, the decisions offered in the order given, the rest
-	// of its fields (attr=value, in name order), and its words. A close,
-	// an update, a refusal and a reminder use Words for theirs, and a
-	// change to a card uses it for the one line of what moved.
+	// of its fields (attr=value, in name order), and its words. An update
+	// is a note's move with the id of the judgment it rewrites in its
+	// attrs (id=). A refusal and a reminder use Words for theirs, and a
+	// change to a card uses it for the one line of what moved. A note's id
+	// (the store gives each its own) and its time (the time Decide is
+	// given) are not carried.
 	Type      string
 	Stream    string
 	Subjects  []string
@@ -168,14 +171,16 @@ func Equal(a, b []Move) (ok bool, diff string) {
 
 // differs is the words of a difference at a move that one side has and the
 // other does not: the first card, and what each side, by its name, does with
-// it in that duty.
+// it in that duty. A move that is of no card (a count left due, a notice of
+// nothing in particular) is named by its duty and kind: the presence due move.
 func differs(first Move, mine string, mineMoves []Move, other string, otherMoves []Move) string {
 	subject := first.Card
 	if subject == "" && len(first.Subjects) > 0 {
 		subject = first.Subjects[0]
 	}
+	what := "card " + subject + " differs at " + first.Duty
 	if subject == "" {
-		subject = first.Kind + " " + first.Type
+		what = "the " + first.Duty + " " + strings.TrimSpace(first.Kind+" "+first.Type) + " move differs"
 	}
 	inDuty := func(ms []Move) []string {
 		var out []string
@@ -186,7 +191,7 @@ func differs(first Move, mine string, mineMoves []Move, other string, otherMoves
 		}
 		return out
 	}
-	return fmt.Sprintf("card %s differs at %s: %s has %s; %s has %s", subject, first.Duty, mine, listOrNone(inDuty(mineMoves)), other, listOrNone(inDuty(otherMoves)))
+	return fmt.Sprintf("%s: %s has %s; %s has %s", what, mine, listOrNone(inDuty(mineMoves)), other, listOrNone(inDuty(otherMoves)))
 }
 
 func listOrNone(lines []string) string {
@@ -225,7 +230,9 @@ func planMoves(duty string, s *sprint.Snapshot, p sprint.Plan) []Move {
 	out = appendCloses(out, duty, p.Closes...)
 	for _, n := range p.Updates {
 		m := noteMove(duty, n)
-		m.Kind, m.Card = KindUpdate, n.ID
+		m.Kind = KindUpdate
+		m.Attrs = append(m.Attrs, "id="+n.ID) // the judgment it rewrites; the card it is about stays in Card
+		sort.Strings(m.Attrs)
 		out = append(out, m)
 	}
 	for _, r := range p.Refused {
