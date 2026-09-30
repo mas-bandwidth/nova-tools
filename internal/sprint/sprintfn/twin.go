@@ -27,6 +27,9 @@ type LogTwin interface {
 	// Read serves Layer 2's queries (last, lines, cardlines) of one plan: a
 	// page, or one atomic query.
 	Read(prefix string, plan tset.ReadPlan) (tset.ReadReply, *Refusal)
+	// LineAt is L.read_line_at: the stored line at exactly seq, a canonical
+	// decimal string (REQUEST otherwise), LOGID for a seq with no line.
+	LineAt(prefix string, epoch tset.Decimal, seq string) (tset.LogLine, *Refusal)
 }
 
 // LogInput is what the log plans a step from.
@@ -260,6 +263,9 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	if ref := checkAbout(PhaseOpen, enc.step.Entries); ref != nil {
 		return Result{Refusal: ref}
 	}
+	if ref := tset.CheckLogStep(enc.step.Entries, enc.step.Notes); ref != nil {
+		return Result{Refusal: fromTset(PhaseOpen, ref)}
+	}
 	if req.Fence {
 		// E5: a fence returns at open. Layer 1 writes its receipt alone.
 		t.enter(PhasePrepare)
@@ -359,6 +365,11 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	combined.Entries = append(append([]tset.Entry{}, enc.step.Entries...), derived...)
 	if ref := checkNotes(combined.Entries, notes); ref != nil {
 		return Result{Refusal: ref}
+	}
+	// The composed profile's static rules on the combined staged request,
+	// before any guard (L1 8; table_set_log.lua's L.check_step).
+	if ref := tset.CheckLogStep(combined.Entries, notes); ref != nil {
+		return Result{Refusal: fromTset(PhasePlan, ref)}
 	}
 	mp, lref := t.tab.Plan(combined)
 	if lref != nil {

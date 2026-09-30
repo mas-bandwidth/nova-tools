@@ -236,6 +236,29 @@ func (l *MemLog) Read(space string, plan ReadPlan) (ReadReply, *Refusal) {
 	return fail("REQUEST", RefusalDetail{})
 }
 
+// LineAt is table_set_log.lua's L.read_line_at: the stored line at exactly
+// seq. seq is a canonical decimal string in 1..2^53-1, and anything else is
+// REQUEST; a seq with no line, past the tail or in a hole, is LOGID with the
+// budget log_line (decision 12: LOGID when a history seq has no line). Like
+// the store's exact-line fetch it reads that one line and not the head.
+func (l *MemLog) LineAt(space string, epoch Decimal, seq string) (LogLine, *Refusal) {
+	n, err := strconv.ParseUint(seq, 10, 64)
+	if err != nil || seq != strconv.FormatUint(n, 10) || n == 0 || n > logSeqCeiling {
+		return LogLine{}, NewRefusal("REQUEST", RefusalDetail{QueryIndex: memIndex(0)})
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lg := l.epoch(space, epoch, false)
+	if lg == nil {
+		return LogLine{}, NewRefusal("LOGID", RefusalDetail{QueryIndex: memIndex(0), Budget: "log_line"})
+	}
+	line, ok := lg.lines[n]
+	if !ok {
+		return LogLine{}, NewRefusal("LOGID", RefusalDetail{QueryIndex: memIndex(0), Budget: "log_line"})
+	}
+	return line, nil
+}
+
 func quoted(s string) json.RawMessage { return json.RawMessage(strconv.Quote(s)) }
 
 // Item is the line as a lines query returns it, {seq, n, d} with d verbatim,
@@ -273,7 +296,14 @@ func (l *MemLog) lines(lg *memLogEpoch, plan ReadPlan, q ReadQuery, page bool,
 	if idsCap == 0 {
 		idsCap = logReadIDs
 	}
-	room := logMaxReply - logDefaultUsed - 1 - logEnvelope
+	// The answer's room: the reply cap less what earlier answers used, or the
+	// query's bytes_limit when smaller, less the envelope (table_set_log.lua's
+	// answer_room; L1 7, decision 6).
+	room := logMaxReply - logDefaultUsed - 1
+	if q.BytesLimit > 0 && q.BytesLimit < room {
+		room = q.BytesLimit
+	}
+	room -= logEnvelope
 	items := []json.RawMessage{}
 	cur, ids, bytes, fetched := after, 0, 0, 0
 	stop := ""

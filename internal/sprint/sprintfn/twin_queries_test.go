@@ -214,10 +214,11 @@ func TestRelatedSources(t *testing.T) {
 		if ids := asRelated(t, res).IDs; !reflect.DeepEqual(ids, []string{"l1", "l2", "l3"}) {
 			t.Fatalf("a line's about: %v", ids)
 		}
-		// A line the log does not have is DRIFT.
+		// A line the log does not have, past its tail, is LOGID with the
+		// budget log_line, as the store's L.read_line_at answers (decision 12).
 		ref := w.refused(sprint.SprintQ{Kind: sprint.QueryRelated, Table: sprint.Work, Fields: fieldsOpen,
 			Source: sprint.IDSource{Kind: sprint.SourceLine, Seq: uint64(last + 50)}})
-		if ref.Code != codeDrift {
+		if ref.Code != codeLogID || ref.Detail.Budget != "log_line" {
 			t.Fatalf("a line that is not there: %v", ref)
 		}
 	})
@@ -598,7 +599,7 @@ func TestJnoteSubjects(t *testing.T) {
 	}
 	// A note id the log does not have, one that is not a note's line, and one of
 	// another epoch.
-	if ref := w.refused(sprint.SprintQ{Kind: sprint.QueryJnote, Source: ids("n999"), Fields: []string{}, Subjects: 1}); ref.Code != codeDrift {
+	if ref := w.refused(sprint.SprintQ{Kind: sprint.QueryJnote, Source: ids("n999"), Fields: []string{}, Subjects: 1}); ref.Code != codeLogID {
 		t.Fatalf("a seq the log lacks: %+v", ref)
 	}
 	if ref := w.refused(sprint.SprintQ{Kind: sprint.QueryJnote, Source: ids("n1"), Fields: []string{}, Subjects: 1}); ref.Code != codeDrift {

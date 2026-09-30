@@ -5,10 +5,12 @@ package tset
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -34,6 +36,8 @@ type logWorld struct {
 	nextID int
 	lines  int
 	ops    int
+	// reads counts the reads compared by kind and mode, refusals by code.
+	reads map[string]int
 }
 
 var logWorldColumns = map[string][]string{"work": {"a", "b"}, "aux": {"c"}}
@@ -42,7 +46,8 @@ func newLogWorld(t *testing.T, seed int64) *logWorld {
 	t.Helper()
 	fx := newComposedTSetFixture(t)
 	w := &logWorld{t: t, fx: fx, mem: NewMem(), log: NewMemLog(), rng: rand.New(rand.NewSource(seed)),
-		rows: map[string][]string{}, cells: map[string]map[string][]string{}, placed: map[string]string{}, all: map[string]bool{}}
+		rows: map[string][]string{}, cells: map[string]map[string][]string{}, placed: map[string]string{}, all: map[string]bool{},
+		reads: map[string]int{}}
 	for _, table := range []string{"work", "aux"} {
 		fx.Define(t, table, logWorldColumns[table]...)
 		if err := w.mem.DefineTable(fx.Space, table, TableDefinition{Columns: logWorldColumns[table],
@@ -51,7 +56,9 @@ func newLogWorld(t *testing.T, seed int64) *logWorld {
 		}
 		w.cells[table] = map[string][]string{}
 	}
-	fx.Activate(t)
+	// The line-at probe registers L.read_line_at as a read kind, so the
+	// twin's LineAt is compared with the store's.
+	fx.ActivateWithLua(t, logDraftLineAtProbeLua)
 	w.store = newFixtureRedis(t, fx.Client)
 	return w
 }
@@ -65,6 +72,10 @@ func (w *logWorld) apply(step Step) {
 	op := fmt.Sprintf("op-%d", w.ops)
 	intent := "log-world/" + op
 	step.Op, step.Intent = &op, &intent
+	// The composed profile's static rules come before Mem's guards (L1 8).
+	if ref := CheckLogStep(step.Entries, step.Notes); ref != nil {
+		w.t.Fatalf("the twin's static rules refused a generated step %s: %+v\n%s", ref.Code, ref.Detail, stepJSON(step))
+	}
 	mp, ref := w.mem.Plan(step)
 	if ref != nil {
 		w.t.Fatalf("the twin refused a generated step %s: %+v\n%s", ref.Code, ref.Detail, stepJSON(step))
@@ -143,6 +154,8 @@ func (w *logWorld) word() string {
 
 var logWorldScores = []string{"1", "2.5", "2.50", "-7", "0.1", "1e3", "12345", "0", "3.25"}
 
+// meta is a random meta value. A body d holds no JSON number (L2 1.1), so
+// meta holds strings, booleans, nulls, arrays and objects; digits are strings.
 func (w *logWorld) meta() json.RawMessage {
 	switch w.rng.Intn(6) {
 	case 0:
@@ -150,13 +163,13 @@ func (w *logWorld) meta() json.RawMessage {
 	case 1:
 		return json.RawMessage(`{}`)
 	case 2:
-		return json.RawMessage(fmt.Sprintf(`{"why":%s,"n":%d}`, strJSON(w.word()), w.rng.Intn(1000)))
+		return json.RawMessage(fmt.Sprintf(`{"why":%s,"n":"%d"}`, strJSON(w.word()), w.rng.Intn(1000)))
 	case 3:
-		return json.RawMessage(`{"z":[1,0.1,-2.5e-7,12345678901234567890,true,null,"x/y"],"a":{"b":{},"c":[]}}`)
+		return json.RawMessage(`{"z":["1","0.1","-2.5e-7","12345678901234567890",true,null,"x/y"],"a":{"b":{},"c":[]}}`)
 	case 4:
 		return json.RawMessage(fmt.Sprintf(`{"kind":"judgment","type":%s,"list":[%s,"b"]}`, strJSON(w.word()), strJSON(w.word())))
 	}
-	return json.RawMessage(`{"f":1e20,"g":0.30000000000000004,"h":-0}`)
+	return json.RawMessage(`{"f":"1e20","g":false,"h":null}`)
 }
 
 func strJSON(s string) string {
@@ -345,7 +358,13 @@ func TestLogTwinAgreesWithLuaOnRandomEntries(t *testing.T) {
 	w := newLogWorld(t, 20260930)
 	for w.lines < 10000 {
 		w.apply(w.randomStep())
+		// Reads throughout the run, while the histories are short enough for
+		// atomic cardlines answers and long enough for pages.
+		if w.ops%150 == 0 {
+			w.compareReads("0", uint64(w.lines))
+		}
 	}
+	w.compareReads("0", uint64(w.lines))
 	for _, about := range logWorldAbouts {
 		got := logDraftHistory(t, w.fx.Client, w.fx.Space, "0", about)
 		want := w.log.History(w.fx.Space, "0", about)
@@ -358,7 +377,18 @@ func TestLogTwinAgreesWithLuaOnRandomEntries(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("the twin and the store agree on %d lines over %d steps", w.lines, w.ops)
+	w.advance()
+	for _, kind := range []string{"last", "lines/atomic", "lines/page", "cardlines/atomic", "cardlines/page", "lineat"} {
+		if w.reads[kind] == 0 {
+			t.Errorf("no %s answer was compared", kind)
+		}
+	}
+	for _, code := range []string{"CURSOR", "BUDGET", "REQUEST", "LOGID"} {
+		if w.reads["refused/"+code] == 0 {
+			t.Errorf("no %s refusal was compared", code)
+		}
+	}
+	t.Logf("the twin and the store agree on %d lines over %d steps, and on the reads %v", w.lines, w.ops, w.reads)
 }
 
 // TestReplayWritesTablesAndCompares (L2 6, J5 at 10,000 cards; 100,000 is
@@ -452,4 +482,210 @@ func normalRecord(r MemRecord) MemRecord {
 		r.Fields = nil
 	}
 	return r
+}
+
+// readBoth runs one read on the store and on the twin and compares the
+// refusal code, or the answer: an atomic answer's list, or a page's items,
+// next, through and exhausted, each as decoded JSON (the store's cjson and
+// the twin order object keys differently). It returns the store's reply.
+func (w *logWorld) readBoth(plan ReadPlan) (ReadReply, string) {
+	w.t.Helper()
+	plan.Space = w.fx.Space
+	got, err := w.store.Read(context.Background(), plan)
+	want, ref := w.log.Read(w.fx.Space, plan)
+	storeCode, twinCode := "", ""
+	var refusal *Refusal
+	if errors.As(err, &refusal) {
+		storeCode = refusal.Code
+	} else if err != nil {
+		w.t.Fatalf("store read: %v", err)
+	}
+	if ref != nil {
+		twinCode = ref.Code
+	}
+	q, _ := json.Marshal(plan.Queries[0])
+	if storeCode != twinCode {
+		w.t.Fatalf("%s read %s: store %q, twin %q", plan.Mode, q, storeCode, twinCode)
+	}
+	if storeCode != "" {
+		w.reads["refused/"+storeCode]++
+		return got, storeCode
+	}
+	if plan.Mode == "page" {
+		if a, b := logSemantic(w.t, []any{got.Items, got.Next, got.Through, got.Exhausted}),
+			logSemantic(w.t, []any{want.Items, want.Next, want.Through, want.Exhausted}); !reflect.DeepEqual(a, b) {
+			w.t.Fatalf("page %s:\nstore %v\ntwin  %v", q, a, b)
+		}
+	} else if a, b := logSemantic(w.t, got.Answers), logSemantic(w.t, want.Answers); !reflect.DeepEqual(a, b) {
+		w.t.Fatalf("atomic %s:\nstore %v\ntwin  %v", q, a, b)
+	}
+	mode := plan.Mode
+	if mode == "" {
+		mode = "atomic"
+	}
+	kind := plan.Queries[0].Kind
+	if kind != "last" {
+		kind += "/" + mode
+	}
+	w.reads[kind]++
+	return got, ""
+}
+
+// lineAtBoth reads one line by seq through the store's L.read_line_at (the
+// probe kind) and the twin's LineAt, and compares the code or the decoded
+// line: its kind, ids, about and meta.
+func (w *logWorld) lineAtBoth(epoch Decimal, seq string) {
+	w.t.Helper()
+	wire, err := w.fx.Client.FCall(context.Background(), "ns_tset_lineat_probe", []string{}, Version,
+		fmt.Sprintf(`{"epoch":%q,"space":%q,"queries":[{"kind":"lineat","seq":%q}]}`, epoch, w.fx.Space, seq)).Result()
+	if err != nil {
+		w.t.Fatalf("line-at probe: %v", err)
+	}
+	var reply map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(wire.(string)), &reply); err != nil {
+		w.t.Fatal(err)
+	}
+	storeCode := logDraftCode(w.t, reply)
+	line, ref := w.log.LineAt(w.fx.Space, epoch, seq)
+	twinCode := ""
+	if ref != nil {
+		twinCode = ref.Code
+	}
+	if storeCode != twinCode {
+		w.t.Fatalf("line at %s@%s: store %q, twin %q", seq, epoch, storeCode, twinCode)
+	}
+	if storeCode != "" {
+		w.reads["refused/"+storeCode]++
+		return
+	}
+	var answers []struct {
+		Seq      string          `json:"seq"`
+		LineKind string          `json:"line_kind"`
+		IDs      []string        `json:"ids"`
+		About    []string        `json:"about"`
+		Meta     json.RawMessage `json:"meta"`
+	}
+	if err := json.Unmarshal(reply["answers"], &answers); err != nil || len(answers) != 1 {
+		w.t.Fatalf("line-at answers %s: %v", reply["answers"], err)
+	}
+	body, err := ParseLogBody(line.D)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	a := answers[0]
+	norm := func(s []string) []string {
+		if len(s) == 0 {
+			return nil
+		}
+		return s
+	}
+	meta := json.RawMessage("null")
+	if len(body.Meta) != 0 {
+		meta = body.Meta
+	}
+	if a.Seq != string(line.Seq) || a.LineKind != LogWords[body.K] || !reflect.DeepEqual(norm(a.IDs), norm(body.IDs)) ||
+		!reflect.DeepEqual(norm(a.About), norm(body.About)) ||
+		!reflect.DeepEqual(logSemantic(w.t, a.Meta), logSemantic(w.t, meta)) {
+		w.t.Fatalf("line at %s@%s:\nstore %+v meta %s\ntwin  %s", seq, epoch, a, a.Meta, line.D)
+	}
+	w.reads["lineat"]++
+}
+
+// compareReads runs a round of random reads of every kind the log serves on
+// both sides, at an epoch whose tail is known: last; lines atomic and paged
+// with an optional through_seq, ids_limit and bytes_limit, cursors past the
+// tail included; cardlines atomic and paged over a few abouts with a
+// projection, meta or not, a repeated about and a changed cursor; and lines by
+// seq, past the tail and non-canonical included (read 4812 M2).
+func (w *logWorld) compareReads(epoch Decimal, tail uint64) {
+	w.t.Helper()
+	w.readBoth(ReadPlan{Epoch: epoch, Queries: []ReadQuery{{Kind: "last"}}})
+	seq := func(n uint64) Decimal { return Decimal(strconv.FormatUint(n, 10)) }
+	pick := func(max uint64) uint64 { return uint64(w.rng.Int63n(int64(max) + 1)) }
+	for i := 0; i < 4; i++ {
+		q := ReadQuery{Kind: "lines", AfterSeq: seq(pick(tail + 1)), Limit: 1 + w.rng.Intn(40)}
+		if w.rng.Intn(3) == 0 {
+			through := seq(pick(tail + 1))
+			q.ThroughSeq = &through
+		}
+		if w.rng.Intn(3) == 0 {
+			q.IDsLimit = 1 + w.rng.Intn(100)
+		}
+		if w.rng.Intn(4) == 0 {
+			q.BytesLimit = 4096 + w.rng.Intn(16000)
+		}
+		mode := []string{"", "page"}[i%2]
+		reply, code := w.readBoth(ReadPlan{Epoch: epoch, Mode: mode, Queries: []ReadQuery{q}})
+		for p := 0; p < 2 && mode == "page" && code == "" && !reply.Exhausted; p++ {
+			var next, through string
+			if json.Unmarshal(reply.Next, &next) != nil || json.Unmarshal(reply.Through, &through) != nil {
+				w.t.Fatalf("a lines page's next %s and through %s", reply.Next, reply.Through)
+			}
+			n, _ := strconv.ParseUint(next, 10, 64)
+			th := Decimal(through)
+			q.AfterSeq, q.ThroughSeq = seq(n-1), &th
+			reply, code = w.readBoth(ReadPlan{Epoch: epoch, Mode: mode, Queries: []ReadQuery{q}})
+		}
+	}
+	names := append(append([]string{}, logWorldShared...), logWorldOwn...)
+	for i := 0; i < 4; i++ {
+		abouts := []string{w.about()}
+		for k := w.rng.Intn(3); k > 0; k-- {
+			if a := w.about(); a != abouts[0] {
+				abouts = append(abouts, a)
+			}
+		}
+		if w.rng.Intn(8) == 0 {
+			abouts = append(abouts, "p-none")
+		}
+		if w.rng.Intn(10) == 0 {
+			abouts = append(abouts, abouts[0]) // a repeated about is REQUEST
+		}
+		fields := []string{}
+		for _, f := range names {
+			if w.rng.Intn(3) == 0 {
+				fields = append(fields, f)
+			}
+		}
+		q := ReadQuery{Kind: "cardlines", Abouts: abouts, Fields: fields, IncludeMeta: w.rng.Intn(2) == 0,
+			Limit: 1 + w.rng.Intn(60)}
+		mode := []string{"", "page"}[i%2]
+		reply, code := w.readBoth(ReadPlan{Epoch: epoch, Mode: mode, Queries: []ReadQuery{q}})
+		for p := 0; p < 3 && mode == "page" && code == "" && !reply.Exhausted; p++ {
+			var cursor CardCursor
+			if err := json.Unmarshal(reply.Next, &cursor); err != nil {
+				w.t.Fatalf("a cardlines page's cursor %s: %v", reply.Next, err)
+			}
+			q.Cursor = &cursor
+			if p == 2 {
+				// A cursor whose identity changed is CURSOR on both.
+				bad := cursor
+				bad.IncludeMeta = !q.IncludeMeta
+				w.readBoth(ReadPlan{Epoch: epoch, Mode: mode, Queries: []ReadQuery{{Kind: "cardlines", Abouts: abouts,
+					Fields: fields, IncludeMeta: q.IncludeMeta, Limit: q.Limit, Cursor: &bad}}})
+			}
+			reply, code = w.readBoth(ReadPlan{Epoch: epoch, Mode: mode, Queries: []ReadQuery{q}})
+		}
+	}
+	for _, s := range []string{string(seq(1 + pick(tail))), string(seq(tail + 1 + pick(5))), "01"} {
+		if s == "0" {
+			s = "1"
+		}
+		w.lineAtBoth(epoch, s)
+	}
+}
+
+// advance ends epoch 0 with an advance on both sides, restores a row of each
+// table and writes a card and a note in epoch 1, each line compared as apply
+// compares; then the reads of epoch 1 are compared (L2 2: the new epoch's log
+// starts at seq 1 with the advance line).
+func (w *logWorld) advance() {
+	w.t.Helper()
+	w.apply(Step{Epoch: "0", Entries: []Entry{{Kind: "advance", AdvanceFrom: "0"},
+		{Kind: "rows", Table: "work", Add: []string{"r0"}}, {Kind: "rows", Table: "aux", Add: []string{"r0"}}},
+		Notes: []Note{{Line: NoteLine{Kind: "note", Meta: json.RawMessage(`{"why":"advance"}`)}, About: []string{"p1"}}}})
+	w.apply(Step{Epoch: "1", Entries: []Entry{{Kind: "create", Table: "work", To: "r0:a", IDs: []string{"after-advance"},
+		Scores: []string{"1"}, About: []string{"p1"}, Set: map[string]string{"brief": "b"}}}})
+	w.compareReads("1", 5)
+	w.lineAtBoth("1", "1")
 }

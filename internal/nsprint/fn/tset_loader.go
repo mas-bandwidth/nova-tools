@@ -39,16 +39,15 @@ var TSetFunctions = []string{"ns_tset_step", "ns_tset_read", "ns_tset_define", "
 
 // TSetSource assembles an isolated nova_sprint library with the tset writer,
 // reader and lifecycle. The lexical shim registers only TSetFunctions at
-// library load time, and in the sprint profile SprintFunctions beside them
-// (registrationFilter); the unchanged legacy table.lua belongs to the old-tool
-// profile. The standalone profile leaves Layer 2's log out; the composed and
-// sprint profiles load it. The prelude carries the profile and the build: a
-// digest of the profile and of everything after the prelude, which
-// ns_tset_define compares with the build its caller names (the lifecycle
-// amendment, section 2). The build is the library's declaration of its
-// source, made here at assembly from the body loaded beside it: the store
-// compares it and never recomputes it, so a library loaded by another hand
-// declares whatever it says.
+// library load time, and in the sprint profile SprintFunctions beside them;
+// the unchanged legacy table.lua belongs to the old-tool profile. The
+// standalone profile leaves Layer 2's log out; the composed and sprint
+// profiles load it. The prelude carries the profile and the build: a digest of the
+// profile and of everything after the prelude, which ns_tset_define compares
+// with the build its caller names (the lifecycle amendment, section 2). The
+// build is the library's declaration of its source, made here at assembly
+// from the body loaded beside it: the store compares it and never recomputes
+// it, so a library loaded by another hand declares whatever it says.
 func TSetSource(profile TSetProfile) (string, error) {
 	body, err := tsetBody(profile)
 	if err != nil {
@@ -100,7 +99,7 @@ func tsetBody(profile TSetProfile) (string, error) {
 	b.WriteString("  acl_check_cmd = function(...) return runtime_redis().acl_check_cmd(...) end,\n")
 	b.WriteString("  register_function = function(spec, callback)\n")
 	b.WriteString("    local name = callback and spec or spec.function_name\n")
-	b.WriteString("    if " + registrationFilter(profile) + " then\n")
+	b.WriteString("    if " + tsetFilter(profile) + " then\n")
 	b.WriteString("      if callback == nil then return native_redis.register_function(spec) end\n")
 	b.WriteString("      return native_redis.register_function(spec, callback)\n")
 	b.WriteString("    end\n")
@@ -130,19 +129,19 @@ func tsetBody(profile TSetProfile) (string, error) {
 	return b.String(), nil
 }
 
-// registrationFilter is the Lua condition the shim admits a registration
-// under: TSetFunctions in every profile (the log registers none of its own),
-// and the sprint's two (SprintFunctions) in the sprint profile.
-func registrationFilter(profile TSetProfile) string {
+// tsetFilter is the registration filter's condition: the name is one of
+// TSetFunctions (the log registers none of its own), or, in the sprint
+// profile, one of SprintFunctions.
+func tsetFilter(profile TSetProfile) string {
 	names := append([]string(nil), TSetFunctions...)
 	if profile == TSetSprint {
 		names = append(names, SprintFunctions...)
 	}
-	conds := make([]string, len(names))
-	for i, n := range names {
-		conds[i] = "name == '" + n + "'"
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = "name == '" + name + "'"
 	}
-	return strings.Join(conds, " or ")
+	return strings.Join(parts, " or ")
 }
 
 func appendTSetFragment(b *strings.Builder, name string) error {

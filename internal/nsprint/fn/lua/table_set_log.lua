@@ -14,8 +14,11 @@
 -- stream line per emitting entry and per note, allocates every sequence in
 -- plan, and returns write descriptors only. L.read(ctx, query) serves last,
 -- lines and cardlines. L.read_line_at(ctx, seq, query_index) reads one exact
--- line. Every read goes through S.readcmd, every count through S.charge, and
--- every write is an S.writecmd descriptor; nothing here executes a mutation.
+-- line. L.check_step is the composed profile's static request rules, which
+-- Layer 1's validator runs. Every read goes through S.readcmd, every read
+-- count through S.charge (the reporting counter generated_log_bytes has no
+-- limit and no checked helper), and every write is an S.writecmd descriptor;
+-- nothing here executes a mutation.
 -- S.* helpers are bound at call time: this fragment loads before the
 -- validation fragment defines S.json, S.array and the decimal helpers.
 if NS.tset_profile then
@@ -69,15 +72,15 @@ if NS.tset_profile then
     return keys
   end
 
-  -- Generic canonical encoder for caller meta. Meta is the one place a JSON
-  -- number may appear (the meta exemption); it uses the codec's number form.
+  -- Generic canonical encoder for caller meta. A body d holds no JSON number
+  -- (L2 1.1): L.check_step refuses a number in meta before any guard, so one
+  -- here is a broken invariant, not a request's fault.
   local function encode(v)
     local t = type(v)
     if t == 'string' then return str(v) end
     if v == cjson.null then return 'null' end
     if t == 'boolean' then return v and 'true' or 'false' end
-    if t == 'number' then return S.json.encode(v) end
-    if t ~= 'table' then error('tset log: unencodable value', 0) end
+    if t ~= 'table' then error('tset log: unencodable value in meta', 0) end
     local out = {}
     if S.is_array(v) then
       for i = 1, #v do out[i] = encode(v[i]) end
@@ -225,6 +228,37 @@ if NS.tset_profile then
       about = about, note = position, detail = {}}, nil
   end
 
+  -- A JSON number anywhere in a decoded meta value.
+  local function has_number(v)
+    if type(v) == 'number' then return true end
+    if type(v) ~= 'table' then return false end
+    for _, item in pairs(v) do
+      if has_number(item) then return true end
+    end
+    return false
+  end
+
+  -- The composed profile's static rules on a step, run by Layer 1's validator
+  -- on the original request and again on the combined staged request, so they
+  -- refuse REQUEST before any guard (L1 8's fixed precedence): every
+  -- member-changing entry carries about (L2 1.2), and no meta, an entry's or
+  -- a note's, holds a JSON number, since a body d holds none (L2 1.1). The
+  -- validator has already bounded meta's depth and shapes.
+  function L.check_step(req)
+    for i = 1, #req.entries do
+      local e = req.entries[i]
+      if e.kind == 'create' or e.kind == 'move' or e.kind == 'remove' then
+        if e.about == nil or has_number(e.meta) then
+          return nil, S.refuse('REQUEST', {entry_index = i - 1, table = e.t})
+        end
+      end
+    end
+    for i = 1, #(req.notes or {}) do
+      if has_number(req.notes[i].line.meta) then return nil, S.refuse('REQUEST') end
+    end
+    return true, nil
+  end
+
   local function type_of(ctx, key)
     local value, err = S.readcmd(ctx, {argv = {'TYPE', key}, access = {}}, 16, 'log')
     if err then return nil, err end
@@ -287,7 +321,6 @@ if NS.tset_profile then
     if type(ctx.now_ms) ~= 'string' then error('tset log: TIME was not sampled for this call', 0) end
     local notes = ctx.notes
     if type(notes) ~= 'table' or notes ~= ctx.request.notes then return nil, S.refuse('REQUEST') end
-    local originals = ctx.request.entries or {}
     local lines = {}
     -- Member and topology lines in combined entry order. A guard, a count,
     -- a guard-only rowset, an unchanged rows entry and an entry whose
@@ -297,10 +330,8 @@ if NS.tset_profile then
       local kind = type(e) == 'table' and e.kind or nil
       local line, err
       if kind == 'create' or kind == 'move' or kind == 'remove' then
-        -- The composed profile requires about on every member-changing entry.
-        if type(originals[ix]) ~= 'table' or originals[ix].about == nil then
-          return nil, S.refuse('REQUEST', {entry_index = ix - 1, table = e.table})
-        end
+        -- about on every member-changing entry is L.check_step's, in
+        -- validation, before the guards.
         if #e.changed_ids > 0 then
           line, err = member_line(ctx, e, ix - 1)
           if err then return nil, err end
@@ -458,9 +489,10 @@ if NS.tset_profile then
   end
 
   -- The room this answer may use in the encoded reply: the shared 8 MiB less
-  -- what earlier answers used, less a reserved envelope. bytes_limit is not
-  -- admitted by Layer 1's static validator; it is honoured here if it
-  -- arrives.
+  -- what earlier answers used, or a lines query's bytes_limit when smaller,
+  -- less a reserved envelope (L1 7; decision 6: lines takes an optional
+  -- bytes_limit, bounded by the 8 MiB reply cap, the envelope reserved
+  -- first). Layer 1's validator admits it on lines only.
   local function answer_room(ctx, q)
     local cap = MAX_REPLY - (ctx.read_encoded or 512) - 1
     if type(q.bytes_limit) == 'number' and q.bytes_limit < cap then cap = q.bytes_limit end
@@ -626,7 +658,11 @@ if NS.tset_profile then
       end
       if not named then return nil, fail('DRIFT', index, {budget = 'history', ids = {about}}) end
       local item = {seq = line.seq, kind = 'note', at_ms = b.ms}
-      if include_meta and b.meta ~= nil then item.meta = copy_body(b.meta, 2, {left = 2 * #line.d + 64}) end
+      if include_meta and b.meta ~= nil then
+        local meta, copied = copy_body(b.meta, 2, {left = 2 * #line.d + 64})
+        if not copied then return nil, fail('DRIFT', index, {budget = 'log_body'}) end
+        item.meta = meta
+      end
       out[1] = item
       return out, nil
     end
@@ -669,7 +705,11 @@ if NS.tset_profile then
         end
         if next(set) ~= nil then item.set = set end
         if #unset > 0 then item.unset = unset end
-        if include_meta and b.meta ~= nil then item.meta = copy_body(b.meta, 2, {left = 2 * #line.d + 64}) end
+        if include_meta and b.meta ~= nil then
+          local meta, copied = copy_body(b.meta, 2, {left = 2 * #line.d + 64})
+          if not copied then return nil, fail('DRIFT', index, {budget = 'log_body'}) end
+          item.meta = meta
+        end
         out[#out + 1] = item
       end
     end
@@ -829,7 +869,10 @@ if NS.tset_profile then
   end
 
   -- One exact line by seq, decoded: ids, about and meta, with the common
-  -- fetched-byte, probe and log_id charges. A fetched line is reused within
+  -- fetched-byte, probe and log_id charges. seq is a canonical decimal string
+  -- in 1..2^53-1; any other value, a Lua number included, is REQUEST. A seq
+  -- with no line, past the tail or in a hole, is LOGID (decision 12: LOGID
+  -- when a history seq has no line). A fetched line is reused within
   -- the call, but each use charges its ids. The ids, about and meta tables
   -- are the call's cached decode: a caller reads them and never changes them.
   function L.read_line_at(ctx, seq, index)
