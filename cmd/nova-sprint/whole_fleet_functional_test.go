@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -64,13 +65,46 @@ func loopDeals(out string) [][]string {
 	return ticks
 }
 
+// fleetReady is the ready cards on a member's queue, as the member sees them.
+func fleetReady(t *testing.T, do func(args ...string) string, member string) int {
+	t.Helper()
+	var q struct {
+		Cards []struct {
+			Col string `json:"col"`
+		} `json:"cards"`
+	}
+	if err := json.Unmarshal([]byte(do("queue", "--as", member, "--json")), &q); err != nil {
+		t.Fatalf("queue of %s: %v", member, err)
+	}
+	n := 0
+	for _, c := range q.Cards {
+		if c.Col == "ready" {
+			n++
+		}
+	}
+	return n
+}
+
 // The owner's run on the store (the dogfood finding of 2026-09-30, "ticking
 // halves"; his words: "we need to not do this. whole fleet table, one
-// update."): eight machines of width 64, three streams of 1,000, the loop
-// woken by the log, the world played at 10 ms. Every tick that deals reaches
-// every machine (the whole fleet in one update), never part of the fleet one
-// tick and the rest the next, and the deal's index is a counter
-// (errata 3 amendment 5, the owner's form).
+// update."): eight machines of width 64, three streams of 1,000. The machine
+// ticks and the world plays in turn, so every deal sees every member's room
+// freed by the world's whole batch before it: the tick deals, the world takes
+// what was dealt (every member up takes, in the one step, in the tick after
+// the deal reaches it), the world finishes it, the tick deals again. Every
+// tick that deals reaches every machine (the whole fleet in one update), never
+// part of the fleet one tick and the rest the next; over the run no member is
+// dealt more than one card more than another (the rolling index, errata 3
+// amendment 5, goes round the fleet a card a member); and the deal's index is a
+// counter (errata 3 amendment 5, the owner's form).
+//
+// The turns are the test's, not a sleep's: a machine ticking on the log while
+// the world plays at 10 ms is not a run this can assert the whole fleet of. The
+// world and the machine each write the store in steps of their own, and a deal
+// that commits between two of the world's steps deals the room it finds: a run
+// of it on a loaded machine dealt 448 cards, 64 to each of seven members, the
+// eighth not yet having room. A deal reaches every member that has room. The
+// wake on the log is run_wake_functional_test.go's.
 func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	t.Parallel()
 	addr := testutil.Start(t)
@@ -110,28 +144,45 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		t.Fatalf("run: %d", code)
 	}
 	var out, errb lockedBuffer
-	lctx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		loop.runLoop(lctx, st, 0, 0, &out, &errb)
-	}()
-	var pout, perr bytes.Buffer
-	world.run([]string{"play", "--every", "10ms", "--ticks", "40"}, &pout, &perr)
-	cancel()
-	<-done
+	// Each round is one machine tick and one world tick; the world takes
+	// (and, the round after, finishes) every card the tick dealt, so the next
+	// deal that has cards to give has the whole fleet's room. A round is
+	// 1 ms of world time, and the rounds are bounded, never timed.
+	const rounds = 16
+	dealing := 0
+	for i := 0; i < rounds; i++ {
+		loop.runLoop(ctx, st, 0, 1, &out, &errb)
+		dealt := len(loopDeals(out.String())) > dealing
+		dealing = len(loopDeals(out.String()))
+		var pout, perr bytes.Buffer
+		if code := world.run([]string{"play", "--every", "1ms", "--ticks", "1"}, &pout, &perr); code != 0 {
+			t.Fatalf("play: %d %s%s", code, pout.String(), perr.String())
+		}
+		if !dealt {
+			continue
+		}
+		// the tick dealt: the world's tick took every member's ready cards,
+		// none left behind for a tick after
+		for _, m := range members {
+			if n := fleetReady(t, do, m); n != 0 {
+				t.Fatalf("round %d: %s has %d ready cards after the tick that followed the deal: every member up takes in that tick\n%s", i+1, m, n, out.String())
+			}
+		}
+	}
 
 	ticks := loopDeals(out.String())
 	if len(ticks) < 3 {
-		t.Fatalf("%d ticks dealt, want at least 3: %s", len(ticks), out.String())
+		t.Fatalf("%d ticks dealt in %d rounds, want at least 3: %s", len(ticks), rounds, out.String())
 	}
 	dealt := 0
+	perMember := map[string]int{}
 	for i, d := range ticks {
 		var set []string
 		for _, m := range d {
 			if !slices.Contains(set, m) {
 				set = append(set, m)
 			}
+			perMember[m]++
 		}
 		slices.Sort(set)
 		t.Logf("tick %d: %d dealt to %v", i+1, len(d), set)
@@ -139,6 +190,13 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		if len(d) >= len(members) && !slices.Equal(set, members) {
 			t.Fatalf("tick %d dealt %d cards to %v only: every tick's deal reaches the whole fleet", i+1, len(d), set)
 		}
+	}
+	least, most := dealt, 0
+	for _, m := range members {
+		least, most = min(least, perMember[m]), max(most, perMember[m])
+	}
+	if most-least > 1 {
+		t.Fatalf("members were dealt from %d to %d cards over the run (%v): the deal goes round the fleet a card a member, so no member is more than one card ahead", least, most, perMember)
 	}
 	snap, err := st.Load(ctx, store.All, nil)
 	if err != nil {
