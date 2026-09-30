@@ -160,6 +160,7 @@ func (s *Server) Stop() {
 	s.stop.Do(func() {
 		// An error here is a process that has already ended, which is the
 		// state Stop is asked for; the wait below is the proof either way.
+		// ignored: a process that has already ended is the state Stop is asked for (see the comment above); the wait is the proof
 		_ = s.cmd.Process.Kill()
 	})
 	<-s.exited

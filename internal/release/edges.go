@@ -482,6 +482,7 @@ func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, 
 	// Drain what is left so the child never blocks on a full pipe, then wait.
 	// A fetch that failed halfway must not read as a success just because this
 	// side stopped listening.
+	// ignored: a drain so the child never blocks (see the comment above); the wait error below is the one returned
 	_, _ = io.Copy(io.Discard, stdout)
 	waitErr := cmd.Wait()
 	if unpackErr != nil {

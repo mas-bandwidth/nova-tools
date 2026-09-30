@@ -5,9 +5,11 @@ package ci
 import (
 	"bytes"
 	"errors"
+	"html"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -38,6 +40,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 
 	root := repoRoot(t)
 	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
+	catalogue := readmeWhatItDoes(t, readFile(t, filepath.Join(root, "README.md")))
 
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
@@ -59,7 +62,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 
 			// (c) The transcript section in docs/TESTS.md that a test executes.
 			if firstRunErr != nil {
-				t.Errorf("%v\n(docs/ONBOARDING.md point 5(c): every tool's docs/TESTS.md section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
+				t.Errorf("%v\n(docs/STANDARD.md, onboarding point 5(c): every tool's docs/TESTS.md section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
 			}
 
 			// (a), first half: the bare command REFUSES in one line and names the
@@ -98,9 +101,32 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			// Every verb of it answers -h with that verb's help (verbhelp_functional_test.go).
 			everyVerbAnswersHelp(t, root, tool, bin, banner)
 
+			// (d) The banner answers the three questions a stranger brings, before
+			// the usage lines (docs/ONBOARDING.md point 6): line 1 says in one
+			// sentence what the tool does, a `how it works:` paragraph near the top
+			// names its nouns and where its state lives, and the `example:` block
+			// is a first run of at least three command lines. No exemptions.
+			sentence, err := onboarding.OpeningSentence(banner, tool)
+			if err != nil {
+				t.Errorf("%v\n(docs/ONBOARDING.md point 6: what does it do?)", err)
+			}
+			if onboarding.HowItWorksLine(banner) == 0 {
+				t.Errorf("`%s help` has no %q paragraph in its first %d lines; it names the tool's nouns and where its state lives (docs/ONBOARDING.md point 6: how does it work?)", tool, onboarding.HowItWorksLabel, onboarding.HowItWorksWithin)
+			} else if n := onboarding.HowItWorksLength(banner); n > onboarding.HowItWorksMaxLines {
+				t.Errorf("`%s help`'s %q paragraph takes %d lines, over %d; it names the nouns and where the state lives, and the usage says the rest (docs/ONBOARDING.md point 6)", tool, onboarding.HowItWorksLabel, n, onboarding.HowItWorksMaxLines)
+			}
+			if got := onboarding.ExampleCommands(banner, tool); len(got) < onboarding.MinExampleCommands {
+				t.Errorf("`%s help`'s example: block runs the tool %d time(s): %q; a first run is at least %d command lines a stranger runs in order (docs/ONBOARDING.md point 6: how do I use it?)", tool, len(got), got, onboarding.MinExampleCommands)
+			}
+			// The README's catalogue says the same sentence, so a reader choosing a
+			// tool there and a reader opening its help meet one answer.
+			if cell, listed := catalogue[tool]; listed && err == nil && cell != sentence {
+				t.Errorf("README.md's \"What it does\" for %s is %q, and line 1 of `%s help` says %q; they are one sentence", tool, cell, tool, sentence)
+			}
+
 			examples, err := onboarding.ExampleLines(banner, tool)
 			if err != nil {
-				t.Fatalf("%v\n(docs/ONBOARDING.md point 1)\n\nwhat it printed:\n%s", err, banner)
+				t.Fatalf("%v\n(docs/STANDARD.md, onboarding point 1)\n\nwhat it printed:\n%s", err, banner)
 			}
 			for _, ex := range examples {
 				if strings.Contains(ex, "<") || strings.Contains(ex, ">") {
@@ -112,6 +138,47 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	if found == 0 {
 		t.Fatal("no command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
 	}
+}
+
+// readmeWhatItDoes returns the "What it does" cell of every row of README.md's
+// catalogue, keyed by the tool the row links, HTML entities decoded. A catalogue
+// without that column, or a row without the cell, fails here rather than
+// passing by comparing nothing.
+func readmeWhatItDoes(t *testing.T, readme string) map[string]string {
+	t.Helper()
+	header := regexp.MustCompile(`<thead><tr>(.*?)</tr></thead>`).FindStringSubmatch(readme)
+	if header == nil {
+		t.Fatal("README.md has no catalogue table header")
+	}
+	col := -1
+	for i, th := range regexp.MustCompile(`<th>(.*?)</th>`).FindAllStringSubmatch(header[1], -1) {
+		if th[1] == "What it does" {
+			col = i
+		}
+	}
+	if col < 0 {
+		t.Fatalf("README.md's catalogue has no \"What it does\" column: %s", header[0])
+	}
+	cells := regexp.MustCompile(`<td(?: nowrap)?>(.*?)</td>`)
+	link := regexp.MustCompile(`<a href="[^"]+">(nova-[a-z-]+)</a>`)
+	out := map[string]string{}
+	for _, row := range regexp.MustCompile(`<tr><td>.*?</tr>`).FindAllString(readme, -1) {
+		tds := cells.FindAllStringSubmatch(row, -1)
+		var tool string
+		for _, td := range tds {
+			if m := link.FindStringSubmatch(td[1]); m != nil && tool == "" {
+				tool = m[1]
+			}
+		}
+		if tool == "" || col >= len(tds) {
+			t.Fatalf("README.md catalogue row names no tool or has no \"What it does\" cell: %s", row)
+		}
+		out[tool] = html.UnescapeString(tds[col][1])
+	}
+	if len(out) == 0 {
+		t.Fatal("README.md's catalogue has no rows")
+	}
+	return out
 }
 
 // buildTool builds one command and returns its path. It is BUILT rather than called

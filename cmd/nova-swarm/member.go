@@ -232,6 +232,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		c.err = cmd.Wait()
 		release()
 		logf.Close()
+		// ignored: the pid file of a child that has ended; a leftover names a dead pid, which the next start overwrites
 		_ = safepath.RemoveUnder(r.slots, pidPath)
 		close(c.done)
 	}()

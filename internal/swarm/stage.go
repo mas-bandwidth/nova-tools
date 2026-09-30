@@ -346,6 +346,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	cloneCmd := stageGit(ctx, cloneArgs...)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		if stageTimedOut(ctx, err) {
+			// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
 			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
 		}
@@ -355,11 +356,17 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	// Update remote origin to baseRepo if cloned from mirror
 	if cloneSource != baseRepo {
 		remCmd := stageGit(ctx, "-C", opts.TargetDir, "remote", "set-url", "origin", baseRepo)
-		_ = remCmd.Run()
+		if out, err := remCmd.CombinedOutput(); err != nil {
+			// A checkout whose origin still names the mirror pushes to the mirror:
+			// refuse the stage rather than hand the card that checkout.
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, Wall: time.Since(start)},
+				fmt.Errorf("git remote set-url origin %s failed in %s: %s (%w)", baseRepo, opts.TargetDir, strings.TrimSpace(string(out)), err)
+		}
 	}
 
 	fail := func(what string, out []byte, err error) (StageResult, error) {
 		if stageTimedOut(ctx, err) {
+			// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
 			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
 		}

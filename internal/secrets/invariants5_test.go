@@ -14,9 +14,12 @@ func TestCheckInvariant5DotDotNamedDirIsInsideTheStore(t *testing.T) {
 
 	root := t.TempDir()
 	store := filepath.Join(root, "store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	inside := func(keyPath string) bool {
 		for _, f := range CheckInvariant5(store, keyPath) {
-			if f.Kind == "store-private-key" {
+			if f.Kind == "store-private-key" && f.Reason == "key file is inside store directory" {
 				return true
 			}
 		}

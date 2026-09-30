@@ -60,7 +60,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 	}
 	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
 	if len(out) > limit {
+		// ignored: the child is killed for writing past the limit, which is reported as the truncated flag
 		_ = cmd.Process.Kill()
+		// ignored: the child was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		return string(out[:limit]), true, nil
 	}
@@ -97,7 +99,9 @@ func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) e
 	}
 	consumeErr := consume(stdout)
 	if consumeErr != nil {
+		// ignored: the child is killed because the consumer failed; the consume error is the one returned
 		_ = cmd.Process.Kill()
+		// ignored: the child was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		return consumeErr
 	}
@@ -119,6 +123,7 @@ func (b *limitedGitBuffer) Write(p []byte) (int, error) {
 		if remain > len(p) {
 			remain = len(p)
 		}
+		// ignored: a bytes.Buffer write never returns an error
 		_, _ = b.Buffer.Write(p[:remain])
 	}
 	return len(p), nil

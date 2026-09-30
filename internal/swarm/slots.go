@@ -266,15 +266,18 @@ func publishSlotLease(store, id, body string) error {
 		return err
 	}
 	if err := atomicfile.Write(filepath.Join(tmp, "lease"), []byte(body), 0o644, atomicfile.ExactMode()); err != nil {
+		// ignored: a best-effort cleanup of this call's own temp directory; the write error is the one returned
 		_ = safepath.RemoveUnder(store, tmp)
 		return err
 	}
 	dest := filepath.Join(slotStoreDir(store), id)
 	if _, err := os.Lstat(dest); err == nil {
+		// ignored: a best-effort cleanup of this call's own temp directory; the exists error is the one returned
 		_ = safepath.RemoveUnder(store, tmp)
 		return &os.PathError{Op: "publish", Path: dest, Err: os.ErrExist}
 	}
 	if err := os.Rename(tmp, dest); err != nil {
+		// ignored: a best-effort cleanup of this call's own temp directory; the rename error is the one returned
 		_ = safepath.RemoveUnder(store, tmp)
 		return err
 	}
@@ -297,6 +300,7 @@ func MakeSlotLease(store, id, owner string, pid int, label string, until time.Ti
 
 func slotLeaseID(owner string, now time.Time) string {
 	var b [4]byte
+	// ignored: crypto/rand.Read never returns an error on the supported platforms (Go 1.24+ panics instead)
 	_, _ = rand.Read(b[:])
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -429,6 +433,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 			// directories (publishSlotLease), so a directory with no lease
 			// file in it holds no lease and no hold. Reap it so garbage
 			// never accumulates.
+			// ignored: a reap of an empty lease directory, which holds no lease; the next take tries again
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
@@ -436,6 +441,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 			// SPEC-JOBS section 3: the next take reaps the dead worker's lease
 			// and its card returns to queue/ before the slot is granted.
 			_ = returnCardForLease(store, l)
+			// ignored: a reap of a dead worker's lease; the next take tries again
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}

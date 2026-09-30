@@ -17,13 +17,13 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 	manifest := "--file <manifest: " + manifestShape + ">"
 	return &tool.Tool{
 		Name:  "nova-version",
-		What:  "installed tool identities: report, snapshot, diff, and the TOOLS MOVED note (see docs/SPEC-VERSION.md)",
+		What:  "which version of each tool is installed, recorded and compared",
 		Stamp: stamp,
-		How: `nova-update and nova-version are ONE binary under two names: one build, reader and report.
-nova-version RECORDS and COMPARES; asking what is latest and installing it are nova-update's.
+		How: `report reads each tool's installed version; snapshot records a directory's binaries;
+diff compares two snapshots; moved writes the note of what two commits' binaries changed.
+It is ONE binary under two names; asking what is latest and installing are nova-update's.
 THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
-Report reads installed identities, no bus or network; --draft prints a note, send delivers it.
-Defaults: --max 20, --timeout 5s (snapshot 30s), --budget 60s. Examples run from a checkout.`,
+first run: from a nova-tools checkout, the example lines read the included manifest.`,
 		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
 		Verbs: []tool.Verb{
 			{
@@ -42,9 +42,10 @@ Defaults: --max 20, --timeout 5s (snapshot 30s), --budget 60s. Examples run from
 				Run: func(c *tool.Call) *tool.Out { return movedVerb(c, env) },
 			},
 			{
-				Name:   "snapshot",
-				Usage:  "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]",
-				Effect: tool.LocalWrite + "; with --file, inspection",
+				Name:    "snapshot",
+				Usage:   "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]",
+				Example: "snapshot --file cmd/nova-version/testdata/example.tsv",
+				Effect:  tool.LocalWrite + "; with --file, inspection",
 				Flags: func(f *tool.Flags) {
 					f.String("file", "", "manifest of adopted tools: count how many answer")
 					f.String("bin", "", "directory holding the binaries")

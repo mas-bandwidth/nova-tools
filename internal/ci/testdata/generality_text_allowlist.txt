@@ -21,7 +21,7 @@
 # fixture; changing the path changes the record's id, so the fixture is regenerated as a
 # piece, not edited.
 #
-# ceiling: 378
+# ceiling: 369
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
@@ -43,7 +43,6 @@
 .github/workflows/ci.yml:vision 10
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
-AGENTS.md:glenn 1
 CHANGELOG.md:batman 4
 CHANGELOG.md:emma 8
 CHANGELOG.md:glenn 11
@@ -90,8 +89,6 @@ docs/CLI.md:stella 7
 docs/CLI.md:studio 11
 docs/CONTRIBUTING.md:glenn 1
 docs/CONTRIBUTING.md:mas-bandwidth 1
-docs/CONTRIBUTING.md:space 2
-docs/CONTRIBUTING.md:studio 1
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:emma 3
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:mas-bandwidth 1
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:studio 2
@@ -100,8 +97,6 @@ docs/MAPPING-TOKENS-GROK.md:johnny 2
 docs/MAPPING-TOKENS-GROK.md:stella 2
 docs/MODELS.md:mini 1
 docs/MODELS.md:space 2
-docs/ONBOARDING.md:emma 1
-docs/ONBOARDING.md:glenn 1
 docs/PROPOSAL-TOKENS-RECORDS-185.md:emma 2
 docs/PROPOSAL-TOKENS-RECORDS-185.md:stella 4
 docs/PROPOSAL-TOKENS-RECORDS-185.md:studio 2
@@ -158,7 +153,6 @@ docs/SPEC-UPDATE.md:rowan 5
 docs/SPEC-UPDATE.md:space 1
 docs/SPEC-UPDATE.md:stella 6
 docs/SPEC-UPDATE.md:studio 6
-docs/SPEC.md:freddy 2
 docs/SPEC.md:rowan 4
 docs/SPEC.md:space 16
 docs/SPEC.md:studio 1
@@ -194,7 +188,6 @@ internal/ci/testdata/cardtemplate_allowlist.txt:mini 1
 internal/ci/testdata/cardtemplate_allowlist.txt:space 1
 internal/ci/testdata/cardtemplate_allowlist.txt:studio 1
 internal/ci/testdata/cardtemplate_allowlist.txt:vision 1
-internal/ci/testdata/compared_examples.txt:rowan 2
 internal/ci/testdata/deleted-tests.txt:glenn 9
 internal/ci/testdata/deleted-tests.txt:rowan 1
 internal/ci/testdata/deleted-tests.txt:space 1
@@ -208,10 +201,8 @@ internal/ci/testdata/serial-tests_allowlist.txt:stella 4
 internal/ci/testdata/silent_allowlist.txt:glenn 1
 internal/ci/testdata/testoutpath/after.go.txt:emma 1
 internal/ci/testdata/testoutpath/before.go.txt:emma 1
-internal/ci/testdata/unexecuted_examples.txt:emma 1
 internal/ci/testdata/unexecuted_examples.txt:mas-bandwidth 3
-internal/ci/testdata/unexecuted_examples.txt:mini 2
-internal/ci/testdata/unexecuted_examples.txt:rowan 19
+internal/ci/testdata/unexecuted_examples.txt:rowan 6
 internal/ci/testdata/unexecuted_examples.txt:stella 1
 internal/ci/timing/testdata/events.jsonl:mas-bandwidth 420
 internal/ci/timing/testdata/table.tsv:mas-bandwidth 400

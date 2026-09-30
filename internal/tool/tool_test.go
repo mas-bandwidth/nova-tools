@@ -267,7 +267,7 @@ func TestRun(t *testing.T) {
 		{name: "bare refuses in one line naming the door", args: nil, code: 2, emptyStdout: true, stderrLines: 1,
 			stderr: []string{"DEMO REFUSED: no verb given; the verbs are put, who, deny, forget, raw, version; run: nova-demo help"}},
 		{name: "help is the banner: what, how, usage, exit codes, example last", args: []string{"help"}, code: 0, emptyStderr: true,
-			stdout: []string{"nova-demo: a tool that exists to be tested\n\nIt keeps nothing.\n", "usage:\n  nova-demo put --store <dir> --key <k> [--max <n>]\n",
+			stdout: []string{"nova-demo: a tool that exists to be tested\n\nhow it works: It keeps nothing.\n", "usage:\n  nova-demo put --store <dir> --key <k> [--max <n>]\n",
 				"  nova-demo version\n  nova-demo help [<verb>]\n", "Every verb but raw takes --json", "\nexit codes: 0 done, 1 said no, 2 could not run.\n", "\nexample:\n  nova-demo put --store ./s --key k\n"}},
 		{name: "help of a verb is its -h", args: []string{"help", "put"}, code: 0, emptyStderr: true,
 			stdout: []string{"usage: nova-demo put [flags]", "nova-demo put --store <dir>", "--json", "--max", "exit codes: 0 done, 1 said no, 2 could not run."}},

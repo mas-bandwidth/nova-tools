@@ -78,6 +78,7 @@ func newApp(getenv func(string) string) *app {
 
 func (a *app) close() {
 	for _, c := range a.conns {
+		// ignored: a close at the end of the run, after every answer is printed
 		_ = c.Close()
 	}
 }
@@ -101,6 +102,7 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 			return nil, err
 		}
 		if err := libraryMatches(ctx, conn.Client(), addr); err != nil {
+			// ignored: a close on the failure path; the library mismatch error is the one returned
 			_ = conn.Close()
 			return nil, err
 		}

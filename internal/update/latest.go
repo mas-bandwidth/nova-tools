@@ -153,11 +153,14 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 		}
 		switch scheme {
 		case "github":
+			// ignored: a missing or mistyped field leaves v empty, which versionKey below refuses
 			_ = json.Unmarshal(a["tag_name"], &v)
 		case "npm":
+			// ignored: a missing or mistyped field leaves v empty, which versionKey below refuses
 			_ = json.Unmarshal(a["version"], &v)
 		case "brew":
 			var versions map[string]string
+			// ignored: a missing or mistyped field leaves v empty, which versionKey below refuses
 			_ = json.Unmarshal(a["versions"], &versions)
 			v = versions["stable"]
 		case "ollama":

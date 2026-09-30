@@ -588,6 +588,23 @@ func Path(from, to string) Norm {
 	}
 }
 
+// Recorded declares that a name a recorded fixture carries (`run`, an
+// organization or a repository the recording was made against) is written in
+// the document as the variable a reader sets (`doc`, such as $ORG). The name is
+// replaced whole: a word boundary before it, and `/`, a blank, `,` or the end of
+// the line after it, so a longer name containing it is compared as written.
+// CompareTranscript refuses a declaration whose doc is not a `$NAME` a
+// documented command types, whose run the document prints as written, or whose
+// name or variable is declared twice.
+func Recorded(doc, run string) Norm {
+	return Norm{
+		Name: fmt.Sprintf("%s (the recorded fixture's name, written %s)", run, doc),
+		Re:   regexp.MustCompile(`\b` + regexp.QuoteMeta(run)),
+		As:   doc,
+		path: true,
+	}
+}
+
 // Elide declares a normalisation this package has no constructor for. The name
 // is what a reader of the failing test is told is not compared, so it says what
 // the value IS rather than what it looks like.
