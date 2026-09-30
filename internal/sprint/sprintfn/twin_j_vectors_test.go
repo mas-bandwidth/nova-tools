@@ -73,6 +73,9 @@ type jVecExpect struct {
 	Refusal  string     `json:"refusal"`
 	Notes    []jVecNote `json:"notes"`
 	Commands [][]string `json:"commands"`
+	// Probes is how many typed reads J's pre stage makes: what JCost counts, and
+	// what the Lua half's stub of Layer 1's S counts readcmd calls to be.
+	Probes int `json:"probes,omitempty"`
 }
 
 type jVector struct {
@@ -151,6 +154,7 @@ func (v jVector) build() (*State, *Before, []tset.Entry, []NoteReq, LogPlan) {
 	for _, s := range v.NoteSeqs {
 		lp.NoteSeqs = append(lp.NoteSeqs, tset.Decimal(s))
 	}
+	st.Entries = entries
 	return st, obs, entries, reqs, lp
 }
 
@@ -172,6 +176,11 @@ func (v jVector) runGo() (jVecExpect, error) {
 	for _, c := range JCmds(st, jp, lp) {
 		out.Commands = append(out.Commands, c.Argv)
 	}
+	cost, ref := JCost(st, reqs, obs, entries)
+	if ref != nil {
+		return out, fmt.Errorf("JCost refused what JDecideEntries did not: %v", ref)
+	}
+	out.Probes = cost.Probes
 	return out, nil
 }
 
@@ -271,8 +280,19 @@ func jLuaBlock() string {
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "    {kind = %s, table = %s, col = %s, field = %s, of_row = %v,\n      type = %s, reason = %s},\n",
-			jLuaQuote(k.Kind), jLuaQuote(k.Table), jLuaQuote(k.Col), jLuaQuote(k.Field), k.OfRow, jLuaQuote(typ), jLuaQuote(jEndReason[k.Kind]))
+		why := jEndReasons[k.Kind]
+		var cols []string
+		for col := range why.moved {
+			cols = append(cols, col)
+		}
+		sort.Strings(cols)
+		moved := make([]string, len(cols))
+		for i, col := range cols {
+			moved[i] = fmt.Sprintf("%s = %s", col, jLuaQuote(why.moved[col]))
+		}
+		fmt.Fprintf(&b, "    {kind = %s, table = %s, col = %s, field = %s, of_row = %v,\n      type = %s, moved = {%s},\n      other = %s, cleared = %s},\n",
+			jLuaQuote(k.Kind), jLuaQuote(k.Table), jLuaQuote(k.Col), jLuaQuote(k.Field), k.OfRow, jLuaQuote(typ),
+			strings.Join(moved, ", "), jLuaQuote(why.other), jLuaQuote(why.cleared))
 	}
 	b.WriteString("  }\n")
 	return b.String()

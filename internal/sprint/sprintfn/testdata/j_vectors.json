@@ -72,6 +72,12 @@
      "2"
     ],
     [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n7",
+     "bd0861a3057f279478113792321bf360cdd9d638"
+    ],
+    [
      "ZADD",
      "t:sprint:askwait@0",
      "1790769600000",
@@ -91,7 +97,8 @@
      "cannot ask|c",
      "n7"
     ]
-   ]
+   ],
+   "probes": 4
   }
  },
  {
@@ -175,7 +182,8 @@
      "cannot ask|c",
      "n8"
     ]
-   ]
+   ],
+   "probes": 4
   }
  },
  {
@@ -210,7 +218,8 @@
   "expect": {
    "refusal": "",
    "notes": [],
-   "commands": []
+   "commands": [],
+   "probes": 1
   }
  },
  {
@@ -240,7 +249,8 @@
   "expect": {
    "refusal": "",
    "notes": [],
-   "commands": []
+   "commands": [],
+   "probes": 1
   }
  },
  {
@@ -305,7 +315,8 @@
      "a primary is blocked on something dropped|n0",
      "n4~1"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -378,7 +389,8 @@
      "a primary is blocked on something dropped|n0",
      "n4"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -451,7 +463,8 @@
      "a primary is blocked on something dropped|n0",
      "n4"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -510,7 +523,8 @@
      "the sprint is done|d",
      "n4"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -634,7 +648,8 @@
      "a primary is blocked on something dropped|n0",
      "n2"
     ]
-   ]
+   ],
+   "probes": 5
   }
  },
  {
@@ -719,7 +734,8 @@
      "n3",
      "2"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -780,18 +796,7 @@
    "notes": [
     {
      "about": [
-      "p1"
-     ],
-     "meta": {
-      "cause": "n0",
-      "kind": "decided",
-      "note": "n3",
-      "op": "close",
-      "type": "a primary is blocked on something dropped"
-     }
-    },
-    {
-     "about": [
+      "p1",
       "p2"
      ],
      "meta": {
@@ -807,8 +812,7 @@
     [
      "RPUSH",
      "t:sprint:notes@0",
-     "9",
-     "10"
+     "9"
     ],
     [
      "HDEL",
@@ -834,8 +838,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
     ]
-   ]
+   ],
+   "probes": 3
   }
  },
  {
@@ -857,6 +867,11 @@
    "t:sprint:jopen:p1@0": {
     "hash": {
      "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
     }
    },
    "t:sprint:askwait@0": {
@@ -902,11 +917,22 @@
      "cannot ask|c"
     ],
     [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n3"
+    ],
+    [
      "ZREM",
      "t:sprint:askwait@0",
      "p1"
     ]
-   ]
+   ],
+   "probes": 4
   }
  },
  {
@@ -986,8 +1012,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
     ]
-   ]
+   ],
+   "probes": 4
   }
  },
  {
@@ -1016,6 +1048,11 @@
    "t:sprint:jopen:p1@0": {
     "hash": {
      "cannot ask|d": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
     }
    },
    "t:sprint:askwait@0": {
@@ -1096,8 +1133,19 @@
      "HDEL",
      "t:sprint:jopen:p1@0",
      "cannot ask|d"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n3"
     ]
-   ]
+   ],
+   "probes": 7
   }
  },
  {
@@ -1195,8 +1243,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
     ]
-   ]
+   ],
+   "probes": 7
   }
  },
  {
@@ -1235,6 +1289,11 @@
     "hash": {
      "n3": "1",
      "n4": "2"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
     }
    }
   },
@@ -1308,6 +1367,16 @@
     ],
     [
      "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n3"
+    ],
+    [
+     "HDEL",
      "t:sprint:jn@0",
      "n3"
     ],
@@ -1322,12 +1391,18 @@
      "overdue:n3"
     ],
     [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ],
+    [
      "HSET",
      "t:sprint:jn@0",
      "n4",
      "1"
     ]
-   ]
+   ],
+   "probes": 6
   }
  },
  {
@@ -1350,7 +1425,8 @@
   "expect": {
    "refusal": "",
    "notes": [],
-   "commands": []
+   "commands": [],
+   "probes": 1
   }
  },
  {
@@ -1430,6 +1506,12 @@
     ],
     [
      "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "HSET",
      "t:sprint:jopen:p1@0",
      "cannot ask|c",
      "hn3"
@@ -1448,8 +1530,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
     ]
-   ]
+   ],
+   "probes": 3
   }
  },
  {
@@ -1517,6 +1605,12 @@
     ],
     [
      "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "HSET",
      "t:sprint:jopen:p1@0",
      "cannot ask|c",
      "hn3"
@@ -1527,7 +1621,8 @@
      "n3",
      "1"
     ]
-   ]
+   ],
+   "probes": 3
   }
  },
  {
@@ -1590,6 +1685,12 @@
     ],
     [
      "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "HSET",
      "t:sprint:jopen:sprint@0",
      "the machine is STOPPED and moves are due|c",
      "hn3"
@@ -1608,8 +1709,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
     ]
-   ]
+   ],
+   "probes": 3
   }
  },
  {
@@ -1672,7 +1779,8 @@
      "1790773200000",
      "overdue:n3"
     ]
-   ]
+   ],
+   "probes": 1
   }
  },
  {
@@ -1727,7 +1835,8 @@
      "t:sprint:notes@0",
      "9"
     ]
-   ]
+   ],
+   "probes": 1
   }
  },
  {
@@ -1758,7 +1867,8 @@
   "expect": {
    "refusal": "",
    "notes": [],
-   "commands": []
+   "commands": [],
+   "probes": 1
   }
  },
  {
@@ -1781,9 +1891,19 @@
      "cannot ask|c": "hn3"
     }
    },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
    "t:sprint:askwait@0": {
     "zset": {
      "p1": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "hold:n3": "1790769660000"
     }
    }
   },
@@ -1818,11 +1938,22 @@
      "cannot ask|c"
     ],
     [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n3"
+    ],
+    [
      "ZREM",
      "t:sprint:askwait@0",
      "p1"
     ]
-   ]
+   ],
+   "probes": 4
   }
  },
  {
@@ -1857,7 +1988,8 @@
   "expect": {
    "refusal": "",
    "notes": [],
-   "commands": []
+   "commands": [],
+   "probes": 1
   }
  },
  {
@@ -1920,8 +2052,15 @@
      "RPUSH",
      "t:sprint:notes@0",
      "9"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n3",
+     "0fd2f8c417122b34ab62f7d15d7bcee562dd6fe7"
     ]
-   ]
+   ],
+   "probes": 4
   }
  },
  {
@@ -2120,8 +2259,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2214,8 +2359,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2275,6 +2426,11 @@
    "t:sprint:jopen:w1@0": {
     "hash": {
      "a work card is past its deadline|untaken": "hn5"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n5": "1"
     }
    },
    "t:sprint:due@0": {
@@ -2341,8 +2497,19 @@
      "HDEL",
      "t:sprint:jopen:w1@0",
      "a work card is past its deadline|untaken"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n5"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2432,8 +2599,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n6"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n6"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2520,8 +2693,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n7"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n7"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2607,8 +2786,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2697,8 +2882,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2740,7 +2931,8 @@
   "expect": {
    "refusal": "",
    "notes": [],
-   "commands": []
+   "commands": [],
+   "probes": 1
   }
  },
  {
@@ -2843,8 +3035,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
     ]
-   ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -2955,8 +3153,14 @@
      "ZREM",
      "t:sprint:due@0",
      "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
     ]
-   ]
+   ],
+   "probes": 3
   }
  },
  {
@@ -3075,7 +3279,4396 @@
      "cannot ask|c",
      "n2"
     ]
-   ]
+   ],
+   "probes": 5
+  }
+ },
+ {
+  "name": "merge_two_opens_one_note",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "text": "no readers are free"
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ],
+    "text": "no readers are free"
+   }
+  ],
+  "note_seqs": [
+   "7"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1",
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "text": "no readers are free",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n7",
+     "2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n7",
+     "0fe4215fbd65813e705dbd15d882e004ac17abc7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p1",
+     "1790769600000",
+     "p2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "n7"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "merge_different_text_stays_apart",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "text": "one text"
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ],
+    "text": "another text"
+   }
+  ],
+  "note_seqs": [
+   "7",
+   "8"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "text": "one text",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "text": "another text",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "7",
+     "8"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n7",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n7",
+     "3e5d81f2a6130b7f06a3d578815bb493366af1f8"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n8"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n8"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n8",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n8",
+     "50bd5674c451b343dce4875aa23df559cb9f940b"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "n8"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "merge_different_time_stays_apart",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "until": "1790769660000"
+   },
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ],
+    "until": "1790769690000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "n4"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1",
+     "n4": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "9",
+   "10"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "note": "n3",
+      "op": "hold",
+      "type": "cannot ask",
+      "until": "1790769660000"
+     }
+    },
+    {
+     "about": [
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "note": "n4",
+      "op": "hold",
+      "type": "cannot ask",
+      "until": "1790769690000"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9",
+     "10"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790769660000",
+     "hold:n3"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790769690000",
+     "hold:n4"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n4",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "hn3"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "hn4"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n4"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n4"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n4"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n4"
+    ]
+   ],
+   "probes": 6
+  }
+ },
+ {
+  "name": "merge_closes_of_one_note_count_together",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "close",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "p2"
+    ]
+   },
+   {
+    "op": "close",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "p3"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jopen:p3@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "3"
+    }
+   },
+   "t:sprint:jnotes@0": {
+    "zset": {
+     "n3": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1",
+      "p2",
+      "p3"
+     ],
+     "meta": {
+      "cause": "n0",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "a primary is blocked on something dropped"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p1@0",
+     "a primary is blocked on something dropped|n0"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p2@0",
+     "a primary is blocked on something dropped|n0"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p3@0",
+     "a primary is blocked on something dropped|n0"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "merge_keeps_the_other_requests_in_place",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "know",
+    "type": "ci green",
+    "cause": "",
+    "subjects": [
+     "p3"
+    ]
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ]
+   }
+  ],
+  "note_seqs": [
+   "1",
+   "2"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1",
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p3"
+     ],
+     "meta": {
+      "kind": "happened",
+      "op": "know",
+      "type": "ci green"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "1",
+     "2"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n1",
+     "2"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p1",
+     "1790769600000",
+     "p2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "n1"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "merge_opens_of_two_causes_stay_two_notes",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "d",
+    "subjects": [
+     "p2"
+    ]
+   }
+  ],
+  "note_seqs": [
+   "1",
+   "2"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p2"
+     ],
+     "meta": {
+      "cause": "d",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "1",
+     "2"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n1",
+     "1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n2"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n2",
+     "1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|d",
+     "n2"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "merge_hold_of_two_subjects_of_one_note",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "until": "1790769660000"
+   },
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ],
+    "until": "1790769660000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "2"
+    }
+   },
+   "t:sprint:jnotes@0": {
+    "zset": {
+     "n3": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000",
+     "p2": "1790769600000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1",
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "note": "n3",
+      "op": "hold",
+      "type": "cannot ask",
+      "until": "1790769660000"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790769660000",
+     "hold:n3"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "hn3"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "hn3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "hold_adds_to_an_existing_held_count",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "until": "1790769690000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jnotes@0": {
+    "zset": {
+     "n3": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000",
+     "hold:n3": "1790769660000"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000",
+     "p2": "1790769600000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "note": "n3",
+      "op": "hold",
+      "type": "cannot ask",
+      "until": "1790769690000"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790769690000",
+     "hold:n3"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "hn3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ]
+   ],
+   "probes": 3
+  }
+ },
+ {
+  "name": "close_held_keeps_the_entry_while_another_subject_is_held",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "2"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000",
+     "p2": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "hold:n3": "1790769660000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "ZREM",
+     "t:sprint:askwait@0",
+     "p1"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "close_last_held_subject_removes_the_entry",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "hold:n3": "1790769660000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:askwait@0",
+     "p1"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "unhold_last_held_subject_removes_the_entry",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "unhold",
+    "type": "no fleet member is up",
+    "cause": "c",
+    "subjects": [
+     "sprint"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:sprint@0": {
+    "hash": {
+     "no fleet member is up|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "hold:n3": "1790769660000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "sprint"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "unhold",
+      "type": "no fleet member is up"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:sprint@0",
+     "no fleet member is up|c"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "hold:n3"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "unhold_one_of_two_held_subjects",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "unhold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "2"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000",
+     "p2": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "hold:n3": "1790769660000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "unhold",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "ZREM",
+     "t:sprint:askwait@0",
+     "p2"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "close_held_stopped_judgment_clears_stophold",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "the machine is STOPPED and moves are due",
+    "cause": "c",
+    "subjects": [
+     "sprint"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:sprint@0": {
+    "hash": {
+     "the machine is STOPPED and moves are due|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:clock": {
+    "hash": {
+     "stophold_ms": "1790769720000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "sprint"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "the machine is STOPPED and moves are due"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:sprint@0",
+     "the machine is STOPPED and moves are due|c"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:clock",
+     "stophold_ms"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "unhold_stopped_judgment_clears_stophold",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "unhold",
+    "type": "the machine is STOPPED and moves are due",
+    "cause": "c",
+    "subjects": [
+     "sprint"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:sprint@0": {
+    "hash": {
+     "the machine is STOPPED and moves are due|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:clock": {
+    "hash": {
+     "stophold_ms": "1790769720000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "sprint"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "unhold",
+      "type": "the machine is STOPPED and moves are due"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:sprint@0",
+     "the machine is STOPPED and moves are due|c"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jh@0",
+     "n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:clock",
+     "stophold_ms"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "hold_and_unhold_subjects_of_one_note_in_one_step",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "until": "1790769660000"
+   },
+   {
+    "op": "unhold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jnotes@0": {
+    "zset": {
+     "n3": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000",
+     "hold:n3": "1790769630000"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000",
+     "p2": "1790769600000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9",
+   "10"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "note": "n3",
+      "op": "hold",
+      "type": "cannot ask",
+      "until": "1790769660000"
+     }
+    },
+    {
+     "about": [
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "unhold",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9",
+     "10"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790769660000",
+     "hold:n3"
+    ],
+    [
+     "HSET",
+     "t:sprint:jh@0",
+     "n3",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "hn3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c"
+    ],
+    [
+     "ZREM",
+     "t:sprint:askwait@0",
+     "p2"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ]
+   ],
+   "probes": 6
+  }
+ },
+ {
+  "name": "update_same_text_writes_nothing",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "text": "the reader is away",
+    "decisions": [
+     "wait",
+     "drop"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "hash": {
+     "n3": "62362c4a1d7f003954298ae7bd03e97741ef1805"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [],
+   "commands": [],
+   "probes": 2
+  }
+ },
+ {
+  "name": "update_changed_text_writes_the_line_and_the_digest",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "text": "the reader is back",
+    "decisions": [
+     "wait",
+     "drop"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "hash": {
+     "n3": "62362c4a1d7f003954298ae7bd03e97741ef1805"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "decisions": [
+       "wait",
+       "drop"
+      ],
+      "kind": "judgment",
+      "note": "n3",
+      "op": "update",
+      "text": "the reader is back",
+      "type": "cannot ask",
+      "verb": "updated"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n3",
+     "f65a7741ed95df0a5e970aa71efcdb8e527b9bd6"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "update_changed_decisions",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "text": "the reader is away",
+    "decisions": [
+     "wait",
+     "drop",
+     "reader add"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "hash": {
+     "n3": "62362c4a1d7f003954298ae7bd03e97741ef1805"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "decisions": [
+       "wait",
+       "drop",
+       "reader add"
+      ],
+      "kind": "judgment",
+      "note": "n3",
+      "op": "update",
+      "text": "the reader is away",
+      "type": "cannot ask",
+      "verb": "updated"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n3",
+     "4d4809b0f3b96358fa28785749ac8596ef5c0bd3"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "update_empty_against_no_digest_writes_nothing",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [],
+   "commands": [],
+   "probes": 2
+  }
+ },
+ {
+  "name": "update_to_empty_writes_the_empty_digest",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "hash": {
+     "n3": "0bb9be29ab313ed67549526d34c26c9b7fefc3e3"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "note": "n3",
+      "op": "update",
+      "type": "cannot ask",
+      "verb": "updated"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n3",
+     "5c91e1d2f1faeb755e35ff424eaf9236a8d6cc50"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "update_of_two_notes_reads_each_digest",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1",
+     "p2"
+    ],
+    "text": "same"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "n4"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1",
+     "n4": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "hash": {
+     "n3": "70b34688f2dd7d1c43f13dd26322918b34eec741",
+     "n4": "dbc5d0cbb264cb66b99a634ee4bf4b40c4f28809"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "note": "n4",
+      "op": "update",
+      "text": "same",
+      "type": "cannot ask",
+      "verb": "updated"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@0",
+     "n4",
+     "70b34688f2dd7d1c43f13dd26322918b34eec741"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "close_of_the_last_open_subject_forgets_the_digest",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "hash": {
+     "n3": "8be002a80c1fb7c937ed9c0c9d7fcf6e4bb7a6e5"
+    }
+   },
+   "t:sprint:jnotes@0": {
+    "zset": {
+     "n3": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c"
+    ],
+    [
+     "ZREM",
+     "t:sprint:askwait@0",
+     "p1"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "open_cannot_ask_leaves_the_quarantined_out_of_askwait",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1",
+     "p2",
+     "p3"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:quarantine@0": {
+    "hash": {
+     "p1": "DRIFT",
+     "p3": "MISSING"
+    }
+   }
+  },
+  "note_seqs": [
+   "7"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1",
+      "p2",
+      "p3"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n7",
+     "3"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p2"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p3@0",
+     "cannot ask|c",
+     "n7"
+    ]
+   ],
+   "probes": 5
+  }
+ },
+ {
+  "name": "open_cannot_ask_all_quarantined_writes_no_askwait",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:quarantine@0": {
+    "hash": {
+     "p1": "DRIFT"
+    }
+   }
+  },
+  "note_seqs": [
+   "7"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n7",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n7"
+    ]
+   ],
+   "probes": 3
+  }
+ },
+ {
+  "name": "open_of_another_type_does_not_read_the_quarantine",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:quarantine@0": {
+    "hash": {
+     "w1": "DRIFT"
+    }
+   }
+  },
+  "note_seqs": [
+   "7"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "kind": "judgment",
+      "op": "open",
+      "type": "a primary is blocked on something dropped"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n7",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:w1@0",
+     "a primary is blocked on something dropped|n0",
+     "n7"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "open_cannot_ask_reads_each_subject_once",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1",
+     "p2"
+    ]
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "d",
+    "subjects": [
+     "p2",
+     "p3"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:quarantine@0": {
+    "hash": {
+     "p2": "DRIFT"
+    }
+   }
+  },
+  "note_seqs": [
+   "7",
+   "8"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1",
+      "p2"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p2",
+      "p3"
+     ],
+     "meta": {
+      "cause": "d",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "7",
+     "8"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n7"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n7",
+     "2"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n8"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n8"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n8",
+     "2"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p3"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|c",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|c",
+     "n7"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p2@0",
+     "cannot ask|d",
+     "n8"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p3@0",
+     "cannot ask|d",
+     "n8"
+    ]
+   ],
+   "probes": 6
+  }
+ },
+ {
+  "name": "missing_seq_leaves_the_count_alone",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p5"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "2"
+    }
+   },
+   "t:sprint:jnotes@0": {
+    "zset": {
+     "n3": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   }
+  },
+  "note_seqs": [
+   "",
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "a primary is blocked on something dropped"
+     }
+    },
+    {
+     "about": [
+      "p5"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790770200000",
+     "overdue:n9"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@0",
+     "1790769600000",
+     "n9"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@0",
+     "n9",
+     "1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:askwait@0",
+     "1790769600000",
+     "p5"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:p5@0",
+     "cannot ask|c",
+     "n9"
+    ]
+   ],
+   "probes": 5
+  }
+ },
+ {
+  "name": "missing_seq_leaves_askwait_alone",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "know",
+    "type": "ci green",
+    "cause": "",
+    "subjects": [
+     "p3"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000"
+    }
+   }
+  },
+  "note_seqs": [
+   "",
+   "5"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p3"
+     ],
+     "meta": {
+      "kind": "happened",
+      "op": "know",
+      "type": "ci green"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "5"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "missing_seq_holds_nothing",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "until": "1790769660000"
+   },
+   {
+    "op": "know",
+    "type": "ci green",
+    "cause": "",
+    "subjects": [
+     "p3"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "",
+   "5"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "note": "n3",
+      "op": "hold",
+      "type": "cannot ask",
+      "until": "1790769660000"
+     }
+    },
+    {
+     "about": [
+      "p3"
+     ],
+     "meta": {
+      "kind": "happened",
+      "op": "know",
+      "type": "ci green"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "5"
+    ]
+   ],
+   "probes": 3
+  }
+ },
+ {
+  "name": "missing_seq_of_a_held_close_keeps_the_count_and_the_entry",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "know",
+    "type": "ci green",
+    "cause": "",
+    "subjects": [
+     "p3"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn3"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "hold:n3": "1790769660000"
+    }
+   }
+  },
+  "note_seqs": [
+   "",
+   "5"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p3"
+     ],
+     "meta": {
+      "kind": "happened",
+      "op": "know",
+      "type": "ci green"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "5"
+    ]
+   ],
+   "probes": 4
+  }
+ },
+ {
+  "name": "missing_seq_of_an_open_lets_the_close_drop_askwait",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   },
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "d",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|d": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:askwait@0": {
+    "zset": {
+     "p1": "1790769600000"
+    }
+   }
+  },
+  "note_seqs": [
+   "",
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "c",
+      "kind": "judgment",
+      "op": "open",
+      "type": "cannot ask"
+     }
+    },
+    {
+     "about": [
+      "p1"
+     ],
+     "meta": {
+      "cause": "d",
+      "kind": "decided",
+      "note": "n3",
+      "op": "close",
+      "type": "cannot ask"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:p1@0",
+     "cannot ask|d"
+    ],
+    [
+     "ZREM",
+     "t:sprint:askwait@0",
+     "p1"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n3"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n3"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n3"
+    ]
+   ],
+   "probes": 7
+  }
+ },
+ {
+  "name": "lateness_untaken_replaced_moves_to_withdrawn",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|untaken": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "ready",
+    "fields": {
+     "due_untaken": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:ready",
+    "to": "m1:withdrawn",
+    "unset": [
+     "due_untaken"
+    ]
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "untaken",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "replaced",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|untaken"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_untaken_moved_where_no_reason_names",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|untaken": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "ready",
+    "fields": {
+     "due_untaken": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:ready",
+    "to": "m1:ok"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "untaken",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "state ended",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|untaken"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unfinished_finishes_ok",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|unfinished": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "working",
+    "fields": {
+     "due_unfinished": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:working",
+    "to": "m1:ok"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "unfinished",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "finished",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|unfinished"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unfinished_finishes_failed",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|unfinished": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "working",
+    "fields": {
+     "due_unfinished": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:working",
+    "to": "m1:failed"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "unfinished",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "finished",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|unfinished"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unfinished_replaced_moves_to_withdrawn",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|unfinished": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "working",
+    "fields": {
+     "due_unfinished": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:working",
+    "to": "m1:withdrawn"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "unfinished",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "replaced",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|unfinished"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unfinished_returns_to_ready",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|unfinished": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "working",
+    "fields": {
+     "due_unfinished": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:working",
+    "to": "m1:ready"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "unfinished",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "state ended",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|unfinished"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unbegun_begins",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:rc@0": {
+    "hash": {
+     "a read card is past its deadline|unbegun": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "readers",
+    "id": "rc",
+    "row": "r1",
+    "col": "asked",
+    "fields": {
+     "due_unbegun": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "readers",
+    "ids": [
+     "rc"
+    ],
+    "from": "r1:asked",
+    "to": "r1:reading"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "rc"
+     ],
+     "meta": {
+      "cause": "unbegun",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "begun",
+      "type": "a read card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:rc@0",
+     "a read card is past its deadline|unbegun"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unbegun_reports",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:rc@0": {
+    "hash": {
+     "a read card is past its deadline|unbegun": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "readers",
+    "id": "rc",
+    "row": "r1",
+    "col": "asked",
+    "fields": {
+     "due_unbegun": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "readers",
+    "ids": [
+     "rc"
+    ],
+    "from": "r1:asked",
+    "to": "r1:ok"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "rc"
+     ],
+     "meta": {
+      "cause": "unbegun",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "reported",
+      "type": "a read card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:rc@0",
+     "a read card is past its deadline|unbegun"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unbegun_retired",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:rc@0": {
+    "hash": {
+     "a read card is past its deadline|unbegun": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "readers",
+    "id": "rc",
+    "row": "r1",
+    "col": "asked",
+    "fields": {
+     "due_unbegun": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "readers",
+    "ids": [
+     "rc"
+    ],
+    "from": "r1:asked",
+    "to": "r1:retired"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "rc"
+     ],
+     "meta": {
+      "cause": "unbegun",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "state ended",
+      "type": "a read card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:rc@0",
+     "a read card is past its deadline|unbegun"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_unreported_reports_broken",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:rc@0": {
+    "hash": {
+     "a read card is past its deadline|unreported": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "readers",
+    "id": "rc",
+    "row": "r1",
+    "col": "reading",
+    "fields": {
+     "due_unreported": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "readers",
+    "ids": [
+     "rc"
+    ],
+    "from": "r1:reading",
+    "to": "r1:broken"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "rc"
+     ],
+     "meta": {
+      "cause": "unreported",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "reported",
+      "type": "a read card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:rc@0",
+     "a read card is past its deadline|unreported"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_due_field_cleared_says_cleared",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a work card is past its deadline|untaken": "n5"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n5": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1",
+    "row": "m1",
+    "col": "ready",
+    "fields": {
+     "due_untaken": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1"
+    ],
+    "from": "m1:ready",
+    "unset": [
+     "due_untaken"
+    ]
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "untaken",
+      "kind": "decided",
+      "note": "n5",
+      "op": "close",
+      "text": "cleared",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@0",
+     "a work card is past its deadline|untaken"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n5"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n5"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n5"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "lateness_stream_no_longer_merging_when_the_due_field_is_unset",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:s1@0": {
+    "hash": {
+     "a stream has had no merge step past its deadline|mergeidle": "n7"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n7": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "merge",
+    "id": "s1ctl",
+    "row": "s1",
+    "col": "ctl",
+    "fields": {
+     "due_mergeidle": "9000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "merge",
+    "ids": [
+     "s1ctl"
+    ],
+    "from": "s1:ctl",
+    "unset": [
+     "due_mergeidle"
+    ]
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "s1"
+     ],
+     "meta": {
+      "cause": "mergeidle",
+      "kind": "decided",
+      "note": "n7",
+      "op": "close",
+      "text": "stream no longer merging",
+      "type": "a stream has had no merge step past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:s1@0",
+     "a stream has had no merge step past its deadline|mergeidle"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@0",
+     "n7"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@0",
+     "n7"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@0",
+     "overdue:n7"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@0",
+     "n7"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "advance_writes_at_the_next_epoch",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ],
+    "text": "after the clear"
+   }
+  ],
+  "entries": [
+   {
+    "kind": "advance",
+    "table": "",
+    "ids": []
+   }
+  ],
+  "note_seqs": [
+   "4"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "kind": "judgment",
+      "op": "open",
+      "text": "after the clear",
+      "type": "a primary is blocked on something dropped"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@1",
+     "4"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@1",
+     "1790770200000",
+     "overdue:n4~1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@1",
+     "1790769600000",
+     "n4~1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@1",
+     "n4~1",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jtext@1",
+     "n4~1",
+     "6107ec238d6a97a09660f0f2357086399692f252"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:w1@1",
+     "a primary is blocked on something dropped|n0",
+     "n4~1"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "advance_reads_at_the_next_epoch",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   }
+  },
+  "entries": [
+   {
+    "kind": "advance",
+    "table": "",
+    "ids": []
+   }
+  ],
+  "note_seqs": [
+   "4"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "kind": "judgment",
+      "op": "open",
+      "type": "a primary is blocked on something dropped"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@1",
+     "4"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@1",
+     "1790770200000",
+     "overdue:n4~1"
+    ],
+    [
+     "ZADD",
+     "t:sprint:jnotes@1",
+     "1790769600000",
+     "n4~1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jn@1",
+     "n4~1",
+     "1"
+    ],
+    [
+     "HSET",
+     "t:sprint:jopen:w1@1",
+     "a primary is blocked on something dropped|n0",
+     "n4~1"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "advance_closes_at_the_next_epoch",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@1": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3~1"
+    }
+   },
+   "t:sprint:jn@1": {
+    "hash": {
+     "n3~1": "1"
+    }
+   },
+   "t:sprint:jnotes@1": {
+    "zset": {
+     "n3~1": "1790769600000"
+    }
+   },
+   "t:sprint:due@1": {
+    "zset": {
+     "overdue:n3~1": "1790770200000"
+    }
+   }
+  },
+  "entries": [
+   {
+    "kind": "advance",
+    "table": "",
+    "ids": []
+   }
+  ],
+  "note_seqs": [
+   "4"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "kind": "decided",
+      "note": "n3~1",
+      "op": "close",
+      "type": "a primary is blocked on something dropped"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@1",
+     "4"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@1",
+     "a primary is blocked on something dropped|n0"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@1",
+     "n3~1"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@1",
+     "n3~1"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@1",
+     "overdue:n3~1"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@1",
+     "n3~1"
+    ]
+   ],
+   "probes": 2
   }
  },
  {
@@ -10699,6 +15292,259 @@
   ],
   "expect": {
    "refusal": "CONFIG",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_drift_no_held_count",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn1"
+    }
+   }
+  },
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "DRIFT",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_drift_short_held_count",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "close",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1",
+     "p2"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn1"
+    }
+   },
+   "t:sprint:jopen:p2@0": {
+    "hash": {
+     "cannot ask|c": "hn1"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n1": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "DRIFT",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_drift_held_count_is_no_count",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "until": "1790769660000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n1"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n1": "1"
+    }
+   },
+   "t:sprint:jh@0": {
+    "hash": {
+     "n1": "zero"
+    }
+   }
+  },
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "DRIFT",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_wrong_type_jh",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "unhold",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "hn1"
+    }
+   },
+   "t:sprint:jh@0": {
+    "zset": {
+     "m": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "WRONGTYPE",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_wrong_type_jtext",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "update",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ],
+    "text": "x"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:p1@0": {
+    "hash": {
+     "cannot ask|c": "n1"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n1": "1"
+    }
+   },
+   "t:sprint:jtext@0": {
+    "zset": {
+     "m": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "WRONGTYPE",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_wrong_type_quarantine",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1"
+    ]
+   }
+  ],
+  "keys": {
+   "t:sprint:quarantine@0": {
+    "zset": {
+     "m": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "WRONGTYPE",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_two_requests_one_field_even_when_they_would_merge",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p1",
+     "p2"
+    ],
+    "text": "t"
+   },
+   {
+    "op": "open",
+    "type": "cannot ask",
+    "cause": "c",
+    "subjects": [
+     "p2",
+     "p3"
+    ],
+    "text": "t"
+   }
+  ],
+  "note_seqs": [
+   "8"
+  ],
+  "expect": {
+   "refusal": "REQUEST",
    "notes": null,
    "commands": null
   }

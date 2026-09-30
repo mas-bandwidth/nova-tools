@@ -60,6 +60,14 @@ type Phases struct {
 	JDecide func(st *State, in []NoteReq, obs *Before) ([]tset.Note, JPlan, *Refusal)
 	XCmds   func(st *State, tp TablePlan, lp LogPlan) []Cmd
 	JCmds   func(st *State, jp JPlan, lp LogPlan) []Cmd
+	// JBefore names what J reads of the cards a step moves or removes, beside
+	// Before's, so that composing X's asks with J's clobbers neither.
+	JBefore func(st *State, req *Request) []BeforeAsk
+	// JOnEntries says JDecide also runs for a step that carries entries and no
+	// note request, since J ends the timed states the entries end (1.3.4); it
+	// reads them from st.Entries. A phase set that leaves it false calls JDecide
+	// for a step's note requests only.
+	JOnEntries bool
 	// Query answers one sprint query in the read's snapshot (IT30). Nil: a
 	// sprint query is a kind the twin does not know, REQUEST.
 	Query func(st *State, q SprintQuery) (json.RawMessage, *Refusal)
@@ -287,7 +295,11 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	var notes []tset.Note
 	var jp JPlan
 	ranJ := false
-	if len(noteReqs) != 0 {
+	// J sees the step's combined entries, the caller's and the derived ones
+	// (S.plan takes the same list), for the timed states they end (1.3.4): it
+	// runs for any step with entries as well as for one with note requests.
+	st.Entries = append(append([]tset.Entry{}, enc.step.Entries...), derived...)
+	if len(noteReqs) != 0 || (t.phases.JOnEntries && t.phases.JDecide != nil && len(st.Entries) != 0) {
 		if t.phases.JDecide == nil {
 			return Result{Refusal: refuse(PhaseJ, CodeConfig, RefusalDetail{})}
 		}
@@ -508,6 +520,11 @@ func (t *Twin) before(ctx context.Context, st *State, req *Request) (*Before, *R
 	}
 	if t.phases.Before != nil {
 		for _, a := range t.phases.Before(st, req) {
+			add(a.Table, a.IDs, a.Fields)
+		}
+	}
+	if t.phases.JBefore != nil {
+		for _, a := range t.phases.JBefore(st, req) {
 			add(a.Table, a.IDs, a.Fields)
 		}
 	}

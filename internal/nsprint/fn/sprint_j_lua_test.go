@@ -1,10 +1,13 @@
 package fn
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -193,6 +196,9 @@ type jvExpect struct {
 	Refusal  string     `json:"refusal"`
 	Notes    []jvNote   `json:"notes"`
 	Commands [][]string `json:"commands"`
+	// Probes is how many typed reads the pre stage made: the readcmd calls the
+	// stub counted, held to what the twin's JCost counts for the same vector.
+	Probes int `json:"probes,omitempty"`
 }
 
 type jvVector struct {
@@ -238,6 +244,7 @@ function S.before(ctx, t, ids, fields)
   return out, nil
 end
 function S.readcmd(ctx, d, reserve, probe)
+  T.probes = T.probes + 1
   local a = d.argv
   local cmd, key = a[1], a[2]
   local kind = d.access[1] and d.access[1].kind
@@ -315,7 +322,16 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	T := L.NewTable()
 	T.RawSetString("keys", luaValue(L, keys))
 	T.RawSetString("records", luaValue(L, records))
+	T.RawSetString("probes", lua.LNumber(0))
 	L.SetGlobal("T", T)
+	// redis.sha1hex, which Redis gives a function and J digests a note's text with.
+	redisT := L.NewTable()
+	redisT.RawSetString("sha1hex", L.NewFunction(func(L *lua.LState) int {
+		sum := sha1.Sum([]byte(L.CheckString(1)))
+		L.Push(lua.LString(hex.EncodeToString(sum[:])))
+		return 1
+	}))
+	L.SetGlobal("redis", redisT)
 	if err := L.DoString(jStubs); err != nil {
 		t.Fatalf("%s: stubs: %v", v.Name, err)
 	}
@@ -368,7 +384,19 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	if err := L.DoString("SEQS = nil"); err != nil {
 		t.Fatal(err)
 	}
-	ctx := luaValue(L, map[string]any{"space": "t:", "write_epoch": v.Epoch, "now_ms": v.NowMS,
+	// A step that advances writes at the next epoch (L1 1.2): Layer 1 gives the
+	// Lua half that as ctx.write_epoch, where the twin reads the advance entry.
+	writeEpoch := v.Epoch
+	for _, e := range v.Entries {
+		if e.Kind == "advance" {
+			n, err := strconv.ParseUint(v.Epoch, 10, 64)
+			if err != nil {
+				t.Fatalf("%s: epoch %q: %v", v.Name, v.Epoch, err)
+			}
+			writeEpoch = strconv.FormatUint(n+1, 10)
+		}
+	}
+	ctx := luaValue(L, map[string]any{"space": "t:", "write_epoch": writeEpoch, "now_ms": v.NowMS,
 		"request": map[string]any{"entries": entries}})
 	ctx.(*lua.LTable).RawSetString("notes", L.NewTable())
 	L.SetGlobal("CTX", ctx)
@@ -376,10 +404,11 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	L.SetGlobal("SEQS", luaValue(L, seqs))
 	if err := L.DoString(`
 		local notes, jp, err = NS.SP.j_decide(CTX, REQS, {})
-		RESULT = {refusal = '', notes = {}, commands = {}}
+		RESULT = {refusal = '', notes = {}, commands = {}, probes = 0}
 		if err then
 			RESULT.refusal = err.code
 		else
+			RESULT.probes = T.probes
 			for i, n in ipairs(notes) do RESULT.notes[i] = n end
 			local plan = NS.SP.j_cmds(CTX, jp, {note_seqs = SEQS})
 			for i, c in ipairs(plan.commands) do RESULT.commands[i] = c.argv end
@@ -389,6 +418,9 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	}
 	res := L.GetGlobal("RESULT").(*lua.LTable)
 	out := jvExpect{Refusal: lua.LVAsString(res.RawGetString("refusal")), Notes: []jvNote{}, Commands: [][]string{}}
+	if p, ok := res.RawGetString("probes").(lua.LNumber); ok {
+		out.Probes = int(p)
+	}
 	notes := res.RawGetString("notes").(*lua.LTable)
 	for i := 1; i <= notes.Len(); i++ {
 		el := goValue(notes.RawGetInt(i)).(map[string]any)
@@ -476,5 +508,108 @@ func TestSprintJLuaVectors(t *testing.T) {
 			wb, _ := json.MarshalIndent(want, "", " ")
 			t.Errorf("%s:\n got %s\nwant %s", v.Name, gb, wb)
 		}
+	}
+}
+
+// jvPieces is n elements in full pieces of 1,000 and the rest: the pieces the
+// twin's JCmds makes (TestJPiecesAreAtMostAThousand holds it to the same).
+func jvPieces(n int) []int {
+	var out []int
+	for ; n > 1000; n -= 1000 {
+		out = append(out, 1000)
+	}
+	return append(out, n)
+}
+
+// jvElements is how many collection elements a command carries: a pair for ZADD
+// and HSET, a member or a field for the others.
+func jvElements(argv []string) int {
+	if argv[0] == "ZADD" || argv[0] == "HSET" {
+		return (len(argv) - 2) / 2
+	}
+	return len(argv) - 2
+}
+
+// TestSprintJLuaPiecesAreAtMostAThousand: the Lua half writes askwait for a note
+// of more than 1,000 primaries in pieces of at most 1,000 pairs, and takes more
+// than 1,000 out in pieces of at most 1,000 members, so that no command passes
+// Layer 1's bound of 1,000 elements; the pieces are full, as the twin's are. No
+// golden vector is so large, so the cases are made here from the vector shape and
+// held to what the twin's test of the same sizes expects.
+func TestSprintJLuaPiecesAreAtMostAThousand(t *testing.T) {
+	t.Parallel()
+	req := func(op string, subjects []string) map[string]json.RawMessage {
+		ss, _ := json.Marshal(subjects)
+		return map[string]json.RawMessage{"op": json.RawMessage(`"` + op + `"`), "type": json.RawMessage(`"cannot ask"`),
+			"cause": json.RawMessage(`"c"`), "subjects": ss}
+	}
+	for _, n := range []int{1000, 1001, 2000} {
+		subjects := make([]string, n)
+		keys := map[string]jvKey{"t:sprint:jn@0": {Hash: map[string]string{"n1": strconv.Itoa(n)}}}
+		for i := range subjects {
+			subjects[i] = "p" + strconv.Itoa(i)
+			keys["t:sprint:jopen:"+subjects[i]+"@0"] = jvKey{Hash: map[string]string{"cannot ask|c": "n1"}}
+		}
+		for _, tc := range []struct {
+			name, command, askwait string
+			v                      jvVector
+		}{
+			{"an open", "ZADD", "t:sprint:askwait@0", jvVector{Name: "open", Epoch: "0", NowMS: "1790000000000",
+				Requests: []map[string]json.RawMessage{req("open", subjects)}, NoteSeqs: []string{"1"}}},
+			{"a close", "ZREM", "t:sprint:askwait@0", jvVector{Name: "close", Epoch: "0", NowMS: "1790000000000", Keys: keys,
+				Requests: []map[string]json.RawMessage{req("close", subjects)}, NoteSeqs: []string{"2"}}},
+		} {
+			got := runJLua(t, tc.v)
+			if got.Refusal != "" {
+				t.Fatalf("%s of %d: refused %s", tc.name, n, got.Refusal)
+			}
+			var pieces []int
+			for _, argv := range got.Commands {
+				if e := jvElements(argv); e > 1000 {
+					t.Fatalf("%s of %d: %s %s has %d elements, over 1,000", tc.name, n, argv[0], argv[1], e)
+				}
+				if argv[0] == tc.command && argv[1] == tc.askwait {
+					pieces = append(pieces, jvElements(argv))
+				}
+			}
+			if want := jvPieces(n); !reflect.DeepEqual(pieces, want) {
+				t.Errorf("%s of %d: askwait in pieces %v, want %v", tc.name, n, pieces, want)
+			}
+		}
+	}
+}
+
+// TestSprintLuaCoreRunsJOnEntries (errata 3: the lateness close runs on the
+// composed write path): with J registered, ns_sprint_step calls it for a step
+// that carries entries and no note request, since J closes the lateness
+// judgment of each timed state the entries end; a step with neither entries nor
+// a note request does not call it; and with J not registered a step of entries
+// is served without it, as the traced phases of the core's own tests are.
+func TestSprintLuaCoreRunsJOnEntries(t *testing.T) {
+	t.Parallel()
+	entries := "T.ctx = function() return {request = {entries = {{kind = 'move', t = 'fleet', ids = {'w1'}}}}, notes = {}} end"
+
+	h := newLuaSprint(t)
+	h.setup(nil)
+	h.do(entries)
+	h.step(`{"meta":{"verb":"take"}}`)
+	want := []string{"open", "phase:before", "before", "before", "x_pre", "j_decide", "plan", "log", "x_cmds", "j_cmds", "prepare", "commit"}
+	if !reflect.DeepEqual(h.trace, want) {
+		t.Fatalf("a step of entries called\n got %v\nwant %v", h.trace, want)
+	}
+
+	bare := newLuaSprint(t)
+	bare.setup(nil)
+	bare.step(`{"meta":{"verb":"tick"}}`)
+	if contains(bare.trace, "j_decide") || contains(bare.trace, "j_cmds") {
+		t.Fatalf("a step with no entries and no note request called J: %v", bare.trace)
+	}
+
+	none := newLuaSprint(t)
+	none.setup([]string{"j_decide", "j_cmds"})
+	none.do(entries)
+	reply := none.step(`{"meta":{"verb":"take"}}`)
+	if contains(none.trace, "j_decide") || refusalCode(reply) != "" {
+		t.Fatalf("a step of entries with J not registered: trace %v, reply %s", none.trace, reply)
 	}
 }

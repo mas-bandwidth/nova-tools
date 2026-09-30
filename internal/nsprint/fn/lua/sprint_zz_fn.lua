@@ -125,8 +125,11 @@ do
       for _, e in ipairs(entries or {}) do ctx.request.entries[#ctx.request.entries + 1] = e end
       for _, n in ipairs(notes or {}) do note_reqs[#note_reqs + 1] = n end
     end
+    -- J runs for a step that carries a note request, and, once registered, for
+    -- any step that carries entries: it closes the lateness judgment of each
+    -- timed state they end (1.3.4), which no note request asks for.
     local jp
-    if #note_reqs > 0 then
+    if #note_reqs > 0 or (SP.phases.j_decide and #ctx.request.entries > 0) then
       local j_decide
       j_decide, err = needed(S, 'j_decide')
       if err then return S.json.encode(err) end

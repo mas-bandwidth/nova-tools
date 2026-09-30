@@ -1,26 +1,36 @@
 -- J, the judgments of a step: the upper design (EVENT-DRIVEN-TICK version 2.1)
--- 1.3.4 and 2.2, as errata 1 and 2 correct 8.0; item IT15. NS.SP.j_decide is J's
--- pre stage (note requests to the step's notes, from the real state of jopen, jn
--- and the clock) and NS.SP.j_cmds is its X.plan (the keys that follow, with note
--- ids from the seqs Layer 2 gave the lines). Written to the interfaces of
--- sprint_00_core.lua and sprint_zz_fn.lua and parsed, and run under gopher-lua
--- against stubs of Layer 1's S in internal/nsprint/fn; no store loads it before
--- gate G0. Its Go twin is internal/sprint/sprintfn/twin_j.go, whose comments
--- state the ops and the readings the design left to take; both halves are held to
--- the vectors in internal/sprint/sprintfn/testdata/j_vectors.json.
+-- 1.3.4 and 2.2, as errata 1 to 3 correct them; item IT15. NS.SP.j_decide is J's
+-- pre stage (note requests to the step's notes, from the real state of jopen, jn,
+-- jh, jtext, the quarantine and the clock) and NS.SP.j_cmds is its X.plan (the
+-- keys that follow, with note ids from the seqs Layer 2 gave the lines). Written
+-- to the interfaces of sprint_00_core.lua and sprint_zz_fn.lua and parsed, and
+-- run under gopher-lua against stubs of Layer 1's S in internal/nsprint/fn; no
+-- store loads it before gate G0. Its Go twin is internal/sprint/sprintfn/twin_j.go,
+-- whose comments state the ops and the readings the design left to take; both
+-- halves are held to the vectors in
+-- internal/sprint/sprintfn/testdata/j_vectors.json.
 --
--- One difference from the twin: a step that advances writes at the next epoch
--- (ctx.write_epoch), and State carries the request epoch only, so the twin
--- writes at that. Another: S.writecmd can refuse when the step's commands pass
--- the shared bound, and the core takes j_cmds's first return only, so j_cmds
+-- J runs for a step that carries a note request and for any step that carries
+-- entries (the core calls it once it is registered), since it closes the
+-- lateness judgment of each timed state the entries end. It writes at
+-- ctx.write_epoch, the next epoch on a step that advances, where the twin reads
+-- the advance entry from State.Entries.
+--
+-- The differences from the twin. S.writecmd can refuse when the step's commands
+-- pass the shared bound, and the core takes j_cmds's first return only, so j_cmds
 -- raises that refusal as an error, which prepare's own totals make a last resort.
+-- J asks S.before itself for the due fields of the cards every entry moves or
+-- removes, derived entries included; the twin asks for those of the caller's
+-- entries (Phases.JBefore, before derive runs). Derive's entries stay on the
+-- work table (1.3.3), which has no timed state of a due kind, so the two agree.
 if NS.tset_profile then
 do
   local SP = NS.SP
 
   -- BEGIN generated: TestJTablesMatchLua holds this block equal to
   -- sprint.Judgments (2.2), sprint.Notices (2.5), sprint.DueKinds (1.2) and the
-  -- bounds of twin_j.go. A type maps to true when the tick keeps its condition.
+  -- bounds and reasons of twin_j.go. A type maps to true when the tick keeps its
+  -- condition.
   SP.j_bounds = {subjects = 2000, notes = 100, about = 4000, name = 256, piece = 1000,
     overdue_ms = 600000, digits = 15}
   SP.j_judgments = {
@@ -81,15 +91,20 @@ do
   }
   SP.j_late = {
     {kind = 'untaken', table = 'fleet', col = 'ready', field = 'due_untaken', of_row = false,
-      type = 'a work card is past its deadline', reason = 'taken'},
+      type = 'a work card is past its deadline', moved = {withdrawn = 'replaced', working = 'taken'},
+      other = 'state ended', cleared = 'cleared'},
     {kind = 'unfinished', table = 'fleet', col = 'working', field = 'due_unfinished', of_row = false,
-      type = 'a work card is past its deadline', reason = 'finished'},
+      type = 'a work card is past its deadline', moved = {failed = 'finished', ok = 'finished', withdrawn = 'replaced'},
+      other = 'state ended', cleared = 'cleared'},
     {kind = 'unbegun', table = 'readers', col = 'asked', field = 'due_unbegun', of_row = false,
-      type = 'a read card is past its deadline', reason = 'begun'},
+      type = 'a read card is past its deadline', moved = {broken = 'reported', ok = 'reported', reading = 'begun'},
+      other = 'state ended', cleared = 'cleared'},
     {kind = 'unreported', table = 'readers', col = 'reading', field = 'due_unreported', of_row = false,
-      type = 'a read card is past its deadline', reason = 'reported'},
+      type = 'a read card is past its deadline', moved = {broken = 'reported', ok = 'reported'},
+      other = 'state ended', cleared = 'cleared'},
     {kind = 'mergeidle', table = 'merge', col = 'ctl', field = 'due_mergeidle', of_row = true,
-      type = 'a stream has had no merge step past its deadline', reason = 'stream no longer merging'},
+      type = 'a stream has had no merge step past its deadline', moved = {},
+      other = 'stream no longer merging', cleared = 'stream no longer merging'},
   }
   -- END generated
 
@@ -103,6 +118,8 @@ do
   local UNTIL_MAX = 999999999999999
   local STATE_OPS = {open = true, close = true, update = true, hold = true, unhold = true}
   local OPS = {open = true, close = true, update = true, hold = true, unhold = true, know = true, request = true}
+  -- What a read of a quarantine record may cost, a field at a time.
+  local QUARANTINE_FIELD_BYTES = 1024
 
   -- A per epoch sprint key: {p}<name>@<epoch>. {p} is the prefix and "sprint:".
   local function jkey(ctx, name) return ctx.space .. 'sprint:' .. name .. '@' .. ctx.write_epoch end
@@ -119,6 +136,19 @@ do
     return NOTE .. seq .. '~' .. ctx.write_epoch
   end
   local function num(n) return string.format('%.0f', n) end
+
+  -- digest is the digest of a note's text and decisions, which jtext holds for an
+  -- open note: SHA-1 of the lengths and the words (sprintfn jDigest), so that no
+  -- two different pairs read alike. A note with neither has the empty digest,
+  -- which jtext does not store: an absent field is that digest.
+  local function digest(text, decisions)
+    local parts = {string.format('%d:', #text), text, string.format('%d;', #decisions)}
+    for _, d in ipairs(decisions) do
+      parts[#parts + 1] = string.format('%d:', #d)
+      parts[#parts + 1] = d
+    end
+    return redis.sha1hex(table.concat(parts))
+  end
 
   -- utf8_ok is utf8.ValidString: no bad continuation, overlong form, surrogate
   -- or value past U+10FFFF.
@@ -225,36 +255,77 @@ do
     if v == false or v == nil then return nil, nil end
     return v, nil
   end
-  local function state_of(d, subject, field)
-    local k = jkey(d.ctx, 'jopen:' .. subject)
+  -- cell is one field of a hash, read once a call.
+  local function cell(d, k, field, reserve)
     local memo = k .. '\0' .. field
-    local v
-    if d.seen[memo] then
-      v = d.val[memo]
-    else
-      local err
-      v, err = hget(d, k, field, 600)
-      if err then return nil, err end
-      d.seen[memo], d.val[memo] = true, v
-    end
+    local c = d.cells[memo]
+    if c then return c.v, nil end
+    local v, err = hget(d, k, field, reserve)
+    if err then return nil, err end
+    d.cells[memo] = {v = v}
+    return v, nil
+  end
+  local function state_of(d, subject, field)
+    local v, err = cell(d, jkey(d.ctx, 'jopen:' .. subject), field, 600)
+    if err then return nil, err end
     if v == nil then return {kind = ''}, nil end
     if #v > 2 and string.sub(v, 1, 2) == HOLD .. NOTE then return {kind = 'held', id = string.sub(v, 2)}, nil end
     if #v > 1 and string.sub(v, 1, 1) == NOTE then return {kind = 'open', id = v}, nil end
     return nil, d.S.refuse('DRIFT', {})
   end
-  -- count is jn[note]: DRIFT when there is none, or it is no count.
+  -- is_count says a value is a count as jn and jh hold it: one to nine digits, no
+  -- leading zero, at least one.
+  local function is_count(v) return #v <= 9 and string.match(v, '^[1-9][0-9]*$') ~= nil end
+  -- count_of is jn[note]: DRIFT when there is none, or it is no count.
   local function count_of(d, note)
-    local v = d.jn[note]
-    if v == nil then
-      local err
-      v, err = hget(d, jkey(d.ctx, 'jn'), note, 32)
-      if err then return nil, err end
-      d.jn[note] = v or false
-    end
-    if v == false or v == nil or #v > 9 or not string.match(v, '^[1-9][0-9]*$') then
-      return nil, d.S.refuse('DRIFT', {})
-    end
+    local v, err = cell(d, jkey(d.ctx, 'jn'), note, 32)
+    if err then return nil, err end
+    if v == nil or not is_count(v) then return nil, d.S.refuse('DRIFT', {}) end
     return tonumber(v), nil
+  end
+  -- held_of is jh[note], the held subjects of a note: DRIFT for a note whose
+  -- subjects a step takes out of the hold (must) and jh has none of, or no count;
+  -- zero for a note a step holds more subjects of, with none held yet.
+  local function held_of(d, note, must)
+    local v, err = cell(d, jkey(d.ctx, 'jh'), note, 32)
+    if err then return nil, err end
+    if v == nil and not must then return 0, nil end
+    if v == nil or not is_count(v) then return nil, d.S.refuse('DRIFT', {}) end
+    return tonumber(v), nil
+  end
+  -- empty_digest is the digest of a note with no text and no decisions, worked
+  -- out once a call.
+  local function empty_digest(d)
+    if not d.empty then d.empty = digest('', {}) end
+    return d.empty
+  end
+  -- text_digest is the digest an open note has: jtext's field, or the empty one.
+  local function text_digest(d, note)
+    local v, err = cell(d, jkey(d.ctx, 'jtext'), note, 64)
+    if err then return nil, err end
+    if v == nil then return empty_digest(d), nil end
+    return v, nil
+  end
+  -- quarantined reads {p}quarantine@e over the subjects in pieces of at most
+  -- B.piece: a read for each piece and never one for each subject.
+  local function quarantined(d, subjects, into)
+    local S, ctx = d.S, d.ctx
+    local k = jkey(ctx, 'quarantine')
+    local acc = {{key = k, kind = 'hash', mode = 'read'}}
+    local i = 1
+    while i <= #subjects do
+      local last = math.min(i + B.piece - 1, #subjects)
+      local argv = {'HMGET', k}
+      for j = i, last do argv[#argv + 1] = subjects[j] end
+      local got, err = S.readcmd(ctx, {argv = argv, access = acc}, (last - i + 1) * QUARANTINE_FIELD_BYTES + 16, 'cell')
+      if err then return err end
+      for j = i, last do
+        local v = got[j - i + 1]
+        if v ~= false and v ~= nil then into[subjects[j]] = true end
+      end
+      i = last + 1
+    end
+    return nil
   end
   -- digits reads a clock field: absent is 0; anything but 1 to 15 digits fails.
   local function digits(v)
@@ -288,7 +359,8 @@ do
     d.r = r
     return r, nil
   end
-  -- jopen_fields is every field of a subject's jopen hash, bounded by its HLEN.
+  -- jopen_fields is every field of a subject's jopen hash, bounded by its HLEN,
+  -- as a set of names.
   local function jopen_fields(d, subject)
     if d.all[subject] then return d.all[subject], nil end
     local S, ctx = d.S, d.ctx
@@ -308,15 +380,15 @@ do
   end
 
   -- decide expands one request into the lines it makes (sprintfn decide): each
-  -- a group {req = ..., existing = ""}, existing the note id, "h" before it for
-  -- a hold.
+  -- a group {req = ..., existing = "", digest = ""}, existing the note id, "h"
+  -- before it for a hold.
   local function copy_req(r, subjects, op)
     return {op = op or r.op, type = r.type, cause = r.cause, subjects = subjects, text = r.text,
       decisions = r.decisions, ['until'] = r['until']}
   end
   local function decide(d, r)
     local subjects = dedup(r.subjects)
-    if not STATE_OPS[r.op] then return {{req = copy_req(r, subjects), existing = ''}}, nil end
+    if not STATE_OPS[r.op] then return {{req = copy_req(r, subjects), existing = '', digest = ''}}, nil end
     local field = field_of(r.type, r.cause)
     local order, buckets, fresh = {}, {}, {}
     for _, s in ipairs(subjects) do
@@ -331,20 +403,28 @@ do
         b.subjects[#b.subjects + 1] = s
       end
     end
+    local dg = digest(r.text, r.decisions)
     if r.op == 'open' then
       if #fresh == 0 then return {}, nil end
-      return {{req = copy_req(r, fresh), existing = ''}}, nil
+      return {{req = copy_req(r, fresh), existing = '', digest = dg}}, nil
     end
     local tick_kept = SP.j_judgments[r.type] == true
     local out = {}
     for _, k in ipairs(order) do
       local b = buckets[k]
       local held = b.state.kind == 'held'
-      local g = {req = copy_req(r, b.subjects), existing = b.state.id}
+      local g = {req = copy_req(r, b.subjects), existing = b.state.id, digest = ''}
       if held then g.existing = HOLD .. b.state.id end
       local skip = false
       if r.op == 'update' then
-        skip = held
+        if held then
+          skip = true
+        else
+          local have, err = text_digest(d, b.state.id)
+          if err then return nil, err end
+          skip = have == dg
+          g.digest = dg
+        end
       elseif r.op == 'hold' then
         skip = held
         if not skip and not tick_kept then g.req.op = 'review' end
@@ -354,6 +434,54 @@ do
       if not skip then out[#out + 1] = g end
     end
     return out, nil
+  end
+
+  -- merge_key is what makes two state requests one note: the op, the type and
+  -- cause, the text and decisions, and the time, each length-prefixed.
+  local function merge_key(r)
+    local parts = {string.format('%d:%s%d:%s%d:%s%d:%s%d;', #r.op, r.op, #r.type, r.type, #r.cause, r.cause,
+      #r.text, r.text, #r.decisions)}
+    for _, x in ipairs(r.decisions) do parts[#parts + 1] = string.format('%d:%s', #x, x) end
+    parts[#parts + 1] = num(r['until'])
+    return table.concat(parts)
+  end
+  -- merge makes the state requests of one op, type, cause, text, decisions and
+  -- time one request, in the place of the first, and cuts one of more than 2,000
+  -- subjects into pieces of 2,000 (sprintfn jMerge): one pass over the requests.
+  local function merge(list)
+    local out, at = {}, {}
+    for _, r in ipairs(list) do
+      if not STATE_OPS[r.op] then
+        out[#out + 1] = r
+      else
+        local subjects = dedup(r.subjects)
+        local k = merge_key(r)
+        local i = at[k]
+        if i then
+          local dst = out[i].subjects
+          for _, s in ipairs(subjects) do dst[#dst + 1] = s end
+        else
+          out[#out + 1] = copy_req(r, subjects)
+          at[k] = #out
+        end
+      end
+    end
+    local cut = {}
+    for _, r in ipairs(out) do
+      if not STATE_OPS[r.op] or #r.subjects <= B.subjects then
+        cut[#cut + 1] = r
+      else
+        local i = 1
+        while i <= #r.subjects do
+          local last = math.min(i + B.subjects - 1, #r.subjects)
+          local piece = {}
+          for j = i, last do piece[#piece + 1] = r.subjects[j] end
+          cut[#cut + 1] = copy_req(r, piece)
+          i = last + 1
+        end
+      end
+    end
+    return cut
   end
 
   -- meta_of is the line's meta: an object of strings and one list of strings,
@@ -390,18 +518,20 @@ do
     local head = string.match(stored, '^(.+)~[^~]*$')
     return head or stored
   end
+  -- ends says whether an entry takes the ith card out of the due kind's state,
+  -- and with which reason: the kind's own for where a move goes (sprintfn jEnds).
   local function ends(e, i, k, rec)
     if e.kind == 'remove' then return 'removed', true end
     if e.to and e.to ~= '' and e.to ~= (e.from or '') then
       local row, col = cell_of(e.to)
-      if col ~= k.col or (k.of_row and row ~= rec.place.row) then return k.reason, true end
+      if col ~= k.col or (k.of_row and row ~= rec.place.row) then return k.moved[col] or k.other, true end
     end
     for _, f in ipairs(e.unset or {}) do
-      if f == k.field then return 'cleared', true end
+      if f == k.field then return k.cleared, true end
     end
-    if e.set and e.set[k.field] ~= nil and e.set[k.field] == '' then return 'cleared', true end
+    if e.set and e.set[k.field] ~= nil and e.set[k.field] == '' then return k.cleared, true end
     local each = e.each and e.each[i]
-    if type(each) == 'table' and each[k.field] ~= nil and each[k.field] == '' then return 'cleared', true end
+    if type(each) == 'table' and each[k.field] ~= nil and each[k.field] == '' then return k.cleared, true end
     return '', false
   end
   local function endings(d, named)
@@ -467,57 +597,65 @@ do
     return out, nil
   end
 
-  -- open_taken is how many subjects a step takes off each open note's count.
-  local function open_taken(jnotes)
-    local out, order = {}, {}
+  -- effects is what a list of notes does to the counts and to askwait (sprintfn
+  -- jEffectsOf): how many open subjects a close or a hold takes off each note's
+  -- count, how many a hold puts in the held count and a close or an unhold of
+  -- held subjects takes out, and the subjects whose "cannot ask" fields leave.
+  local function effects(jnotes)
+    local e = {taken = {}, taken_order = {}, held = {}, held_order = {}, leaving = {}, leave_order = {}, staying = {}}
     for _, n in ipairs(jnotes) do
-      if n.existing ~= '' and string.sub(n.existing, 1, 1) ~= HOLD and (n.req.op == 'close' or n.req.op == 'hold') then
-        if not out[n.existing] then out[n.existing] = 0; order[#order + 1] = n.existing end
-        out[n.existing] = out[n.existing] + #n.req.subjects
+      local req = n.req
+      local is_held = n.existing ~= '' and string.sub(n.existing, 1, 1) == HOLD
+      if n.existing ~= '' and not is_held and (req.op == 'close' or req.op == 'hold') then
+        if not e.taken[n.existing] then e.taken[n.existing] = 0; e.taken_order[#e.taken_order + 1] = n.existing end
+        e.taken[n.existing] = e.taken[n.existing] + #req.subjects
       end
-    end
-    return out, order
-  end
-
-  -- askwait_drops is the subjects that leave askwait in this step: those whose
-  -- last "cannot ask" field, of any cause, a close or an unhold takes, with none
-  -- opened on them in the same step (sprintfn jAskwaitDrops). fields(s) is
-  -- their jopen fields.
-  local function askwait_drops(jnotes, fields)
-    local leaving, staying, order = {}, {}, {}
-    for _, n in ipairs(jnotes) do
-      if n.req.type == CANNOT_ASK then
-        local field = field_of(n.req.type, n.req.cause)
-        if n.req.op == 'open' then
-          for _, s in ipairs(n.req.subjects) do staying[s] = true end
-        elseif n.req.op == 'close' or n.req.op == 'unhold' then
-          for _, s in ipairs(n.req.subjects) do
-            if not leaving[s] then leaving[s] = {}; order[#order + 1] = s end
-            leaving[s][field] = true
+      if n.existing ~= '' and (req.op == 'hold' or (is_held and (req.op == 'close' or req.op == 'unhold'))) then
+        local note = note_of(n.existing)
+        local h = e.held[note]
+        if not h then
+          h = {enter = 0, leave = 0, type = req.type}
+          e.held[note] = h
+          e.held_order[#e.held_order + 1] = note
+        end
+        if req.op == 'hold' then h.enter = h.enter + #req.subjects else h.leave = h.leave + #req.subjects end
+      end
+      if req.type == CANNOT_ASK then
+        local field = field_of(req.type, req.cause)
+        if req.op == 'open' then
+          for _, s in ipairs(req.subjects) do e.staying[s] = true end
+        elseif req.op == 'close' or req.op == 'unhold' then
+          for _, s in ipairs(req.subjects) do
+            if not e.leaving[s] then e.leaving[s] = {}; e.leave_order[#e.leave_order + 1] = s end
+            e.leaving[s][field] = true
           end
         end
       end
     end
-    local drops = {}
-    for _, s in ipairs(order) do
-      if not staying[s] then
+    return e
+  end
+  -- drops is the subjects that leave askwait in this step: those whose last
+  -- "cannot ask" field, of any cause, a close or an unhold takes, with none
+  -- opened on them in the same step. fields(s) is their jopen fields.
+  local function drops_of(e, fields)
+    local out = {}
+    for _, s in ipairs(e.leave_order) do
+      if not e.staying[s] then
         local keep = false
-        local f, err = fields(s)
-        if err then return nil, err end
-        for name in pairs(f) do
-          if string.sub(name, 1, #CANNOT_ASK + 1) == CANNOT_ASK .. SEP and not leaving[s][name] then keep = true; break end
+        for name in pairs(fields(s) or {}) do
+          if string.sub(name, 1, #CANNOT_ASK + 1) == CANNOT_ASK .. SEP and not e.leaving[s][name] then keep = true; break end
         end
-        if not keep then drops[#drops + 1] = s end
+        if not keep then out[#out + 1] = s end
       end
     end
-    return drops, nil
+    return out
   end
 
   -- j_decide is J's pre stage: requests (decoded note requests of the sprint
   -- half, and those derive made) to the step's notes and J's plan.
   function SP.j_decide(ctx, reqs, obs)
     local S = layer_one()
-    local d = {S = S, ctx = ctx, seen = {}, val = {}, jn = {}, all = {}}
+    local d = {S = S, ctx = ctx, cells = {}, all = {}}
     local list = {}
     for i, r in ipairs(reqs) do
       list[i] = normalize(r)
@@ -537,6 +675,7 @@ do
     local auto, err = endings(d, named)
     if err then return nil, nil, err end
     for _, r in ipairs(auto) do list[#list + 1] = r end
+    list = merge(list)
     local notes, jnotes = {}, {}
     local base = #ctx.notes
     local about, opens = 0, false
@@ -552,32 +691,59 @@ do
         local arr = S.array()
         for _, s in ipairs(g.req.subjects) do arr[#arr + 1] = s end
         notes[#notes + 1] = {line = {kind = 'note', meta = meta_of(g)}, about = arr}
-        jnotes[#jnotes + 1] = {index = base + #notes, req = g.req, existing = g.existing}
+        jnotes[#jnotes + 1] = {index = base + #notes, req = g.req, existing = g.existing, digest = g.digest}
       end
     end
-    local taken, order = open_taken(jnotes)
-    local jn = {}
-    for _, note in ipairs(order) do
+    local eff = effects(jnotes)
+    local have_n, have_h, fields, quar = {}, {}, {}, {}
+    -- A close or a hold of open subjects takes them off their note's count: it
+    -- must have the count, and one to take them from (jn agrees with jopen).
+    for _, note in ipairs(eff.taken_order) do
       local have
       have, err = count_of(d, note)
       if err then return nil, nil, err end
-      if have < taken[note] then return nil, nil, S.refuse('DRIFT', {}) end
-      jn[note] = have
+      if have < eff.taken[note] then return nil, nil, S.refuse('DRIFT', {}) end
+      have_n[note] = have
     end
-    local drops
-    drops, err = askwait_drops(jnotes, function(s) return jopen_fields(d, s) end)
+    -- A hold puts subjects in the note's held count, and a close or an unhold of
+    -- held subjects takes them out (jh agrees with jopen).
+    for _, note in ipairs(eff.held_order) do
+      local h = eff.held[note]
+      local have
+      have, err = held_of(d, note, h.leave ~= 0)
+      if err then return nil, nil, err end
+      if have < h.leave then return nil, nil, S.refuse('DRIFT', {}) end
+      have_h[note] = have
+    end
+    -- The fields of each subject that may leave askwait, and the primaries a
+    -- "cannot ask" opens on that are quarantined.
+    for _, s in ipairs(eff.leave_order) do
+      fields[s], err = jopen_fields(d, s)
+      if err then return nil, nil, err end
+    end
+    local asking, seen = {}, {}
+    for _, n in ipairs(jnotes) do
+      if n.req.op == 'open' and n.req.type == CANNOT_ASK then
+        for _, s in ipairs(n.req.subjects) do
+          if not seen[s] then seen[s] = true; asking[#asking + 1] = s end
+        end
+      end
+    end
+    err = quarantined(d, asking, quar)
     if err then return nil, nil, err end
     local r
     if opens then
       r, err = running(d)
       if err then return nil, nil, err end
     end
-    return notes, {notes = jnotes, jn = jn, taken = taken, order = order, r = r, drops = drops}, nil
+    return notes, {notes = jnotes, have_n = have_n, have_h = have_h, fields = fields, quar = quar, r = r}, nil
   end
 
   -- j_cmds is J's X.plan: the commands of the plan, in the order A1 wants:
   -- what records owed work before the state it is owed for, and what forgets a
-  -- trigger after. It reads nothing: everything it needs j_decide read.
+  -- trigger after. It reads nothing: everything it needs j_decide read. A note
+  -- with no seq writes nothing, and neither do its counts, holds or askwait: they
+  -- are worked out over the notes that have a line.
   function SP.j_cmds(ctx, jp, lp)
     local S = layer_one()
     local records, states, after, seqs = {}, {}, {}, {}
@@ -609,50 +775,86 @@ do
       end
     end
     local due, jnotes, jn = jkey(ctx, 'due'), jkey(ctx, 'jnotes'), jkey(ctx, 'jn')
+    local jh, jtext = jkey(ctx, 'jh'), jkey(ctx, 'jtext')
     local askwait = jkey(ctx, 'askwait')
+    local seqed = {}
     for _, n in ipairs(jp.notes) do
       local seq = lp.note_seqs and lp.note_seqs[n.index]
       if type(seq) == 'string' and S.uint(seq) then
+        seqed[#seqed + 1] = n
         seqs[#seqs + 1] = seq
-        local req = n.req
-        local field = field_of(req.type, req.cause)
-        local untilms = num(req['until'])
-        if req.op == 'open' then
-          local id = note_id(ctx, seq)
-          local rs = num(jp.r)
-          if req.type ~= DONE then
-            add(records, 'ZADD', due, 'zset', {num(jp.r + B.overdue_ms), 'overdue:' .. id})
-          end
-          add(records, 'ZADD', jnotes, 'zset', {rs, id})
-          add(records, 'HSET', jn, 'hash', {id, string.format('%d', #req.subjects)})
-          if req.type == CANNOT_ASK then pairs_of(records, askwait, rs, req.subjects) end
-          for _, s in ipairs(req.subjects) do
-            add(states, 'HSET', jkey(ctx, 'jopen:' .. s), 'hash', {field, id})
-          end
-        elseif req.op == 'close' or req.op == 'hold' or req.op == 'unhold' then
-          local id = note_of(n.existing)
-          if req.op == 'hold' then
-            if req.type == STOPPED then
-              add(records, 'HSET', clock_key(ctx), 'hash', {'stophold_ms', untilms})
-            else
-              add(records, 'ZADD', due, 'zset', {untilms, 'hold:' .. id})
-            end
-            for _, s in ipairs(req.subjects) do
-              add(states, 'HSET', jkey(ctx, 'jopen:' .. s), 'hash', {field, HOLD .. id})
-            end
-          else
-            for _, s in ipairs(req.subjects) do
-              add(states, 'HDEL', jkey(ctx, 'jopen:' .. s), 'hash', {field})
-            end
-          end
-        elseif req.op == 'review' then
-          if req.type ~= DONE then
-            add(records, 'ZADD', due, 'zset', {untilms, 'overdue:' .. note_of(n.existing)})
-          end
-        end
       end
     end
     if #seqs == 0 then return {commands = {}} end
+    local eff = effects(seqed)
+    local r = jp.r or 0
+    local rs = num(r)
+    local empty = digest('', {})
+    for i, n in ipairs(seqed) do
+      local seq = seqs[i]
+      local req = n.req
+      local field = field_of(req.type, req.cause)
+      local untilms = num(req['until'])
+      if req.op == 'open' then
+        local id = note_id(ctx, seq)
+        if req.type ~= DONE then
+          add(records, 'ZADD', due, 'zset', {num(r + B.overdue_ms), 'overdue:' .. id})
+        end
+        add(records, 'ZADD', jnotes, 'zset', {rs, id})
+        add(records, 'HSET', jn, 'hash', {id, string.format('%d', #req.subjects)})
+        if n.digest ~= empty then add(records, 'HSET', jtext, 'hash', {id, n.digest}) end
+        if req.type == CANNOT_ASK then
+          local put = {}
+          for _, s in ipairs(req.subjects) do
+            if not jp.quar[s] then put[#put + 1] = s end
+          end
+          pairs_of(records, askwait, rs, put)
+        end
+        for _, s in ipairs(req.subjects) do
+          add(states, 'HSET', jkey(ctx, 'jopen:' .. s), 'hash', {field, id})
+        end
+      elseif req.op == 'update' then
+        add(records, 'HSET', jtext, 'hash', {n.existing, n.digest})
+      elseif req.op == 'hold' then
+        local id = note_of(n.existing)
+        if req.type == STOPPED then
+          add(records, 'HSET', clock_key(ctx), 'hash', {'stophold_ms', untilms})
+        else
+          add(records, 'ZADD', due, 'zset', {untilms, 'hold:' .. id})
+        end
+        for _, s in ipairs(req.subjects) do
+          add(states, 'HSET', jkey(ctx, 'jopen:' .. s), 'hash', {field, HOLD .. id})
+        end
+      elseif req.op == 'close' or req.op == 'unhold' then
+        for _, s in ipairs(req.subjects) do
+          add(states, 'HDEL', jkey(ctx, 'jopen:' .. s), 'hash', {field})
+        end
+      elseif req.op == 'review' then
+        if req.type ~= DONE then
+          add(records, 'ZADD', due, 'zset', {untilms, 'overdue:' .. note_of(n.existing)})
+        end
+      end
+    end
+    -- The held counts a hold raises are recorded before the fields become holds;
+    -- the ones a close or an unhold lowers are forgotten after the fields go, and
+    -- a count that reaches zero takes the hold entry with it (or the STOPPED
+    -- judgment's stophold_ms, which is that judgment's hold).
+    for _, note in ipairs(eff.held_order) do
+      local h = eff.held[note]
+      local net = (jp.have_h[note] or 0) + h.enter - h.leave
+      local into = after
+      if h.enter ~= 0 then into = records end
+      if net > 0 then
+        add(into, 'HSET', jh, 'hash', {note, string.format('%d', net)})
+      else
+        add(into, 'HDEL', jh, 'hash', {note})
+        if h.type == STOPPED then
+          add(into, 'HDEL', clock_key(ctx), 'hash', {'stophold_ms'})
+        else
+          add(into, 'ZREM', due, 'zset', {'hold:' .. note})
+        end
+      end
+    end
     local head = {}
     local i = 1
     while i <= #seqs do
@@ -662,15 +864,16 @@ do
       add(head, 'RPUSH', jkey(ctx, 'notes'), 'list', args)
       i = last + 1
     end
-    members_of(after, askwait, jp.drops)
-    for _, id in ipairs(jp.order) do
-      local left = jp.jn[id] - jp.taken[id]
+    members_of(after, askwait, drops_of(eff, function(s) return jp.fields[s] end))
+    for _, id in ipairs(eff.taken_order) do
+      local left = jp.have_n[id] - eff.taken[id]
       if left > 0 then
         add(after, 'HSET', jn, 'hash', {id, string.format('%d', left)})
       else
         add(after, 'HDEL', jn, 'hash', {id})
         add(after, 'ZREM', jnotes, 'zset', {id})
         add(after, 'ZREM', due, 'zset', {'overdue:' .. id})
+        add(after, 'HDEL', jtext, 'hash', {id})
       end
     end
     local out = {}
