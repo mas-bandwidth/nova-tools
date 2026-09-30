@@ -1,12 +1,11 @@
-//go:build tickprofile
-
 package main
 
 // The tick's profile at the owner's size (3 x 1000 cards, 8 members of width
-// 64, 4 readers) on the twin: go test -tags tickprofile -run TestTickProfile
+// 64, 4 readers) on the in-memory store: go test -run TestTickProfile -v
 // ./cmd/nova-sprint -args -cpuprofile-ticks <file>. It prints every tick's
 // parts and times; the CPU profile covers the ticks only (label part=tick).
-// No tier runs it: it is the bench of the tick's cost, not a test.
+// Without the flag it is skipped: it is the bench of the tick's cost, run by
+// hand, not a test of the tiers.
 
 import (
 	"context"
@@ -23,6 +22,10 @@ var tickProfile = flag.String("cpuprofile-ticks", "", "write the ticks' CPU prof
 var tickCount = flag.Int("ticks", 40, "ticks to run")
 
 func TestTickProfile(t *testing.T) {
+	t.Parallel()
+	if *tickProfile == "" {
+		t.Skip("the tick's profile is run by hand: -args -cpuprofile-ticks <file>")
+	}
 	ta := newTestApp(t)
 	ta.live = []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 	ta.ok("init --readers reader-a,reader-b,reader-c,reader-d --members m1:64,m2:64,m3:64,m4:64,m5:64,m6:64,m7:64,m8:64")

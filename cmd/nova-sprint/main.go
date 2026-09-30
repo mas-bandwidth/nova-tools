@@ -66,6 +66,9 @@ type app struct {
 	// began, and why (the loop's start, a line on the log, the clock of a
 	// quiet log, a retry).
 	ticked func(n int, began time.Time, why string)
+	// profiled, when set, is told of each tick run finished, by its count:
+	// run --cpuprofile ends its profile at the last tick it covers.
+	profiled func(n int)
 }
 
 func newApp(getenv func(string) string) *app {
@@ -103,6 +106,7 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 		a.conns[addr] = conn
 	}
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
+	b.CountTrips() // a tick's cost says its round trips (store/stats.go)
 	a.cached[key] = b
 	return b, nil
 }
