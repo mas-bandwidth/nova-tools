@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -17,29 +16,31 @@ import (
 // look of R17 while the machine is STOPPED, and the judgment that names a
 // step the store refused (1.3.5), which parks or halves the key.
 //
-// Every rule is a pure function of a snapshot, the keys it was given and Now.
-// Time comes only from Now (R for running time, Wall for wall time): nothing
-// here reads a clock. Every rule is idempotent (1.3.3, E7): it decides from
-// the state it read, its moves and creates carry the guards of the cards they
-// read, and a rule run a second time on the same keys with nothing changed
-// asks for nothing that changes anything. Each rule names its cost below; a
-// plan is O(1) a key.
+// Every rule is a pure function of a partial snapshot (IT05), the keys it was
+// given and Now. Time comes only from Now (R for running time, Wall for wall
+// time): nothing here reads a clock. Every rule is idempotent (1.3.3, E7): it
+// decides from the state it read, its moves and creates carry the guards of
+// the cards it read, and a rule run a second time on the same keys with
+// nothing changed asks for nothing that changes anything. Each rule's Read asks
+// for everything its Plan reads and no more: on the partial snapshot a read of
+// what was not asked panics in a test and is refused in a release build.
 //
-// What these rules stand on and that is not merged (the clock of IT03, the
-// rule registry and read plans of IT05, the words of IT06, the agenda key of
-// IT01's revision) is in rules_time_stub.go, each named for its item and
-// deleted when the item merges. The sprint's own reads beyond the four tables
-// are TimeFacts, which the partial snapshot will carry; until it does, a
-// snapshot is given them beside it.
+// Each rule names its cost below. A plan is O(1) a key, and O(f) or O(r) once a
+// plan for the members or readers a replacement chooses among (a heap: the
+// choice is O(log f), O(15 + log r) a key).
+//
+// The writes to the sprint's own keys that a plan carries beside its cards
+// (R14's move of its due entry and its claim on the goal record, R18's re-arm,
+// R17's clock fields and the park of 1.3.5) are RulePlan.Sprint (TimeWrites).
+// The sprint's own reads beyond the four tables (jnote, the goal records, the
+// cut entries, the tick hash, the dropping marks) are answered in
+// Answer.Time (TimeAnswer), by the sprint-key read kinds that the errata's
+// addendum (from the cold read of layer 1 revision 4) says the registry
+// includes beside the eight composite kinds: it is not closed at them.
 //
 // What the design leaves open, and the narrower reading taken (also listed in
 // the pull request):
 //
-//   - RulePlan (8.0) has no field for writes to the sprint's own keys: R14's
-//     move of its due entry and its claim on the goal record, R18's re-arm,
-//     R17's clock fields and the park of 1.3.5. They are TimeWrites, planned
-//     beside the RulePlan (TimePlan, StoppedWrites, BugWrites); the step that
-//     carries the plan must carry them.
 //   - No `count` guard on a receiving cell (R11): RulePlan and the entries of
 //     Plan cannot carry one, so a replacement is guarded by the card's place
 //     and revision and by X's memberup, not by the receiving queue's length.
@@ -53,37 +54,45 @@ import (
 //   - R11 does not read jopen: J's one per cause makes a second request for an
 //     open judgment write nothing (1.3.4).
 
-// The numbers of the time rules, each with its section.
+// The numbers of the time rules, each with its section. They are the design's
+// own, named here for these rules: today's machine keeps its own (MaxRedeals
+// is 3 in steps_tick.go), and each difference is a question for the switch
+// (IT23) that the pull request lists.
 const (
-	// lateMaxRedeals is how many times a taken card that is late is replaced
+	// RuleMaxRedeals is how many times a taken card that is late is replaced
 	// (2.3 R11, unfinished): the bound R2 counts against too.
-	lateMaxRedeals = 5
-	// lateMaxRereads is how many more readers a late read may be given at one
+	RuleMaxRedeals = 5
+	// RuleMaxRereads is how many more readers a late read may be given at one
 	// attempt (2.3 R11, unbegun and unreported).
-	lateMaxRereads = 3
-	// maxReadCards is the read cards a primary may ever have (3, ask
+	RuleMaxRereads = 3
+	// RuleMaxReadCards is the read cards a primary may ever have (3, ask
 	// --another; F1-26).
-	maxReadCards = 15
+	RuleMaxReadCards = 15
+	// RuleDeadlineUntaken is how long a work card dealt may wait to be taken
+	// (1.2, untaken), and the replacement's own span.
+	RuleDeadlineUntaken = 15 * time.Minute
+	// RuleDeadlineUnfinished is how long a work card taken may go unfinished
+	// (1.2, unfinished).
+	RuleDeadlineUnfinished = 2 * time.Hour
+	// RuleDeadlineUnbegun is how long a read card asked may go unbegun (1.2,
+	// unbegun), and a replacement's own span.
+	RuleDeadlineUnbegun = 30 * time.Minute
+	// RuleDeadlineMergeIdle is how long a stream merging may go with no merge
+	// step (1.2, mergeidle).
+	RuleDeadlineMergeIdle = 30 * time.Minute
+	// RuleRemindEvery is the running time between two pushes to one person
+	// (1.2, remind).
+	RuleRemindEvery = 5 * time.Minute
 	// BehindSpan is the running time from when the backlog is first not zero
 	// to the judgment that the machine is falling behind (1.2, R18).
 	BehindSpan = 5 * time.Minute
 	// StoppedDueSpan is the wall time from when moves became due to the
 	// judgment that the machine is STOPPED and they are (2.3 R17).
 	StoppedDueSpan = 10 * time.Minute
-	// fleetReadRecords and readersReadRecords are the most records the fleet
-	// and readers queries of R11's read may return: members and streams
-	// together are at most 250, and members + readers + 2 x streams at most
-	// 1,024 (3, the size of the sprint).
-	fleetReadRecords   = 250
-	readersReadRecords = 1024
-	// noteReadRecords is what a jnote of one note may return: its line, and
-	// jopen of each subject the line lists (1.0, MaxListed).
-	noteReadRecords = 1 + MaxListed
-	// goalReadRecords is the goal record and the score of its due entry.
-	goalReadRecords = 2
-	// tickReadRecords is the tick hash, the agenda's size, the due count and
-	// the `behind` entry (R18's read).
-	tickReadRecords = 4
+	// ruleIdleSpan is how long a stream with open cards may land nothing before
+	// the owner is told (2.5): provisional so the build can run, the owner's to
+	// set (7).
+	ruleIdleSpan = 2 * time.Hour
 )
 
 // The card fields the time rules read and write (1.2, 1.3.1): every stamp and
@@ -101,32 +110,37 @@ const (
 	fieldAskedR          = "asked_r"
 )
 
-// The projections of R11's reads and the other reads of the time rules: no
-// rule read fetches a whole record (1.0, bytes).
+// The projections of the reads of the time rules: no rule read fetches a whole
+// record (1.0, bytes). Each names what the rule's plan reads of the record, and
+// the fields it unsets (an unset of a field the read did not name is dropped by
+// unsetPresent as absent).
 var (
 	workCardFields = []string{"stream", "primary", "attempt", "gen", "member", "redeals",
 		fieldDueUntaken, fieldDueUnfinished, fieldUntakenR, fieldUntakenReplaced, fieldFirstTakenR}
-	readCardFields  = []string{"stream", "primary", "attempt", "reader", fieldAskedR, fieldDueUnbegun, fieldDueUnreported}
-	primaryFields   = []string{"stream", "attempt", "rereads", "rcards", "head"}
-	streamCtlFields = []string{"state", fieldDueMergeIdle, fieldDueIdle}
-	memberCtlFields = []string{"status"}
-	readerCtlFields = []string{"status"}
-	goalFields      = []string{"claimed_gen", "claimed_r"}
-	tickFields      = []string{"cur", "behind_n"}
-	followReadCards = []string{"rcards"}
+	readCardFields = []string{"stream", "primary", "attempt", fieldDueUnbegun, fieldDueUnreported}
+	// primaryFields are a read card's primary, with the read cards it names:
+	// the follow's cards are found by their primary field (Table.Of), which the
+	// projection must keep (ReadPlan.Validate).
+	primaryFields = []string{"stream", "attempt", "rereads", "rcards", "head", PrimaryField}
+	// workPrimaryFields are a work card's primary: nothing follows from it.
+	workPrimaryFields = []string{"stream", "attempt"}
+	streamCtlFields   = []string{"state", fieldDueMergeIdle, fieldDueIdle}
+	memberCtlFields   = []string{"status"}
+	readerCtlFields   = []string{"status"}
+	followReadCards   = []string{FollowRCards}
+
+	// The projections of the sprint-key reads: what each returns of its subject
+	// (1.0, the fields of a composite query; E6).
+	noteFields     = []string{"type", "cause", "subjects", "jopen"}
+	goalFields     = []string{"exists", "score", "claimed_gen", "claimed_r"}
+	tickFields     = []string{"cur", "behind_n", "score", "judged"}
+	cutFields      = []string{"score", "verb"}
+	droppingFields = []string{"op"}
 )
 
-// The words of the queries, the requests and the guards the time rules use
-// (8.0, 1.0), and of the entries and causes they name.
+// The words of the requests and the guards the time rules use (8.0, 1.0), and
+// of the entries and causes they name.
 const (
-	queryRelated = "related"
-	queryFleet   = "fleet"
-	queryReaders = "readers"
-	queryJNote   = "jnote"
-	queryGoal    = "goal"
-	queryTick    = "tick"
-	queryCut     = "cut"
-
 	requestOpen   = "open"
 	requestClose  = "close"
 	requestKnow   = "know"
@@ -151,6 +165,69 @@ const (
 	entryCut      = "cut:"
 )
 
+// The sprint-key read kinds beyond the eight composite kinds of 1.0 (the errata's
+// addendum: the registry includes the eight, it is not closed at them): each
+// reads bounded keys of the sprint through `S.read_probe`. IT05's table of query costs
+// (QueryCost) has no row for them: timeQueryCost is their cost until it has.
+const (
+	queryGoal     = "goal"
+	queryTick     = "tick"
+	queryCut      = "cut"
+	queryDropping = "dropping"
+)
+
+// The costs of the sprint-key reads, in records: the goal record and the score
+// of its due entry; the tick hash, the agenda's size, the due count and the
+// `behind` entry; a cut op's entry score and verb; the dropping marks, at most
+// one for each stream.
+const (
+	goalReadRecords     = 2
+	tickReadRecords     = 4
+	cutReadRecords      = 1
+	droppingReadRecords = MaxStreams
+)
+
+// timeQueryCost is what a query may cost the store: QueryCost for the
+// composite queries of 1.0, and the time rules' own rows for the sprint-key
+// reads that QueryCost does not know.
+func timeQueryCost(q SprintQ) Cost {
+	switch q.Kind {
+	case queryGoal:
+		return recordsCost(len(q.Source.IDs)*goalReadRecords, 0, q.Fields)
+	case queryTick:
+		return recordsCost(tickReadRecords, 0, q.Fields)
+	case queryCut:
+		return recordsCost(len(q.Source.IDs)*cutReadRecords, 0, q.Fields)
+	case queryDropping:
+		return recordsCost(droppingReadRecords, 0, q.Fields)
+	}
+	return QueryCost(q)
+}
+
+// sumCost is the cost of the queries together.
+func sumCost(qs ...SprintQ) Cost {
+	var c Cost
+	for _, q := range qs {
+		c = c.Add(timeQueryCost(q))
+	}
+	return c
+}
+
+// idsQ is a composite query over a list of ids.
+func idsQ(kind string, ids []string, fields []string) SprintQ {
+	return SprintQ{Kind: kind, Source: IDSource{Kind: SourceIDs, IDs: ids}, Fields: fields}
+}
+
+// relatedQ is `related` of the ids of a table, with the follows.
+func relatedQ(table string, ids, fields, follow []string) SprintQ {
+	q := idsQ(QueryRelated, ids, fields)
+	q.Table, q.Follow = table, follow
+	return q
+}
+
+// oneKeyID stands for the one id of a query costed for one key.
+var oneKeyID = []string{"id"}
+
 // NoteFact is what jnote returns for one note (1.0): its type and cause from
 // its line, the subjects it is still open on, the subjects whose jopen holds
 // it, and whether R12 has marked it.
@@ -172,10 +249,13 @@ type GoalFact struct {
 	At    int64
 }
 
-// CutFact is a cut op's entry in `{p}cut@e` (1.2): its score, in wall time.
+// CutFact is a cut op's entry in `{p}cut@e` (1.2): its score, in wall time,
+// and the verb the op is a part of when the read knows it ("" when it does
+// not).
 type CutFact struct {
 	Entry bool
 	At    int64
+	Verb  string
 }
 
 // TickFact is what R18 reads (2.3): the backlog, the agenda's size, the due
@@ -189,20 +269,154 @@ type TickFact struct {
 	Judged                  bool
 }
 
-// TimeFacts is what the time rules read of the sprint beside its tables: the
-// answers of jnote (R12, R13), the goal records and their entries (R14), the
-// cut set (R11), the tick hash (R18) and the marks of the streams being
-// dropped (1.3.5).
-type TimeFacts struct {
+// TimeAnswer is what the sprint-key reads of the time rules answer, in
+// Answer.Time: the answers of jnote (by note), goal (by person), cut (by op),
+// tick, and dropping (every stream being dropped, with the op that marked it).
+// A note, goal or op the read asked for and that is not here is unknown: no
+// such note, no goal record, no cut entry.
+type TimeAnswer struct {
 	Notes    map[string]NoteFact
 	Goals    map[string]GoalFact
 	Cuts     map[string]CutFact
-	Tick     TickFact
-	Dropping map[string]bool
+	Tick     *TickFact
+	Dropping map[string]string
+}
+
+// TimeFacts is what the time rules read of the sprint beside its tables, as
+// one read gave it: the sprint-key queries of the snapshot's plan and their
+// answers, and what was asked. A rule that reads a note, goal, cut entry, the
+// tick or the dropping marks that its plan did not ask for is refused as any
+// read of what was not loaded (Table.Loaded, 1.5.2). A snapshot built whole
+// has none of these facts, and nothing is unloaded on it.
+type TimeFacts struct {
+	log      *unloadedLog // nil on a snapshot built whole
+	asked    map[string]map[string]bool
+	tick     bool
+	marks    bool
+	notes    map[string]NoteFact
+	goals    map[string]GoalFact
+	cuts     map[string]CutFact
+	tickFact TickFact
+	dropping map[string]string
+}
+
+// timeFactsOf is the sprint's facts as the snapshot's read gave them.
+func timeFactsOf(s *Snapshot) *TimeFacts {
+	f := &TimeFacts{}
+	if s == nil || s.Partial == nil {
+		return f
+	}
+	p := s.Partial
+	f.log = p.log
+	f.asked = map[string]map[string]bool{}
+	for i, q := range p.Plan.Sprint {
+		var ta *TimeAnswer
+		if i < len(p.Answer.Sprint) {
+			ta = p.Answer.Sprint[i].Time
+		}
+		switch q.Kind {
+		case QueryJnote, queryGoal, queryCut:
+			set := f.asked[q.Kind]
+			if set == nil {
+				set = map[string]bool{}
+				f.asked[q.Kind] = set
+			}
+			for _, id := range q.Source.IDs {
+				set[id] = true
+			}
+		case queryTick:
+			f.tick = true
+		case queryDropping:
+			f.marks = true
+		}
+		if ta == nil {
+			continue
+		}
+		switch q.Kind {
+		case QueryJnote:
+			f.notes = mergeMap(f.notes, ta.Notes)
+		case queryGoal:
+			f.goals = mergeMap(f.goals, ta.Goals)
+		case queryCut:
+			f.cuts = mergeMap(f.cuts, ta.Cuts)
+		case queryTick:
+			if ta.Tick != nil {
+				f.tickFact = *ta.Tick
+			}
+		case queryDropping:
+			f.dropping = mergeMap(f.dropping, ta.Dropping)
+		}
+	}
+	return f
+}
+
+func mergeMap[V any](into, from map[string]V) map[string]V {
+	if len(from) == 0 {
+		return into
+	}
+	if into == nil {
+		into = make(map[string]V, len(from))
+	}
+	for k, v := range from {
+		into[k] = v
+	}
+	return into
+}
+
+// unloaded records a read of what the plan did not ask for.
+func (f *TimeFacts) unloaded(what string) {
+	if f.log != nil {
+		f.log.note(unloadedMessage + ": " + what)
+	}
+}
+
+// need says the fact of the kind and id was asked for, and otherwise records
+// the read.
+func (f *TimeFacts) need(kind, id string) {
+	if f.log != nil && !f.asked[kind][id] {
+		f.unloaded(kind + " of " + id)
+	}
+}
+
+// Note is jnote's answer for the note, and whether the note is known.
+func (f *TimeFacts) Note(id string) (NoteFact, bool) {
+	f.need(QueryJnote, id)
+	n, ok := f.notes[id]
+	return n, ok
+}
+
+// Goal is the goal of the person: the zero fact when there is none.
+func (f *TimeFacts) Goal(person string) GoalFact {
+	f.need(queryGoal, person)
+	return f.goals[person]
+}
+
+// Cut is the cut entry of the op: the zero fact when it has none.
+func (f *TimeFacts) Cut(op string) CutFact {
+	f.need(queryCut, op)
+	return f.cuts[op]
+}
+
+// Tick is the tick hash's answer.
+func (f *TimeFacts) Tick() TickFact {
+	if f.log != nil && !f.tick {
+		f.unloaded("the tick hash")
+	}
+	return f.tickFact
+}
+
+// DroppingOp is the op whose mark says the stream is being dropped, and
+// whether it is.
+func (f *TimeFacts) DroppingOp(stream string) (string, bool) {
+	if f.log != nil && !f.marks {
+		f.unloaded("the dropping marks")
+	}
+	op, ok := f.dropping[stream]
+	return op, ok
 }
 
 // TimeWrites are the writes to the sprint's own keys that a time rule plans
-// and that RulePlan (8.0) has no field for. The step that carries the plan
+// and that the tables' plan has no place for. The step that carries the plan
 // carries them, in the order A1 gives: what records owed work first.
 type TimeWrites struct {
 	// Due sets due entries to a running time: R14's move of `remind:<person>`
@@ -254,45 +468,42 @@ func (w TimeWrites) Empty() bool {
 	return len(w.Due) == 0 && len(w.Goal) == 0 && w.Tick == nil && w.Clock == nil && len(w.Park) == 0
 }
 
+// LateDue says a card whose deadline is due (its `due_<kind>` field, in R) is
+// late at now: R is at least the deadline (2.3 R11, "a card is late only when
+// R is at least its due"). It is the one place the condition is written, for
+// the holder table (IT11) to call.
+func LateDue(now Now, due int64) bool { return now.R >= due }
+
+// CutDue says a cut entry (in wall time) is due at now: the wall time is at
+// least the entry's score (1.2, `cut:<op>`). The one place the condition is
+// written.
+func CutDue(now Now, at int64) bool { return now.Wall >= at }
+
 // timeRule is one row of the table of the rules this file registers: the
-// rule's name and its place in the round robin (1.4.2), its read and its plan.
+// rule's name (its place in the round robin is RulePriorities'), its read and
+// its plan.
 type timeRule struct {
 	Name string
-	// Priority is the rule's place in 1.4.2's order: R1, R2, R4, R3, R5, R6,
-	// R7, R8, R9, R10, R11, R12, R13, R14, R18, R15, R19.
-	Priority int
-	Read     func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
-	Plan     func(s *Snapshot, keys []AgendaKey, now Now) (RulePlan, TimeWrites)
+	Read func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
+	Plan func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
 }
 
 var timeRules = []timeRule{
-	{Name: "late", Priority: 11, Read: readLate, Plan: planLate},
-	{Name: "overdue", Priority: 12, Read: readOverdue, Plan: planOverdue},
-	{Name: "hold", Priority: 13, Read: readHold, Plan: planHold},
-	{Name: "remind", Priority: 14, Read: readRemind, Plan: planRemind},
-	{Name: "behind", Priority: 15, Read: readBehind, Plan: planBehind},
+	{Name: "late", Read: readLate, Plan: planLate},
+	{Name: "overdue", Read: readOverdue, Plan: planOverdue},
+	{Name: "hold", Read: readHold, Plan: planHold},
+	{Name: "remind", Read: readRemind, Plan: planRemind},
+	{Name: "behind", Read: readBehind, Plan: planBehind},
 }
 
 func init() {
 	for _, tr := range timeRules {
-		RegisterRule(Rule{Name: tr.Name, Priority: tr.Priority, Read: tr.Read,
-			Plan: func(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-				p, _ := tr.Plan(s, keys, now)
-				return p
-			}})
-	}
-}
-
-// TimePlan is the plan of the time rule with the name over the keys, with the
-// writes to the sprint's keys that RulePlan has no field for. A name that is
-// no time rule plans nothing.
-func TimePlan(name string, s *Snapshot, keys []AgendaKey, now Now) (RulePlan, TimeWrites) {
-	for _, tr := range timeRules {
-		if tr.Name == name {
-			return tr.Plan(s, keys, now)
+		p, ok := PriorityOf(tr.Name)
+		if !ok {
+			panic("sprint: the time rule " + tr.Name + " has no row in RulePriorities")
 		}
+		RegisterRule(Rule{Name: tr.Name, Priority: p, Read: tr.Read, Plan: tr.Plan})
 	}
-	return RulePlan{}, TimeWrites{}
 }
 
 // timeBuilder assembles one plan: it puts into one note the requests that
@@ -300,7 +511,6 @@ func TimePlan(name string, s *Snapshot, keys []AgendaKey, now Now) (RulePlan, Ti
 // the same type and cause, 1.3.4), and keeps each guard once.
 type timeBuilder struct {
 	rp     RulePlan
-	tw     TimeWrites
 	noteAt map[noteKey]int
 	guards map[XGuard]bool
 }
@@ -314,7 +524,7 @@ func newTimeBuilder() *timeBuilder {
 	return &timeBuilder{noteAt: map[noteKey]int{}, guards: map[XGuard]bool{}}
 }
 
-func (b *timeBuilder) result() (RulePlan, TimeWrites) { return b.rp, b.tw }
+func (b *timeBuilder) result() RulePlan { return b.rp }
 
 func (b *timeBuilder) note(n NoteReq) {
 	k := noteKey{n.Op, n.Type, n.Cause, n.Text, n.Until}
@@ -334,12 +544,36 @@ func (b *timeBuilder) guard(g XGuard) {
 	}
 }
 
-func (b *timeBuilder) unit(u Unit) { b.rp.Plan.Units = append(b.rp.Plan.Units, u) }
+// unit adds a unit and returns its place in the plan.
+func (b *timeBuilder) unit(u Unit) int {
+	b.rp.Plan.Units = append(b.rp.Plan.Units, u)
+	return len(b.rp.Plan.Units) - 1
+}
 
 // noEntryAbove is the guard that the due entry key has no score above at:
 // the entry a later part or a second run has moved on refuses XGUARD.
 func noEntryAbove(key string, at int64) XGuard {
 	return XGuard{Kind: guardDue, Key: key, Score: at}
+}
+
+// uniqueKeys is the keys with a key given twice (the same text) once: the
+// agenda holds a key once, but the head's keys and the new keys of a tick may
+// name one twice, and a plan must not do its work twice for it.
+func uniqueKeys(keys []AgendaKey) []AgendaKey {
+	if len(keys) < 2 {
+		return keys
+	}
+	seen := make(map[string]struct{}, len(keys))
+	out := make([]AgendaKey, 0, len(keys))
+	for _, k := range keys {
+		t := keyText(k)
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, k)
+	}
+	return out
 }
 
 // subjectOfKey is the subject of a key of the rule: what follows "<rule>:".
@@ -370,12 +604,117 @@ func cardR(c *Card, field string) (int64, bool) {
 // wall stay for the reader and no rule reads them (1.3.1).
 func wallStamp(now Now) string { return stamp(time.UnixMilli(now.Wall)) }
 
+// pool is a set of names with a load each, from which the one with the lowest
+// load, the first in row order on a tie, is picked and counted: a heap, so a
+// pick is O(log n) and the pool is built once a plan.
+type pool struct {
+	h   []poolItem
+	buf []poolItem
+}
+
+type poolItem struct {
+	name      string
+	load, ord int
+}
+
+func (a poolItem) less(b poolItem) bool {
+	return a.load < b.load || a.load == b.load && a.ord < b.ord
+}
+
+// newPool is the pool of the names, in row order, with their loads.
+func newPool(names []string, load func(name string) int) *pool {
+	p := &pool{h: make([]poolItem, len(names))}
+	for i, n := range names {
+		p.h[i] = poolItem{name: n, load: load(n), ord: i}
+	}
+	for i := len(p.h)/2 - 1; i >= 0; i-- {
+		p.down(i)
+	}
+	return p
+}
+
+func (p *pool) up(i int) {
+	for i > 0 {
+		parent := (i - 1) / 2
+		if !p.h[i].less(p.h[parent]) {
+			return
+		}
+		p.h[i], p.h[parent] = p.h[parent], p.h[i]
+		i = parent
+	}
+}
+
+func (p *pool) down(i int) {
+	n := len(p.h)
+	for {
+		l, r, least := 2*i+1, 2*i+2, i
+		if l < n && p.h[l].less(p.h[least]) {
+			least = l
+		}
+		if r < n && p.h[r].less(p.h[least]) {
+			least = r
+		}
+		if least == i {
+			return
+		}
+		p.h[i], p.h[least] = p.h[least], p.h[i]
+		i = least
+	}
+}
+
+func (p *pool) pop() poolItem {
+	top := p.h[0]
+	last := len(p.h) - 1
+	p.h[0] = p.h[last]
+	p.h = p.h[:last]
+	if last > 0 {
+		p.down(0)
+	}
+	return top
+}
+
+func (p *pool) push(it poolItem) {
+	p.h = append(p.h, it)
+	p.up(len(p.h) - 1)
+}
+
+// pick is the name with the lowest load that skip does not refuse, "" when
+// there is none. With count, the pick's load rises by one. The names skipped
+// on the way are put back as they were.
+func (p *pool) pick(skip func(name string) bool, count bool) string {
+	p.buf = p.buf[:0]
+	chosen := ""
+	for len(p.h) > 0 {
+		it := p.pop()
+		if skip != nil && skip(it.name) {
+			p.buf = append(p.buf, it)
+			continue
+		}
+		chosen = it.name
+		if count {
+			it.load++
+		}
+		p.buf = append(p.buf, it)
+		break
+	}
+	for _, it := range p.buf {
+		p.push(it)
+	}
+	return chosen
+}
+
 // R11 late: the deadlines and the cut clock.
 
 // lateKey is the text of a key of R11: late:<kind>:<id>.
 type lateKey struct{ kind, id string }
 
+// parseLateKey is the kind and id of a key R11 serves: late:<kind>:<id>, and
+// idle:<stream>, the key ServingRule sends to R11 for a stream's idle span
+// (rule.go, keyRules) whose pop form is late:idle:<stream>.
 func parseLateKey(text string) (lateKey, bool) {
+	if id, ok := strings.CutPrefix(text, "idle:"); ok {
+		return lateKey{"idle", id}, id != ""
+	}
 	rest, ok := strings.CutPrefix(text, "late:")
 	if !ok {
 		return lateKey{}, false
@@ -388,17 +727,17 @@ func parseLateKey(text string) (lateKey, bool) {
 }
 
 // lateRow is one kind of card R11 judges (1.2): where its card is, the field
-// that holds when it is due, what its read costs, and the effect.
+// that holds when it is due, what one key reads, and the effect.
 type lateRow struct {
 	Kind string
 	// Due is the card field holding the running time the card is due at.
 	Due string
-	// Records is the most records the kind's key reads: the card, its primary
-	// and, for a read card, its read cards.
-	Records int
+	// Cost is what one key of the kind adds to a read: the queries it names,
+	// costed as QueryCost costs them.
+	Cost Cost
 	// Fleet and Readers say the read needs the fleet or the readers query,
-	// once for all its keys.
-	Fleet, Readers bool
+	// once for all its keys; Marks that it needs the dropping marks.
+	Fleet, Readers, Marks bool
 	// OwnStream says the key's id is the stream, whose control card is the
 	// card.
 	OwnStream bool
@@ -407,13 +746,19 @@ type lateRow struct {
 }
 
 var lateRows = []lateRow{
-	{Kind: "untaken", Due: fieldDueUntaken, Records: 2, Fleet: true, find: inCell(Fleet, Ready), effect: (*lateRun).untaken},
-	{Kind: "unfinished", Due: fieldDueUnfinished, Records: 2, Fleet: true, find: inCell(Fleet, Working), effect: (*lateRun).unfinished},
-	{Kind: "unbegun", Due: fieldDueUnbegun, Records: 2 + maxReadCards, Readers: true, find: inCell(Readers, Asked), effect: (*lateRun).unread},
-	{Kind: "unreported", Due: fieldDueUnreported, Records: 2 + maxReadCards, Readers: true, find: inCell(Readers, Reading), effect: (*lateRun).unread},
-	{Kind: "mergeidle", Due: fieldDueMergeIdle, Records: 1, OwnStream: true, find: streamControl, effect: (*lateRun).mergeIdle},
-	{Kind: "idle", Due: fieldDueIdle, Records: 1, OwnStream: true, find: streamControl, effect: (*lateRun).idle},
-	{Kind: kindCut, effect: (*lateRun).cut},
+	{Kind: "untaken", Due: fieldDueUntaken, Fleet: true, Marks: true, find: inCell(Fleet, Ready), effect: (*lateRun).untaken,
+		Cost: sumCost(relatedQ(Fleet, oneKeyID, workCardFields, nil), relatedQ(Work, oneKeyID, workPrimaryFields, nil))},
+	{Kind: "unfinished", Due: fieldDueUnfinished, Fleet: true, Marks: true, find: inCell(Fleet, Working), effect: (*lateRun).unfinished,
+		Cost: sumCost(relatedQ(Fleet, oneKeyID, workCardFields, nil), relatedQ(Work, oneKeyID, workPrimaryFields, nil))},
+	{Kind: "unbegun", Due: fieldDueUnbegun, Readers: true, Marks: true, find: inCell(Readers, Asked), effect: (*lateRun).unread,
+		Cost: sumCost(relatedQ(Readers, oneKeyID, readCardFields, nil), relatedQ(Work, oneKeyID, primaryFields, followReadCards))},
+	{Kind: "unreported", Due: fieldDueUnreported, Readers: true, Marks: true, find: inCell(Readers, Reading), effect: (*lateRun).unread,
+		Cost: sumCost(relatedQ(Readers, oneKeyID, readCardFields, nil), relatedQ(Work, oneKeyID, primaryFields, followReadCards))},
+	{Kind: "mergeidle", Due: fieldDueMergeIdle, OwnStream: true, Marks: true, find: streamControl, effect: (*lateRun).mergeIdle,
+		Cost: sumCost(relatedQ(Merge, oneKeyID, streamCtlFields, nil)).Add(Cost{Bytes: CountBytes})},
+	{Kind: "idle", Due: fieldDueIdle, OwnStream: true, Marks: true, find: streamControl, effect: (*lateRun).idle,
+		Cost: sumCost(relatedQ(Merge, oneKeyID, streamCtlFields, nil))},
+	{Kind: kindCut, effect: (*lateRun).cut, Cost: sumCost(idsQ(queryCut, oneKeyID, cutFields))},
 }
 
 func lateRowOf(kind string) *lateRow {
@@ -447,16 +792,59 @@ func streamControl(s *Snapshot, stream string) *Card {
 	return s.Merge.Placed(CtlID(stream))
 }
 
+// primaryRun is what the plan has of one primary whose read cards it replaces:
+// the primary's rcards and rereads as they stand after the replacements the
+// plan has made so far, so that two late reads of one primary in one run are
+// planned as one change to it, with distinct readers.
+type primaryRun struct {
+	card    *Card
+	cards   []string
+	rereads int
+	// used are the readers that have a read card at an attempt, from cards.
+	used map[int]map[string]bool
+	// unit is the place of the primary's unit in the plan, -1 until it has
+	// one; added counts the replacements it holds.
+	unit, added int
+	moved       []string
+}
+
+// readers are the readers that have a read card of the primary at the attempt
+// (a retired card counts: that reader has read it).
+func (st *primaryRun) readers(attempt int) map[string]bool {
+	if st.used == nil {
+		st.used = map[int]map[string]bool{}
+		for _, id := range st.cards {
+			if _, at, rd, ok := ParseReadCard(id); ok {
+				st.mark(at, rd)
+			}
+		}
+	}
+	return st.used[attempt]
+}
+
+func (st *primaryRun) mark(attempt int, reader string) {
+	set := st.used[attempt]
+	if set == nil {
+		set = map[string]bool{}
+		st.used[attempt] = set
+	}
+	set[reader] = true
+}
+
 // lateRun is R11 planning the keys of one tick.
 type lateRun struct {
 	s   *Snapshot
 	f   *TimeFacts
 	now Now
 	b   *timeBuilder
-	ups []string
-	// ready and asked are the queue lengths, raised as the plan places cards,
-	// so that replacements spread over the members and readers.
-	ready, asked map[string]int
+	// members and readers are the pools the replacements choose from, built
+	// when the first replacement needs them: the up members by the length of
+	// their ready queue, the readers by the length of their asked queue. Each
+	// pick counts against the pool, so replacements spread as the plan fills
+	// them.
+	members, readers *pool
+	primaries        map[string]*primaryRun
+	order            []*primaryRun
 }
 
 // planLate is R11.
@@ -468,22 +856,36 @@ type lateRun struct {
 // retired and one more reader asked while the attempt's rereads are below
 // three, then judged; mergeidle and cut, judged; idle, said once.
 // Key: removed, except a key of a stream being dropped, which is held back
-// (1.3.5). Cost: O(1) a key, and O(f) or O(r) once for the members or readers
-// a replacement chooses among. Without it: every timed card read every tick.
-func planLate(s *Snapshot, keys []AgendaKey, now Now) (RulePlan, TimeWrites) {
-	w := &lateRun{s: s, f: timeFactsOf(s), now: now, b: newTimeBuilder(),
-		ready: map[string]int{}, asked: map[string]int{}}
-	if s.Fleet != nil {
-		w.ups = s.UpMembers()
-	}
-	for _, k := range keys {
+// (1.3.5). Cost: O(1) a key, and O(f) or O(r) once a plan for the members or
+// readers a replacement chooses among, then O(log f) or O(15 + log r) a key.
+// Without it: every timed card read every tick.
+func planLate(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
+	w := &lateRun{s: s, f: timeFactsOf(s), now: now, b: newTimeBuilder(), primaries: map[string]*primaryRun{}}
+	for _, k := range uniqueKeys(keys) {
 		if w.key(k) {
 			w.b.rp.HeldBack = append(w.b.rp.HeldBack, k)
 		} else {
 			w.b.rp.Done = append(w.b.rp.Done, k)
 		}
 	}
+	w.finish()
 	return w.b.result()
+}
+
+// finish writes the one change each primary that had read cards replaced gets:
+// its rcards and rereads as the plan has them, guarded at the place and
+// revision it was read at.
+func (w *lateRun) finish() {
+	for _, st := range w.order {
+		if st.added == 0 {
+			continue
+		}
+		u := &w.b.rp.Plan.Units[st.unit]
+		u.Changes = append(u.Changes, change(Work, setEntry(st.card, map[string]string{
+			"rereads": itoa(st.rereads), "rcards": strings.Join(st.cards, ","),
+		})))
+		u.Moved = strings.Join(st.moved, "; ")
+	}
 }
 
 // key plans one key, and says whether it is held back for a stream being
@@ -504,14 +906,14 @@ func (w *lateRun) key(k AgendaKey) (heldBack bool) {
 			return false
 		}
 		due, ok := cardR(c, row.Due)
-		if !ok || w.now.R < due {
+		if !ok || !LateDue(w.now, due) {
 			return false
 		}
-		stream := c.F("stream")
-		if row.OwnStream {
-			stream = lk.id
+		stream := lk.id
+		if !row.OwnStream {
+			stream = c.F("stream")
 		}
-		if w.f.Dropping[stream] {
+		if _, dropping := w.f.DroppingOp(stream); dropping {
 			return true
 		}
 	}
@@ -519,26 +921,27 @@ func (w *lateRun) key(k AgendaKey) (heldBack bool) {
 	return false
 }
 
-// queue is a member's ready queue length as the plan has it.
-func (w *lateRun) queue(member string) int {
-	n, ok := w.ready[member]
-	if !ok {
-		n = w.s.Fleet.Count(member, Ready)
-		w.ready[member] = n
+// memberPool is the up members by the length of their ready queue.
+func (w *lateRun) memberPool() *pool {
+	if w.members == nil {
+		w.members = newPool(w.s.UpMembers(), func(m string) int { return w.s.Fleet.Count(m, Ready) })
 	}
-	return n
+	return w.members
+}
+
+// readerPool is the readers by the length of their asked queue.
+func (w *lateRun) readerPool() *pool {
+	if w.readers == nil {
+		w.readers = newPool(w.s.Readers.Rows(), func(rd string) int { return w.s.Readers.Count(rd, Asked) })
+	}
+	return w.readers
 }
 
 // receiver is the up member other than present with the shortest ready queue,
-// the first in row order on a tie; "" when no other member is up.
+// the first in row order on a tie, counted as receiving a card; "" when no
+// other member is up.
 func (w *lateRun) receiver(present string) string {
-	best := ""
-	for _, m := range w.ups {
-		if m != present && (best == "" || w.queue(m) < w.queue(best)) {
-			best = m
-		}
-	}
-	return best
+	return w.memberPool().pick(func(m string) bool { return m == present }, true)
 }
 
 // redeal is a work card dealt again to an up member at the next generation:
@@ -550,7 +953,6 @@ func (w *lateRun) redeal(c *Card, to string, set map[string]string, moved string
 	w.b.unit(Unit{Key: c.F("primary"), Stream: c.F("stream"),
 		Changes: []Change{change(Fleet, moveEntry(c, to, Ready, set, unset...))}, Moved: moved})
 	w.b.guard(XGuard{Kind: guardMemberUp, Member: to})
-	w.ready[to] = w.queue(to) + 1
 }
 
 // know asks for a notice on one subject.
@@ -576,7 +978,7 @@ func (w *lateRun) untaken(lk lateKey, c *Card) {
 		if to := w.receiver(c.Row); to != "" {
 			w.redeal(c, to, map[string]string{
 				fieldUntakenReplaced: "1",
-				fieldDueUntaken:      msText(w.now.R + spanMs(DeadlineUntaken)),
+				fieldDueUntaken:      msText(w.now.R + spanMs(RuleDeadlineUntaken)),
 			}, fmt.Sprintf("%s %s:ready -> %s:ready gen=%d (replaced, not taken)", c.ID, c.Row, to, c.Int("gen")+1))
 			w.know(NReplacedUntaken, lk.kind, c.ID, "work cards not taken by their deadline were replaced")
 			return
@@ -592,7 +994,7 @@ func (w *lateRun) untaken(lk lateKey, c *Card) {
 		why = "no other member is up"
 	}
 	w.judge(NWorkLate, lk.kind, c.ID, fmt.Sprintf("%s is not taken by %s after %s of running time (%s)",
-		c.ID, c.Row, DeadlineUntaken, why), decisions, Fleet, c, c.F("stream"))
+		c.ID, c.Row, RuleDeadlineUntaken, why), decisions, Fleet, c, c.F("stream"))
 }
 
 // unfinished: a work card taken and not finished by its deadline is replaced
@@ -602,41 +1004,65 @@ func (w *lateRun) untaken(lk lateKey, c *Card) {
 // worker may still finish.
 func (w *lateRun) unfinished(lk lateKey, c *Card) {
 	redeals := c.Int("redeals")
-	if redeals < lateMaxRedeals {
+	if redeals < RuleMaxRedeals {
 		if to := w.receiver(c.Row); to != "" {
 			w.redeal(c, to, map[string]string{
 				"redeals":       itoa(redeals + 1),
 				fieldUntakenR:   msText(w.now.R),
-				fieldDueUntaken: msText(w.now.R + spanMs(DeadlineUntaken)),
-			}, fmt.Sprintf("%s %s:working -> %s:ready gen=%d (replaced, late: redeal %d of %d)", c.ID, c.Row, to, c.Int("gen")+1, redeals+1, lateMaxRedeals),
+				fieldDueUntaken: msText(w.now.R + spanMs(RuleDeadlineUntaken)),
+			}, fmt.Sprintf("%s %s:working -> %s:ready gen=%d (replaced, late: redeal %d of %d)", c.ID, c.Row, to, c.Int("gen")+1, redeals+1, RuleMaxRedeals),
 				fieldFirstTakenR, fieldDueUnfinished, fieldUntakenReplaced)
-			w.know(NReplacedLateWork, lk.kind, c.ID, fmt.Sprintf("a late work card was replaced: redeal %d of %d", redeals+1, lateMaxRedeals))
+			w.know(NReplacedLateWork, lk.kind, c.ID, fmt.Sprintf("a late work card was replaced: redeal %d of %d", redeals+1, RuleMaxRedeals))
 			return
 		}
 	}
 	why := "no other member is up"
-	if redeals >= lateMaxRedeals {
+	if redeals >= RuleMaxRedeals {
 		why = "its redeals are at their bound"
 	}
 	w.judge(NWorkLate, lk.kind, c.ID, fmt.Sprintf("%s is not finished by %s after %s of running time (%s); redealt %d of %d times; history: nova-sprint log --card %s",
-		c.ID, c.Row, DeadlineUnfinished, why, redeals, lateMaxRedeals, c.F("primary")),
+		c.ID, c.Row, RuleDeadlineUnfinished, why, redeals, RuleMaxRedeals, c.F("primary")),
 		[]string{"fleet down " + c.Row, "drop " + c.F("primary"), "wait"}, Fleet, c, c.F("stream"))
+}
+
+// primaryOf is what the plan has of the primary: made when the plan first
+// meets it.
+func (w *lateRun) primaryOf(pr *Card) *primaryRun {
+	st := w.primaries[pr.ID]
+	if st == nil {
+		st = &primaryRun{card: pr, cards: Split(pr.F("rcards")), rereads: pr.Int("rereads"), unit: -1}
+		w.primaries[pr.ID] = st
+		w.order = append(w.order, st)
+	}
+	return st
+}
+
+// pickReader is the reader with the shortest asked queue that has no read
+// card of the primary at the attempt, the first in row order on a tie; "" when
+// there is none. A retired card counts: rcards keeps every read card the
+// primary has had (at most fifteen), so the readers of rcards are the readers
+// that have read the attempt. With count, the reader is counted as asked.
+func (w *lateRun) pickReader(st *primaryRun, attempt int, count bool) string {
+	read := st.readers(attempt)
+	return w.readerPool().pick(func(rd string) bool { return read[rd] }, count)
 }
 
 // unread: a read card not begun or not reported by its deadline is retired
 // and one more reader is asked, one not yet asked at the attempt, while the
 // attempt's rereads are below three; at three, or with no such reader, it is
-// judged. The read card, the primary and the new card are one unit.
+// judged. The read cards a primary has late in one run are one unit: each
+// retired and replaced by a distinct reader, and the primary set once, with its
+// rereads raised by the replacements.
 func (w *lateRun) unread(lk lateKey, c *Card) {
 	pr := w.s.Work.Card(c.F("primary"))
 	if pr == nil || !pr.Placed() {
 		return
 	}
+	st := w.primaryOf(pr)
 	attempt := c.Int("attempt")
-	cards := Split(pr.F("rcards"))
 	reader := ""
-	if pr.Int("rereads") < lateMaxRereads && len(cards) < maxReadCards {
-		reader = w.freshReader(pr, attempt, cards)
+	if st.rereads < RuleMaxRereads && len(st.cards) < RuleMaxReadCards {
+		reader = w.pickReader(st, attempt, true)
 	}
 	word := "not begun"
 	if lk.kind == "unreported" {
@@ -644,23 +1070,29 @@ func (w *lateRun) unread(lk lateKey, c *Card) {
 	}
 	if reader == "" {
 		decisions := []string{"drop " + pr.ID, "wait"}
-		if len(cards) < maxReadCards && w.freshReader(pr, attempt, cards) != "" {
+		if len(st.cards) < RuleMaxReadCards && w.pickReader(st, attempt, false) != "" {
 			decisions = append([]string{"ask --another " + pr.ID}, decisions...)
 		}
 		w.judge(NReadLate, lk.kind, c.ID, fmt.Sprintf("%s (%s of %s) is %s after its deadline; rereads %d of %d at attempt %d",
-			c.ID, kindWord(lk.kind), c.Row, word, pr.Int("rereads"), lateMaxRereads, attempt), decisions, Readers, c, c.F("stream"))
+			c.ID, kindWord(lk.kind), c.Row, word, st.rereads, RuleMaxRereads, attempt), decisions, Readers, c, c.F("stream"))
 		return
 	}
 	id := ReadCardID(pr.ID, attempt, reader)
-	w.asked[reader] = w.askedQueue(reader) + 1
-	w.b.unit(Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{
+	if st.unit < 0 {
+		st.unit = w.b.unit(Unit{Key: pr.ID, Stream: pr.Row})
+	}
+	u := &w.b.rp.Plan.Units[st.unit]
+	u.Changes = append(u.Changes,
 		change(Readers, removeEntry(c, map[string]string{"retired": wallStamp(w.now), "retired_by": retiredByLate})),
 		change(Readers, createEntry(id, reader, Asked, pr.Score, map[string]string{
 			"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": pr.F("head"),
-			"asked": wallStamp(w.now), fieldAskedR: msText(w.now.R), fieldDueUnbegun: msText(w.now.R + spanMs(DeadlineUnbegun)),
-		})),
-		change(Work, setEntry(pr, map[string]string{"rereads": itoa(pr.Int("rereads") + 1), "rcards": strings.Join(append(cards, id), ",")})),
-	}, Moved: fmt.Sprintf("%s retired (%s); %s asked of %s", c.ID, word, id, reader)})
+			"asked": wallStamp(w.now), fieldAskedR: msText(w.now.R), fieldDueUnbegun: msText(w.now.R + spanMs(RuleDeadlineUnbegun)),
+		})))
+	st.cards = append(st.cards, id)
+	st.mark(attempt, reader)
+	st.rereads++
+	st.added++
+	st.moved = append(st.moved, fmt.Sprintf("%s retired (%s); %s asked of %s", c.ID, word, id, reader))
 	w.know(NReplacedLateRead, lk.kind, c.ID, "late reads were retired and asked of another reader")
 }
 
@@ -672,32 +1104,6 @@ func kindWord(kind string) string {
 	return "asked"
 }
 
-func (w *lateRun) askedQueue(reader string) int {
-	n, ok := w.asked[reader]
-	if !ok {
-		n = w.s.Readers.Count(reader, Asked)
-		w.asked[reader] = n
-	}
-	return n
-}
-
-// freshReader is the reader with the shortest asked queue that has no read
-// card of the primary at the attempt (a retired card counts: that reader has
-// read it); "" when there is none.
-func (w *lateRun) freshReader(pr *Card, attempt int, cards []string) string {
-	best := ""
-	for _, rd := range w.s.Readers.Rows() {
-		id := ReadCardID(pr.ID, attempt, rd)
-		if contains(cards, id) || w.s.Readers.Card(id) != nil {
-			continue
-		}
-		if best == "" || w.askedQueue(rd) < w.askedQueue(best) {
-			best = rd
-		}
-	}
-	return best
-}
-
 // mergeIdle: a stream merging, or waiting with queued cards, that has had no
 // merge step by its deadline is judged, with its control card held at its
 // place and revision.
@@ -707,7 +1113,7 @@ func (w *lateRun) mergeIdle(lk lateKey, ctl *Card) {
 		return
 	}
 	w.judge(NMergeLate, lk.kind, StreamSubject(lk.id), fmt.Sprintf("stream %s is %s and has had no merge step for %s of running time",
-		lk.id, state, DeadlineMergeIdle), []string{"merge --stream " + lk.id, "card", "wait"}, Merge, ctl, lk.id)
+		lk.id, state, RuleDeadlineMergeIdle), []string{"merge --stream " + lk.id, "card", "wait"}, Merge, ctl, lk.id)
 }
 
 // idle: a stream with open cards that has landed none for IdleSpan is told
@@ -716,7 +1122,24 @@ func (w *lateRun) idle(lk lateKey, ctl *Card) {
 	w.b.unit(Unit{Key: lk.id, Stream: lk.id,
 		Changes: []Change{change(Merge, setEntry(ctl, nil, fieldDueIdle))},
 		Moved:   fmt.Sprintf("stream %s idle: %s unset", lk.id, fieldDueIdle)})
-	w.know(NIdle, lk.kind, StreamSubject(lk.id), fmt.Sprintf("stream %s has landed nothing for %s", lk.id, IdleSpan))
+	w.know(NIdle, lk.kind, StreamSubject(lk.id), fmt.Sprintf("stream %s has landed nothing for %s", lk.id, ruleIdleSpan))
+}
+
+// cutDecisions are the decisions a verb in parts that stopped offers (2.2): the
+// same command with its op; for a drop or a remove its abort, and `ack` only
+// for the others, which it ends as they stand. A verb the read does not know
+// offers them all, and IT06's Accepted filters by what each verb accepts.
+func cutDecisions(op, verb string) []string {
+	same := "the same command with --op " + op
+	switch verb {
+	case "":
+		return []string{same, "drop --abort --op " + op, "remove --abort --op " + op, "ack", "wait"}
+	case "drop":
+		return []string{same, "drop --abort --op " + op, "wait"}
+	case "remove":
+		return []string{same, "remove --abort --op " + op, "wait"}
+	}
+	return []string{same, "ack", "wait"}
 }
 
 // cut: a verb in parts whose cut clock ran out is judged, RUNNING or STOPPED:
@@ -724,89 +1147,102 @@ func (w *lateRun) idle(lk lateKey, ctl *Card) {
 // The clock counts wall time. An entry above wall was armed again by a later
 // part, and the op goes on.
 func (w *lateRun) cut(lk lateKey, _ *Card) {
-	if cf := w.f.Cuts[lk.id]; cf.Entry && cf.At > w.now.Wall {
+	cf := w.f.Cut(lk.id)
+	if cf.Entry && !CutDue(w.now, cf.At) {
 		return
 	}
 	w.b.guard(noEntryAbove(entryCut+lk.id, w.now.Wall))
 	w.b.note(NoteReq{Op: requestOpen, Type: NCutStopped, Cause: kindCut, Subjects: []string{lk.id},
 		Text:      fmt.Sprintf("the verb of op %s stopped before its end: its parts ran out of time", lk.id),
-		Decisions: []string{"the same command with --op " + lk.id, "drop --abort --op " + lk.id, "remove --abort --op " + lk.id, "ack", "wait"}})
+		Decisions: cutDecisions(lk.id, cf.Verb)})
 }
 
 // readLate is R11's read: each card kind's key reads its card and its primary
-// through related (a read card follows rcards), a stream kind its control
-// card, and a work or read card once the fleet or the readers.
+// through related (a read card's primary follows rcards, a work card's follows
+// nothing), a stream kind its control card, a work or read card once the fleet
+// or the readers, every kind but a cut the dropping marks once, and a merge
+// idle key the queued count of its stream. The keys are cut to what the read
+// bounds allow, each key costed by the queries it names (FitKeys).
 func readLate(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
-	kept, rest := cutKeys(keys, b, halvings, func(k AgendaKey, seen map[string]bool) int {
+	fixed := map[string]bool{}
+	fixedCost := map[string]Cost{
+		QueryFleet:    timeQueryCost(SprintQ{Kind: QueryFleet, Fields: memberCtlFields}),
+		QueryReaders:  timeQueryCost(SprintQ{Kind: QueryReaders, Fields: readerCtlFields}),
+		queryDropping: timeQueryCost(SprintQ{Kind: queryDropping, Fields: droppingFields}),
+	}
+	take, rest := FitKeys(keys, func(k AgendaKey) Cost {
 		lk, ok := parseLateKey(keyText(k))
 		row := lateRowOf(lk.kind)
 		if !ok || row == nil {
-			return 0
+			return Cost{}
 		}
-		n := row.Records
-		if row.Fleet && !seen[queryFleet] {
-			seen[queryFleet] = true
-			n += fleetReadRecords
+		c := row.Cost
+		for _, need := range []struct {
+			on   bool
+			name string
+		}{{row.Fleet, QueryFleet}, {row.Readers, QueryReaders}, {row.Marks, queryDropping}} {
+			if need.on && !fixed[need.name] {
+				fixed[need.name] = true
+				c = c.Add(fixedCost[need.name])
+			}
 		}
-		if row.Readers && !seen[queryReaders] {
-			seen[queryReaders] = true
-			n += readersReadRecords
-		}
-		return n
-	})
-	var cards, reads, primaries, streams, mergeIdle []string
-	for _, k := range kept {
+		return c
+	}, Cost{}, b, halvings)
+
+	var cards, reads, workPrimaries, readPrimaries, streams, mergeIdle, ops []string
+	var fleet, readers, marks bool
+	for _, k := range take {
 		lk, ok := parseLateKey(keyText(k))
-		if !ok {
+		row := lateRowOf(lk.kind)
+		if !ok || row == nil {
 			continue
 		}
+		fleet, readers, marks = fleet || row.Fleet, readers || row.Readers, marks || row.Marks
 		switch lk.kind {
 		case "untaken", "unfinished":
 			cards = append(cards, lk.id)
 			if p, _, ok := ParseWorkCard(lk.id); ok {
-				primaries = append(primaries, p)
+				workPrimaries = append(workPrimaries, p)
 			}
 		case "unbegun", "unreported":
 			reads = append(reads, lk.id)
 			if p, _, _, ok := ParseReadCard(lk.id); ok {
-				primaries = append(primaries, p)
+				readPrimaries = append(readPrimaries, p)
 			}
 		case "mergeidle", "idle":
 			streams = append(streams, CtlID(lk.id))
 			if lk.kind == "mergeidle" {
-				mergeIdle = append(mergeIdle, lk.id)
+				mergeIdle = append(mergeIdle, lk.id+":"+Queued)
 			}
 		case kindCut:
-			// its entry's score: the cut set
+			ops = append(ops, lk.id)
 		}
 	}
 	var rp ReadPlan
 	add := func(q SprintQ, ids []string) {
-		if len(ids) > 0 || q.Kind == queryFleet || q.Kind == queryReaders {
-			q.Source = IDSource{Kind: SourceIDs, IDs: ids}
+		if len(ids) > 0 {
+			q.Source = IDSource{Kind: SourceIDs, IDs: uniqueSorted(ids)}
 			rp.Sprint = append(rp.Sprint, q)
 		}
 	}
-	add(SprintQ{Kind: queryRelated, Table: Fleet, Fields: workCardFields}, uniqueSorted(cards))
-	add(SprintQ{Kind: queryRelated, Table: Readers, Fields: readCardFields}, uniqueSorted(reads))
-	add(SprintQ{Kind: queryRelated, Table: Work, Fields: primaryFields, Follow: followReadCards}, uniqueSorted(primaries))
-	add(SprintQ{Kind: queryRelated, Table: Merge, Fields: streamCtlFields}, uniqueSorted(streams))
-	if len(cards) > 0 {
-		add(SprintQ{Kind: queryFleet, Fields: memberCtlFields}, nil)
+	add(relatedQ(Fleet, nil, workCardFields, nil), cards)
+	add(relatedQ(Work, nil, workPrimaryFields, nil), workPrimaries)
+	add(relatedQ(Readers, nil, readCardFields, nil), reads)
+	add(relatedQ(Work, nil, primaryFields, followReadCards), readPrimaries)
+	add(relatedQ(Merge, nil, streamCtlFields, nil), streams)
+	if fleet {
+		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryFleet, Fields: memberCtlFields})
 	}
-	if len(reads) > 0 {
-		add(SprintQ{Kind: queryReaders, Fields: readerCtlFields}, nil)
+	if readers {
+		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryReaders, Fields: readerCtlFields})
 	}
-	for _, s := range uniqueSorted(mergeIdle) {
-		rp.Counts = append(rp.Counts, CountQ{Table: Merge, Cells: []string{s + ":" + Queued}})
+	if marks {
+		rp.Sprint = append(rp.Sprint, SprintQ{Kind: queryDropping, Fields: droppingFields})
 	}
-	var ops []string
-	for _, k := range kept {
-		if lk, ok := parseLateKey(keyText(k)); ok && lk.kind == kindCut {
-			ops = append(ops, lk.id)
-		}
+	add(SprintQ{Kind: queryCut, Fields: cutFields}, ops)
+	if len(mergeIdle) > 0 {
+		rp.Counts = []CountQ{{Table: Merge, Cells: uniqueSorted(mergeIdle)}}
 	}
-	add(SprintQ{Kind: queryCut}, uniqueSorted(ops))
 	return rp, rest
 }
 
@@ -818,16 +1254,16 @@ func readLate(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // only a note still open and not marked. Effect: one overdue line naming the
 // note, and the mark. Key: removed. Cost: O(1) a key. Without it: every open
 // judgment compared with the clock every tick.
-func planOverdue(s *Snapshot, keys []AgendaKey, _ Now) (RulePlan, TimeWrites) {
+func planOverdue(s *Snapshot, keys []AgendaKey, _ Now) RulePlan {
 	f := timeFactsOf(s)
 	b := newTimeBuilder()
-	for _, k := range keys {
+	for _, k := range uniqueKeys(keys) {
 		b.rp.Done = append(b.rp.Done, k)
 		note, ok := subjectOfKey(keyText(k), "overdue")
 		if !ok {
 			continue
 		}
-		nf, ok := f.Notes[note]
+		nf, ok := f.Note(note)
 		if !ok || len(nf.Open) == 0 || nf.Marked {
 			continue
 		}
@@ -853,16 +1289,16 @@ func readOverdue(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agen
 // again if its condition stands. A second run finds no hold and writes
 // nothing. Key: removed. Cost: O(1) a key. Without it: every hold compared
 // with the clock every tick.
-func planHold(s *Snapshot, keys []AgendaKey, _ Now) (RulePlan, TimeWrites) {
+func planHold(s *Snapshot, keys []AgendaKey, _ Now) RulePlan {
 	f := timeFactsOf(s)
 	b := newTimeBuilder()
-	for _, k := range keys {
+	for _, k := range uniqueKeys(keys) {
 		b.rp.Done = append(b.rp.Done, k)
 		note, ok := subjectOfKey(keyText(k), "hold")
 		if !ok {
 			continue
 		}
-		nf, ok := f.Notes[note]
+		nf, ok := f.Note(note)
 		if !ok || len(nf.Holds) == 0 {
 			continue
 		}
@@ -878,18 +1314,22 @@ func readHold(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 }
 
 // readNotes is the read of R12 and R13: one jnote for the notes the kept keys
-// name.
+// name. A jnote of one note may return the note's line and jopen of each of
+// the subjects a line can name (1.3.4, up to the chunk, and MaxAboutIDs to the
+// `about` of a line), so each key is costed at 1 + MaxAboutIDs records by
+// QueryCost, which is what the read may return whatever the note holds.
 func readNotes(rule string, keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
-	kept, rest := cutKeys(keys, b, halvings, func(AgendaKey, map[string]bool) int { return noteReadRecords })
+	one := timeQueryCost(idsQ(QueryJnote, oneKeyID, noteFields))
+	take, rest := FitKeys(keys, func(AgendaKey) Cost { return one }, Cost{}, b, halvings)
 	var notes []string
-	for _, k := range kept {
+	for _, k := range take {
 		if n, ok := subjectOfKey(keyText(k), rule); ok {
 			notes = append(notes, n)
 		}
 	}
 	var rp ReadPlan
 	if len(notes) > 0 {
-		rp.Sprint = []SprintQ{{Kind: queryJNote, Source: IDSource{Kind: SourceIDs, IDs: uniqueSorted(notes)}}}
+		rp.Sprint = []SprintQ{idsQ(QueryJnote, uniqueSorted(notes), noteFields)}
 	}
 	return rp, rest
 }
@@ -906,37 +1346,38 @@ func readNotes(rule string, keys []AgendaKey, b ReadBounds, halvings int) (ReadP
 // Phase 2, the push outside the store, and phase 3, its outcome, are the
 // loop's. Cost: O(1) a key. Without it: every goal compared with the clock
 // every tick.
-func planRemind(s *Snapshot, keys []AgendaKey, now Now) (RulePlan, TimeWrites) {
+func planRemind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	f := timeFactsOf(s)
 	b := newTimeBuilder()
-	for _, k := range keys {
+	for _, k := range uniqueKeys(keys) {
 		b.rp.Done = append(b.rp.Done, k)
 		person, ok := subjectOfKey(keyText(k), "remind")
 		if !ok {
 			continue
 		}
-		g := f.Goals[person]
+		g := f.Goal(person)
 		if !g.Exists || g.Entry && g.At > now.R {
 			continue
 		}
 		b.guard(noEntryAbove(entryRemind+person, now.R))
-		b.tw.Due = append(b.tw.Due, DueSet{Key: entryRemind + person, At: now.R + spanMs(RemindEvery)})
-		b.tw.Goal = append(b.tw.Goal, GoalClaim{Person: person, R: now.R})
+		b.rp.Sprint.Due = append(b.rp.Sprint.Due, DueSet{Key: entryRemind + person, At: now.R + spanMs(RuleRemindEvery)})
+		b.rp.Sprint.Goal = append(b.rp.Sprint.Goal, GoalClaim{Person: person, R: now.R})
 	}
 	return b.result()
 }
 
 func readRemind(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
-	kept, rest := cutKeys(keys, b, halvings, func(AgendaKey, map[string]bool) int { return goalReadRecords })
+	one := timeQueryCost(idsQ(queryGoal, oneKeyID, goalFields))
+	take, rest := FitKeys(keys, func(AgendaKey) Cost { return one }, Cost{}, b, halvings)
 	var people []string
-	for _, k := range kept {
+	for _, k := range take {
 		if p, ok := subjectOfKey(keyText(k), "remind"); ok {
 			people = append(people, p)
 		}
 	}
 	var rp ReadPlan
 	if len(people) > 0 {
-		rp.Sprint = []SprintQ{{Kind: queryGoal, Source: IDSource{Kind: SourceIDs, IDs: uniqueSorted(people)}, Fields: goalFields}}
+		rp.Sprint = []SprintQ{idsQ(queryGoal, uniqueSorted(people), goalFields)}
 	}
 	return rp, rest
 }
@@ -952,14 +1393,14 @@ func readRemind(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agend
 // tick-end part does that when the backlog reaches zero) and closes the
 // judgment when it is open. Key: removed. Cost: O(1). Without it: nothing
 // names a machine that never catches up.
-func planBehind(s *Snapshot, keys []AgendaKey, now Now) (RulePlan, TimeWrites) {
+func planBehind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	f := timeFactsOf(s)
 	b := newTimeBuilder()
-	b.rp.Done = append(b.rp.Done, keys...)
+	b.rp.Done = append(b.rp.Done, uniqueKeys(keys)...)
 	if len(keys) == 0 {
 		return b.result()
 	}
-	t := f.Tick
+	t := f.Tick()
 	switch {
 	case t.Entry && t.EntryAt > now.R:
 		// the entry the first run armed again: nothing to do
@@ -985,45 +1426,20 @@ func planBehind(s *Snapshot, keys []AgendaKey, now Now) (RulePlan, TimeWrites) {
 		}
 	default:
 		b.guard(noEntryAbove(entryBehind, now.R))
-		b.tw.Due = append(b.tw.Due, DueSet{Key: entryBehind, At: now.R + spanMs(BehindSpan)})
-		b.tw.Tick = &TickSet{BehindN: t.Backlog}
+		b.rp.Sprint.Due = append(b.rp.Sprint.Due, DueSet{Key: entryBehind, At: now.R + spanMs(BehindSpan)})
+		b.rp.Sprint.Tick = &TickSet{BehindN: t.Backlog}
 	}
 	return b.result()
 }
 
 func readBehind(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
-	kept, rest := cutKeys(keys, b, halvings, func(AgendaKey, map[string]bool) int { return tickReadRecords })
+	one := timeQueryCost(SprintQ{Kind: queryTick, Fields: tickFields})
+	take, rest := FitKeys(keys, func(AgendaKey) Cost { return one }, Cost{}, b, halvings)
 	var rp ReadPlan
-	if len(kept) > 0 {
+	if len(take) > 0 {
 		rp.Sprint = []SprintQ{{Kind: queryTick, Fields: tickFields}}
 	}
 	return rp, rest
-}
-
-// cutKeys keeps the keys a read may name: each halving halves the keys, down
-// to one, and the rest are cut off at the records the bounds allow. It keeps
-// at least one key whatever it costs, so a key always moves: a read of one key
-// that the store still refuses is parked (1.3.5). The cost of a key may add a
-// fixed cost once, by the names in seen.
-func cutKeys(keys []AgendaKey, b ReadBounds, halvings int, cost func(k AgendaKey, seen map[string]bool) int) (kept, rest []AgendaKey) {
-	n := len(keys)
-	for i := 0; i < halvings && n > 1; i++ {
-		n /= 2
-	}
-	seen := map[string]bool{}
-	records := 0
-	for i, k := range keys {
-		if i >= n {
-			break
-		}
-		c := cost(k, seen)
-		if i > 0 && records+c > b.Records {
-			break
-		}
-		records += c
-		kept = append(kept, k)
-	}
-	return kept, keys[len(kept):]
 }
 
 func uniqueSorted(ids []string) []string {
@@ -1048,26 +1464,18 @@ func uniqueSorted(ids []string) []string {
 // while it is STOPPED: dry are the plans the rules made without applying them,
 // c the clock as read, wall the store's wall time.
 //
-// Moves are due when the dry plans would change at least one card; the count
-// is of the cards they change, never of the backlog. Due, and `due_since_ms`
-// empty: it is set to wall. Not due: it is cleared. The judgment "the machine
-// is STOPPED and moves are due" is raised when wall is at least `due_since_ms`
-// + 10 min and at least `stophold_ms`, and `stopraised_ms` is not this span's:
-// once a STOPPED span. The plan is guarded on the clock fields as read; its
-// writes are StoppedWrites. On a RUNNING machine it plans nothing. Cost: O(n)
-// in the cards of the dry plans, every ten seconds; the writes are O(1).
+// Moves are due when the dry plans would change at least one card: a card an
+// entry changes, or one an intent changes (needmet lowers the open count of
+// each of its waiters; waitfor and waive change their card; needgone opens a
+// judgment and changes no card, 1.3.3); the count is of the cards, never of the
+// backlog. Due, and `due_since_ms` empty: it is set to wall. Not due: it is
+// cleared. The judgment "the machine is STOPPED and moves are due" is raised
+// when wall is at least `due_since_ms` + 10 min and at least `stophold_ms`, and
+// `stopraised_ms` is not this span's: once a STOPPED span. The plan is guarded
+// on the clock fields as read; its writes are in RulePlan.Sprint.Clock. On a
+// RUNNING machine it plans nothing. Cost: O(n) in the cards of the dry plans,
+// every ten seconds; the writes are O(1).
 func StoppedLook(dry []RulePlan, c Clock, wall int64) RulePlan {
-	p, _ := stoppedLook(dry, c, wall)
-	return p
-}
-
-// StoppedWrites is the clock fields StoppedLook's plan writes.
-func StoppedWrites(dry []RulePlan, c Clock, wall int64) TimeWrites {
-	_, w := stoppedLook(dry, c, wall)
-	return w
-}
-
-func stoppedLook(dry []RulePlan, c Clock, wall int64) (RulePlan, TimeWrites) {
 	b := newTimeBuilder()
 	if c.StoppedSinceMs == 0 {
 		return b.result()
@@ -1101,13 +1509,13 @@ func stoppedLook(dry []RulePlan, c Clock, wall int64) (RulePlan, TimeWrites) {
 	} {
 		b.guard(g)
 	}
-	b.tw.Clock = &set
+	b.rp.Sprint.Clock = &set
 	return b.result()
 }
 
 // movesDue is how many cards the plans would change: each card once, by its
-// table and id, whichever rules change it. A guard names a card and changes
-// none.
+// table and id, whichever rules change it, and whether an entry or an intent
+// changes it. A guard names a card and changes none.
 func movesDue(dry []RulePlan) int {
 	seen := map[[2]string]bool{}
 	for _, p := range dry {
@@ -1118,8 +1526,27 @@ func movesDue(dry []RulePlan) int {
 				}
 			}
 		}
+		for _, in := range p.Intents {
+			for _, id := range intentCards(in) {
+				seen[[2]string{Work, id}] = true
+			}
+		}
 	}
 	return len(seen)
+}
+
+// intentCards are the cards an intent changes when it is applied (1.3.3): the
+// waiters of a need that landed lose one open need; the waiter of a waitfor
+// gets its open count, and of a waive has one need waived. A need that was
+// removed opens a judgment on each waiter and changes none.
+func intentCards(in Intent) []string {
+	switch in.Kind {
+	case "needmet":
+		return in.Waiters
+	case "waitfor", "waive":
+		return []string{in.Card}
+	}
+	return nil
 }
 
 // changesCard says an entry does more than guard its card.
@@ -1139,23 +1566,11 @@ func changesCard(e ntable.BatchMemberEntry) bool {
 // BUDGET on a read, the key stays in the agenda and is planned again at half
 // its size, so the next halving is one more. Only a refusal of a key already
 // at a chunk of one card parks it, and every other code parks it at once: the
-// key leaves the agenda (Done), the park (BugWrites) written before its ZREM
-// (A1), and the returned halving is 0, since a parked key is planned no more
-// until `ack` of the judgment queues it again (2.1). The step wrote nothing,
-// so nothing is resent unchanged.
+// key leaves the agenda (Done), the park (RulePlan.Sprint.Park) written before
+// its ZREM (A1), and the returned halving is 0, since a parked key is planned
+// no more until `ack` of the judgment queues it again (2.1). The step wrote
+// nothing, so nothing is resent unchanged.
 func OnBug(rule string, key AgendaKey, code string, size string, halvings int) (RulePlan, int) {
-	p, _, next := onBug(rule, key, code, size, halvings)
-	return p, next
-}
-
-// BugWrites is the park OnBug's plan writes: one key, or none when the key
-// stays to be planned at half its size.
-func BugWrites(rule string, key AgendaKey, code string, size string, halvings int) TimeWrites {
-	_, w, _ := onBug(rule, key, code, size, halvings)
-	return w
-}
-
-func onBug(rule string, key AgendaKey, code, size string, halvings int) (RulePlan, TimeWrites, int) {
 	b := newTimeBuilder()
 	text := keyText(key)
 	halves := code == codeLimit || code == codeBudget
@@ -1169,13 +1584,11 @@ func onBug(rule string, key AgendaKey, code, size string, halvings int) (RulePla
 		Decisions: []string{"log --since", "ack", "stop", "wait"}})
 	if park {
 		b.rp.Done = []AgendaKey{key}
-		b.tw.Park = []ParkKey{{Key: text}}
-		rp, tw := b.result()
-		return rp, tw, 0
+		b.rp.Sprint.Park = []ParkKey{{Key: text}}
+		return b.result(), 0
 	}
 	b.rp.Requeue = []AgendaKey{key}
-	rp, tw := b.result()
-	return rp, tw, halvings + 1
+	return b.result(), halvings + 1
 }
 
 // chunkAfter is the chunk of a step after the halvings: layer 1's ceiling
@@ -1189,16 +1602,15 @@ func chunkAfter(halvings int) int {
 }
 
 // Stand-ins for what is not merged yet, each named for its item and deleted
-// when the item merges (IT05's are real, and their part of the old stub file is
-// gone): the time rules stand on them and are changed only where they say.
+// when the item merges: the time rules stand on them and are changed only
+// where they say.
 //
 //	IT01  keyText, keyOf: AgendaKey is {Key, Seq} in the tree, and 8.0 gives it
 //	      {Rule, Subject, Line, Offset, Order} with String and ParseAgendaKey.
+//	      Only these two functions know the shape; on IT01's revision they
+//	      become k.String() and ParseAgendaKey.
 //	IT03  Clock (8.1 IT03 gives it these five fields).
 //	IT04  stepChunk: step.Bounds.Chunk before any halving (1.0, the chunk).
-//	IT05  timeFactsOf: the sprint's own reads that the partial snapshot does not
-//	      carry yet (jnote, the due and cut sets, the tick hash, the goal
-//	      record, the dropping marks).
 //	IT06  the words of the notices and judgments these rules raise (2.2, 2.5),
 //	      and subjectSprint.
 
@@ -1226,28 +1638,6 @@ type Clock struct {
 // ceiling, before any halving after a LIMIT (1.3.5).
 const stepChunk = 2000
 
-var (
-	snapFacts  sync.Map // *Snapshot -> *TimeFacts
-	stubNoFact = &TimeFacts{}
-)
-
-// withTimeFacts gives a snapshot the sprint's facts that the time rules read
-// beyond its tables, and returns the snapshot.
-func withTimeFacts(s *Snapshot, f *TimeFacts) *Snapshot {
-	snapFacts.Store(s, f)
-	return s
-}
-
-// timeFactsOf is the sprint's facts read with the snapshot: the one place a
-// time rule takes them from. A snapshot with none read has none: no note, no
-// goal, no cut entry, an idle tick and no dropping stream.
-func timeFactsOf(s *Snapshot) *TimeFacts {
-	if v, ok := snapFacts.Load(s); ok {
-		return v.(*TimeFacts)
-	}
-	return stubNoFact
-}
-
 // The types of the notices and judgments the time rules raise, in the
 // design's own words (2.2 and 2.5). The judgments of the old tick keep their
 // constants (NWorkLate, NReadLate, NMergeLate, NStoppedWithDue).
@@ -1260,11 +1650,6 @@ const (
 	NCutStopped       = "a verb in parts stopped before its end"
 	NStepRefused      = "the machine's step was refused"
 )
-
-// IdleSpan is how long a stream with open cards may land nothing before the
-// owner is told (2.5): provisional so the build can run, the owner's to set
-// (7).
-const IdleSpan = 2 * time.Hour
 
 // subjectSprint is the subject of a judgment about the sprint as a whole
 // (`jopen:sprint`, R1 and R17).
