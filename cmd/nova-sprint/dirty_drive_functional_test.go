@@ -391,7 +391,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	for _, m := range members {
 		doneLine = append(doneLine, fmt.Sprintf("%s=%d", m, done[m]))
 		if d := float64(done[m]) - mean; d > mean*0.05 || -d > mean*0.05 {
-			t.Errorf("%s did %d cards, the mean is %.1f: over 5%% off", m, done[m], mean)
+			mu.Lock()
+			downs := notesSeen["happened: fleet member down"]
+			mu.Unlock()
+			t.Errorf("%s did %d cards, the mean is %.1f: over 5%% off (%d member-down events in the run: a machine that lapses has its cards dealt to the others)", m, done[m], mean, downs)
 		}
 	}
 	if sum == 0 {
