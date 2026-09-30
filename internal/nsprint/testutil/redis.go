@@ -24,7 +24,7 @@ const CIEnv = "NOVA_CI"
 
 // Absent is Start's answer when redis-server is not on PATH. CI fails closed.
 // A skip here would let a green run be a run that never executed the store.
-func Absent(t *testing.T, cause error) {
+func Absent(t testing.TB, cause error) {
 	t.Helper()
 	if cause == nil {
 		t.Fatal("Absent requires the error from looking up redis-server")
@@ -45,7 +45,7 @@ func Absent(t *testing.T, cause error) {
 // anywhere" and exits). The ephemeral port is taken here, the way the controls
 // used to, and handed to redis-server as --port. That is a free loopback port,
 // not a dial to a bench.
-func Start(t *testing.T, extra ...string) string {
+func Start(t testing.TB, extra ...string) string {
 	t.Helper()
 	bin := Program(t)
 	// THE PORT IS TAKEN, CLOSED AND HANDED OVER, so another process can bind it
@@ -68,7 +68,7 @@ func Start(t *testing.T, extra ...string) string {
 
 // startOnce is one attempt: ok is false, with the server's log, when this
 // server did not bind its port.
-func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) {
+func startOnce(t testing.TB, bin string, extra []string) (string, bool, string) {
 	t.Helper()
 	port := FreePort(t)
 	addr := net.JoinHostPort("127.0.0.1", port)
@@ -120,7 +120,7 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 // Program is the redis-server on PATH, or Absent's answer when there is none.
 // A test that launches the server through its own production path (nova-redis
 // serve) takes the program from here, so the missing-binary rule stays one.
-func Program(t *testing.T) string {
+func Program(t testing.TB) string {
 	t.Helper()
 	bin, err := exec.LookPath("redis-server")
 	if err != nil {
@@ -131,7 +131,7 @@ func Program(t *testing.T) string {
 
 // FreePort takes a free loopback port and returns it as text. Redis treats
 // --port 0 as "do not listen", so the port is taken here and handed over.
-func FreePort(t *testing.T) string {
+func FreePort(t testing.TB) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

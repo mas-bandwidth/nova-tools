@@ -27,7 +27,7 @@ type tsetFixture struct {
 	profile        fn.TSetProfile
 	loaded         bool
 	active         bool
-	t              *testing.T
+	t              testing.TB
 	tables         []string
 	seededEpoch    string
 	pendingRows    []fixturePendingRow
@@ -40,12 +40,12 @@ type fixturePendingRow struct {
 	rank              int64
 }
 
-func newTSetFixture(t *testing.T) *tsetFixture {
+func newTSetFixture(t testing.TB) *tsetFixture {
 	t.Helper()
 	return newTSetFixtureProfile(t, fn.TSetStandalone)
 }
 
-func newComposedTSetFixture(t *testing.T) *tsetFixture {
+func newComposedTSetFixture(t testing.TB) *tsetFixture {
 	t.Helper()
 	// Resolve the real embedded source before starting a Redis process. Only
 	// the exact missing Layer 2 fragment may defer composed-only witnesses.
@@ -53,7 +53,7 @@ func newComposedTSetFixture(t *testing.T) *tsetFixture {
 	return newTSetFixtureProfile(t, fn.TSetComposed)
 }
 
-func newTSetFixtureProfile(t *testing.T, profile fn.TSetProfile) *tsetFixture {
+func newTSetFixtureProfile(t testing.TB, profile fn.TSetProfile) *tsetFixture {
 	t.Helper()
 	return newTSetFixtureSpace(t, profile, "l1:")
 }
@@ -61,7 +61,7 @@ func newTSetFixtureProfile(t *testing.T, profile fn.TSetProfile) *tsetFixture {
 // newTSetFixtureSpace is a fixture of its own server whose namespace is space:
 // the lifecycle's tests use a space of its grammar, {<name>}: (lifecycle.go
 // ValidNamespace).
-func newTSetFixtureSpace(t *testing.T, profile fn.TSetProfile, space string) *tsetFixture {
+func newTSetFixtureSpace(t testing.TB, profile fn.TSetProfile, space string) *tsetFixture {
 	t.Helper()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
@@ -73,7 +73,7 @@ func newTSetFixtureSpace(t *testing.T, profile fn.TSetProfile, space string) *ts
 
 // newFixtureRedis owns a separate public tset connection to the same private
 // server. The raw client remains available for setup and key-level assertions.
-func newFixtureRedis(t *testing.T, client *redis.Client) *RedisStore {
+func newFixtureRedis(t testing.TB, client *redis.Client) *RedisStore {
 	t.Helper()
 	store, err := NewRedis(client.Options().Addr, "", "")
 	if err != nil {
@@ -87,7 +87,7 @@ func newFixtureRedis(t *testing.T, client *redis.Client) *RedisStore {
 	return store
 }
 
-func (fx *tsetFixture) seedEpoch(t *testing.T) {
+func (fx *tsetFixture) seedEpoch(t testing.TB) {
 	t.Helper()
 	// A read fixture can construct snapshots for successive epochs before its
 	// final Activate call. Commit queued rows in the old epoch before its raw
@@ -113,7 +113,7 @@ func (fx *tsetFixture) seedEpoch(t *testing.T) {
 
 // Define installs both the current definition and the epoch-zero snapshot.
 // The fixture's owner must finish all definitions before Activate.
-func (fx *tsetFixture) Define(t *testing.T, table string, columns ...string) {
+func (fx *tsetFixture) Define(t testing.TB, table string, columns ...string) {
 	t.Helper()
 	fx.mustInitialize(t)
 	if fx.loaded {
@@ -155,7 +155,7 @@ func (fx *tsetFixture) Define(t *testing.T, table string, columns ...string) {
 	fx.seedEpoch(t)
 }
 
-func (fx *tsetFixture) AddRow(t *testing.T, table, row string, rank int64) {
+func (fx *tsetFixture) AddRow(t testing.TB, table, row string, rank int64) {
 	t.Helper()
 	fx.mustInitialize(t)
 	if table == "" || row == "" || rank < 0 || rank > 9007199254740991 {
@@ -177,14 +177,14 @@ func (fx *tsetFixture) AddRow(t *testing.T, table, row string, rank int64) {
 	fx.pendingRows = append(fx.pendingRows, fixturePendingRow{table: table, row: row, epoch: fx.Epoch, rank: rank})
 }
 
-func (fx *tsetFixture) mustInitialize(t *testing.T) {
+func (fx *tsetFixture) mustInitialize(t testing.TB) {
 	t.Helper()
 	if fx.active {
 		t.Fatal("fixture setup after tset runtime activation")
 	}
 }
 
-func (fx *tsetFixture) Activate(t *testing.T) {
+func (fx *tsetFixture) Activate(t testing.TB) {
 	t.Helper()
 	if fx.active {
 		return
@@ -194,7 +194,7 @@ func (fx *tsetFixture) Activate(t *testing.T) {
 	fx.active = true
 }
 
-func (fx *tsetFixture) loadTSet(t *testing.T) {
+func (fx *tsetFixture) loadTSet(t testing.TB) {
 	t.Helper()
 	if fx.loaded {
 		return
@@ -209,7 +209,7 @@ func (fx *tsetFixture) loadTSet(t *testing.T) {
 // rows steps. Public add assigns only max-rank+1; temporary rows bridge small
 // requested rank gaps and are subsequently removed by public steps. In a
 // composed profile these temporary mutations are real log/history events.
-func (fx *tsetFixture) flushPendingRows(t *testing.T) {
+func (fx *tsetFixture) flushPendingRows(t testing.TB) {
 	t.Helper()
 	if len(fx.pendingRows) == 0 {
 		return
@@ -318,7 +318,7 @@ func (fx *tsetFixture) flushPendingRows(t *testing.T) {
 	fx.pendingRows = nil
 }
 
-func (fx *tsetFixture) publicRowsStep(t *testing.T, store *RedisStore, epoch, table string, add, del []string) {
+func (fx *tsetFixture) publicRowsStep(t testing.TB, store *RedisStore, epoch, table string, add, del []string) {
 	t.Helper()
 	ctx := context.Background()
 	var before int64
@@ -346,7 +346,7 @@ func (fx *tsetFixture) publicRowsStep(t *testing.T, store *RedisStore, epoch, ta
 
 // ActivateWithLua appends one test-owned callback to the isolated library.
 // It is intentionally test-only and must be called during initialization.
-func (fx *tsetFixture) ActivateWithLua(t *testing.T, extraSource string) {
+func (fx *tsetFixture) ActivateWithLua(t testing.TB, extraSource string) {
 	t.Helper()
 	fx.mustInitialize(t)
 	if fx.loaded {
@@ -367,7 +367,7 @@ func (fx *tsetFixture) ActivateWithLua(t *testing.T, extraSource string) {
 // probe the native load-time registration API while its callback continues to
 // use the profile's late-bound runtime Redis methods. Production TSetSource
 // never includes this second registration scope.
-func tsetTestSourceWithProbe(t *testing.T, profile fn.TSetProfile, extraSource, name string) string {
+func tsetTestSourceWithProbe(t testing.TB, profile fn.TSetProfile, extraSource, name string) string {
 	t.Helper()
 	source, err := fn.TSetSource(profile)
 	if err != nil {
@@ -382,7 +382,7 @@ func tsetTestSourceWithProbe(t *testing.T, profile fn.TSetProfile, extraSource, 
 		"}\n" + extraSource + "\nend\n"
 }
 
-func tsetTestProbeName(t *testing.T, extraSource string) string {
+func tsetTestProbeName(t testing.TB, extraSource string) string {
 	t.Helper()
 	const marker = "redis.register_function('"
 	start := strings.Index(extraSource, marker)
@@ -397,7 +397,7 @@ func tsetTestProbeName(t *testing.T, extraSource string) string {
 	return extraSource[start : start+end]
 }
 
-func tsetRequireProbeLoaded(t *testing.T, client *redis.Client, name string) {
+func tsetRequireProbeLoaded(t testing.TB, client *redis.Client, name string) {
 	t.Helper()
 	libraries, err := client.FunctionList(context.Background(), redis.FunctionListQuery{LibraryNamePattern: fn.Library}).Result()
 	if err != nil {
@@ -419,7 +419,7 @@ func tsetRequireProbeLoaded(t *testing.T, client *redis.Client, name string) {
 // Reset opens a fresh declared initialization interval on this test's own
 // process. It clears the library as well as data, so setup cannot act through
 // an already installed runtime write surface.
-func (fx *tsetFixture) Reset(t *testing.T) {
+func (fx *tsetFixture) Reset(t testing.TB) {
 	t.Helper()
 	ctx := context.Background()
 	if err := fx.Client.Do(ctx, "FUNCTION", "FLUSH").Err(); err != nil {
@@ -482,7 +482,7 @@ func fixtureDoneKey(space, epoch string) string { return space + "sprint:done@" 
 // Redis. It is separate from the whole-key TYPE/DUMP image used on refusals:
 // successful parity checks should compare rows, cells, records and receipts,
 // while a refusal image must also catch unexpected keys and value types.
-func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
+func (fx *tsetFixture) SemanticSnapshot(t testing.TB) MemSnapshot {
 	t.Helper()
 	ctx := context.Background()
 	keys, err := fx.Client.Keys(ctx, fx.Space+"*").Result()
