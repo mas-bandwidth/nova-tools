@@ -41,8 +41,16 @@ Discussions and no issue templates, and nova's routing table and its fast lane
 for typo and clarity PRs are written for a repo whose product is prose.
 
 On terms: this repo is MIT, see [LICENSE](../LICENSE), and nothing in this file
-adds to or subtracts from it. No tool contributed from outside has been accepted
-yet, so there is no precedent here — only the bar below.
+adds to or subtracts from it. The bar below is the whole of the precedent: a
+contribution from outside is judged on it, like every other.
+
+## The standard every PR meets
+
+[STANDARD.md](STANDARD.md) is the one standard: how a tool is built, the
+onboarding points every command meets, the ten rules never to break and every
+class test by name, and the rules for working in the tree. The root
+[AGENTS.md](../AGENTS.md) embeds it whole, so a contributor's harness reads it
+at the start of a session. This page is how review goes.
 
 ## Why the bar is where it is
 
@@ -145,8 +153,7 @@ it gates a release and not a change.
 Where CI runs follows the cost of the machine, not the shape of the change.
 Pull requests run on the self-hosted runners only: one job per `./cmd/<tool>`
 plus `./internal/...` grouped into at most eight groups, fanned out across the
-four Linux space runners and the four macOS studio runners in parallel with
-fail-fast off, and every self-hosted job is guarded so fork code never runs on
+self-hosted runners in parallel with fail-fast off, and every self-hosted job is guarded so fork code never runs on
 our machines. The GitHub-hosted runners (ubuntu-latest, macos-latest,
 windows-latest) run only on push to main and on the nightly schedule, with the
 full suite, and a new push to a pull request cancels the in-progress run.
@@ -178,8 +185,8 @@ with a skip (never a red): a head commit that is itself a revert (no revert
 loops), a parent run that was not green (the red predates this push), or a
 `main` that has already moved on (the newer run decides).
 
-**To verify:** the repository ruleset must let the github-actions app push to
-`main` or auto-merge a `revert/<sha>` pull request. Until that is true, the
+**The rule:** the repository ruleset lets the github-actions app push to
+`main` or auto-merge a `revert/<sha>` pull request; without that, the
 mechanical revert lands as a pull request awaiting an approving reviewer and
 the red stays.
 
@@ -211,24 +218,8 @@ how a commons acquires a reputation for being a clique.
 - **`SPEC.md` is contract, not documentation** — it says so, and README defers
   to it. It governs exit tables and check semantics, so a wording change to a
   rule there is a rule change and gets the full bar rather than a fast lane.
-- **Shape before substance:** standard library only, no hardcoded paths, no
-  default paths, and the exit-code grammar — 0 pass, 1 check failed, 2 could not
-  run. `nova-fuse`'s write verbs deviate deliberately and SPEC.md's per-tool
-  table governs them.
-- **[ONBOARDING.md](ONBOARDING.md) is the standard a new command meets on its
-  first day**, not later: a usage banner ending in an `example:` block whose
-  lines run, refusals that say what the flag wants and that report every
-  independent problem in one go, a `### First run` in `docs/CLI.md`, a `quickstart`
-  verb where there is a natural first run, and tests that pin all three by
-  executing them. `internal/ci/onboarding_functional_test.go` walks `cmd/`, so a new
-  binary is held to it without anyone adding it to a list.
 - **Expect the review to be slow and specific.** That is the bar working, not a
   judgment about you.
-- **Parked tools and verbs have no active documentation.** Remove their entries,
-  examples, links and retirement notices from README and `docs/`. The documentation
-  tests reject parked tool names across these pages, using directory inventories
-  without building archived code. Review verb descriptions against the current
-  dispatcher as well: the name check does not prove a documented verb is reachable.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would
   change the verdict.
 - **A suspected security vulnerability in a shipped tool does not go in a public
@@ -245,59 +236,6 @@ how a commons acquires a reputation for being a clique.
 - **There is one source for these tools:** `github.com/mas-bandwidth/nova-tools`.
   Build from a checkout you verified. Anything else offering a `nova-check` is
   not this.
-
-## The ten rules never to break
-
-Each line names the class test that enforces it. A class test reads this
-repository's own text and refuses a SHAPE wherever it stands, so a rule lands
-with its sweep of the tree or it does not land.
-
-1. **Never `gh pr merge`, in any spelling, and never `--auto`** — nothing
-   reaches the dev merge queue but a batch (`prmerge`).
-2. **No test names a real network host** — unit tests test logic; mock with
-   `httptest` or a local fake, and name `example.com`, `*.invalid` or `*.test`
-   in fixtures (`net`).
-3. **No fixed wall-clock wait on the CI path** — poll for the event up to
-   `NOVA_TEST_WAIT`, or inject a fake clock (`waits`).
-4. **No test asserts a bound under ten seconds** — a short bound asserts the
-   machine's load, not the code (`wall clock`).
-5. **No unit package over 2 s, no unit test over 1 s** — per-change CI answers in
-   one minute ideally, two at most. Every leg prints the CI-SLOW lines; the nightly
-   whole-tree run on the space legs fails on them; the allowlist only shrinks
-   (`slowtests`, `tiers`).
-6. **The Makefile is the one entry for build, test and lint** — a workflow or a
-   script calls a target, never its own `go test` line (`make`).
-7. **Every command meets the onboarding standard** — `<tool> help` with runnable
-   examples, a refusal that says what the input WANTS, a `### First run` section
-   in [CLI.md](CLI.md) (`onboarding`).
-8. **Every tool prints the one version line** — one shape, every binary
-   (`version`).
-9. **No `os.RemoveAll` of a computed path** — deletion is a verb over a
-   validated path below a root (`removeall`).
-10. **A test writes and lists only inside its own `t.TempDir()`** — never
-    `os.TempDir()`, and every path a tool writes is named there
-    (`testoutpath`, `sharedtemp`).
-
-**The rest of the index, by name.** `tlc` (fresh bounded model evidence and explicit bench debt), `cap` (every job two minutes, permanently, every platform),
-`templates`, `goenv`, `pathassert`, `busprogress`,
-`outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `functional-image` (the functional-tier image is pinned, and a program a Go file runs by name is a row of `infra/functional-image/binaries.txt`), `redis-version` (every place that names a Redis version names the one `ARG REDIS_VERSION` in the functional image's Containerfile), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`ciworkspace`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
-`seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `darwin-gate` (the darwin unit shards run only where the target branch is dev or main), `cert-race-shards` (certification's whole-tree race run meets the cap by shards, its race build cache saved before the tests), `release-legs` (the release and its dry run build one leg per platform and sum the whole set on one machine), `seatredis` (no verb of a live tool that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly), `generality` (no host, machine, tailnet, friend or person name in code, contracts, defaults or refusals), `generality-text` (the same rule over every living text file that is not Go: a tailnet address, a home path naming a user, a name of ours), `tool-standard` (a package that builds a `tool.Tool` tests its `Problems()`: every verb states its effect, the how text is five lines of at most 100 characters), `remedy` (every refusal in the tools names its next step), `no-ok-on-failure` (a failed run's last word is never OK), `discarded` (no error thrown away without `// ignored: <reason>`), `script-hide` (no script or play hides a failure without `# ignored: <reason>`). Every entry — the ten above too — is written out in
-[SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the mistake
-it prevents, its allowlist, its remedy line and its narrowings. Read the entry, not
-the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.
-After a removal, `NOVA_CI_UPDATE=1 go test -count=1 ./internal/ci/` drops the stale rows
-from every list and fails once with `updated, rerun` ([TESTING.md](TESTING.md)).
-
-**Two more that are not class tests.** A fake is **strict like the real tool** —
-a lenient fake ships the real thing broken, so a fake refuses what the real one
-refuses. And **tests run on the benches**: build and test on the bench the card
-names before you call anything green.
-
-**Scaffolding verbs.** Lay down skeletons with files, makefile, harness,
-and a passing fixture under write confinement:
-- `nova-ci new-rule <name>` (or `make new-rule ARGS=<name>`): lays down a new class rule skeleton (`internal/ci/<name>_class_test.go`, fixture, `make/rule_<name>.mk`).
-- `nova-ci new-verb <tool> <verb>` (or `make new-verb ARGS='<tool> <verb>'`): lays down a new CLI verb skeleton (`cmd/<tool>/<verb>.go`, test, fixture, `make/verb_<tool>_<verb>.mk`) into a tool that already has a `func main` (it refuses otherwise), and prints the exact `case` line to add to the tool's dispatch switch; it never edits the switch itself.
 
 ## How work lands
 
@@ -325,33 +263,14 @@ rest under [docs/](.). A spec is normative — where the code and the spec
 disagree, one of them has a bug and the tests decide which. **Read the spec
 before the code.**
 
-Also: [ONBOARDING.md](ONBOARDING.md) (the five-point standard every
-command meets), [CLI.md](CLI.md) (the command reference and every
+Also: [STANDARD.md](STANDARD.md) (the standard), [CLI.md](CLI.md) (the command reference and every
 first run), [TESTS.md](TESTS.md) (the transcripts the tests execute),
 [TERMINOLOGY.md](TERMINOLOGY.md).
 
 ## When a tool refuses
 
-**The remedy on the line is the contract.** An unusable invocation costs one
-line per problem — `<TOKEN> REFUSED: <what was wrong>; run: <tool> help`, or
-`<tool>[ <verb>]: <what was wrong>; run: <tool> help` on a tool not yet built on
-`internal/tool` — and exits 2, and
-where the guidance is a sentence of its own it follows on one further indented
-line. Do that, rather than guessing. A class test's refusal names its
-`remedy="…"`; do what it says instead of adding an allowlist row. A `FAIL` line
-at exit 1 means the check ran and said NO — that is the check working.
-
-**Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help
-<verb>` where the tool has a help verb) prints that verb's help on stdout and
-exits 0: its usage lines from `<tool> help`, then every flag it takes, before
-anything is read, dialled or written. Every verb parses its flags through the one
-seam, `internal/nsprint/verbflag` (`verbflag.Parse`, or `verbflag.HelpIfAsked`
-for a verb that reads its arguments by hand), with `verbflag.Recover` deferred in
-the dispatcher; `internal/testverbhelp` is the per-tool check, and
-`internal/ci`'s functional walk holds every verb of every living tool to it.
-`flag: help requested` at exit 2 reads to an AI as a syntax error, not as the
-answer it asked for. nova-fuse is the one exception, on purpose: its exit 0
-means CLEAR, so its verbs still refuse `-h`.
+The remedy on the line is the contract: do what it says rather than guessing,
+and do what a class test's `remedy="…"` says instead of adding an allowlist row.
 
 **When the refusal is wrong, that is a gift.** Say three things, in this order:
 what works, where it caught you with the exact sentence it printed, and the fix
