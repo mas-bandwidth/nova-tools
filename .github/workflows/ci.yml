@@ -538,9 +538,11 @@ jobs:
           # legs are the slowest, the scarcest and the ones the two-minute cap
           # cancels whenever the host is loaded, so a change bound for a working
           # branch (sprint/foundation) meets Linux only, and the darwin evidence
-          # is taken where it is certified: a pull_request whose base is dev or
+          # is taken at dev and main: a pull_request whose base is dev or
           # main, the merge queue for dev or main (its base_ref), a push to dev or
-          # main, and certification.yml, which is untouched. schedule and
+          # main, and certification.yml (pushes to dev, nightly, dispatch), which
+          # is untouched. A change that touches only darwin-only packages gets no
+          # test run until it reaches dev. schedule and
           # workflow_dispatch keep the shape they have. With the gate off, every
           # package rides the Linux shards and the darwin-only packages
           # (cmd/nova-sandbox, internal/sandbox) have no leg, exactly as on

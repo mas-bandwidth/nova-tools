@@ -11,279 +11,186 @@
 // WHAT IT REFUSES TO BE. Not a lifecycle: no seal, no consume, no delete,
 // no grading, no consolidation, no liveness inference, no mandatory
 // cardinality, no keeper/bud model, no prescribed headings. Those are
-// separate explicit choices and are refused here as unknown subcommands, so
-// no friend's practice is renamed by adopting this tool.
+// separate explicit choices and are refused here as unknown verbs, so no
+// friend's practice is renamed by adopting this tool.
 //
 // Every path, every identity and every policy comes from a flag. There is no
 // default store, no environment variable and no discovery: a missing flag is
-// a refusal, never a guess. Exit 0 ran and passed, 1 ran and failed (a
-// conflict the caller must resolve), 2 could not run.
+// a refusal, never a guess. The dispatch, the banner, the help, the version
+// verb, the refusals and the output envelope are internal/tool's.
 package main
 
 import (
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 var version string
 
-const usage = `nova-cairn: optional checkpoints, no memory lifecycle (see docs/SPEC-CAIRN.md)
+func main() { os.Exit(cairnTool().Main()) }
 
-usage:
-  nova-cairn version
-  nova-cairn open    --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]
-  nova-cairn append  --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]
-  nova-cairn index   --store <dir> [--session <id>] [--max <n>]
-  nova-cairn receipt --store <dir> --session <id> --entry <id>
-
-flags:
-  --store <dir>     the checkpoint store. Required, always: there is no
-                    environment variable and no discovery from the working
-                    directory. The store is plain files; a note is fsync-durable
-                    before success is reported, independently of Redis and of
-                    any remote. Two shapes are read: this tool's own
-                    (sessions/<id>.md, entries/, log.jsonl) and a bench store of
-                    one markdown file per session directly under the store
-                    (<id>.md), appended by hand. On the second, open is a no-op
-                    and append lands a dated "## <stamp> - <entry>" section at
-                    the end of the file; no index and no directory appear
-                    beside it.
-  --session <id>    the stable session identifier. Required: retries and
-                    recoveries address the same record by this name.
-  --entry <id>      the stable entry identifier. Required on append and receipt:
-                    retrying with the same id and the same words succeeds as a
-                    duplicate; the same id with different words is refused.
-  --text <words>    the friend's exact words, stored byte-for-byte. Exactly one
-  --file <path|->   of --text or --file: --file - reads stdin.
-  --source <ptr>    where the words came from (transcript path, line range,
-                    bench/session pointer). Recorded, never opened. On open it
-                    is the session's pointer; an append with no --source
-                    carries it. Every line prints source=, and source=- is an
-                    entry with no pointer.
-  --publish <pol>   caller-chosen publication policy, one of never, manual,
-                    deferred, immediate. Required on open and append. This slice
-                    implements no transport: every success reports
-                    persisted=true with published=false, and local durability
-                    never implies replicated durability.
-  --now <rfc3339>   the stamp, for tests and replays. Default is the real clock
-                    in UTC; a value that does not parse as RFC 3339 UTC is exit 2.
-  --max <n>         index only: entry lines to print before one MORE line stands
-                    for the rest. Default 20, and 0 prints all. The count is
-                    never capped -- the coverage line carries the total.
-
-There is deliberately no seal, consume, delete, grade, consolidate or wake
-verb: the boundary in SPEC-CAIRN.md lists them, and naming one here is exit 2.
-
-exit codes: 0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).
-
-example:
-  nova-cairn open --store ./cairns --session s1 --publish manual
-  nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
-  nova-cairn index --store ./cairns
-  nova-cairn receipt --store ./cairns --session s1 --entry e1
-
-Those four are one sitting, in order: the open makes ./cairns, and the append,
-index and receipt read it back. A line run alone names a record it did not make.
-`
-
-// refuse is what an unusable invocation costs: one line naming what was
-// wrong, and the door to the usage rather than the usage itself.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-cairn%s: %s; run: nova-cairn help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return cairnTool().Run(args, stdin, stdout, stderr)
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+const publishes = "never, manual, deferred or immediate"
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-cairn", usage, &code)
-	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; open starts a record")
-	}
-	switch args[0] {
-	case "open":
-		return cmdOpen(args[1:], stdout, stderr)
-	case "append":
-		return cmdAppend(args[1:], stdin, stdout, stderr)
-	case "index":
-		return cmdIndex(args[1:], stdout, stderr)
-	case "receipt":
-		return cmdReceipt(args[1:], stdout, stderr)
-	case "version", "--version":
-		return cmdVersion(args[1:], stdout, stderr)
-	case "help", "-h", "--help":
-		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdin, stdout, stderr)
-		}
-		fmt.Fprint(stdout, usage)
-		return 0
-	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
+func cairnTool() *tool.Tool {
+	return &tool.Tool{
+		Name:  "nova-cairn",
+		What:  "optional checkpoints, no memory lifecycle (see docs/SPEC-CAIRN.md)",
+		Stamp: version,
+		How: `The store is plain files under --store, fsync-durable before success; no Redis, remote or discovery.
+It reads its own layout (sessions/, entries/, log.jsonl) or a hand-kept markdown file per session.
+The same entry id with the same words is a duplicate, and with different words a conflict (exit 1).
+--now stamps a replay (RFC 3339 UTC). There is no seal, consume, delete or grade verb (SPEC-CAIRN).
+The four examples are one sitting: the open makes ./cairns and the rest read it back.`,
+		ExitTable: "0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).",
+		Verbs: []tool.Verb{
+			{
+				Name:    "open",
+				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]",
+				Example: "open --store ./cairns --session s1 --publish manual",
+				Effect:  tool.LocalWrite,
+				Flags: func(f *tool.Flags) {
+					record(f)
+					f.String("source", "", "where the record points back to; appends with no --source carry it")
+					f.Required("publish", "the publication policy: "+publishes)
+					now(f)
+				},
+				Run: open,
+			},
+			{
+				Name:    "append",
+				Usage:   "append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]",
+				Example: `append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual`,
+				Effect:  tool.LocalWrite,
+				Flags: func(f *tool.Flags) {
+					record(f)
+					f.Required("entry", "the stable entry identifier")
+					f.String("text", "", "the friend's exact words, stored byte for byte; exactly one of --text or --file")
+					f.String("file", "", "file holding the exact words; - reads stdin")
+					f.String("source", "", "where the words came from; recorded, never opened")
+					f.Required("publish", "the publication policy: "+publishes)
+					now(f)
+					// The words arrive by exactly one road: two roads is two candidates
+					// for "the friend's chosen words", and the tool must not pick.
+					f.Check(func(c *tool.Call) {
+						switch {
+						case c.Given("text") && c.Given("file"):
+							c.Problem("--text and --file both name the words; give exactly one")
+						case !c.Given("text") && !c.Given("file"):
+							c.Problem("the words come from --text or --file; refusing to guess")
+						}
+					})
+				},
+				Run: appendEntry,
+			},
+			{
+				Name:    "index",
+				Usage:   "index --store <dir> [--session <id>] [--max <n>]",
+				Example: "index --store ./cairns",
+				Effect:  tool.Inspection,
+				Flags: func(f *tool.Flags) {
+					f.Required("store", "the checkpoint store directory")
+					f.String("session", "", "one session to index; default every record")
+					f.Max()
+				},
+				Run: index,
+			},
+			{
+				Name:    "receipt",
+				Usage:   "receipt --store <dir> --session <id> --entry <id>",
+				Example: "receipt --store ./cairns --session s1 --entry e1",
+				Effect:  tool.Inspection,
+				Flags: func(f *tool.Flags) {
+					record(f)
+					f.Required("entry", "the stable entry identifier")
+				},
+				Run: receipt,
+			},
+		},
 	}
 }
 
-// parse runs a subcommand flag set and enforces the no-guessing rule: every
-// required flag must have been GIVEN. Every missing flag is reported, not
-// the first, so one run teaches the whole invocation.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, ok bool) {
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
-		return nil, false
-	}
-	given = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	sorted := append([]string(nil), required...)
-	sort.Strings(sorted)
-	ok = true
-	for _, name := range sorted {
-		if !given[name] {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
-			ok = false
-		}
-	}
-	return given, ok
+// record declares the two flags every verb that names a record takes.
+func record(f *tool.Flags) {
+	f.Required("store", "the checkpoint store directory")
+	f.Required("session", "the stable session identifier")
 }
 
-// clock resolves the stamp: the real clock in UTC unless --now names one.
-// --now exists for tests and replays; a masked, local-format or otherwise
-// unparsable time is exit 2, because a stamp that did not come from a clock
+// now declares --now and its rule: a masked, local-format or otherwise
+// unparsable time is a refusal, because a stamp that did not come from a clock
 // (or an explicit replay of one) is how estimates get filed as facts.
-func clock(given map[string]bool, now string, verb string, stderr io.Writer) (time.Time, bool) {
-	if !given["now"] {
-		return time.Now().UTC(), true
+func now(f *tool.Flags) {
+	f.String("now", "", "RFC 3339 UTC stamp for tests and replays; default the real clock")
+	f.Check(func(c *tool.Call) {
+		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(c.Str("now"))); c.Given("now") && err != nil {
+			c.Problem("--now must parse as RFC 3339 UTC (got " + c.Str("now") + "); refusing to guess")
+		}
+	})
+}
+
+// clock is the stamp: the real clock in UTC unless --now (checked) names one.
+func clock(c *tool.Call) time.Time {
+	if !c.Given("now") {
+		return time.Now().UTC()
 	}
-	t, err := time.Parse(time.RFC3339, strings.TrimSpace(now))
+	t, _ := time.Parse(time.RFC3339, strings.TrimSpace(c.Str("now")))
+	return t.UTC()
+}
+
+func stampOf(t time.Time) string { return t.Format(time.RFC3339Nano) }
+
+// sourceOf is a source pointer as a field: "" reads as absent, "-".
+func sourceOf(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func open(c *tool.Call) *tool.Out {
+	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
+	if err := cairn.Open(store, session, c.Str("source"), stamp, publish); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	stored, err := cairn.SessionSource(store, session)
 	if err != nil {
-		refuse(stderr, " "+verb, fmt.Sprintf("--now must parse as RFC 3339 UTC (got %q); refusing to guess", now))
-		return time.Time{}, false
+		return tool.Refuse(err.Error())
 	}
-	return t.UTC(), true
+	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(stored)).
+		Fact("publish", publish).Fact("stamp", stampOf(stamp))
 }
 
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	verbflag.HelpIfAsked(args, "version")
-	if len(args) > 0 {
-		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)))
-	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-cairn", version))
-	return 0
-}
-
-func cmdOpen(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("open", flag.ContinueOnError)
-	store := fs.String("store", "", "checkpoint store directory (required)")
-	session := fs.String("session", "", "stable session identifier (required)")
-	source := fs.String("source", "", "where the record points back to (optional)")
-	publish := fs.String("publish", "", "publication policy: never|manual|deferred|immediate (required)")
-	now := fs.String("now", "", "RFC 3339 UTC stamp override for tests and replays")
-	given, ok := parse(fs, args, stderr, "store", "session", "publish")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " open", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	stamp, ok := clock(given, *now, "open", stderr)
-	if !ok {
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	if err := cairn.Open(*store, *session, *source, stamp, *publish); err != nil {
-		return refuse(stderr, " open", oneline.Err(err))
-	}
-	stored, err := cairn.SessionSource(*store, *session)
-	if err != nil {
-		return refuse(stderr, " open", oneline.Err(err))
-	}
-	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s source=%s publish=%s stamp=%s\n",
-		oneline.Field(*session), oneline.Escape(*store), sourceField(stored), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
-	return 0
-}
-
-func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("append", flag.ContinueOnError)
-	store := fs.String("store", "", "checkpoint store directory (required)")
-	session := fs.String("session", "", "stable session identifier (required)")
-	entry := fs.String("entry", "", "stable entry identifier (required)")
-	text := fs.String("text", "", "the friend's exact words")
-	file := fs.String("file", "", "file holding the exact words (- reads stdin)")
-	source := fs.String("source", "", "where the words came from (optional)")
-	publish := fs.String("publish", "", "publication policy: never|manual|deferred|immediate (required)")
-	now := fs.String("now", "", "RFC 3339 UTC stamp override for tests and replays")
-	given, ok := parse(fs, args, stderr, "store", "session", "entry", "publish")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " append", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	// The words arrive by exactly one road: two roads is two candidates for
-	// "the friend's chosen words", and the tool must not pick between them.
-	words := ""
-	switch {
-	case given["text"] && given["file"]:
-		refuse(stderr, " append", "--text and --file both name the words; give exactly one")
-		bad = true
-	case given["text"]:
-		words = *text
-	case given["file"]:
-		raw, err := readWords(*file, stdin)
+func appendEntry(c *tool.Call) *tool.Out {
+	store, session, entry, publish := c.Str("store"), c.Str("session"), c.Str("entry"), c.Str("publish")
+	words := c.Str("text")
+	if c.Given("file") {
+		raw, err := readWords(c.Str("file"), c.Stdin)
 		if err != nil {
-			refuse(stderr, " append", oneline.Err(err))
-			bad = true
-		} else {
-			words = string(raw)
+			return tool.Refuse(err.Error())
 		}
-	default:
-		refuse(stderr, " append", "the words come from --text or --file; refusing to guess")
-		bad = true
+		words = string(raw)
 	}
-	stamp, ok := clock(given, *now, "append", stderr)
-	if !ok {
-		bad = true
+	stamp := clock(c)
+	res, err := cairn.Append(store, session, entry, words, c.Str("source"), stamp, publish)
+	var conflict *cairn.ConflictError
+	switch {
+	case errors.As(err, &conflict):
+		return tool.Fail(err.Error()).Fact("session", session).Fact("entry", entry)
+	case err != nil:
+		return tool.Refuse(err.Error())
 	}
-	if bad {
-		return 2
-	}
-	res, err := cairn.Append(*store, *session, *entry, words, *source, stamp, *publish)
-	if err != nil {
-		var conflict *cairn.ConflictError
-		if errors.As(err, &conflict) {
-			fmt.Fprintf(stderr, "APPEND FAIL session=%s entry=%s %s\n",
-				oneline.Field(*session), oneline.Field(*entry), oneline.Escape(err.Error()))
-			return 1
-		}
-		return refuse(stderr, " append", oneline.Err(err))
-	}
-	dup := "false"
-	if res.Duplicate {
-		dup = "true"
-	}
-	fmt.Fprintf(stdout, "APPEND OK session=%s entry=%s source=%s persisted=true published=false publish=%s duplicate=%s stamp=%s\n",
-		oneline.Field(*session), oneline.Field(*entry), sourceField(res.Source), oneline.Field(res.Policy), dup, res.Stamp.Format(time.RFC3339Nano))
-	return 0
+	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", sourceOf(res.Source)).
+		Fact("persisted", true).Fact("published", false).Fact("publish", res.Policy).
+		Fact("duplicate", res.Duplicate).Fact("stamp", stampOf(res.Stamp))
 }
 
 // readWords reads the exact words from a file, or from stdin when the path
@@ -301,80 +208,27 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// indexRemedy is the second half of the index MORE line: the flag that shows
-// the rest, written the way it would be typed.
-const indexRemedy = "--max <n> raises the ceiling, --max 0 prints every entry"
-
-func cmdIndex(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("index", flag.ContinueOnError)
-	store := fs.String("store", "", "checkpoint store directory (required)")
-	session := fs.String("session", "", "one session to index (default: every record)")
-	max := fs.Int("max", bounded.Default, "entry lines to print before one MORE line stands for the rest; 0 prints all")
-	given, ok := parse(fs, args, stderr, "store")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " index", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	if given["max"] && *max < 0 {
-		refuse(stderr, " index", fmt.Sprintf("--max must be zero or more (got %d); 0 means print them all", *max))
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	all, total, err := cairn.Index(*store, *session, 0)
+// index lists every entry; the coverage counts on its first line are never
+// capped, so the total is carried whether or not --max elides entries.
+func index(c *tool.Call) *tool.Out {
+	store := c.Str("store")
+	all, total, err := cairn.Index(store, c.Str("session"), 0)
 	if err != nil {
-		return refuse(stderr, " index", oneline.Err(err))
+		return tool.Refuse(err.Error())
 	}
-	led := cairn.Coverage(*store)
-	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
+	o := tool.Done().Fact("sessions", cairn.Coverage(store).Sessions).Fact("entries", total)
 	for _, r := range all {
-		list.Line(fmt.Sprintf("INDEX ENTRY session=%s entry=%s stamp=%s bytes=%d source=%s",
-			oneline.Field(r.Session), oneline.Field(r.ID),
-			r.Stamp.Format(time.RFC3339Nano), r.Bytes, sourceField(r.Source)))
+		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
 	}
-	list.More()
-	fmt.Fprintf(stdout, "INDEX COVERAGE sessions=%d entries=%d shown=%d\n", led.Sessions, total, list.Shown())
-	return 0
+	return o
 }
 
-func cmdReceipt(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("receipt", flag.ContinueOnError)
-	store := fs.String("store", "", "checkpoint store directory (required)")
-	session := fs.String("session", "", "stable session identifier (required)")
-	entry := fs.String("entry", "", "stable entry identifier (required)")
-	given, ok := parse(fs, args, stderr, "store", "session", "entry")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " receipt", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	rc, err := cairn.Receipt(*store, *session, *entry)
+func receipt(c *tool.Call) *tool.Out {
+	rc, err := cairn.Receipt(c.Str("store"), c.Str("session"), c.Str("entry"))
 	if err != nil {
-		return refuse(stderr, " receipt", oneline.Err(err))
+		return tool.Refuse(err.Error())
 	}
-	fmt.Fprintf(stdout, "RECEIPT OK session=%s entry=%s stamp=%s bytes=%d source=%s persisted=true published=false publish=%s\n",
-		oneline.Field(rc.Session), oneline.Field(rc.ID),
-		rc.Stamp.Format(time.RFC3339Nano), rc.Bytes, sourceField(rc.Source), oneline.Field(rc.Policy))
-	return 0
-}
-
-// sourceField renders a source pointer as one key=value token: Field, so a
-// pointer holding a space stays one field, and "-" for an entry that carries
-// none, so an empty pointer reads as absent rather than as a lost value.
-func sourceField(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return oneline.Field(s)
+	return tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
+		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
+		Fact("published", false).Fact("publish", rc.Policy)
 }

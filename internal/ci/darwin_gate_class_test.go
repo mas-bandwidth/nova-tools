@@ -15,7 +15,7 @@ import (
 // selected package, and the darwin legs are the slowest and the scarcest: cancelled at
 // the two-minute cap whenever their host is loaded, which turned every working
 // branch PR red for a reason the change did not cause. certification.yml is
-// untouched: dev and main certify on darwin.
+// untouched: it runs on pushes to dev, nightly and on dispatch, and certifies on darwin.
 //
 // The gate lives in test-packages' `list` step, which deals the matrix: with it
 // off, every package rides the Linux shards and the darwin-only packages have no
@@ -122,7 +122,7 @@ func TestDarwinShardsRunOnlyForIntegrationBranches(t *testing.T) {
 		if name == "test-packages" {
 			continue
 		}
-		if strings.Contains(body, `"os":"macOS"`) || strings.Contains(body, "[self-hosted, macOS") {
+		if namesMacOSRunner(body) {
 			t.Errorf("job %s names a self-hosted macOS runner outside the gated deal; route it through test-packages' DARWIN gate", name)
 		}
 		if strings.Contains(body, "macos-latest") && (jobRunsOnEvent(body, "pull_request") || jobRunsOnEvent(body, "merge_group")) {
@@ -145,4 +145,65 @@ func dealLoop(step string) string {
 		return rest
 	}
 	return rest[:j]
+}
+
+// macOSLabelRe finds a macOS label as one element of a label list: flow or block
+// form, in any position, bare or quoted, in any case.
+var macOSLabelRe = regexp.MustCompile(`(?i)(^|[\[,\s'"-])macos($|[\],\s'"])`)
+
+// macOSOSKeyRe finds an `os` key whose value is macOS, in a flow map or a
+// matrix entry, bare or quoted (the dealt entries carry `"os":"macOS"`).
+var macOSOSKeyRe = regexp.MustCompile(`(?i)["']?\bos["']?\s*:\s*["']?macos(["'\s,}\]]|$)`)
+
+// namesMacOSRunner reports whether a job body puts a macOS label on a runs-on
+// list, in any position and any spelling, or carries an os key of macOS.
+func namesMacOSRunner(body string) bool {
+	if macOSOSKeyRe.MatchString(body) {
+		return true
+	}
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, "runs-on:") {
+			continue
+		}
+		spec := strings.TrimPrefix(trimmed, "runs-on:")
+		// A block list continues on the `- item` lines below the key.
+		for j := i + 1; j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if !strings.HasPrefix(next, "- ") {
+				break
+			}
+			spec += " " + next
+		}
+		if macOSLabelRe.MatchString(spec) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMacOSRunnerMatchCatchesEveryPosition probes namesMacOSRunner: the label in
+// any position, quoted or in a block list, is caught; a Linux list is not.
+func TestMacOSRunnerMatchCatchesEveryPosition(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{"    runs-on: [self-hosted, macOS, ARM64]", true},
+		{"    runs-on: [self-hosted, ARM64, macOS]", true},
+		{`    runs-on: [self-hosted, "macOS", ARM64]`, true},
+		{"    runs-on: [macos]", true},
+		{"    runs-on:\n      - self-hosted\n      - macOS\n    steps:", true},
+		{`    strategy: {matrix: {entry: [{"os":"macOS"}]}}`, true},
+		{"    runs-on: [self-hosted, linux, x64, space]", false},
+		{`    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}"]`, false},
+		{"    # runs-on: [self-hosted, macOS]", false},
+	} {
+		if got := namesMacOSRunner(tc.body); got != tc.want {
+			t.Errorf("namesMacOSRunner(%q) = %v, want %v", tc.body, got, tc.want)
+		}
+	}
 }

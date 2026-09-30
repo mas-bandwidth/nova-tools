@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"os"
 	"testing"
 )
 
@@ -16,5 +17,37 @@ func TestOSProcessTreeCPUNonExistent(t *testing.T) {
 		if _, ok := snap.TreeCPU(pid); ok {
 			t.Fatalf("TreeCPU(%d) = true, want false for non-existent pid", pid)
 		}
+	}
+}
+
+// TestTreeCPUReadsOnlyAKnownSnapshotsLiveTree pins the tree TreeCPU walks: from a
+// live pid, through the live processes it fathered, and nothing else. The
+// snapshots are built by hand around the test's own process, whose CPU time any
+// platform can read.
+func TestTreeCPUReadsOnlyAKnownSnapshotsLiveTree(t *testing.T) {
+	t.Parallel()
+
+	windowsIsNotABench(t)
+	self := os.Getpid()
+	const gone = 1 << 30 // a pid no table holds live
+	for _, c := range []struct {
+		name string
+		snap *procSnapshot
+		pid  int
+		want bool
+	}{
+		{"no snapshot", nil, self, false},
+		{"a table the platform could not read", &procSnapshot{live: map[int]bool{self: true}}, self, false},
+		{"a live pid", &procSnapshot{live: map[int]bool{self: true}, known: true}, self, true},
+		{"a pid that is not live", &procSnapshot{live: map[int]bool{}, known: true}, self, false},
+		{"no pid", &procSnapshot{live: map[int]bool{self: true}, known: true}, 0, false},
+		{"a live child of a live pid", &procSnapshot{live: map[int]bool{gone: true, self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, true},
+		{"a live child of a pid that is not live", &procSnapshot{live: map[int]bool{self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, ok := c.snap.TreeCPU(c.pid); ok != c.want {
+				t.Errorf("%s: TreeCPU(%d) ok = %v, want %v", c.name, c.pid, ok, c.want)
+			}
+		})
 	}
 }

@@ -1191,7 +1191,7 @@ package rides the Linux shards, the darwin-only packages (`cmd/nova-sandbox`,
 a change that selected only darwin-only packages gets the one leg that prints
 "nothing to test for this change". Linux shards are unchanged, `ci-ok` reads the
 `test` job whose matrix has no darwin entry on a working branch, and
-certification.yml (dev and main certify on darwin) is untouched. No ruleset
+certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies on darwin) is untouched. A change that touches only darwin-only packages gets no test run until it reaches dev. No ruleset
 applies to a working branch, so no darwin check is required there.
 **The mistake it prevents.** The Go is the same Go on both OSes and the darwin legs
 are the slowest and the scarcest: cancelled at the two-minute cap whenever their
@@ -1202,8 +1202,9 @@ change did not cause and held the queue behind them.
 equals the integration list, each event reads its own target branch, the deal loop
 sends every package to a Linux shard before it can append to the darwin group
 while the gate is off, the darwin-only-only change falls back to the empty leg, and
-no other job names a self-hosted macOS runner or runs macos-latest on a pull_request
-or merge_group.
+no other job carries a macOS label on a `runs-on` list (any position, quoted or
+block form, any case) or runs macos-latest on a pull_request or merge_group.
+`TestMacOSRunnerMatchCatchesEveryPosition` holds that label match itself.
 **Its allowlist.** None.
 **Its remedy line.** Put the darwin leg behind `darwin_on`, or add the branch to the
 integration list and to `DARWIN_BRANCHES` together.
@@ -2580,6 +2581,15 @@ the original failed measurement.
 **Its allowlist.** `internal/ci/testdata/generality_allowlist.txt`, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. In `internal/tset` and files that directly import it, the exact Go identifiers `space` and `Space` and the JSON field tag `json:"space"` denote a deployment namespace, so the scanner exempts those syntax nodes. In `internal/tset/wire.go`, it also exempts the literal JSON key `"space"` only in its map-to-`.Space`, `strictObject`, and `unmarshalRequired` schema contexts. Compound identifiers, other tag keys, comments, and ordinary string literals still count when they name a machine. This does not expand the token inventory or the shrink-only allowlist ceiling.
+
+### `tool-standard` — every tool built on internal/tool is held to the standard its definition alone can break
+
+**The rule.** A package that builds a `tool.Tool` has a test that calls its `Problems()` and fails on each: every verb's effect is inspection, local write or delivery (optionally with a clause), and the how text is at most five lines of at most 100 characters. The rest of the banner standard (the what line, usage, exit codes, the example block last, `-h` per verb) holds by construction in `internal/tool`.
+**The mistake it prevents.** The first two tools on the skeleton shipped how texts of 11 and 12 lines, and `help <verb>` printed `effect: unstated`, while every test was green: nothing checked what only the definition says.
+**The test.** `TestEveryToolDefinitionIsHeldToTheStandard` (`internal/ci/toolstandard_class_test.go`); `Problems()` itself is pinned by `internal/tool` `TestProblems`.
+**Its allowlist.** None.
+**Its remedy line.** `remedy="add a test that fails on each of its Problems() (as cmd/nova-cairn TestCairnToolMeetsTheStandard)"`.
+**Its narrowings.** It reads non-test `.go` files under `cmd/` and `internal/` for a `tool.Tool{` literal, outside `testdata/` and `internal/tool` itself, and asks that a `_test.go` file in the same directory call `.Problems()`.
 
 ### `generality-text` — the same rule over every living text file that is not Go
 

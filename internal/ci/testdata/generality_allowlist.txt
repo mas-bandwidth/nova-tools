@@ -23,7 +23,6 @@ cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
 cmd/nova-bus/main.go:stella 1
 cmd/nova-bus/version.go:space 1
-cmd/nova-cairn/main.go:space 1
 cmd/nova-check/convergence.go:glenn 1
 cmd/nova-check/convergence.go:mas-bandwidth 1
 cmd/nova-check/convergence.go:rowan 1

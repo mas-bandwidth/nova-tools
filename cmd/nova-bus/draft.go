@@ -161,16 +161,23 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		var open []bus.OpenEntry
+		var openErr error
 		if known && me.Lane != "" {
-			if entries, oerr := bus.ReadOpen(*busDir, me.Lane); oerr == nil {
-				open = entries
-			}
+			open, openErr = bus.ReadOpen(*busDir, me.Lane)
 		}
+		openErrReported := false
 		for i, r := range re {
 			if r == "new" {
 				continue
 			}
 			if _, found := t.Resolve(r); found {
+				continue
+			}
+			if openErr != nil {
+				if !openErrReported {
+					problems = append(problems, draftOpenReadFailure(*busDir, me, openErr))
+					openErrReported = true
+				}
 				continue
 			}
 			matches := bus.MatchOpenSubject(open, r)
@@ -200,6 +207,17 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fmt.Fprint(stdout, skeleton)
 	fmt.Fprintf(stderr, "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n")
 	return 0
+}
+
+func draftOpenReadFailure(busDir string, me bus.Participant, err error) error {
+	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words '<receipt-word-limit>' --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)))
+	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
+	placeholders := "replace the receipt-word-limit, remote, and branch placeholders; receipt-word-limit is a positive word-count threshold for classifying short receipts"
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Errorf("cannot read %s (%v); repair access to that OPEN path first, then rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
+	}
+	return fmt.Errorf("%s is invalid (%v); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
 }
 
 func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr io.Writer) int {

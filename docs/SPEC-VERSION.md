@@ -87,9 +87,9 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    the budget and never as a slow binary.
 6. **`diff` reads two snapshots and prints one line per changed binary.** For every `name`
    whose row differs — stamp, revision or platform, or a name present on one side only — it
-   prints `DIFF CHANGED name=<name> from=<stamp|-> to=<stamp|->`; an unchanged binary prints
-   no line, and the closing `DIFF OK from=<a.tsv> to=<b.tsv> tools=<n> changed=<n>` counts
-   the state, not the output.
+   prints `DIFF CHANGED name=<name> from=<stamp|-> to=<stamp|->` under its first line,
+   `DIFF OK from=<a.tsv> to=<b.tsv> tools=<n> changed=<n>`, which counts the state, not the
+   output; an unchanged binary prints no line.
 7. **`diff` refuses what it cannot read.** A file that is not a snapshot — a missing or
    wrong header, or a row of the wrong arity — names the file and the `snapshot` that writes
    one, exit 2, and prints no changed line; the two files are read, never written.
