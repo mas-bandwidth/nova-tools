@@ -363,8 +363,38 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	if code, _, _ := ta.do("where"); code == 0 {
 		t.Fatalf("the tables are still there")
 	}
-	if code, _, errs := ta.do("where --prefix x"); code != 2 || !strings.Contains(errs, "prefix") {
-		t.Fatalf("a prefix flag is refused: %d %s", code, errs)
+	const none = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
+	for _, verb := range []string{"where", "card p1", "log", "clear", "teardown", "inbox", "check", "repair", "init", "add --stream s1", "fleet up m1", "goal set a", "goal show", "goal", "reader add r"} {
+		name := verb
+		if f := strings.Fields(verb); f[0] == "goal" && len(f) == 1 {
+			name = "goal"
+		} else if f[0] == "goal" || f[0] == "fleet" || f[0] == "reader" {
+			name = f[0] + " " + f[1]
+		} else {
+			name = f[0]
+		}
+		want := "nova-sprint " + name + ": " + none + "; run: nova-sprint " + name + " -h\n"
+		if name == "goal" {
+			want = "nova-sprint goal: " + none + "; run: nova-sprint goal -h\n"
+		}
+		if code, _, errs := ta.do(verb + " --prefix x"); code != 2 || errs != want {
+			t.Fatalf("%s --prefix x: exit %d, stderr %q, want %q", verb, code, errs, want)
+		}
+	}
+	get := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == "NOVA_SPRINT_PREFIX" {
+			return "dev-"
+		}
+		return get(k)
+	}
+	if code, _, errs := ta.do("where"); code != 2 || errs != "nova-sprint where: NOVA_SPRINT_PREFIX is set: "+none+"; unset it; run: nova-sprint where -h\n" {
+		t.Fatalf("a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
+	}
+	// before the --redis check: with no store named the refusal is still this one
+	ta.a.getenv = func(k string) string { return map[string]string{"NOVA_SPRINT_PREFIX": "dev-"}[k] }
+	if code, _, errs := ta.do("where"); code != 2 || !strings.HasPrefix(errs, "nova-sprint where: NOVA_SPRINT_PREFIX is set: ") {
+		t.Fatalf("the prefix variable is checked before --redis: %d %q", code, errs)
 	}
 }
 

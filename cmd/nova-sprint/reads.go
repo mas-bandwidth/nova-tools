@@ -240,7 +240,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "where", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "where", argErr("takes no words ", err))
 	}
 	ctx := context.Background()
 	if *watch {
@@ -395,7 +395,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "inbox", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "inbox", argErr("takes no words ", err))
 	}
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
@@ -572,7 +572,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	fields := fs.Bool("fields", false, "every field of the primary and its cards, one record a line, instead of its story")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
-		return refuse(stderr, "card", fmt.Sprint("wants one primary id ", err))
+		return refuse(stderr, "card", argErr("wants one primary id ", err))
 	}
 	id := pos[0]
 	st, err := a.storeAt(*c, *atEpoch)
@@ -688,7 +688,7 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("check")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "check", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "check", argErr("takes no words ", err))
 	}
 	st, err := a.store(*c)
 	if err != nil {

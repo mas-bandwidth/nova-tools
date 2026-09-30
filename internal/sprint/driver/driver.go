@@ -78,7 +78,7 @@ type Silence struct {
 }
 
 // Driver runs the loop. Run is the command's entry point; Base is the flags
-// every verb it runs gets (the store and the prefix), and they are printed
+// every verb it runs gets (the store), and they are printed
 // with each command line so the line can be typed by hand.
 type Driver struct {
 	Run    func(args []string, stdout, stderr io.Writer) int

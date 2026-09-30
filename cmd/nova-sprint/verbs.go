@@ -227,6 +227,9 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {
 		if err := verbflag.Parse(fs, args); err != nil {
+			if strings.Contains(err.Error(), "flag provided but not defined: -prefix") {
+				return nil, errNoPrefix
+			}
 			return nil, err
 		}
 		args = fs.Args()
@@ -1196,7 +1199,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("repair")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "repair", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "repair", argErr("takes no words ", err))
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -1239,11 +1242,11 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view, sprint")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "teardown", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "teardown", argErr("takes no words ", err))
 	}
 	want := confirmName()
 	if *confirm != want {
-		return refuse(stderr, "teardown", "drops the four tables, the view and every key of the sprint "+want+"; wants --confirm "+want+" (the name of the sprint's view)")
+		return refuse(stderr, "teardown", "drops the four tables, the view and every key of the sprint; wants --confirm "+want+" (the name of the sprint's view)")
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -1263,11 +1266,11 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view, sprint")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "clear", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "clear", argErr("takes no words ", err))
 	}
 	want := confirmName()
 	if *confirm != want {
-		return refuse(stderr, "clear", "stops the sprint "+want+" and clears all work in it (a new epoch; the old one stays readable with --at-epoch); wants --confirm "+want+" (the name of the sprint's view)")
+		return refuse(stderr, "clear", "stops the sprint and clears all work in it (a new epoch; the old one stays readable with --at-epoch); wants --confirm "+want+" (the name of the sprint's view)")
 	}
 	st, err := a.store(*c)
 	if err != nil {
