@@ -610,3 +610,60 @@ func TestLiveTreeRefusesAFailedList(t *testing.T) {
 		t.Errorf("LiveTree = %v, want the go list error", err)
 	}
 }
+
+func TestRunnerShareIsCoresOverRunnersBetweenOneAndTwo(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		cores             int
+		says              string
+		wantRunners, want int
+	}{
+		{64, "", 8, 2}, {16, "8", 8, 2}, {12, "8", 8, 1}, {4, "8", 8, 1}, {1, "1", 1, 1}, {64, "1", 1, 2},
+		{6, "3", 3, 2}, {6, "4", 4, 1}, {16, "0", 8, 2}, {16, "many", 8, 2}, {16, "-3", 8, 2}, {0, "4", 4, 1},
+	} {
+		if runners, share := RunnerShare(tc.cores, tc.says); runners != tc.wantRunners || share != tc.want {
+			t.Errorf("RunnerShare(%d, %q) = %d runners, share %d; want %d and %d", tc.cores, tc.says, runners, share, tc.wantRunners, tc.want)
+		}
+	}
+}
+
+func TestUnitMakeArgsByRun(t *testing.T) {
+	t.Parallel()
+	const common = "make test PKGS=./cmd/a GOTEST_TIMEOUT=110s"
+	for name, tc := range map[string]struct {
+		whole   string
+		nightly bool
+		want    string
+	}{
+		"the default leg keeps Go's test cache and links without DWARF": {"", false, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
+		"a whole-tree run keeps the cache and brings its budgets":       {"--budget 60", false, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
+		"the nightly leg measures uncached and enforces":                {"", true, common + " GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_ENFORCE=1"},
+		"a whole-tree run outranks the nightly flag":                    {"--budget 60", true, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
+	} {
+		if got := strings.Join(UnitMakeArgs("./cmd/a", tc.whole, tc.nightly), " "); got != tc.want {
+			t.Errorf("%s:\n got %s\nwant %s", name, got, tc.want)
+		}
+	}
+}
+
+func TestWriteUnitShimRefusesWithExit86(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	shim, err := WriteUnitShim(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shim != filepath.Join(tmp, UnitShimDir, "redis-server") {
+		t.Errorf("shim at %s", shim)
+	}
+	b, err := os.ReadFile(shim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "#!/bin/sh\necho \"" + UnitShimMessage + "\" >&2\nexit 86\n"; string(b) != want {
+		t.Errorf("shim body = %q, want %q", b, want)
+	}
+	if fi, err := os.Stat(shim); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("shim mode = %v, %v; want 0755", fi, err)
+	}
+}
