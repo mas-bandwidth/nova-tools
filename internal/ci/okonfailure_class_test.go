@@ -105,20 +105,26 @@ func (p *cmdPackage) okOnFailureSites(fset *token.FileSet, f *ast.File) []okOnFa
 				if !printed {
 					continue
 				}
+				// The word that counts is the last status line the run printed, the
+				// one a reader is left with: an OK after a REFUSED, then exit 2, is an
+				// OK on a failed run, and a FAIL after an OK, then exit 0, is the
+				// reverse. A line holding both words is an item list ending in its verdict
+				// and reads as a failure.
+				word := lastStatusWord(text)
 				line := fset.Position(st.Pos()).Line
 				code, ok := exitCode(st)
 				if !ok {
-					if v := carriedExit(st); v != "" && okWordRe.MatchString(text) && !failWordRe.MatchString(text) {
+					if v := carriedExit(st); v != "" && word == wordOK {
 						out = append(out, okOnFailureSite{fn: name, kind: kindOKCarried, line: line,
 							text: fmt.Sprintf("prints %q on every outcome, then exits %s, which may be non-zero; print OK only when %s is 0, FAIL otherwise", remedyShort(text), v, v)})
 					}
 					continue
 				}
 				switch {
-				case code != "0" && okWordRe.MatchString(text) && !failWordRe.MatchString(text):
+				case code != "0" && word == wordOK:
 					out = append(out, okOnFailureSite{fn: name, kind: kindOKNonZero, line: line,
 						text: fmt.Sprintf("prints %q, then exits %s; a failed run's last word is FAIL or REFUSED, never OK", remedyShort(text), code)})
-				case code == "0" && failWordRe.MatchString(text) && !okWordRe.MatchString(text):
+				case code == "0" && word == wordFail:
 					out = append(out, okOnFailureSite{fn: name, kind: kindFailZero, line: line,
 						text: fmt.Sprintf("prints %q, then exits 0; a FAIL or REFUSED line exits 1 or 2", remedyShort(text))})
 				}
@@ -129,8 +135,32 @@ func (p *cmdPackage) okOnFailureSites(fset *token.FileSet, f *ast.File) []okOnFa
 	return out
 }
 
+// The two status words lastStatusWord reads.
+const (
+	wordOK   = "ok"
+	wordFail = "fail"
+)
+
+// lastStatusWord is the status the run's last status line carries: the lines of
+// the printed text are read from the end, and the first one that holds an OK
+// word or a FAIL or REFUSED word decides (fail when it holds both). "" when no
+// line is a status line.
+func lastStatusWord(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		switch l := lines[i]; {
+		case failWordRe.MatchString(l):
+			return wordFail
+		case okWordRe.MatchString(l):
+			return wordOK
+		}
+	}
+	return ""
+}
+
 // fmtPrintsBefore is the text of the run of fmt print statements that ends
-// the statement list (the lines a reader sees last before the exit).
+// the statement list (the lines a reader sees last before the exit), in the
+// order they print.
 func (p *cmdPackage) fmtPrintsBefore(list []ast.Stmt) (string, bool) {
 	var parts []string
 	for i := len(list) - 1; i >= 0; i-- {
@@ -142,9 +172,9 @@ func (p *cmdPackage) fmtPrintsBefore(list []ast.Stmt) (string, bool) {
 		if !ok || !isFmtPrint(call) {
 			break
 		}
-		parts = append(parts, p.argsText(call))
+		parts = append([]string{p.argsText(call)}, parts...)
 	}
-	return strings.Join(parts, " "), len(parts) > 0
+	return strings.Join(parts, "\n"), len(parts) > 0
 }
 
 // carriedExit is the variable of `return <ident>` in a function returning an
@@ -196,8 +226,9 @@ func exitCode(st ast.Stmt) (string, bool) {
 }
 
 // TestOKOnFailureRuleReadsBothWays proves the rule over source: OK then exit 1
-// and FAIL then exit 0 are read; OK then 0, FAIL then 1, and a line that holds
-// both words (an item OK before the closing FAIL) are not.
+// and FAIL then exit 0 are read, and so are an OK printed after a REFUSED (exit 2) and
+// a FAIL printed after an OK (exit 0), because the last status line decides; OK then 0,
+// FAIL then 1, and an item OK before the closing FAIL are not.
 func TestOKOnFailureRuleReadsBothWays(t *testing.T) {
 	t.Parallel()
 	src := `package main
@@ -228,6 +259,20 @@ func a(w io.Writer, bad bool) int {
 	fmt.Fprintln(w, "CHECK OK findings=0")
 	return 0
 }
+
+func b(w io.Writer, bad bool) int {
+	if bad {
+		fmt.Fprintln(w, "CHECK REFUSED reason=bad_flag: x; run: t help")
+		fmt.Fprintln(w, "CHECK OK findings=0")
+		return 2
+	}
+	if bad {
+		fmt.Fprintln(w, "CHECK OK findings=0")
+		fmt.Fprintln(w, "CHECK FAIL findings=1")
+		return 0
+	}
+	return 0
+}
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", src, 0)
@@ -239,7 +284,9 @@ func a(w io.Writer, bad bool) int {
 	for _, s := range p.okOnFailureSites(fset, f) {
 		got[s.kind]++
 	}
-	if got[kindOKNonZero] != 1 || got[kindFailZero] != 1 || len(got) != 2 {
-		t.Errorf("got %v, want one %s and one %s", got, kindOKNonZero, kindFailZero)
+	// a: one of each. b: an OK printed after a REFUSED then exit 2 (the last status
+	// line wins, not "any line says FAIL"), and a FAIL after an OK then exit 0.
+	if got[kindOKNonZero] != 2 || got[kindFailZero] != 2 || len(got) != 2 {
+		t.Errorf("got %v, want two %s and two %s", got, kindOKNonZero, kindFailZero)
 	}
 }
