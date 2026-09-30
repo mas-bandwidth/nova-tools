@@ -36,12 +36,13 @@ func guardedByMergeRule(rel string) bool {
 // and what it declared. For a pull request's merge ref and a merge-queue
 // commit the first parent is the base branch's tip, so Deleted is exactly
 // what merging the change takes away from dev; for a squash on dev it is
-// the squash's effect; for a plain commit, that commit's. A promotion of dev
-// to main is the one change the comparison does not fit: its first parent is
-// main's tip, so Deleted is every deletion dev accumulated since the last
-// promotion, each already declared in the change that made it on dev; the
-// class test recognises that pull request (promotionSkip) and does not run
-// the comparison on it. Once the promotion has landed, a main run (mainRun:
+// the squash's effect; for a plain commit, that commit's. A promotion (dev
+// to main, or sprint/foundation to dev) is the change the comparison does
+// not fit: its first parent is the base branch's tip, so Deleted is every
+// deletion the head branch accumulated since the last promotion, each already
+// declared in the change that made it on that branch; the class test
+// recognises that pull request (promotionSkip) and does not run the comparison
+// on it. Once the promotion has landed, a main run (mainRun:
 // push, workflow_dispatch or schedule on refs/heads/main, or a local run on
 // main) at a merge commit keeps the first-parent comparison and excuses what
 // dev's own history deleted (excuseDevDeletions), and checks the merge's own
@@ -403,25 +404,32 @@ func parentInCheckout(root, parent string) error {
 	return nil
 }
 
-// promotionSkip recognises a promotion of dev to main from GitHub's own event
-// environment: GITHUB_EVENT_NAME, GITHUB_BASE_REF and GITHUB_HEAD_REF, as the
-// `test` jobs receive them, and the pull request's head repository from the
-// event payload (pullRequestHeadRepo) against GITHUB_REPOSITORY. It is true
-// exactly for the pull_request event whose base is main and whose head is
-// this repository's own dev, and the note says why the comparison does not
-// run there: every commit such a merge brings landed through dev's queue,
-// where this rule ran on each change against dev's tip. GITHUB_HEAD_REF is a
-// bare branch name, so a fork's branch named dev is refused by the head
-// repository, and an absent or unreadable payload refuses too. main takes
-// pull requests only (its ruleset has no merge queue), so no other event
-// carries a promotion. Anything else, an empty environment included, is the
-// ordinary comparison: a pull request into dev, a merge-queue group, a push,
-// a local run.
+// isPromotion reports whether a pull request promotes an integration branch:
+// dev into main, or sprint/foundation into dev.
+func isPromotion(base, head string) bool {
+	return (base == "main" && head == "dev") || (base == "dev" && head == "sprint/foundation")
+}
+
+// promotionSkip recognises a promotion (dev to main, or sprint/foundation to dev)
+// from GitHub's own event environment: GITHUB_EVENT_NAME, GITHUB_BASE_REF and
+// GITHUB_HEAD_REF, as the `test` jobs receive them, and the pull request's head
+// repository from the event payload (pullRequestHeadRepo) against GITHUB_REPOSITORY.
+// It is true exactly for the pull_request event whose base is main and whose head
+// is this repository's own dev, or whose base is dev and whose head is this
+// repository's own sprint/foundation, and the note says why the comparison does
+// not run there: every commit such a merge brings landed through that branch's
+// queue, where this rule ran on each change against that branch's tip.
+// GITHUB_HEAD_REF is a bare branch name, so a fork's branch named dev or
+// sprint/foundation is refused by the head repository, and an absent or unreadable
+// payload refuses too. main takes pull requests only (its ruleset has no merge
+// queue), so no other event carries a promotion. Anything else, an empty
+// environment included, is the ordinary comparison: a feature pull request into
+// dev, a merge-queue group, a push, a local run.
 func promotionSkip(event, base, head, headRepo, repo string) (bool, string) {
-	if event != "pull_request" || base != "main" || head != "dev" || repo == "" || headRepo != repo {
+	if event != "pull_request" || !isPromotion(base, head) || repo == "" || headRepo != repo {
 		return false, ""
 	}
-	return true, "NOTE: pull_request " + headRepo + ":" + head + " -> " + base + " is a promotion: its first parent is main's tip, so the comparison would see every deletion dev accumulated since the last promotion; each of those landed through dev's queue, where this rule ran on the change that made it, so the comparison does not run here"
+	return true, "NOTE: pull_request " + headRepo + ":" + head + " -> " + base + " is a promotion: its first parent is " + base + "'s tip, so the comparison would see every deletion " + head + " accumulated since the last promotion; each of those landed through " + head + "'s queue, where this rule ran on the change that made it, so the comparison does not run here"
 }
 
 // pullRequestHeadRepo is the head repository's full name from the event
@@ -515,10 +523,10 @@ func (m *mergeDeletions) ordinaryFindings() []string {
 // is read from git and compared with what the same change declared, so a
 // squash from a stale base — a tree that lacks files dev had, with nothing
 // in the change saying so — is red on the pull request, in the merge queue
-// and on dev. On the promotion of dev to main (promotionSkip) the
-// comparison does not run and the run says so; on a main run at the landed
-// promotion (mainRun) it runs with what dev's history deleted excused, and
-// the merge's own change checked against dev's tip. 2026-09-26: #4346 (rowan/functional-tag) was rebased onto
+// and on dev. On the promotion of dev to main or sprint/foundation to dev
+// (promotionSkip) the comparison does not run and the run says so; on a main
+// run at the landed promotion (mainRun) it runs with what dev's history deleted
+// excused, and the merge's own change checked against dev's tip. 2026-09-26: #4346 (rowan/functional-tag) was rebased onto
 // #4344 with a tree that lacked the four files #4344 had added (the silent
 // class test, its allowlist, two of its controls) and undid #4344's
 // live-path fixes with them; every check was green, because a rule that is
@@ -627,11 +635,11 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 }
 
 // TestPromotionSkipReadsTheEvent pins the one shape that skips the
-// comparison, the promotion pull request from this repository's dev to main,
-// against its reversed witnesses: the same event into dev, a feature branch
-// into main, a fork's branch named dev, an absent payload, a push carrying
-// the same refs, a merge-queue group (main has none; dev's carries no
-// promotion), and no environment at all.
+// comparison, the promotion pull request from this repository's dev to main
+// or sprint/foundation to dev, against its reversed witnesses: the same event
+// into dev from a feature branch, a feature branch into main, a fork's branch,
+// an absent payload, a push carrying the same refs, a merge-queue group
+// (main has none; dev's carries no promotion), and no environment at all.
 func TestPromotionSkipReadsTheEvent(t *testing.T) {
 	t.Parallel()
 	const repo = "mas-bandwidth/nova-tools"
@@ -640,10 +648,14 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 		skip                                    bool
 	}{
 		{"the promotion", "pull_request", "main", "dev", repo, repo, true},
+		{"the sprint foundation promotion", "pull_request", "dev", "sprint/foundation", repo, repo, true},
 		{"a pull request into dev from dev", "pull_request", "dev", "dev", repo, repo, false},
 		{"a feature branch into main", "pull_request", "main", "feature", repo, repo, false},
+		{"a feature branch into dev", "pull_request", "dev", "feature", repo, repo, false},
 		{"a fork's branch named dev", "pull_request", "main", "dev", "someone/nova-tools", repo, false},
+		{"a fork's branch named sprint/foundation", "pull_request", "dev", "sprint/foundation", "someone/nova-tools", repo, false},
 		{"an absent payload", "pull_request", "main", "dev", "", repo, false},
+		{"an absent payload on sprint foundation promotion", "pull_request", "dev", "sprint/foundation", "", repo, false},
 		{"no GITHUB_REPOSITORY", "pull_request", "main", "dev", repo, "", false},
 		{"a push with the promotion's refs", "push", "main", "dev", repo, repo, false},
 		{"a merge-queue group", "merge_group", "", "", "", repo, false},
@@ -654,8 +666,8 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 		if skip != tc.skip {
 			t.Errorf("%s: promotionSkip(%q, %q, %q, %q, %q) = %v, want %v", tc.name, tc.event, tc.base, tc.head, tc.headRepo, tc.repo, skip, tc.skip)
 		}
-		if skip && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, "dev's queue")) {
-			t.Errorf("%s: note = %q; want a NOTE naming dev's queue as where the rule ran", tc.name, note)
+		if skip && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, tc.head+"'s queue")) {
+			t.Errorf("%s: note = %q; want a NOTE naming %s's queue as where the rule ran", tc.name, note, tc.head)
 		}
 		if !skip && note != "" {
 			t.Errorf("%s: note = %q; want none when the comparison runs", tc.name, note)

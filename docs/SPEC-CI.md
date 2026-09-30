@@ -2270,15 +2270,15 @@ was ADDED to `internal/ci/testdata/deleted-tests.txt` in the same change; a
 row that names no deletion of the change is red too. On a pull request the
 checkout is the merge ref and the first parent is dev's tip, so the set is
 exactly what merging the change deletes from dev; in the merge queue the
-same; on dev, a squash's own effect. On the promotion of dev to main (the
-`pull_request` event with `GITHUB_BASE_REF` main and `GITHUB_HEAD_REF` dev
-whose payload's head repository is this repository, read by `promotionSkip`)
-the comparison does not run and the run logs a NOTE saying why: the first
-parent is main's tip, so the set would be every deletion dev accumulated
-since the last promotion, each declared in the change that made it on dev,
-where this rule ran; main takes pull requests only, so no other event carries
-a promotion, and a fork's branch named dev is refused by the head
-repository. Once the promotion has landed, a main run (`mainRun`: `push`,
+same; on dev, a squash's own effect. On a promotion — dev to main or
+sprint/foundation to dev (the `pull_request` event with `GITHUB_BASE_REF` main
+and `GITHUB_HEAD_REF` dev, or `GITHUB_BASE_REF` dev and `GITHUB_HEAD_REF`
+sprint/foundation, whose payload's head repository is this repository, read by
+`promotionSkip`) the comparison does not run and the run logs a NOTE saying why:
+the first parent is the base branch's tip, so the set would be every deletion the
+head branch accumulated since the last promotion, each declared in the change
+that made it on that branch, where this rule ran; a fork's branch named dev or
+sprint/foundation is refused by the head repository. Once the promotion has landed, a main run (`mainRun`: `push`,
 `workflow_dispatch` or `schedule` on `refs/heads/main`, main being the
 default branch where schedules run; or no GitHub environment with main
 checked out, so a local audit agrees with CI) at a two-parent merge keeps
