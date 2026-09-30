@@ -45,6 +45,13 @@ import (
 // operation, a receipt without its account, a refusal) drops the twin's
 // records of every table, and the next read reads them whole. A test build
 // checks every read of the twin against a fresh read (Store.CheckTwin).
+//
+// The model is tla/DirtyTickRead.tla: the view, the catch-up, the whole
+// read, the fence read last, the commit at the generation read with its
+// receipt on the twin, the pass-over, the drop and the halt on a part's first
+// read; ViewIsSnapshot (a part plans on the store's records at one
+// generation), TwinIsTheStore, BeganRunning and TwinNotAhead, each with a
+// reversed witness that breaks it (tla/CASES.tsv, dirtytickread).
 
 // GrantError is a read the store refused to this user for want of a grant:
 // the twin reads the table whole instead, and the tick says so (a NOTE).

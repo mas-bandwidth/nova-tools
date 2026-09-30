@@ -120,6 +120,7 @@ type Step struct {
 	// read off the queue (sprint.Drain).
 	Pump, Drain bool
 	// Halts, when set (a part of the tick), makes the step begin nothing when
+	// (tla/DirtyTickRead.tla, Begin and BeganRunning)
 	// the machine's state, read with its first fence, is STOPPED: its result
 	// says Halted, and it writes nothing (the stop's rule: the part in flight
 	// finishes, and no part begins after the flag says STOPPED).
@@ -337,7 +338,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	drains := 0
 	plans := st.retry(ctx)
 	// a twin the step does not leave as the state it committed is dropped:
-	// the next step reads the store (twin.go)
+	// the next step reads the store (twin.go; tla/DirtyTickRead.tla, Commit
+	// and Drop: the Acquire at the generation read is the one guard)
 	tw, release := st.stepTwin(step)
 	defer release()
 	twinKept := true
