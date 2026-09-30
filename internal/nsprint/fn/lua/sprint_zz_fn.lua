@@ -66,7 +66,12 @@ do
       end
     end
     for _, it in ipairs(sp.intents or {}) do
-      add(SP.work_table, {it.card}, nil)
+      -- 8.0 gives a needmet and a needgone a need and its waiters and no card:
+      -- the empty card is not an id to read (S.before refuses it REQUEST), and
+      -- the need, read below, is the card they are about (IT14).
+      if not ((it.kind == 'needmet' or it.kind == 'needgone') and (it.card == nil or it.card == '')) then
+        add(SP.work_table, {it.card}, nil)
+      end
       add(SP.work_table, it.needs, nil)
       if it.need then add(SP.work_table, {it.need}, nil) end
       add(SP.work_table, it.waiters, nil)
@@ -159,6 +164,10 @@ do
     x_cmds, err = needed(S, 'x_cmds')
     if err then return S.json.encode(err) end
     local others = {x_cmds(ctx, tp, lp)}
+    -- Commands the derive phase staged for x_cmds to append (SP.intent_commands)
+    -- that it left behind are refused, never dropped: open would be lowered with
+    -- the card still in wait:<n> (I2). Nothing has been written yet (IT14).
+    if SP.intent_commands_pending and SP.intent_commands_pending(ctx) then return S.json.encode(S.refuse('CONFIG')) end
     if jp then
       local j_cmds
       j_cmds, err = needed(S, 'j_cmds')
