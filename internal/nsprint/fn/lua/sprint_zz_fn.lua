@@ -98,6 +98,7 @@ do
   local function step(keys, args)
     local S, L = layers()
     if #keys ~= 0 or #args ~= 3 then return S.json.encode(S.refuse('ARGS')) end
+    if not SP.shapes_ok() then return S.json.encode(S.refuse('CONFIG')) end
     local sp, err = decode_sprint(S, args[2], args[3])
     if err then return S.json.encode(err) end
     -- open: Layer 1's size, version, definitions and receipt replay.
@@ -219,9 +220,11 @@ do
   -- again would be refused CONFIG. A wrong argument count on the read is
   -- refused inside a context of its own, as Layer 1's own read does.
   local function bad_args(S) return S.json.encode(S.refuse('ARGS')) end
+  local function bad_config(S) return S.json.encode(S.refuse('CONFIG')) end
   local function read(keys, args)
     local S, L = layers()
     if #keys ~= 0 or #args ~= 2 then return S.run_context(bad_args, S) end
+    if not SP.shapes_ok() then return S.run_context(bad_config, S) end
     return S.read(args[1], args[2], L and L.read or nil, extension())
   end
 
