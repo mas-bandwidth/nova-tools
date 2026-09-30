@@ -13,6 +13,7 @@ do
   local active_callback_ctx
   local original_unchanged
   local load_defs
+  local key_type,empty_advance_key
   S.profile = NS.tset_profile
   S.limits = {request_bytes=4194304,read_request_bytes=4194304,entries=256,queries=1024,
     ids_per_entry=2000,member_candidates=2000,guard_members=4000,rows=100,advance_rows=1024,
@@ -674,7 +675,18 @@ do
     local key=ctx.props_key(t,ctx.write_epoch)
     ctx.prop_pre=ctx.prop_pre or {}
     local cache=ctx.prop_pre[key]
-    if not cache then cache={};ctx.prop_pre[key]=cache end
+    if not cache then
+      cache={};ctx.prop_pre[key]=cache
+      if ctx.write_epoch~=ctx.request_epoch then
+        ctx.checked_advance=ctx.checked_advance or {}
+        if not ctx.checked_advance[key] then
+          local actual,terr=key_type(ctx,key);if terr then return nil,nil,terr end
+          if actual~='none' and actual~='hash' then return nil,nil,S.refuse('DRIFT') end
+          local ok,aerr=empty_advance_key(ctx,key,actual);if aerr then return nil,nil,aerr end
+          ctx.checked_advance[key]=true
+        end
+      end
+    end
     if cache[name]==nil then
       local ok,err=S.charge(ctx,'field',1);if err then return nil,nil,err end
       local value;value,err=rd(ctx,{'HGET',key,name},'hash',S.limits.field_value,'field');if err then return nil,nil,err end
@@ -995,7 +1007,7 @@ do
     elseif command=='SET' and n~=3 then return nil,S.refuse('REQUEST') end
     return bytes,nil
   end
-  local function key_type(ctx,key)
+  key_type=function(ctx,key)
     if ctx.types[key] then return ctx.types[key],nil end
     local value,err=S.readcmd(ctx,{argv={'TYPE',key},access={}},16,'metadata')
     if err then return nil,err end
@@ -1020,7 +1032,7 @@ do
         h.length~=h['entries-added'] then return nil,S.refuse('LOGID') end
     return seq,nil
   end
-  local function empty_advance_key(ctx,key,kind)
+  empty_advance_key=function(ctx,key,kind)
     if ctx.write_epoch==ctx.request_epoch or key==ctx.epoch_key or key==ctx.done_key(ctx.request_epoch) or kind=='none' then return true,nil end
     local commands={hash='HLEN',zset='ZCARD',stream='XLEN',list='LLEN',string='STRLEN'}
     local n,err=rd(ctx,{commands[kind],key},kind,32,'metadata');if err then return nil,err end
@@ -1076,7 +1088,7 @@ do
     end
     if #commands>S.limits.commands then return nil,limit(ctx,'commands',#commands,S.limits.commands) end
     local total=0
-    local projected,heads,checked={},{},{}
+    local projected,heads={},{};local checked={};if ctx.checked_advance then for k in pairs(ctx.checked_advance) do checked[k]=true end end
     local frozen={}
     for _,d in ipairs(commands) do
       local bytes;bytes,err=validate_write(ctx,d);if err then return nil,err end

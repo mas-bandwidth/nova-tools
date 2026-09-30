@@ -338,6 +338,34 @@ func (m *Mem) SeedRow(space, table string, epoch Decimal, row string, rank Decim
 	return nil
 }
 
+func (m *Mem) SeedProperty(space, table string, epoch Decimal, name, value string) error {
+	if !validMemName(space) || !validMemName(table) || !memValidDecimal(epoch) || !validMemName(name) {
+		return memRefusal("REQUEST", RefusalDetail{Table: table, Name: name})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.spaces[space]
+	if s == nil || s.defs[table] == nil {
+		return memRefusal("CONFIG", RefusalDetail{Table: table, Name: name})
+	}
+	e := s.epochs[epoch]
+	if e == nil {
+		e = &memEpoch{tables: make(map[string]*memTableEpoch, len(s.defs))}
+		for t := range s.defs {
+			e.tables[t] = newMemTableEpoch()
+		}
+		s.epochs[epoch] = e
+	}
+	te := e.tables[table]
+	if te == nil {
+		te = newMemTableEpoch()
+		e.tables[table] = te
+	}
+	te.props[name] = value
+	s.version++
+	return nil
+}
+
 func (m *Mem) SeedMember(space, table string, epoch Decimal, id string, record MemRecord) error {
 	if !validMemName(id) || !memValidDecimal(epoch) || !memValidDecimal(record.Revision) || record.Epoch != epoch ||
 		(record.Row == "") != (record.Column == "") {
