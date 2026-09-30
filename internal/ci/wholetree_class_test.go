@@ -24,16 +24,9 @@ import (
 //
 // The rule reads, as text: every Markdown file in the tree outside testdata
 // (the docs, AGENTS.md, TESTING.md, READMEs), every card template
-// (CardTemplateDirs), every brief source the no-gh rule reads (briefSources),
-// and the Go files that write a harness card's standard lines. No allowlist:
+// (CardTemplateDirs) and every brief source the no-gh rule reads
+// (briefSources). No allowlist:
 // the offenders in the tree when it landed were rewritten.
-
-// wholeTreeCardSources are the Go files whose string constants are a card's
-// text: the harness card's standard lines and the copy cards built from them.
-var wholeTreeCardSources = []string{
-	"internal/nsprint/taskcard/complete.go",
-	"internal/nsprint/card/copy.go",
-}
 
 // wholeTreeGoTestRe is `go test`, any flags (a flag may take one value that is
 // not a path), then `./...` or one of the three trees that are most of it
@@ -87,12 +80,6 @@ func wholeTreeSources(t *testing.T) []string {
 			}
 			seen[filepath.ToSlash(rel)] = true
 		}
-	}
-	for _, rel := range wholeTreeCardSources {
-		if tree.ByRel(rel) == nil {
-			t.Fatalf("card source %s is not in the tree; a file that moves must move here too", rel)
-		}
-		seen[rel] = true
 	}
 	out := make([]string, 0, len(seen))
 	for rel := range seen {

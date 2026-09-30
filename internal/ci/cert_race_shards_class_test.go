@@ -29,13 +29,13 @@ var certRaceMinShards = map[string]int{
 // certRaceHeavy are the packages the race deal places first, one per shard:
 // every live package over 15 s in this job's own hosted legs (the larger of
 // ubuntu-latest and macos-latest, run 36375296705 at 3314df055 plus this
-// change): internal/ci 49.3 s, internal/gh 47.3, cmd/nova-tokens 46.4,
-// cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1,
-// cmd/nova-secrets 16.7, internal/bus 16.6; the next is internal/merge at 12.4.
+// change): internal/ci 49.3 s, cmd/nova-tokens 46.4, cmd/nova-sandbox 34.2,
+// cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
+// internal/bus 16.6.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
-	"internal/ci", "internal/gh", "cmd/nova-tokens", "cmd/nova-sandbox",
-	"cmd/nova-self-talk", "internal/update", "cmd/nova-secrets", "internal/bus",
+	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
+	"internal/update", "cmd/nova-secrets", "internal/bus",
 }
 
 const certRaceDealStep = "deal this shard's packages"
@@ -122,8 +122,21 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := strings.Fields(string(liveOut))
-	if len(want) == 0 || len(want) == len(strings.Fields(string(list))) {
-		t.Fatalf("live-packages.sh kept %d of %d packages; the stand-in for deprecated/PACKAGES is not being read", len(want), len(strings.Fields(string(list))))
+	if len(want) == 0 {
+		t.Fatalf("live-packages.sh kept none of the %d packages", len(strings.Fields(string(list))))
+	}
+	// The script reads deprecated/PACKAGES: a package under its internal/nsprint
+	// prefix that no keep line names is dropped. No such package is in the tree
+	// any more, so the control is one that is not.
+	probe := "github.com/mas-bandwidth/nova-tools/internal/nsprint/deprecatedprobe"
+	pr := exec.Command("bash", liveScript(t))
+	pr.Stdin = strings.NewReader(string(list) + probe + "\n")
+	prOut, err := pr.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(prOut), probe) {
+		t.Fatalf("live-packages.sh kept %s; the stand-in for deprecated/PACKAGES is not being read", probe)
 	}
 
 	// One deal per distinct shard count: two OSes at the same n deal the same.

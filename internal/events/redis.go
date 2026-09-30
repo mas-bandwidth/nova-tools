@@ -11,7 +11,7 @@ import (
 )
 
 // RedisStore is the live stream on the fleet Redis. go-redis is already this repository's
-// Redis client (internal/redisq, internal/record, internal/ci), so this adds no dependency;
+// Redis client (internal/record, internal/ci), so this adds no dependency;
 // the five calls below are XADD, XREADGROUP, XAUTOCLAIM, XACK and XRANGE, which is the whole
 // of what "core types only" allows.
 type RedisStore struct {

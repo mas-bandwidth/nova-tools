@@ -20,9 +20,9 @@ import (
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
-// rest of this repository holds a child to (internal/update.ChildCap,
-// internal/merge's execOutputCap). A gh or ssh that writes without end must not
-// be a way to exhaust this process's memory.
+// rest of this repository holds a child to (internal/update.ChildCap). A gh or
+// ssh that writes without end must not be a way to exhaust this process's
+// memory.
 const childCap = 64 * 1024
 
 // forgeCap is the ceiling on ONE forge read, and it is far above childCap for a

@@ -49,7 +49,7 @@ func TestGitHubEventReadersDoNotImportIngestion(t *testing.T) {
 			imports[pkg] = append(imports[pkg], dep)
 		}
 	}
-	for _, root := range []string{"internal/gh", "internal/wake", "internal/ghevent/wire"} {
+	for _, root := range []string{"internal/wake", "internal/ghevent/wire"} {
 		if _, ok := imports[module+root]; !ok {
 			t.Fatalf("missing root %s", root)
 		}
