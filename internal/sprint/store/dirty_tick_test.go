@@ -525,3 +525,153 @@ func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
 	}
 	h.clean("landed")
 }
+
+// A review primary modified after the pump's work drain (a queued rank) waits
+// for the next tick's pump (LeaveQueued): it is not accepted, moves to no
+// merge queue, and emits no phantom "ready to merge" note for the coordinator.
+// When the first accepted unit of a stream is held back while subsequent units
+// are kept, stream-control transitions (state: StreamMerging) and the
+// "stream started merging" note are preserved on the kept units, and the
+// ready-to-merge note names the kept cards only.
+func TestAnAcceptHeldBackByTheQueueEmitsNoPhantomReadyToMergeNote(t *testing.T) {
+	t.Parallel()
+	t.Run("all held", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.setup(1)
+		h.startMachine()
+		h.machine() // deals s1-1
+		h.work("m1")
+		h.machine() // moves s1-1 to review, asks readers
+		h.readAll() // readers read and give ok
+
+		ranked := false
+		work := sprint.TickTables[0]
+		var parts []sprint.TickPartDef
+		for _, p := range work.Parts {
+			if p.Name == "accept" {
+				parts = append(parts, sprint.TickPartDef{Name: "world", Fn: func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+					if !ranked {
+						ranked = true
+						h.must(RankStep(sprint.RankReq{IDs: []string{"s1-1"}, First: true}))
+						return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+					}
+					return sprint.Plan{}, 0
+				}})
+			}
+			parts = append(parts, p)
+		}
+		work.Parts = parts
+		h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+		h.machine()
+
+		// s1-1 is held in review; stream remains waiting; no ready-to-merge or started-merging note
+		if st := h.table().StateOf("s1-1"); st != sprint.Review {
+			t.Fatalf("held s1-1: state is %s, want review", st)
+		}
+		if st := h.table().StreamCtl("s1").F("state"); st != sprint.StreamWaiting {
+			t.Fatalf("stream s1: state is %s, want waiting", st)
+		}
+		if n := h.written(sprint.NReadyToMerge); n != 0 {
+			t.Fatalf("phantom ready to merge notes emitted: %d, want 0", n)
+		}
+		if n := h.written(sprint.NStartedMerging); n != 0 {
+			t.Fatalf("started merging notes emitted: %d, want 0", n)
+		}
+
+		// Next tick: drains the rank, accept accepts s1-1
+		h.st.Updates = nil
+		h.machine()
+		if st := h.table().StateOf("s1-1"); st != sprint.Merging {
+			t.Fatalf("s1-1 after next tick: state is %s, want merging", st)
+		}
+		if st := h.table().StreamCtl("s1").F("state"); st != sprint.StreamMerging {
+			t.Fatalf("stream s1 after next tick: state is %s, want merging", st)
+		}
+		if n := h.written(sprint.NReadyToMerge); n != 1 {
+			t.Fatalf("ready to merge notes: %d, want 1", n)
+		}
+	})
+
+	t.Run("first held second kept", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.setup(2)
+		h.startMachine()
+		h.machine() // deals both
+		h.work("m1")
+		h.work("m2")
+		h.machine() // moves both to review, asks readers
+		h.readAll() // readers read both
+
+		ranked := false
+		work := sprint.TickTables[0]
+		var parts []sprint.TickPartDef
+		for _, p := range work.Parts {
+			if p.Name == "accept" {
+				parts = append(parts, sprint.TickPartDef{Name: "world", Fn: func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+					if !ranked {
+						ranked = true
+						h.must(RankStep(sprint.RankReq{IDs: []string{"s1-1"}, First: true}))
+						return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+					}
+					return sprint.Plan{}, 0
+				}})
+			}
+			parts = append(parts, p)
+		}
+		work.Parts = parts
+		h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+		h.machine()
+
+		// s1-1 is held in review, s1-2 is accepted to merging
+		if st := h.table().StateOf("s1-1"); st != sprint.Review {
+			t.Fatalf("held s1-1: state is %s, want review", st)
+		}
+		if st := h.table().StateOf("s1-2"); st != sprint.Merging {
+			t.Fatalf("kept s1-2: state is %s, want merging", st)
+		}
+		// Stream-control transition preserved: s1 transitioned to merging
+		if st := h.table().StreamCtl("s1").F("state"); st != sprint.StreamMerging {
+			t.Fatalf("stream s1: state is %s, want merging (preserved from dropped first unit)", st)
+		}
+		if n := h.written(sprint.NStartedMerging); n != 1 {
+			t.Fatalf("started merging notes: %d, want 1", n)
+		}
+		// Ready-to-merge note derived only from kept units (s1-2, not s1-1)
+		if n := h.written(sprint.NReadyToMerge); n != 1 {
+			t.Fatalf("ready to merge notes: %d, want 1", n)
+		}
+		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+		var rtm *sprint.Note
+		for i := range notes {
+			if notes[i].Type == sprint.NReadyToMerge {
+				rtm = &notes[i]
+				break
+			}
+		}
+		if rtm == nil {
+			t.Fatalf("ready to merge note not found")
+		}
+		if len(rtm.Primaries) != 1 || rtm.Primaries[0] != "s1-2" {
+			t.Fatalf("ready to merge primaries: %v, want [s1-2]", rtm.Primaries)
+		}
+		if rtm.Count != 1 {
+			t.Fatalf("ready to merge count: %d, want 1", rtm.Count)
+		}
+		if strings.Contains(rtm.What, "s1-1") {
+			t.Fatalf("ready to merge note text announces held s1-1: %s", rtm.What)
+		}
+
+		// Next tick accepts s1-1
+		h.st.Updates = nil
+		h.machine()
+		if st := h.table().StateOf("s1-1"); st != sprint.Merging {
+			t.Fatalf("s1-1 after next tick: state is %s, want merging", st)
+		}
+		if n := h.written(sprint.NReadyToMerge); n != 2 {
+			t.Fatalf("ready to merge notes after next tick: %d, want 2", n)
+		}
+	})
+}
+
