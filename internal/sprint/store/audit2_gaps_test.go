@@ -291,7 +291,7 @@ func TestAudit2ClosedAckedReminderFailureStaysOnTheGoal(t *testing.T) {
 		t.Fatalf("the route recovered")
 	}
 	// A reminder's failure is information: ack lists it, and the failure
-	// stays on the person's goal, which where shows, until a delivery arrives.
+	// stays on the person's goal, which goal show shows, until a delivery arrives.
 	if n := len(h.a2Open(sprint.NRemindFailed)); n != 0 {
 		t.Fatalf("the acknowledged failure is judged again while the route fails: %d", n)
 	}

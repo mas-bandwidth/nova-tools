@@ -35,7 +35,7 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a = newApp(func(k string) string { return env[k] })
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
-	ta.a.backend = func(string, sprint.Names) (store.Backend, error) { return ta.m, nil }
+	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
 	return ta
 }

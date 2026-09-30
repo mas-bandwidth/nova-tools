@@ -40,9 +40,13 @@ func TestGoalVerbsSetShowDropAndTheTickDelivers(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dir, "reminder-a.txt")); !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", sprint t-, epoch 0\nkeep going\n") {
 		t.Fatalf("file: %s", b)
 	}
-	out = ta.ok("where")
-	if !strings.Contains(out, "REMINDERS") || !strings.Contains(out, "friend-a route="+route+" last="+t0.Format(time.RFC3339)+" count=1 state=ok") {
+	// the frame holds the tables and no line about the people; goal show
+	// says each person's last push, and where --json carries it
+	if out = ta.ok("where"); strings.Contains(out, "REMINDERS") || strings.Contains(out, "friend-a") {
 		t.Fatalf("where: %s", out)
+	}
+	if out = ta.ok("goal show"); !strings.Contains(out, "friend-a route="+route+" last="+t0.Format(time.RFC3339)+" count=1 state=ok") {
+		t.Fatalf("goal show: %s", out)
 	}
 	var w whereView
 	ta.json("where", &w)

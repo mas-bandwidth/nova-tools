@@ -113,6 +113,7 @@ var DefaultCatalog = []Entry{
 	E("internal/textbody", "shared line-oriented message body filtering", "go test ./internal/textbody", "go test ./internal/textbody"),
 	E("internal/tlc", "TLC runner: the jar, the run, its results read, the case plan and the run records", "go test ./internal/tlc", "go test ./internal/tlc"),
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
+	E("internal/tty", "whether a file is a terminal and how large its screen is", "go test ./internal/tty", "go test ./internal/tty"),
 	E("internal/typedrec", "typed RESULT record contract, parser and legacy adapter", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/wake", "slot leases and heartbeat monitors", "go test ./internal/wake", "go test ./internal/wake"),
