@@ -382,7 +382,7 @@ Redis 8.10.2 remained red only for 17 diagnostics loading the absent
 `lua/table_set_log.lua`; non-verbose output did not provide individual PASS
 lines. The reports live in the Stella review dispatch's `l1-build-dispatch`
 directory and predate later source-`72177fe33` edits, so they do not certify
-those edits. The tracer's Redis 7.4.11 measurements are not a Redis 8.10.2
-performance pass. No 1,000,000-card composed memory or latency measurement,
+those edits. The tracer's measurements on an earlier Redis version are not a
+Redis 8.10.2 performance pass. No 1,000,000-card composed memory or latency measurement,
 actual-table replay measurement, or revised model proof is established here.
 A Layer 1-only pass cannot stand in for a composed Layer 1/Layer 2 gate.

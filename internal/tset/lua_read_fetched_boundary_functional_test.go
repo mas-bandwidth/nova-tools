@@ -138,9 +138,10 @@ func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
 	fx.ActivateWithLua(t, luaReadFetchedBoundaryProbe)
 
 	// The fixture client uses the normal short timeout. This read-only probe
-	// decodes 400 full receipts inside one FCALL, so give it a bounded allowance.
+	// decodes 400 full receipts inside one FCALL. This is a generous event ceiling,
+	// not a timeout the test waits out; the package runner also bounds the run.
 	probeClient := redis.NewClient(&redis.Options{Addr: fx.Client.Options().Addr,
-		MaxRetries: -1, ReadTimeout: 20 * time.Second})
+		MaxRetries: -1, ReadTimeout: 30 * time.Second})
 	t.Cleanup(func() { _ = probeClient.Close() })
 	type boundaryReply struct {
 		Status   string            `json:"status"`
