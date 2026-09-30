@@ -609,7 +609,7 @@ func TestCrossResumes(t *testing.T) {
 	if !posHas(p.Done, "cross") {
 		t.Fatalf("done: %v", p.Done)
 	}
-	tw.judge(NCross, "", StreamSubject("s1"))
+	tw.judge(NCross, CrossCause, StreamSubject("s1"))
 	if out := tw.apply(p); out.refused != "" {
 		t.Fatalf("apply: %+v", out)
 	}
@@ -625,7 +625,7 @@ func TestCrossResumes(t *testing.T) {
 	if _, ok := tw.merge["z1"].f["need_card"]; !ok {
 		t.Fatal("a stuck card of a stream that was not resumed lost what it needs")
 	}
-	if tw.opened(NCross, "", StreamSubject("s1")) {
+	if tw.opened(NCross, CrossCause, StreamSubject("s1")) {
 		t.Fatal("the stop judgment stays open")
 	}
 	if q := tw.plan(t, "cross", 0, k); !posQuiet(q) {
@@ -809,7 +809,7 @@ func TestDoneOneRcountEntry(t *testing.T) {
 	if !posHas(p.Done, "done") {
 		t.Fatalf("done: %v", p.Done)
 	}
-	if out := tw.apply(p); out.refused != "" || !tw.opened(NSprintDone, "", SprintSubject) {
+	if out := tw.apply(p); out.refused != "" || !tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
 		t.Fatalf("apply: %+v", out)
 	}
 	if q := tw.plan(t, "done", 0, k); !posQuiet(q) {
@@ -827,7 +827,7 @@ func TestDoneStreamsCounterGuard(t *testing.T) {
 	tw.streams++
 	tw.card("fresh", "s-new", Waiting, 1)
 	out := tw.apply(p)
-	if out.refused != "COUNTER" || tw.opened(NSprintDone, "", SprintSubject) {
+	if out.refused != "COUNTER" || tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
 		t.Fatalf("apply after a stream was added: %+v, judged %v", out, tw.judged)
 	}
 	// the next plan sees the new stream and its open card: nothing is done
@@ -839,7 +839,7 @@ func TestDoneStreamsCounterGuard(t *testing.T) {
 	// read): a stream added between the read and the apply refuses it, and the
 	// judgment stays open
 	tw = posDoneTwin(3, true)
-	tw.judge(NSprintDone, "", SprintSubject)
+	tw.judge(NSprintDone, SprintDoneCause, SprintSubject)
 	p = tw.plan(t, "done", 0, k)
 	if len(p.Notes) != 1 || p.Notes[0].Op != posClose {
 		t.Fatalf("the close: %+v", p.Notes)
@@ -848,7 +848,7 @@ func TestDoneStreamsCounterGuard(t *testing.T) {
 	tw.streams++
 	tw.card("fresh", "s-new", Waiting, 1)
 	out = tw.apply(p)
-	if out.refused != "COUNTER" || !tw.opened(NSprintDone, "", SprintSubject) {
+	if out.refused != "COUNTER" || !tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
 		t.Fatalf("apply of a close after a stream was added: %+v, judged %v", out, tw.judged)
 	}
 }
@@ -856,7 +856,7 @@ func TestDoneStreamsCounterGuard(t *testing.T) {
 func TestDoneClosesWhenWorkAdded(t *testing.T) {
 	t.Parallel()
 	tw := posDoneTwin(3, true)
-	tw.judge(NSprintDone, "", SprintSubject)
+	tw.judge(NSprintDone, SprintDoneCause, SprintSubject)
 	k := posKeyOf("done")
 	p := tw.plan(t, "done", 0, k)
 	gs := posGuardsOf(t, p)
@@ -864,7 +864,7 @@ func TestDoneClosesWhenWorkAdded(t *testing.T) {
 		len(gs) != 1 || gs[0].AtLeast == nil || *gs[0].AtLeast != 1 || gs[0].AtMost != nil {
 		t.Fatalf("plan: notes %+v guards %+v", p.Notes, gs)
 	}
-	if out := tw.apply(p); out.refused != "" || tw.opened(NSprintDone, "", SprintSubject) {
+	if out := tw.apply(p); out.refused != "" || tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
 		t.Fatalf("apply: %+v", out)
 	}
 	if q := tw.plan(t, "done", 0, k); !posQuiet(q) {
@@ -1495,7 +1495,7 @@ func TestPositionRulesTwiceSecondEmpty(t *testing.T) {
 		{ruleDone, func() (*posTwin, AgendaKey) { return posDoneTwin(4, false), posKeyOf("done") }},
 		{ruleDone, func() (*posTwin, AgendaKey) { // a close
 			tw := posDoneTwin(4, true)
-			tw.judge(NSprintDone, "", SprintSubject)
+			tw.judge(NSprintDone, SprintDoneCause, SprintSubject)
 			return tw, posKeyOf("done")
 		}},
 		{ruleResolve, func() (*posTwin, AgendaKey) { // a release and an unreach in one plan
@@ -2195,7 +2195,7 @@ func TestDoneRaisedForASprintWhoseCardsWereAllDropped(t *testing.T) {
 	if out.refused != "" || len(p.Notes) != 1 || p.Notes[0].Op != posOpen || p.Notes[0].Type != NSprintDone || p.Notes[0].Text != "0 landed, 3 dropped" {
 		t.Fatalf("plan: %+v %+v", p.Notes, out)
 	}
-	if !tw.opened(NSprintDone, "", SprintSubject) {
+	if !tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
 		t.Fatal("the judgment is not open")
 	}
 	if q := tw.plan(t, ruleDone, 0, k); !posQuiet(q) {
@@ -2208,7 +2208,7 @@ func TestDoneRaisedForASprintWhoseCardsWereAllDropped(t *testing.T) {
 func TestDoneHeldJudgmentIsNotRaisedAgainAndClosesWhenWorkIsAdded(t *testing.T) {
 	t.Parallel()
 	tw := posDoneTwin(2, false)
-	tw.hold(NSprintDone, "", SprintSubject)
+	tw.hold(NSprintDone, SprintDoneCause, SprintSubject)
 	k := posKeyOf("done")
 	if p := tw.plan(t, ruleDone, 0, k); len(p.Notes) != 0 || len(p.Guards) != 0 {
 		t.Fatalf("a held judgment was raised again: %+v", p.Notes)

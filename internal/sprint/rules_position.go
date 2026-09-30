@@ -160,12 +160,12 @@ const (
 	posSetGuard = "setguard"
 )
 
-// The types of the two notices of 2.5 that no constant names yet: the count and
-// the stream are in the note's text, and IT06's notice table will own the
-// words.
+// The types of the two notices of 2.5 that no constant names yet: the words of
+// the notice table's rows (sprint.Notices), which J takes as they stand. The
+// count, the stream and the sentinel are in the note's text, not in its type.
 const (
-	posNoticeMadeReady  = "cards made ready"                 // 2.5: k cards of s made ready
-	posNoticePulledBack = "ready cards went back to waiting" // 2.5: k ready cards of s went back to waiting behind G
+	posNoticeMadeReady  = "k cards of s made ready"
+	posNoticePulledBack = "k ready cards of s went back to waiting behind G"
 )
 
 // posCrossNeedField is the field of a stopped stream's control card that names
@@ -526,6 +526,21 @@ func readResolve(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agen
 // op with an empty cause (REQUEST), so R3's reach, its unreach, release and a
 // rank or insertion that passes the sentinel all name this one.
 const ReachedCause = "-"
+
+// CrossCause is the cause of "stream stopped: needs a card of another stream
+// first", the close R5's resume writes, and SprintDoneCause the cause of "the
+// sprint is done", the open and close R15 writes. The model carries neither
+// judgment, so each is decided the way the model writes a judgment that has no
+// cause beyond itself: "-", as ReachedCause is. J refuses a state op with an
+// empty cause (REQUEST), so each names its constant; a judgment's open and its
+// close name the same one, and the stop that opens a cross (a step of the
+// merge, not a rule) keeps its own cause on the stream's control card, which is
+// not a note's cause. The class test TestRuleNotesJAccepts sweeps every note a
+// rule can write through J's check.
+const (
+	CrossCause      = "-"
+	SprintDoneCause = "-"
+)
 
 // planResolve is R3, resolve:s, on the partial snapshot: for each stream, in
 // this order and at most one chunk in all,
@@ -1027,7 +1042,7 @@ func (rp *RulePlan) resumeStream(stream string, ctl *Card, stuck StuckAnswer, no
 		u.Changes = append(u.Changes, change(Merge, setEntry(ctl, set, "cause", "card", "other")))
 		u.Moved = fmt.Sprintf("stream %s stopped -> merging; %d stuck -> queued", stream, len(stuck.IDs))
 		rp.Notes = append(rp.Notes,
-			NoteReq{Op: posClose, Type: NCross, Subjects: []string{StreamSubject(stream)}, Text: posResumeDid},
+			NoteReq{Op: posClose, Type: NCross, Cause: CrossCause, Subjects: []string{StreamSubject(stream)}, Text: posResumeDid},
 			NoteReq{Op: posKnow, Type: NResumed, Subjects: []string{StreamSubject(stream)}, Text: "stream " + stream + " resumed: " + posResumeDid})
 	}
 	for _, id := range stuck.IDs {
@@ -1095,11 +1110,11 @@ func planDone(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	switch {
 	case len(rows) > 0 && open == 0 && landed+dropped > 0 && !judged:
 		rp.Guards = append(rp.Guards, all(nil, posInt(0)).XGuard(), counter)
-		rp.Notes = append(rp.Notes, NoteReq{Op: posOpen, Type: NSprintDone, Subjects: []string{SprintSubject},
+		rp.Notes = append(rp.Notes, NoteReq{Op: posOpen, Type: NSprintDone, Cause: SprintDoneCause, Subjects: []string{SprintSubject},
 			Text: fmt.Sprintf("%d landed, %d dropped", landed, dropped)})
 	case open > 0 && judged:
 		rp.Guards = append(rp.Guards, all(posInt(1), nil).XGuard(), counter)
-		rp.Notes = append(rp.Notes, NoteReq{Op: posClose, Type: NSprintDone, Subjects: []string{SprintSubject},
+		rp.Notes = append(rp.Notes, NoteReq{Op: posClose, Type: NSprintDone, Cause: SprintDoneCause, Subjects: []string{SprintSubject},
 			Text: "work was added"})
 	}
 	rp.Done = append(rp.Done, mine...)

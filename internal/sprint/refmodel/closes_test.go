@@ -92,7 +92,7 @@ func TestAskClosesTheJudgmentForTooFewReadersWhenAReaderIsAdded(t *testing.T) {
 		"create readers s1-1.r1.reader-a >reader-a:asked",
 		"create readers s1-1.r1.reader-b >reader-b:asked",
 		"open stranded in review [s1-1]",
-		"close cannot ask: fewer than two different readers are free [s1-1]")
+		"close cannot ask [s1-1]")
 	theClose(t, got, sprint.NCannotAsk, ids[0], "s1-1")
 }
 

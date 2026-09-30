@@ -56,7 +56,7 @@ const MaxRedeals = 3
 // The tick's own notification types.
 const (
 	NResumed   = "stream resumed: the card it needed landed"
-	NCannotAsk = "cannot ask: fewer than two different readers are free"
+	NCannotAsk = "cannot ask"
 	NNoMember  = "no fleet member is up"
 	NInvariant = "an invariant is broken"
 	NWorkLate  = "a work card is past its deadline"
