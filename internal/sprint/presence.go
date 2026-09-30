@@ -137,14 +137,20 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		// the first up levels the queues over every member up after the plan;
 		// the others are their control cards and notifications alone
 		all := append(append([]string(nil), live...), ups[:n]...)
-		p := fleetStepPlan(s, FleetReq{Op: "up", Member: ups[0], Who: r.who(), Live: all, Why: "it beats"})
+		// the levelling goes round the fleet from the deal's index and moves it
+		// (round.go, errata 3 amendment 5), written with the plan
+		rr := dealRoundWith(s, all...)
+		moves := roundMoves{}
+		p := fleetStepPlan(s, FleetReq{Op: "up", Member: ups[0], Who: r.who(), Live: all, Why: "it beats"}, rr, moves)
 		for _, m := range ups[1:n] {
-			q := fleetStepPlan(s, FleetReq{Op: "up", Member: m, Who: r.who(), Live: []string{}, Why: "it beats"})
+			q := fleetStepPlan(s, FleetReq{Op: "up", Member: m, Who: r.who(), Live: []string{}, Why: "it beats"}, rr, moves)
 			p.Rows = append(p.Rows, q.Rows...)
 			p.Units = append(p.Units, q.Units...)
 			p.Refused = append(p.Refused, q.Refused...)
 		}
-		return Lawful(p), len(ups) - n + len(downs)
+		p = Lawful(p)
+		roundWrites(&p, rr, moves)
+		return p, len(ups) - n + len(downs)
 	}
 	if len(downs) > 0 {
 		m := downs[0]

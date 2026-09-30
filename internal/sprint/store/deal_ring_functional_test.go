@@ -21,3 +21,10 @@ func TestRedisTheIndexesGoOnFromTickToTick(t *testing.T) {
 	h, _ := liveHarness(t)
 	dealRingAcrossTicks(t, h)
 }
+
+func TestRedisMemberDownRedealsAndLevelGoRoundTheFleet(t *testing.T) {
+	t.Parallel()
+	h, _ := liveHarness(t)
+	dealRingMemberDownAndLevel(t, h)
+}
+

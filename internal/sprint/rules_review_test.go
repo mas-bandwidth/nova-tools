@@ -290,6 +290,7 @@ func (tw rvTwin) query(q SprintQ) Answer {
 			}
 			add(Fleet, s.Fleet.Card(CtlID(m)))
 		}
+		a.Props = propsAnswer(s.Fleet, q.Props)
 	case QueryRelated:
 		if q.Table != Work {
 			tw.fail("the review rules read related records of %q", q.Table)

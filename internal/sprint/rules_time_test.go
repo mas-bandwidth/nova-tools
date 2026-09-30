@@ -202,6 +202,7 @@ func (w *timeWorld) answerSprint(q SprintQ) Answer {
 				a.Counts = append(a.Counts, CellCount{Row: row, Col: col, N: len(t.Cell(row, col))})
 			}
 		}
+		a.Props = propsAnswer(t, q.Props)
 	case QueryJnote:
 		a.Time = &TimeAnswer{Notes: map[string]NoteFact{}}
 		for _, id := range q.Source.IDs {
@@ -1649,8 +1650,14 @@ func TestLateReplacementsSpreadOverMembers(t *testing.T) {
 	for _, ch := range moved(p) {
 		to = append(to, ch.Entry.Move.Row)
 	}
-	// m3 (0), then m2 and m3 tie at 1 (row order: m2), then m3 again (1 to 2).
-	want(t, "receivers", to, []string{"m3", "m2", "m3"})
+	// round the fleet from the deal's index (errata 3 amendment 5; none yet, so
+	// from the first member), m1 the cards' own member skipped: m2 (room at 1),
+	// m3, then m2 is full at 2 and m3 takes the third; a queue's length does not
+	// choose. The index is written past m3, guarded on its absence.
+	want(t, "receivers", to, []string{"m2", "m3", "m3"})
+	if len(p.Plan.Props) != 1 || p.Plan.Props[0] != (PropWrite{Table: Fleet, Name: PropDealIndex, Value: "m3", WasAbsent: true}) {
+		t.Fatalf("the deal's index: %+v, want it moved past m3", p.Plan.Props)
+	}
 	if n := noteReq(p, requestKnow, NReplacedUntaken); n == nil || len(n.Subjects) != 3 || len(p.Notes) != 1 {
 		t.Fatalf("one notice names the three cards: %+v", p.Notes)
 	}
