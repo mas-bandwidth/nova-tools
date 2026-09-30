@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -17,30 +19,34 @@ import (
 // writes one tick-end note, "judgments=N", in a notes-only step of its own;
 // inbox --wait blocks until the next one.
 
-// keyTickEnd holds the stream id of the last note a tick-end covered.
+// keyTickEnd holds "<epoch> <stream id>": the epoch the mark is of and the
+// last note a tick-end scanned. A mark of another epoch (a clear since) is
+// none: the new epoch's notes are scanned from their first.
 const keyTickEnd = "tickend"
 
 // tickEndScan is the most notes one tick-end reads.
 const tickEndScan = 10000
 
 // tickEnd writes the tick-end note when notes for the coordinator came after
-// the last one covered, and moves the mark past them; the count it wrote, 0
-// for none. A backend with no keys (KV) writes none.
+// the mark, and moves the mark to the last note it scanned: a note that lands
+// after the scan is after the mark, so the next tick counts it, once. The
+// count it wrote, 0 for none. A backend with no keys (KV) writes none.
 func (st *Store) tickEnd(ctx context.Context) (int, error) {
 	kv, ok := st.B.(KV)
 	if !ok {
 		return 0, nil
 	}
-	_, tail, err := st.B.Tails(ctx)
-	if err != nil || tail == "" {
-		return 0, err
-	}
-	mark, _, err := kv.GetKey(ctx, keyTickEnd)
-	if err != nil || mark == tail {
-		return 0, err
-	}
-	notes, _, err := st.B.NotesSince(ctx, mark, tickEndScan)
+	raw, _, err := kv.GetKey(ctx, keyTickEnd)
 	if err != nil {
+		return 0, err
+	}
+	epoch := strconv.FormatUint(st.epoch, 10)
+	mark := ""
+	if e, id, ok := strings.Cut(raw, " "); ok && e == epoch {
+		mark = id
+	}
+	notes, ids, err := st.B.NotesSince(ctx, mark, tickEndScan)
+	if err != nil || len(ids) == 0 {
 		return 0, err
 	}
 	n := 0
@@ -60,11 +66,8 @@ func (st *Store) tickEnd(ctx context.Context) (int, error) {
 		}}); err != nil {
 			return 0, err
 		}
-		if _, tail, err = st.B.Tails(ctx); err != nil {
-			return 0, err
-		}
 	}
-	return n, kv.SetKey(ctx, keyTickEnd, tail)
+	return n, kv.SetKey(ctx, keyTickEnd, epoch+" "+ids[len(ids)-1])
 }
 
 // NotesWaiter is a backend that can block on its notes.
