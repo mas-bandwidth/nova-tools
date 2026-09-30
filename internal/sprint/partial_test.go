@@ -647,6 +647,15 @@ func TestAListingCutAtItsUnitsIsNotTheTablesRows(t *testing.T) {
 			}
 		}
 
+		// A query that lists nothing has no rows to give, whatever its Units.
+		if _, err := load(3, nil, false, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadPartial(ReadPlan{Sprint: []SprintQ{{Kind: QueryFront, Stream: "s1", Units: 3}}},
+			ReadAnswer{Sprint: []Answer{{Kind: QueryFront, Front: &FrontAnswer{Stream: "s1"}, Rows: []string{tt.prefix + "1"}}}}, false); !errors.Is(err, ErrMisaligned) || !strings.Contains(err.Error(), "no such query does") {
+			t.Errorf("rows from a front: %v, want a refusal that says no query of the kind lists rows", err)
+		}
+
 		// A listing that does not say it has more, read after or before one that does, is
 		// the table's rows: the one that has more leaves them as they were.
 		whole := SprintQ{Kind: tt.kind, Units: 2}
