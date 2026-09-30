@@ -573,31 +573,33 @@ func TestAStartThatFailsIsPrintedAndLeavesNoChild(t *testing.T) {
 	}
 }
 
-// TestCardTextForAWorkPacket pins what a child reads: the branch, the brief,
-// the fix, every note, and the exact finish line with card@gen, epoch and
-// branch.
+// TestCardTextForAWorkPacket pins what a child reads: the brief verbatim and
+// first, then the sprint's mechanics: the attempt, the branch and base, the
+// fix, every note, and the exact finish line with card@gen, epoch and branch.
 func TestCardTextForAWorkPacket(t *testing.T) {
 	t.Parallel()
 	p := Packet{
 		Card: "c1", Kind: "work", As: "m1", Primary: "p1", Stream: "a", Attempt: 2, Gen: 5, Epoch: 9,
-		Brief: "  Build the thing.  ", Fix: "Mind the edge.", Notes: []string{"first note", "  ", "second note"},
+		Brief: "Build the thing.\nsecond line\n\n", Fix: " Mind the edge. ", Notes: []string{"first note", "  ", "second note"},
 		Branch: "work/c1", Base: "sprint/base",
 	}
 	got := CardText(p, "nova-sprint")
+	if !strings.HasPrefix(got, "Build the thing.\nsecond line\n\n## From the sprint\n\n") {
+		t.Fatalf("the brief is not verbatim and first:\n%s", got)
+	}
 	for _, want := range []string{
-		"# c1: attempt 2 of p1 (stream a)",
-		"Work on branch work/c1 from sprint/base.",
-		"## Brief\n\nBuild the thing.\n",
-		"## Fix, this attempt\n\nMind the edge.\n",
-		"## Note\n\nfirst note\n",
-		"## Note\n\nsecond note\n",
+		"This is c1: attempt 2 of p1 (stream a).",
+		"The work is branch work/c1 from sprint/base;",
+		"Fix, this attempt:\n\nMind the edge.\n",
+		"Note:\n\nfirst note\n",
+		"Note:\n\nsecond note\n",
 		"    nova-sprint finish --as m1 c1@5 --epoch 9 --branch work/c1 --head <sha> --report '<one line>' [--failed]\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the work card lacks %q:\n%s", want, got)
 		}
 	}
-	if n := strings.Count(got, "## Note"); n != 2 {
+	if n := strings.Count(got, "Note:\n"); n != 2 {
 		t.Fatalf("%d notes, want 2 (a blank note is dropped):\n%s", n, got)
 	}
 	if strings.Contains(got, " read --as ") {
@@ -605,18 +607,39 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 	}
 }
 
-// TestCardTextForAReadPacket pins a read card: the head, the work branch and
-// base, the worker's report, and the read line.
+// TestCardTextForAWorkPacketWithNoBaseWorksInPlace pins the other branch of
+// the mechanics: with no base the child works where it starts, and the
+// finish line still names the branch.
+func TestCardTextForAWorkPacketWithNoBaseWorksInPlace(t *testing.T) {
+	t.Parallel()
+	got := CardText(Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "b", Attempt: 1, Gen: 1, Epoch: 3, Branch: "work/c2"}, "nova-sprint")
+	if !strings.HasPrefix(got, "## From the sprint\n\n") {
+		t.Fatalf("a packet with no brief starts at the sprint's part:\n%s", got)
+	}
+	for _, want := range []string{"Work in the directory you start in and nowhere else.", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the card lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "The work is branch") {
+		t.Fatalf("a card with no base names a branch to start from:\n%s", got)
+	}
+}
+
+// TestCardTextForAReadPacket pins a read card: the brief, the head, the work
+// branch and base, the worker's report, and the read line.
 func TestCardTextForAReadPacket(t *testing.T) {
 	t.Parallel()
 	p := Packet{
-		Card: "r1", Kind: "read", As: "rd", Primary: "p1", Attempt: 1, Epoch: 4, Worker: "m2",
-		Head: "deadbeef", WorkBranch: "work/c1", WorkBase: "sprint/base", Report: "landed it",
+		Card: "r1", Kind: "read", As: "rd", Primary: "p1", Attempt: 1, Epoch: 4, Worker: "m2", Brief: "Read it well.",
+		Head: "deadbeef", WorkBranch: "work/c1", WorkBase: "sprint/base", Report: " landed it ",
 	}
 	got := CardText(p, "/bin/nova-sprint")
+	if !strings.HasPrefix(got, "Read it well.\n\n## From the sprint\n\n") {
+		t.Fatalf("the brief is not verbatim and first:\n%s", got)
+	}
 	for _, want := range []string{
-		"# Read r1: attempt 1 of p1 by m2",
-		"Read the work at head deadbeef on branch work/c1 (base sprint/base).",
+		"This is read r1: attempt 1 of p1, worked by m2, at head deadbeef on branch work/c1 (base sprint/base).",
 		"The worker's report:\n\nlanded it\n",
 		"    /bin/nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<one line>'\n",
 	} {
