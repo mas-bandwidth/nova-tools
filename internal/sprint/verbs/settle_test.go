@@ -28,8 +28,8 @@ func TestOpNeverChangesEpoch(t *testing.T) {
 		w.env.C = f
 		_, err := Clear(ctx, w.env, ClearReq{Op: "c1", Confirm: testPrefix})
 		var u *Unknown
-		if !errors.As(err, &u) || u.Epoch != 0 || !strings.Contains(err.Error(), "at epoch 0") {
-			t.Fatalf("err %v, want an unknown outcome naming op c1 at epoch 0", err)
+		if !errors.As(err, &u) || u.Epoch != 0 || !strings.Contains(err.Error(), "run the same command with --op c1 --epoch 0") {
+			t.Fatalf("err %v, want an unknown outcome naming --op c1 --epoch 0", err)
 		}
 		// The command, given no --epoch, runs at the active epoch; and at the
 		// op's own. Either finds the receipt, and neither clears again.

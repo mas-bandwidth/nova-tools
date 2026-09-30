@@ -48,11 +48,24 @@ type world struct {
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
+	return newWorldAt(t, 0)
+}
+
+// newWorldAt is a world whose sprint's first epoch is first: Layer 1's
+// fixture initializer makes it the active epoch, with no marker at the epochs
+// between 0 and it, and the Env plans at it.
+func newWorldAt(t *testing.T, first uint64) *world {
+	t.Helper()
 	m := tset.NewMem()
 	for _, table := range []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet} {
 		if err := m.DefineTable(testPrefix, table, tset.TableDefinition{Columns: testColumns[table],
 			MemberPrefix: testNames.TSetMemberPrefix(table), EpochKey: testNames.EpochKey(), EpochField: "n"}); err != nil {
 			t.Fatalf("define %s: %v", table, err)
+		}
+	}
+	if first > 0 {
+		if err := m.SetActiveEpoch(testPrefix, dec(first)); err != nil {
+			t.Fatalf("first epoch %d: %v", first, err)
 		}
 	}
 	w := &world{t: t, log: sprintfn.NewLogStub(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
@@ -65,7 +78,7 @@ func newWorld(t *testing.T) *world {
 		return w.now
 	})
 	w.cc = &Counting{C: w.tw}
-	w.env = &Env{C: w.cc, Names: testNames, Actor: "coord", noWait: true}
+	w.env = &Env{C: w.cc, Names: testNames, Actor: "coord", Epoch: first, noWait: true}
 	w.cfg = config.NewMem()
 	w.configure("coord")
 	return w
@@ -150,13 +163,18 @@ const (
 	killBefore          // the step is never sent, and the connection drops
 	killAfter           // the step applies, its reply is lost, and the connection drops
 	killReply           // the step applies and its reply is lost; the connection stays
+	killLost            // the step is never sent and its reply is lost; the connection stays
 )
 
 // faulty stands between a verb and the twin: it refuses a step as the store
 // would on a race or a bug, loses a step before or after it applies, or runs
 // another writer just before a step, by the step's number (from 1). A fence
 // is a step too. After killBefore or killAfter the connection is down: every
-// later call fails, until the test sets dead back to false.
+// later call fails, until the test sets dead back to false. After killLost or
+// killReply it stays up, so a done read after the loss answers. lost runs
+// when a step is lost with killLost, as another writer between the loss and
+// the verb's next call; after runs once step n applied, before the items
+// after it in the same pipeline (a read riding with the step).
 type faulty struct {
 	c      sprintfn.Client
 	mu     sync.Mutex
@@ -165,6 +183,8 @@ type faulty struct {
 	refuse func(n int, req *sprintfn.Request) *sprintfn.Refusal
 	kill   func(n int) killMode
 	before func(n int)
+	after  func(n int)
+	lost   func(n int, req *sprintfn.Request)
 	sent   []*sprintfn.Request // every step that reached the twin
 }
 
@@ -201,6 +221,12 @@ func (f *faulty) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintf
 			f.mu.Unlock()
 			return nil, &sprintfn.OutcomeUnknownError{Cause: errors.New("the connection dropped before the step was sent")}
 		}
+		if mode == killLost {
+			if f.lost != nil {
+				f.lost(n, it.Step)
+			}
+			return nil, &sprintfn.OutcomeUnknownError{Cause: errors.New("the step was lost before it reached the store")}
+		}
 		if f.refuse != nil {
 			if ref := f.refuse(n, it.Step); ref != nil {
 				out = append(out, sprintfn.Result{Refusal: ref})
@@ -222,6 +248,9 @@ func (f *faulty) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintf
 			f.dead = mode == killAfter
 			f.mu.Unlock()
 			return nil, &sprintfn.OutcomeUnknownError{Cause: errors.New("the connection dropped after the step was sent")}
+		}
+		if f.after != nil {
+			f.after(n)
 		}
 		out = append(out, r...)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -33,9 +34,10 @@ const (
 const EntriesMax = 256
 
 // SizeBounds refuses a sprint of members, readers and streams past either
-// bound of section 3, naming the bound. fleet up, reader add and an add that
-// creates a stream refuse with it (items IT19, IT20). clear holds a sprint to
-// the rows bound alone (clearRows), the one its first part needs.
+// bound of section 3, naming the bound. fleet up, reader add and add (IT19,
+// IT20) must call SizeBounds before they write, since clear holds a sprint to
+// the rows bound alone (clearRows) and so clears only a sprint built within
+// these bounds.
 func SizeBounds(members, readers, streams int) error {
 	if members+streams > MembersAndStreamsMax {
 		return fmt.Errorf("members and streams together are %d, over the sprint's %d (members %d, streams %d)",
@@ -415,11 +417,35 @@ func clearFirst(rd *sprintfn.ReadReply, chunk int) (Part, error) {
 // clearRest is a later part of clear from its read at the new epoch: the next
 // control cards of the streams and members part 1 restored, in part 1's
 // order (the rows it added, by rank).
+//
+// A clear runs only while the machine is STOPPED (errata 1), and in parts a
+// start can come between them: the later parts carry no clock part, so the
+// clock part's own MACHINESTATE (IT16) does not hold them. Each later part
+// refuses MACHINESTATE from its read when the clock runs, and carries X's
+// clock guard on stopped_since_ms as read (1.3.5, XGUARD; the guard kinds of
+// sprintfn/twin_x.go), so a start (or a start and a stop) between the read
+// and the step refuses the part at apply; a race, it is read again, and
+// refused here. No part is written, and no notice says the sprint is
+// STOPPED, on a machine that runs.
 func clearRest(rd *sprintfn.ReadReply, cont string, chunk int) (Part, error) {
 	const verb = "clear"
 	cc, err := parseClearCont(cont)
 	if err != nil {
 		return Part{}, err
+	}
+	c, has, err := clockOf(rd, 0)
+	if err != nil {
+		return Part{}, err
+	}
+	if !has {
+		return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
+	}
+	if running(c) {
+		return Part{}, refuseLocal(verb, sprintfn.CodeMachineState, "the machine runs: a start came between clear's parts, and a clear runs only while the machine is STOPPED; run stop first")
+	}
+	since, err := strconv.ParseInt(*c.Clock.StoppedSinceMS, 10, 64)
+	if err != nil {
+		return Part{}, fmt.Errorf("clear: the clock's stopped_since_ms %q is not a number", *c.Clock.StoppedSinceMS)
 	}
 	epoch, ok := undec(rd.Epoch)
 	if !ok {
@@ -435,7 +461,8 @@ func clearRest(rd *sprintfn.ReadReply, cont string, chunk int) (Part, error) {
 	}
 	entries, moved, cc := ctlCards(nil, nil, epoch, streams, members, cc, min(EntriesMax, chunk))
 	last := cc.S == cc.SN && cc.M == cc.MN
-	req := &sprintfn.Request{Body: sprintfn.Body{Entries: entries}}
+	req := &sprintfn.Request{Body: sprintfn.Body{Entries: entries,
+		Guards: []sprintfn.XGuard{{Kind: sprintfn.XGuardClock, Key: "stopped_since_ms", Score: since}}}}
 	if last {
 		req.Body.Notes = []sprintfn.NoteReq{know(noticeCleared, verb)}
 	}

@@ -62,20 +62,33 @@ const retryJitterMS = 5
 // and Parts move Epoch to the active epoch when a read or a refusal shows it
 // moved (STALE, EPOCHAHEAD). For an op the caller gave, Epoch is the op's
 // epoch (its --epoch, or the active epoch when the command names none), and
-// the op never moves from it (L1 5); a clear of the op's own moves Epoch on.
+// the op never moves from it once it may have run (L1 5); a clear of the op's
+// own moves Epoch on.
 type Env struct {
-	C      sprintfn.Client
-	Names  sprint.Names
-	Actor  string
-	Epoch  uint64
-	mu     sync.Mutex // guards Epoch against two verbs of one Env at once
-	noWait bool       // tests: retry without the jitter's wait
+	C     sprintfn.Client
+	Names sprint.Names
+	Actor string
+	Epoch uint64
+	// FirstEpoch is the sprint's first kept epoch: a repeat's look-back for
+	// its op's receipt never asks below it, since Layer 1 refuses a done
+	// query that names an epoch whose marker is gone (L1 5 and 7, EPOCHGONE).
+	// 0 until a look-back is refused EPOCHGONE, when the driver finds it
+	// (learnFirst) and keeps it here; a command that knows it may set it.
+	FirstEpoch uint64
+	mu         sync.Mutex // guards Epoch and FirstEpoch against two verbs of one Env at once
+	noWait     bool       // tests: retry without the jitter's wait
 }
 
 func (e *Env) epoch() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.Epoch
+}
+
+func (e *Env) firstEpoch() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.FirstEpoch
 }
 
 func (e *Env) setEpoch(n uint64) {
@@ -280,8 +293,8 @@ func opMoved(verb, op string, part int, opEpoch, active uint64, applied int) *Re
 
 // Unknown is a step whose reply was lost (L1 8, OUTCOMEUNKNOWN): whether it
 // applied is not known, and done did not settle it. The same command with
-// --op <Op> at the op's epoch settles it (1.5.4; L1 5); a verb run without an
-// op names what it did.
+// --op <Op> --epoch <Epoch> settles it (1.5.4; L1 5: the caller retains the
+// op's epoch); a verb run without an op names what it did.
 type Unknown struct {
 	Verb  string
 	Op    string
@@ -299,7 +312,7 @@ func (u *Unknown) Error() string {
 	if u.Part > 0 {
 		what = fmt.Sprintf("part %d's outcome", u.Part)
 	}
-	return fmt.Sprintf("%s: %s is unknown (%v): run the same command with --op %s (op %s is at epoch %d)", u.Verb, what, u.Err, u.Op, u.Op, u.Epoch)
+	return fmt.Sprintf("%s: %s is unknown (%v): run the same command with --op %s --epoch %d", u.Verb, what, u.Err, u.Op, u.Epoch)
 }
 
 // Unwrap is the cause, so errors.Is finds tset.ErrOutcomeUnknown.
@@ -425,12 +438,77 @@ func opWindow(id string, hi, lo uint64, intentAt func(epoch uint64) (string, err
 	}
 }
 
-// windowLow is the oldest epoch a window ending at hi asks.
-func windowLow(hi uint64) uint64 {
-	if hi < OpEpochsMax-1 {
-		return 0
+// windowLow is the oldest epoch a window ending at hi asks: OpEpochsMax
+// epochs, never below the sprint's first kept epoch (FirstEpoch), nor above hi.
+func (e *Env) windowLow(hi uint64) uint64 {
+	lo := uint64(0)
+	if hi >= OpEpochsMax-1 {
+		lo = hi - (OpEpochsMax - 1)
 	}
-	return hi - (OpEpochsMax - 1)
+	return min(max(lo, e.firstEpoch()), hi)
+}
+
+// codeEpochGone is Layer 1's refusal of a read that names an epoch whose
+// marker is gone (L1 7, 9).
+const codeEpochGone = "EPOCHGONE"
+
+// zeroDigest is an intent digest no intent has in practice: learnFirst's
+// probe asks done for it only to learn whether its epoch is kept.
+var zeroDigest = strings.Repeat("0", 40)
+
+// learnFirst finds the sprint's first kept epoch after a look-back from hi
+// was refused EPOCHGONE, and keeps it in FirstEpoch. The kept epochs are the
+// ones from the first up to the active one (L1 5: receipts and epoch markers
+// are retained through clear until teardown; L1 9), so the first is found by
+// halving the window, one done probe of a single identity a round trip, at
+// most log2(OpEpochsMax) + 1 of them. It says whether the floor rose, so a
+// read again can succeed; when hi itself is gone it does not rise, and the
+// caller returns the refusal.
+func (e *Env) learnFirst(ctx context.Context, res *Result, hi uint64, id string) (bool, error) {
+	gone := func(ep uint64) (bool, error) {
+		r, err := sprintfn.Read(ctx, e.C, &sprintfn.ReadRequest{Epoch: dec(ep),
+			Tset: []tset.ReadQuery{{Kind: "done", Ops: []tset.DoneIdentity{{Epoch: dec(ep), Op: id, IntentDigest: zeroDigest}}}}})
+		res.Trips++
+		switch {
+		case err != nil:
+			return false, err
+		case r.Err != nil:
+			return false, r.Err
+		case r.Refusal != nil && r.Refusal.Code == codeEpochGone:
+			return true, nil
+		case r.Refusal != nil:
+			return false, &Refused{Verb: res.Verb, Refusal: r.Refusal, Op: res.Op}
+		}
+		return false, nil
+	}
+	lo := e.windowLow(hi)
+	if lo >= hi {
+		return false, nil
+	}
+	if g, err := gone(hi); err != nil || g {
+		return false, err
+	}
+	// Invariant: hi is kept, and the refusal says an epoch at lo or above it
+	// is gone, so lo is taken as below the first kept epoch.
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		g, err := gone(mid)
+		if err != nil {
+			return false, err
+		}
+		if g {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if hi <= e.FirstEpoch {
+		return false, nil
+	}
+	e.FirstEpoch = hi
+	return true, nil
 }
 
 // doneOf is the done answer at slot i of a read, checked: a reply that does
@@ -492,9 +570,12 @@ func settleDo(res *Result, verb, op string, slots []tset.DoneSlot, eps []uint64)
 // the active epoch. With an op the caller gave, the op never changes epoch
 // (L1 5): Env.Epoch is the op's epoch, the plan's read asks done for the op at
 // it and the OpEpochsMax - 1 epochs before it, and a match returns the
-// recorded result with no step, wherever the receipt is (L1 5); a sprint
-// whose epoch moved from the op's is refused, naming both epochs, never
-// planned again at the new one. A lost reply is settled by done before it is
+// recorded result with no step, wherever the receipt is (L1 5). An op done
+// finds nowhere from the look-back up to the active epoch never ran, and takes
+// the active epoch (L1 5); otherwise a sprint whose epoch moved from the op's
+// is refused, naming both epochs, never planned again at the new one. The
+// look-back never asks below the sprint's first kept epoch (FirstEpoch,
+// learnFirst). A lost reply is settled by done before it is
 // reported (L1 5, 8), and a refused send of a caller's op, which may be a
 // resend of a copy still in flight, is reported final only once the fence
 // settles it (fence).
@@ -507,6 +588,7 @@ func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 	opEpoch := e.epoch()
 	intentAt := func(ep uint64) (string, error) { return Intent(e.Names, dec(ep), p.Verb, 0, p.Args) }
 	askDone := pinned
+	learned := false // the look-back's floor was found after an EPOCHGONE
 	for {
 		at := e.epoch()
 		if pinned {
@@ -530,7 +612,7 @@ func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 		}
 		doneAt, eps := -1, []uint64(nil)
 		if askDone {
-			ids, ws, err := opWindow(p.Op, at, windowLow(at), intentAt)
+			ids, ws, err := opWindow(p.Op, at, e.windowLow(at), intentAt)
 			if err != nil {
 				return res, refuseLocal(p.Verb, sprintfn.CodeRequest, "%v", err)
 			}
@@ -548,6 +630,18 @@ func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 				return res, r.Err
 			}
 			if ref := r.Refusal; ref != nil {
+				if ref.Code == codeEpochGone && doneAt >= 0 && !learned {
+					// The look-back named an epoch that is gone: find the
+					// sprint's first kept epoch, and ask again above it.
+					learned = true
+					rose, err := e.learnFirst(ctx, &res, at, p.Op)
+					if err != nil {
+						return res, err
+					}
+					if rose {
+						continue
+					}
+				}
 				if epochMoved(ref.Code) {
 					if active, ok := undec(ref.Detail.ActiveEpoch); ok && pinned {
 						return res, opMoved(p.Verb, p.Op, 0, at, active, 0)
@@ -580,6 +674,19 @@ func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 						// receipt may be at an epoch after it. One more done.
 						if settled, err := e.lookAhead(ctx, &res, p.Verb, p.Op, at, active, intentAt); settled {
 							return res, err
+						}
+						// Done is absent from the look-back below the op's
+						// epoch up to the active one: the op never ran, so it
+						// takes the active epoch (never refuse an op that never
+						// ran). A copy at an older epoch can no longer commit
+						// (S.open refuses STALE), and a copy at the active one
+						// is caught by the step's own receipt check (L1 5).
+						// Only when the look-ahead covered every epoch between.
+						if active-at <= OpEpochsMax && res.Retries < Retries {
+							res.Retries++
+							opEpoch, askDone = active, false
+							e.setEpoch(active)
+							continue
 						}
 					}
 					return res, opMoved(p.Verb, p.Op, 0, at, active, 0)
@@ -1121,6 +1228,9 @@ func (e *Env) Parts(ctx context.Context, op string, pp PartsPlan) (Result, error
 			var rf *Refused
 			if errors.As(err, &rf) {
 				rf.Verb, rf.Op, rf.Part = pp.Verb, op, k
+				if rf.Hint == "" && k > 1 {
+					rf.Hint = fmt.Sprintf("parts 1 to %d stay applied; fix, then run the same command with --op %s --epoch %d", k-1, op, opEpoch)
+				}
 			}
 			return res, err
 		}
@@ -1201,7 +1311,7 @@ func (e *Env) Parts(ctx context.Context, op string, pp PartsPlan) (Result, error
 				return res, rf
 			}
 			rf := &Refused{Verb: pp.Verb, Refusal: ref, Retries: retries, Op: op, Part: k,
-				Hint: fmt.Sprintf("parts 1 to %d stay applied; fix, then run the same command with --op %s", k-1, op)}
+				Hint: fmt.Sprintf("parts 1 to %d stay applied; fix, then run the same command with --op %s --epoch %d", k-1, op, opEpoch)}
 			if k == 1 {
 				rf.Hint = "no part was applied; fix, then run it again"
 			}
@@ -1272,7 +1382,7 @@ func (e *Env) Parts(ctx context.Context, op string, pp PartsPlan) (Result, error
 			return res, next.Err
 		case next.Refusal != nil:
 			return res, &Refused{Verb: pp.Verb, Refusal: next.Refusal, Op: op, Part: k,
-				Hint: fmt.Sprintf("parts 1 to %d are applied; run the same command with --op %s", k-1, op)}
+				Hint: fmt.Sprintf("parts 1 to %d are applied; run the same command with --op %s --epoch %d", k-1, op, opEpoch)}
 		default:
 			rd = next.Read
 		}
@@ -1348,23 +1458,40 @@ func (e *Env) resumeRead(ctx context.Context, res *Result, pp PartsPlan, op stri
 	}
 	var before []tset.DoneIdentity
 	var eps []uint64
-	if opEpoch > 0 {
-		before, eps, err = opWindow(partID(op, 1), opEpoch-1, windowLow(opEpoch), func(ep uint64) (string, error) { return intentAt(ep, 1) })
-		if err != nil {
-			return nil, rs, refuseLocal(pp.Verb, sprintfn.CodeRequest, "%v", err)
+	var rr *sprintfn.ReadRequest
+	var r sprintfn.Result
+	for learned := false; ; learned = true {
+		before, eps = nil, nil
+		if lo := e.windowLow(opEpoch); lo < opEpoch {
+			before, eps, err = opWindow(partID(op, 1), opEpoch-1, lo, func(ep uint64) (string, error) { return intentAt(ep, 1) })
+			if err != nil {
+				return nil, rs, refuseLocal(pp.Verb, sprintfn.CodeRequest, "%v", err)
+			}
 		}
+		rr = e.partRead(pp, dec(opEpoch), "", chunk)
+		rr.Tset = append(append([]tset.ReadQuery(nil), rr.Tset...), tset.ReadQuery{Kind: "done", Ops: append(append([]tset.DoneIdentity(nil), here...), before...)})
+		r, err = sprintfn.Read(ctx, e.C, rr)
+		res.Trips++
+		if err != nil {
+			return nil, rs, err
+		}
+		if r.Err != nil {
+			return nil, rs, r.Err
+		}
+		if ref := r.Refusal; ref != nil && ref.Code == codeEpochGone && len(before) != 0 && !learned {
+			// The look-back named an epoch that is gone: find the sprint's
+			// first kept epoch, and ask again above it.
+			rose, err := e.learnFirst(ctx, res, opEpoch, partID(op, 1))
+			if err != nil {
+				return nil, rs, err
+			}
+			if rose {
+				continue
+			}
+		}
+		break
 	}
-	rr := e.partRead(pp, dec(opEpoch), "", chunk)
-	rr.Tset = append(append([]tset.ReadQuery(nil), rr.Tset...), tset.ReadQuery{Kind: "done", Ops: append(append([]tset.DoneIdentity(nil), here...), before...)})
 	at := len(rr.Tset) - 1
-	r, err := sprintfn.Read(ctx, e.C, rr)
-	res.Trips++
-	if err != nil {
-		return nil, rs, err
-	}
-	if r.Err != nil {
-		return nil, rs, r.Err
-	}
 	if ref := r.Refusal; ref != nil {
 		if active, ok := undec(ref.Detail.ActiveEpoch); ok && epochMoved(ref.Code) {
 			return nil, rs, opMoved(pp.Verb, op, 1, opEpoch, active, 0)
