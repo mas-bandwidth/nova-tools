@@ -535,16 +535,16 @@ func TestRestartArgv(t *testing.T) {
 }
 
 // TestNoReleaseCodeReadsASecretOverSsh is the class test of #4356 A's "never
-// ssh cat": no string in the fleetbuild package or the fleet release verb
-// names the store host's password files or a sudo cat, so the admin password
-// can only come from the environment or the seat.
+// ssh cat": no string in the fleetbuild package names the store host's
+// password files or a sudo cat, so the admin password can only come from the
+// environment or the seat. The fleet release verb's file is not scanned: it
+// moved under deprecated/cmd/nova-sprint (#4493), where code is reference only.
 func TestNoReleaseCodeReadsASecretOverSsh(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	files = append(files, filepath.Join("..", "..", "..", "cmd", "nova-sprint", "fleet_release.go"))
 	fset := token.NewFileSet()
 	n := 0
 	for _, path := range files {
