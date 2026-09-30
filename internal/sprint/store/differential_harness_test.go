@@ -273,8 +273,9 @@ func newDHarness(t testing.TB) *dHarness {
 }
 
 // observe is Abstract of what the engine's store holds: the four tables with
-// the records of every card either side has held this epoch, the open
-// judgments, the fence and the machine.
+// the records of every card either side has held this epoch, the work table as
+// the next pump leaves it (its queue applied), the open judgments, the fence
+// and the machine.
 func (h *dHarness) observe() refmodel.State {
 	ids := map[string][]string{}
 	add := func(table, id string) {
@@ -315,6 +316,14 @@ func (h *dHarness) observe() refmodel.State {
 	if err != nil {
 		h.t.Fatalf("load: %v", err)
 	}
+	// The sprint as the next pump leaves its work table: every step but the
+	// pump queues its work-table changes while the machine runs, and the
+	// model's state is the work table with them applied (refmodel.Tick).
+	q, err := h.m.AtEpoch(s.Epoch, false).QueueRead(h.ctx)
+	if err != nil {
+		h.t.Fatalf("queue: %v", err)
+	}
+	s = sprint.WithQueue(s, q)
 	for _, name := range All {
 		for _, c := range s.T(name).Cards() {
 			add(name, c.ID)

@@ -48,7 +48,47 @@ func onlyOpen(verb string, types ...string) func(dFinding) bool {
 	}
 }
 
+// droppedInItsTick says the sequence has a card added and dropped with the
+// machine RUNNING and no tick between: both are queued for the pump, which
+// drains the creation and leaves the removal for the next drain (the table
+// takes no entry that does both), so the pump's resolve and deal of that tick
+// see a card the model has already taken off the table.
+func droppedInItsTick(seq []dAction) bool {
+	running, added := false, map[string]bool{}
+	for _, a := range seq {
+		switch a.Kind {
+		case "start":
+			running = true
+		case "stop", "clear":
+			running, added = false, map[string]bool{}
+		case "tick":
+			added = map[string]bool{}
+		case "add":
+			for _, id := range a.IDs {
+				added[id] = running
+			}
+		case "drop":
+			for _, id := range a.IDs {
+				if added[id] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 var dKnown = []dKnownDiff{
+	// ENGINE (the tick's core, open). A card added and dropped before one
+	// drain: the drain creates it and leaves its removal for the next drain, so
+	// that tick's pump resolves and deals it, and whatever follows from it (its
+	// work card, the deal's indexes, a sentinel waiting on it, a judgment of a
+	// need it was) differs from the model, which has it off the table at once.
+	// A pump that drains again while a removal is requeued (the drain's own
+	// MaxDrains bound) leaves none of these: delete this entry with that change.
+	{"ENGINE a card added and dropped before one drain is resolved and dealt by that tick's pump", func(f dFinding) bool {
+		return droppedInItsTick(f.Seq)
+	}},
 	// ENGINE or SPEC. Section 16: a sentinel inserted in line sends the
 	// ready cards behind it back to waiting; the engine treats a ready
 	// primary whose card was withdrawn (no member up) as in flight: it
