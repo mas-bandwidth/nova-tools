@@ -291,10 +291,8 @@ PlaceOn == "unplaced" \in Fixes
 TriesOn == StableOn \/ PlaceOn
 DealUp == {m \in Up : ~StableOn \/ stab[m] = 0}
 DealRoom == Cardinality({x \in DealUp \X (1..Cap) : x[2] > RCount(x[1])})
-\* The up members other than a work card's present one with room, and the
-\* one of a set with the shortest ready queue.
+\* The up members other than a work card's present one with room.
 Others(p) == {m \in Up \ {MemberOf(wk[p])} : RCount(m) < Cap}
-Shortest(ms) == CHOOSE m \in ms : \A n \in ms : RCount(m) <= RCount(n)
 
 \* The record a revision guards: every field but the entries, and the timers,
 \* whose absolute stamps do not move with time (only this model's relative
@@ -567,7 +565,8 @@ Eff1(T, u) ==
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
                                        !.tu = IF wasW THEN 1 ELSE @, !.tf = IF wasW THEN -1 ELSE @,
                                        !.taken = IF wasW THEN FALSE ELSE @],
-                   !.fld[c].redeals = IF wasW /\ Broken # "W7b" THEN @ + 1 ELSE @]
+                   !.fld[c].redeals = IF wasW /\ Broken # "W7b" THEN @ + 1 ELSE @,
+                   !.dcur = Past(MemSeq, u.m)]
     [] u.op = "withdraw2" ->                     \* (unplaced, H15: an untaken withdrawal counts)
          LET wasW == InWorking(wk[c])
              nr == IF wasW /\ fld[c].redeals < MaxRedeals /\ Broken # "W7b" THEN fld[c].redeals + 1 ELSE fld[c].redeals
@@ -582,11 +581,13 @@ Eff1(T, u) ==
     [] u.op = "replace" ->                       \* R11, untaken: once per untaken span (W7a: without end)
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
                                        !.repl = Broken # "W7a", !.tu = 1],
+                   !.dcur = Past(MemSeq, u.m),
                    !.J = IF "judgeguard" \in Fixes THEN JClose(@, "latework", WS(c), "untaken") ELSE @]
     [] u.op = "replaceF" ->                      \* R11, unfinished: a redeal that counts (W7b: not counted)
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
                                        !.tf = -1, !.tu = 1, !.taken = FALSE, !.repl = FALSE],
-                   !.fld[c].redeals = IF Broken # "W7b" THEN @ + 1 ELSE @]
+                   !.fld[c].redeals = IF Broken # "W7b" THEN @ + 1 ELSE @,
+                   !.dcur = Past(MemSeq, u.m)]
     [] u.op = "latej" -> [T EXCEPT !.J = JOpen(@, "latework", WS(c), u.x)]
     [] u.op = "needmet" ->                       \* decided on the present state, as the Lua does
          LET live == {w \in u.x.ws : w \in T.waitn[c]} IN
@@ -612,7 +613,8 @@ Eff1(T, u) ==
          [T EXCEPT !.fld[c] = [@ EXCEPT !.attempt = @ + 1, !.avoid = wk[c].m0, !.rereads = 0, !.result = "none"],
                    !.rd[c] = NoReads,
                    !.col[c] = IF u.m = None THEN "ready" ELSE "working",
-                   !.wk[c] = IF u.m = None THEN [@ EXCEPT !.pl = {}] ELSE NewCard(@, u.m)]
+                   !.wk[c] = IF u.m = None THEN [@ EXCEPT !.pl = {}] ELSE NewCard(@, u.m),
+                   !.dcur = IF u.m = None THEN @ ELSE Past(MemSeq, u.m)]
     [] u.op = "boundj" -> [T EXCEPT !.fld[c].bound = TRUE, !.J = JOpen(@, "bound", CS(c), "attempts")]
     [] u.op = "reread" ->
          [T EXCEPT !.rd[c][u.x[1]] = Retire(@), !.rd[c][u.x[2]] = [@ EXCEPT !.st = "asked", !.t = 1],
@@ -640,13 +642,6 @@ PlanU(k, us, more) == [k |-> k, units |-> us, more |-> more, skip |-> FALSE]
 Held(k) == [Plan0(k) EXCEPT !.skip = TRUE]
 Frozen(c) == dropping[S(c)] # None
 
-\* Members with room, the shortest ready queue first, avoiding one member
-\* unless no other has room.
-AssignOne(cnt, ms, av) ==
-  CHOOSE r \in {IF room = {} THEN None
-                ELSE CHOOSE r2 \in {CHOOSE m \in pref : \A n \in pref : cnt[m] <= cnt[n] :
-                                    pref \in {IF room \ {av} # {} THEN room \ {av} ELSE room}} : TRUE :
-                room \in {{m \in ms : cnt[m] < Cap}}} : TRUE
 Counts == [m \in Members |-> RCount(m)]
 
 \* The deal goes round the fleet and the ask round the readers (errata 3,
@@ -732,13 +727,17 @@ PlanDeal(k, ch) ==
 \* R2 down:m: m's cards as sets, redealt or withdrawn; a held member stays held.
 DownUnit(p, m2) == IF m2 = None \/ (InWorking(wk[p]) /\ fld[p].redeals >= MaxRedeals)
                    THEN U("withdraw2", p, None, None) ELSE U("redeal2", p, m2, None)
-RECURSIVE DownUnits(_, _, _)
-DownUnits(q0, c0, ms0) ==
+\* Each card goes round the fleet from the rolling index (RoundOne; errata 3,
+\* amendment 5: every placement, first attempts and redeals and levelling
+\* alike, moves the index), and the index moves past it.
+RECURSIVE DownUnits(_, _, _, _)
+DownUnits(q0, c0, ms0, at0) ==
   CHOOSE r \in {IF q = <<>> THEN <<>>
-                ELSE CHOOSE r2 \in UNION {{<<u>> \o DownUnits(Tail(q), IF u.op = "withdraw2" THEN cnt ELSE [cnt EXCEPT ![m2] = @ + 1], ms) :
+                ELSE CHOOSE r2 \in UNION {{<<u>> \o DownUnits(Tail(q), IF u.op = "withdraw2" THEN cnt ELSE [cnt EXCEPT ![m2] = @ + 1], ms,
+                                                             IF u.op = "withdraw2" THEN at ELSE Past(MemSeq, m2)) :
                                            u \in {DownUnit(Head(q), m2)}} :
-                                          m2 \in {AssignOne(cnt, ms, None)}} : TRUE :
-                q \in {q0}, cnt \in {c0}, ms \in {ms0}} : TRUE
+                                          m2 \in {RoundOne(cnt, ms, None, at)}} : TRUE :
+                q \in {q0}, cnt \in {c0}, ms \in {ms0}, at \in {at0}} : TRUE
 \* H2's repair (seenfresh, its second clause): a plan of R2 with nothing to
 \* change removes down:m only under R2's guard, the control card as read.
 DownKey(P0) == CHOOSE r \in {IF "seenfresh" \in Fixes /\ P.units = <<>>
@@ -748,7 +747,7 @@ PlanDown(k, ch) ==
   LET m == k[2] IN
   DownKey(IF status[m] = "up" /\ BeatFresh(m) THEN Plan0(k)
           ELSE CHOOSE r \in {PlanU(k, (IF status[m] = "up" \/ (status[m] = "held" /\ Broken = "W19") THEN <<U("setdown", m, None, None)>> ELSE <<>>)
-                                      \o DownUnits(Take(Sorted(mine), ch), Counts, Up \ {m}),
+                                      \o DownUnits(Take(Sorted(mine), ch), Counts, Up \ {m}, dcur),
                                    Cardinality(mine) > ch) :
                              mine \in {{p \in Prims : \E x \in wk[p].pl : x[1] = m}}} : TRUE)
 
@@ -791,7 +790,7 @@ PlanRework(k) ==
       bad == fld[p].result = "failed" \/ \E r \in Readers : rd[p][r].st = "broken"
   IN IF Frozen(p) THEN Held(k)
      ELSE IF col[p] = "review" /\ bad /\ ~fld[p].bound
-     THEN PlanU(k, <<IF fld[p].attempt < MaxAttempts THEN U("rework", p, AssignOne(Counts, Up, wk[p].m0), None)
+     THEN PlanU(k, <<IF fld[p].attempt < MaxAttempts THEN U("rework", p, RoundOne(Counts, Up, wk[p].m0, dcur), None)
                      ELSE U("boundj", p, None, None)>>, FALSE)
      ELSE Plan0(k)
 
@@ -801,14 +800,14 @@ PlanLate(k) ==
          LET p == k[2] IN
          IF Frozen(p) THEN Held(k)
          ELSE IF InReady(wk[p]) /\ wk[p].tu = 0
-         THEN PlanU(k, <<IF ~wk[p].repl /\ Others(p) # {} THEN U("replace", p, Shortest(Others(p)), None)
+         THEN PlanU(k, <<IF ~wk[p].repl /\ Others(p) # {} THEN U("replace", p, FirstFrom(MemSeq, dcur, Others(p)), None)
                          ELSE U("latej", p, None, "untaken")>>, FALSE)
          ELSE Plan0(k)
     [] k[1] = "late:unfinished" ->
          LET p == k[2] IN
          IF Frozen(p) THEN Held(k)
          ELSE IF InWorking(wk[p]) /\ wk[p].tf = 0
-         THEN PlanU(k, <<IF fld[p].redeals < MaxRedeals /\ Others(p) # {} THEN U("replaceF", p, Shortest(Others(p)), None)
+         THEN PlanU(k, <<IF fld[p].redeals < MaxRedeals /\ Others(p) # {} THEN U("replaceF", p, FirstFrom(MemSeq, dcur, Others(p)), None)
                          ELSE U("latej", p, None, "unfinished")>>, FALSE)
          ELSE Plan0(k)
     [] k[1] = "late:unread" ->
