@@ -533,9 +533,11 @@ to someone arrived, it writes one tick-end note to the coordinator with their
 count (`judgments=N`) and advances the mark. The tick-end note is a wake signal,
 not an inbox item. `inbox --wait` waits for the next tick-end after the notes
 present when the call starts, then prints the inbox. Its `--timeout` defaults
-to five minutes; if no tick-end arrives, it reports the timeout and still
-prints the inbox. Waiting does not advance the cursor (`--read` does), and
-`--wait` takes a positive timeout in the current epoch, not `--at-epoch`.
+to five minutes; if no tick-end arrives, text mode reports the timeout condition
+and still prints the inbox, while `--json` mode returns the unpolluted JSON
+inbox object directly without a text banner, preserving the strict JSON contract
+and parser compatibility. Waiting does not advance the cursor (`--read` does),
+and `--wait` takes a positive timeout in the current epoch, not `--at-epoch`.
 
 ## 9. What is always true
 
