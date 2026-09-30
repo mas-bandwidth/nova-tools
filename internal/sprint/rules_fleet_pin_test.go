@@ -452,7 +452,7 @@ func TestDownDealsRoundTheFleet(t *testing.T) {
 	if !reflect.DeepEqual(to, want) {
 		t.Fatalf("dealt to %v, want %v", to, want)
 	}
-	if len(rp.Plan.Props) != 1 || rp.Plan.Props[0].Name != PropDealIndex || rp.Plan.Props[0].Value != "m3" {
+	if len(rp.Plan.Props) != 1 || rp.Plan.Props[0].Name != PropDealIndex || indexPast([]string{"m1", "m2", "m3"}, rp.Plan.Props[0].Value) != "m3" {
 		t.Fatalf("the deal's index: %+v, want it moved past m3", rp.Plan.Props)
 	}
 	f.apply(rp)

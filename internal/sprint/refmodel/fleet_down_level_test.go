@@ -9,12 +9,12 @@ import (
 
 // TestFleetDownAndLevelGoRoundTheFleet verifies on the reference model (the twin)
 // with eight members that:
-// 1. When a member goes down, its cards go round the fleet from the rolling
-//    index (DealLast) via PlaceOn, and DealLast moves past each member dealt to.
-//    A destination mapping that picks shortest queue by name is rejected with badChoice.
-// 2. Levelling (Level / levelRound) moves excess cards from the longest queue
-//    to members below the mean starting past DealLast, advancing DealLast past
-//    the recipient. Moves not matching the rolling index are rejected.
+//  1. When a member goes down, its cards go round the fleet from the rolling
+//     index (DealLast) via PlaceOn, and DealLast moves past each member dealt to.
+//     A destination mapping that picks shortest queue by name is rejected with badChoice.
+//  2. Levelling (Level / levelRound) moves excess cards from the longest queue
+//     to members below the mean starting past DealLast, advancing DealLast past
+//     the recipient. Moves not matching the rolling index are rejected.
 func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 	t.Parallel()
 	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
@@ -48,8 +48,8 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 	s.Work["p07.w1"] = refmodel.WorkCard{Primary: "p07", Member: "m7", Place: refmodel.FDone, Gen: 1}
 	s.Work["p08.w1"] = refmodel.WorkCard{Primary: "p08", Member: "m8", Place: refmodel.FDone, Gen: 1}
 
-	// The rolling index is past m4
-	s.DealLast = "m4"
+	// The rolling index is past m4 (counter 4)
+	s.DealLast = "4"
 
 	// All other members m2..m8 have 0 ready/working cards.
 	// Under shortest queue by name, m1's cards would be assigned to m2 and m3 (ties by name).
@@ -61,7 +61,7 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 		t.Fatalf("FleetDown with shortest-queue-by-name dest succeeded, want refusal (not round the fleet)")
 	}
 
-	// Under rolling index from DealLast "m4", cards must go to m5 and m6:
+	// Under rolling index from DealLast "4" (past m4), cards must go to m5 and m6:
 	roundDest := map[string]string{
 		"p01.w1": "m5",
 		"p09.w1": "m6",
@@ -70,8 +70,8 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FleetDown with rolling index dest failed: %v", err)
 	}
-	if sDown.DealLast != "m6" {
-		t.Fatalf("DealLast after FleetDown: %q, want m6", sDown.DealLast)
+	if sDown.DealLast != "6" {
+		t.Fatalf("DealLast after FleetDown: %q, want 6", sDown.DealLast)
 	}
 	if w := sDown.Work["p01.w1"]; w.Member != "m5" || w.Place != refmodel.FReady {
 		t.Fatalf("p01.w1 after FleetDown: %+v, want on m5 ready", w)
@@ -108,17 +108,17 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 	makeCard("d08a", "m8", 9)
 	makeCard("d08b", "m8", 10) // newest on longest queue
 
-	sLevel.DealLast = "m8"
+	sLevel.DealLast = "8"
 
-	// From past m8, the next member below the mean (1) is m1 (count 0 < 1).
+	// From past m8 (counter 8), the next member below the mean (1) is m1 (count 0 < 1).
 	// The newest card from the first longest queue (d07b.w1 on m7) moves to m1.
-	// DealLast moves to m1.
+	// DealLast moves to 9 (past m1).
 	sAfterLevel, err := refmodel.Level(sLevel, nil)
 	if err != nil {
 		t.Fatalf("Level on uneven 8-member fleet failed: %v", err)
 	}
-	if sAfterLevel.DealLast != "m1" {
-		t.Fatalf("DealLast after Level: %q, want m1", sAfterLevel.DealLast)
+	if sAfterLevel.DealLast != "9" {
+		t.Fatalf("DealLast after Level: %q, want 9", sAfterLevel.DealLast)
 	}
 	if w := sAfterLevel.Work["d07b.w1"]; w.Member != "m1" || w.Place != refmodel.FReady {
 		t.Fatalf("d07b.w1 after Level: %+v, want on m1 ready", w)

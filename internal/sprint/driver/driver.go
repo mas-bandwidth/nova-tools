@@ -441,7 +441,8 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	var finishers []string
 	var good []string
 	bad := map[string][]string{}
-	takers := map[int][]string{} // by take limit, the members with a ready queue
+	takers := map[int][]string{} // by take limit, the members up whose queue was read
+	anyReady := false            // a member's queue showed a ready card
 	for _, m := range members {
 		if !next[m] {
 			continue
@@ -468,10 +469,16 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		if done > 0 {
 			finishers = append(finishers, m)
 		}
-		if ready > 0 {
-			n := min(takeLimit(c, fleet[m]), Most)
-			takers[n] = append(takers[n], m)
-		}
+		// every member up takes, whether or not its queue showed a ready card:
+		// the queues are read one member at a time, and a deal that commits
+		// between two of those reads leaves the members read before it showing
+		// nothing ready; a take of only the members that showed one would take
+		// the fleet in two parts from then on, one part a tick behind the other
+		// ("ticking halves"). The take is by selection, so every member takes
+		// what is ready when it runs, the whole fleet in the one step.
+		n := min(takeLimit(c, fleet[m]), Most)
+		takers[n] = append(takers[n], m)
+		anyReady = anyReady || ready > 0
 	}
 	as := strings.Join(finishers, ",")
 	d.batches(append([]string{"finish", "--as", as}, held...), good)
@@ -484,6 +491,9 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	}
 	sort.Ints(limits)
 	for _, n := range limits {
+		if !anyReady {
+			break
+		}
 		d.run(false, append([]string{"take", "--as", strings.Join(takers[n], ","), "--limit", strconv.Itoa(n)}, held...)...)
 	}
 	var reporters, beginners []string

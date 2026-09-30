@@ -295,7 +295,8 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 	for _, id := range failed {
 		// every member is idle: the next member round the fleet is the one past
 		// the index, and a rework whose failed attempt was on it skips it
-		past, _ := h.snap().Fleet.Prop(sprint.PropDealIndex)
+		at, _ := h.snap().Fleet.Prop(sprint.PropDealIndex)
+		past := indexPast(ringMembers, at)
 		next := ringMembers[(slices.Index(ringMembers, past)+1)%len(ringMembers)]
 		failedOn := h.snap().Fleet.Card(sprint.WorkCardID(id, 1)).Row
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{id}}, Fix: "make the test pass", Who: "tester"}))
@@ -348,21 +349,21 @@ func TestTheRedealsGoRoundTheFleetInARunWithFailures(t *testing.T) {
 // down, its cards and any levelled cards distribute round the fleet from the
 // deal's rolling index (deal_index) rather than to the shortest queue by name
 // (errata 3 amendment 5):
-// 1. Eight members (m1..m8) are up. 12 cards are dealt, placing 2 cards on
-//    m1..m4 and 1 card on m5..m8, leaving deal_index at m4.
-// 2. Members m2..m8 take and finish their cards; m1 keeps its 2 ready cards
-//    m2..m8 with 0 ready cards. The deal_index remains m4.
-// 3. m1's beat lapses and m1 goes down at the tick. Its 2 cards are redealt:
-//    starting past deal_index (m4), the cards go to m5 and m6 (the next up
-//    members with room), advancing deal_index to m6. Under shortest queue by
-//    name, m2 and m3 (having count 0 and earlier names) would have been picked.
-// 4. Queues are made uneven while m1 is down: 9 cards are dealt across m2..m8
-//    From deal_index m6, the first round is 7 cards (m7, m8, m2, m3, m4, m5, m6),
-//    leaving all 7 up members with 1 card each. Next 2 cards go to m7 and m8!
-//    Now m7 and m8 have 2 cards each, m2..m6 have 1 card each. deal_index is m8.
-// 5. m1 beats again and comes up. Levelling (R7 / T4) moves an excess card
-//    round the fleet past deal_index (m8) to m1 (below the mean), moving
-//    deal_index past m1 to m1!
+//  1. Eight members (m1..m8) are up. 12 cards are dealt, placing 2 cards on
+//     m1..m4 and 1 card on m5..m8, leaving deal_index at m4.
+//  2. Members m2..m8 take and finish their cards; m1 keeps its 2 ready cards
+//     m2..m8 with 0 ready cards. The deal_index remains m4.
+//  3. m1's beat lapses and m1 goes down at the tick. Its 2 cards are redealt:
+//     starting past deal_index (m4), the cards go to m5 and m6 (the next up
+//     members with room), advancing deal_index to m6. Under shortest queue by
+//     name, m2 and m3 (having count 0 and earlier names) would have been picked.
+//  4. Queues are made uneven while m1 is down: 9 cards are dealt across m2..m8
+//     From deal_index m6, the first round is 7 cards (m7, m8, m2, m3, m4, m5, m6),
+//     leaving all 7 up members with 1 card each. Next 2 cards go to m7 and m8!
+//     Now m7 and m8 have 2 cards each, m2..m6 have 1 card each. deal_index is m8.
+//  5. m1 beats again and comes up. Levelling (R7 / T4) moves an excess card
+//     round the fleet past deal_index (m8) to m1 (below the mean), moving
+//     deal_index past m1 to m1!
 func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	ringFleet(h)
 	h.startMachine()
@@ -388,8 +389,8 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	}
 	s := h.snap()
 	dealAt, _ := s.Fleet.Prop(sprint.PropDealIndex)
-	if dealAt != "m4" {
-		t.Fatalf("deal_index after 12 deals: %q, want m4", dealAt)
+	if dealAt != "12" {
+		t.Fatalf("deal_index after 12 deals: %q, want 12 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 
 	// 2. m2..m8 take and finish their cards; m1 keeps its 2 ready cards
@@ -406,8 +407,8 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 		}
 	}
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	if dealAt != "m4" {
-		t.Fatalf("deal_index before down: %q, want m4", dealAt)
+	if dealAt != "12" {
+		t.Fatalf("deal_index before down: %q, want 12", dealAt)
 	}
 
 	// 3. m1 goes down: stop its beat and advance past BeatDeadline
@@ -415,7 +416,7 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	h.tick(sprint.BeatDeadline + time.Second)
 	h.machine()
 
-	// Verify m1 is down and its cards were redealt past deal_index (m4) to m5 and m6
+	// Verify m1 is down and its cards were redealt past deal_index (counter 12, past m4) to m5 and m6
 	s = h.snap()
 	if st := s.MemberCtl("m1").F("status"); st != sprint.Down {
 		t.Fatalf("m1 status: %q, want down", st)
@@ -435,14 +436,14 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 		}
 	}
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	if dealAt != "m6" {
-		t.Fatalf("deal_index after member down redeals: %q, want m6", dealAt)
+	if dealAt != "14" {
+		t.Fatalf("deal_index after member down redeals: %q, want 14 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 
 	// 4. While m1 is down, deal 9 cards across the 7 up members (m2..m8)
-	// From deal_index m6, the first round is 7 cards (m7, m8, m2, m3, m4, m5, m6),
+	// From deal_index counter 14 (past m6), the first round is 7 cards (m7, m8, m2, m3, m4, m5, m6),
 	// leaving all 7 up members with 1 card each. Next 2 cards go to m7 and m8!
-	// Now m7 and m8 have 2 cards each, m2..m6 have 1 card each. deal_index is m8.
+	// Now m7 and m8 have 2 cards each, m2..m6 have 1 card each. deal_index is 23 (past m8).
 	for i := 0; i < 9; i++ {
 		h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{fmt.Sprintf("d%02d", i)}}))
 	}
@@ -450,8 +451,8 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	t.Logf("deal while m1 down tick: %s", r)
 	s = h.snap()
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	if dealAt != "m8" {
-		t.Fatalf("deal_index after 9 deals: %q, want m8", dealAt)
+	if dealAt != "24" {
+		t.Fatalf("deal_index after 9 deals: %q, want 24 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 	if n := s.Fleet.Count("m7", sprint.Ready); n != 2 {
 		t.Fatalf("m7 ready count: %d, want 2", n)
@@ -463,9 +464,9 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	// 5. m1 beats again and comes up. Levelling (T4 / R7) triggers because m7/m8
 	// have 2 cards and m1 has 0 (differ by 2 > 1).
 	// Mean is 9/8 = 1. Only m1 is below the mean (0 < 1).
-	// Starting round the fleet from deal_index (m8), m1 is the next member
+	// Starting round the fleet from deal_index (23, past m8), m1 is the next member
 	// below the mean. So m1 receives a card from the longest queue, and
-	// deal_index advances past m1 to m1!
+	// deal_index advances past m1 to 24!
 	h.setLive(ringMembers...)
 	h.tick(time.Second)
 	h.machine()
@@ -478,8 +479,8 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 		t.Fatalf("m1 ready count after levelling: %d, want 1", n)
 	}
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	if dealAt != "m1" {
-		t.Fatalf("deal_index after levelling: %q, want m1", dealAt)
+	if dealAt != "25" {
+		t.Fatalf("deal_index after levelling: %q, want 25 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 }
 

@@ -134,11 +134,12 @@ func TestTheStreamIndexIsReadBackAfterAStop(t *testing.T) {
 		h.must(AddStep(sprint.AddReq{Stream: st, Count: 3}))
 	}
 	h.startMachine()
-	var served []string
+	var served, counts []string
 	for i := 0; i < 5; i++ {
 		res := h.machine()
 		idx, _ := h.snap().Work.Prop(sprint.PropStreamIndex)
-		served = append(served, idx)
+		served = append(served, indexPast(h.snap().Work.Rows(), idx))
+		counts = append(counts, idx)
 		// the member finishes its one card, so the next tick deals one more
 		s := h.snap()
 		for _, c := range s.Fleet.Column(sprint.Ready) {
@@ -156,5 +157,10 @@ func TestTheStreamIndexIsReadBackAfterAStop(t *testing.T) {
 	}
 	if want := []string{"s1", "s2", "s3", "s1", "s2"}; !slices.Equal(served, want) {
 		t.Fatalf("the streams served one a tick, across a stop: %v, want %v", served, want)
+	}
+	// the index is a counter, up by one with every card dealt (errata 3
+	// amendment 5, the owner's form)
+	if want := []string{"1", "2", "3", "4", "5"}; !slices.Equal(counts, want) {
+		t.Fatalf("the stream index's counter a tick, across a stop: %v, want %v", counts, want)
 	}
 }

@@ -317,9 +317,9 @@ func Start(s State, p, m string, limit int) (State, error) {
 		return s, badChoice("%s dealt to %s, not the next member round the fleet, %s (past %q) of %v", p, m, next, s.DealLast, up)
 	}
 	n := s.Clone()
-	n.DealLast = m
+	n.DealLast = roundPast(sorted(s.Order), s.DealLast, m)
 	pr := n.Primaries[p]
-	n.StreamLast = pr.Stream // the deal's stream index moves past it (errata 3 amendment 10)
+	n.StreamLast = roundPast(s.streamOrder(pr.Stream), s.StreamLast, pr.Stream) // the deal's stream index moves past it (errata 3 amendment 10)
 	id := WC(p, pr.Attempt)
 	if w, ok := n.Work[id]; ok {
 		if w.Place != FWithdrawn {
@@ -436,9 +436,10 @@ func Ask(s State, p string, two []string) (State, error) {
 	}
 	n := s.Clone()
 	if len(next) == 2 {
-		n.AskLast = next[1]
+		order := addSorted(nil, s.Readers...)
+		n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
 	}
-	n.AskStreamLast = pr.Stream // the ask's stream index moves past it (errata 3 amendment 10)
+	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it (errata 3 amendment 10)
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
@@ -482,7 +483,7 @@ func AskAnother(s State, p, r string) (State, error) {
 		return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 	}
 	n := s.Clone()
-	n.AskLast = r
+	n.AskLast = roundPast(sorted(s.Readers), s.AskLast, r)
 	n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked}
 	delete(n.Open, Judgment{JBroken, p})
 	delete(n.Open, Judgment{JReads, p})
@@ -574,8 +575,9 @@ func Accept(s State, set []string) (State, error) {
 	n := s.Clone()
 	// the accept's stream index moves past the stream of the last in stream
 	// turns (errata 3 amendment 10)
-	if turns := s.streamTurns(set, s.AcceptStreamLast); len(turns) > 0 {
-		n.AcceptStreamLast = s.Primaries[turns[len(turns)-1]].Stream
+	for _, p := range s.streamTurns(set, s.AcceptStreamLast) {
+		st := s.Primaries[p].Stream
+		n.AcceptStreamLast = roundPast(s.streamOrder(st), n.AcceptStreamLast, st)
 	}
 	for _, p := range set {
 		for _, id := range n.OutOf(p) {
@@ -632,7 +634,7 @@ func Rework(s State, p, m string) (State, error) {
 		if m != choice {
 			return s, badChoice("%s reworked into %s, not the next member round the fleet, %s (past %q) of %v", p, m, choice, s.DealLast, up)
 		}
-		n.DealLast = m
+		n.DealLast = roundPast(sorted(n.Order), n.DealLast, m)
 		id := WC(p, pr.Attempt)
 		if _, made := n.Work[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
@@ -980,7 +982,7 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 		}
 		w.Member, w.Place, w.Gen, w.Redeals = t, FReady, w.Gen+1, w.Redeals+1
 		n.Work[id] = w
-		n.DealLast = t
+		n.DealLast = roundPast(sorted(n.Order), n.DealLast, t)
 	}
 	return n, nil
 }
@@ -1109,7 +1111,7 @@ func (n *State) levelRound() map[string]string {
 		w := n.Work[newest]
 		w.Member, w.Gen = to, w.Gen+1
 		n.Work[newest] = w
-		n.DealLast = to
+		n.DealLast = roundPast(sorted(n.Order), n.DealLast, to)
 		out[newest] = to
 	}
 }

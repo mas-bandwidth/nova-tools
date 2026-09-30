@@ -1658,7 +1658,10 @@ func TestLateReplacementsSpreadOverMembers(t *testing.T) {
 	// width at 1), m3, then m2 is at its width of 2 and m3 takes the third; a
 	// queue's length does not choose. The index is written past m3, guarded on its absence.
 	want(t, "receivers", to, []string{"m2", "m3", "m3"})
-	if len(p.Plan.Props) != 1 || p.Plan.Props[0] != (PropWrite{Table: Fleet, Name: PropDealIndex, Value: "m3", WasAbsent: true}) {
+	// three placements, the counter up by one for each and by one for each
+	// member passed over: m1 skipped for m2 (2), m3 (3), m1 and m2 skipped for
+	// m3 (6)
+	if len(p.Plan.Props) != 1 || p.Plan.Props[0] != (PropWrite{Table: Fleet, Name: PropDealIndex, Value: "6", WasAbsent: true}) {
 		t.Fatalf("the deal's index: %+v, want it moved past m3", p.Plan.Props)
 	}
 	if n := noteReq(p, requestKnow, NReplacedUntaken); n == nil || len(n.Subjects) != 3 || len(p.Notes) != 1 {
