@@ -214,8 +214,10 @@ func TestDoRetriesRaceFiveTimes(t *testing.T) {
 			t.Parallel()
 			w := newWorld(t)
 			w.initSprint()
+			// The design's number, as a literal: five races are retried, and
+			// the sixth try applies (1.5.3).
 			f := &faulty{c: w.tw, refuse: func(n int, _ *sprintfn.Request) *sprintfn.Refusal {
-				if n <= Retries {
+				if n <= 5 {
 					return refusalOf(code)
 				}
 				return nil
@@ -226,10 +228,10 @@ func TestDoRetriesRaceFiveTimes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("start: %v", err)
 			}
-			if res.Retries != Retries || f.steps != Retries+1 || len(f.sent) != 1 {
-				t.Fatalf("retries %d, steps tried %d, applied %d; want %d, %d, 1", res.Retries, f.steps, len(f.sent), Retries, Retries+1)
+			if res.Retries != 5 || f.steps != 6 || len(f.sent) != 1 {
+				t.Fatalf("retries %d, steps tried %d, applied %d; want 5, 6, 1", res.Retries, f.steps, len(f.sent))
 			}
-			if got, want := cc.Trips(), 2*(Retries+1); got != want || res.Trips != want {
+			if got, want := cc.Trips(), 12; got != want || res.Trips != want {
 				t.Fatalf("round trips %d (result %d), want %d: a read and a step a try", got, res.Trips, want)
 			}
 			if c, _ := w.clock(0); !running(c) {
@@ -245,11 +247,11 @@ func TestDoRetriesRaceFiveTimes(t *testing.T) {
 		w.env.C = f
 		_, err := Start(ctx, w.env, ClockReq{})
 		var rf *Refused
-		if !errors.As(err, &rf) || rf.Code() != "REVISION" || rf.Retries != Retries || rf.Local {
-			t.Fatalf("err %v, want REVISION after %d retries", err, Retries)
+		if !errors.As(err, &rf) || rf.Code() != "REVISION" || rf.Retries != 5 || rf.Local {
+			t.Fatalf("err %v, want REVISION after 5 retries", err)
 		}
-		if f.steps != Retries+1 || len(f.sent) != 0 {
-			t.Fatalf("steps tried %d, applied %d; want %d, 0", f.steps, len(f.sent), Retries+1)
+		if f.steps != 6 || len(f.sent) != 0 {
+			t.Fatalf("steps tried %d, applied %d; want 6, 0", f.steps, len(f.sent))
 		}
 		if c, _ := w.clock(0); running(c) {
 			t.Fatal("a refused start moved the clock")
