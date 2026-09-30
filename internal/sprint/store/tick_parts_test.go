@@ -463,7 +463,7 @@ func TestSixtyPrimariesLandDrivenOnlyByTheTick(t *testing.T) {
 
 func TestASprintStoppedMidFlightLandsTheSame(t *testing.T) {
 	t.Parallel()
-	a, b := sprintOf(t, 30, 0), sprintOf(t, 30, 6)
+	a, b := sprintOf(t, 30, 0), sprintOf(t, 30, 2) // the whole fleet is dealt in the first tick: the stop comes early
 	sa, sb := a.snap(), b.snap()
 	for _, st := range []string{"s1", "s2", "s3"} {
 		var la, lb []string

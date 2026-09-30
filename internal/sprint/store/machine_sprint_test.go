@@ -93,7 +93,7 @@ func (w *crWorld) holders(round int) {
 	up := s.UpMembers()
 	room := false
 	for _, m := range up {
-		if s.Fleet.Count(m, sprint.Ready) < sprint.MaxReadyPerMember {
+		if heldBy(s, m) < s.Width(m) {
 			room = true
 		}
 	}

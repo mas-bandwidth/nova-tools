@@ -56,11 +56,15 @@ type Clock interface {
 
 // Config is how the driver plays.
 type Config struct {
-	Every     time.Duration // between ticks
-	Batch     int           // a merge step's batch
-	TakeLimit int           // work cards a member takes a tick
-	ReadLimit int           // read cards a reader reports a tick
-	Ticks     int           // stop after this many ticks; 0 is until every stream lands
+	Every time.Duration // between ticks
+	Batch int           // a merge step's batch
+	// TakeLimit is the work cards a member takes in its one take of a tick;
+	// 0 is the member's width, as the view shows it, else DefaultWidth.
+	TakeLimit int
+	// ReadLimit is the read cards a reader begins, and reports, in its one
+	// call of each a tick; 0 is its whole queue. Every batch is cut at Most.
+	ReadLimit int
+	Ticks     int // stop after this many ticks; 0 is until every stream lands
 	// Hold plays the facts' downs as the coordinator's hold (fleet down and
 	// fleet up); without it a member the facts take down falls silent (its
 	// machine stops beating), takes no work while it is down, and comes back
@@ -109,23 +113,47 @@ const clearedMark = "the sprint was cleared at"
 var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": true, "rank": true, "resume": true, "return": true,
 	"start": true, "stop": true, "tick": true, "run": true, "resolve": true, "ask": true}
 
+// DefaultWidth is the work cards a member takes a tick when the view shows no
+// width for it.
+const DefaultWidth = 64
+
+// Most is the cards one batched verb names: the Layer 1 step's bound of IDs
+// in an entry and in a log line (L1 contract section 6, LimitEntryIDs and
+// LimitLineIDs). A batch larger than this is cut at it; the rest wait a tick.
+const Most = 2000
+
 // run runs one verb, prints its command line and its summary shortened, and
 // returns its exit code and stdout.
 func (d *Driver) run(quiet bool, args ...string) (int, string) {
+	return d.exec(quiet, args, nil)
+}
+
+// batch runs one verb over a set of cards in one call, the cards after its
+// words. Its printed line names the count and the first three cards when the
+// set is larger than three, never a line per card.
+func (d *Driver) batch(words []string, cards []string) (int, string) {
+	return d.exec(false, words, cards)
+}
+
+func (d *Driver) exec(quiet bool, args, cards []string) (int, string) {
 	if coordinatorVerbs[args[0]] {
 		panic("the driver never runs the coordinator's verb " + args[0])
 	}
 	if d.cleared {
 		return 1, ""
 	}
-	full := append(append([]string{}, args...), d.Base...)
+	full := append(append(append([]string{}, args...), cards...), d.Base...)
 	var out, errb bytes.Buffer
 	code := d.Run(full, &out, &errb)
 	if code != 0 && strings.Contains(out.String()+errb.String(), clearedMark) {
 		d.cleared = true
 	}
 	if !quiet {
-		fmt.Fprintf(d.Out, "  %-60s %s\n", commandLine(full), short(args[0], out.String()+errb.String(), code))
+		line := commandLine(full)
+		if len(cards) > 3 {
+			line = commandLine(append(append([]string{}, args...), d.Base...)) + fmt.Sprintf(" [%d cards: %s ...]", len(cards), strings.Join(cards[:3], " "))
+		}
+		fmt.Fprintf(d.Out, "  %-60s %s\n", line, short(args[0], out.String()+errb.String(), code))
 	}
 	return code, out.String()
 }
@@ -242,11 +270,8 @@ func (d *Driver) Loop() (string, error) {
 	if c.Batch <= 0 {
 		c.Batch = 100
 	}
-	if c.TakeLimit <= 0 {
-		c.TakeLimit = 10
-	}
-	if c.ReadLimit <= 0 {
-		c.ReadLimit = 10
+	if c.ReadLimit <= 0 || c.ReadLimit > Most {
+		c.ReadLimit = Most
 	}
 	var first where
 	if !d.read(&first, "where") {
@@ -393,8 +418,12 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			next[m] = false // a silent machine's worker does no work
 		}
 	}
-	// Workers: finish what they took last tick, then take the oldest ready
-	// cards; every card is named <card>@<gen>, the generation from the queue.
+	// Workers, a batch each (the owner's ruling of 2026-09-30: a machine
+	// moves its cards in batches, never one or two a tick): one finish of
+	// every card it took last tick (a card's simulated work is one tick), the
+	// failed ones in a second call, then one take of its ready queue, up to
+	// its width. Every card finished is named <card>@<gen>, the generation
+	// from the queue.
 	for _, m := range members {
 		if !next[m] {
 			continue
@@ -403,55 +432,66 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		if !d.read(&q, "queue", "--as", m) {
 			continue
 		}
-		var good, ready []string
+		ready, done := 0, 0
+		var good []string
 		bad := map[string][]string{}
 		for _, card := range q.Cards {
-			word := card.ID + "@" + strconv.Itoa(card.Gen)
-			if card.Col == "ready" && len(ready) < c.TakeLimit {
-				ready = append(ready, word)
-			}
-			if card.Col != "working" {
-				continue
-			}
-			if ok, report := d.Facts.Work(card.ID); ok {
-				good = append(good, word)
-			} else {
-				bad[report] = append(bad[report], word)
+			switch {
+			case card.Col == "ready":
+				ready++
+			case card.Col == "working" && done < Most:
+				done++
+				word := card.ID + "@" + strconv.Itoa(card.Gen)
+				if ok, report := d.Facts.Work(card.ID); ok {
+					good = append(good, word)
+				} else {
+					bad[report] = append(bad[report], word)
+				}
 			}
 		}
 		if len(good) > 0 {
-			d.run(false, append(append([]string{"finish", "--as", m}, held...), good...)...)
+			d.batch(append([]string{"finish", "--as", m}, held...), good)
 		}
 		for _, report := range sortedKeys(bad) {
-			d.run(false, append(append([]string{"finish", "--as", m, "--failed", "--report", report}, held...), bad[report]...)...)
+			d.batch(append([]string{"finish", "--as", m, "--failed", "--report", report}, held...), bad[report])
 		}
-		if len(ready) > 0 {
-			d.run(false, append(append([]string{"take", "--as", m}, held...), ready...)...)
+		if ready > 0 {
+			n := min(takeLimit(c, fleet[m]), Most)
+			d.run(false, append([]string{"take", "--as", m, "--limit", strconv.Itoa(n)}, held...)...)
 		}
 	}
-	// Readers report what is asked of them.
+	// Readers, a batch each: one report of every card begun last tick (a
+	// read's simulated time is one tick), ok and broken at most two calls,
+	// then one begin of every card asked.
 	for _, r := range sortedRows(w.Tables["readers"]) {
 		var q queue
 		if !d.read(&q, "queue", "--as", r) {
 			continue
 		}
-		var good []string
+		var begin, good []string
 		broken := map[string][]string{}
-		for i, card := range q.Cards {
-			if i == c.ReadLimit {
-				break
-			}
-			if ok, finding := d.Facts.Read(card.ID); ok {
-				good = append(good, card.ID)
-			} else {
-				broken[finding] = append(broken[finding], card.ID)
+		reported := 0
+		for _, card := range q.Cards {
+			switch {
+			case card.Col == "asked" && len(begin) < c.ReadLimit:
+				begin = append(begin, card.ID)
+			case card.Col == "reading" && reported < c.ReadLimit:
+				reported++
+				if ok, finding := d.Facts.Read(card.ID); ok {
+					good = append(good, card.ID)
+				} else {
+					broken[finding] = append(broken[finding], card.ID)
+				}
 			}
 		}
 		if len(good) > 0 {
-			d.run(false, append(append([]string{"read", "--as", r, "--ok"}, held...), good...)...)
+			d.batch(append([]string{"read", "--as", r, "--ok"}, held...), good)
 		}
 		for _, f := range sortedKeys(broken) {
-			d.run(false, append(append([]string{"read", "--as", r, "--broken", "--finding", f}, held...), broken[f]...)...)
+			d.batch(append([]string{"read", "--as", r, "--broken", "--finding", f}, held...), broken[f])
+		}
+		if len(begin) > 0 {
+			d.batch(append([]string{"read", "--as", r, "--begin"}, held...), begin)
 		}
 	}
 	// Each stream's merge step, with its facts. A stream's queue is read just
@@ -516,6 +556,19 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		}
 		d.run(false, append(args, held...)...)
 	}
+}
+
+// takeLimit is the cards a member takes in its one take: the configured
+// limit, else the member's width as the view's fleet table shows it, else
+// DefaultWidth.
+func takeLimit(c Config, row map[string]string) int {
+	if c.TakeLimit > 0 {
+		return c.TakeLimit
+	}
+	if n := atoi(row["width"]); n > 0 {
+		return n
+	}
+	return DefaultWidth
 }
 
 // waits prints what waits for the coordinator, and for how long.

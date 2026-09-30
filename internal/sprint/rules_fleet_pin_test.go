@@ -62,9 +62,10 @@ func fieldScenarios() []fieldScenario {
 			f.setMember("m4", Down, "2030-01-02T03:04:05Z") // down, and a hold
 			return f
 		}},
-		// m1 holds a card never taken, a taken one, and a taken one at the bound; m2 and m3 receive
+		// m1 holds a card never taken, a taken one, and a taken one at the bound; m2 and m3 receive,
+		// every member at width 1, so m2 (holding r1) is at its width and the width decides
 		{"down, dealt again and at the bound", ruleDown, []string{"down:m1"}, func(t *testing.T) *fleetT {
-			f := newFleetT(t, 1, "m1", "m2", "m3")
+			f := newFleetW(t, 1, 1, "m1", "m2", "m3")
 			putWorkCard(f, "a1", "m1", Ready, 10, map[string]string{"redeals": "2"})
 			putWorkCard(f, "a2", "m1", Working, 11, taken(map[string]string{"redeals": "2"}))
 			putWorkCard(f, "a3", "m1", Working, 12, taken(map[string]string{"redeals": itoa(RuleMaxRedeals)}))
@@ -336,7 +337,7 @@ func TestDownCutIsFoundFromTheCountsNotTheHead(t *testing.T) {
 // nothing is dealt to it.
 func TestDealRoomIsTheCellCounts(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 3, "m1", "m2")
+	f := newFleetW(t, 3, 2, "m1", "m2")
 	for i := 1; i <= 3; i++ {
 		putWorkCard(f, "x"+itoa(i), "m1", Ready, float64(20+i), nil)
 	}
@@ -424,11 +425,13 @@ func TestDownGuardsTheControlCardWhenItMovesCards(t *testing.T) {
 	quiet(t, "held with no cards", h.plan(ruleDown, "down:m1"), "down:m1")
 }
 
-// The cards of a member that went down go to the up member with the shortest
-// ready queue, counting the cards the plan has dealt there already (2.3 R2).
-func TestDownDealsToTheShortestQueue(t *testing.T) {
+// The cards of a member that went down go round the fleet from the deal's
+// rolling index (2.3 R2; errata 3 amendment 5: every placement moves the
+// index), each to the first up member with room, counting the cards the plan
+// has dealt there already.
+func TestDownDealsRoundTheFleet(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 1, "m1", "m2", "m3")
+	f := newFleetW(t, 1, 2, "m1", "m2", "m3") // every member at width 2
 	putWorkCard(f, "r1", "m2", Ready, 1, nil) // m2 holds one, m3 none
 	for i := 1; i <= 3; i++ {
 		putWorkCard(f, "c"+itoa(i), "m1", Ready, float64(10+i), nil)
@@ -442,10 +445,15 @@ func TestDownDealsToTheShortestQueue(t *testing.T) {
 			}
 		}
 	}
-	// m3 (0), then m2 and m3 tie at 1 and the first of them takes it, then m3 (1 < 2)
-	want := map[string]string{"c1.w1": "m3", "c2.w1": "m2", "c3.w1": "m3"}
+	// from the first member (no index yet), m1 going down: m2 (1 < its width 2),
+	// m3, then m2 is at its width and m3 takes the third (1 < 2); the shorter
+	// queue does not choose
+	want := map[string]string{"c1.w1": "m2", "c2.w1": "m3", "c3.w1": "m3"}
 	if !reflect.DeepEqual(to, want) {
 		t.Fatalf("dealt to %v, want %v", to, want)
+	}
+	if len(rp.Plan.Props) != 1 || rp.Plan.Props[0].Name != PropDealIndex || rp.Plan.Props[0].Value != "m3" {
+		t.Fatalf("the deal's index: %+v, want it moved past m3", rp.Plan.Props)
 	}
 	f.apply(rp)
 	if a, b := f.snap().Fleet.Count("m2", Ready), f.snap().Fleet.Count("m3", Ready); a != 2 || b != 2 {
@@ -483,11 +491,12 @@ func TestDownOnlyAWorkingCardIsAtTheBound(t *testing.T) {
 // even when it used all the room on the other streams (1.3.5).
 func TestDealKeepsTheKeyWhenTheRoomIsUsedAndAStreamWasSkipped(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 1, "m1", "m2")
+	const width = 2
+	f := newFleetW(t, 1, width, "m1", "m2")
 	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 5}))
 	f.facts.Dropping["s1"] = true
 	rp := f.plan(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 2*RuleReadyCap || hasUnit(rp, "s1-1") {
+	if len(rp.Plan.Units) != 2*width || hasUnit(rp, "s1-1") {
 		t.Fatalf("units: %+v", rp.Plan.Units)
 	}
 	if keyTexts(rp.Requeue) != "deal" || len(rp.Done) != 0 || len(rp.HeldBack) != 0 {
@@ -634,8 +643,8 @@ func TestRegisteredReadsOfDealAndLevelKeepTheirKeys(t *testing.T) {
 	keptWhole(t, "deal with nobody up", rp, s, "front of s1", "deal")
 
 	// R6: no room, nothing can be dealt, and the key goes: room frees queue it again
-	h := newFleetT(t, 4, "m1")
-	h.run(ruleDeal, "deal") // m1 holds its two; two primaries wait
+	h := newFleetW(t, 4, 2, "m1")
+	h.run(ruleDeal, "deal") // m1 at its width of two; two primaries wait
 	h.byRegistered = true
 	rp, s = h.shortPlan(ruleDeal, "deal")
 	quiet(t, "deal with no room", rp, "deal")
@@ -949,8 +958,8 @@ func TestDealAgainIgnoresTheAvoidMember(t *testing.T) {
 // The numbers of the rules are the design's, the rules' own.
 func TestRuleConstantsAreTheDesigns(t *testing.T) {
 	t.Parallel()
-	if RuleReadyCap != 2 || RuleUntakenDeadline != 15*time.Minute || RuleBeatDeadline != 15*time.Second {
-		t.Fatalf("ready cap %d, untaken deadline %v, beat deadline %v", RuleReadyCap, RuleUntakenDeadline, RuleBeatDeadline)
+	if DefaultWidth != 64 || RuleUntakenDeadline != 15*time.Minute || RuleBeatDeadline != 15*time.Second {
+		t.Fatalf("default width %d, untaken deadline %v, beat deadline %v", DefaultWidth, RuleUntakenDeadline, RuleBeatDeadline)
 	}
 	if got := untakenDue(1000); got != 1000+15*60_000 {
 		t.Fatalf("a card dealt at R = 1000 is due at %d", got)

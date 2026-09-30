@@ -478,20 +478,18 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false
 		}
-		// The ready queues' free places go to the ready primaries in the
+		// The members' free places (each one's width less its ready and
+		// working cards, width.go) go to the ready primaries in the
 		// deal's order: one with as many ahead of it as there are places waits
-		// for the workers to take from the queues.
-		room := 0
-		for _, m := range up {
-			room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
-		}
+		// for the members to finish work.
+		room := widthRoom(s, up)
 		// The deal's order is dealTurns (a stream at a time, in turn), so what
 		// is ahead is counted in that order.
 		ahead := c.dealTurn(pr.ID)
 		if ahead < room {
-			return "a member has room in its ready queue, and nothing deals it", "", false
+			return "a member is below its width, and nothing deals it", "", false
 		}
-		return fmt.Sprintf("waits for a place in a ready queue: %d free, %d ready ahead of it", room, ahead), "", true
+		return fmt.Sprintf("waits for a member below its width: %d free, %d ready ahead of it", room, ahead), "", true
 	case Working:
 		return "no live work card of an up member holds it before its deadline, and no judgment is open on it", "", false
 	case Review:

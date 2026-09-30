@@ -93,8 +93,8 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 		}
 		s := h.snap()
 		for _, m := range crMembers {
-			if n := s.Fleet.Count(m, sprint.Ready); n > sprint.MaxReadyPerMember {
-				t.Errorf("trial %d: %s ready %d", trial, m, n)
+			if n := heldBy(s, m); n > s.Width(m) {
+				t.Errorf("trial %d: %s holds %d, its width %d", trial, m, n, s.Width(m))
 			}
 		}
 		for _, c := range s.Work.Column(sprint.Review) {

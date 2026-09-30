@@ -16,7 +16,7 @@ import (
 func streamsOf30(t *testing.T) *fleetT {
 	t.Helper()
 	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
-	f := newFleetT(t, 30, members...)
+	f := newFleetW(t, 30, 2, members...) // at width 2 the room is 16
 	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 30}))
 	f.w.must(Add(f.snap(), AddReq{Stream: "s3", Count: 30}))
 	return f
@@ -97,7 +97,7 @@ func TestTickDealWorksEveryStreamInParallel(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, "reader-a")
 	for i := 1; i <= 8; i++ {
-		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: fmt.Sprintf("m%d", i)}))
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: fmt.Sprintf("m%d", i), Width: 2}))
 	}
 	for _, st := range []string{"s1", "s2", "s3"} {
 		w.must(Add(w.s, AddReq{Stream: st, Count: 30}))

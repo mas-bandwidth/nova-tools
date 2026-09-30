@@ -66,7 +66,7 @@ var heldFields = []string{
 }
 
 // heldFleetFields are the fields of the members' control cards R16 reads.
-var heldFleetFields = []string{"status"}
+var heldFleetFields = []string{"status", FieldWidth}
 
 // heldFollows are what related follows from each card (1.0): its live work
 // card, its read cards, its merge card, its stream's control card, its needs
