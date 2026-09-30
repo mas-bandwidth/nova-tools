@@ -45,6 +45,11 @@ const (
 	KeyMissing   = "missing"   // scores in {p}missing@e of the ids named
 	KeyJOpen     = "jopen"     // {p}jopen:<subject>@e of the subjects named
 	KeyDueCount  = "duecount"  // the due entries at or below R
+	// KeyBeat is the score of beat:<m> in {p}due@e for each member named: a
+	// member's beat is fresh while it lies above R (1.4.4), which fleet up
+	// reads (section 3) and R1 and R2 read as a fact (IT07's question 3). Added
+	// by IT20 beside IT30's kinds, in the shape of missing.
+	KeyBeat = "beat"
 )
 
 // CompositeKinds are the eight composite queries of 1.0, in its order.
@@ -53,7 +58,7 @@ var CompositeKinds = []string{sprint.QueryRelated, sprint.QueryFront, sprint.Que
 
 // SprintKeyKinds are the bounded sprint-key read kinds, in the order above.
 var SprintKeyKinds = []string{KeyClock, KeyLease, KeyTick, KeyHeartbeat, KeyDropping, KeyParked, KeyMissing,
-	KeyJOpen, KeyDueCount}
+	KeyJOpen, KeyDueCount, KeyBeat}
 
 // Bounds of a query, each the design's own.
 const (
@@ -326,7 +331,7 @@ func ValidateKeyQ(q KeyQ) *Refusal {
 		ok = q.Streams != nil && distinct(q.Streams, validName) && none(q.Keys, q.IDs, q.Subjects, q.Names)
 	case KeyParked:
 		ok = q.Keys != nil && distinct(q.Keys, text) && none(q.Streams, q.IDs, q.Subjects, q.Names)
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		ok = q.IDs != nil && distinct(q.IDs, validName) && none(q.Streams, q.Keys, q.Subjects, q.Names)
 	case KeyJOpen:
 		ok = q.Subjects != nil && q.Names != nil && distinct(q.Subjects, validName) && distinct(q.Names, text) &&
@@ -413,7 +418,7 @@ func EncodeKeyQ(q KeyQ) (SprintQuery, *Refusal) {
 		m["streams"] = q.Streams
 	case KeyParked:
 		m["keys"] = q.Keys
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		m["ids"] = q.IDs
 	case KeyJOpen:
 		m["subjects"], m["names"] = q.Subjects, q.Names
@@ -653,7 +658,7 @@ func DecodeKeyQ(q SprintQuery) (KeyQ, *Refusal) {
 		allowed = []string{"streams"}
 	case KeyParked:
 		allowed = []string{"keys"}
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		allowed = []string{"ids"}
 	case KeyJOpen:
 		allowed = []string{"subjects", "names"}
@@ -678,7 +683,7 @@ func DecodeKeyQ(q SprintQuery) (KeyQ, *Refusal) {
 	case KeyParked:
 		out.Keys, ok1 = wireList(m, "keys")
 		ok2 = true
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		out.IDs, ok1 = wireList(m, "ids")
 		ok2 = true
 	case KeyJOpen:
