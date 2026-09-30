@@ -4,13 +4,14 @@ package swarm
 
 import (
 	"errors"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -232,4 +233,16 @@ func execCmd(t *testing.T, dir, name string, args ...string) string {
 		t.Fatalf("%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	}
 	return string(out)
+}
+
+// testWait is the allowed poll bound: NOVA_TEST_WAIT when set, thirty seconds
+// otherwise. It is read at the call, never written as a constant, so a loaded
+// machine lengthens the wait rather than flaking a test.
+func testWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
 }

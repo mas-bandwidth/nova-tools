@@ -28,9 +28,9 @@ func luaFunctionRegistrations(source string) map[string]bool {
 // TestEveryGoFunctionNameIsRegistered is the #4405 fix round's item 5
 // (#4322): every ns_* function name a Go source outside the tests names
 // (an FCALL's constant) is registered by the library, so no call reaches
-// "ERR Function not found". The cold read named ns_task_push
-// (internal/nsprint/task/push.go) as unregistered; task_claim.lua
-// registers it, and this test holds it so for every name.
+// "ERR Function not found". The two names checked first are the table
+// primitive's batch and Layer 1's step, so a library that assembled
+// nothing fails loudly before the walk.
 func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 	t.Parallel()
 	src, err := Source()
@@ -38,8 +38,8 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 	registered := luaFunctionRegistrations(src)
-	if !registered["ns_task_push"] || !registered["ns_ws_paths_repair"] {
-		t.Fatalf("the library registers %d functions, not ns_task_push and ns_ws_paths_repair", len(registered))
+	if !registered["ns_table_apply"] || !registered["ns_tset_step"] {
+		t.Fatalf("the library registers %d functions, not ns_table_apply and ns_tset_step", len(registered))
 	}
 	root := filepath.Join("..", "..", "..")
 	named := 0

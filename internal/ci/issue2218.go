@@ -326,9 +326,41 @@ func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, 
 					}
 				}
 			}
+			// A tool on internal/tool writes its banner from its verbs: each
+			// verb's Example is its example lines, after the tool's name.
+			for _, ex := range exampleFields(file) {
+				for _, l := range strings.Split(ex, "\n") {
+					if l = strings.Join(strings.Fields(l), " "); l != "" {
+						if _, dup := out["example: "+tool+" "+l]; !dup {
+							out["example: "+tool+" "+l] = rel
+						}
+					}
+				}
+			}
 		}
 	}
 	return out, nil
+}
+
+// exampleFields returns the string literal of every `Example:` field of a
+// composite literal: an internal/tool Verb's example lines.
+func exampleFields(file *ast.File) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		lit, isLit := kv.Value.(*ast.BasicLit)
+		if ok && isLit && key.Name == "Example" && lit.Kind == token.STRING {
+			if s, err := strconv.Unquote(lit.Value); err == nil {
+				out = append(out, s)
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // stringConstants returns every string literal of a file and every `+` chain

@@ -1656,6 +1656,40 @@ func TestHeldFactsOfALineRead(t *testing.T) {
 	}
 }
 
+// TestHeldFactsOfCarriesOnlyTheRelatedAboutOfALine pins the rule heldFactsOf
+// keeps over the plan it reads: a line is carried by the answer of a `related`
+// query over a line's `about`, and by nothing else. A query of another kind, a
+// related query over ids, and a plan longer than its answer carry no line.
+func TestHeldFactsOfCarriesOnlyTheRelatedAboutOfALine(t *testing.T) {
+	t.Parallel()
+	line := IDSource{Kind: SourceLine, Seq: 9, About: true, Limit: 4}
+	answered := []Answer{{IDs: []string{"c0", "c1"}}}
+	for _, c := range []struct {
+		name string
+		q    SprintQ
+		ans  []Answer
+		want bool
+	}{
+		{"related over a line's about", SprintQ{Kind: QueryRelated, Source: line}, answered, true},
+		{"another kind of query over the same line", SprintQ{Kind: QueryWaiters, Source: line}, answered, false},
+		{"related over ids that say about", SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceIDs, IDs: []string{"c0"}, About: true}}, answered, false},
+		{"related over a line's ids", SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9, Limit: 4}}, answered, false},
+		{"related over a line's about, no answer for it", SprintQ{Kind: QueryRelated, Source: line}, nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Snapshot{Partial: &Partial{
+				Plan:   ReadPlan{Sprint: []SprintQ{c.q}},
+				Answer: ReadAnswer{Sprint: c.ans},
+			}}
+			lines := heldFactsOf(s).Lines
+			got, ok := lines[HeldLineAt{Line: 9}]
+			if c.want && (!ok || !slices.Equal(got.About, []string{"c0", "c1"})) || !c.want && len(lines) != 0 {
+				t.Errorf("%s: carried %+v, want carried %v", c.name, lines, c.want)
+			}
+		})
+	}
+}
+
 // heldKeysOf is the keys of the held rule the lines make at ingest, in the
 // order ingest gives them.
 func heldKeysOf(t *testing.T, seq uint64, line string) []AgendaKey {
@@ -2157,6 +2191,34 @@ func TestHeldDeadlinesAreHeldByTheActorBeforeThemAndByR11AtThem(t *testing.T) {
 				t.Errorf("%s: the rule judges a card held by its deadline: %+v", st.name, rp)
 			}
 		}
+	}
+}
+
+// TestHeldAWorkCardAtAMemberNoHolderNamesIsHeldByR11OnlyAtItsDue pins the
+// condition of R11 on a working primary: its work card's deadline has come. A
+// card before its deadline at a member that is neither up, down nor held is
+// held by no one, and is a stall, not a late card.
+func TestHeldAWorkCardAtAMemberNoHolderNamesIsHeldByR11OnlyAtItsDue(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name    string
+		due     int64
+		stalled bool
+	}{
+		{"before its due", hR + 1, true},
+		{"at its due", hR, false},
+		{"after its due", hR - 1, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newHWorld()
+			w.member("m3", "")
+			p := w.primary("p1", "s1", Working, 1, "attempt", "1")
+			w.work(p, "m3", Working, heldDueUnfinished, strconv.FormatInt(c.due, 10))
+			vd := w.verdict("p1")
+			if vd.Stalled() != c.stalled || !c.stalled && (vd.By != HeldByTick || !strings.HasPrefix(vd.Why, "R11, its due has passed")) {
+				t.Errorf("%s: stalled %v, (%s) %s, want stalled %v", c.name, vd.Stalled(), vd.By, vd.Why, c.stalled)
+			}
+		})
 	}
 }
 

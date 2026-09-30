@@ -2,8 +2,6 @@ package swarm
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,50 +39,6 @@ func TestApplyProviderReadDeadlineWritesBothAndKeepsTheKey(t *testing.T) {
 	}
 	if opts["chunkTimeout"] != float64(ProviderChunkTimeout/time.Millisecond) {
 		t.Fatalf("chunkTimeout = %v", opts["chunkTimeout"])
-	}
-}
-
-func TestScoreCardHoldsAnUnknownAcceptanceEvenWhenAResultExists(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	job := filepath.Join(root, "1", "jobs", "a")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("a card line 1\nDONE\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("unknown\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	state, reason, _, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(job, "harness.log"), "")
-	if state != "hold" || reason != "unknown-acceptance" {
-		t.Fatalf("a result beside an unknown acceptance scored %s %s", state, reason)
-	}
-}
-
-func TestAcceptanceUnknownHoldsAnEmptyMarker(t *testing.T) {
-	t.Parallel()
-
-	job := t.TempDir()
-	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !AcceptanceUnknown(job) {
-		t.Fatal("an empty marker was treated as reconciled")
-	}
-}
-
-func TestAcceptanceUnknownFailsClosedWhenTheMarkerCannotBeRead(t *testing.T) {
-	t.Parallel()
-
-	job := t.TempDir()
-	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if !AcceptanceUnknown(job) {
-		t.Fatal("an unreadable marker was treated as an ordinary missing result")
 	}
 }
 

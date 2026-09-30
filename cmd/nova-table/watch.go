@@ -300,11 +300,12 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 		}
 		if out == "" {
 			if _, err := io.WriteString(w, clearScreen+text); err != nil {
-				fmt.Fprintf(stderr, "nova-table watch: stdout: %s\n", oneline.Escape(err.Error()))
+				fmt.Fprintf(stderr, "nova-table watch: stdout: %s; next: repair or replace the stdout consumer, then rerun this watch\n", oneline.Escape(err.Error()))
 				return 1
 			}
 		} else if err := writeAtomic(out, text); err != nil {
-			fmt.Fprintf(stderr, "nova-table watch: %s\n", oneline.Escape(err.Error()))
+			fmt.Fprintf(stderr, "nova-table watch: %s; next: make --out %q writable (and its parent directory present and writable), then rerun this watch\n", oneline.Escape(err.Error()), out)
+			return 1
 		}
 		select {
 		case <-ctx.Done():

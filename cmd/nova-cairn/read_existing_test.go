@@ -60,7 +60,7 @@ func TestIndexAndReceiptReadFlatRecordsWithoutChangingThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _ := runOK(t, "", "index", "--store", store, "--max", "1")
-	for _, want := range []string{"INDEX ENTRY session=flat entry=early stamp=2026-09-28T01:02:03Z bytes=6 source=-", "MORE", "sessions=1 entries=2 shown=1"} {
+	for _, want := range []string{"INDEX ENTRY session=flat entry=early stamp=2026-09-28T01:02:03Z bytes=6 source=-", "INDEX MORE kind=entry shown=1 total=2", "INDEX OK sessions=1 entries=2"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("index lacks %q: %s", want, out)
 		}

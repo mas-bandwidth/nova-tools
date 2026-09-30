@@ -1,7 +1,5 @@
 package swarm
 
-import ()
-
 // EVERY CALLER OF `native` PASSES THE WORD, AND NONE INVENTS IT (SPEC-SWARM rule 13d,
 // demanded test 13d, issue #1545).
 //
