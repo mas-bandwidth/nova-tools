@@ -83,9 +83,6 @@ output (stdout): PLAN OK, then REPO OK per repository, then
   sha256= calls= points= rest=0 seconds= dry_run=
 calls are GraphQL calls; points are what GitHub charged for them; rest is REST
 calls, always 0. Failures go to stderr as IMPORT FAIL <reason>.
-
-example:
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
 `
 
 const verifyHelp = `nova-work verify --tree <tree.lisp> [flags]
@@ -120,9 +117,6 @@ flags:
 output: VERIFY OK tree= sha256= repos= issues= comments= calls= points= rest=0
 seconds= on stdout when there is no difference; VERIFY FAIL ... differences=
 on stderr when there is, exit 1.
-
-example:
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }

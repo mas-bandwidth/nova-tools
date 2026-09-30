@@ -103,6 +103,12 @@ type LinkedPR struct {
 	State  string
 }
 
+// Web is the source.s web root every repository and issue URL starts with.
+const Web = "https://github.com/"
+
+// IssueURL is the URL of issue n of repo (owner/name).
+func IssueURL(repo string, n int) string { return Web + repo + "/issues/" + strconv.Itoa(n) }
+
 // Path is an issue's path in the tree: repos/<owner>/<repo>/issues/<n>.
 func Path(repo string, number int) string {
 	return "repos/" + repo + "/issues/" + strconv.Itoa(number)
@@ -111,7 +117,7 @@ func Path(repo string, number int) string {
 // PathOfURL turns an issue URL into its tree path; the two are one lookup
 // in each direction and nothing is written to the source to make them so.
 func PathOfURL(url string) (string, error) {
-	rest, ok := strings.CutPrefix(url, "https://github.com/")
+	rest, ok := strings.CutPrefix(url, Web)
 	if !ok {
 		return "", fmt.Errorf("not a GitHub issue URL: %q", url)
 	}
@@ -136,7 +142,7 @@ func URLOfPath(path string) (string, error) {
 	if err != nil || n <= 0 || strconv.Itoa(n) != parts[4] {
 		return "", fmt.Errorf("not a tree issue path: %q", path)
 	}
-	return "https://github.com/" + parts[1] + "/" + parts[2] + "/issues/" + parts[4], nil
+	return IssueURL(parts[1]+"/"+parts[2], n), nil
 }
 
 // OriginOf is the origin an author association gives: an issue filed by the

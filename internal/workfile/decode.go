@@ -2,7 +2,7 @@ package workfile
 
 import (
 	"fmt"
-	"strconv"
+	"sort"
 
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -244,7 +244,7 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 	} else {
 		return is, d.errf(at, ":origin wants :internal or :external")
 	}
-	if want := "https://github.com/" + repo + "/issues/" + strconv.Itoa(n); is.URL != want {
+	if want := IssueURL(repo, n); is.URL != want {
 		return is, d.errf(at, ":url %q is not the URL its path gives, %q", is.URL, want)
 	}
 	if is.Locked, err = d.boolean(at, "locked", m["locked"]); err != nil {
@@ -255,6 +255,9 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 	}
 	if is.Assignees, err = d.strs(at, "assignees", m["assignees"]); err != nil {
 		return is, err
+	}
+	if !sort.StringsAreSorted(is.Labels) || !sort.StringsAreSorted(is.Assignees) {
+		return is, d.errf(at, ":labels and :assignees must be sorted")
 	}
 	ms, err := d.list(at, "milestone", m["milestone"])
 	if err != nil {
