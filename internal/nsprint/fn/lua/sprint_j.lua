@@ -511,13 +511,20 @@ do
   end
 
   -- meta_of is the line's meta: an object of strings and one list of strings,
-  -- no numbers (L2 1.1), each key left out when empty.
-  local function meta_of(g)
+  -- no numbers (L2 1.1), each key left out when empty. The list is a marked
+  -- array (S.array): Layer 1's json_tree reads an unmarked table as an object
+  -- and refuses its numeric keys, so the store refuses a note that carries
+  -- decisions REQUEST.
+  local function meta_of(S, g)
     local r = g.req
     local m = {op = r.op, type = r.type}
     if r.cause ~= '' then m.cause = r.cause end
     if r.text ~= '' then m.text = r.text end
-    if #r.decisions > 0 then m.decisions = r.decisions end
+    if #r.decisions > 0 then
+      local decisions = S.array()
+      for i = 1, #r.decisions do decisions[i] = r.decisions[i] end
+      m.decisions = decisions
+    end
     if g.existing ~= '' then m.note = note_of(g.existing) end
     if r.op == 'open' then
       m.kind = 'judgment'
@@ -717,7 +724,7 @@ do
         if about > B.about then return nil, nil, refuse_limit(S, i - 1, 'about', B.about, about) end
         local arr = S.array()
         for _, s in ipairs(g.req.subjects) do arr[#arr + 1] = s end
-        notes[#notes + 1] = {line = {kind = 'note', meta = meta_of(g)}, about = arr}
+        notes[#notes + 1] = {line = {kind = 'note', meta = meta_of(S, g)}, about = arr}
         jnotes[#jnotes + 1] = {index = base + #notes, req = g.req, existing = g.existing, digest = g.digest}
       end
     end
