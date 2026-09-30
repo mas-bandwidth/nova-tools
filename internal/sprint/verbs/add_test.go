@@ -594,8 +594,8 @@ func TestRankAboveCounterRaisesIt(t *testing.T) {
 	w.add(sprint.AddReq{Stream: "s1", IDs: []string{"a", "b"}})
 	x := 10.0
 	res, err := Rank(context.Background(), w.env, sprint.RankReq{IDs: []string{"a"}, Score: &x})
-	if err != nil || res.Trips != 2 {
-		t.Fatalf("rank: %+v, %v (want 2 round trips)", res, err)
+	if err != nil || res.Trips != 3 {
+		t.Fatalf("rank: %+v, %v (want 3 round trips: the cards, then the read and the step)", res, err)
 	}
 	if score(t, w.card("a")) != 10 || w.counter()["score"] != "11" {
 		t.Fatalf("a at %v, counter %q; want 10 and 11", score(t, w.card("a")), w.counter()["score"])

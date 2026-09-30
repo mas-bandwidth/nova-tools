@@ -453,7 +453,8 @@ do
   -- and requeues.
   -- set_guard_of is a set guard's own shape (sprintfn xSetGuardOf; IT19): the JSON
   -- of a sprint.SetGuard of kind zguard over a stream's sent, elig, fresh or again,
-  -- its bounds in the store's grammar and at least one count bound. nil otherwise.
+  -- its bounds in the store's grammar and at least one count bound, each at most
+  -- 2^53 - 1, and no other field. nil otherwise.
   local function set_guard_of(key)
     local ok, g = pcall(cjson.decode, key)
     if not ok or type(g) ~= 'table' or g.kind ~= 'zguard' or type(g.key) ~= 'string' then return nil end
@@ -469,7 +470,7 @@ do
     if hi == cjson.null then hi = nil end
     if lo == nil and hi == nil then return nil end
     for _, v in ipairs({lo or 0, hi or 0}) do
-      if type(v) ~= 'number' or v < 0 or v ~= math.floor(v) then return nil end
+      if type(v) ~= 'number' or v < 0 or v ~= math.floor(v) or v > 9007199254740991 then return nil end
     end
     if lo ~= nil and hi ~= nil and lo > hi then return nil end
     return {key = g.key, min = g.min, max = g.max, atleast = lo, atmost = hi}

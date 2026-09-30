@@ -1064,13 +1064,47 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 // indexes of a stream.
 var xSetIndexes = []string{sprint.IndexSent, sprint.IndexElig, sprint.IndexFresh, sprint.IndexAgain}
 
+// xSetCountMax is the largest count bound of a set guard: 2^53 - 1, the
+// largest integer the Lua's numbers hold exactly.
+const xSetCountMax = 1<<53 - 1
+
 // xSetGuardOf is a set guard's own shape (sprint.SetGuard, kind zguard): a
 // sprint index of a stream, two bounds in the store's grammar, and at least one
-// count bound, the lower not above the upper.
+// count bound, the lower not above the upper, each at most 2^53 - 1 (a count
+// the Lua holds exactly). A field beside kind, key, min, max, atleast and
+// atmost (an rcount's table or cells among them) is refused, as the Lua's
+// set_guard_of refuses it.
 func xSetGuardOf(g XGuard) (sprint.SetGuard, bool) {
 	var sg sprint.SetGuard
-	if err := json.Unmarshal([]byte(g.Key), &sg); err != nil || sg.Kind != sprint.GuardZGuard {
+	var shape struct {
+		Kind    string `json:"kind"`
+		Key     string `json:"key"`
+		Min     string `json:"min"`
+		Max     string `json:"max"`
+		AtLeast *int   `json:"atleast"`
+		AtMost  *int   `json:"atmost"`
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(g.Key), &fields); err != nil {
 		return sg, false
+	}
+	for f := range fields { // exact names: the Go decoder alone folds case
+		switch f {
+		case "kind", "key", "min", "max", "atleast", "atmost":
+		default:
+			return sg, false
+		}
+	}
+	d := json.NewDecoder(strings.NewReader(g.Key))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&shape); err != nil || d.More() || shape.Kind != sprint.GuardZGuard {
+		return sg, false
+	}
+	sg = sprint.SetGuard{Kind: shape.Kind, Key: shape.Key, Min: shape.Min, Max: shape.Max, AtLeast: shape.AtLeast, AtMost: shape.AtMost}
+	for _, b := range []*int{sg.AtLeast, sg.AtMost} {
+		if b != nil && *b > xSetCountMax {
+			return sg, false
+		}
 	}
 	idx, stream, ok := strings.Cut(sg.Key, ":")
 	if !ok || !sprint.ValidID(stream) {

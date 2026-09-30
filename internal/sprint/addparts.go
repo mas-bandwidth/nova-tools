@@ -31,9 +31,11 @@ import (
 //	read.
 //	The ids. A generated id is <stream>-<n> and a gate <stream>-gate-<n>, the
 //	present build's names (AddIDs), numbered from id:<s> and gate:<s> of the
-//	counter (1.3.1), each 1 when the counter has none. A generated id that a
-//	named add already took is refused EXISTS at its part (a race the part's
-//	retries cannot clear): the op stops there and says so.
+//	counter (1.3.1), each 1 when the counter has none. An id the table holds
+//	(a named id added before, or a generated id a named add took) is refused
+//	EXISTS from the part's read, naming the ids, before the step (the verbs'
+//	addTaken). Part 1 of a --count add learns its ids from its own read, so
+//	its first step finds such an id, and its retry reads the ids and refuses.
 //	The first score. The counter's score is the next global score; a sprint
 //	whose counter has none starts at 1.
 //	The order of an op over several streams: each stream's slice whole, in the
@@ -42,9 +44,11 @@ import (
 //	madeclose (errata 3, H3). The add that creates n closes "blocked on
 //	something missing: n" on n's waiters in its own step, for the waiters its
 //	part read (the head of wait:n, AddMadeLimit a need, AddMadeNotes needs a
-//	part); R4's made, which the create line queues, closes any others. Part 1
-//	of a --count add cannot read the waiters of ids it has not reserved yet, so
-//	its slice's are left to R4's made.
+//	part); R4's made, which the create line queues, closes any others on the
+//	next tick. Part 1 of a --count add cannot read the waiters of ids it has
+//	not reserved yet, so its slice's are left to R4's made. This partial form
+//	is the accepted one: the judgments it leaves open last one tick, and
+//	IT06's row stops printing "add n" once n exists.
 //	The part's size is the chunk in changed members (1.0): a new stream's
 //	control card is one, so part 1 creates that many fewer cards.
 
@@ -466,7 +470,10 @@ func AddPart(s *Snapshot, r AddReq, res Reservation, k int) (Plan, []Intent, err
 		if r.Brief != "" && !it.Gate {
 			fields["brief"] = r.Brief
 		}
-		if len(needs) > 0 && kind == "primary" {
+		// a named sentinel names its needs as any card does (the model's NeedsOf
+		// and AddDest; R3's reach reads its open); a gate of a --count add names
+		// none, its cards carry them
+		if len(needs) > 0 && !it.Gate {
 			fields["needs"] = strings.Join(needs, ",")
 			fields["open"] = strconv.Itoa(open)
 			intents = append(intents, Intent{Kind: "waitfor", Card: id, Needs: append([]string(nil), needs...)})

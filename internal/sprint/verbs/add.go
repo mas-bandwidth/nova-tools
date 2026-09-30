@@ -30,7 +30,7 @@ import (
 //	in a read until a read has said which stream and which score (Layer 1's
 //	count refuses a row it does not hold, NOROW, and a range needs its bounds),
 //	so the anchor, or the sentinel, is read first. add --count and named ids
-//	keep n + 1, and rank --score 2.
+//	keep n + 1; rank --score reads its cards first too (H13, below), 3.
 //	The counter's read is the sprint-key kind next (sprintfn, IT19's addition):
 //	the addendum's kinds have none for it.
 //	The size bounds are read from Layer 1's rows (AL3) of the four tables in
@@ -42,11 +42,16 @@ import (
 //	rank --score x with several cards gives them x, x + 1, ... in the order of
 //	their scores, so x must be at or above the counter (which it raises);
 //	below the counter, several cards go in line with --before or --after.
-//	H13 (rankclose) is taken in the model's form (errata 3, amendment 2): an
-//	insertion or a rank in line that places a card before the first sentinel
-//	closes its "sentinel reached" in its own step; rank --score reads no front
-//	and leaves the close to R3's unreach, which its line queues (2.1). The
-//	cause of "sentinel reached" is the model's "-" (sprint.ReachedCause).
+//	H13 (rankclose) is taken in the model's form (errata 3, amendment 2; VEff
+//	"rank" with ReachedPassed): an insertion or any rank that places an open
+//	card before the first sentinel closes its "sentinel reached" in its own
+//	step. rank --score pays a third round trip for it: its first read names
+//	the cards' streams, whose fronts the step's read holds. R3's unreach, which
+//	the rank's line queues (2.1), stays the fallback. The cause of "sentinel
+//	reached" is the model's "-" (sprint.ReachedCause).
+//	An insertion resumed with --op reads its anchor again before the op (n +
+//	3), and refuses an anchor that has landed since, which the later parts'
+//	own guards would accept: kept, so a resume plans from the anchor as it is.
 //
 // The model: tla/SprintEvents.tla's verb actions, VGuard and VEff of "add"
 // (AddDest, the COUNTER guard, the zguard, madeclose, rankclose), "release"
@@ -303,16 +308,20 @@ func Add(ctx context.Context, e *Env, r sprint.AddReq) (Result, error) {
 		}
 	}
 	pre := res.Trips
+	// guess is the slice part 1 of a --count add planned last: its read names
+	// ids it has not reserved yet, so a retry of part 1 reads the ids its last
+	// plan made (addRead). Read and Plan run in turn on one goroutine (Parts).
+	var guess []string
 	pp := PartsPlan{Verb: verb, Args: addArgs(r), Chunk: sprint.AddChunk,
 		Read: func(epoch tset.Decimal, cont string, chunk int) *sprintfn.ReadRequest {
-			rr, _, err := addRead(e.Names, epoch, r, anchor, cont, chunk)
+			rr, _, err := addRead(e.Names, epoch, r, anchor, cont, chunk, guess)
 			if err != nil {
 				return nil
 			}
 			return rr
 		},
 		Plan: func(rd *sprintfn.ReadReply, cont string, chunk int) (Part, error) {
-			return addPlan(e, r, anchor, rd, cont, chunk)
+			return addPlan(e, r, anchor, rd, cont, chunk, &guess)
 		}}
 	out, err := e.Parts(ctx, r.Op, pp)
 	out.Trips += pre
@@ -327,6 +336,7 @@ type addQueries struct {
 	neighbours            int // the first of the six neighbour ranges in Tset, -1 when none
 	next, clock, dropping int // their places in Sprint, -1 when none
 	chain                 int // the needchain's place in Sprint, -1 when none
+	made                  int // the made read's place in Sprint (AddMadeQ), -1 when none
 	nextFields            []string
 	slice                 []string // the stored ids the part may create (the made read)
 }
@@ -340,8 +350,13 @@ var addTables = []string{sprint.Work, sprint.Merge, sprint.Fleet, sprint.Readers
 // front(s) of each stream it creates in, the needs' records, and the waiters of
 // the ids it creates that are missing (H3). The part's plan is made from the
 // same function's answer, so the read and the plan agree by construction.
-func addRead(names sprint.Names, epoch tset.Decimal, r sprint.AddReq, anchor anchorRead, cont string, chunk int) (*sprintfn.ReadRequest, addQueries, error) {
-	q := addQueries{rows: -1, neighbours: -1, next: -1, clock: -1, dropping: -1, chain: -1}
+// The made read also says whether each id of the slice has a record (section
+// 3: add reads the ids' absence), so an id the table holds is refused before
+// the step. Part 1 of a --count add cannot name its slice before it reads the
+// counter: it reads guess, the slice its last plan made, when it has one (a
+// retry after its step was refused).
+func addRead(names sprint.Names, epoch tset.Decimal, r sprint.AddReq, anchor anchorRead, cont string, chunk int, guess []string) (*sprintfn.ReadRequest, addQueries, error) {
+	q := addQueries{rows: -1, neighbours: -1, next: -1, clock: -1, dropping: -1, chain: -1, made: -1}
 	ep, err := epochOf(epoch)
 	if err != nil {
 		return nil, q, err
@@ -363,7 +378,9 @@ func addRead(names sprint.Names, epoch tset.Decimal, r sprint.AddReq, anchor anc
 	var slice []string
 	switch {
 	case first && r.Count > 0:
-		// part 1 of a --count add cannot name ids it has not reserved
+		// part 1 of a --count add cannot name ids it has not reserved: it reads
+		// the slice its last plan made, if any
+		slice = append([]string(nil), guess...)
 	case first:
 		n := min(len(r.IDs), max(chunk, 1))
 		slice = storedAll(r.IDs[:n], ep)
@@ -400,6 +417,7 @@ func addRead(names sprint.Names, epoch tset.Decimal, r sprint.AddReq, anchor anc
 		}
 	}
 	if len(slice) > 0 {
+		q.made = len(q.rp.Sprint)
 		q.rp.Sprint = append(q.rp.Sprint, sprint.AddMadeQ(slice))
 	}
 	// an insertion guards its anchor and its neighbour at their places (1.5.4):
@@ -452,9 +470,9 @@ func addRead(names sprint.Names, epoch tset.Decimal, r sprint.AddReq, anchor anc
 // checks the needs cycle and the size bounds before any write; every part
 // creates its slice, guarded, with the waitfor intents of its cards with
 // needs and the closes of H3.
-func addPlan(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadReply, cont string, chunk int) (Part, error) {
+func addPlan(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadReply, cont string, chunk int, guess *[]string) (Part, error) {
 	const verb = "add"
-	_, q, err := addRead(e.Names, rd.Epoch, r, anchor, cont, chunk)
+	_, q, err := addRead(e.Names, rd.Epoch, r, anchor, cont, chunk, *guess)
 	if err != nil {
 		return Part{}, err
 	}
@@ -499,12 +517,20 @@ func addPlan(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadReply,
 	}
 	size := res.PartSize(k)
 	made := map[string]bool{}
+	var madeIDs []string
 	for _, u := range plan.Units {
 		for _, c := range u.Changes {
 			if c.Table == sprint.Work && c.Entry.Create != nil {
 				made[c.Entry.ID] = true
+				madeIDs = append(madeIDs, c.Entry.ID)
 			}
 		}
+	}
+	if cont == "" && r.Count > 0 {
+		*guess = madeIDs
+	}
+	if err := addTaken(rd, q, r, madeIDs, cont); err != nil {
+		return Part{}, err
 	}
 	entries, err := planEntries(plan)
 	if err != nil {
@@ -643,6 +669,46 @@ func addReserve(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadRep
 		counter = nil
 	}
 	return res, counter, nil
+}
+
+// addTaken refuses a part that would create an id the table holds, from the
+// part's made read (section 3: add reads the ids' absence; VGuard "add",
+// col[a] = "none", tla/SprintEvents.tla): EXISTS, local, naming the ids,
+// before the step, and never retried. An id the read did not cover (part 1 of
+// a --count add before its slice is known, or an id held in quarantine) is
+// left to the step, whose create refuses EXISTS.
+func addTaken(rd *sprintfn.ReadReply, q addQueries, r sprint.AddReq, made []string, cont string) error {
+	const verb = "add"
+	if q.made < 0 || q.made >= len(rd.Sprint) {
+		return nil
+	}
+	wr, err := sprintfn.DecodeResult(sprint.QueryWaiters, rd.Sprint[q.made])
+	if err != nil {
+		return err
+	}
+	held := map[string]bool{}
+	for _, it := range wr.(sprintfn.WaitersResult).Items {
+		if it.Record.Exists {
+			held[it.ID] = true
+		}
+	}
+	var taken []string
+	for _, id := range made {
+		if held[id] {
+			taken = append(taken, sprint.CardID(id))
+		}
+	}
+	if len(taken) == 0 {
+		return nil
+	}
+	after := ""
+	if cont != "" {
+		after = "; the parts before stay applied"
+	}
+	if r.Count > 0 {
+		return refuseLocal(verb, "EXISTS", "the ids this add generates are taken: %s (an add of named ids took them)%s", strings.Join(taken, ", "), after)
+	}
+	return refuseLocal(verb, "EXISTS", "%s already on the table: an add creates new ids%s", strings.Join(taken, ", "), after)
 }
 
 // rcountEntry is a set guard of kind rcount as Layer 1's entry (L1 3).
@@ -853,8 +919,12 @@ func intp(n int) *int { return &n }
 // there; with --before or --after a card, they take scores between it and its
 // neighbour that are not integers, keeping their order. Each card is guarded
 // at its place and revision, every copy of it (its work cards, read cards and
-// merge card) is rescored with it, and a landed card is refused. One step: two
-// round trips with --score, three in line (the anchor is read first).
+// merge card) is rescored with it, and a landed card is refused. Every rank
+// closes "sentinel reached" in its own step when it places an open card before
+// the first sentinel of its stream (H13 rankclose; VEff "rank" with
+// ReachedPassed, tla/SprintEvents.tla), so each reads front(s) of its streams.
+// One step, three round trips: the anchor (in line) or the cards (--score, whose
+// streams the front reads name) are read first.
 func Rank(ctx context.Context, e *Env, r sprint.RankReq) (Result, error) {
 	const verb = "rank"
 	res := Result{Verb: verb, Op: r.Op}
@@ -892,6 +962,14 @@ func Rank(ctx context.Context, e *Env, r sprint.RankReq) (Result, error) {
 			return res, err
 		}
 	}
+	var sp rankScorePre
+	if r.Score != nil {
+		recs, err := readRecords(ctx, e, &res, ids, []string{"kind"})
+		if err != nil {
+			return res, err
+		}
+		sp = rankScorePreOf(recs, *r.Score)
+	}
 	pre := res.Trips
 	args := map[string]any{"ids": IDsDigest(sorted)}
 	if r.Score != nil {
@@ -918,10 +996,15 @@ func Rank(ctx context.Context, e *Env, r sprint.RankReq) (Result, error) {
 				rr.Sprint = append(rr.Sprint, a, f)
 				rr.Tset = neighbourQs(anchor.Stream, anchor.Score, r.Before != "", len(ids)+1)
 			}
+			for _, s := range sp.streams {
+				f, _ := sprintfn.EncodeSprintQ(sprint.SprintQ{Kind: sprint.QueryFront, Stream: s, Fields: []string{"kind"}})
+				rr.Sprint = append(rr.Sprint, f)
+			}
+			rr.Tset = append(rr.Tset, sp.reads()...)
 			return rr
 		},
 		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
-			return rankPlan(rd, r, ids, anchor)
+			return rankPlan(rd, r, ids, anchor, sp)
 		}})
 	out.Trips += pre
 	if err == nil && !out.Replay {
@@ -942,8 +1025,85 @@ type rankCopy struct {
 	rec   sprintfn.Record
 }
 
+// rankProbe is a count rank --score reads beside its step: the cards of a
+// stream at a card's score (U1), or the open cards of a stream before a
+// sentinel's score (H13), at the score the first read's order gives the card.
+type rankProbe struct {
+	id, stream string
+	score      float64
+}
+
+// rankScorePre is what rank --score learns from its first read of the cards:
+// their streams, whose fronts the step's read names, and the counts it reads,
+// the U1 ones first (Tset in order), then the H13 ones.
+type rankScorePre struct {
+	streams []string
+	taken   []rankProbe
+	before  []rankProbe
+}
+
+// rankScorePreOf is rank --score's reads from the cards as first read: each
+// placed card at x, x + 1, ... in the order of its score, then id.
+func rankScorePreOf(recs []sprintfn.Record, x float64) rankScorePre {
+	var sp rankScorePre
+	var placed []sprintfn.Record
+	seen := map[string]bool{}
+	for _, rec := range recs {
+		row, _ := placeOf(rec)
+		if !rec.Exists || row == "" {
+			continue
+		}
+		placed = append(placed, rec)
+		if !seen[row] {
+			seen[row] = true
+			sp.streams = append(sp.streams, row)
+		}
+	}
+	sort.SliceStable(placed, func(i, j int) bool {
+		a, b := scoreOf(placed[i]), scoreOf(placed[j])
+		if a != b {
+			return a < b
+		}
+		return placed[i].ID < placed[j].ID
+	})
+	for i, rec := range placed {
+		row, _ := placeOf(rec)
+		p := rankProbe{id: rec.ID, stream: row, score: x + float64(i)}
+		sp.taken = append(sp.taken, p)
+		if fieldOf(rec, "kind") == sprint.Sentinel {
+			sp.before = append(sp.before, p)
+		}
+	}
+	return sp
+}
+
+// reads are the counts as Layer 1's reads: the rcount of a stream's six cells
+// at [x, x], and of its five open cells in [-inf, x).
+func (sp rankScorePre) reads() []tset.ReadQuery {
+	var out []tset.ReadQuery
+	for _, p := range sp.taken {
+		out = append(out, tset.ReadQuery{Kind: "rcount", Table: sprint.Work, Cells: allCells(p.stream), Min: fmtF(p.score), Max: fmtF(p.score)})
+	}
+	for _, p := range sp.before {
+		out = append(out, tset.ReadQuery{Kind: "rcount", Table: sprint.Work, Cells: sprint.OpenCells(p.stream), Min: "-inf", Max: "(" + fmtF(p.score)})
+	}
+	return out
+}
+
+// count is the count read for the card id at score x (from probes starting at
+// Tset[at]); false when the read counted another score (the order moved since
+// the first read).
+func (sp rankScorePre) count(ans []tset.ReadAnswer, probes []rankProbe, at int, id string, x float64) (int, bool) {
+	for i, p := range probes {
+		if p.id == id && p.score == x && at+i < len(ans) {
+			return int(ans[at+i].Sum), true
+		}
+	}
+	return 0, false
+}
+
 // rankPlan is rank's step from its read (U2, 1.3.1).
-func rankPlan(rd *sprintfn.ReadReply, r sprint.RankReq, ids []string, anchor anchorRead) (*sprintfn.Request, error) {
+func rankPlan(rd *sprintfn.ReadReply, r sprint.RankReq, ids []string, anchor anchorRead, sp rankScorePre) (*sprintfn.Request, error) {
 	const verb = "rank"
 	rel, err := decodeRelated(rd.Sprint[0])
 	if err != nil {
@@ -1025,15 +1185,39 @@ func rankPlan(rd *sprintfn.ReadReply, r sprint.RankReq, ids []string, anchor anc
 		for i := range scores {
 			scores[i] = x + float64(i)
 		}
-		// U1: no other card of the stream at a score taken below the counter
+		// U1: no other card of the stream at a score taken below the counter,
+		// refused from the read (a card ranked away from it does not count) and
+		// guarded at apply
 		for i, c := range cards {
 			if scores[i] >= float64(counter) {
 				continue
 			}
 			row, _ := placeOf(c.rec)
+			if n, ok := sp.count(rd.Tset, sp.taken, 0, c.rec.ID, scores[i]); ok {
+				for _, o := range cards {
+					if orow, _ := placeOf(o.rec); orow == row && scoreOf(o.rec) == scores[i] {
+						n--
+					}
+				}
+				if n > 0 {
+					return nil, refuseLocal(verb, sprintfn.CodeRequest, "--score %s is taken in stream %s (U1: one card a score); choose another", fmtF(scores[i]), row)
+				}
+			}
 			head = append(head, rcountEntry(sprint.SetGuard{Kind: sprint.GuardRCount, Table: sprint.Work, Cells: allCells(row),
 				Min: fmtF(scores[i]), Max: fmtF(scores[i]), AtMost: intp(0)}))
 		}
+		fronts := map[string]sprintfn.FrontResult{}
+		for i, s := range sp.streams {
+			if 2+i >= len(rd.Sprint) {
+				return nil, fmt.Errorf("rank: the read has no front of stream %s", s)
+			}
+			fr, err := sprintfn.DecodeResult(sprint.QueryFront, rd.Sprint[2+i])
+			if err != nil {
+				return nil, err
+			}
+			fronts[s] = fr.(sprintfn.FrontResult)
+		}
+		notes = rankScoreClosesReached(fronts, sp, rd.Tset, cards, scores)
 	default:
 		if len(rd.Sprint) < 3 {
 			return nil, fmt.Errorf("rank: the read has no anchor")
@@ -1113,8 +1297,8 @@ func rankPlan(rd *sprintfn.ReadReply, r sprint.RankReq, ids []string, anchor anc
 // has front(s) of the stream: a card ranked before the first sentinel closes
 // its "sentinel reached"; the first sentinel ranked after an open card closes
 // its own (--after: the anchor is open; --before: when the neighbour below is).
-// A close of a judgment that is not open changes nothing. rank --score reads no
-// front, and leaves the close to R3's unreach, which its line queues (2.1).
+// A close of a judgment that is not open changes nothing (rank --score:
+// rankScoreClosesReached).
 func rankClosesReached(f sprintfn.FrontResult, cards []rankCard, scores []float64, before, lowerOpen bool) []sprintfn.NoteReq {
 	if f.G == "" {
 		return nil
@@ -1134,6 +1318,56 @@ func rankClosesReached(f sprintfn.FrontResult, cards []rankCard, scores []float6
 	}
 	return []sprintfn.NoteReq{{Op: "close", Type: sprint.NSentinelReached, Cause: sprint.ReachedCause, Subjects: []string{f.G},
 		Text: "a card was ranked before it"}}
+}
+
+// rankScoreClosesReached is H13's rankclose for rank --score (errata 3,
+// amendment 2; VEff "rank" with ReachedPassed, tla/SprintEvents.tla): for each
+// stream with a first sentinel G, the step closes G's "sentinel reached" when
+// after it an open card sorts before G, that is when a card other than G is
+// ranked below G's score (as ranked), or when G is ranked to x and an open card
+// other than G lies before x (the read's count of the open cells before x, less
+// the ranked cards that were before it). A close of a judgment that is not open
+// changes nothing. A count read at a score the order no longer gives closes
+// nothing on that disjunct: R3's unreach stays the fallback (2.1).
+func rankScoreClosesReached(fronts map[string]sprintfn.FrontResult, sp rankScorePre, ans []tset.ReadAnswer, cards []rankCard, scores []float64) []sprintfn.NoteReq {
+	var out []sprintfn.NoteReq
+	for _, st := range sp.streams {
+		f := fronts[st]
+		if f.G == "" {
+			continue
+		}
+		gNew, err := strconv.ParseFloat(f.Sigma, 64)
+		if err != nil {
+			continue
+		}
+		ranked := false
+		for i, c := range cards {
+			if c.rec.ID == f.G {
+				gNew, ranked = scores[i], true
+			}
+		}
+		passed := false
+		for i, c := range cards {
+			if row, _ := placeOf(c.rec); row == st && c.rec.ID != f.G && scores[i] < gNew {
+				passed = true
+			}
+		}
+		if !passed && ranked {
+			if n, ok := sp.count(ans, sp.before, len(sp.taken), f.G, gNew); ok {
+				for _, c := range cards {
+					if row, _ := placeOf(c.rec); row == st && scoreOf(c.rec) < gNew {
+						n-- // it moves, and no ranked card lands before gNew (passed is false)
+					}
+				}
+				passed = n > 0
+			}
+		}
+		if passed {
+			out = append(out, sprintfn.NoteReq{Op: "close", Type: sprint.NSentinelReached, Cause: sprint.ReachedCause,
+				Subjects: []string{f.G}, Text: "a card was ranked before it"})
+		}
+	}
+	return out
 }
 
 // nbOpen says the neighbour a range found is in an open cell (not landed).

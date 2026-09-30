@@ -83,6 +83,7 @@ func TestXSetGuard(t *testing.T) {
 	h.applies("no sentinel at or below 3", guard(setGuard("sent:s1", "-inf", "3", nil, ip(0))))
 	h.applies("one sentinel in [4, 4]", guard(setGuard("sent:s1", "4", "4", ip(1), ip(1))))
 	h.applies("no sentinel of s2", guard(setGuard("sent:s2", "-inf", "+inf", nil, ip(0))))
+	h.applies("the largest count bound", guard(setGuard("sent:s1", "-inf", "3", nil, ip(1<<53-1))))
 	for _, g := range []XGuard{setGuard("sent:s1", "-inf", "4", nil, ip(0)), setGuard("sent:s1", "(3", "+inf", ip(2), nil)} {
 		ref := h.wantRefusal(guard(g), "RANGECOUNT")
 		if !strings.Contains(ref.Message, "RANGECOUNT") {
@@ -97,6 +98,10 @@ func TestXSetGuard(t *testing.T) {
 		setGuard("sent:s1", "x", "3", nil, ip(0)),                                                     // not a bound
 		{Kind: XGuardSet, Key: `{"kind":"rcount","key":"sent:s1","min":"-inf","max":"3","atmost":0}`}, // Layer 1's own entry
 		{Kind: XGuardSet, Key: "not json"},
+		{Kind: XGuardSet, Key: `{"kind":"zguard","key":"sent:s1","min":"-inf","max":"3","atmost":0,"table":"work"}`},  // a field beside the shape's
+		{Kind: XGuardSet, Key: `{"kind":"zguard","key":"sent:s1","min":"-inf","max":"3","atmost":0,"KEY":"sent:s2"}`}, // a field named in another case
+		{Kind: XGuardSet, Key: `{"kind":"zguard","key":"sent:s1","min":"-inf","max":"3","atmost":9007199254740992}`},  // a count past 2^53 - 1
+		{Kind: XGuardSet, Key: `{"kind":"zguard","key":"sent:s1","min":"-inf","max":"3","atleast":0,"atmost":1.5}`},   // a count that is not whole
 	} {
 		h.wantRefusal(guard(g), CodeRequest)
 	}
