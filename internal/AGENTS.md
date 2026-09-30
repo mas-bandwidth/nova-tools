@@ -19,6 +19,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
 | `ctxindex/` | per-repo spec, test and symbol index for cards | `go test ./internal/ctxindex` | `go test ./internal/ctxindex` |
 | `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
+| `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./internal/delayproxy` | `go test ./internal/delayproxy` |
 | `docs/` | documentation guards and map generator | `go test ./internal/docs` | `go test ./internal/docs` |
 | `dogfood/` | dogfood self-test gates | `go test ./internal/dogfood` | `go test ./internal/dogfood` |
 | `events/` | card event stream and SQLite fold | `go test ./internal/events` | `go test ./internal/events` |
@@ -65,7 +66,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `testbin/` | places a built program into a test dir | `go test ./internal/testbin` | `go test ./internal/testbin` |
 | `testguard/` | host seam and leak interception | `go test ./internal/testguard` | `go test ./internal/testguard` |
 | `testpg/` | a throwaway Postgres for one test or one package: loopback only, trust authentication, stopped with the test | `go test ./internal/testpg` | `go test ./internal/testpg` |
-| `testredis/` | a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary | `go test ./internal/testredis` | `go test ./internal/testredis` |
+| `testredis/` | a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary; Far puts a store at a distance | `go test ./internal/testredis` | `go test ./internal/testredis` |
 | `testverbhelp/` | per-tool check that every verb answers -h at exit 0 and touches nothing | `go test ./internal/testverbhelp` | `go test ./internal/testverbhelp` |
 | `textbody/` | shared line-oriented message body filtering | `go test ./internal/textbody` | `go test ./internal/textbody` |
 | `tlc/` | TLC runner: the jar, the run, its results read, the case plan and the run records | `go test ./internal/tlc` | `go test ./internal/tlc` |
