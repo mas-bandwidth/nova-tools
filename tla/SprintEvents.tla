@@ -54,36 +54,57 @@
 \* R17's fields) always. So the state stays finite however long a behaviour
 \* runs, and a deadline passing is an event with fairness.
 \*
-\* NOT MODELLED (each is argued in tla/README-SprintEvents.md): R5 (cross),
-\* R7 (level), R12 (overdue), R15 (done), R16 (held; its table is the
-\* invariant NothingSilent instead, and the held queue with its cap is not
-\* kept), R18 (behind); quarantine (a refusal naming a card is a layer-1 bug,
-\* which layer 1's model shows does not happen); clear, epochs and remove;
-\* CI, return, merge stops, resume, reader add; add in parts; the accept
-\* verb (R9 is modelled); R11's idle kind; R1's strangers; the askwait
-\* index; EpochSafe; byte and read budgets other than the step bound; the
-\* round robin budget of a tick (a tick applies every request it planned);
-\* rules' reads as separate snapshots (a tick plans every key on one
-\* snapshot, then applies request by request with every outside action free
-\* to run between); note lines that queue no key (they are not written).
+\* NOT MODELLED (the same list as tla/README-SprintEvents.md, "What is not
+\* modelled", where each is argued):
+\* - R5 (cross), R7 (level), R12 (overdue), R15 (done), R16 (held) and R18
+\*   (behind). R16's table is the invariant `NothingSilent` instead (with a
+\*   row for R6's 30 s entry under `stablesince`); the held queue with its
+\*   cap, and `HeldDrop`, are not kept.
+\* - Quarantine: a refusal naming a card is a layer-1 bug, and layer 1's
+\*   model shows it does not happen.
+\* - Clear, epochs and remove, so `EpochSafe` is not checked; CI, return,
+\*   merge stops and resume; reader add; add in parts and insertion's
+\*   anchors (an insertion is an add at an odd score); `ask --another`; the
+\*   coordinator's `accept` verb (R9, the machine's accept, is modelled).
+\* - R11's `idle:s` kind (a notice, no judgment), and R1's strangers (a
+\*   beat from a member with no fleet row).
+\* - The `askwait` index, and I3 for it and for `fresh` above sigma:
+\*   `HeadActionable` checks `elig` below sigma, deal's heads and `wait:n`.
+\* - `NoLostWork`'s "parked (and named)": a parked key counts as owed
+\*   without the check that its judgment is open. `Named` does check a
+\*   parked key per card.
+\* - Byte and read budgets other than the step bound; the tick's step
+\*   budget (a tick applies every request it planned); R19's one step a
+\*   tick.
+\* - The rules' reads as separate snapshots: a tick plans every key on one
+\*   snapshot, then applies request by request, with every outside action
+\*   free to run between two requests.
+\* - A note line that queues no key is not written.
+\* - The order of two keys of one priority in the round robin is the one
+\*   TLC's `CHOOSE` gives; the design leaves it open, and a trace that needs
+\*   the other order needs another scenario.
+\* - The row of "this card cannot be placed" (H15's judgment): its
+\*   decisions are not decided; the model prints `drop` only, and the
+\*   judgment is neither held nor acked.
 \*
 \* Broken names a reversed witness (section 5's table, W1 to W27; W5Reach
-\* is W5's reach half alone; W7 is split into W7a and W7b) that changes
-\* exactly one rule; "none" is the design.
+\* is W5's reach half, breaking reach and unreach and not the verb; W7 is
+\* split into W7a and W7b) that changes exactly one rule; "none" is the
+\* design.
 \*
 \* Fixes names the repairs of the holes in the design this model found, as
-\* errata 3 to version 2.1 decides them (amended 03:20; tla/
-\* README-SprintEvents.md, Findings). The design as written is Fixes = {};
-\* the goal configurations run it and fail. A configuration that checks
-\* other properties on a scenario that meets a hole names the repair it
-\* runs with, so that the rest is checked; each repair is one decision:
+\* errata 3 to version 2.1 decides them (amended 03:20, and amendment 2 at
+\* 04:35; tla/README-SprintEvents.md, Findings). The design as written is
+\* Fixes = {}; the goal configurations run it and fail. A configuration that
+\* checks other properties on a scenario that meets a hole names the repair
+\* it runs with, so that the rest is checked; each repair is one decision:
 \*   judgeguard  a line that queues deal (room freed, a member up, a card
 \*               ready) also queues the late key of every work card past
 \*               its deadline, and a replacement closes the lateness
 \*               judgment                                           (H1)
-\*   seenfresh   R1 sets a member up only while its beat is fresh, and an
-\*               empty plan of R2 removes down:m only under R2's guard
-\*               on the control card as read                        (H2)
+\*   seenfresh   R1 sets a member up only while its beat is above the
+\*               present R (at plan and at apply), and an empty plan of
+\*               R2 carries a guard-only unit on the control card as read (H2)
 \*   madeclose   the add that creates n closes "blocked on something
 \*               missing: n" in its own step; the row prints add n only
 \*               while n has no record                              (H3)
@@ -92,18 +113,30 @@
 \*               in the span once the hold has passed               (H5)
 \*   stopclose   R17 closes its judgment at a look that finds no move
 \*               due (R17 is planned and applied apart, always)     (H7)
+\*   stopinputs  R17's step also guards on the version of what its dry
+\*               plans read: the revision of every card, as read (a
+\*               counter per stream, over every stream)             (H14)
+\*   stoprearm   a close of the STOPPED judgment clears raised: R17
+\*               raises once per span and close                     (H16)
 \*   dropcond    no decision is printed that DROPPING refuses: drop,
-\*               rework, release, land, and ack of a blocked, missing or
-\*               refused judgment, on a card of a stream being dropped (H8)
+\*               rework, release, land, ack of a dropped, missing or
+\*               refused judgment, on a card of a stream being dropped,
+\*               and add n while n's stream is being dropped        (H8)
 \*   downdeal    a member's down or held line also queues deal      (H10)
 \*   freezefirst part 1 of drop --stream (and every later part) guards
 \*               that the cells before its head hold no card of the
-\*               stream                                             (H11)
+\*               stream; a part refused so returns the verb to its
+\*               continue state, to read again (at most PartRereads) (H11)
 \*   stablesince R6 deals only to a member up for two beat periods; and
 \*               with work ready and no deal for 30 s, the judgment
 \*               "work is ready and no member is stable"            (H12)
-\*   rankclose   a rank or an insertion that places a card before a
-\*               sentinel closes its "sentinel reached"             (H13)
+\*   unplaced    R6's 30 s entry restarts on a take, not on a deal;
+\*               a card dealt and withdrawn MaxPlaceTries times without
+\*               a take raises "this card cannot be placed"         (H15)
+\*   rankclose   a step after which an open card of a sentinel's stream
+\*               sorts before the sentinel closes its "sentinel
+\*               reached": a rank or an insertion of a card before it,
+\*               or a rank of the sentinel behind an open card      (H13)
 EXTENDS Integers, FiniteSets, Sequences, TLC
 
 CONSTANTS
@@ -125,6 +158,7 @@ CONSTANTS
   StepBound,    \* the units one request carries, as the builder counts
   L1Bound,      \* the units layer 1 accepts: below StepBound, the builder counted wrong (LIMIT)
   MaxAttempts, MaxRedeals, MaxRereads,
+  MaxPlaceTries, \* unplaced (H15): untaken withdrawals before "this card cannot be placed" (3 in the design)
   GenMod,       \* generations are kept modulo GenMod
   MaxActs,      \* outside actions (verbs) in all
   MaxCrashes,   \* tick and verb crashes in all
@@ -157,7 +191,8 @@ VARIABLES
   early,        \* ghost: a sentinel landed while an open card of its stream sorted before it
   waivedRec,    \* ghost: a missing need was waived while it had a record
   applied,      \* ghost: part identity -> times applied
-  raises        \* ghost: STOPPED judgments raised in this STOPPED span
+  raises        \* ghost: STOPPED judgments raised in this STOPPED span (since the last
+                \* close with stoprearm, or the last wait with spanreset)
 
 cards  == <<col, score, fld, wk, rd, mi>>
 fleetv == <<status, beat, seen, stab>>
@@ -210,6 +245,13 @@ BeatFresh(m) == beat[m] > 0              \* a beat is fresh while beat:m lies ab
 \* H12's repair (stablesince): R6 deals only to a member up for two beat
 \* periods (stable_since); the other rules place cards on any up member.
 StableOn == "stablesince" \in Fixes
+\* H15's repair (unplaced): a card's untaken withdrawals since its last take
+\* (fld.tries) are counted, and "this card cannot be placed" opens at
+\* MaxPlaceTries. The count is kept with unplaced, and with stablesince as
+\* a ghost (so that the design's configurations with stablesince can check
+\* UnplacedNamed and fail it); it stays 0 otherwise.
+PlaceOn == "unplaced" \in Fixes
+TriesOn == StableOn \/ PlaceOn
 DealUp == {m \in Up : ~StableOn \/ stab[m] = 0}
 DealRoom == Cardinality({x \in DealUp \X (1..Cap) : x[2] > RCount(x[1])})
 \* The up members other than a work card's present one with room, and the
@@ -222,6 +264,12 @@ Shortest(ms) == CHOOSE m \in ms : \A n \in ms : RCount(m) <= RCount(n)
 \* view of them does).
 WRec(w) == [pl |-> w.pl, gen |-> w.gen, taken |-> w.taken, repl |-> w.repl]
 Rec(c) == <<col[c], score[c], fld[c], IF c \in Prims THEN WRec(wk[c]) ELSE None>>
+\* H14's repair (stopinputs): the version of the inputs of R17's dry plans,
+\* as the revision of every card (a counter per stream, over every stream:
+\* the streams' heads and the sentinels' scores are among them). The
+\* members' control cards are not in it, as amendment 2 words the decision
+\* (so a fleet change still empties a dry deal past the guard: H17).
+DryIn == [c \in Cards |-> Rec(c)]
 
 \* The indexes that are functions of the fields (1.3.1), with the witnesses
 \* that break a definition.
@@ -392,7 +440,8 @@ U(op, c, m, x) == [op |-> op, c |-> c, m |-> m, x |-> x,
 \* card, without memberup; the other receivers keep it).
 MemberUp(u) == status[u.m] = "up" \/ (Broken = "W18" /\ u.op \in {"deal", "redealw"})
 Recv(u) == MemberUp(u) /\ RCount(u.m) <= u.cnt
-\* W5 breaks reach (and unreach) and the release verb; W5Reach breaks reach alone.
+\* W5 breaks reach, unreach and the release verb; W5Reach breaks reach and
+\* unreach, not the verb.
 ReachBroken == Broken \in {"W5", "W5Reach"}
 
 UGuard(u) ==
@@ -407,6 +456,7 @@ UGuard(u) ==
     [] u.op = "downkey"   -> status[u.c] = u.x                               \* H2's repair: R2's guard on an empty plan
     [] u.op \in {"armsw", "swfire", "swdone"} -> sw = u.x                    \* XGUARD on the entry as read
     [] u.op = "r17"       -> clk = u.x.clk                                   \* XGUARD on the clock fields as read
+                             /\ ("stopinputs" \notin Fixes \/ DryIn = u.x.inp)  \* H14's repair: and on the cards as read
     [] u.op = "redeal2"   -> Rec(u.c) = u.rec /\ Recv(u)
     [] u.op = "withdraw2" -> Rec(u.c) = u.rec
     [] u.op = "replace"   -> Rec(u.c) = u.rec /\ Recv(u)
@@ -437,11 +487,12 @@ Retire(x) == IF x.st \in {"asked", "begun", "ok", "broken"} THEN [x EXCEPT !.st 
 NewCard(w, m) == [w EXCEPT !.pl = {<<m, "ready">>}, !.gen = (@ + 1) % GenMod, !.taken = FALSE,
                            !.repl = FALSE, !.tu = 1, !.tf = -1, !.m0 = m]
 
-\* H12's repair: R6's 30 s clock restarts at every deal; when the entry
-\* fires with work still dealable, the judgment opens unless this step
-\* dealt (Starved, on the present state: members are up, and either none
-\* is stable or a stable one has room and still nothing was dealt).
-Restart(T) == IF StableOn THEN [T EXCEPT !.sw = 1] ELSE T
+\* H12's repair: R6's 30 s clock restarts at every deal (with unplaced,
+\* H15's repair, at a take instead: VEff); when the entry fires with work
+\* still dealable, the judgment opens unless this step dealt (Starved, on
+\* the present state: members are up, and either none is stable or a
+\* stable one has room and still nothing was dealt).
+Restart(T) == IF StableOn /\ ~PlaceOn THEN [T EXCEPT !.sw = 1] ELSE T
 Eff1(T, u) ==
   LET c == u.c IN
   CASE u.op = "release" -> [T EXCEPT !.col[c] = "ready"]
@@ -480,14 +531,17 @@ Eff1(T, u) ==
                                        !.tu = IF wasW THEN 1 ELSE @, !.tf = IF wasW THEN -1 ELSE @,
                                        !.taken = IF wasW THEN FALSE ELSE @],
                    !.fld[c].redeals = IF wasW /\ Broken # "W7b" THEN @ + 1 ELSE @]
-    [] u.op = "withdraw2" ->
+    [] u.op = "withdraw2" ->                     \* (unplaced, H15: an untaken withdrawal counts)
          LET wasW == InWorking(wk[c])
              nr == IF wasW /\ fld[c].redeals < MaxRedeals /\ Broken # "W7b" THEN fld[c].redeals + 1 ELSE fld[c].redeals
              bd == nr >= MaxRedeals
-         IN [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {Withdrawn}, !.tf = -1, !.taken = FALSE,
-                                          !.tu = IF wasW THEN -1 ELSE @],
-                      !.col[c] = "ready", !.fld[c].redeals = nr, !.fld[c].bound = @ \/ bd,
-                      !.J = IF bd THEN JOpen(@, "bound", CS(c), "redeals") ELSE @]
+             nt == IF ~wasW /\ TriesOn THEN Min(fld[c].tries + 1, MaxPlaceTries) ELSE fld[c].tries
+         IN [[T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {Withdrawn}, !.tf = -1, !.taken = FALSE,
+                                           !.tu = IF wasW THEN -1 ELSE @],
+                       !.col[c] = "ready", !.fld[c].redeals = nr, !.fld[c].bound = @ \/ bd,
+                       !.fld[c].tries = nt,
+                       !.J = IF bd THEN JOpen(@, "bound", CS(c), "redeals") ELSE @]
+             EXCEPT !.J = IF PlaceOn /\ nt >= MaxPlaceTries THEN JOpen(@, "unplaced", CS(c), "-") ELSE @]
     [] u.op = "replace" ->                       \* R11, untaken: once per untaken span (W7a: without end)
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
                                        !.repl = Broken # "W7a", !.tu = 1],
@@ -797,7 +851,7 @@ commitv == <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, J, r
 TkIdle(h) == [pc |-> "idle", gen |-> 0, from |-> 0, to |-> 0, lk |-> {}, bk |-> FALSE,
               plans |-> [k \in {} |-> Plan0(DealK)], pend |-> <<>>, half |-> h, seen0 |-> <<>>]
 VIdle == [pc |-> "idle", verb |-> None, arg |-> None, snap |-> None, op |-> None, s |-> None,
-          part |-> 0, cont |-> <<0, 0>>]
+          part |-> 0, cont |-> <<0, 0>>, rr |-> 0]
 WK0(p) == LET pl == Scn.wpl[p]
               r == \E x \in pl : x[2] = "ready"
               w == \E x \in pl : x[2] = "working"
@@ -814,7 +868,7 @@ Init ==
                              attempt |-> IF Scn.col[c] \in {"working", "review", "merging", "landed"} THEN 1 ELSE 0,
                              redeals |-> 0, rereads |-> 0, avoid |-> None,
                              result |-> IF Scn.col[c] \in {"review", "merging", "landed"} THEN Scn.result[c] ELSE "none",
-                             waived |-> {}]]
+                             waived |-> {}, tries |-> 0]]
   /\ wk = [p \in Prims |-> WK0(p)]
   /\ rd = [p \in Prims |-> NoReads]
   /\ mi = [s \in Streams |-> IF \E p \in Prims : S(p) = s /\ Scn.col[p] = "merging"
@@ -965,14 +1019,18 @@ NoPlans == [k \in {} |-> Plan0(DealK)]
 \* moves are due" raised once per span; W20: moves due counted from the
 \* backlog), sent in RT3 only when it changes something, with the cut
 \* clock's judgments, the only rule steps sent. R17's step is applied as a
-\* request (Apply), guarded by the clock fields as read (2.3).
+\* request (Apply), guarded by the clock fields as read (2.3), and with
+\* stopinputs (H14) by the cards as read. With stoprearm (H16) a close
+\* clears raised, so R17 raises once per span and close.
 R17Unit(due) ==
   LET raise == due /\ clk.since = 0 /\ clk.hold = 0 /\ ~clk.raised
-      nclk == [since |-> IF due THEN (IF clk.since = -1 THEN 1 ELSE clk.since) ELSE -1,
-               hold |-> clk.hold, raised |-> clk.raised \/ raise]
       close == ~due /\ "stopclose" \in Fixes /\ IsOpenJ("stopped", SprintS, "-")   \* H7's repair
+      nclk == [since |-> IF due THEN (IF clk.since = -1 THEN 1 ELSE clk.since) ELSE -1,
+               hold |-> clk.hold,
+               raised |-> IF close /\ "stoprearm" \in Fixes THEN FALSE ELSE clk.raised \/ raise]
   IN [op |-> "r17", c |-> "sprint", m |-> None, rec |-> None, cnt |-> 0,
-      x |-> [clk |-> clk, nclk |-> nclk, raise |-> raise, close |-> close]]
+      x |-> [clk |-> clk, nclk |-> nclk, raise |-> raise, close |-> close,
+             inp |-> IF "stopinputs" \in Fixes THEN DryIn ELSE None]]
 R17Needed(u) == u.x.nclk # u.x.clk \/ u.x.raise \/ u.x.close
 PlanOrLook(t, ag) ==
   LET x == tk[t] IN
@@ -1047,7 +1105,9 @@ Apply(t) ==
      IN IF Len(rq) > L1Bound
         THEN \* LIMIT, a bug: the error step names it; the key is planned at half
              \* the chunk, parked only at a chunk of one (W23: requeued unchanged).
-             /\ IF Broken = "W23"
+             \* The error step carries the lease generation like every tick step
+             \* (1.3.5): a stale loop's is refused STALEGEN and writes nothing.
+             /\ IF Broken = "W23" \/ ~GenOK(t)
                 THEN /\ tk' = [tk EXCEPT ![t] = Settle(x, pend2)]
                      /\ UNCHANGED <<J, agenda, parked>>
                 ELSE /\ J' = JOpen(J, "stepped", KeyS(k), "-")
@@ -1062,9 +1122,12 @@ Apply(t) ==
              /\ probe' = NoProbe
              /\ UNCHANGED <<commitv, agenda, parked, clk, raises>>
         ELSE /\ Commit(T, FALSE)
-             \* R17's step writes its clock fields and counts its raise.
+             \* R17's step writes its clock fields and counts its raise (a close
+             \* with stoprearm starts the count again, H16).
              /\ clk' = IF k[1] = "stopped" THEN rq[1].x.nclk ELSE clk
-             /\ raises' = IF k[1] = "stopped" /\ rq[1].x.raise THEN raises + 1 ELSE raises
+             /\ raises' = CASE k[1] = "stopped" /\ rq[1].x.raise -> raises + 1
+                            [] k[1] = "stopped" /\ rq[1].x.close /\ "stoprearm" \in Fixes -> 0
+                            [] OTHER -> raises
              /\ agenda' = IF remove THEN agenda \ {k} ELSE agenda
              /\ tk' = [tk EXCEPT ![t] = [Settle(x, pend2) EXCEPT !.half = IF single THEN @ \ {k} ELSE @]]
              /\ probe' = IF Probes /\ single /\ (remove \/ T = Cur) /\ planv = x.seen0
@@ -1073,14 +1136,18 @@ Apply(t) ==
              /\ UNCHANGED parked
 
 \* A request refused as a bug that is not a LIMIT: named, and its key parked
-\* (the park written before the agenda's removal, one step here).
+\* (the park written before the agenda's removal, one step here). The
+\* error step carries the lease generation (1.3.5): a stale loop's is
+\* refused STALEGEN and writes nothing.
 ParkOnBug(t) ==
   LET x == tk[t]
       k == Head(x.pend)[1]
   IN /\ bugs < MaxBugs /\ x.pc = "apply" /\ x.pend # <<>> /\ k[1] # "stopped"
-     /\ J' = JOpen(J, "stepped", KeyS(k), "-")
-     /\ parked' = parked \cup {k}
-     /\ agenda' = agenda \ {k}
+     /\ IF GenOK(t)
+        THEN /\ J' = JOpen(J, "stepped", KeyS(k), "-")
+             /\ parked' = parked \cup {k}
+             /\ agenda' = agenda \ {k}
+        ELSE UNCHANGED <<J, parked, agenda>>
      /\ tk' = [tk EXCEPT ![t] = Settle(x, Tail(x.pend))]
      /\ bugs' = bugs + 1
      /\ probe' = NoProbe
@@ -1168,9 +1235,14 @@ VSnap(v, a) ==
     [] OTHER -> None
 
 AddSc(a, sn) == IF AddScore[a] = -1 THEN sn.next ELSE AddScore[a]
-\* H13's repair: a card placed at score x before a sentinel of its stream
-\* that has "sentinel reached" open closes that judgment.
-ReachedPassed(j, c, x) == j.ty = "reached" /\ j.subj[2] # c /\ S(j.subj[2]) = S(c) /\ x < score[j.subj[2]]
+\* H13's repair: a step after which an open card of a sentinel's stream
+\* sorts before the sentinel closes its "sentinel reached": a card placed at
+\* score x before it (a rank or an insertion), or the sentinel itself
+\* ranked to x behind an open card of its stream (amendment 2).
+ReachedPassed(j, c, x) ==
+  /\ j.ty = "reached" /\ S(j.subj[2]) = S(c)
+  /\ \/ j.subj[2] # c /\ x < score[j.subj[2]]
+     \/ j.subj[2] = c /\ \E d \in Cards : d # c /\ S(d) = S(c) /\ col[d] \in OpenCols /\ score[d] < x
 \* A card with needs, a sentinel, and a card behind an unlanded sentinel as
 \* read go to waiting; the others to ready, guarded by the zguard.
 AddDest(a, sn) == IF NeedsOf[a] # {} \/ a \in Sents \/ (sn.sig >= 0 /\ sn.sig < AddSc(a, sn)) THEN "waiting" ELSE "ready"
@@ -1240,9 +1312,12 @@ VEff(v, a, sn) ==
                                 \cup {[ty |-> "missing", subj |-> CS(a), cause |-> n, held |-> FALSE, hent |-> -1] : n \in wn}
                                 \cup {[ty |-> "dropped", subj |-> CS(a), cause |-> n, held |-> FALSE, hent |-> -1] : n \in wg},
                         !.next = IF AddScore[a] = -1 THEN @ + 2 ELSE @]
-    [] v = "take" ->
+    [] v = "take" ->                               \* unplaced (H15): the count ends; R6's 30 s entry restarts
          [Cur EXCEPT !.wk[a] = [@ EXCEPT !.pl = {<<MemberOf(wk[a]), "working">>}, !.taken = TRUE,
-                                         !.repl = FALSE, !.tu = -1, !.tf = 1]]
+                                         !.repl = FALSE, !.tu = -1, !.tf = 1],
+                     !.fld[a].tries = 0,
+                     !.sw = IF StableOn /\ PlaceOn THEN 1 ELSE @,
+                     !.J = JClose(@, "unplaced", CS(a), "-")]
     [] v \in {"finishok", "finishfail"} ->
          [Cur EXCEPT !.wk[a] = [@ EXCEPT !.pl = {}, !.tf = -1, !.taken = FALSE],
                      !.col[a] = "review", !.fld[a].result = IF v = "finishok" THEN "ok" ELSE "failed"]
@@ -1258,11 +1333,12 @@ VEff(v, a, sn) ==
                                  !.J = IF "rankclose" \in Fixes THEN {j \in @ : ~ReachedPassed(j, a[1], a[2])} ELSE @]
     [] v = "rework" ->
          [Cur EXCEPT !.fld[a] = [@ EXCEPT !.attempt = Min(@ + 1, MaxAttempts), !.bound = FALSE, !.refused = FALSE,
-                                          !.redeals = 0, !.rereads = 0, !.result = "none", !.avoid = wk[a].m0],
+                                          !.redeals = 0, !.rereads = 0, !.result = "none", !.avoid = wk[a].m0,
+                                          !.tries = 0],
                      !.col[a] = "ready",
                      !.wk[a] = [@ EXCEPT !.pl = {}, !.tu = -1, !.tf = -1, !.taken = FALSE],
                      !.rd[a] = NoReads,
-                     !.J = {j \in @ : ~(j.subj = CS(a) /\ j.ty \in {"cannotask", "bound", "refused"})}]
+                     !.J = {j \in @ : ~(j.subj = CS(a) /\ j.ty \in {"cannotask", "bound", "refused", "unplaced"})}]
     [] v = "ack" -> AckEff(a)
     [] v = "wait" ->                               \* a hold; its line queues nothing (W16: its owner key)
          [Cur EXCEPT !.J = {IF Tri(j) = a THEN [j EXCEPT !.held = TRUE, !.hent = 1] ELSE j : j \in J},
@@ -1322,6 +1398,9 @@ VerbApply(v) ==
 \* part clears the mark and writes the request line; each part moves the
 \* cut clock and writes its receipt with its continuation.
 CellOrder == <<"waiting", "ready", "working", "review", "merging">>
+\* The bound on a part's fresh reads after a freezefirst refusal (the design
+\* says "bounded"; the model takes 2).
+PartRereads == 2
 InCellT(s, ci, cl) == {c \in Cards : S(c) = s /\ cl[c] = CellOrder[ci]}
 \* W14: the part resumes by offset instead of draining the head.
 PartPick(s, cont) ==
@@ -1349,10 +1428,13 @@ PartApply(v) ==
       c == sn.c
       s == x.s
       own == IF x.part = 1 THEN dropping[s] = None ELSE (dropping[s] = x.op \/ Broken = "W13")
+      fresh == ~\E r \in receipts : r.op = x.op /\ r.k \in {x.part, 0}
+      passed == \A ci \in 1..(sn.ci - 1) : InCellT(s, ci, col) = {}
       guard == /\ own
                /\ c = None \/ Rec(c) = sn.rec
-               /\ ~\E r \in receipts : r.op = x.op /\ r.k \in {x.part, 0}
-               /\ "freezefirst" \notin Fixes \/ \A ci \in 1..(sn.ci - 1) : InCellT(s, ci, col) = {}   \* H11's repair
+               /\ fresh
+               /\ "freezefirst" \notin Fixes \/ passed                                                  \* H11's repair
+      moved == "freezefirst" \in Fixes /\ own /\ fresh /\ ~passed
       T1 == IF c = None THEN Cur ELSE DropEff(Cur, c)
       cont2 == <<Min(sn.ci, 5), IF Broken = "W14" THEN sn.off + 1 ELSE 0>>
       final == sn.ci > 5 \/ (Cardinality(InCellT(s, sn.ci, T1.col)) <= cont2[2]
@@ -1366,10 +1448,16 @@ PartApply(v) ==
              /\ cut' = [cut EXCEPT ![x.op] = IF final THEN -1 ELSE 1]
              /\ receipts' = receipts \cup {[op |-> x.op, k |-> x.part, s |-> s, cont |-> cont2, final |-> final]}
              /\ applied' = [applied EXCEPT ![<<x.op, Min(x.part, MaxParts)>>] = @ + 1]
-             /\ vk' = [vk EXCEPT ![v] = IF final THEN VIdle ELSE [x EXCEPT !.pc = "cont", !.part = @ + 1, !.cont = cont2]]
+             /\ vk' = [vk EXCEPT ![v] = IF final THEN VIdle ELSE [x EXCEPT !.pc = "cont", !.part = @ + 1, !.cont = cont2,
+                                                                                 !.rr = 0]]
              /\ probe' = NoProbe
         ELSE /\ UNCHANGED <<commitv, dropping, cut, receipts, applied>>
-             /\ vk' = [vk EXCEPT ![v] = VIdle]
+             \* freezefirst (H11, amendment 2): a part refused because a card
+             \* moved back to a passed cell returns the verb to its continue
+             \* state, to read again, at most PartRereads times; any other
+             \* refusal ends the verb.
+             /\ vk' = [vk EXCEPT ![v] = IF moved /\ x.rr < PartRereads THEN [x EXCEPT !.pc = "cont", !.rr = @ + 1]
+                                        ELSE VIdle]
              /\ probe' = NoProbe
      /\ UNCHANGED <<beat, seen, agenda, parked, cur, running, clk, next, lease, tk, bounds, seenKeys, raises>>
 \* drop --abort --op: clears the op's marks and cut entry, with the request line.
@@ -1667,6 +1755,7 @@ Decisions(j) ==
     [] j.ty = "stepped"   -> {<<"ack", Tri(j)>>, <<"wait", Tri(j)>>} \cup (IF running THEN {<<"stop", "sprint">>} ELSE {})
     [] j.ty = "stopped"   -> {<<"start", "sprint">>, <<"waitstop", "sprint">>}
     [] j.ty = "opcut"     -> {<<"abort", sb[2]>>, <<"wait", Tri(j)>>} \cup (IF CanResume(sb[2]) THEN {<<"resume", sb[2]>>} ELSE {})
+    [] j.ty = "unplaced"  -> {<<"drop", sb[2]>>}                  \* H15's row, not decided: drop only
     [] OTHER -> {}
 Accepted(d) ==
   CASE d[1] = "resume" -> CanResume(d[2])
@@ -1674,10 +1763,10 @@ Accepted(d) ==
     [] OTHER           -> VPre(d[1], d[2]) /\ VGuard(d[1], d[2], VSnap(d[1], d[2]))
 \* H8's repair: a decision that DROPPING refuses (a verb that changes a card
 \* of a stream being dropped: drop, rework, release, land, and ack of a
-\* blocked, missing or refused judgment, which waives or clears) is not
-\* printed.
+\* dropped, missing or refused judgment, which waives or clears; and add n
+\* while n's stream is being dropped, amendment 2) is not printed.
 Printed(d) == ~("dropcond" \in Fixes /\
-                 \/ d[1] \in {"drop", "rework", "release", "land"} /\ Frozen(d[2])
+                 \/ d[1] \in {"drop", "rework", "release", "land", "add"} /\ Frozen(d[2])
                  \/ d[1] = "ack" /\ d[2][1] \in {"dropped", "missing", "refused"} /\ Frozen(d[2][2][2]))
 Answerable == \A j \in J : ~j.held => \A d \in Decisions(j) : Printed(d) => Accepted(d)
 
@@ -1689,7 +1778,8 @@ UniqueScores == \A a, b \in Cards : (a # b /\ S(a) = S(b) /\ Placed(a) /\ Placed
 ScoresBelowCounter == \A c \in Cards : Placed(c) => score[c] < next
 
 \* "The machine is STOPPED and moves are due" is open only when a dry plan
-\* would change a card, and is raised at most once per STOPPED span.
+\* would change a card, and is raised at most once per STOPPED span (with
+\* spanreset, per span and wait; with stoprearm, per span and close).
 DryDueAll == \E k \in agenda \cup PendingKeys : CardChange(PlanOf(k, FALSE))
 StoppedJudgmentTrue ==
   /\ IsOpenJ("stopped", SprintS, "-") => (~running /\ DryDueAll)
@@ -1697,6 +1787,11 @@ StoppedJudgmentTrue ==
 \* The part of it that holds with the H7 repair at every state: raised at
 \* most once per span. (The rest is StoppedStaleCloses and StoppedRaiseFresh.)
 StoppedOnce == raises <= 1
+
+\* H15's repair (unplaced): a card dealt and withdrawn MaxPlaceTries times
+\* without a take is named ("this card cannot be placed") until it is taken.
+\* With stablesince alone the count is a ghost, and this fails.
+UnplacedNamed == \A p \in Prims : (IsOpen(p) /\ fld[p].tries >= MaxPlaceTries) => Named(p)
 
 \* T6: every step sent fits the model's step bound.
 StepWithinBounds == \A t \in Ticks : \A k \in DOMAIN tk[t].plans :
@@ -1748,7 +1843,8 @@ RedealsCounted ==
                       => fld'[p].redeals = Min(fld[p].redeals + 1, MaxRedeals)]_vars
 \* H7, as the split and stopclose leave it: R17 raises only on a dry plan
 \* that still changes a card when its step applies (the claim errata 3
-\* makes for the split; its guard is the clock fields only).
+\* makes for the split; without stopinputs its guard is the clock fields
+\* only, H14; with it, a change of the fleet still passes the guard, H17).
 StoppedRaiseFresh ==
   [][(~Present("stopped", SprintS, "-") /\ Present("stopped", SprintS, "-")') => DryDueAll]_vars
 \* E4, T1: every tick write carries the lease generation current when it

@@ -1,6 +1,6 @@
 # SprintEvents: the upper layers of nova-sprint as a TLA+ model
 
-`SprintEvents.tla` is the state machine of layers 3 to 8 of nova-sprint, written from section 5 of `design/EVENT-DRIVEN-TICK-v2.1.md` ("the design" below, cited by section), with sections 1.1 to 1.6 and 2 as the text it models. It is item IT24 of the design. `MCSprintEvents.tla` holds the small instances (the scenarios), and each `MCSprintEvents*.cfg` is one configuration. The larger runs are in `tla/sprintevents-bench/`. The repairs are the decisions of errata 3 to version 2.1 (`design/EVENT-DRIVEN-TICK-v2.1-ERRATA-3.md`, as amended at 03:20), each behind the `Fixes` constant.
+`SprintEvents.tla` is the state machine of layers 3 to 8 of nova-sprint, written from section 5 of `design/EVENT-DRIVEN-TICK-v2.1.md` ("the design" below, cited by section), with sections 1.1 to 1.6 and 2 as the text it models. It is item IT24 of the design. `MCSprintEvents.tla` holds the small instances (the scenarios), and each `MCSprintEvents*.cfg` is one configuration. The larger runs are in `tla/sprintevents-bench/`. The repairs are the decisions of errata 3 to version 2.1 (`design/EVENT-DRIVEN-TICK-v2.1-ERRATA-3.md`, as amended at 03:20 and by its amendment 2 at 04:35), each behind the `Fixes` constant.
 
 The model stands on layers 1 and 2 as their own models prove them (`tla/SetTable.tla` and `tla/SetTableLog.tla`, on their own branches): one call at a time, a step all or nothing, guards checked at apply, one place per card and table, a revision that moves with every change of a record, a receipt that makes a part identity apply once, one line per change in the step's own commit, and a function that errors keeping the writes it made before the error. So a step here is one atomic action, a revision guard is "the record is as read", and a refusal writes nothing.
 
@@ -10,7 +10,7 @@ The model stands on layers 1 and 2 as their own models prove them (`tla/SetTable
 
 | variable | what it holds |
 |---|---|
-| `col`, `score`, `fld` | the work table: each card's column, score and the fields the rules read (open, refused, bound, attempt, redeals, rereads, avoid, result, waived) |
+| `col`, `score`, `fld` | the work table: each card's column, score and the fields the rules read (open, refused, bound, attempt, redeals, rereads, avoid, result, waived; and `tries`, the untaken withdrawals since the last take, kept with `unplaced`, and with `stablesince` as a ghost) |
 | `wk` | a primary's live work card: its places (a set, so that a card dealt twice is a state `OnePlace` sees), generation, taken, `untaken_replaced`, the member it was dealt to, and the timers of the two work-card deadlines, each as the card's field and as its due entry |
 | `rd` | the read cards of a primary's attempt, by reader, with the timer of their one deadline (unbegun and unreported as one) |
 | `mi` | a stream's merge-idle timer and entry |
@@ -23,7 +23,7 @@ The model stands on layers 1 and 2 as their own models prove them (`tla/SetTable
 | `running`, `clk` | RUNNING or STOPPED; R17's fields (`due_since`, `stophold`, raised in this span), in wall time |
 | `remind`, `pushes` | one person's remind entry; the pushes made (mod 2) |
 | `dropping`, `cut`, `receipts`, `next` | the dropping marks, the cut entries (wall time), the part receipts with their continuations, the score counter |
-| `lease`, `tk`, `vk` | the lease; the tick processes (their round trip, the page read, the plans, the pending requests, the halved keys); the verb processes |
+| `lease`, `tk`, `vk` | the lease; the tick processes (their round trip, the page read, the plans, the pending requests, the halved keys); the verb processes (with a drop's fresh reads after a `freezefirst` refusal) |
 
 The indexes that are functions of the fields (`sent`, `elig`, `fresh`, `again`) are operators, not variables: X derives them in the step that changes a card, from its real before-state (1.3.2), so they cannot disagree with a move that applied. A witness that breaks a definition (W9, W26) changes the operator.
 
@@ -36,14 +36,14 @@ The indexes that are functions of the fields (`sent`, `elig`, `fresh`, `again`) 
 | `RT1(t)` | the tick's first step: the lease part (take a free lease at gen + 1, or renew one's own), then the pop part: every due entry's key into the agenda first, then the entries removed (A1, D3) |
 | `ReadEvents(t)` | RT1's page: the lines after the cursor, read with the cursor |
 | `RT2(t)` | the ingest part, refused unless the gen is current and the cursor is where the page starts (INGESTAT); keys first, then the cursor. Then, RUNNING, every key of the agenda is planned on the present state and cut into requests by the builder (1.3.6), in the round robin's order (1.4.2). STOPPED, the look (1.4.5): the rules plan dry, R17 plans its step on the clock as read (its fields, and its judgment), and the cut clock's judgments are the only other rule steps sent. RT2 writes nothing but the ingest |
-| `Apply(t)` | one request, atomic alone. LIMIT first (the size), then STALEGEN, STOPPED and the guards (a race writes nothing; the key stays). A plan that fits one request removes its key unless it requeues; a cut plan removes none (1.3.6). R17's step is one such request, guarded by the clock fields as read (2.3, R17) |
+| `Apply(t)` | one request, atomic alone. LIMIT first (the size), then STALEGEN, STOPPED and the guards (a race writes nothing; the key stays). The error step that names a LIMIT carries the lease generation like every tick step (1.3.5): a stale loop's is refused STALEGEN and writes nothing. A plan that fits one request removes its key unless it requeues; a cut plan removes none (1.3.6). R17's step is one such request, guarded by the clock fields as read (2.3, R17), and with `stopinputs` by the cards as read |
 | `ErrorRT1(t)`, `ErrorRT2(t)` | an error between the two writes of the pop or of the ingest: the first write kept, the second lost |
-| `ParkOnBug(t)` | a request refused as a bug other than LIMIT: named, and its key parked |
+| `ParkOnBug(t)` | a request refused as a bug other than LIMIT: named, and its key parked, by an error step that carries the lease generation (a stale loop's writes nothing) |
 | `TickCrash(t)` | a loop dies; what it held in memory is gone |
 | `LeaseExpire` | the lease expires with no renewal (bounded by `MaxLease`) |
 | `RunTwice(t)` | the probe of E7: a second plan and apply of a key right after a run that removed it or changed nothing, while the facts are as that run's plan read them |
-| `VerbPlan(v)`, `VerbApply(v)` | a verb's read (its arguments and a snapshot of what its guards compare) and its step: add (named, a sentinel, an insertion at an odd score), take, finish, read (begin, ok, broken), merge (land), release, drop, rank, rework, ack (with waive), wait, wait on the STOPPED judgment, fleet down, fleet up, start, stop |
-| `PartPlan(v)`, `PartApply(v)`, `AbortApply(v)` | `drop --stream` in parts, under an op name with no receipt: part 1 marks the stream, each part removes the head of the current cell and moves the cut clock, the last part clears the mark and writes the request line; a resume reads the receipts; `--abort` |
+| `VerbPlan(v)`, `VerbApply(v)` | a verb's read (its arguments and a snapshot of what its guards compare) and its step: add (named, a sentinel, an insertion at an odd score), take (with `unplaced`, it ends a card's count and restarts R6's 30 s entry), finish, read (begin, ok, broken), merge (land), release, drop, rank, rework, ack (with waive), wait, wait on the STOPPED judgment, fleet down, fleet up, start, stop |
+| `PartPlan(v)`, `PartApply(v)`, `AbortApply(v)` | `drop --stream` in parts, under an op name with no receipt: part 1 marks the stream, each part removes the head of the current cell and moves the cut clock, the last part clears the mark and writes the request line; with `freezefirst`, a part refused because a card moved back to a passed cell returns the verb to read again, at most `PartRereads` (2) times; a resume reads the receipts; `--abort` |
 | `VerbCrash(v)` | a verb's process dies between its read and its step, or between parts |
 | `Beat(m)` | a member beats: `beat:m` to R + 15 s, and `seen:m` at R for a member that is down. Unbounded and unfair |
 | `Wall` | one unit of time |
@@ -52,20 +52,23 @@ The indexes that are functions of the fields (`sent`, `elig`, `fresh`, `again`) 
 
 ## What is not modelled
 
-- R5 (cross), R7 (level), R12 (overdue), R15 (done), R16 (held) and R18 (behind). R16's table is the invariant `NothingSilent` instead (with a row for R6's 30 s entry under `stablesince`), and the held queue with its cap, and `HeldDrop`, are not kept.
+The same list stands at the top of `SprintEvents.tla` and in the pull request's description.
+
+- R5 (cross), R7 (level), R12 (overdue), R15 (done), R16 (held) and R18 (behind). R16's table is the invariant `NothingSilent` instead (with a row for R6's 30 s entry under `stablesince`); the held queue with its cap, and `HeldDrop`, are not kept.
 - Quarantine: a refusal naming a card is a layer-1 bug, and layer 1's model shows it does not happen.
 - Clear, epochs and remove, so `EpochSafe` is not checked; CI, return, merge stops and resume; reader add; add in parts and insertion's anchors (an insertion is an add at an odd score); `ask --another`; the coordinator's `accept` verb (R9, the machine's accept, is modelled).
 - R11's `idle:s` kind (a notice, no judgment), and R1's strangers (a beat from a member with no fleet row).
 - The `askwait` index, and I3 for it and for `fresh` above sigma: `HeadActionable` checks `elig` below sigma, deal's heads and `wait:n`.
-- `NoLostWork`'s "parked (and named)": a parked key counts as owed without the check that its judgment is open. `Named` does check a parked key per card (below).
+- `NoLostWork`'s "parked (and named)": a parked key counts as owed without the check that its judgment is open. `Named` does check a parked key per card.
 - Byte and read budgets other than the step bound; the tick's step budget (a tick applies every request it planned); R19's one step a tick.
 - The rules' reads as separate snapshots: a tick plans every key on one snapshot, then applies request by request, with every outside action free to run between two requests.
 - A note line that queues no key is not written.
-- The order of two keys of one priority in the round robin is the one TLC's `CHOOSE` gives; the design leaves it open, and a trace that needs the other order needs another scenario (H11's traces put the second member's key first).
+- The order of two keys of one priority in the round robin is the one TLC's `CHOOSE` gives; the design leaves it open, and a trace that needs the other order needs another scenario.
+- The row of "this card cannot be placed" (H15's judgment): its decisions are not decided; the model prints `drop` only, and the judgment is neither held nor acked.
 
 ## The instances
 
-`MCSprintEvents.tla` names the scenarios. Every configuration uses 2 streams (`s1`, `s2`), 2 members (`m1`, `m2`), 1 reader (`r1`; 2 where the review path is checked), 1 verb process and 1 tick process (2 where two loops race), 1 op name (2 in every configuration with `drop --stream`), and some of the cards `p1` (s1), `p2` (s2), `p3` (s1) and the sentinel `g1` (s1). Scores are even integers from the counter; rank and insertion choose odd ones below it (U2). The constants the gated instances use: `StepChunk` 2, a step bound of 1 unit (2 with layer 1 accepting 1 in the LIMIT cases; 2 with layer 1 accepting 2 in `MCSprintEventsMulti`, where a release of two cards and a deal of two cards each apply as one request), `MaxAttempts` 2, `MaxRedeals` 2, `MaxRereads` 1, a ready cap of 1 (2 in three bench runs), generations mod 2 (3 in three bench runs), and 1 to 3 outside actions. Members that beat are either `Beaters` (they may beat, stop and beat again, unfairly) or `Steady` (they never stop).
+`MCSprintEvents.tla` names the scenarios. Every configuration uses 2 streams (`s1`, `s2`), 2 members (`m1`, `m2`), 1 reader (`r1`; 2 where the review path is checked), 1 verb process and 1 tick process (2 where two loops race), 1 op name (2 in every configuration with `drop --stream`), and some of the cards `p1` (s1), `p2` (s2), `p3` (s1) and the sentinel `g1` (s1). Scores are even integers from the counter; rank and insertion choose odd ones below it (U2). The constants the gated instances use: `StepChunk` 2, a step bound of 1 unit (2 with layer 1 accepting 1 in the LIMIT cases; 2 with layer 1 accepting 2 in `MCSprintEventsMulti`, where a release of two cards and a deal of two cards each apply as one request), `MaxAttempts` 2, `MaxRedeals` 2, `MaxRereads` 1, `MaxPlaceTries` 3 (1 in `MCSprintEventsGoalPlace` and `MCSprintEventsRepairPlace`), a ready cap of 1 (2 in three bench runs), generations mod 2 (3 in three bench runs), and 1 to 3 outside actions. Members that beat are either `Beaters` (they may beat, stop and beat again, unfairly) or `Steady` (they never stop).
 
 **The gap to section 5's instance.** Section 5 asks for 1 stream (2 for the cross rule, R15 and remove), 4 primaries and 1 sentinel, 2 members, 3 readers, a step bound of 3 entries (so a plan of 4 changes is cut into two requests), a budget of 3 keys, a held queue capped at 2, and `MaxActs` 6. No instance here reaches it: at most 3 primaries and the sentinel, 2 readers, a step bound of 2, no key budget and no held queue, and at most 3 outside actions (2 in every run with every repair). A request of two units applies in `MCSprintEventsMulti` (and its probe, `MCSprintEventsMultiReach`), but no plan of 4 changes is cut. **Owed:** a bench run of section 5's instance to completion with every repair, with symmetry sets or one smaller menu of verbs per run; the one attempted with every verb but the drops and every repair (`MCSprintEventsFull2`, 2 verbs) does not finish inside the 900 s cap (Results).
 
@@ -90,20 +93,21 @@ The indexes that are functions of the fields (`sent`, `elig`, `fresh`, `again`) 
 | `DropComplete` | action | V6: while an op of `drop --stream` is in flight on a stream (a part receipt with no final part and no abort), only the op's parts move its cards; when a drop records its last part, no card of the stream is open. Keyed on the receipts, not on the mark, so a drop without its mark (W13) is seen |
 | `UniqueScores`, `ScoresBelowCounter` | invariant | U1, U2 |
 | `HeldSticky` | action | a member held by fleet down stays held until fleet up |
-| `StoppedJudgmentTrue` | invariant | the STOPPED judgment open only when a dry plan would change a card; raised at most once per span. It fails with every repair (H7, H14); `StoppedOnce` is its second half, and `StoppedStaleCloses` and `StoppedRaiseFresh` below say what the repair gives |
+| `StoppedJudgmentTrue` | invariant | the STOPPED judgment open only when a dry plan would change a card; raised at most once per span. It fails with every repair (H7: a verb empties the dry plans between two looks); `StoppedOnce` is its second half (once per span, and per wait with `spanreset`, per close with `stoprearm`), and `StoppedStaleCloses` and `StoppedRaiseFresh` below say what the repairs give |
 | `StepWithinBounds` | invariant | every request fits the step bound |
-| `LeaseSafe` | action | E4, T1: every tick write carries the current lease generation |
+| `LeaseSafe` | action | E4, T1: every tick write carries the current lease generation, the error steps of a LIMIT and of a bug refusal included |
 | `ReplayNoop`, `QuietStaysQuiet` | action | a rule run again at once writes nothing |
 | `ChunkProgress` | action | a requeue lowers the key's variant |
 | `PlaceOnlyUp` | action | a card placed in a member's ready cell only while the member is up |
 | `RedealsCounted` | action | R2 and R11: a work card that leaves working other than by a finish or a drop raises its primary's `redeals` by one, up to the bound (W7b's property: under bounded outside actions a take is an outside action, so an uncounted redeal cannot make an infinite behaviour, and `Progress` cannot see it) |
-| `StoppedRaiseFresh` | action | R17 raises its judgment only on a dry plan that still changes a card when its step applies (the claim errata 3 makes for the R17 split) |
+| `StoppedRaiseFresh` | action | R17 raises its judgment only on a dry plan that still changes a card when its step applies (the claim errata 3 makes for the R17 split; with `stopinputs` it holds for a verb that changes a card, and fails for one that changes the fleet: H17) |
+| `UnplacedNamed` | invariant | H15's repair: a card dealt and withdrawn `MaxPlaceTries` times without a take is named until it is taken (the repair's own claim, with the count a ghost under `stablesince` alone; `Progress` in a flapping fleet is the bench's) |
 | `Progress` | temporal | every open primary ends or is named, where a card that waits on a named card (an open need, the first sentinel, the cards before a sentinel, the cards filling every ready cell deal may fill: (d) of R16's table) is named through it, and a parked key names only the cards its rule could move |
 | `ProgressScoped` | temporal | H6's decision: `Progress`, or the machine STOPPED with no move due (the owner's choice) |
 | `HoldEnds` | temporal | a STOPPED hold ends (or the machine starts): the design's liveness argument rests on holds ending |
 | `StoppedStaleCloses` | temporal | a STOPPED judgment left open with no move due is closed by a later look (or a move is due again, or the machine starts) |
 
-`ProgressLiteral` is section 5's `Progress` with `Named` as written; `CursorSoundLiteral`, `IndexAgreesLiteral` and `DueAgreesLiteral` are E3, I1 and D1 as written. Each of these fails on the design (Findings). `ProbeTwoDrops` and `ProbeTwoMoves` (in `MCSprintEvents.tla`) are reachability probes, expected to fail: two drops each reach their last part in one behaviour, and one step moves two cards.
+`ProgressLiteral` is section 5's `Progress` with `Named` as written; `CursorSoundLiteral`, `IndexAgreesLiteral` and `DueAgreesLiteral` are E3, I1 and D1 as written. Each of these fails on the design (Findings). `ProbeTwoDrops`, `ProbeTwoMoves` and `ProbeReread` (in `MCSprintEvents.tla`) are reachability probes, expected to fail: two drops each reach their last part in one behaviour; one step moves two cards; a part of a drop applies after the verb read again on a `freezefirst` refusal.
 
 Fairness is on each tick process's steps and on `Wall` only.
 
@@ -118,7 +122,7 @@ Each `MCSprintEventsW<n>.cfg` turns on one broken rule (`Broken = "W<n>"`) on a 
 | W3 | due entries scored in wall time | `DueAgrees` | 4 |
 | W4 | deal without the zguard on `sent:s` (a sentinel ranked ahead between plan and apply) | `PositionHolds` | 7 |
 | W5 | reach, and the `release` verb, without the `rcount` guard on the open cells before sigma (the verb releases g1 with p1 before it) | `PositionHolds` | 3 |
-| W5Reach | reach alone without that guard, with `rankclose` (H13 closed): a card ranked before g1 between reach's plan and its apply | `Answerable` (the `release` printed, refused by the verb's own guard) | 7 |
+| W5Reach | reach and unreach without that guard (the `release` verb keeps its own), with `rankclose` (H13 closed): a card ranked before g1 between reach's plan and its apply | `Answerable` (the `release` printed, refused by the verb's own guard) | 7 |
 | W6 | a tick write without the lease generation (two loops) | `LeaseSafe` | 6 |
 | W7a | an untaken card replaced without end | `Progress` | 17, lasso from 3 |
 | W7b | a redeal not counted when a taken card leaves unfinished (with a take) | `RedealsCounted` | 9 |
@@ -149,24 +153,29 @@ The liveness witnesses and their controls use `Steady` members, so that a failur
 
 ## Repairs
 
-`Fixes` names the repairs, one per decided hole, each as errata 3 (amended 03:20) states it. The design as written is `Fixes = {}`: every witness but W5Reach and W13 runs it, and so does every goal configuration of a hole in the design, except that GoalCut and GoalFreeze run the repairs of the other holes on their path (so that each fails for its own); the goal configurations of a hole in a repair run that repair. A configuration that checks the other properties on a scenario that meets a hole names the repairs it runs with, so that the rest of the design is still checked there; which configuration needs which repair was found by running it without (Findings).
+`Fixes` names the repairs, one per decided hole, each as errata 3 states it (amended at 03:20, and by amendment 2 at 04:35, which confirms the model's forms of H2, H3, H8 and H11 and decides H14, H15, H16 and the H13 gap). The design as written is `Fixes = {}`: every witness but W5Reach and W13 runs it, and so does every goal configuration of a hole in the design, except that GoalCut and GoalFreeze run the repairs of the other holes on their path (so that each fails for its own). The goal configurations of a hole in a repair run that repair and not the one decided for the hole: GoalStaleRaise and GoalRearm run `stopclose` (H14 fails the same way on `Fixes = {}`, a manual probe; H16 cannot, since nothing closes the judgment there, and GoalRearm passes on `Fixes = {}`, a manual probe); GoalStaleFleet runs `stopclose` and `stopinputs`; GoalPlace runs `seenfresh` and `stablesince`. A configuration that checks the other properties on a scenario that meets a hole names the repairs it runs with, so that the rest of the design is still checked there; which configuration needs which repair was found by running it without (Findings).
 
 | repair | hole | errata 3's decision, as the model has it | a configuration that fails without it | one that passes with it |
 |---|---|---|---|---|
 | `judgeguard` | H1 | a line that queues `deal` (room freed, a member up, a card ready) also queues the late key of every work card past its deadline; a replacement closes the lateness judgment | `MCSprintEventsGoalTakeRoom` | `MCSprintEventsRepairTakeRoom`, `MCSprintEventsFleet`, `MCSprintEventsFaults`, `MCSprintEventsMulti`, `MCSprintEventsDrop2` |
-| `seenfresh` | H2 | R1 sets a member up only while its beat is fresh (`beat:m` above R), and an empty plan of R2 removes `down:m` only under R2's own guard, the control card as read | `MCSprintEventsGoalSeen` | `MCSprintEventsC21`, `MCSprintEventsLand`, `MCSprintEventsFleet` |
+| `seenfresh` | H2 | R1 sets a member up only when its beat is above the present R, checked at plan and again at apply; an empty plan of R2 carries a guard-only unit on the control card as read, so it cannot remove its key past a change | `MCSprintEventsGoalSeen` | `MCSprintEventsC21`, `MCSprintEventsLand`, `MCSprintEventsFleet`, `MCSprintEventsRepairPlace` |
 | `madeclose` | H3 | the add that creates n closes "blocked on something missing: n" on its waiters in its own step; the row prints `add n` only while n has no record | `MCSprintEventsGoalMade` | `MCSprintEventsC22` |
 | `cutmark` | H4 | R11's cut judgment guards that the op's marks stand | `MCSprintEventsGoalCut` | `MCSprintEventsC13`, `MCSprintEventsC14`, `MCSprintEventsDrop`, `MCSprintEventsDrop2` |
 | `spanreset` | H5 | a wait on the STOPPED judgment lets R17 raise it again once the hold has passed | `MCSprintEventsGoalSpan` | `MCSprintEventsC12`, `MCSprintEventsRepairStopped` |
 | (H6) | H6 | not a repair: `Progress` is claimed while RUNNING or while a move is due (`ProgressScoped`) | `MCSprintEventsGoalStopped` (`Progress`) | `MCSprintEventsRepairStopped` (`ProgressScoped`) |
-| `stopclose` | H7 | R17 closes its judgment at a look that finds no move due; R17's step is planned and applied apart (always, in this model) | `MCSprintEventsGoalStale` | `MCSprintEventsRepairStale` (`StoppedOnce`, `StoppedStaleCloses`); `StoppedJudgmentTrue` itself still fails (`MCSprintEventsGoalStaleClose`, H7; `MCSprintEventsGoalStaleRaise`, H14) |
-| `dropcond` | H8 | no decision is printed that DROPPING refuses: `drop`, `rework`, `release`, `land`, and `ack` of a blocked, missing or refused judgment, on a card of a stream being dropped; X refuses such an ack DROPPING (the design, section 3: the model's `ack` guard has it unconditionally) | `MCSprintEventsGoalDrop`, `MCSprintEventsGoalDropAck` | `MCSprintEventsRepairDrop`, `MCSprintEventsRepairDropAck` |
+| `stopclose` | H7 | R17 closes its judgment at a look that finds no move due; R17's step is planned and applied apart (always, in this model) | `MCSprintEventsGoalStale` | `MCSprintEventsRepairStale` (`StoppedOnce`, `StoppedStaleCloses`); `StoppedJudgmentTrue` itself still fails (`MCSprintEventsGoalStaleClose`, H7) |
+| `stopinputs` | H14 | R17's step also guards on the version of what its dry plans read, as read: modelled as the revision of every card (a counter per stream, over every stream), which covers the streams' heads and the sentinels' scores | `MCSprintEventsGoalStaleRaise` | `MCSprintEventsRepairStaleRaise` (`StoppedRaiseFresh`); a change of the fleet is not covered (`MCSprintEventsGoalStaleFleet`, H17) |
+| `stoprearm` | H16 | a close of the STOPPED judgment clears `raised`: R17 raises once per span and close | `MCSprintEventsGoalRearm` | `MCSprintEventsRepairRearm` (`ProgressScoped`, `StoppedOnce`, `StoppedStaleCloses`) |
+| `dropcond` | H8 | no decision is printed that DROPPING refuses: `drop`, `rework`, `release`, `land`, `ack` of a dropped, missing or refused judgment, on a card of a stream being dropped, and `add n` while n's stream is being dropped; X refuses such an ack DROPPING (the design, section 3: the model's `ack` guard has it unconditionally) | `MCSprintEventsGoalDrop`, `MCSprintEventsGoalDropAck`, `MCSprintEventsGoalDropAdd` | `MCSprintEventsRepairDrop`, `MCSprintEventsRepairDropAck`, `MCSprintEventsRepairDropAdd` |
 | `downdeal` | H10 | the down or held line of a member also queues `deal` (the decision's second clause is withdrawn) | `MCSprintEventsGoalDownDeal` | `MCSprintEventsRepairDownDeal`, `MCSprintEventsFaults` |
-| `freezefirst` | H11 | part 1 of `drop --stream` (and every later part) guards that every cell before its head holds no card of the stream; a card moved back to a passed cell refuses the part | `MCSprintEventsGoalFreeze` | `MCSprintEventsC13`, `MCSprintEventsDrop2` |
-| `stablesince` | H12 | R6 deals only to a member up for two beat periods (`stable_since`); R6's 30 s entry is armed while work is dealable and restarted by every deal; when it fires with work dealable, members up, and none stable or a stable one with room, "work is ready and no member is stable" opens | `sprintevents-bench/MCSprintEventsGoalFlap` | none: `sprintevents-bench/MCSprintEventsGoalFlapStable` still fails `Progress` (H15) |
-| `rankclose` | H13 | a rank or an insertion that places a card before a sentinel closes its "sentinel reached" | `MCSprintEventsGoalRank`, `MCSprintEventsGoalInsert` | `MCSprintEventsRepairRank`, `MCSprintEventsInsert` |
+| `freezefirst` | H11 | part 1 of `drop --stream` (and every later part) guards that every cell before its head holds no card of the stream; a part refused so returns the verb to its continue state to read again, at most `PartRereads` (2) times (the design says bounded) | `MCSprintEventsGoalFreeze` | `MCSprintEventsC13`, `MCSprintEventsDrop2`; `MCSprintEventsFreezeReach` shows a part applied after the fresh read |
+| `stablesince` | H12 | R6 deals only to a member up for two beat periods (`stable_since`); R6's 30 s entry is armed while work is dealable and restarted by every deal (by a take, with `unplaced`); when it fires with work dealable, members up, and none stable or a stable one with room, "work is ready and no member is stable" opens | `sprintevents-bench/MCSprintEventsGoalFlap` | none alone: `sprintevents-bench/MCSprintEventsGoalFlapStable` still fails `Progress` (H15) |
+| `unplaced` | H15 | R6's 30 s entry restarts only when a dealt card is taken, not on a deal; a card dealt and withdrawn `MaxPlaceTries` (3) times without a take raises "this card cannot be placed", naming the card (its row prints `drop`); a take closes it | `MCSprintEventsGoalPlace` (`UnplacedNamed`), `sprintevents-bench/MCSprintEventsGoalFlapStable` (`Progress`) | `MCSprintEventsRepairPlace` (`UnplacedNamed`); `sprintevents-bench/MCSprintEventsRepairFlapStable` (`Progress`, Results) |
+| `rankclose` | H13 | a step after which an open card of a sentinel's stream sorts before the sentinel closes its "sentinel reached": a rank or an insertion of a card before it, or a rank of the sentinel itself behind an open card | `MCSprintEventsGoalRank`, `MCSprintEventsGoalInsert`, `MCSprintEventsGoalRankSelf` | `MCSprintEventsRepairRank`, `MCSprintEventsInsert`, `MCSprintEventsRepairRankSelf` |
 
-H9 is wording (the model's `Progress` is its decided form). H14 and H15 are holes in the decided repairs and have no repair here.
+H9 is wording (the model's `Progress` is its decided form). H17 is a hole in the decided repair of H14 and has no repair here.
+
+**Not a repair: the error step's generation.** The model's LIMIT branch of `Apply` and its `ParkOnBug` wrote the stepped judgment, the parked key and the agenda without the lease generation; the design's error step is a step of notes and sprint keys through X.pre that carries the generation like every tick step (1.3.5), so a stale loop's is refused STALEGEN. Both branches now write only under `GenOK`. `MCSprintEventsLeaseErr` (two loops, a lease that expires or is taken over, a LIMIT and a bug refusal) passes `LeaseSafe`; the same configuration on the second round's module fails it in 7 states (manual probes on the bench: a LIMIT's error step after the lease expired, and a bug's).
 
 ## Running it
 
@@ -185,7 +194,7 @@ done
 ```sh
 cd tla
 for c in MCSprintEventsFullDesign MCSprintEventsFull2 MCSprintEventsFullOps2 MCSprintEventsFullLive \
-         MCSprintEventsGoalFlap MCSprintEventsGoalFlapStable; do
+         MCSprintEventsGoalFlap MCSprintEventsGoalFlapStable MCSprintEventsRepairFlapStable; do
   mkdir -p /tmp/tlc-$c
   timeout 900 java -XX:+UseParallelGC -Xmx8g -Djava.io.tmpdir=/tmp/tlc-$c -cp /path/to/tla2tools.jar \
     tlc2.TLC -workers 8 -deadlock -lncheck final -metadir /tmp/tlc-$c/states \
@@ -199,148 +208,163 @@ A note on the model's form: TLC keeps no LET value and no operator argument whil
 
 ## Results
 
-All runs used TLC 2.19 (`tla2tools.jar` sha256 `936a2620...`) on Java 21.0.12.1, on a 32-core Linux bench shared with other work (load average 10 to 30 during the runs), on 2026-09-30 (UTC).
+All runs used TLC 2.19 (`tla2tools.jar` sha256 `936a2620...`) on Java 21.0.12.1, on a 32-core Linux bench shared with other work (load average 8 to 32 during the runs), on 2026-09-30 (UTC), on this module as committed.
 
 **The gated groups**, recorded by `tlacheck` (a case expected to pass on two workers, a counterexample on one; the seconds are the records', summed over the group's cases):
 
 | group | cases | seconds |
 |---|---|---|
-| `sprintevents` | 8 | 36.3 |
-| `sprintevents-land` | 1 | 52.5 |
-| `sprintevents-faults` | 1 | 61.6 |
-| `sprintevents-fleet` | 1 | 48.7 |
-| `sprintevents-lease` | 3 | 38.8 |
-| `sprintevents-loops` | 2 | 51.7 |
-| `sprintevents-drop` | 7 | 49.4 |
-| `sprintevents-controls-a` | 11 | 26.0 |
-| `sprintevents-controls-b` | 13 | 27.0 |
-| `sprintevents-witnesses-a` | 12 | 16.7 |
-| `sprintevents-witnesses-b` | 13 | 19.8 |
-| `sprintevents-goals` | 9 | 12.4 |
-| `sprintevents-goals-b` | 10 | 14.7 |
-| `sprintevents-repairs` | 8 | 23.0 |
+| `sprintevents` | 8 | 45.9 |
+| `sprintevents-land` | 1 | 81.2 |
+| `sprintevents-faults` | 1 | 50.7 |
+| `sprintevents-fleet` | 1 | 47.5 |
+| `sprintevents-lease` | 4 | 52.5 |
+| `sprintevents-loops` | 2 | 83.3 |
+| `sprintevents-drop` | 8 | 69.3 |
+| `sprintevents-controls-a` | 11 | 26.4 |
+| `sprintevents-controls-b` | 13 | 26.9 |
+| `sprintevents-witnesses-a` | 12 | 16.0 |
+| `sprintevents-witnesses-b` | 13 | 17.6 |
+| `sprintevents-goals` | 9 | 13.0 |
+| `sprintevents-goals-b` | 15 | 21.5 |
+| `sprintevents-repairs` | 13 | 42.5 |
 
 **Every gated case** (`RUNS.tsv` has the rest of each record):
 
 | case | result | generated | distinct | seconds |
 |---|---|---|---|---|
-| `MCSprintEvents.cfg` | pass | 149163 | 82395 | 15.923 |
-| `MCSprintEventsCursor.cfg` | pass | 5661 | 3296 | 2.733 |
-| `MCSprintEventsProbe.cfg` | pass | 4953 | 2827 | 2.826 |
-| `MCSprintEventsStop.cfg` | pass | 4557 | 2665 | 2.705 |
-| `MCSprintEventsLimit.cfg` | pass | 276 | 217 | 1.971 |
-| `MCSprintEventsReview.cfg` | pass | 24619 | 12857 | 6.596 |
-| `MCSprintEventsMulti.cfg` | pass | 1461 | 978 | 2.507 |
-| `MCSprintEventsMultiReach.cfg` | fails ProbeTwoMoves | 5 | 5 | 1.039 |
-| `MCSprintEventsLand.cfg` | pass | 208266 | 88267 | 52.510 |
-| `MCSprintEventsFaults.cfg` | pass | 565021 | 327286 | 61.648 |
-| `MCSprintEventsFleet.cfg` | pass | 936787 | 363266 | 48.724 |
-| `MCSprintEventsLease.cfg` | pass | 370752 | 161728 | 32.852 |
-| `MCSprintEventsC6.cfg` | pass | 27242 | 12808 | 4.716 |
-| `MCSprintEventsW6.cfg` | fails LeaseSafe | 70 | 49 | 1.199 |
-| `MCSprintEventsC1.cfg` | pass | 759368 | 343590 | 38.094 |
-| `MCSprintEventsW1.cfg` | pass | 759368 | 343590 | 13.575 |
-| `MCSprintEventsDrop.cfg` | pass | 297254 | 145737 | 23.465 |
-| `MCSprintEventsDrop2.cfg` | pass | 120369 | 62575 | 15.257 |
-| `MCSprintEventsDrop2Reach.cfg` | fails ProbeTwoDrops | 302 | 195 | 1.401 |
-| `MCSprintEventsC13.cfg` | pass | 6274 | 3703 | 2.420 |
-| `MCSprintEventsC14.cfg` | pass | 20531 | 11248 | 4.033 |
-| `MCSprintEventsW13.cfg` | fails DropComplete | 1275 | 734 | 1.703 |
-| `MCSprintEventsW14.cfg` | fails DropComplete | 27 | 16 | 1.165 |
-| `MCSprintEventsC2.cfg` | pass | 500 | 370 | 1.548 |
-| `MCSprintEventsC3.cfg` | pass | 232 | 161 | 1.506 |
-| `MCSprintEventsC4.cfg` | pass | 2822 | 1756 | 2.671 |
-| `MCSprintEventsC5.cfg` | pass | 22350 | 10963 | 4.623 |
-| `MCSprintEventsC7.cfg` | pass | 51 | 38 | 1.336 |
-| `MCSprintEventsC7b.cfg` | pass | 664 | 412 | 2.627 |
-| `MCSprintEventsC8.cfg` | pass | 4208 | 2361 | 2.963 |
-| `MCSprintEventsC9.cfg` | pass | 136 | 102 | 1.343 |
-| `MCSprintEventsC10.cfg` | pass | 371 | 249 | 2.272 |
-| `MCSprintEventsC11.cfg` | pass | 827 | 581 | 3.563 |
-| `MCSprintEventsC12.cfg` | pass | 72 | 51 | 1.589 |
-| `MCSprintEventsC15.cfg` | pass | 3208 | 1971 | 2.919 |
-| `MCSprintEventsC16.cfg` | pass | 371 | 249 | 1.614 |
-| `MCSprintEventsC17.cfg` | pass | 1664 | 1020 | 2.486 |
-| `MCSprintEventsC18.cfg` | pass | 1694 | 992 | 2.648 |
-| `MCSprintEventsC19.cfg` | pass | 80 | 67 | 1.377 |
-| `MCSprintEventsC20.cfg` | pass | 336 | 229 | 1.254 |
-| `MCSprintEventsC21.cfg` | pass | 2761 | 1365 | 2.611 |
-| `MCSprintEventsC22.cfg` | pass | 2948 | 1944 | 3.151 |
-| `MCSprintEventsC23.cfg` | pass | 100 | 75 | 1.928 |
-| `MCSprintEventsC24.cfg` | pass | 55 | 47 | 1.346 |
-| `MCSprintEventsC25.cfg` | pass | 439 | 294 | 1.458 |
-| `MCSprintEventsC26.cfg` | pass | 169 | 130 | 1.633 |
-| `MCSprintEventsC27.cfg` | pass | 2016 | 1383 | 2.618 |
-| `MCSprintEventsW2.cfg` | fails NoLostWork | 9 | 9 | 1.262 |
-| `MCSprintEventsW3.cfg` | fails DueAgrees | 22 | 17 | 1.214 |
-| `MCSprintEventsW4.cfg` | fails PositionHolds | 141 | 99 | 1.293 |
-| `MCSprintEventsW5.cfg` | fails PositionHolds | 19 | 16 | 1.180 |
-| `MCSprintEventsW5Reach.cfg` | fails Answerable | 134 | 91 | 1.315 |
-| `MCSprintEventsW7a.cfg` | fails Progress | 72 | 52 | 1.360 |
-| `MCSprintEventsW7b.cfg` | fails RedealsCounted | 121 | 81 | 1.246 |
-| `MCSprintEventsW8.cfg` | fails OpenExact | 422 | 251 | 1.448 |
-| `MCSprintEventsW9.cfg` | fails HeadActionable | 11 | 10 | 1.233 |
-| `MCSprintEventsW10.cfg` | fails Progress | 364 | 242 | 1.561 |
-| `MCSprintEventsW11.cfg` | fails Progress | 812 | 572 | 2.233 |
-| `MCSprintEventsW12.cfg` | fails HoldEnds | 38 | 28 | 1.361 |
-| `MCSprintEventsW15.cfg` | fails ChunkProgress | 149 | 100 | 1.361 |
-| `MCSprintEventsW16.cfg` | fails WaitHolds | 92 | 66 | 1.258 |
-| `MCSprintEventsW17.cfg` | fails UniqueScores|ScoresBelowCounter | 9 | 8 | 1.273 |
-| `MCSprintEventsW18.cfg` | fails PlaceOnlyUp | 138 | 94 | 1.404 |
-| `MCSprintEventsW19.cfg` | fails HeldSticky | 11 | 10 | 1.383 |
-| `MCSprintEventsW20.cfg` | fails StoppedJudgmentTrue | 227 | 158 | 1.537 |
-| `MCSprintEventsW21.cfg` | fails Answerable | 44 | 28 | 1.852 |
-| `MCSprintEventsW22.cfg` | fails NeedsHold | 72 | 48 | 2.002 |
-| `MCSprintEventsW23.cfg` | fails Progress | 6 | 5 | 1.470 |
-| `MCSprintEventsW24.cfg` | fails NoLostWork | 7 | 7 | 1.391 |
-| `MCSprintEventsW25.cfg` | pass | 439 | 294 | 1.540 |
-| `MCSprintEventsW26.cfg` | fails NeedsHold | 11 | 10 | 1.558 |
-| `MCSprintEventsW27.cfg` | fails NoLostWork | 196 | 141 | 1.790 |
-| `MCSprintEventsGoalNamed.cfg` | fails ProgressLiteral | 40 | 31 | 1.402 |
-| `MCSprintEventsGoalStopped.cfg` | fails Progress | 5 | 4 | 1.249 |
-| `MCSprintEventsGoalSpan.cfg` | fails Progress | 60 | 39 | 1.417 |
-| `MCSprintEventsGoalStale.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 1.250 |
-| `MCSprintEventsGoalDrop.cfg` | fails Answerable | 264 | 157 | 1.355 |
-| `MCSprintEventsGoalMissing.cfg` | fails IndexAgreesLiteral | 9 | 8 | 1.383 |
-| `MCSprintEventsGoalCursor.cfg` | fails CursorSoundLiteral | 642 | 416 | 1.615 |
-| `MCSprintEventsGoalDue.cfg` | fails DueAgreesLiteral | 57 | 41 | 1.310 |
-| `MCSprintEventsGoalDownDeal.cfg` | fails NoLostWork | 46 | 39 | 1.433 |
-| `MCSprintEventsGoalRank.cfg` | fails Answerable | 126 | 87 | 1.281 |
-| `MCSprintEventsGoalTakeRoom.cfg` | fails NoLostWork | 224 | 145 | 1.565 |
-| `MCSprintEventsGoalSeen.cfg` | fails NoLostWork | 233 | 131 | 1.517 |
-| `MCSprintEventsGoalMade.cfg` | fails Answerable | 11 | 10 | 1.303 |
-| `MCSprintEventsGoalCut.cfg` | fails Answerable | 1132 | 648 | 1.853 |
-| `MCSprintEventsGoalFreeze.cfg` | fails DropComplete | 1424 | 832 | 1.977 |
-| `MCSprintEventsGoalDropAck.cfg` | fails Answerable | 27 | 16 | 1.241 |
-| `MCSprintEventsGoalInsert.cfg` | fails Answerable | 1101 | 684 | 1.511 |
-| `MCSprintEventsGoalStaleClose.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 1.274 |
-| `MCSprintEventsGoalStaleRaise.cfg` | fails StoppedRaiseFresh | 95 | 62 | 1.207 |
-| `MCSprintEventsRepairDownDeal.cfg` | pass | 76 | 62 | 1.301 |
-| `MCSprintEventsRepairDrop.cfg` | pass | 14109 | 7985 | 4.357 |
-| `MCSprintEventsRepairRank.cfg` | pass | 1553 | 1057 | 2.233 |
-| `MCSprintEventsRepairTakeRoom.cfg` | pass | 1049 | 725 | 2.144 |
-| `MCSprintEventsRepairDropAck.cfg` | pass | 13018 | 7195 | 4.440 |
-| `MCSprintEventsRepairStopped.cfg` | pass | 465 | 304 | 2.418 |
-| `MCSprintEventsRepairStale.cfg` | pass | 129 | 85 | 1.564 |
-| `MCSprintEventsInsert.cfg` | pass | 21169 | 12488 | 4.495 |
+| `MCSprintEvents.cfg` | pass | 149163 | 82395 | 20.719 |
+| `MCSprintEventsCursor.cfg` | pass | 5661 | 3296 | 3.328 |
+| `MCSprintEventsProbe.cfg` | pass | 4953 | 2827 | 3.002 |
+| `MCSprintEventsStop.cfg` | pass | 4557 | 2665 | 3.123 |
+| `MCSprintEventsLimit.cfg` | pass | 276 | 217 | 2.252 |
+| `MCSprintEventsReview.cfg` | pass | 24619 | 12857 | 8.784 |
+| `MCSprintEventsMulti.cfg` | pass | 1461 | 978 | 3.356 |
+| `MCSprintEventsMultiReach.cfg` | fails ProbeTwoMoves | 5 | 5 | 1.311 |
+| `MCSprintEventsLand.cfg` | pass | 208266 | 88267 | 81.178 |
+| `MCSprintEventsFaults.cfg` | pass | 565021 | 327286 | 50.712 |
+| `MCSprintEventsFleet.cfg` | pass | 936787 | 363266 | 47.473 |
+| `MCSprintEventsLease.cfg` | pass | 370752 | 161728 | 43.580 |
+| `MCSprintEventsC6.cfg` | pass | 27242 | 12808 | 4.871 |
+| `MCSprintEventsW6.cfg` | fails LeaseSafe | 70 | 49 | 1.326 |
+| `MCSprintEventsLeaseErr.cfg` | pass | 1820 | 940 | 2.691 |
+| `MCSprintEventsC1.cfg` | pass | 759368 | 343590 | 62.085 |
+| `MCSprintEventsW1.cfg` | pass | 759368 | 343590 | 21.226 |
+| `MCSprintEventsDrop.cfg` | pass | 297254 | 145737 | 34.348 |
+| `MCSprintEventsDrop2.cfg` | pass | 120369 | 62575 | 19.460 |
+| `MCSprintEventsDrop2Reach.cfg` | fails ProbeTwoDrops | 302 | 195 | 1.521 |
+| `MCSprintEventsFreezeReach.cfg` | fails ProbeReread | 1762 | 1046 | 2.128 |
+| `MCSprintEventsC13.cfg` | pass | 6342 | 3730 | 3.179 |
+| `MCSprintEventsC14.cfg` | pass | 20531 | 11248 | 5.436 |
+| `MCSprintEventsW13.cfg` | fails DropComplete | 1275 | 734 | 1.908 |
+| `MCSprintEventsW14.cfg` | fails DropComplete | 27 | 16 | 1.330 |
+| `MCSprintEventsC2.cfg` | pass | 500 | 370 | 1.959 |
+| `MCSprintEventsC3.cfg` | pass | 232 | 161 | 1.575 |
+| `MCSprintEventsC4.cfg` | pass | 2822 | 1756 | 2.735 |
+| `MCSprintEventsC5.cfg` | pass | 22350 | 10963 | 4.771 |
+| `MCSprintEventsC7.cfg` | pass | 51 | 38 | 1.442 |
+| `MCSprintEventsC7b.cfg` | pass | 664 | 412 | 2.450 |
+| `MCSprintEventsC8.cfg` | pass | 4208 | 2361 | 3.111 |
+| `MCSprintEventsC9.cfg` | pass | 136 | 102 | 1.640 |
+| `MCSprintEventsC10.cfg` | pass | 371 | 249 | 2.098 |
+| `MCSprintEventsC11.cfg` | pass | 827 | 581 | 2.938 |
+| `MCSprintEventsC12.cfg` | pass | 72 | 51 | 1.669 |
+| `MCSprintEventsC15.cfg` | pass | 3208 | 1971 | 2.979 |
+| `MCSprintEventsC16.cfg` | pass | 371 | 249 | 1.703 |
+| `MCSprintEventsC17.cfg` | pass | 1664 | 1020 | 2.417 |
+| `MCSprintEventsC18.cfg` | pass | 1694 | 992 | 2.424 |
+| `MCSprintEventsC19.cfg` | pass | 80 | 67 | 1.357 |
+| `MCSprintEventsC20.cfg` | pass | 336 | 229 | 1.700 |
+| `MCSprintEventsC21.cfg` | pass | 2761 | 1365 | 2.352 |
+| `MCSprintEventsC22.cfg` | pass | 2948 | 1944 | 3.115 |
+| `MCSprintEventsC23.cfg` | pass | 100 | 75 | 1.661 |
+| `MCSprintEventsC24.cfg` | pass | 55 | 47 | 1.375 |
+| `MCSprintEventsC25.cfg` | pass | 439 | 294 | 1.565 |
+| `MCSprintEventsC26.cfg` | pass | 169 | 130 | 1.673 |
+| `MCSprintEventsC27.cfg` | pass | 2016 | 1383 | 2.623 |
+| `MCSprintEventsW2.cfg` | fails NoLostWork | 9 | 9 | 1.078 |
+| `MCSprintEventsW3.cfg` | fails DueAgrees | 22 | 17 | 1.041 |
+| `MCSprintEventsW4.cfg` | fails PositionHolds | 141 | 99 | 1.272 |
+| `MCSprintEventsW5.cfg` | fails PositionHolds | 19 | 16 | 1.068 |
+| `MCSprintEventsW5Reach.cfg` | fails Answerable | 134 | 91 | 1.253 |
+| `MCSprintEventsW7a.cfg` | fails Progress | 72 | 52 | 1.362 |
+| `MCSprintEventsW7b.cfg` | fails RedealsCounted | 121 | 81 | 1.263 |
+| `MCSprintEventsW8.cfg` | fails OpenExact | 422 | 251 | 1.424 |
+| `MCSprintEventsW9.cfg` | fails HeadActionable | 11 | 10 | 1.231 |
+| `MCSprintEventsW10.cfg` | fails Progress | 364 | 242 | 1.656 |
+| `MCSprintEventsW11.cfg` | fails Progress | 812 | 572 | 2.174 |
+| `MCSprintEventsW12.cfg` | fails HoldEnds | 38 | 28 | 1.214 |
+| `MCSprintEventsW15.cfg` | fails ChunkProgress | 149 | 100 | 1.343 |
+| `MCSprintEventsW16.cfg` | fails WaitHolds | 92 | 66 | 1.297 |
+| `MCSprintEventsW17.cfg` | fails UniqueScores|ScoresBelowCounter | 9 | 8 | 1.250 |
+| `MCSprintEventsW18.cfg` | fails PlaceOnlyUp | 138 | 94 | 1.382 |
+| `MCSprintEventsW19.cfg` | fails HeldSticky | 11 | 10 | 1.365 |
+| `MCSprintEventsW20.cfg` | fails StoppedJudgmentTrue | 227 | 158 | 1.380 |
+| `MCSprintEventsW21.cfg` | fails Answerable | 44 | 28 | 1.329 |
+| `MCSprintEventsW22.cfg` | fails NeedsHold | 72 | 48 | 1.326 |
+| `MCSprintEventsW23.cfg` | fails Progress | 6 | 5 | 1.296 |
+| `MCSprintEventsW24.cfg` | fails NoLostWork | 7 | 7 | 1.303 |
+| `MCSprintEventsW25.cfg` | pass | 439 | 294 | 1.373 |
+| `MCSprintEventsW26.cfg` | fails NeedsHold | 11 | 10 | 1.365 |
+| `MCSprintEventsW27.cfg` | fails NoLostWork | 196 | 141 | 1.558 |
+| `MCSprintEventsGoalNamed.cfg` | fails ProgressLiteral | 40 | 31 | 1.387 |
+| `MCSprintEventsGoalStopped.cfg` | fails Progress | 5 | 4 | 1.474 |
+| `MCSprintEventsGoalSpan.cfg` | fails Progress | 60 | 39 | 1.534 |
+| `MCSprintEventsGoalStale.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 1.383 |
+| `MCSprintEventsGoalDrop.cfg` | fails Answerable | 264 | 157 | 1.496 |
+| `MCSprintEventsGoalMissing.cfg` | fails IndexAgreesLiteral | 9 | 8 | 1.300 |
+| `MCSprintEventsGoalCursor.cfg` | fails CursorSoundLiteral | 642 | 416 | 1.694 |
+| `MCSprintEventsGoalDue.cfg` | fails DueAgreesLiteral | 57 | 41 | 1.376 |
+| `MCSprintEventsGoalDownDeal.cfg` | fails NoLostWork | 46 | 39 | 1.403 |
+| `MCSprintEventsGoalRank.cfg` | fails Answerable | 126 | 87 | 1.148 |
+| `MCSprintEventsGoalTakeRoom.cfg` | fails NoLostWork | 224 | 145 | 1.094 |
+| `MCSprintEventsGoalSeen.cfg` | fails NoLostWork | 233 | 131 | 1.186 |
+| `MCSprintEventsGoalMade.cfg` | fails Answerable | 11 | 10 | 1.100 |
+| `MCSprintEventsGoalCut.cfg` | fails Answerable | 1132 | 648 | 1.479 |
+| `MCSprintEventsGoalFreeze.cfg` | fails DropComplete | 1424 | 832 | 1.600 |
+| `MCSprintEventsGoalDropAck.cfg` | fails Answerable | 27 | 16 | 1.169 |
+| `MCSprintEventsGoalInsert.cfg` | fails Answerable | 1101 | 684 | 1.620 |
+| `MCSprintEventsGoalStaleClose.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 1.245 |
+| `MCSprintEventsGoalStaleRaise.cfg` | fails StoppedRaiseFresh | 95 | 62 | 1.298 |
+| `MCSprintEventsGoalDropAdd.cfg` | fails Answerable | 43 | 26 | 1.219 |
+| `MCSprintEventsGoalRankSelf.cfg` | fails Answerable | 129 | 89 | 1.227 |
+| `MCSprintEventsGoalRearm.cfg` | fails ProgressScoped | 1117 | 624 | 3.274 |
+| `MCSprintEventsGoalStaleFleet.cfg` | fails StoppedRaiseFresh | 176 | 111 | 1.315 |
+| `MCSprintEventsGoalPlace.cfg` | fails UnplacedNamed | 1263 | 718 | 1.503 |
+| `MCSprintEventsRepairDownDeal.cfg` | pass | 76 | 62 | 1.283 |
+| `MCSprintEventsRepairDrop.cfg` | pass | 14109 | 7985 | 4.155 |
+| `MCSprintEventsRepairRank.cfg` | pass | 1553 | 1057 | 2.411 |
+| `MCSprintEventsRepairTakeRoom.cfg` | pass | 1049 | 725 | 2.445 |
+| `MCSprintEventsRepairDropAck.cfg` | pass | 13018 | 7195 | 4.155 |
+| `MCSprintEventsRepairStopped.cfg` | pass | 465 | 304 | 2.423 |
+| `MCSprintEventsRepairStale.cfg` | pass | 129 | 85 | 1.549 |
+| `MCSprintEventsInsert.cfg` | pass | 21169 | 12488 | 5.492 |
+| `MCSprintEventsRepairDropAdd.cfg` | pass | 15684 | 8749 | 4.736 |
+| `MCSprintEventsRepairRankSelf.cfg` | pass | 1508 | 1019 | 2.089 |
+| `MCSprintEventsRepairRearm.cfg` | pass | 1031 | 565 | 3.499 |
+| `MCSprintEventsRepairStaleRaise.cfg` | pass | 129 | 85 | 1.596 |
+| `MCSprintEventsRepairPlace.cfg` | pass | 27379 | 13236 | 6.703 |
 
 
-**The bench runs** (`tla/sprintevents-bench/`, on the final module, 2026-09-30 UTC; the seconds are TLC's own):
+**The bench runs** (`tla/sprintevents-bench/`; the seconds are TLC's own):
 
 | config | instance | result | generated | distinct | seconds |
 |---|---|---|---|---|---|
-| `MCSprintEventsFullDesign` | 3 primaries and the sentinel, 2 readers, cap 2, every verb but the drops, 3 verbs; the design as written (6 workers) | `Answerable` violated, 10 states: H13 | 91,795 | 52,735 | 5 |
-| `MCSprintEventsFull2` | the same with every repair, 2 verbs (8 workers) | did not finish: no violation in 12,616,771 distinct states (29,377,003 generated, depth 34 when stopped at the 900 s cap); a timeout is not a pass | - | 12,616,771 | 900 |
-| `MCSprintEventsFullOps2` | drops in parts with two op names, resume, abort, a crash, an error, stop and start, rank, ack; every repair; `StoppedOnce` for `StoppedJudgmentTrue` (8 workers) | pass, every other safety property and every action property | 12,817,551 | 5,996,775 | 337 |
-| `MCSprintEventsFullLive` | `Progress` with 2 readers, 2 steady members, workers and readers acting, every repair (6 workers) | pass | 9,393 | 4,566 | 3 |
-| `MCSprintEventsGoalFlap` | two members that beat and stop; `seenfresh` (6 workers) | `Progress` violated: a 59-state lasso back to state 38 (H12) | 1,497,540 | 522,822 | 87 |
-| `MCSprintEventsGoalFlapStable` | the same with `stablesince` (6 workers) | `Progress` violated: a 70-state lasso back to state 7 (H15) | 5,747,421 | 2,030,014 | 284 |
+| `MCSprintEventsFullDesign` | 3 primaries and the sentinel, 2 readers, cap 2, every verb but the drops, 3 verbs; the design as written (6 workers) | `Answerable` violated, 10 states: H13 | 44,019 | 26,109 | 5 |
+| `MCSprintEventsFull2` | the same with every repair, 2 verbs (8 workers) | did not finish: no violation in 14,359,942 distinct states (33,736,189 generated, depth 34 at TLC's last report, 1,540,931 states on the queue) when the 900 s cap stopped it; a timeout is not a pass | - | 14,359,942 | 900 |
+| `MCSprintEventsFullOps2` | drops in parts with two op names, resume, abort, a crash, an error, stop and start, rank, ack; every repair; `StoppedOnce` for `StoppedJudgmentTrue` (8 workers) | pass, every other safety property and every action property | 16,532,388 | 7,662,264 | 486 |
+| `MCSprintEventsFullLive` | `Progress` with 2 readers, 2 steady members, workers and readers acting, every repair (6 workers) | pass | 11,121 | 5,391 | 4 |
+| `MCSprintEventsGoalFlap` | two members that beat and stop; `seenfresh` (6 workers) | `Progress` violated: a 59-state lasso back to state 38 (H12) | 1,497,540 | 522,822 | 67 |
+| `MCSprintEventsGoalFlapStable` | the same with `stablesince` (6 workers) | `Progress` violated: a 129-state lasso back to state 64 (H15) | 15,920,778 | 5,623,278 | 689 |
+| `MCSprintEventsRepairFlapStable` | the same with `unplaced` as well, `MaxPlaceTries` 3 (8 workers) | pass: `Progress` holds | 15,800,739 | 5,591,976 | 715 |
 
-Manual probes, on the bench and not recorded in `RUNS.tsv`, each a gated configuration run without one of its repairs (Findings, H1, H2, H10, H11): Fleet without `judgeguard` and without `seenfresh`, Faults without `judgeguard` and without `seenfresh`, Land without any, Multi without `judgeguard`, Drop2 without `downdeal`, without `freezefirst` and without `judgeguard` (the first two on an earlier form of Drop2, with members that stop beating and resume in the menu), and W6 checked against `OnePlace`. All but the W6 probe ran on an earlier state of this round's module that differs from the final one only in a row of `NothingSilent` read under `stablesince`, which none of them runs. Two larger runs of the first round were not repeated (the two-loop instance with three lease generations, which reached 16,670,850 distinct states at the 900 s cap with no violation; and Full2 with 3 verbs, stopped by hand at 12,869,947); a timeout is not a pass.
+"Every repair" now includes `stopinputs`, `stoprearm` and `unplaced`. GoalFlapStable's state space is larger than in the second round (2,030,014 distinct states then) because the count of untaken withdrawals is kept as a ghost under `stablesince`.
+
+Manual probes, on the bench and not recorded in `RUNS.tsv`. This round, on this module before its last three comment edits: GoalStaleRaise on `Fixes = {}` fails `StoppedRaiseFresh` in 12 states (H14 on the design); GoalRearm on `Fixes = {}` passes (613 distinct states: H16 needs `stopclose`); RepairPlace without `seenfresh` fails `NoLostWork` in 16 states, which is H2 (`seen:m1` and `down:m1` in one tick); RepairFlapStable with `MaxPlaceTries` 1 passes `Progress` (2,159,656 distinct states, 6 workers, 267 s). This round, on the second round's module: GoalDropAdd with its `dropcond` and `cutmark` fails `Answerable` in 4 states; GoalRankSelf with its `rankclose` fails `Answerable` in 7 states; LeaseErr fails `LeaseSafe` in 7 states, and so do its two halves (a LIMIT's error step after the lease expired, with no bug; a bug's, at a step bound of 1). The second round's, on its module: Fleet without `judgeguard` and without `seenfresh`, Faults without `judgeguard` and without `seenfresh`, Land without any, Multi without `judgeguard`, Drop2 without `downdeal`, without `freezefirst` and without `judgeguard`, and W6 checked against `OnePlace` (Findings, H1, H2, H10, H11). Two larger runs of the first round were not repeated (the two-loop instance with three lease generations, which reached 16,670,850 distinct states at the 900 s cap with no violation; and Full2 with 3 verbs, stopped by hand at 12,869,947); a timeout is not a pass.
 
 ## Findings
 
-Every trace below was read state by state and checked against the design's text. H1 to H13 are holes in the design as written: it breaks a property section 5 states, or a claim the design makes. H14 and H15 are holes in repairs errata 3 decided: the repaired model still breaks the property the repair was decided for. Each has a configuration that fails; the ones in the design as written run `Fixes = {}`, or only the repairs of other holes on their path (Repairs). W-rows are witnesses whose failure the table of section 5 claims but the design does not give. The last group is wording: a property as written that the design, as it is meant, does not keep.
+Every trace below was read state by state and checked against the design's text. H1 to H13 are holes in the design as written: it breaks a property section 5 states, or a claim the design makes. H14, H15 and H16 are holes in repairs errata 3 decided (the repaired model still breaks the property the repair was decided for); amendment 2 decides each, and the model has those repairs. H17 is a hole in amendment 2's decision for H14, found this round. Each has a configuration that fails; the ones in the design as written run `Fixes = {}`, or only the repairs of other holes on their path (Repairs). W-rows are witnesses whose failure the table of section 5 claims but the design does not give. The last group is wording: a property as written that the design, as it is meant, does not keep.
 
 ### H1. R11 judges a late work card and never looks again, though a replacement becomes possible
 
@@ -419,7 +443,9 @@ STOPPED, moves due, R17 raises its judgment; then `drop p1` removes the only car
 - GoalDrop: p1 is in review with "cannot ask" open (decisions include `rework p1` and `drop p1`). `drop --stream s1` applies its first part and marks s1. Both decisions are now refused DROPPING ("every verb that changes a card of a stream being dropped or removed is refused DROPPING, except that op's own parts", section 3), and `Answerable` fails.
 - GoalDropAck: s1 has p1 waiting and free to go, and p3 waiting on p2, which has no record ("blocked on something missing: p2" on p3, decisions `add p2`, `ack`, `drop p3`). `drop --stream s1` applies its first part: p1 is removed and s1 is marked, p3 left for the next part. Now `drop p3` is refused DROPPING, and so is `ack`: an ack of a blocked, missing or refused judgment waives a need or clears `refused`, so it changes the card, and the model's `ack` guard refuses it DROPPING, as section 3 says (the first round's model lacked this guard). `add p2` (stream s2) is accepted. `Answerable` fails on both.
 
-Repair (`dropcond`, errata 3 as amended): no decision is printed that DROPPING refuses: `drop`, `rework`, `release`, `land`, and `ack` of a blocked, missing or refused judgment, on a card of a stream being dropped. `MCSprintEventsRepairDrop` and `MCSprintEventsRepairDropAck` pass with it (and `cutmark`, since H4 is on the same path). In GoalDropAck's last state the four verbs of the first round's condition would still print `ack`, which the guard refuses; the widened condition leaves it out.
+- GoalDropAdd (amendment 2; the second round's check found it by reading): s2 has p2 waiting on p1 (s1), which has no record ("blocked on something missing: p1" on p2, decisions `add p1`, `ack`, `drop p2`); s1 has p3 waiting at 2 and g1 behind it at 4. `drop --stream s1` reads (the verb, then its part 1's head, p3) and applies part 1: p3 is removed, s1 is marked, g1 is left for the next part. `drop p2` and `ack` are accepted (p2 is in s2), but `add p1` is refused DROPPING: p1's stream is being dropped (the model's add guard, `~Frozen`, as 1.5.4 says of every other step touching s). `Answerable` fails in 4 states, on `Fixes = {}` and, a manual probe on the second round's module, with its `dropcond` (and `cutmark`), which did not leave out `add`.
+
+Repair (`dropcond`, errata 3 as amended, with amendment 2's `add n`): no decision is printed that DROPPING refuses: `drop`, `rework`, `release`, `land`, `ack` of a dropped, missing or refused judgment, on a card of a stream being dropped, and `add n` while n's stream is being dropped. `MCSprintEventsRepairDrop`, `MCSprintEventsRepairDropAck` and `MCSprintEventsRepairDropAdd` pass with it (and `cutmark`, since H4 is on the same path). In GoalDropAck's last state the four verbs of the first round's condition would still print `ack`, which the guard refuses; the widened condition leaves it out.
 
 ### H9. Section 5's `Progress` names no card that waits on a named card
 
@@ -446,13 +472,13 @@ It is transient here, because R2's own later request queues `deal`; it is still 
 2. Before part 1 applies (and so before any mark exists), both members' beats lapse; R2 sets m2 and then m1 down, and withdraws p3 (no member up): p3 goes to ready, a cell part 1's read passed. (The two `down` keys of one rule go in the order `CHOOSE` gives them here, m2 first; the design leaves that order open, and the other order withdraws p1 first, which refuses part 1. The first round's reader could not confirm the trace by hand for that reason.)
 3. Part 1 applies: p1 at its place, its guard passes; it removes p1 and finds the working cell and every later cell empty. It is the last part: it records the end with p3 still open in ready, and the mark never stands. `DropComplete` fails.
 
-1.5.4 says each part "drains the head, so nothing is skipped or taken twice"; that holds once the mark is set, and the mark is written by part 1 itself. Repair (`freezefirst`, errata 3 as amended): part 1 (and every part) guards that every cell before its head holds no card of the stream; a card that moved back refuses the part (a race: the verb plans it again on a fresh read). `MCSprintEventsC13` and `MCSprintEventsDrop2` pass with it.
+1.5.4 says each part "drains the head, so nothing is skipped or taken twice"; that holds once the mark is set, and the mark is written by part 1 itself. Repair (`freezefirst`, errata 3 as amended, and amendment 2): part 1 (and every part) guards that every cell before its head holds no card of the stream; a part refused so returns the verb to its continue state, and it reads again, at most `PartRereads` (2) times; any other refusal ends the verb, as before. `MCSprintEventsC13` and `MCSprintEventsDrop2` pass with it. `MCSprintEventsFreezeReach` (C13's instance, a probe) shows the fresh read: part 1 is planned with p1 in working as its head; R2 sets both members down and withdraws p3 to ready, a cell the read passed; part 1 is refused and the verb reads again; the new head is p3 in ready, and the part applies and marks s1 (20 states). In the second round's model a refused part ended the verb, which then needed a new `drop --stream`.
 
 ### H12. A fleet that beats and stops in step with the tick starves every step that places a card, and nothing names the cards
 
 `sprintevents-bench/MCSprintEventsGoalFlap` (with `seenfresh`; a 59-state lasso back to state 38, on the bench: 522,822 distinct states).
 
-Two members, each beating and stopping (the design's environment: "a member may beat, stop and beat again forever"). In every cycle deal plans p1 to the member that is up at its read; before its request applies, R2 (earlier in the round robin) sets that member down, and memberup refuses the deal. At the next read the other member is up, and so on. At every plan some member is up, so "no fleet member is up" is never raised, and p1 stays ready forever unnamed: `Progress` fails. Each step is refused correctly; the design has no judgment for a card that the machine keeps failing to place. The schedule is adversarial (the beats must fall in step with the tick), but beats are unfair in section 5 and the claim is stated for them. The gated liveness configurations use `Steady` members to check `Progress` apart from this. Errata 3 decides `stablesince`; the model has it, and H15 is what is left.
+Two members, each beating and stopping (the design's environment: "a member may beat, stop and beat again forever"). In every cycle deal plans p1 to the member that is up at its read; before its request applies, R2 (earlier in the round robin) sets that member down, and memberup refuses the deal. At the next read the other member is up, and so on. At every plan some member is up, so "no fleet member is up" is never raised, and p1 stays ready forever unnamed: `Progress` fails. Each step is refused correctly; the design has no judgment for a card that the machine keeps failing to place. The schedule is adversarial (the beats must fall in step with the tick), but beats are unfair in section 5 and the claim is stated for them. The gated liveness configurations use `Steady` members to check `Progress` apart from this. Errata 3 decides `stablesince`; the model has it, and H15 is what is left (decided in amendment 2: `unplaced`).
 
 ### H13. "Sentinel reached" outlives a card ranked or inserted before its sentinel, and prints a `release` that is refused
 
@@ -462,11 +488,13 @@ Two members, each beating and stopping (the design's environment: "a member may 
 2. The coordinator runs `rank p3 --score 3` (GoalInsert: `add p1` at 3, the insertion the judgment itself suggests): a card now sorts before g1.
 3. Until R3's unreach closes the judgment (the line queues `resolve:s1`, so a tick later), the judgment prints `release g1`, which the verb refuses: "release G guards, at apply time, that no open card of s is before G" (2.4). `Answerable` fails.
 
-Repair (`rankclose`): a rank or an insertion that places a card before a sentinel closes its "sentinel reached" in its own step. `MCSprintEventsRepairRank` and `MCSprintEventsInsert` (a sentinel added by insertion, then a card inserted before it) pass with it.
+The same with the sentinel ranked, not the card (`MCSprintEventsGoalRankSelf`, 7 states; amendment 2, the second round's check found it by reading): g1 at 4, p3 fresh at 6 behind it; R3 reaches g1; `rank g1 --score 7` (odd, below the counter 8) applies, and p3 now sorts before g1. "Sentinel reached: g1" stays open, and its `release g1` is refused (NBefore is 1). It fails on `Fixes = {}` and, a manual probe on the second round's module, with its `rankclose`, whose close skipped the sentinel's own rank.
+
+Repair (`rankclose`, with amendment 2's widening): a step after which an open card of a sentinel's stream sorts before the sentinel closes its "sentinel reached" in that step: a rank or an insertion of a card before it, or a rank of the sentinel itself behind an open card (no other step moves a card's score or brings an open card into being). `MCSprintEventsRepairRank`, `MCSprintEventsInsert` (a sentinel added by insertion, then a card inserted before it) and `MCSprintEventsRepairRankSelf` pass with it.
 
 ### H14. R17's step raises on a dry plan that a verb emptied between its read and its step
 
-`MCSprintEventsGoalStaleRaise` (12 states; with `stopclose`). New in this round: a hole in errata 3's decision for H7.
+`MCSprintEventsGoalStaleRaise` (12 states; with `stopclose`, and the same on `Fixes = {}`, a manual probe). A hole in errata 3's decision for H7, found in the second round.
 
 1. The machine is STOPPED; p1 waits and is free to go, so a dry resolve releases it: moves are due. The coordinator reads `drop p1`.
 2. A look sets `due_since`; a unit (ten minutes) passes.
@@ -474,18 +502,43 @@ Repair (`rankclose`): a rank or an insertion that places a card before a sentine
 4. `drop p1` applies: no dry plan changes a card any more.
 5. R17's step applies. Its guard is "XGUARD on the clock fields as read" (2.3, R17), and the drop changed no clock field: it raises "the machine is STOPPED and moves are due" with no move due. `StoppedRaiseFresh` fails.
 
-Errata 3 says of H7 that "the split is what closes the stale-due path"; the split alone does not, since R17's guard does not cover what its dry plans read. With `stopclose` the next look closes the judgment (`StoppedStaleCloses` holds in `MCSprintEventsRepairStale`), so it is stale for at most one look, the same bound as H7. To refuse the raise at apply, R17's step would have to carry a guard on what its dry plans read (the heads of the ranges of the agenda's keys); otherwise the claim is H7's, at every look. Not decided.
+Amendment 2 decides that R17's apply also guards on the version of its dry plans' inputs as read (the streams' heads and the sentinels' scores it looked at, through a stream-set counter or the revisions of the cards it read). Repair (`stopinputs`): the model takes the revision of every card as read, which is a counter per stream over every stream, and covers both. The drop at step 4 changes p1's revision, so R17's step is refused and the next look plans afresh. `MCSprintEventsRepairStaleRaise` passes `StoppedRaiseFresh`, `StoppedStaleCloses` and every safety property with `StoppedOnce`. The version does not cover the fleet: H17.
 
 ### H15. With `stablesince`, a card whose deals succeed and whose members keep dropping is never named
 
-`sprintevents-bench/MCSprintEventsGoalFlapStable` (with `seenfresh` and `stablesince`; a 70-state lasso back to state 7, on the bench: 2,030,014 distinct states). New in this round: a hole in errata 3's decision for H12.
+`sprintevents-bench/MCSprintEventsGoalFlapStable` (with `seenfresh` and `stablesince`; on this round's module a 129-state lasso back to state 64, 5,623,278 distinct states; the second round's module gave a 70-state lasso of the same kind). A hole in errata 3's decision for H12, found in the second round. The loop of this round's trace:
 
-1. p1 is dealt to m1, stable; the 30 s entry restarts.
-2. A unit passes before the loop pops again: both members' beats lapse, and p1's untaken deadline passes.
-3. One tick plans `down:m1`, `down:m2` and R11 on p1. R11 reads m2 up, so its plan replaces p1 to m2 (its once-only replacement). R2's steps apply first (the round robin): m1 and m2 down, and memberup refuses the replacement; the key stays. R2 withdraws p1 once no member is up, and R11's plan on a withdrawn card is empty.
-4. The members beat again; R1 sets them up and sets `stable_since`; deal finds no stable member and arms its 30 s entry. A unit later they are stable, and deal redeals p1 to m1 (a deal: the 30 s clock restarts). The state is the one of step 1, and the cycle repeats.
+1. p1 is dealt to m1, which is stable; the 30 s entry restarts. p1's untaken deadline is already past (a withdrawal and the redeal of a withdrawn card keep it), so its late key is due at once.
+2. A unit passes before the loop pops again: both members' beats lapse, and the 30 s entry falls due while p1 is dealt; deal finds nothing dealable and clears it.
+3. One tick plans `down:m1`, `down:m2` and R11 on p1. R11 reads m2 up, so its plan is p1's one replacement, to m2. R2's steps apply first (the round robin): m1 and m2 are set down, and memberup refuses the replacement; its key stays.
+4. The next tick reads both members down, so R2 plans to withdraw p1. m1 beats, and R1 sets it up before the withdrawal applies; the withdrawal applies (p1's revision is as read). R11's plan on a withdrawn card is empty.
+5. A unit later m1 is stable, and deal redeals p1 to m1: the state of step 1.
 
-The untaken clock is past due all along ("a member that flaps forever cannot reset the untaken clock" holds), but R11's one replacement is refused in every cycle and it never reaches its judgment; the 30 s judgment never opens, because a deal applies in every cycle. `Progress` fails. The schedule needs the loop to fall a whole unit (15 s here) behind at every redeal: the model's tick is only weakly fair, as section 5 states it; a loop that ticks every second pops the past-due entry within a second of the redeal, and R11's replacement then applies. It also needs the model's time grain: two beat periods of `stable_since` and 15 s of beat freshness are both one unit. A repair would count a replacement refused on memberup, or a withdrawal of an untaken card, toward R11's judgment, or bound the tick's lag in the liveness claim. Not decided.
+The untaken clock is past due all along, but R11's one replacement is refused in every cycle and it never reaches its judgment; the 30 s judgment never opens, because a deal restarts the entry in every cycle and it falls due only while nothing is dealable. `Progress` fails. The schedule needs the loop to fall a whole unit behind at every redeal (the tick is only weakly fair), and the model's time grain (two beat periods of `stable_since` and 15 s of beat freshness are both one unit).
+
+Amendment 2 decides: the entry restarts only when a dealt card is taken, not on a deal; and a card dealt and withdrawn N times (a named constant, 3) without a take raises "this card cannot be placed", naming the card and the members. Repair (`unplaced`): the take restarts the entry and ends the count; an untaken withdrawal (R2's, of a card in a ready cell) raises the count, and at `MaxPlaceTries` opens the judgment in its own step; the judgment prints `drop` (its row is not decided) and closes at a take, a rework or a drop. Its safety claim, `UnplacedNamed` (a card at the count is named until it is taken), fails without it and holds with it: `MCSprintEventsGoalPlace` (18 states, the count a ghost: m2 stops beating and is set down, p1 is dealt to m1, m1's beat lapses, and R2 sets m1 down and withdraws p1 untaken; no judgment names p1 in that state) and `MCSprintEventsRepairPlace`, both with a count of 1 and one member beating, so that the whole state space fits the gated budget. The goal shows only that the design has no such judgment: in its last state "no fleet member is up" opens a tick later. H15's own trace, and `Progress` with the repair, are the bench's. `Progress` in the flapping fleet with the repair is `sprintevents-bench/MCSprintEventsRepairFlapStable`, with the count at 3 (Results).
+
+### H16. With `stopclose`, a move that becomes due again after a close is never named
+
+`MCSprintEventsGoalRearm` (26 states, a lasso back to state 24; with `stopclose`). A hole in errata 3's decision for H7, found by the second round's check by reading.
+
+1. The machine is STOPPED; p1 waits and is free to go: moves are due. A look sets `due_since`; a unit passes; a look raises "the machine is STOPPED and moves are due", and `raised` is set.
+2. `drop p1` applies. The next look finds no move due and closes the judgment (`stopclose`); `raised` stays set.
+3. The coordinator runs `add p3`: no needs and no sentinel, so p3 goes to ready (1.4.5 names this use: "verbs applied while STOPPED, the owner sets up work ready to go"). The next look finds a dry deal due and sets `due_since`; a unit passes.
+4. From then on every look finds moves due, `due_since` passed and no hold, but `raised` is set, so R17 never raises. p3 is open, nothing names it, and moves are due: `ProgressScoped` fails.
+
+On `Fixes = {}` nothing closes the judgment, so the stale one stays open and names p3 (GoalRearm passes there, a manual probe); the repair of H7 opened this. Amendment 2 decides: a close clears `raised`; R17 raises once per span and close. Repair (`stoprearm`): the close's step clears `raised` (and the ghost count of raises in the span starts again, so `StoppedOnce` states once per span and close). `MCSprintEventsRepairRearm` passes `ProgressScoped`, `StoppedStaleCloses` and every safety property with `StoppedOnce`.
+
+### H17. With `stopinputs`, R17's step still raises on a dry deal that a fleet change emptied
+
+`MCSprintEventsGoalStaleFleet` (12 states; with `stopclose` and `stopinputs`). New in this round: a hole in amendment 2's decision for H14.
+
+1. The machine is STOPPED; p1 is ready and never dealt, m1 is up and m2 down, so a dry deal places p1 on m1: moves are due. The coordinator reads `fleet down m1`.
+2. A look sets `due_since`; a unit passes; the next look plans R17's step: raise.
+3. `fleet down m1` applies: m1 is held and no member is up. A dry deal now places nothing (its plan is "no fleet member is up", which changes no card), and `down:m1` has nothing to move: no move is due.
+4. R17's step applies: the clock fields are as read, and so is every card (the fleet down changed only m1's control card). It raises "the machine is STOPPED and moves are due" with no move due. `StoppedRaiseFresh` fails.
+
+The decided version covers "the streams' heads and the sentinels' scores"; deal's dry plan also reads the fleet (which members are up, and with `stablesince` which are stable), and R1's and R2's read the members' control cards. With `stopclose` the next look closes the stale judgment, so it lives at most one look, as H14 did. A repair would put the fleet table's revision (or the control cards read) into the version. Not decided.
 
 ### Witnesses the table claims that pass: defence in depth
 

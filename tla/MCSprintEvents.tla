@@ -34,6 +34,7 @@ MCNone == {}
 MCRank3 == {3}
 MCRank5 == {5}
 MCRank6 == {6}
+MCRank7 == {7}
 
 Cols4(a, b, c, d) == [x \in MCAll |-> CASE x = "p1" -> a [] x = "p2" -> b [] x = "p3" -> c [] OTHER -> d]
 NoCard == [x \in MCAll |-> {}]
@@ -119,6 +120,12 @@ ScnInsert == [Base EXCEPT !.col = Cols4("none", "none", "ready", "none"), !.scor
 ScnDropTwo == [ScnTwoWaiting EXCEPT !.col = Cols4("waiting", "waiting", "waiting", "none"), !.score = Cols4(2, 2, 4, 0)]
 \* s1: p1 and p3 waiting and free to go (2, 4), g1 waiting behind them (6).
 ScnMulti == [Base EXCEPT !.col = Cols4("waiting", "none", "waiting", "waiting"), !.score = Cols4(2, 0, 4, 6), !.next = 8]
+\* s2: p2 waiting (2) on p1 (s1), which has no record: "a primary is blocked
+\* on something missing: p1" on p2; s1: p3 waiting and free to go (2), g1
+\* waiting behind it (4), so that a drop of s1 takes more than one part.
+ScnDropMissing == [Base EXCEPT !.col = Cols4("none", "waiting", "waiting", "waiting"), !.score = Cols4(0, 2, 2, 4), !.next = 6]
+\* STOPPED, p1 ready and never dealt (s1, 2), m1 up, m2 down: a dry deal would place it.
+ScnStoppedReady == [ScnReady1 EXCEPT !.running = FALSE]
 
 \* Reachability probes (expected to fail: each names a state a configuration
 \* must reach for its case to mean anything).
@@ -127,5 +134,8 @@ ProbeTwoDrops == Cardinality({r \in receipts : r.k > 0 /\ r.final}) < 2
 \* One step that moves two cards: a request of two units applied (a release
 \* of two, a deal of two; no verb here moves two cards) (MCSprintEventsMulti).
 ProbeTwoMoves == [][~\E p, q \in Prims : p # q /\ col'[p] # col[p] /\ col'[q] # col[q]]_vars
+\* A part of drop --stream applied after the verb read again on a
+\* freezefirst refusal (MCSprintEventsFreezeReach).
+ProbeReread == [][~\E v \in VerbProcs : vk[v].rr > 0 /\ \E r \in receipts' \ receipts : r.op = vk[v].op /\ r.k > 0]_vars
 
 =============================================================================

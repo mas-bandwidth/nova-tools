@@ -144,11 +144,13 @@ MCSprintEventsFleet.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-f
 MCSprintEventsLease.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-lease	required	-
 MCSprintEventsC6.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-lease	required	-
 MCSprintEventsW6.cfg	MCSprintEvents.tla	action	LeaseSafe	ignore-terminal	sprintevents-lease	required	-
+MCSprintEventsLeaseErr.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-lease	required	-
 MCSprintEventsC1.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-loops	required	-
 MCSprintEventsW1.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-loops	required	-
 MCSprintEventsDrop.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-drop	required	-
 MCSprintEventsDrop2.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-drop	required	-
 MCSprintEventsDrop2Reach.cfg	MCSprintEvents.tla	invariant	ProbeTwoDrops	ignore-terminal	sprintevents-drop	required	-
+MCSprintEventsFreezeReach.cfg	MCSprintEvents.tla	action	ProbeReread	ignore-terminal	sprintevents-drop	required	-
 MCSprintEventsC13.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-drop	required	-
 MCSprintEventsC14.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-drop	required	-
 MCSprintEventsW13.cfg	MCSprintEvents.tla	action	DropComplete	ignore-terminal	sprintevents-drop	required	-
@@ -221,6 +223,11 @@ MCSprintEventsGoalDropAck.cfg	MCSprintEvents.tla	invariant	Answerable	ignore-ter
 MCSprintEventsGoalInsert.cfg	MCSprintEvents.tla	invariant	Answerable	ignore-terminal	sprintevents-goals-b	required	-
 MCSprintEventsGoalStaleClose.cfg	MCSprintEvents.tla	invariant	StoppedJudgmentTrue	ignore-terminal	sprintevents-goals-b	required	-
 MCSprintEventsGoalStaleRaise.cfg	MCSprintEvents.tla	action	StoppedRaiseFresh	ignore-terminal	sprintevents-goals-b	required	-
+MCSprintEventsGoalDropAdd.cfg	MCSprintEvents.tla	invariant	Answerable	ignore-terminal	sprintevents-goals-b	required	-
+MCSprintEventsGoalRankSelf.cfg	MCSprintEvents.tla	invariant	Answerable	ignore-terminal	sprintevents-goals-b	required	-
+MCSprintEventsGoalRearm.cfg	MCSprintEvents.tla	temporal	ProgressScoped	ignore-terminal	sprintevents-goals-b	required	-
+MCSprintEventsGoalStaleFleet.cfg	MCSprintEvents.tla	action	StoppedRaiseFresh	ignore-terminal	sprintevents-goals-b	required	-
+MCSprintEventsGoalPlace.cfg	MCSprintEvents.tla	invariant	UnplacedNamed	ignore-terminal	sprintevents-goals-b	required	-
 MCSprintEventsRepairDownDeal.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
 MCSprintEventsRepairDrop.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
 MCSprintEventsRepairRank.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
@@ -229,3 +236,8 @@ MCSprintEventsRepairDropAck.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprint
 MCSprintEventsRepairStopped.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
 MCSprintEventsRepairStale.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
 MCSprintEventsInsert.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
+MCSprintEventsRepairDropAdd.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
+MCSprintEventsRepairRankSelf.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
+MCSprintEventsRepairRearm.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
+MCSprintEventsRepairStaleRaise.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
+MCSprintEventsRepairPlace.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
