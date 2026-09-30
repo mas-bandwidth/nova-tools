@@ -2,6 +2,7 @@ package machine
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/stepbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
@@ -37,11 +37,22 @@ func realRule(t *testing.T, name string) sprint.Rule {
 	return sprint.Rule{}
 }
 
-// leased is a loop that holds the lease on the world, for the generation its
-// rule steps carry.
+// realLoop is a loop over the world with the rules given (nil is the real
+// RuleTable) and the real builder, StepBuilder: the loop the machine runs.
+func (w *world) realLoop(rules []sprint.Rule) *Loop {
+	w.t.Helper()
+	l, err := NewLoop(Config{Names: testNames, Owner: "token-a", Name: "a", Rules: rules})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return l
+}
+
+// leased is a real loop that holds the lease on the world, for the generation
+// its rule steps carry.
 func (w *world) leased() *Loop {
 	w.t.Helper()
-	l := w.loop("a", nil, Budget{})
+	l := w.realLoop(nil)
 	w.tick(l, &counting{c: w.tw})
 	if l.gen == 0 {
 		w.t.Fatal("the loop took no lease")
@@ -96,26 +107,31 @@ func (w *world) planReal(rule sprint.Rule, keys ...sprint.AgendaKey) sprint.Rule
 	return rp
 }
 
-// applyReal builds a plan through StepBuilder and applies each body on the
-// world, the time part on the first request, as the loop's cut() sends them;
-// it returns the requests.
+// cutReal cuts a plan into requests through the loop's own cut(), as a tick
+// does (its builder, StepBuilder; the time part on the first request); a plan
+// it cannot cut gives no requests and parks the keys, as the report says.
+func (w *world) cutReal(l *Loop, rule string, rp sprint.RulePlan) (*planned, Report) {
+	w.t.Helper()
+	rep := Report{Read: map[string]int{}, Left: map[string]int{}, Refused: map[string]int{}, Halved: map[string]int{}}
+	p, err := l.cut(sprint.Rule{Name: rule}, Batch{Rule: rule, Keys: rp.Done}, rp, &rep)
+	if err != nil {
+		w.t.Fatalf("%s's cut: %v", rule, err)
+	}
+	return p, rep
+}
+
+// applyReal cuts a plan through the loop's cut() and applies each request on
+// the world, in order; it returns the requests.
 func (w *world) applyReal(l *Loop, rule string, rp sprint.RulePlan) []*sprintfn.Request {
 	w.t.Helper()
-	meta := sprintfn.Meta{Rule: rule, Tick: true, Gen: l.gen}
-	bodies, err := StepBuilder(testNames.Prefix)(rp, meta, stepbuild.Contract())
-	if err != nil || len(bodies) == 0 {
-		w.t.Fatalf("%s built %d bodies: %v", rule, len(bodies), err)
+	p, rep := w.cutReal(l, rule, rp)
+	if p == nil || len(p.reqs) == 0 {
+		w.t.Fatalf("%s built no requests: parked %v, owed %+v", rule, rep.Parked, l.owed.notes)
 	}
-	var reqs []*sprintfn.Request
-	for i, body := range bodies {
-		req := &sprintfn.Request{Epoch: "0", Meta: meta, Body: body}
-		if i == 0 {
-			req.Sprint = TimePart(rp.Sprint)
-		}
+	for _, req := range p.reqs {
 		w.step(req)
-		reqs = append(reqs, req)
 	}
-	return reqs
+	return p.reqs
 }
 
 func keyOf(text string) sprint.AgendaKey { return sprint.AgendaKey{Key: text, Seq: 1} }
@@ -397,3 +413,140 @@ func TestParkedKeyApplies(t *testing.T) {
 		t.Fatalf("the park: %q", v)
 	}
 }
+
+// timeRule is a real time rule as a tick runs it, its read answered here: IT30
+// has no goal or tick query yet, so the rule's own Read is not sent. The tick
+// sends a read the twin answers (one work id), and the rule's Plan runs on the
+// snapshot its own Read plans, loaded with what answer gives for each of its
+// sprint queries. Everything else is the loop's: the pop, the dispatch, cut()
+// with StepBuilder and the time part, the steps.
+func (w *world) timeRule(name string, answer func(q sprint.SprintQ) sprint.Answer) sprint.Rule {
+	w.t.Helper()
+	r := realRule(w.t, name)
+	read := func(keys []sprint.AgendaKey, _ sprint.ReadBounds, _ int) (sprint.ReadPlan, []sprint.AgendaKey) {
+		return sprint.ReadPlan{IDs: map[string][]string{sprint.Work: {"none"}}}, nil
+	}
+	plan := func(_ *sprint.Snapshot, keys []sprint.AgendaKey, now sprint.Now) sprint.RulePlan {
+		rp, left := r.Read(keys, sprint.L1ReadBounds(), 0)
+		if len(left) != 0 {
+			w.t.Errorf("%s left keys unread: %v", name, left)
+		}
+		ans := sprint.ReadAnswer{Epoch: "0", ActiveEpoch: "0", TimeMS: sprint.Decimal(strconv.FormatInt(now.Wall, 10))}
+		for _, q := range rp.Sprint {
+			ans.Sprint = append(ans.Sprint, answer(q))
+		}
+		snap, err := sprint.LoadPartial(rp, ans)
+		if err != nil {
+			w.t.Errorf("%s's answer does not load: %v", name, err)
+			return sprint.RulePlan{}
+		}
+		return r.Plan(snap, keys, now)
+	}
+	return sprint.Rule{Name: r.Name, Priority: r.Priority, Read: read, Plan: plan}
+}
+
+// TestRealRuleRemindThroughATick (R14, 2.3; M3): remind:ann due now is popped
+// by the lease step, dispatched to the rule table's remind, planned, cut by the
+// loop's cut() with its time part on the first request, and applied in RT3: the
+// entry is at R + 5 min and ann's goal record is claimed at R with the loop's
+// generation. The time part rides only through cut(): no test helper attaches it.
+func TestRealRuleRemindThroughATick(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	var planned sprint.Now
+	remind := w.timeRule("remind", func(q sprint.SprintQ) sprint.Answer {
+		g := sprint.GoalFact{Exists: true}
+		if at, ok := w.zset("due@0")["remind:ann"]; ok {
+			g.Entry, g.At = true, int64(at)
+		}
+		return sprint.Answer{Kind: q.Kind, Time: &sprint.TimeAnswer{Goals: map[string]sprint.GoalFact{"ann": g}}}
+	})
+	plan := remind.Plan
+	remind.Plan = func(s *sprint.Snapshot, keys []sprint.AgendaKey, now sprint.Now) sprint.RulePlan {
+		planned = now
+		return plan(s, keys, now)
+	}
+	l := w.realLoop([]sprint.Rule{remind})
+	k := &counting{c: w.tw}
+	w.tick(l, k)
+	at := w.clk.now().UnixMilli()
+	w.step(&sprintfn.Request{Epoch: "0", Meta: sprintfn.Meta{Verb: "seed", Actor: "coordinator"},
+		Sprint: &sprintfn.SprintPart{Time: &sprintfn.SprintTime{Due: []sprintfn.DueAt{{Key: "remind:ann", At: tset.Decimal(strconv.FormatInt(at, 10))}}}}})
+	w.clk.add(time.Second)
+	rep := w.tick(l, k)
+	if st := rep.Rules["remind"]; st == nil || st.Applied != 1 || planned.R == 0 {
+		t.Fatalf("remind through the tick: %+v, %+v", rep.Rules["remind"], rep)
+	}
+	if got := int64(w.zset("due@0")["remind:ann"]); got != planned.R+int64(sprint.RuleRemindEvery/time.Millisecond) {
+		t.Fatalf("remind:ann is at %d; R was %d", got, planned.R)
+	}
+	if g := w.hash("goal:ann"); g["claimed_r"] != strconv.FormatInt(planned.R, 10) || g["claimed_gen"] != strconv.FormatUint(l.gen, 10) {
+		t.Fatalf("ann's claim: %v (R %d, gen %d)", g, planned.R, l.gen)
+	}
+}
+
+// TestRealRuleBehindThroughTicks (R18, 2.3; M1, L4): a backlog of B armed by
+// the tick end fires on B-1 and arms again with the new backlog: its step
+// clears behind_n, and the next tick end records B-1 and a fresh entry; the
+// next fire on B-1 is judged, "the machine is falling behind". A page of one
+// line a tick, and one line added a tick, hold the backlog where the test puts
+// it; the tick answer is the store's behind_n, entry and judgment and the
+// backlog the tick recorded.
+func TestRealRuleBehindThroughTicks(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	var l *Loop
+	behind := w.timeRule("behind", func(q sprint.SprintQ) sprint.Answer {
+		n, _ := strconv.Atoi(w.hash("tick@0")["behind_n"])
+		at, entry := w.zset("due@0")["behind"]
+		backlog, _ := strconv.Atoi(l.hb["backlog"])
+		_, judged := w.hash("jopen:sprint@0")[fallingBehind+"|behind"]
+		return sprint.Answer{Kind: q.Kind, Time: &sprint.TimeAnswer{Tick: &sprint.TickFact{Backlog: backlog, BehindN: n,
+			Entry: entry, EntryAt: int64(at), Judged: judged}}}
+	})
+	b := DefaultBudget()
+	b.PageLines = 1
+	var err error
+	if l, err = NewLoop(Config{Names: testNames, Owner: "token-a", Name: "a", Rules: []sprint.Rule{behind}, Budget: b}); err != nil {
+		t.Fatal(err)
+	}
+	k := &counting{c: w.tw}
+	w.tick(l, k)
+	n := 0
+	line := func() { n++; w.verb(create("s1:waiting", waiting(), fmt.Sprintf("c%d", n))) }
+	for range 5 {
+		line()
+	}
+	armed := w.tick(l, k).Backlog
+	if got := w.hash("tick@0")["behind_n"]; armed < 2 || got != strconv.FormatUint(armed, 10) {
+		t.Fatalf("the tick end armed %q at a backlog of %d", got, armed)
+	}
+	w.clk.add(sprint.BehindSpan + time.Second)
+	rep := w.tick(l, k) // the pop, a page of one line: the backlog is one smaller
+	if rep.Backlog != armed-1 || rep.Rules["behind"] == nil || rep.Rules["behind"].Applied != 1 {
+		t.Fatalf("the first fire, on %d: %+v", rep.Backlog, rep)
+	}
+	if v, set := w.hash("tick@0")["behind_n"]; set {
+		t.Fatalf("behind_n after the re-arm: %q", v)
+	}
+	line()
+	if rep = w.tick(l, k); rep.Backlog != armed-1 || w.hash("tick@0")["behind_n"] != strconv.FormatUint(armed-1, 10) {
+		t.Fatalf("the tick end after the re-arm: backlog %d, behind_n %q", rep.Backlog, w.hash("tick@0")["behind_n"])
+	}
+	if _, there := w.zset("due@0")["behind"]; !there {
+		t.Fatalf("the tick end armed no entry: %v", w.zset("due@0"))
+	}
+	line()
+	w.clk.add(sprint.BehindSpan + time.Second)
+	if rep = w.tick(l, k); rep.Backlog != armed-1 {
+		t.Fatalf("the second fire: backlog %d", rep.Backlog)
+	}
+	if _, judged := w.hash("jopen:sprint@0")[fallingBehind+"|behind"]; !judged {
+		t.Fatalf("a backlog that stalled at %d was not judged: %v %+v %+v", armed-1, w.hash("jopen:sprint@0"), rep, rep.Rules["behind"])
+	}
+}
+
+// fallingBehind is R18's judgment (2.5), the field of jopen:sprint its cause
+// "behind" follows.
+const fallingBehind = "the machine is falling behind"
