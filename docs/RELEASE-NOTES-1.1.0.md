@@ -20,6 +20,10 @@ The dirty-driven tick pumps queued work once at the start of a tick, then settle
 
 `nova-swarm lint --child-rules` checks the standing instructions a coordinator gives a child. `nova-swarm template --name card` supplies a card template, and `nova-sprint add` checks supplied briefs before writing a card. Refusals identify the missing rule so the coordinator can repair the brief.
 
+## A smaller maintained codebase
+
+The release removes 66 packages from unused or superseded implementations, along with command implementations replaced by the eighteen living tools. This removes duplicate maintenance paths and keeps the reference focused on the commands the release actually builds.
+
 ## First read-only `nova-work` layer
 
 `nova-work import` reads the specified GitHub organization or repositories into a local tree file; `--dry-run` performs the read without writing the file. `nova-work verify --tree <tree.lisp>` fetches again and reports differences in the captured issue records. The tree covers the fields listed in [the tree specification](SPEC-WORK-V1.md), including bodies, comments, cross-references and linked pull requests. Reactions, edit history, other timeline events, projects, issue types, sub-issues and pins are outside this first layer. Import and verify do not edit GitHub.

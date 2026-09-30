@@ -17,33 +17,18 @@ import (
 //	epoch 0  <consumer>:cards:<col>      ws:<s>:<w>      s:<S>:<pool|waiting>
 //	epoch e  <consumer>:<e>:cards:<col>  ws:<e>:<s>:<w>  s:<S>:<e>:<pool|waiting>
 //
-// and the rule is spelled in exactly three places: internal/nsprint/ws
-// (KeyAt, ConsumerKeyAt, SprintListAt, key0), fn/lua/02_card_move.lua
-// (cm_ckey, cm_wskey, cm_skey, exported as NS.card.ckey|wskey|skey) and the
-// stream lander's standalone script (land_stream.lua's wskey, outside the
-// library). A literal name anywhere else reads or writes epoch 0 whatever
-// the epoch is: after the first clear the dealer saw only old cards and the
-// probe guard was off (the 4/10 read of #4377). The retired epoch-0 helpers
-// stay named here so a resurrected one is caught before the compiler would
-// miss a new spelling.
+// and the rule is spelled in one place: fn/lua/02_card_move.lua (cm_ckey,
+// cm_wskey, cm_skey, exported as NS.card.ckey|wskey|skey). A literal name
+// anywhere else reads or writes epoch 0 whatever the epoch is: after the
+// first clear the dealer saw only old cards and the probe guard was off (the
+// 4/10 read of #4377). The retired epoch-0 helpers stay named here so a
+// resurrected one is caught before the compiler would miss a new spelling.
 
 // epochRuleLines are the only code lines that may spell a table set's name,
 // each the rule itself, and the one ws:<stream>:* key that is not a table
-// set (the stream's MERGE-NOTE list, note.StreamNotesKey, #4427: a list
-// per stream, never per epoch); a row whose line is gone fails, so the
-// list only shrinks.
+// set (the stream's MERGE-NOTE list, #4427: a list per stream, never per
+// epoch); a row whose line is gone fails, so the list only shrinks.
 var epochRuleLines = map[string][]string{
-	"internal/nsprint/note/note.go": {
-		`func StreamNotesKey(stream string) string { return "ws:" + stream + ":notes" }`,
-	},
-	"internal/nsprint/ws/ws.go": {
-		`func key0(stream, state string) string { return "ws:" + stream + ":" + state }`,
-	},
-	"internal/nsprint/ws/epoch.go": {
-		`return "ws:" + strconv.FormatUint(e, 10) + ":" + stream + ":" + state`,
-		`return consumer + ":cards:" + col`,
-		`return consumer + ":" + strconv.FormatUint(e, 10) + ":cards:" + col`,
-	},
 	"02_card_move.lua": {
 		`if s == '0' then return c .. ':cards:' .. col end`,
 		`return c .. ':' .. s .. ':cards:' .. col`,
@@ -53,10 +38,6 @@ var epochRuleLines = map[string][]string{
 	"land_watch.lua": {
 		// ws:<s>:notes is the stream's notes list (note.StreamNotesKey), not a table set
 		`local sn = redis.call('LRANGE', 'ws:' .. s .. ':notes', 0, -1)`,
-	},
-	"land/stream/land_stream.lua": {
-		`if not e or e == '' or e == '0' then return 'ws:' .. stream .. ':' .. w end`,
-		`return 'ws:' .. e .. ':' .. stream .. ':' .. w`,
 	},
 }
 
@@ -125,8 +106,8 @@ func epochNameHits(n, src string, lua bool) []string {
 	return out
 }
 
-// TestEveryTableSetIsNamedByTheEpochRule (#4238): no Lua file of the library
-// or the lander, and no non-test Go file under cmd/ or internal/ (fixtures
+// TestEveryTableSetIsNamedByTheEpochRule (#4238): no Lua file of the library,
+// and no non-test Go file under cmd/ or internal/ (fixtures
 // included: they seed through ws.KeyAt(0, ...) and its twins), names a table
 // set but through the rule, and no retired epoch-0 helper is back.
 func TestEveryTableSetIsNamedByTheEpochRule(t *testing.T) {

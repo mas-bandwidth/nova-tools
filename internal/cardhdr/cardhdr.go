@@ -1,10 +1,7 @@
 // Package cardhdr is the card header's vocabulary: the kinds and routes a
 // card's KIND and ROUTE lines may carry, and the one reader of a `KEY: value`
-// header line. It is a leaf (standard library only) so both the card session
-// (internal/nsprint/card, which lints and runs cards) and the task record
-// store (internal/nsprint/taskcard, which renders a card from a record) read
-// the header the same way without importing each other: card drives taskcard
-// for copy sessions, so taskcard must not import card (PR #3916 landing).
+// header line. It is a leaf (standard library only) so every reader of a card
+// header reads it the same way without importing another.
 package cardhdr
 
 import (
@@ -54,8 +51,7 @@ func IsRunnerKind(kind string) bool {
 
 // The routes a card may carry: the three model types (Glenn 2026-09-26).
 // frontier is the most recent Astra or Fable model only; pro and flash are
-// the rungs of internal/nsprint/route/routes.yaml the bench harness picks
-// its model from (nova-sprint routes --tier <route>, first allowed route). A
+// the rungs the bench harness picks its model from (nova-sprint routes --tier <route>, first allowed route). A
 // card with no ROUTE line is flash. Every worker (a friend or a bench)
 // advertises the types it runs on its desired record's tiers field
 // (nova-sprint capacity bench --tiers ..., nova-config for a friend); the dealer matches a
