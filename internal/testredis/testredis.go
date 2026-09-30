@@ -30,6 +30,12 @@
 // NOVA_CI=1, which the CI workflows set: a skip there would let a green run be
 // a run that never executed the store. A redis-server that is found and does
 // not come up fails the test anywhere.
+//
+// THE IMAGE OF A STORE. Image reads every key under a prefix, with its type
+// and the SHA256 of its DUMP, by SCAN and pipelines, from any server; Diff
+// names the keys added, removed and changed between two images. A test that
+// must show a step wrote nothing takes an image before the step and one after
+// it and expects an empty Diff: see image.go.
 package testredis
 
 import (
