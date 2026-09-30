@@ -17,9 +17,11 @@ import (
 // what becomes of its keys. Each plans once a tick over all the keys it has
 // (T4) and is idempotent (1.3.3, E7): a rule run again on the same keys with
 // nothing changed in between writes nothing and raises nothing, so a key
-// delivered twice is harmless. Nothing here reads a store or a clock: the
-// snapshot, the facts about the sprint's own keys and the two clocks are
-// given.
+// delivered twice is harmless. A plan that a limit cut (R2's chunk, R6's room, a
+// queue longer than R7's read) does what it read and leaves its key, and the
+// next plan, on the state the first left, does the rest. Nothing here reads a
+// store or a clock: the snapshot, the facts about the sprint's own keys and the
+// two clocks are given.
 //
 // A plan is made on a snapshot loaded from its own read (LoadPartial): it
 // reads only the cells, counts, rows and fields the read named, and a plan
@@ -155,6 +157,9 @@ var (
 	// The member's control card: status and its hold (isHeld). A fleet member's
 	// `since` is written and never read.
 	memberReadFields = []string{"status", "held"}
+	// The members R6 and R7 read: the status alone (UpMembers); they never ask
+	// whether a member is held.
+	upReadFields = []string{"status"}
 	// R2's work cards and their primaries: the stream (a dropping stream is
 	// skipped), the generation and the clocks nextGen, redealUnit and
 	// withdrawUnit read or unset, the count of redeals, the primary and, on the
@@ -451,10 +456,13 @@ func readSeen(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 //
 // Trigger: the pop of beat:<m> (no beat for 15 s of running time), or the line
 // of fleet down m (which holds m).
-// Read: m's control card and beat:<m>'s score in the due set; the first
-// 2,000 of m's ready and working cells by score, each with its primary; the
-// up members' control cards and ready counts (the receivers).
-// Guard: m's control card at its place and revision; each card at its place
+// Read: the fleet (every member's control card, and the counts of each member's
+// cells: the receivers' ready counts and m's own) and the first 2,000 of m's
+// ready and working cells by score, each with its primary; beat:<m>'s score in
+// the due set is a fact.
+// Guard: m's control card at its place and revision, whenever the step moves
+// m's cards (the entry that marks m down, or, for a held member or one an
+// earlier chunk marked, an entry that only guards it); each card at its place
 // and revision; one count entry over the receivers' ready cells, each at most
 // what was read; each receiver's status up (memberup); and, when the key came
 // from the pop and m is not held, no beat:<m> entry above R (beatstale): a
@@ -465,17 +473,17 @@ func readSeen(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // is dealt again to the up member with the shortest ready queue, at
 // generation + 1. A card that was ready keeps untaken_r and redeals: it was
 // never taken, so its redeal does not count. A card that was working ended a
-// take without a finish, and its redeal counts: below MaxRedeals it is dealt
-// again with redeals + 1, first_taken_r unset and untaken_r = R; at
-// MaxRedeals it goes to withdrawn instead, and its primary working -> ready
+// take without a finish, and its redeal counts: below RuleMaxRedeals it is
+// dealt again with redeals + 1, first_taken_r unset and untaken_r = R; at
+// RuleMaxRedeals it goes to withdrawn instead, and its primary working -> ready
 // with bound = redeals (out of again). With no member up the cards go to
 // withdrawn as one set and their primaries working -> ready as one set (into
 // again); a working card's count is raised at its withdrawal, and its later
 // redeal from withdrawn does not count again.
 // A card of a stream being dropped is left as it is (X refuses DROPPING), and
 // the key stays.
-// Key: requeued while either cell still holds a card; removed when both are
-// empty.
+// Key: requeued while either cell still holds a card (the cells' counts say, not
+// the cards the read loaded); removed when both are empty.
 // Raises: "fleet member down: m, k redealt, j withdrawn" (the step that marks
 // it, with that step's counts) and "cards returned to ready because no member
 // is up"; "a card reached its bound" naming the primaries at the bound.
@@ -696,7 +704,7 @@ func withdrawUnit(s *Snapshot, c *Card, from string, now Now, wall time.Time, at
 // fleetQuery is the fleet query the rules read the members by (1.0): every
 // member's control card, the rows of the fleet table and the counts of each
 // member's cells (a receiver's ready count is one of them).
-func fleetQuery() SprintQ { return SprintQ{Kind: QueryFleet, Fields: memberReadFields} }
+func fleetQuery(fields []string) SprintQ { return SprintQ{Kind: QueryFleet, Fields: fields} }
 
 // downQueries are R2's queries for one member at a limit: the heads of its ready
 // and working cells, each card with its primary (2.3 R2).
@@ -724,7 +732,7 @@ func recordsOf(qs ...SprintQ) int {
 // receivers and each member's own cells) and the heads of each member's ready
 // and working cells with their primaries. The beat entry is a fact.
 func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
-	fleet := fleetQuery()
+	fleet := fleetQuery(memberReadFields)
 	kept, left, lim := fleetShare(keys, fleetChunk, recordsOf(fleet),
 		func(limit int) int { return recordsOf(downQueries("m", limit)...) }, b, halvings)
 	ks := fleetKeysOf(ruleDown, kept)
@@ -743,11 +751,12 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // Trigger: cards enter ready; a ready card's attempt, bound or refused
 // changes; room frees; a member up; a sentinel line; the owner of "no fleet
 // member is up"; start.
-// Read: the up members' control cards and ready counts (room is the sum of 2
-// less each ready count); for each stream that is not dropping, front(s) for
-// σ_s and the head of fresh:s below σ_s and of again:s, each up to
+// Read: the fleet (the members' control cards and their cells' counts: room is
+// the sum of 2 less each ready count); for each stream, front(s) for σ_s and
+// the head of fresh:s below σ_s and of again:s, each up to
 // L = min(room, 64, ⌊10,000 / 3s⌋), with the heads' records and, for
-// again:s, their withdrawn work cards.
+// again:s, their withdrawn work cards. The plan's candidates are those heads,
+// not a cell of the table.
 // Plan: the room lowest (score, id) of what was read, each dealt: a new work
 // card to the shortest ready queue among the up members, the primary's avoid
 // member only when no other up member has room; or the withdrawn card dealt
@@ -759,8 +768,9 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // (memberup); for each stream with fresh cards dealt,
 // S.zguard(sent:s, rcount, -inf, the highest fresh score dealt, atmost 0).
 // Effect: as planned. A primary the planner refuses (its work card's id is
-// taken by a record) gets refused = "deal: <why>" and its judgment "the
-// machine could not move a card". No member up and some card dealable
+// taken by a record the read loaded: the read cannot ask for an id it does not
+// know, and a card it did not load is refused by the guard, EXISTS) gets
+// refused = "deal: <why>" and its judgment "the machine could not move a card". No member up and some card dealable
 // (fresh:s below σ_s, or again:s not empty): "no fleet member is up", once
 // (J's one per cause; a hold on it keeps it closed).
 // A card of a stream being dropped is not dealt, and the key stays (1.3.5).
@@ -996,7 +1006,7 @@ func dealReadFor(sh fleetShape, b ReadBounds, halvings int) ReadPlan {
 		records = MaxReadRecords
 	}
 	lim := Halved(dealLimit(0, len(sh.Streams), len(sh.Members), records), halvings)
-	rp := ReadPlan{Sprint: []SprintQ{fleetQuery()}}
+	rp := ReadPlan{Sprint: []SprintQ{fleetQuery(upReadFields)}}
 	rp.Sprint[0].Units = sh.units()
 	for _, st := range sh.Streams {
 		rp.Sprint = append(rp.Sprint, dealQueries(st, lim)...)
@@ -1137,7 +1147,7 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 // levelReadFor is R7's read of the shape's members (8.0): the fleet, and the
 // head of each member's ready cell, at most MaxReadyPerMember cards each.
 func levelReadFor(sh fleetShape) ReadPlan {
-	rp := ReadPlan{Sprint: []SprintQ{fleetQuery()}}
+	rp := ReadPlan{Sprint: []SprintQ{fleetQuery(upReadFields)}}
 	rp.Sprint[0].Units = sh.units()
 	for _, m := range sh.Members {
 		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryRelated, Table: Fleet,

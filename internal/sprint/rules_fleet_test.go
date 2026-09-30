@@ -39,6 +39,11 @@ type fleetT struct {
 	partialOnly bool
 	// bounds are the read bounds the plans are read within.
 	bounds ReadBounds
+	// halvings are the halvings the reads are planned at (1.3.5).
+	halvings int
+	// mutate changes the read plan before it is answered: a test that asks
+	// whether a field or a follow of a read is needed takes it out.
+	mutate func(rp *ReadPlan)
 }
 
 // newFleetT is a sprint with the members up (rows and control cards) and n
@@ -70,7 +75,7 @@ func (f *fleetT) snap() *Snapshot { return f.w.s }
 
 // agendaOf is agenda keys from their texts, in the order of the seqs that
 // queued them. It is the one place a test builds a key from its parts, with
-// keyRule and keySubject in rules_fleet_stub.go.
+// keyRule and keySubject in rules_fleet.go.
 func agendaOf(texts ...string) []AgendaKey {
 	out := make([]AgendaKey, len(texts))
 	for i, s := range texts {
@@ -100,11 +105,11 @@ func (f *fleetT) readPlan(rule string, ks []AgendaKey) ReadPlan {
 	var left []AgendaKey
 	switch rule {
 	case ruleSeen:
-		rp, left = readSeen(ks, f.bounds, 0)
+		rp, left = readSeen(ks, f.bounds, f.halvings)
 	case ruleDown:
-		rp, left = readDown(ks, f.bounds, 0)
+		rp, left = readDown(ks, f.bounds, f.halvings)
 	case ruleDeal:
-		rp = dealReadFor(f.shape(), f.bounds, 0)
+		rp = dealReadFor(f.shape(), f.bounds, f.halvings)
 	case ruleLevel:
 		rp = levelReadFor(f.shape())
 	default:
@@ -112,6 +117,10 @@ func (f *fleetT) readPlan(rule string, ks []AgendaKey) ReadPlan {
 	}
 	if len(left) != 0 {
 		f.t.Fatalf("the read left keys %v", keyTexts(left))
+	}
+	if f.mutate != nil {
+		rp.Sprint = append([]SprintQ(nil), rp.Sprint...) // the queries are values; the plan is not shared
+		f.mutate(&rp)
 	}
 	return rp
 }
@@ -207,6 +216,31 @@ func (f *fleetT) failedGuard(rp RulePlan) string {
 			}
 		default:
 			f.t.Fatalf("a guard of kind %q", g.Kind)
+		}
+	}
+	return ""
+}
+
+// failedExpect is what layer 1 does at apply, on the state a plan meets: the
+// first entry whose card is not at the place or the revision the plan read it
+// at, as text; "" when every entry holds. It changes nothing, where applying
+// the plan would fail the test.
+func (f *fleetT) failedExpect(rp RulePlan) string {
+	for _, u := range rp.Plan.Units {
+		for _, ch := range u.Changes {
+			e := ch.Entry
+			if e.Expect == nil || e.Expect.Absent {
+				continue
+			}
+			c := f.snap().T(ch.Table).Card(e.ID)
+			switch {
+			case c == nil:
+				return ch.Table + " " + e.ID + " is gone"
+			case e.Expect.Revision != "" && e.Expect.Revision != u64(c.Rev):
+				return ch.Table + " " + e.ID + " is at revision " + u64(c.Rev) + ", the plan read " + e.Expect.Revision
+			case e.Expect.Place != nil && (e.Expect.Place.Row != c.Row || e.Expect.Place.Col != c.Col):
+				return ch.Table + " " + e.ID + " moved to " + c.Row + ":" + c.Col
+			}
 		}
 	}
 	return ""
@@ -1438,17 +1472,30 @@ func TestLevelReadTwoEach(t *testing.T) {
 // holding the cards, half ready and half working.
 func benchDownT(b testing.TB, cards int) *Snapshot {
 	b.Helper()
+	return downSprintT(b, (cards+1)/2, cards/2)
+}
+
+// downSprintT is that sprint with m1 holding ready cards and working cards,
+// the ready ones first in score order.
+func downSprintT(b testing.TB, ready, working int) *Snapshot {
+	b.Helper()
 	s := &Snapshot{Now: t0, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet)}
 	s.Work.SetRows([]string{"s1"})
 	s.Fleet.SetRows([]string{"m1", "m2", "m3"})
 	for _, m := range s.Fleet.Rows() {
 		s.Fleet.Put(&Card{ID: CtlID(m), Row: m, Col: Ctl, Rev: 1, Fields: map[string]string{"kind": "member", "status": Up}})
 	}
-	for i := 0; i < cards; i++ {
+	r, w := ready, working
+	for i := 0; r+w > 0; i++ {
 		id := "p" + itoa(i)
-		col := Working
-		if i%2 == 0 {
-			col = Ready
+		col := Ready
+		if r == 0 || w > 0 && i%2 == 1 {
+			col = Working
+		}
+		if col == Ready {
+			r--
+		} else {
+			w--
 		}
 		s.Work.Put(&Card{ID: id, Row: "s1", Col: Working, Score: float64(i), Rev: 1,
 			Fields: map[string]string{"kind": "primary", "stream": "s1", "attempt": "1", "work": id + ".w1"}})
