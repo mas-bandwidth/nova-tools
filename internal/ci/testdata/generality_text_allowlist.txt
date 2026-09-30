@@ -21,7 +21,7 @@
 # fixture; changing the path changes the record's id, so the fixture is regenerated as a
 # piece, not edited.
 #
-# ceiling: 458
+# ceiling: 444
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
@@ -232,18 +232,6 @@ internal/decide/testdata/registry.json:glenn 3
 internal/decide/testdata/registry.json:johnny 3
 internal/decide/testdata/registry.json:rowan 3
 internal/decide/testdata/registry.json:stella 3
-internal/events/schema.sql:glenn 1
-internal/events/schema.sql:johnny 2
-internal/events/schema.sql:rowan 1
-internal/events/testdata/fold-2026-09-22.sql:hulk 4
-internal/events/testdata/fold-2026-09-22.sql:studio 4
-internal/events/testdata/schema-v1.sql:glenn 1
-internal/events/testdata/schema-v1.sql:johnny 2
-internal/events/testdata/schema-v2.sql:glenn 1
-internal/events/testdata/schema-v2.sql:johnny 2
-internal/events/testdata/schema-v2.sql:rowan 1
-internal/events/testdata/three-card-priced.sql:studio 6
-internal/events/testdata/three-card.sql:studio 6
 internal/fleet/testdata/machines.tsv:batman 2
 internal/fleet/testdata/machines.tsv:glenn 3
 internal/fleet/testdata/machines.tsv:hulk 4
@@ -331,8 +319,6 @@ internal/nsprint/fn/lua/waiting_resolve.lua:glenn 1
 internal/nsprint/fn/lua/waiting_resolve.lua:space 1
 internal/nsprint/fn/lua/ws.lua:glenn 1
 internal/nsprint/fn/lua/ws.lua:rowan 1
-internal/play/story.txt.notes:emma 2
-internal/play/story.txt.notes:stella 1
 internal/records/testdata/refused/absent_reason_missing.json:rowan 1
 internal/records/testdata/refused/absent_reason_missing.json:studio 1
 internal/records/testdata/refused/absent_value_not_null.json:rowan 1

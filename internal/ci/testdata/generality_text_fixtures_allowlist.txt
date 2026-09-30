@@ -10,15 +10,13 @@
 # row is a refusal unless the file is a capture. Checked by TestGeneralityText
 # (docs/SPEC-CI.md#generality-text).
 #
-# ceiling: 17
+# ceiling: 15
 cmd/nova-tokens/testdata/units/pitstop-2026-09-18-units.lisp a verbatim excerpt of a real work set, copied as written
 internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
 internal/ci/testdata/failed/merge-darwin-timeout.log captured CI job output of a failed run
 internal/ci/testdata/failed/windows-sandbox.log captured CI job output of a failed run
 internal/ci/testdata/generality_allowlist.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality_text_allowlist.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/decide/testdata/pitstop-2026-09-18/decisions.jsonl recorded rows of a real decisions log
-internal/decide/testdata/reader-observations-2026-09-19.jsonl recorded observations of real reader answers (README-reader-observations.md)
 internal/tlc/testdata/temporal-new.log captured TLC model checker output
 internal/tlc/testdata/temporal-old.log captured TLC model checker output
 internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository

@@ -85,9 +85,14 @@ var (
 	// The project's own public repositories are its identity, not fleet names: this
 	// repository, the seed it grows from and the store of the secrets design. The
 	// name must end there, so mas-bandwidth/nova-tools-x is not the project's.
-	reOwnIdentity = regexp.MustCompile(`(?i)mas-bandwidth/(?:nova-tools|nova|secrets)([^A-Za-z0-9_-]|$)`)
+	// It is anchored on the left: the start of the line, a character that cannot continue
+	// a path (or an escaped tab, newline or return, as a JSON log writes one), optionally followed by a URL scheme, github.com/ (or api.github.com/) and
+	// repos/ (the API path), so
+	// other/mas-bandwidth/nova is not the project's. Group 2 is the part blanked.
+	reOwnIdentity = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_./-]|\\[nrt])(?:https?://)?(?:(?:api\.)?github\.com/)?(?:repos/)?(mas-bandwidth/(?:nova-tools|nova|secrets))([^A-Za-z0-9_-]|$)`)
 	// The project's contact addresses, in the one document that publishes them.
-	reContact = regexp.MustCompile(`(?i)[A-Za-z0-9._+-]+@mas-bandwidth\.com`)
+	// Exactly the two published addresses, not any local part. Group 2 is the address.
+	reContact = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9._+-])((?:glenn|rowan)@mas-bandwidth\.com)(?:\.?(?:[^A-Za-z0-9.-]|$))`)
 )
 
 // lineMayContainText is the cheap prefilter: a line with none of these substrings has
@@ -103,6 +108,25 @@ func lineMayContainText(line string) bool {
 		}
 	}
 	return false
+}
+
+// blankGroup replaces the bytes of group g of every match of re with spaces. A match
+// consumes the character after it, so the scan repeats until none is left to blank: two
+// adjacent links are both found.
+func blankGroup(s string, re *regexp.Regexp, g int) string {
+	for {
+		idx := re.FindAllStringSubmatchIndex(s, -1)
+		if len(idx) == 0 {
+			return s
+		}
+		b := []byte(s)
+		for _, m := range idx {
+			for i := m[2*g]; i < m[2*g+1]; i++ {
+				b[i] = ' '
+			}
+		}
+		s = string(b)
+	}
 }
 
 // contactDoc is the document that publishes the project's contact addresses.
@@ -140,12 +164,9 @@ func generalityTextFindings(rel, line string) []string {
 		}
 	}
 	scrubbed := rePosixClass.ReplaceAllString(line, "        ")
-	scrubbed = reOwnIdentity.ReplaceAllStringFunc(scrubbed, func(s string) string {
-		tail := len(reOwnIdentity.FindStringSubmatch(s)[1])
-		return strings.Repeat(" ", len(s)-tail) + s[len(s)-tail:]
-	})
+	scrubbed = blankGroup(scrubbed, reOwnIdentity, 2)
 	if rel == contactDoc {
-		scrubbed = reContact.ReplaceAllStringFunc(scrubbed, func(s string) string { return strings.Repeat(" ", len(s)) })
+		scrubbed = blankGroup(scrubbed, reContact, 2)
 	}
 	out = append(out, extractTokensFromText(scrubbed)...)
 	return out
@@ -358,6 +379,9 @@ func TestGeneralityTextFindings(t *testing.T) {
 		{"the store `mas-bandwidth/secrets`, and repos/mas-bandwidth/secrets/collaborators", nil},
 		{"mas-bandwidth/nova-tools-x and mas-bandwidth/novax and mas-bandwidth/secrets2", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
 		{"mas-bandwidth/nova mas-bandwidth/nova-tools", nil},
+		{`{"Output":"FAIL\tgithub.com/mas-bandwidth/nova-tools/cmd/x"}`, nil},
+		{"other/mas-bandwidth/nova and xgithub.com/mas-bandwidth/nova and other/github.com/mas-bandwidth/nova", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
+		{"gh api repos/mas-bandwidth/secrets/collaborators and (mas-bandwidth/nova)", nil},
 		{"mail ada@mas-bandwidth.com", []string{"mas-bandwidth"}},
 		{"in a namespace, on miniredis, in whitespace", nil},
 		{"the swarm-hulk seat", []string{"hulk"}},
@@ -389,6 +413,15 @@ func TestGeneralityTextContactDoc(t *testing.T) {
 	}
 	if got := generalityTextFindings(contactDoc, "ask rowan or mas-bandwidth/ideas"); len(got) != 2 {
 		t.Errorf("%s: a name and another repository still count, got %v", contactDoc, got)
+	}
+	// Only the two published addresses pass, whole.
+	for _, l := range []string{"mail ada@mas-bandwidth.com", "mail xglenn@mas-bandwidth.com", "mail glenn@mas-bandwidth.com.evil"} {
+		if got := generalityTextFindings(contactDoc, l); len(got) == 0 {
+			t.Errorf("%s: %q passed", contactDoc, l)
+		}
+	}
+	if got := generalityTextFindings(contactDoc, "to <rowan@mas-bandwidth.com>, <glenn@mas-bandwidth.com>"); len(got) != 0 {
+		t.Errorf("%s: both published addresses: %v", contactDoc, got)
 	}
 }
 
