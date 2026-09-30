@@ -1,9 +1,12 @@
 package fn
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var localDecl = regexp.MustCompile(`^local\s+(function\s+[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*(\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)`)
@@ -108,3 +111,162 @@ func TestCountLocalsSeesTheOldShape(t *testing.T) {
 		t.Fatalf("unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
 	}
 }
+
+type fakeRedisLoader struct {
+	redis.UniversalClient
+
+	keys              []string
+	info              string
+	loadReplaceCalled int
+	loadCalled        int
+}
+
+func (f *fakeRedisLoader) Keys(ctx context.Context, pattern string) *redis.StringSliceCmd {
+	return redis.NewStringSliceResult(f.keys, nil)
+}
+
+func (f *fakeRedisLoader) Info(ctx context.Context, section ...string) *redis.StringCmd {
+	return redis.NewStringResult(f.info, nil)
+}
+
+func (f *fakeRedisLoader) FunctionLoadReplace(ctx context.Context, code string) *redis.StringCmd {
+	f.loadReplaceCalled++
+	return redis.NewStringResult(Library, nil)
+}
+
+func (f *fakeRedisLoader) FunctionLoad(ctx context.Context, code string) *redis.StringCmd {
+	f.loadCalled++
+	return redis.NewStringResult(Library, nil)
+}
+
+func (f *fakeRedisLoader) FunctionList(ctx context.Context, q redis.FunctionListQuery) *redis.FunctionListCmd {
+	cmd := redis.NewFunctionListCmd(ctx, "function", "list")
+	cmd.SetVal(nil)
+	return cmd
+}
+
+func TestLoadRefusesNonDevSprint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Single non-dev sprint key
+	fake := &fakeRedisLoader{
+		keys: []string{"prod-sprint:epoch"},
+		info: "cluster_enabled:0",
+	}
+	err := Load(ctx, fake)
+	if err == nil {
+		t.Fatal("Load = nil, want refusal for non-dev sprint key")
+	}
+	want := "this server holds a sprint that is not a dev- sprint (prod-sprint:epoch); nothing was loaded; load this library only on a bench server"
+	if err.Error() != want {
+		t.Fatalf("Load error = %q, want %q", err.Error(), want)
+	}
+	if fake.loadReplaceCalled != 0 {
+		t.Fatalf("FunctionLoadReplace was called %d times; want 0", fake.loadReplaceCalled)
+	}
+
+	// Multiple keys: verify sorting selects the first offending key
+	fakeSorted := &fakeRedisLoader{
+		keys: []string{"prod-sprint:epoch", "alpha-sprint:epoch", "dev-test:sprint:epoch"},
+		info: "cluster_enabled:0",
+	}
+	err = Load(ctx, fakeSorted)
+	if err == nil {
+		t.Fatal("Load = nil, want refusal for non-dev sprint key")
+	}
+	wantSorted := "this server holds a sprint that is not a dev- sprint (alpha-sprint:epoch); nothing was loaded; load this library only on a bench server"
+	if err.Error() != wantSorted {
+		t.Fatalf("Load error = %q, want %q", err.Error(), wantSorted)
+	}
+	if fakeSorted.loadReplaceCalled != 0 {
+		t.Fatalf("FunctionLoadReplace was called %d times; want 0", fakeSorted.loadReplaceCalled)
+	}
+
+	// LoadMissing also refuses
+	fakeMissing := &fakeRedisLoader{
+		keys: []string{"prod-sprint:epoch"},
+		info: "cluster_enabled:0",
+	}
+	err = LoadMissing(ctx, fakeMissing)
+	if err == nil {
+		t.Fatal("LoadMissing = nil, want refusal for non-dev sprint key")
+	}
+	if err.Error() != want {
+		t.Fatalf("LoadMissing error = %q, want %q", err.Error(), want)
+	}
+	if fakeMissing.loadCalled != 0 {
+		t.Fatalf("FunctionLoad was called %d times; want 0", fakeMissing.loadCalled)
+	}
+}
+
+func TestLoadRefusesCluster(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	fake := &fakeRedisLoader{
+		keys: []string{"dev-bench:sprint:epoch"},
+		info: "# Cluster\r\ncluster_enabled:1\r\n",
+	}
+	err := Load(ctx, fake)
+	if err == nil {
+		t.Fatal("Load = nil, want refusal for cluster")
+	}
+	want := "this server is a cluster; the library supports a standalone server only; nothing was loaded"
+	if err.Error() != want {
+		t.Fatalf("Load error = %q, want %q", err.Error(), want)
+	}
+	if fake.loadReplaceCalled != 0 {
+		t.Fatalf("FunctionLoadReplace was called %d times; want 0", fake.loadReplaceCalled)
+	}
+
+	// LoadMissing also refuses
+	fakeMissing := &fakeRedisLoader{
+		keys: []string{"dev-bench:sprint:epoch"},
+		info: "# Cluster\r\ncluster_enabled:1\r\n",
+	}
+	err = LoadMissing(ctx, fakeMissing)
+	if err == nil {
+		t.Fatal("LoadMissing = nil, want refusal for cluster")
+	}
+	if err.Error() != want {
+		t.Fatalf("LoadMissing error = %q, want %q", err.Error(), want)
+	}
+	if fakeMissing.loadCalled != 0 {
+		t.Fatalf("FunctionLoad was called %d times; want 0", fakeMissing.loadCalled)
+	}
+}
+
+func TestLoadCleanServer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	for _, keys := range [][]string{
+		nil,
+		{},
+		{"dev-one:sprint:epoch", "dev-two:sprint:epoch"},
+	} {
+		fake := &fakeRedisLoader{
+			keys: keys,
+			info: "# Cluster\r\ncluster_enabled:0\r\n",
+		}
+		if err := Load(ctx, fake); err != nil {
+			t.Fatalf("Load with keys %v: %v", keys, err)
+		}
+		if fake.loadReplaceCalled != 1 {
+			t.Fatalf("FunctionLoadReplace called %d times, want 1", fake.loadReplaceCalled)
+		}
+
+		fakeMissing := &fakeRedisLoader{
+			keys: keys,
+			info: "# Cluster\r\ncluster_enabled:0\r\n",
+		}
+		if err := LoadMissing(ctx, fakeMissing); err != nil {
+			t.Fatalf("LoadMissing with keys %v: %v", keys, err)
+		}
+		if fakeMissing.loadCalled != 1 {
+			t.Fatalf("FunctionLoad called %d times, want 1", fakeMissing.loadCalled)
+		}
+	}
+}
+

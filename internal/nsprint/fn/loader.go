@@ -84,9 +84,39 @@ func Source() (string, error) {
 	return b.String(), nil
 }
 
+// checkServer refuses to load the library on a server that holds a sprint
+// that is not a dev- sprint, or on a cluster server. A function library
+// belongs to the whole server, so loading on a real sprint would replace the
+// functions that sprint runs on.
+func checkServer(ctx context.Context, client redis.UniversalClient) error {
+	keys, err := client.Keys(ctx, "*sprint:epoch").Result()
+	if err != nil {
+		return err
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !strings.HasPrefix(key, "dev-") {
+			return fmt.Errorf("this server holds a sprint that is not a dev- sprint (%s); nothing was loaded; load this library only on a bench server", key)
+		}
+	}
+
+	info, err := client.Info(ctx, "cluster").Result()
+	if err != nil {
+		return err
+	}
+	if strings.Contains(info, "cluster_enabled:1") {
+		return fmt.Errorf("this server is a cluster; the library supports a standalone server only; nothing was loaded")
+	}
+
+	return nil
+}
+
 // Load installs the complete library atomically. REPLACE permits an updated
 // binary to deploy its exact embedded version without a delete/load gap.
-func Load(ctx context.Context, client *redis.Client) error {
+func Load(ctx context.Context, client redis.UniversalClient) error {
+	if err := checkServer(ctx, client); err != nil {
+		return err
+	}
 	source, err := Source()
 	if err != nil {
 		return err
@@ -107,7 +137,10 @@ func Load(ctx context.Context, client *redis.Client) error {
 // deploy's job (`nova-sprint fn load`, which uses Ensure). A caller whose ACL
 // refuses FUNCTION LIST is not the deployer: it loads nothing and its FCALL
 // answers for the store.
-func LoadMissing(ctx context.Context, client *redis.Client) error {
+func LoadMissing(ctx context.Context, client redis.UniversalClient) error {
+	if err := checkServer(ctx, client); err != nil {
+		return err
+	}
 	libs, err := client.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: Library}).Result()
 	if err != nil {
 		if strings.Contains(err.Error(), "NOPERM") {
@@ -143,7 +176,7 @@ func Sum(source string) string {
 
 // Loaded returns the code of the nova_sprint library the server holds, and
 // false when it holds none.
-func Loaded(ctx context.Context, client *redis.Client) (string, bool, error) {
+func Loaded(ctx context.Context, client redis.UniversalClient) (string, bool, error) {
 	libs, err := client.FunctionList(ctx, ListQuery).Result()
 	if err != nil {
 		return "", false, fmt.Errorf("list %s function library: %w", Library, err)
@@ -171,7 +204,7 @@ func FromList(libs []redis.Library) (string, bool) {
 // Ensure loads the embedded library only when the server does not already
 // hold that exact source, so a converge that runs it every pass is a no-op
 // once the version matches. It returns the embedded Sum and whether it loaded.
-func Ensure(ctx context.Context, client *redis.Client) (string, bool, error) {
+func Ensure(ctx context.Context, client redis.UniversalClient) (string, bool, error) {
 	source, err := Source()
 	if err != nil {
 		return "", false, err
@@ -211,7 +244,7 @@ const PingSkipped = "skipped"
 // ns_ping the server would run is not ours (another library, or an older
 // body, may write), so Check skips the call and reports Ping=PingSkipped; it
 // changes nothing.
-func Check(ctx context.Context, client *redis.Client) (State, error) {
+func Check(ctx context.Context, client redis.UniversalClient) (State, error) {
 	source, err := Source()
 	if err != nil {
 		return State{}, err
