@@ -615,7 +615,13 @@ func (m *Mem) Step(ctx context.Context, step Step) (Reply, error) {
 		return Reply{}, memEpochRefusal("EPOCHAHEAD", s.active)
 	}
 	next := cloneMemSpace(s)
-	reply, err := m.planStep(ctx, s, next, step)
+	var reply Reply
+	var err error
+	if step.Fence {
+		reply, err = m.planFence(step)
+	} else {
+		reply, err = m.planStep(ctx, s, next, step)
+	}
 	if err != nil {
 		return Reply{}, err
 	}
