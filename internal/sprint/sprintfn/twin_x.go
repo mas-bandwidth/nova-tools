@@ -3,6 +3,7 @@ package sprintfn
 import (
 	"container/list"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,6 +101,16 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	            (init --coordinator, 3).
 //	stranger    Member: the machine. {p}strangers[Member] is not yet noticed
 //	            (2.3, R1).
+//	sent        Key: "sent:<stream> <max>", max a score (a decimal, "(" before
+//	            it for an open bound). No sentinel of the stream is placed at
+//	            or below max: S.zguard(sent:<stream>, rcount, -inf, max,
+//	            atmost 0) over {p}sprint:sent:<stream>@e (2.3, R3's release
+//	            and R6's deal).
+//	counter     Key: a field of {p}next@e, score or streams. Score: its value
+//	            as read, 0 for a field absent (2.3, R15's COUNTER on
+//	            next.streams; R17's stopinputs, errata 3 H14). The sprint
+//	            part's CounterChange guards the fields it writes; this guards
+//	            a field a step reads and does not write.
 const (
 	XGuardMemberUp    = "memberup"
 	XGuardBeatStale   = "beatstale"
@@ -108,7 +119,28 @@ const (
 	XGuardClock       = "clock"
 	XGuardCoordinator = "coordinator"
 	XGuardStranger    = "stranger"
+	XGuardSent        = "sent"
+	XGuardCounter     = "counter"
 )
+
+// xSentBound is the score grammar of a sent guard's max: a decimal, with an
+// exponent of at most two digits, "(" before it for an open bound. The Lua's
+// sent_bound reads the same (TestXSentAndCounterGuardsAgree).
+var xSentBound = regexp.MustCompile(`^\(?-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]{1,2})?$`)
+
+// xSentKey is a sent guard's key as its stream and max: "sent:<stream> <max>",
+// the stream a name with no space, the max a score of xSentBound.
+func xSentKey(key string) (stream, max string, ok bool) {
+	rest, ok := strings.CutPrefix(key, "sent:")
+	if !ok {
+		return "", "", false
+	}
+	stream, max, ok = strings.Cut(rest, " ")
+	if !ok || stream == "" || strings.ContainsAny(stream, " @") || !xSentBound.MatchString(max) {
+		return "", "", false
+	}
+	return stream, max, true
+}
 
 // XGuardAbsent is the Score of a due or clock guard over an entry or field
 // that was absent (or empty) when the plan read it. No running or wall time is
@@ -902,6 +934,14 @@ func xCheckShape(req *Request) *Refusal {
 				return bad("a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent", g.Key)
 			}
 		case XGuardCoordinator:
+		case XGuardSent:
+			if _, _, ok := xSentKey(g.Key); !ok {
+				return bad("a sent guard's key %q is not sent:<stream> <max>", g.Key)
+			}
+		case XGuardCounter:
+			if (g.Key != xFieldNextScore && g.Key != xFieldNextStream) || g.Score < 0 {
+				return bad("a counter guard names %q, which is not score or streams, or a value below zero", g.Key)
+			}
 		default:
 			return bad("%q is not a kind of guard", g.Kind)
 		}
@@ -1025,6 +1065,28 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		}
 		if ok && got == xNoticed {
 			return fail("machine %s has been noticed already", g.Member)
+		}
+	case XGuardSent:
+		stream, max, _ := xSentKey(g.Key)
+		n, ref := r.zcount(r.at("sent:"+stream), "-inf", max)
+		if ref != nil {
+			return ref
+		}
+		if n > 0 {
+			return fail("a sentinel of %s is placed at or below %s since the read", stream, max)
+		}
+	case XGuardCounter:
+		got, ok, ref := r.hget(r.at(xKeyNext), g.Key)
+		if ref != nil {
+			return ref
+		}
+		if !ok {
+			got = "0"
+		} else if n, err := strconv.ParseUint(got, 10, 64); err != nil || strconv.FormatUint(n, 10) != got {
+			return xRefuse(CodeConfig, RefusalDetail{}, "the counter's %s holds %q, not a whole number", g.Key, got)
+		}
+		if want := strconv.FormatInt(g.Score, 10); got != want {
+			return fail("the counter's %s is %s now, read as %s", g.Key, got, want)
 		}
 	}
 	return nil

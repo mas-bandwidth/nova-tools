@@ -34,6 +34,22 @@ func (r *xRead) zmscore(key string, members []string) (map[string]float64, *Refu
 	return out, nil
 }
 
+// zcount is the number of members of a sorted set scored within min and max
+// (the store's bound grammar): S.zguard's ZCOUNT, one probe.
+func (r *xRead) zcount(key, min, max string) (int, *Refusal) {
+	r.probes++
+	if ref := r.wrongType(key, kindZSet); ref != nil {
+		return 0, ref
+	}
+	n := 0
+	for _, p := range r.k.ks.zpairs(key) {
+		if inBounds(p.score, min, max) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // xScore spells an index score for ZADD, as the Lua's score_text does
 // (TestXScoreSpellingAgrees): a whole number below 1e15 as itself, zero (minus zero
 // too) as "0", and any other number from the fewest of 15, 16 and 17 significant
