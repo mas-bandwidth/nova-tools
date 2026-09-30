@@ -263,17 +263,22 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Notes = append(g.Notes, n.ID)
 	}
-	var top, other []Group
+	var done, top, other []Group
 	for i := range rest {
 		rest[i].Members = sortedSet(restMembers[i])
 		rest[i].Size = len(rest[i].Members)
-		if rest[i].To != "" {
+		switch {
+		case rest[i].Type == NSprintDone:
+			done = append(done, rest[i])
+		case rest[i].To != "":
 			top = append(top, rest[i])
-		} else {
+		default:
 			other = append(other, rest[i])
 		}
 	}
-	return append(append(top, out...), other...)
+	// the sprint done first, then the judgments, then the other notes to the
+	// coordinator (ready to merge, the tick-end line), then the rest
+	return append(append(append(done, out...), top...), other...)
 }
 
 // FindGroup is the group of the id, if it is in the inbox.

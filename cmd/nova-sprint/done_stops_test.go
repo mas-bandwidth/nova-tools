@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,24 +59,15 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 		t.Fatalf("where's header:\n%s", where)
 	}
 	inbox := ta.ok("inbox")
-	// the notes addressed to the coordinator come first, in time order: the
-	// machine's "ready to merge" of each stream and its tick-end note, then the
-	// sprint done
+	// the sprint done is the first thing the coordinator reads
 	lines := strings.Split(inbox, "\n")
-	at := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "the sprint is done") })
-	for i := 0; i < at; i++ {
-		if !strings.HasPrefix(lines[i], "HAPPENED ") || !strings.Contains(lines[i], "for=coordinator") {
-			t.Fatalf("a line before the sprint done is not a note to the coordinator: %q\n%s", lines[i], inbox)
-		}
-	}
-	if at < 0 || !strings.HasPrefix(lines[at], "HAPPENED ") || !strings.Contains(lines[at], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ") ||
-		lines[at+1] != "  "+sprint.DoneHint || strings.Contains(inbox, "JUDGMENT") || !strings.Contains(inbox, "\nmachine: DONE\n") {
+	if !strings.HasPrefix(lines[0], "HAPPENED ") || !strings.Contains(lines[0], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ") ||
+		lines[1] != "  "+sprint.DoneHint || strings.Contains(inbox, "JUDGMENT") || !strings.Contains(inbox, "\nmachine: DONE\n") {
 		t.Fatalf("the inbox:\n%s", inbox)
 	}
 	var in struct{ Groups []sprint.Group }
 	ta.json("inbox", &in)
-	doneAt := slices.IndexFunc(in.Groups, func(g sprint.Group) bool { return g.Type == sprint.NSprintDone })
-	if doneAt < 0 || in.Groups[doneAt].Kind != sprint.Happened || in.Groups[doneAt].To != "coordinator" {
+	if len(in.Groups) == 0 || in.Groups[0].Type != sprint.NSprintDone || in.Groups[0].Kind != sprint.Happened || in.Groups[0].To != "coordinator" {
 		t.Fatalf("the inbox, for a program: %+v", in.Groups)
 	}
 	notes, _, err := ta.m.NotesSince(context.Background(), "", 100000)
