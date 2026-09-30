@@ -436,3 +436,23 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderNonASCIICellsAlignByRunes: cell width is counted in runes, so a
+// row key with multibyte characters lines up with its ASCII neighbours and the
+// separators stay in one column.
+func TestRenderNonASCIICellsAlignByRunes(t *testing.T) {
+	t.Parallel()
+
+	tbl := counts([]string{"a", "b"}, map[string][]int64{"café": {1, 2}, "abcd": {3, 4}, "日本語": {5, 6}}, []string{"café", "abcd", "日本語"})
+	want := "row  | a |  b\n" +
+		"-----+---+---\n" +
+		"café | 1 |  2\n" +
+		"abcd | 3 |  4\n" +
+		"日本語  | 5 |  6\n" +
+		"-----+---+---\n" +
+		"     | 9 | 12\n"
+	got := ntable.Render(tbl, ntable.RenderOpts{})
+	if got != want {
+		t.Fatalf("non-ASCII rows rendered:\n%s\nwant:\n%s", got, want)
+	}
+}

@@ -28,6 +28,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does.
@@ -289,27 +291,5 @@ func (l *List) render(drop map[int]bool, grow []string, kept int) string {
 // writeAtomic replaces path through a temp file in its own directory, so a reader
 // never sees half a list.
 func writeAtomic(path, text string) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(text); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.Write(filepath.Clean(path), []byte(text), 0o644, atomicfile.ExactMode())
 }

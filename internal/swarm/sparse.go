@@ -457,13 +457,24 @@ func listDepDirs(src string, patterns []string) ([]string, error) {
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
 			abs = real
 		}
-		rel, err := filepath.Rel(srcAbs, abs)
-		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		rel, ok := relBelow(srcAbs, abs)
+		if !ok {
 			continue
 		}
-		dirs = append(dirs, filepath.ToSlash(rel))
+		dirs = append(dirs, rel)
 	}
 	return dirs, nil
+}
+
+// relBelow returns abs relative to root, in slash form, when abs is strictly
+// below root. A child named "..cache" is below root; "../x", root itself and an
+// absolute result are not (filepath.IsLocal decides, never a prefix test).
+func relBelow(root, abs string) (string, bool) {
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }
 
 func sparseGit(dir string, args ...string) (string, error) {

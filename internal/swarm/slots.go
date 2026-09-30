@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -264,7 +265,7 @@ func publishSlotLease(store, id, body string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "lease"), []byte(body), 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(tmp, "lease"), []byte(body), 0o644, atomicfile.ExactMode()); err != nil {
 		_ = safepath.RemoveUnder(store, tmp)
 		return err
 	}

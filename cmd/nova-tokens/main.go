@@ -30,11 +30,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -1204,12 +1206,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	fmt.Fprint(stdout, body)
 	if *notePath != "" {
-		tmp := *notePath + ".tmp"
-		if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
-			return r.print(stderr)
-		}
-		if err := os.Rename(tmp, *notePath); err != nil {
+		if err := atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())
 			return r.print(stderr)
 		}

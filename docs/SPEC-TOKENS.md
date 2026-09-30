@@ -131,8 +131,8 @@ near the end, and the sections below say how each is met.
    nothing. No verb deletes, truncates or trims any file, including any log.
    The exception is a file THIS RUN makes: the fold's own `fold.lock`, the copy under `--scratch`, the temporary file
    `internal/atomicfile` writes through before rename (removed on failure or
-   cleanup), the report's and the ledgers' own `.tmp` files, and, on a platform with no flock, the lock sentinel the release
-   removes. A file the tool was given is
+   cleanup), and, on a platform with no flock, the lock sentinel the release
+   removes. The report and the ledgers are written through the same atomicfile. A file the tool was given is
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
    `.Truncate(`, `os.Create(`, `os.WriteFile(`, `os.O_TRUNC` (the flag that

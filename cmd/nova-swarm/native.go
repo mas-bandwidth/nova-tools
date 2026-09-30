@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -1997,11 +1998,7 @@ func copyRegularFile(from, to string) error {
 	if err != nil {
 		return err
 	}
-	tmp := to + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, to)
+	return atomicfile.Write(filepath.Clean(to), raw, 0o644)
 }
 
 // sweepNativeJob removes the job directory after its results have been

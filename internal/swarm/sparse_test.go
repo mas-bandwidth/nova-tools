@@ -54,3 +54,29 @@ func TestCardTestPackageReadsTheOneGrammar(t *testing.T) {
 		}
 	}
 }
+
+// TestRelBelowAcceptsDotDotNamedChildren: a child directory named "..cache" is
+// below the root and is kept; "../x", the root itself and a sibling are not.
+func TestRelBelowAcceptsDotDotNamedChildren(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(string(filepath.Separator), "src", "mod")
+	cases := []struct {
+		abs  string
+		want string
+		ok   bool
+	}{
+		{filepath.Join(root, "..cache"), "..cache", true},
+		{filepath.Join(root, "..cache", "sub"), "..cache/sub", true},
+		{filepath.Join(root, "pkg"), "pkg", true},
+		{filepath.Join(root, "..", "x"), "", false},
+		{filepath.Join(root, "..", "mod-other"), "", false},
+		{root, "", false},
+	}
+	for _, c := range cases {
+		got, ok := relBelow(root, c.abs)
+		if ok != c.ok || got != c.want {
+			t.Errorf("relBelow(%q, %q) = %q, %v; want %q, %v", root, c.abs, got, ok, c.want, c.ok)
+		}
+	}
+}

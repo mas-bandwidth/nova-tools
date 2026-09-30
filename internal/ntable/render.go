@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -108,12 +109,12 @@ func Render(t Table, opts RenderOpts) string {
 			w = v
 		}
 		if w == 0 {
-			w = len(header[j])
+			w = cellWidth(header[j])
 			for i := range body {
-				w = max(w, len(body[i][j]))
+				w = max(w, cellWidth(body[i][j]))
 			}
 			if hasFooter {
-				w = max(w, len(footer[j]))
+				w = max(w, cellWidth(footer[j]))
 			}
 		}
 		widths[j] = w
@@ -162,10 +163,14 @@ func Render(t Table, opts RenderOpts) string {
 	return b.String()
 }
 
+// cellWidth is the display width of a cell in runes, so a non-ASCII cell
+// aligns with its neighbours; a byte count would widen it.
+func cellWidth(s string) int { return utf8.RuneCountInString(s) }
+
 // pad writes s in a field of width w, right- or left-aligned; a
 // left-aligned last field is written as it is.
 func pad(b *strings.Builder, s string, w int, right, last bool) {
-	fill := w - len(s)
+	fill := w - cellWidth(s)
 	if fill < 0 {
 		fill = 0
 	}

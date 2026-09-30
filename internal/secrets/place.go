@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
@@ -330,30 +331,7 @@ func writeReceipt(dir, machine string, add placedReceipt) error {
 	}
 
 	final := receiptPath(dir, machine)
-	tmp, err := os.CreateTemp(dir, machine+".receipt.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if _, err := tmp.WriteString(b.String()); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, final); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return atomicfile.Write(filepath.Clean(final), []byte(b.String()), 0o600, atomicfile.ExactMode())
 }
 
 // defaultFleetFile is the fleet registry this tool reads when --machines is not given.

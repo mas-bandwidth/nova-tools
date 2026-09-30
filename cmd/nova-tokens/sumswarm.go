@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -332,9 +333,5 @@ func writeLedger(path, day string, names []string, models map[string]*cardSum) e
 		}, "\t"))
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.Write(filepath.Clean(path), []byte(strings.Join(out, "\n")+"\n"), 0o644)
 }

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
@@ -252,22 +253,5 @@ func dirExists(path string) bool {
 // writeFile writes data to path through a temporary file in the same
 // directory and a rename, so a reader never sees half a tree.
 func writeFile(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".nova-work-*")
-	if err != nil {
-		return err
-	}
-	_, werr := tmp.Write(data)
-	if werr == nil {
-		werr = tmp.Sync()
-	}
-	if cerr := tmp.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Rename(tmp.Name(), path)
-	}
-	if werr != nil {
-		os.Remove(tmp.Name())
-	}
-	return werr
+	return atomicfile.Write(filepath.Clean(path), data, 0o600, atomicfile.ExactMode())
 }
