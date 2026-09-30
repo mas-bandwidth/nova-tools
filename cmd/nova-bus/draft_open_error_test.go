@@ -106,9 +106,9 @@ func TestDraftSubjectResolutionRepairsMalformedOrUnreadableOpen(t *testing.T) {
 			for _, want := range []string{
 				tc.wantContext,
 				tc.wantRepair,
-				"nova-bus inbox --bus " + shellQuote(root) + " --as 'Ada Vale' --receipt-max-words '<receipt-word-limit>' --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'",
-				"replace the receipt-word-limit, remote, and branch placeholders",
-				"positive word-count threshold for classifying short receipts",
+				"nova-bus inbox --bus " + shellQuote(root) + " --as 'Ada Vale' --receipt-max-words 23 --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'",
+				"replace the remote and branch placeholders",
+				"--receipt-max-words 23 is the resolved positive word-count threshold for classifying short receipts",
 				"--carry-history preserves existing history",
 				"--advance moves and pushes the cursor",
 				"; run: nova-bus inbox",
@@ -119,6 +119,9 @@ func TestDraftSubjectResolutionRepairsMalformedOrUnreadableOpen(t *testing.T) {
 			}
 			if strings.Contains(r.stderr, "not an id on this bus, not a note that exists, and not the subject") {
 				t.Errorf("malformed OPEN was mislabeled as an unmatched subject: %s", r.stderr)
+			}
+			if tc.name == "old format" && strings.Contains(r.stderr, "read once with --full --advance") {
+				t.Errorf("old OPEN error duplicated its legacy recovery remedy: %s", r.stderr)
 			}
 		})
 	}
@@ -150,6 +153,7 @@ func draftOpenErrorBus(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "bus with space")
 	writeDraftOpenTestFile(t, root, "participants.json", `{"participants":[{"name":"Ada Vale","lane":"from-ada","git_name":"Ada Vale","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}`)
+	writeDraftOpenTestFile(t, root, ".nova-bus/defaults", "receipt-max-words=23\n")
 	if err := os.MkdirAll(filepath.Join(root, "from-ada"), 0o755); err != nil {
 		t.Fatal(err)
 	}
