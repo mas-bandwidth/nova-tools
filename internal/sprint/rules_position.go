@@ -1059,35 +1059,36 @@ func (rp *RulePlan) resumeStream(stream string, ctl *Card, stuck StuckAnswer, no
 // R15 done.
 
 // readDone is R15's read (2.3): the control card of every stream, for its
-// dropped count, the stream set's version and jopen:sprint, and the counts of
-// every stream's five open cells and its landed cell. It is one streams query,
-// whatever the number of streams.
+// dropped count, the stream set's version, and the counts of every stream's
+// five open cells and its landed cell. It is one streams query, whatever the
+// number of streams. (jopen:sprint is no longer read: R15 opens no judgment,
+// errata 3 amendment 6.)
 func readDone(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	mine, left := posOwnKeys(keys, ruleDone)
 	var rp ReadPlan
 	if len(mine) > 0 {
 		rp.Sprint = []SprintQ{{Kind: QueryStreams, Fields: []string{"dropped"}, Counts: posCountColumns,
-			Keys: []string{KeyNextStreams, KeyJOpenSprint}}}
+			Keys: []string{KeyNextStreams}}}
 	}
 	return rp, left
 }
 
-// planDone is R15, done, on the partial snapshot. No open card in any stream
-// (and a card landed or dropped: see above) and no "the sprint is done" open:
-// the judgment is raised once, "n landed, m dropped". Open cards and the
-// judgment open: it closes, "work was added". It guards with one rcount entry
-// over the five open cells of every stream, scores -inf to +inf, at most 0 for
-// the decision and at least 1 for the close, however many streams there are,
-// and with COUNTER on {p}next@e.streams as read, so a stream added or removed
-// since the read refuses the step (a race, 1.3.5). The key is removed.
+// planDone is R15, done, on the partial snapshot (errata 3 amendment 6: a
+// HAPPENED and a stop, not a judgment). No open card in any stream and a card
+// landed or dropped: one KNOW note, "the sprint is done: n landed, m dropped",
+// with the hint to continue, which is addressed to the coordinator
+// (AddressedNotices: the tick's tick-end counts it, and the inbox shows it
+// first), and the machine STOPPED in the same step (RulePlan.Stop: the clock
+// part's stop). R15 runs only while RUNNING, so it says it once for each run
+// that finishes the sprint; a start with nothing added says it again and stops
+// at its first tick. No judgment opens, and R15's close ("work was added") is
+// gone. It guards with one rcount entry over the five open cells of every
+// stream, scores -inf to +inf, at most 0, however many streams there are, and
+// with COUNTER on {p}next@e.streams as read, so a stream added or removed since
+// the read refuses the step (a race, 1.3.5). The key is removed.
 //
 // O(s) cells in one entry and one read. Without it, nothing: the counts are
 // cells.
-//
-// Errata 3 amendment 6 amends R15: the sprint done is a KNOW note addressed to
-// the coordinator and a stop of the machine, not a judgment. The present tick
-// carries it (TickDone, and the store's stop); this rule takes it, with a
-// STOPPED write of the clock in RT3, when the event-driven path is wired.
 func planDone(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	var rp RulePlan
 	mine, _ := posOwnKeys(keys, ruleDone)
@@ -1107,20 +1108,13 @@ func planDone(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		landed += s.Work.Count(row, Landed)
 		dropped += s.StreamCtl(row).Int("dropped")
 	}
-	judged := posJudgedSprint(s, NSprintDone)
 	counter := XGuard{Kind: posCounter, Key: "streams", Score: int64(version)}
-	all := func(atLeast, atMost *int) SetGuard {
-		return SetGuard{Kind: GuardRCount, Table: Work, Cells: posOpenCells(rows...), Min: "-inf", Max: "+inf", AtLeast: atLeast, AtMost: atMost}
-	}
-	switch {
-	case len(rows) > 0 && open == 0 && landed+dropped > 0 && !judged:
-		rp.Guards = append(rp.Guards, all(nil, posInt(0)).XGuard(), counter)
-		rp.Notes = append(rp.Notes, NoteReq{Op: posOpen, Type: NSprintDone, Cause: SprintDoneCause, Subjects: []string{SprintSubject},
-			Text: fmt.Sprintf("%d landed, %d dropped", landed, dropped)})
-	case open > 0 && judged:
-		rp.Guards = append(rp.Guards, all(posInt(1), nil).XGuard(), counter)
-		rp.Notes = append(rp.Notes, NoteReq{Op: posClose, Type: NSprintDone, Cause: SprintDoneCause, Subjects: []string{SprintSubject},
-			Text: "work was added"})
+	if len(rows) > 0 && open == 0 && landed+dropped > 0 {
+		none := SetGuard{Kind: GuardRCount, Table: Work, Cells: posOpenCells(rows...), Min: "-inf", Max: "+inf", AtMost: posInt(0)}
+		rp.Guards = append(rp.Guards, none.XGuard(), counter)
+		rp.Notes = append(rp.Notes, NoteReq{Op: "know", Type: NSprintDone, Subjects: []string{SprintSubject},
+			Text: fmt.Sprintf("the sprint is done: %d landed, %d dropped; %s", landed, dropped, DoneHint)})
+		rp.Stop = true
 	}
 	rp.Done = append(rp.Done, mine...)
 	return rp

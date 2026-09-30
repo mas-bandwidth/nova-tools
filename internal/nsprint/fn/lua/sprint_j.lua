@@ -86,6 +86,7 @@ do
     ['stream started merging'] = true,
     ['the machine started'] = true,
     ['the machine stopped'] = true,
+    ['the sprint is done'] = true,
     ['the sprint was cleared, and is STOPPED'] = true,
     ['work came back ok'] = true,
   }

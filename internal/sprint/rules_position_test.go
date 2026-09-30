@@ -802,18 +802,18 @@ func TestDoneOneRcountEntry(t *testing.T) {
 	if counters != 1 || len(p.Guards) != 2 || len(p.Plan.Units) != 0 {
 		t.Fatalf("guards %d counters %d units %d", len(p.Guards), counters, len(p.Plan.Units))
 	}
-	if len(p.Notes) != 1 || p.Notes[0].Op != posOpen || p.Notes[0].Type != NSprintDone || p.Notes[0].Text != "400 landed, 200 dropped" ||
-		!reflect.DeepEqual(p.Notes[0].Subjects, []string{SprintSubject}) {
-		t.Fatalf("the judgment: %+v", p.Notes)
+	// errata 3 amendment 6: a KNOW for the coordinator and the machine's stop,
+	// no judgment
+	if len(p.Notes) != 1 || p.Notes[0].Op != "know" || p.Notes[0].Type != NSprintDone ||
+		p.Notes[0].Text != "the sprint is done: 400 landed, 200 dropped; "+DoneHint ||
+		!reflect.DeepEqual(p.Notes[0].Subjects, []string{SprintSubject}) || !p.Stop || !TickEndCounts(p.Notes[0]) {
+		t.Fatalf("the notice: %+v, stop %v", p.Notes, p.Stop)
 	}
 	if !posHas(p.Done, "done") {
 		t.Fatalf("done: %v", p.Done)
 	}
-	if out := tw.apply(p); out.refused != "" || !tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
+	if out := tw.apply(p); out.refused != "" || tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
 		t.Fatalf("apply: %+v", out)
-	}
-	if q := tw.plan(t, "done", 0, k); !posQuiet(q) {
-		t.Fatalf("a second plan: %+v", q)
 	}
 }
 
@@ -827,48 +827,26 @@ func TestDoneStreamsCounterGuard(t *testing.T) {
 	tw.streams++
 	tw.card("fresh", "s-new", Waiting, 1)
 	out := tw.apply(p)
-	if out.refused != "COUNTER" || tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
-		t.Fatalf("apply after a stream was added: %+v, judged %v", out, tw.judged)
+	if out.refused != "COUNTER" {
+		t.Fatalf("apply after a stream was added: %+v", out)
 	}
 	// the next plan sees the new stream and its open card: nothing is done
 	p = tw.plan(t, "done", 0, k)
-	if len(p.Notes) != 0 {
-		t.Fatalf("the sprint is not done: %+v", p.Notes)
-	}
-	// the close carries the counter too (2.3: COUNTER on {p}next@e.streams as
-	// read): a stream added between the read and the apply refuses it, and the
-	// judgment stays open
-	tw = posDoneTwin(3, true)
-	tw.judge(NSprintDone, SprintDoneCause, SprintSubject)
-	p = tw.plan(t, "done", 0, k)
-	if len(p.Notes) != 1 || p.Notes[0].Op != posClose {
-		t.Fatalf("the close: %+v", p.Notes)
-	}
-	tw.rows = append(tw.rows, "s-new")
-	tw.streams++
-	tw.card("fresh", "s-new", Waiting, 1)
-	out = tw.apply(p)
-	if out.refused != "COUNTER" || !tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
-		t.Fatalf("apply of a close after a stream was added: %+v, judged %v", out, tw.judged)
+	if len(p.Notes) != 0 || p.Stop {
+		t.Fatalf("the sprint is not done: %+v, stop %v", p.Notes, p.Stop)
 	}
 }
 
-func TestDoneClosesWhenWorkAdded(t *testing.T) {
+// With work open R15 writes nothing and stops nothing, whatever a store from
+// before errata 3 amendment 6 holds open: its close ("work was added") is gone.
+func TestDoneQuietWhileWorkIsOpen(t *testing.T) {
 	t.Parallel()
 	tw := posDoneTwin(3, true)
 	tw.judge(NSprintDone, SprintDoneCause, SprintSubject)
 	k := posKeyOf("done")
 	p := tw.plan(t, "done", 0, k)
-	gs := posGuardsOf(t, p)
-	if len(p.Notes) != 1 || p.Notes[0].Op != posClose || p.Notes[0].Type != NSprintDone || p.Notes[0].Text != "work was added" ||
-		len(gs) != 1 || gs[0].AtLeast == nil || *gs[0].AtLeast != 1 || gs[0].AtMost != nil {
-		t.Fatalf("plan: notes %+v guards %+v", p.Notes, gs)
-	}
-	if out := tw.apply(p); out.refused != "" || tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
-		t.Fatalf("apply: %+v", out)
-	}
-	if q := tw.plan(t, "done", 0, k); !posQuiet(q) {
-		t.Fatalf("a second plan: %+v", q)
+	if len(p.Notes) != 0 || len(p.Guards) != 0 || p.Stop || !posHas(p.Done, "done") {
+		t.Fatalf("plan: notes %+v guards %+v stop %v done %v", p.Notes, p.Guards, p.Stop, p.Done)
 	}
 }
 
@@ -1139,7 +1117,6 @@ func TestPlansReadOnlyWhatTheirReadAsked(t *testing.T) {
 		{"R3 the dropping marks", ruleResolve, "resolve:s1", KeyDropping, posResolveTwin},
 		{"R4 the dropping marks", ruleNeeds, "needs:n", KeyDropping, needsTwin},
 		{"R5 the dropping marks", ruleCross, "cross", KeyDropping, posCrossTwin},
-		{"R15 jopen of the sprint", ruleDone, "done", KeyJOpenSprint, func() *posTwin { return posDoneTwin(3, false) }},
 		{"R15 the version of the stream set", ruleDone, "done", KeyNextStreams, func() *posTwin { return posDoneTwin(3, false) }},
 		{"R19 the dropping marks", posPullbackRule, "pullback:s1", KeyDropping, func() *posTwin {
 			tw := newPosTwin("s1")
@@ -1492,12 +1469,6 @@ func TestPositionRulesTwiceSecondEmpty(t *testing.T) {
 			return tw, posKeyOf("made:n")
 		}},
 		{ruleCross, func() (*posTwin, AgendaKey) { return posCrossTwin(), posKeyOf("cross") }},
-		{ruleDone, func() (*posTwin, AgendaKey) { return posDoneTwin(4, false), posKeyOf("done") }},
-		{ruleDone, func() (*posTwin, AgendaKey) { // a close
-			tw := posDoneTwin(4, true)
-			tw.judge(NSprintDone, SprintDoneCause, SprintSubject)
-			return tw, posKeyOf("done")
-		}},
 		{ruleResolve, func() (*posTwin, AgendaKey) { // a release and an unreach in one plan
 			tw := newPosTwin("s1")
 			tw.sentinel("g", "s1", 5)
@@ -1527,13 +1498,6 @@ func TestPositionRulesTwiceSecondEmpty(t *testing.T) {
 			tw.stuck("s5", "m8", 1)
 			return tw, posKeyOf("cross")
 		}},
-		{ruleDone, func() (*posTwin, AgendaKey) { // one card landed, three dropped
-			tw := newPosTwin("s1", "s2")
-			tw.card("a", "s1", Landed, 1)
-			tw.ctl("s1", "dropped", "1")
-			tw.ctl("s2", "dropped", "2")
-			return tw, posKeyOf("done")
-		}},
 		{posPullbackRule, func() (*posTwin, AgendaKey) { // cards below and above σ, and a working one
 			tw := newPosTwin("s1")
 			tw.card("below", "s1", Waiting, 0)
@@ -1551,12 +1515,9 @@ func TestPositionRulesTwiceSecondEmpty(t *testing.T) {
 			tw.hold(NSentinelReached, ReachedCause, "g")
 			return tw, posKeyOf("resolve:s1")
 		}},
-		{ruleDone, func() (*posTwin, AgendaKey) { // every card dropped
-			tw := newPosTwin("s1", "s2")
-			tw.ctl("s1", "dropped", "2")
-			tw.ctl("s2", "dropped", "1")
-			return tw, posKeyOf("done")
-		}},
+		// R15 is not here: its step stops the machine (errata 3 amendment 6),
+		// and a stopped machine plans no rule, so its second run is the tick's
+		// to prevent, not the plan's (TestNewPathDoneStopsTheMachine).
 		{posPullbackRule, func() (*posTwin, AgendaKey) {
 			tw := newPosTwin("s1")
 			tw.sentinel("g", "s1", 1)
@@ -2183,8 +2144,8 @@ func TestNeedsRunToTheEndOnRandomStates(t *testing.T) {
 // R15 and R19, the cases the tests did not reach.
 
 // A sprint whose cards were all dropped has no card landed and is done: the
-// judgment is raised with the dropped count (the raise needs a card landed or
-// dropped, not a card landed).
+// notice says the dropped count and the machine stops (the notice needs a card
+// landed or dropped, not a card landed).
 func TestDoneRaisedForASprintWhoseCardsWereAllDropped(t *testing.T) {
 	t.Parallel()
 	tw := newPosTwin("s1", "s2")
@@ -2192,31 +2153,9 @@ func TestDoneRaisedForASprintWhoseCardsWereAllDropped(t *testing.T) {
 	tw.ctl("s2", "dropped", "1")
 	k := posKeyOf("done")
 	p, out := tw.run(t, ruleDone, 0, k)
-	if out.refused != "" || len(p.Notes) != 1 || p.Notes[0].Op != posOpen || p.Notes[0].Type != NSprintDone || p.Notes[0].Text != "0 landed, 3 dropped" {
-		t.Fatalf("plan: %+v %+v", p.Notes, out)
-	}
-	if !tw.opened(NSprintDone, SprintDoneCause, SprintSubject) {
-		t.Fatal("the judgment is not open")
-	}
-	if q := tw.plan(t, ruleDone, 0, k); !posQuiet(q) {
-		t.Fatalf("a second plan: %+v", q)
-	}
-}
-
-// A held "the sprint is done" is still on the sprint: not raised again, and
-// closed when work is added.
-func TestDoneHeldJudgmentIsNotRaisedAgainAndClosesWhenWorkIsAdded(t *testing.T) {
-	t.Parallel()
-	tw := posDoneTwin(2, false)
-	tw.hold(NSprintDone, SprintDoneCause, SprintSubject)
-	k := posKeyOf("done")
-	if p := tw.plan(t, ruleDone, 0, k); len(p.Notes) != 0 || len(p.Guards) != 0 {
-		t.Fatalf("a held judgment was raised again: %+v", p.Notes)
-	}
-	tw.card("late", "s0", Waiting, 9)
-	p, out := tw.run(t, ruleDone, 0, k)
-	if out.refused != "" || len(p.Notes) != 1 || p.Notes[0].Op != posClose || len(tw.held) != 0 {
-		t.Fatalf("work was added: %+v %+v held %v", p.Notes, out, tw.held)
+	if out.refused != "" || len(p.Notes) != 1 || p.Notes[0].Op != "know" || p.Notes[0].Type != NSprintDone ||
+		!strings.HasPrefix(p.Notes[0].Text, "the sprint is done: 0 landed, 3 dropped") || !p.Stop {
+		t.Fatalf("plan: %+v %+v stop %v", p.Notes, out, p.Stop)
 	}
 }
 

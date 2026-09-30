@@ -70,8 +70,8 @@ func answerPlan(t *testing.T, w *qworld, rp sprint.ReadPlan) []sprint.Answer {
 // TestRuleReadsLoadFromTheTwin: R4's own reads (needs:n, made:n+w with its
 // cursor and the made filter, a line of needs, each with the dropping marks)
 // and R5's (streams with the stuck ids and the marks) are answered by the twin
-// and load; so do R3's (front with jopen:G) and R15's (streams with
-// jopen:sprint), each jopen key read as the one field its rule tests.
+// and load; so do R3's (front with jopen:G, the one field its rule tests) and
+// R15's (streams with the stream set's version).
 func TestRuleReadsLoadFromTheTwin(t *testing.T) {
 	t.Parallel()
 	w, line := extWorld(t)
@@ -92,9 +92,11 @@ func TestRuleReadsLoadFromTheTwin(t *testing.T) {
 	if want := []sprint.KeyAnswer{{Key: sprint.KeyDropping, Streams: []string{"s1", "s2"}}}; !reflect.DeepEqual(as[0].Keys, want) {
 		t.Fatalf("cross reads the marks of every stream: %+v", as[0].Keys)
 	}
+	// R15 reads no jopen:sprint since errata 3 amendment 6 (it opens no
+	// judgment): the stream set's version alone
 	as = answerPlan(t, w, ruleRead(t, "done", sprint.AgendaKey{Key: "done", Seq: 1}))
-	if want := (sprint.KeyAnswer{Key: sprint.KeyJOpenSprint, Subject: sprint.SprintSubject}); !reflect.DeepEqual(as[0].Keys[1], want) {
-		t.Fatalf("done reads jopen:sprint: %+v", as[0].Keys)
+	if len(as[0].Keys) != 1 || as[0].Keys[0].Key != sprint.KeyNextStreams {
+		t.Fatalf("done reads the stream set's version only: %+v", as[0].Keys)
 	}
 	as = answerPlan(t, w, ruleRead(t, "resolve", sprint.AgendaKey{Key: "resolve:s1", Seq: 1}))
 	if want := (sprint.KeyAnswer{Key: sprint.KeyJOpenG, Subject: "g1"}); !reflect.DeepEqual(as[0].Keys[0], want) {

@@ -14,10 +14,11 @@ import (
 // tables to this copy, so a change to a row is a change to both.
 
 // The rows of the design's tables: 2.2 has 26, and 2.5 has 23 of which one holds
-// two notices and one three, so 26 notices.
+// two notices and one three, so 26 notices, and "the sprint is done" (errata 3
+// amendment 6) a 27th.
 const (
 	rows22 = 26
-	rows25 = 26
+	rows25 = 27
 )
 
 // judgmentWant is one row of 2.2. ownerArg is the word the owner key is made
@@ -180,6 +181,8 @@ var table25 = []noticeWant{
 	{"replaced a late work card", "card", []string{"R11"}},
 	{"replaced a late read", "card", []string{"R11"}},
 	{"a judgment has waited past its due time", "note", []string{"R12"}},
+	// errata 3 amendment 6: R15's done, a notice addressed to the coordinator
+	{"the sprint is done", "sprint", []string{"R15"}},
 }
 
 func TestNoticesMatch25(t *testing.T) {
@@ -224,9 +227,11 @@ func TestNoticesMatch25(t *testing.T) {
 		}
 	}
 	// A notice needs no decision, and a judgment is no notice: the two tables
-	// share no type.
+	// share no type, but "the sprint is done", a notice since errata 3
+	// amendment 6, whose judgment row stays for a store that holds one open
+	// from before it.
 	for typ := range Notices {
-		if _, ok := Judgments[typ]; ok {
+		if _, ok := Judgments[typ]; ok && typ != NSprintDone {
 			t.Errorf("%q is in both tables", typ)
 		}
 	}

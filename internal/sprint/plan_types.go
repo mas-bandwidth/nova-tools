@@ -119,6 +119,9 @@ type RulePlan struct {
 	// rules_time.go, IT10). The step that carries the plan carries them, and a
 	// step that dropped them would remove the key and lose the work.
 	Sprint TimeWrites
+	// Stop says the plan's step stops the machine in the same atomic call: R15
+	// at done (errata 3 amendment 6), the clock part's stop on its request.
+	Stop bool
 }
 
 // ReadBounds are the limits one read of a tick is planned within (1.0, 1.4.2):

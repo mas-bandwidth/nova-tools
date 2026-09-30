@@ -1141,6 +1141,11 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		case r.Step != nil:
 			rep.Applied++
 			rep.stat(p.batch.Rule).Applied++
+			if p.plan.Stop {
+				// R15 stopped the machine (errata 3 amendment 6): the loop runs
+				// STOPPED from here, and its next lease step writes looked_at
+				l.stopped = true
+			}
 			if p.whole {
 				for _, k := range p.batch.Keys {
 					delete(l.halvings, k.Key) // a plan of it applied whole (1.3.6)
@@ -1233,6 +1238,11 @@ func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) 
 		req := &sprintfn.Request{Epoch: l.epoch, Body: body, Meta: meta}
 		if i == 0 {
 			req.Sprint = TimePart(rp.Sprint) // the writes to the sprint's own keys ride the first request (IT16's sprint part)
+		}
+		if rp.Stop && i == len(bodies)-1 {
+			// R15 at done stops the machine with its note, in one call (errata 3
+			// amendment 6): the clock part's stop, as the stop verb's
+			req.Clock = &sprintfn.ClockPart{Verb: sprintfn.ClockStop}
 		}
 		c, ref := costOf(l.cfg.Names.Prefix, req)
 		if ref != nil {

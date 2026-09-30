@@ -329,6 +329,9 @@ var noticeRows = []Notice{
 	{Type: "replaced a late work card", Subject: subjCard, RaisedBy: []string{"R11"}},
 	{Type: "replaced a late read", Subject: subjCard, RaisedBy: []string{"R11"}},
 	{Type: "a judgment has waited past its due time", Subject: subjNote, RaisedBy: []string{"R12"}},
+	// errata 3 amendment 6: R15's done is a notice addressed to the
+	// coordinator (AddressedNotices), with the machine's stop
+	{Type: "the sprint is done", Subject: subjSprint, RaisedBy: []string{"R15"}},
 }
 
 // Judgments is table 2.2 by type: every judgment the machine and the verbs
