@@ -93,8 +93,9 @@
 \*   judgment is neither held nor acked.
 \*
 \* Broken names a reversed witness (section 5's table, W1 to W27, W28 of
-\* errata 3's amendment 4, the deal's order, and W29 of amendment 5, the deal's
-\* member choice by the rolling index; W5Reach
+\* errata 3's amendment 4, the deal's order, W29 of amendment 5, the deal's
+\* member choice by the rolling index, and W30 of amendment 8, no tick-end
+\* note; W5Reach
 \* is W5's reach half, breaking reach and unreach and not the verb; W7 is
 \* split into W7a and W7b) that changes exactly one rule; "none" is the
 \* design.
@@ -911,7 +912,8 @@ planv == <<col, score, fld, wk, rd, mi, status, beat, stab, sw, waitn, missing, 
 commitv == <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, J, remind, pushes, next, dcur, acur,
              ahead, early, waivedRec, log>>
 TkIdle(h) == [pc |-> "idle", gen |-> 0, from |-> 0, to |-> 0, lk |-> {}, bk |-> FALSE,
-              plans |-> [k \in {} |-> Plan0(DealK)], pend |-> <<>>, half |-> h, seen0 |-> <<>>]
+              plans |-> [k \in {} |-> Plan0(DealK)], pend |-> <<>>, half |-> h, seen0 |-> <<>>,
+              n |-> 0, ends |-> 0, due |-> 0]
 VIdle == [pc |-> "idle", verb |-> None, arg |-> None, snap |-> None, op |-> None, s |-> None,
           part |-> 0, cont |-> <<0, 0>>, rr |-> 0]
 WK0(p) == LET pl == Scn.wpl[p]
@@ -1149,6 +1151,26 @@ ErrorRT2(t) ==
 Settle(x, pend2) == [x EXCEPT !.pend = pend2, !.pc = IF pend2 = <<>> THEN "idle" ELSE "apply",
                               !.plans = IF pend2 = <<>> THEN NoPlans ELSE x.plans,
                               !.seen0 = IF pend2 = <<>> THEN <<>> ELSE x.seen0]
+
+\* The tick-end note (errata 3 amendment 8; internal/sprint/machine/tickend.go):
+\* the coordinator is woken once a tick, at its end, and not by a tick that
+\* addressed it nothing. A tick counts in n the judgments its requests open
+\* (J's new (type, subject, cause) records, not held); its last request is
+\* followed by the tick-end step, a notes-only step of its own that carries
+\* the lease generation: with n above zero it writes one tick-end note (ends),
+\* and refused STALEGEN (a take since the tick read) it is owed (due) to the
+\* loop's next RT1, whose error step writes it (RT1 sets due to 0 as it resets
+\* the tick). A loop that dies loses what it owed, as it loses its halvings
+\* (TickCrash). What a tick ingests of other writers' judgments (a verb's) is
+\* not modelled: this model's log holds the keys a line queues, not its note.
+\* W30: no tick-end note is written (the design before amendment 8).
+Opens(JS2) == Cardinality({j \in JS2 : ~j.held /\ ~\E j0 \in J : Tri(j0) = Tri(j)})
+TickEnd(t, x, pend2, o) ==
+  LET n2 == x.n + o
+      write == pend2 = <<>> /\ n2 > 0 /\ Broken # "W30"
+  IN [Settle(x, pend2) EXCEPT !.n = n2,
+        !.ends = IF write /\ GenOK(t) THEN x.ends + 1 ELSE x.ends,
+        !.due = IF write /\ ~GenOK(t) THEN x.due + 1 ELSE x.due]
 Applies(t) ==
   LET x == tk[t]
       P == x.plans[Head(x.pend)[1]]
@@ -1171,17 +1193,17 @@ Apply(t) ==
              \* The error step carries the lease generation like every tick step
              \* (1.3.5): a stale loop's is refused STALEGEN and writes nothing.
              /\ IF Broken = "W23" \/ ~GenOK(t)
-                THEN /\ tk' = [tk EXCEPT ![t] = Settle(x, pend2)]
+                THEN /\ tk' = [tk EXCEPT ![t] = TickEnd(t, x, pend2, 0)]
                      /\ UNCHANGED <<J, agenda, parked>>
                 ELSE /\ J' = JOpen(J, "stepped", KeyS(k), "-")
                      /\ parked' = IF chunk1 THEN parked \cup {k} ELSE parked
                      /\ agenda' = IF chunk1 THEN agenda \ {k} ELSE agenda
-                     /\ tk' = [tk EXCEPT ![t] = [Settle(x, pend2) EXCEPT !.half = @ \cup {k}]]
+                     /\ tk' = [tk EXCEPT ![t] = [TickEnd(t, x, pend2, Opens(J')) EXCEPT !.half = @ \cup {k}]]
              /\ probe' = NoProbe
              /\ UNCHANGED <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, remind, pushes, next, dcur, acur,
                             ahead, early, waivedRec, log, clk, raises>>
         ELSE IF ~Applies(t)
-        THEN /\ tk' = [tk EXCEPT ![t] = Settle(x, pend2)]
+        THEN /\ tk' = [tk EXCEPT ![t] = TickEnd(t, x, pend2, 0)]
              /\ probe' = NoProbe
              /\ UNCHANGED <<commitv, agenda, parked, clk, raises>>
         ELSE /\ Commit(T, FALSE)
@@ -1192,7 +1214,7 @@ Apply(t) ==
                             [] k[1] = "stopped" /\ rq[1].x.close /\ "stoprearm" \in Fixes -> 0
                             [] OTHER -> raises
              /\ agenda' = IF remove THEN agenda \ {k} ELSE agenda
-             /\ tk' = [tk EXCEPT ![t] = [Settle(x, pend2) EXCEPT !.half = IF single THEN @ \ {k} ELSE @]]
+             /\ tk' = [tk EXCEPT ![t] = [TickEnd(t, x, pend2, Opens(J')) EXCEPT !.half = IF single THEN @ \ {k} ELSE @]]
              /\ probe' = IF Probes /\ single /\ (remove \/ T = Cur) /\ planv = x.seen0
                          THEN [a |-> "armed", t |-> t, k |-> k, removed |-> remove, noop |-> T = Cur]
                          ELSE NoProbe
@@ -1211,7 +1233,7 @@ ParkOnBug(t) ==
              /\ parked' = parked \cup {k}
              /\ agenda' = agenda \ {k}
         ELSE UNCHANGED <<J, parked, agenda>>
-     /\ tk' = [tk EXCEPT ![t] = Settle(x, Tail(x.pend))]
+     /\ tk' = [tk EXCEPT ![t] = TickEnd(t, x, Tail(x.pend), Opens(J'))]
      /\ bugs' = bugs + 1
      /\ probe' = NoProbe
      /\ UNCHANGED <<col, score, fld, wk, rd, mi, fleetv, waitn, missing, log, cur, clock, sprint, lease, vk,
@@ -1792,6 +1814,10 @@ NothingSilent ==
 \* One open judgment per (type, subject, cause); none while a hold on it is
 \* before its time.
 JudgmentOnce == \A j1, j2 \in J : (~j1.held /\ ~j2.held /\ Tri(j1) = Tri(j2)) => j1 = j2
+\* The coordinator's one wake a tick (errata 3 amendment 8): a tick that
+\* opened a judgment ends with exactly one tick-end note, written or owed to
+\* the loop's next RT1; a tick that opened none, with none (W30).
+TickEndOnce == \A t \in Ticks : tk[t].pc = "idle" => tk[t].ends + tk[t].due = IF tk[t].n > 0 THEN 1 ELSE 0
 WaitHolds == ~\E j1, j2 \in J : Tri(j1) = Tri(j2) /\ j1.held /\ j1.hent > 0 /\ ~j2.held
 
 \* Every decision printed for an open judgment is accepted by its verb's

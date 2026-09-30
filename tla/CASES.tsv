@@ -208,6 +208,7 @@ MCSprintEventsW26.cfg	MCSprintEvents.tla	invariant	NeedsHold	ignore-terminal	spr
 MCSprintEventsW27.cfg	MCSprintEvents.tla	invariant	NoLostWork	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsW28.cfg	MCSprintEvents.tla	invariant	DealTakesTurns	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsW29.cfg	MCSprintEvents.tla	invariant	DealGoesRound	ignore-terminal	sprintevents-witnesses-b	required	-
+MCSprintEventsW30.cfg	MCSprintEvents.tla	invariant	TickEndOnce	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsGoalNamed.cfg	MCSprintEvents.tla	temporal	ProgressLiteral	ignore-terminal	sprintevents-goals	required	-
 MCSprintEventsGoalStopped.cfg	MCSprintEvents.tla	temporal	Progress	ignore-terminal	sprintevents-goals	required	-
 MCSprintEventsGoalSpan.cfg	MCSprintEvents.tla	temporal	Progress	ignore-terminal	sprintevents-goals	required	-
