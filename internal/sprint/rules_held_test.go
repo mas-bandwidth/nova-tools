@@ -1958,6 +1958,36 @@ func TestHeldCrossNeedThatHasNotLandedHoldsNothing(t *testing.T) {
 	}
 }
 
+func TestHeldAQuarantinedReachedSentinelIsTheQuarantinedRowsAndNotR3s(t *testing.T) {
+	t.Parallel()
+	// R3 raises "sentinel reached" for a reached sentinel, and the quarantined row
+	// takes a quarantined one before the row of a reached one does, so the holder
+	// of reach needs no check of its own: a quarantined reached sentinel that
+	// nothing names is a stall of the quarantined, and never R3's
+	build := func(quarantined bool) *hworld {
+		w := newHWorld()
+		w.primary("g1", "s1", Waiting, 2, "kind", "sentinel")
+		if quarantined {
+			w.f.Quarantined["g1"] = true
+		}
+		return w
+	}
+	if vd := build(false).verdict("g1"); vd.By != HeldByTick || vd.row.Name != "a sentinel, reached" || !strings.HasPrefix(vd.Why, "R3, reach") {
+		t.Fatalf("a reached sentinel: (%s) %s", vd.By, vd.Why)
+	}
+	w := build(true)
+	if vd := w.verdict("g1"); !vd.Stalled() || vd.row.Name != "quarantined" {
+		t.Fatalf("a quarantined reached sentinel: %+v", vd.Hold)
+	}
+	if rp := w.plan(hkeys("g1")...); len(rp.Notes) != 1 || rp.Notes[0].Cause != "quarantined" {
+		t.Fatalf("the note of a quarantined reached sentinel: %+v", rp.Notes)
+	}
+	w.judge("g1", NInvariant)
+	if hd := w.holder("g1"); hd.By != HeldByJudgment || strings.HasPrefix(hd.Why, "R3") {
+		t.Fatalf("a quarantined reached sentinel with its invariant judgment: (%s) %s", hd.By, hd.Why)
+	}
+}
+
 func TestHeldWorkAtAMemberThatIsHeldIsR2s(t *testing.T) {
 	t.Parallel()
 	// R2's condition is a member down or held: a held member keeps its cards
@@ -2342,6 +2372,11 @@ func TestHeldReviewStallAgreesWithReviewJudgment(t *testing.T) {
 							t.Fatalf("result %q, reads %q %q, judgment %+v, attempt %s: R16 says %q %v, reviewJudgment %q %v",
 								res, r1, r2, j, attempt, got, gotOK, want.Type, wantOK)
 						}
+						// R10 holds every failed card in review, so a failed card is never
+						// a stall and R16's judgment of a review has no case for it
+						if vd := w.view().verdict("p1"); res == "failed" && vd.Stalled() {
+							t.Fatalf("reads %q %q, judgment %+v, attempt %s: a failed card in review is stalled: %+v", r1, r2, j, attempt, vd.Hold)
+						}
 						checked++
 					}
 				}
@@ -2639,20 +2674,44 @@ func TestHeldReadWithoutFrontsAgreesWithWhole(t *testing.T) {
 	}
 }
 
+// addRandomLine gives the world a line by seq whose about names some of its cards
+// at random, more than once, with a stream, the sprint and a card on no table
+// among them, and returns its key, after the keys of the cards. The twin reads it
+// as Layer 2 stores it (about; ids that are the cards' work cards on every other
+// line, none on the rest, as a note has none) and planHeld is told what the read
+// of it returns. Its size leaves room for the keys of the cards in one read.
+func addRandomLine(w *hworld, rng *rand.Rand, ids []string, seq uint64, order int) AgendaKey {
+	var about []string
+	for range rng.Intn(min(len(ids), heldReadCards(L1ReadBounds(), 0)-len(ids)-4) + 1) {
+		about = append(about, ids[rng.Intn(len(ids))])
+	}
+	about = append(about, "stream:s1", "sprint:done", "ghost")
+	w.lines[seq] = about
+	if seq%2 == 0 {
+		for _, id := range about {
+			w.lineIDs[seq] = append(w.lineIDs[seq], WorkCardID(id, 1))
+		}
+	}
+	w.f.Lines[HeldLineAt{Line: seq}] = HeldLine{About: about}
+	return AgendaKey{Key: "held@" + strconv.FormatUint(seq, 10), Seq: uint64(order)}
+}
+
 func TestHeldRegisteredRuleAgreesWithPlanHeldOnRandomSprints(t *testing.T) {
 	t.Parallel()
 	// the whole plan, not only the verdict: notes, guards and keys, for every
-	// primary of 100 random sprints named by a key, are the same through the
+	// primary of 100 random sprints named by a key or by a line's about, are the same through the
 	// registered rule as through planHeld on the whole world, but for the notes
 	// that name a sentinel the partial snapshot cannot judge
 	for seed := int64(1); seed <= 100; seed++ {
-		w := randomHWorld(rand.New(rand.NewSource(1000 + seed)))
+		rng := rand.New(rand.NewSource(1000 + seed))
+		w := randomHWorld(rng)
 		var ids []string
 		for _, c := range w.s.Work.Cards() {
 			ids = append(ids, c.ID)
 		}
 		sort.Strings(ids)
 		keys := hkeys(ids...)
+		keys = append(keys, addRandomLine(w, rng, ids, uint64(900+seed), len(keys)+1))
 		want, got := w.plan(keys...), w.viaRule(t, keys...)
 		if !reflect.DeepEqual(want.Done, got.Done) || len(got.Requeue) != 0 || len(got.HeldBack) != 0 {
 			t.Fatalf("seed %d: done %v, %v", seed, want.Done, got.Done)
@@ -2675,6 +2734,74 @@ func TestHeldRegisteredRuleAgreesWithPlanHeldOnRandomSprints(t *testing.T) {
 	}
 }
 
+func TestHeldRegisteredRuleOnRandomSprintsNamedByLinesOnly(t *testing.T) {
+	t.Parallel()
+	// the cards of 100 random sprints are named by lines alone, each line's about
+	// a random part of them (two lines, one with the cards' work cards for ids and
+	// one with none, as a note has none): the registered rule judges the cards the
+	// lines are about, and only those, as planHeld does on the whole world, and its
+	// second run, on the state the first left, writes nothing
+	named := 0
+	for seed := int64(1); seed <= 100; seed++ {
+		rng := rand.New(rand.NewSource(9000 + seed))
+		w := randomHWorld(rng)
+		var ids []string
+		for _, c := range w.s.Work.Cards() {
+			ids = append(ids, c.ID)
+		}
+		sort.Strings(ids)
+		keys := []AgendaKey{addRandomLine(w, rng, ids, 2*uint64(seed), 1), addRandomLine(w, rng, ids, 2*uint64(seed)+1, 2)}
+		about := map[string]bool{}
+		for _, k := range keys {
+			hk, _ := parseHeldKey(k)
+			for _, id := range w.lines[hk.Line] {
+				about[id] = true
+			}
+		}
+		want, got := w.plan(keys...), w.viaRule(t, keys...)
+		if !slices.Equal(want.Done, keys) || !slices.Equal(got.Done, keys) || len(got.Requeue) != 0 || len(got.HeldBack) != 0 {
+			t.Fatalf("seed %d: the lines were not finished: planHeld %+v, the rule %+v", seed, want.Done, got)
+		}
+		// no follow reaches the card a stream's control card names as its cross need,
+		// so a merging card of a stream stopped on one no line is about is held
+		// ("was not read", question 5) by the rule and judged by the whole world
+		crossUnread := func(id string) bool {
+			ctl := w.ctl(w.s.Work.Card(id).Row)
+			need := ctl.F("need_card")
+			if need == "" {
+				need = ctl.F("other")
+			}
+			return ctl.F("state") == StreamStopped && ctl.F("cause") == crossStop && need != "" && !about[need]
+		}
+		notes := func(rp RulePlan) map[string][]string {
+			out := map[string][]string{}
+			for _, n := range rp.Notes {
+				for _, id := range n.Subjects {
+					if !about[id] {
+						t.Fatalf("seed %d: %s is judged and no line is about it", seed, id)
+					}
+					if strings.HasPrefix(id, "g") && n.Cause == "sentinel" || n.Cause == "merging" && crossUnread(id) {
+						continue // the partial snapshot cannot judge what it did not read
+					}
+					out[n.Type+" / "+n.Cause] = append(out[n.Type+" / "+n.Cause], id)
+				}
+			}
+			return out
+		}
+		if !reflect.DeepEqual(notes(want), notes(got)) {
+			t.Fatalf("seed %d: planHeld %v, the rule %v", seed, notes(want), notes(got))
+		}
+		named += len(got.Notes)
+		w.apply(got)
+		if second := w.viaRule(t, keys...); !writesNothing(second) {
+			t.Fatalf("seed %d: the second run writes: %+v (the first named %+v)", seed, second, got.Notes)
+		}
+	}
+	if named == 0 {
+		t.Fatal("no random sprint had a stall named by a line")
+	}
+}
+
 func TestHeldRegisteredRuleTwiceOnRandomSprintsSecondEmpty(t *testing.T) {
 	t.Parallel()
 	// (b) idempotence over 150 random sprints, through the registered rule read
@@ -2683,13 +2810,15 @@ func TestHeldRegisteredRuleTwiceOnRandomSprintsSecondEmpty(t *testing.T) {
 	// the first left writes nothing (it may still finish the keys)
 	named := 0
 	for seed := int64(1); seed <= 150; seed++ {
-		w := randomHWorld(rand.New(rand.NewSource(5000 + seed)))
+		rng := rand.New(rand.NewSource(5000 + seed))
+		w := randomHWorld(rng)
 		var ids []string
 		for _, c := range w.s.Work.Cards() {
 			ids = append(ids, c.ID)
 		}
 		sort.Strings(ids)
 		keys := hkeys(ids...)
+		keys = append(keys, addRandomLine(w, rng, ids, uint64(900+seed), len(keys)+1))
 		first := w.viaRule(t, keys...)
 		named += len(first.Notes)
 		w.apply(first)
