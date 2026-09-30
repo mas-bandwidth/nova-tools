@@ -1,5 +1,0 @@
-{
-  "field": "body.raw_usage.cost_usd_ticks.value",
-  "rule": "decimal_lexeme",
-  "verdict": "refused"
-}

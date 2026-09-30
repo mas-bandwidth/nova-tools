@@ -38,14 +38,6 @@ than one per test, and the same two-minute cap as every job. On a working machin
 they run inside one container per run, `make test-functional-container
 PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
 
-One narrow fixture exception is `internal/tset`: its functional tests start a
-Redis server per test or subtest. Each fixture loads its own standalone,
-composed, or private-probe Function library, and tests may use `FUNCTION FLUSH`
-or `FLUSHDB`; sharing a `TestMain` server would let parallel fixtures replace
-one another's library or clear one another's keys. This exception applies only
-to the tset fixture. Those tests still use the normal functional tag and runner,
-including the pinned two-core container policy above.
-
 ### Table epoch actions and receipt replay
 
 `TestTableEpochActionsAndReceiptReplay` in `internal/ntable` runs eight fixed

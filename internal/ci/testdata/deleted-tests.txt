@@ -650,7 +650,6 @@ internal/nsprint/life/procs_test.go dead: no living importer, the owner 2026-09-
 internal/nsprint/life/ps_functional_test.go dead: no living importer, the owner 2026-09-30
 internal/nsprint/life/redis_test.go dead: no living importer, the owner 2026-09-30
 internal/nsprint/life/row_test.go dead: no living importer, the owner 2026-09-30
-internal/nsprint/life/stella_ghost_probe_test.go dead: no living importer, the owner 2026-09-30
 internal/nsprint/life/wake_stale_test.go dead: no living importer, the owner 2026-09-30
 internal/nsprint/life/wakehealth_functional_test.go dead: no living importer, the owner 2026-09-30
 internal/nsprint/life/wakehealth_test.go dead: no living importer, the owner 2026-09-30
@@ -1018,3 +1017,169 @@ internal/typedrec/kind_test.go typedrec's RESULT parser, legacy adapter, synth a
 internal/typedrec/pathsrefusal_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
 internal/swarm/sparse_test.go its one test held SPEC-SWARM's sparse-checkout section, deleted with internal/swarm/sparse.go (reached only by nova-swarm batch)
 internal/typedrec/evidence_functional_test.go its one test drove ns_card_result, a function of the old card machine's Lua, which is deleted
+internal/check/issue2295_test.go it drove NoCode's index path (Stage: true), which no caller sets; the verb's staged check is cmd/nova-check/staged.go with its own tests (issue2296_test.go)
+internal/records/adversarial_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/canonical_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/codex_snapshot_contract_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/encode_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/fixtures_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/mapping_fixtures_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/mapping_shape_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/numeric_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/profile_preimage_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/retained_validators_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/records/stella_boundary_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
+internal/tokens/antigravity_fixture_test.go it tested internal/tokens/antigravity.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/antigravity_identity_test.go it tested internal/tokens/antigravity.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/check_receipt_test.go it tested internal/tokens/check_receipt.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/codex_snapshot_test.go it tested internal/tokens/codex_snapshot.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/codex_test.go it tested internal/tokens/codex.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/cost_test.go it tested internal/tokens/cost.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/diff_test.go it tested internal/tokens/diff.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/friction_test.go it tested internal/tokens/friction.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/grok_test.go it tested internal/tokens/grok.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/hot_test.go it tested internal/tokens/hot.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/package_test.go it tested internal/tokens/package.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/publish_frictions_test.go it tested internal/tokens/publish_frictions.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/rates_test.go it tested internal/tokens/rates.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/tokens/receipt_test.go it tested internal/tokens/receipt.go, deleted: every function in it is unreachable from every cmd/ (deadcode, three platforms); fold, sum, check, sources and profiles keep their tests
+internal/nsprint/fn/profile_sprint_intents_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/profile_sprint_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/profile_sprint_queries_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/profile_sprint_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/sprint_j_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/sprint_parts_lua_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/sprint_x_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/tset_loader_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/tset_score_functional_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/nsprint/fn/tset_static_boundaries_functional_test.go the tset and sprint profiles of nova_sprint are deleted with their Lua (table_set*.lua, sprint_*.lua); the library's own tests stay in this package
+internal/sprint/sprintfn/client_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/compose_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/helpers_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/reached_cause_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/redis_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/rules_notes_class_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/stopped_guards_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_compose_items_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_intents_cost_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_intents_fixture_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_intents_idem_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_intents_lua_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_intents_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_j_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_j_vectors_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_keyrange_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_parts_bounds_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_parts_lua_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_parts_probes_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_parts_sprint_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_parts_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_parts_time_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_bounds_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_extensions_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_keys_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_lua_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_project_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_quarantine_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_static_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_queries_world_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_x_helpers_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_x_lua_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_x_probes_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_x_round2_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_x_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/sprintfn/twin_x_walk_test.go internal/sprint/sprintfn is deleted: the parked event-driven sprint client and its Go twin over tset had no living importer
+internal/sprint/stepbuild/argv_layout_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/argv_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/bound_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/cjson_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/encode_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/helpers_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/pinsites_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/property_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/refuse_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/rows_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/rules_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/scale_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/sites_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/sprint/stepbuild/slow_test.go internal/sprint/stepbuild is deleted: the parked tset step builder had no living importer
+internal/tset/absent_field_observations_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/advance_catalog_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/advance_identity_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/advance_identity_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/al5_guardrails_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/al5_log_capability_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/bounds_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/builder_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/commit_probes_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/compare_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/decimal_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/dispatch_cost_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/epoch_gone_active_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/fence_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/fence_mem_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/fence_wire_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/fields_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/fixture_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/independent_invariants_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/late_refusal_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/lifecycle_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/lifecycle_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/log_composition_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/log_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/log_twin_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/log_twin_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/lua_read_fetched_boundary_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/lua_read_field_boundary_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_epoch_read_parity_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_epoch_read_parity_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_pins_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_plan_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_plan_state_witness_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_planned_counts_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_two_phase_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_write_parity_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mem_write_parity_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/mutation_placement_cost_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/named_config_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/named_read_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/named_refusals_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/named_state_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/named_store_faults_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/observation_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/preplan_bytes_boundary_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/preplan_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/preplan_note_identity_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/preplan_original_seal_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/profile_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/prop_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/prop_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/read_bounds_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/read_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/read_differential_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/read_drift_guardrails_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/read_extension_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/read_observation_boundaries_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/receipt_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/receipt_encoding_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/receipt_prepare_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/receipt_settlement_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/redis_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/redis_lost_reply_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/refusal_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/row_namespace_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/rowset_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/rowset_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/rowset_mem_budget_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/rowset_static_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/rowset_wire_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/sequence_shrink_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/topology_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/wire_contract_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/write_observation_boundaries_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/write_record_budget_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+internal/tset/zguard_functional_test.go internal/tset is deleted: the parked Layer 1 table-set path had no living importer; ntable covers every feature the sprint uses
+tools/sprintsize/tset_test.go tools/sprintsize's --tset-* size run is deleted with internal/tset; main.go's size run of the present build stays with main_test.go

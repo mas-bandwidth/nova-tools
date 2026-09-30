@@ -1,5 +1,0 @@
-{
-  "field": "body.source.namespace",
-  "rule": "namespace_syntax",
-  "verdict": "refused"
-}
