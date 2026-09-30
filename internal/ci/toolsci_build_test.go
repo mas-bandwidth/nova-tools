@@ -49,7 +49,7 @@ func TestToolsCIIsBuiltOnceAndNeverRun(t *testing.T) {
 						OS any `yaml:"os"`
 					} `yaml:"matrix"`
 				} `yaml:"strategy"`
-				Steps    []struct {
+				Steps []struct {
 					Name string         `yaml:"name"`
 					Uses string         `yaml:"uses"`
 					Run  string         `yaml:"run"`
