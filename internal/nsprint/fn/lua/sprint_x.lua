@@ -461,7 +461,7 @@ do
     return exp == '' or string.match(exp, '^[eE][+-]?%d%d?$') ~= nil
   end
   -- A sent guard's key as its stream and max (sprintfn xSentKey): "sent:<stream>
-  -- <max>", the stream a name with no space or @; nil when it is not one.
+  -- <max>", the stream a name with no blank or @; nil when it is not one.
   local function sent_key(key)
     if type(key) ~= 'string' or string.sub(key, 1, 5) ~= 'sent:' then return nil end
     local rest = string.sub(key, 6)
@@ -489,6 +489,8 @@ do
         if not known or (score < 0 and score ~= ABSENT) then return bad('a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent', key) end
       elseif k == 'sent' then
         if sent_key(key) == nil then return bad('a sent guard\'s key %q is not sent:<stream> <max>', key) end
+      elseif k == 'dueatmost' then
+        if key == '' or score < 0 then return bad('a dueatmost guard names no entry, or a time below zero') end
       elseif k == 'counter' then
         if (key ~= 'score' and key ~= 'streams') or score < 0 then
           return bad('a counter guard names %q, which is not score or streams, or a value below zero', key)
@@ -657,6 +659,13 @@ do
         if err.code == 'RANGECOUNT' then return fail('a sentinel of %s is placed at or below %s since the read', stream, max) end
         return err
       end
+    elseif k == 'dueatmost' then
+      local set = KEY_DUE
+      if string.sub(g.key, 1, 4) == 'cut:' then set = KEY_CUT end
+      local scores, err = zmscore(ctx, ekey(ctx, set, e), {g.key})
+      if err then return err end
+      local score, most = scores[g.key], tonumber(g.score)
+      if score ~= nil and score > most then return fail('the entry %s is at %d, above %d', g.key, score, most) end
     elseif k == 'counter' then
       local vals, err = hmget(ctx, ekey(ctx, KEY_NEXT, e), {g.key})
       if err then return err end

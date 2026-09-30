@@ -106,6 +106,11 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	            or below max: S.zguard(sent:<stream>, rcount, -inf, max,
 //	            atmost 0) over {p}sprint:sent:<stream>@e (2.3, R3's release
 //	            and R6's deal).
+//	dueatmost   Key: the due-set member <kind>:<id> (a cut:<op> member in the
+//	            cut set). Score: a time. The entry is absent or scored at or
+//	            below Score: no later part or second run has moved it on (2.3:
+//	            R11's cut clock, R14, R18: "no entry above R", the time rules'
+//	            noEntryAbove; the pop takes the entry, so it is absent at apply).
 //	counter     Key: a field of {p}next@e, score or streams. Score: its value
 //	            as read, 0 for a field absent (2.3, R15's COUNTER on
 //	            next.streams; R17's stopinputs, errata 3 H14). The sprint
@@ -120,6 +125,7 @@ const (
 	XGuardCoordinator = "coordinator"
 	XGuardStranger    = "stranger"
 	XGuardSent        = "sent"
+	XGuardDueAtMost   = "dueatmost"
 	XGuardCounter     = "counter"
 )
 
@@ -129,7 +135,7 @@ const (
 var xSentBound = regexp.MustCompile(`^\(?-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]{1,2})?$`)
 
 // xSentKey is a sent guard's key as its stream and max: "sent:<stream> <max>",
-// the stream a name with no space, the max a score of xSentBound.
+// the stream a name with no blank, the max a score of xSentBound.
 func xSentKey(key string) (stream, max string, ok bool) {
 	rest, ok := strings.CutPrefix(key, "sent:")
 	if !ok {
@@ -938,6 +944,10 @@ func xCheckShape(req *Request) *Refusal {
 			if _, _, ok := xSentKey(g.Key); !ok {
 				return bad("a sent guard's key %q is not sent:<stream> <max>", g.Key)
 			}
+		case XGuardDueAtMost:
+			if g.Key == "" || g.Score < 0 {
+				return bad("a dueatmost guard names no entry, or a time below zero")
+			}
 		case XGuardCounter:
 			if (g.Key != xFieldNextScore && g.Key != xFieldNextStream) || g.Score < 0 {
 				return bad("a counter guard names %q, which is not score or streams, or a value below zero", g.Key)
@@ -1074,6 +1084,18 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		}
 		if n > 0 {
 			return fail("a sentinel of %s is placed at or below %s since the read", stream, max)
+		}
+	case XGuardDueAtMost:
+		set := xKeyDue
+		if strings.HasPrefix(g.Key, "cut:") {
+			set = xKeyCut
+		}
+		score, ok, ref := r.zscore(r.at(set), g.Key)
+		if ref != nil {
+			return ref
+		}
+		if ok && score > float64(g.Score) {
+			return fail("the entry %s is at %s, above %d", g.Key, xScore(score), g.Score)
 		}
 	case XGuardCounter:
 		got, ok, ref := r.hget(r.at(xKeyNext), g.Key)
