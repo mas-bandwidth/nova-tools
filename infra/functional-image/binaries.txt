@@ -22,6 +22,7 @@ ansible-inventory	absent	the one test that runs it reads only a wrapper script a
 bash	base	bash
 c++	absent	only the macOS sandbox tests compile with it; the darwin body is skipped on Linux by design
 cmd.exe	absent	Windows only; a Linux container has no Windows shell
+deadcode	absent	the dead code class test runs in the unit tier; the functional runner image does not carry it
 diskutil	absent	macOS only; the volume tests that call it are darwin tests
 echo	base	coreutils
 gh	absent	reaches the forge over the network, which the container has none of; the tier fakes it
