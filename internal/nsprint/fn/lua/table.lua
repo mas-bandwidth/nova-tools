@@ -139,6 +139,7 @@ do
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
     columns = 1000, rows = 100000,
+    manifest_props = 64, table_props = 64,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
@@ -146,6 +147,7 @@ do
     set_fields = 'set fields per member', unset_fields = 'unset fields per member',
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
     columns = 'columns per table', rows = 'rows per table',
+    manifest_props = 'properties per manifest', table_props = 'properties per table',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -508,6 +510,9 @@ do
   function T.rowkey(d, row) return d.prefix .. ':row:' .. row end
   function T.cellkey(d, row, col) return d.prefix .. ':cell:' .. row .. ':' .. col end
   function T.rowskey(d) return d.prefix .. ':rows' end
+  -- T.propskey(d): the table's properties at the epoch (a hash of name ->
+  -- value): L1-CONTRACT-AMENDMENT-PROPERTY-2026-09-30 section 4.
+  function T.propskey(d) return d.prefix .. ':props' end
   function T.col(d, name)
     for _, col in ipairs(d.cols) do if col.name == name then return col end end
   end
@@ -1540,7 +1545,8 @@ do
   redis.register_function{function_name = 'ns_table_read', flags={'no-writes'}, callback=function(keys, args)
     local d, err = T.def(args[1], args[3])
     if not d then return err end
-    local out = {'TABLE', T.flatdef(d), {}}
+    local _, props_flat = T.hash(T.propskey(d))
+    local out = {'TABLE', T.flatdef(d), {}, props_flat}
     for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
       local h, flat = T.hash(T.rowkey(d, row))
       local cells = {}
@@ -1804,12 +1810,12 @@ do
       skip_ws()
       local ch = peek()
       if not ch then return nil, "unexpected EOF" end
-      if ctx == 'root' or ctx == 'member' or ctx == 'expect' or ctx == 'place' or ctx == 'create' or ctx == 'move' or ctx == 'set' or ctx == 'fields' or ctx == 'field_guard' then
+      if ctx == 'root' or ctx == 'member' or ctx == 'expect' or ctx == 'place' or ctx == 'create' or ctx == 'move' or ctx == 'set' or ctx == 'fields' or ctx == 'field_guard' or ctx == 'props' then
         if ch ~= '{' then
           return nil, "expected object for " .. tostring(ctx)
         end
         return parse_object(ctx)
-      elseif ctx == 'members' or ctx == 'unset' or ctx == 'one_of' then
+      elseif ctx == 'members' or ctx == 'unset' or ctx == 'one_of' or ctx == 'prop_absent' then
         if ch ~= '[' then
           return nil, "expected array for " .. tostring(ctx)
         end
@@ -1891,10 +1897,13 @@ do
         if ctx == 'root' then
           local root_keys = {
             schema=true, table=true, epoch=true, expected_table_revision=true,
-            operation_id=true, actor=true, members=true
+            operation_id=true, actor=true, members=true,
+            props=true, prop_expect=true, prop_absent=true
           }
           if not root_keys[key] then return nil, "unknown field: " .. key end
           if key == 'members' then val_ctx = 'members' end
+          if key == 'props' or key == 'prop_expect' then val_ctx = 'props' end
+          if key == 'prop_absent' then val_ctx = 'prop_absent' end
           if key == 'schema' then val_ctx = 'schema' end
         elseif ctx == 'member' then
           local member_keys = {
@@ -1933,6 +1942,9 @@ do
           if not move_keys[key] then return nil, "unknown move field: " .. key end
         elseif ctx == 'set' then
           if not T.word(key) then return nil, "invalid field name: " .. key end
+          val_ctx = 'string'
+        elseif ctx == 'props' then
+          if not T.word(key) then return nil, "invalid property name: " .. key end
           val_ctx = 'string'
         else
           return nil, "an object is not allowed here"
@@ -1976,7 +1988,7 @@ do
         local elem_ctx = nil
         if ctx == 'members' then
           elem_ctx = 'member'
-        elseif ctx == 'unset' or ctx == 'one_of' then
+        elseif ctx == 'unset' or ctx == 'one_of' or ctx == 'prop_absent' then
           elem_ctx = 'string'
         end
 
@@ -2010,9 +2022,51 @@ do
   -- bounds and combinations, in one pass over the entries. It returns a refusal,
   -- or nil and the counts of entries with changes and guard-only entries.
   -- A refusal here happens before the store is read.
+  function T.static_props(manifest)
+    local function count(o)
+      local n = 0
+      for _ in pairs(o) do n = n + 1 end
+      return n
+    end
+    local expected = {}
+    for _, key in ipairs({'props', 'prop_expect'}) do
+      local o = manifest[key]
+      if o ~= nil then
+        if type(o) ~= 'table' then return T.refuse('ARGS', key .. ' must be an object') end
+        local over = T.over('manifest_props', count(o))
+        if over then return over end
+        for name, value in pairs(o) do
+          if not T.name(name) or type(value) ~= 'string' then return T.refuse('ARGS', key .. ': property names are identifiers and values strings') end
+          over = T.over('field_value_bytes', #value)
+          if over then return over end
+          if key == 'prop_expect' then expected[name] = true end
+        end
+      end
+    end
+    local absent = manifest.prop_absent
+    if absent ~= nil then
+      if type(absent) ~= 'table' then return T.refuse('ARGS', 'prop_absent must be an array') end
+      local over = T.over('manifest_props', #absent)
+      if over then return over end
+      local named = {}
+      for _, name in ipairs(absent) do
+        if not T.name(name) then return T.refuse('ARGS', 'prop_absent: property names are identifiers') end
+        if named[name] or expected[name] then return T.refuse('ARGS', 'prop_absent names a property twice or one prop_expect names') end
+        named[name] = true
+      end
+    end
+    return nil
+  end
   function T.static_entries(manifest)
     local seen, changed, guards = {}, 0, 0
-    if #manifest.members == 0 then return T.refuse('MANIFEST', 'a manifest names at least one member') end
+    -- The table's properties the manifest writes and expects (L1 contract
+    -- amendment, table properties, section 4): names, values and counts.
+    local props_err = T.static_props(manifest)
+    if props_err then return props_err end
+    if #manifest.members == 0 and next(manifest.props or {}) == nil and next(manifest.prop_expect or {}) == nil
+        and #(manifest.prop_absent or {}) == 0 then
+      return T.refuse('MANIFEST', 'a manifest names at least one member or table property')
+    end
     local function finite(n) return type(n) == 'number' and n == n and n ~= math.huge and n ~= -math.huge end
     local function score_refusal(id, v)
       local found = type(v)
@@ -2217,6 +2271,28 @@ do
     if manifest.expected_table_revision ~= d.revision then
       return T.refuse('REVISION', manifest.expected_table_revision, d.revision)
     end
+
+    -- The table's properties: every expectation holds before any write, and a
+    -- write is a change only where the value differs (L1 contract amendment,
+    -- table properties, section 4).
+    local props_key = T.propskey(d)
+    local props_now = T.hash(props_key)
+    for name, value in pairs(manifest.prop_expect or {}) do
+      if props_now[name] ~= value then return T.refuse('PROPGUARD', table_name, name) end
+    end
+    for _, name in ipairs(manifest.prop_absent or {}) do
+      if props_now[name] ~= nil then return T.refuse('PROPGUARD', table_name, name) end
+    end
+    local props_changed, props_held = {}, 0
+    for _ in pairs(props_now) do props_held = props_held + 1 end
+    for name, value in pairs(manifest.props or {}) do
+      if props_now[name] ~= value then
+        if props_now[name] == nil then props_held = props_held + 1 end
+        props_changed[name] = value
+      end
+    end
+    local props_over = T.over('table_props', props_held)
+    if props_over then return props_over end
 
     local members_list = manifest.members
 
@@ -2525,7 +2601,17 @@ do
       end
     end
 
-    local outcome = real_changes == 0 and 'noop' or 'changed'
+    local props_delta = {}
+    if next(props_changed) then
+      local hcmd = {'HSET', props_key}
+      for name, value in pairs(props_changed) do
+        hcmd[#hcmd + 1] = name
+        hcmd[#hcmd + 1] = value
+        props_delta[name] = value
+      end
+      T.stage(d, unpack(hcmd))
+    end
+    local outcome = (real_changes == 0 and not next(props_changed)) and 'noop' or 'changed'
     local function encode_delta()
       return cjson.encode({
         operation_id = manifest.operation_id,
@@ -2535,6 +2621,7 @@ do
         guard_count = guard_count,
         changed_count = real_changes,
         members = delta_members,
+        props = next(props_delta) and props_delta or nil,
       })
     end
 

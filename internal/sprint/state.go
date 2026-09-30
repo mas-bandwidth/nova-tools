@@ -143,6 +143,12 @@ type Table struct {
 	// only some of the table's, and an exported field could not say so.
 	cards map[string]*Card
 
+	// props are the table's properties (L1 contract amendment, table
+	// properties), read by Prop and set by SetProps: on a table loaded from a
+	// read plan they are known only when a query read them (propsRead).
+	props     map[string]string
+	propsRead bool
+
 	// rows are the table's rows in order, read by Rows and set by SetRows: on a
 	// table loaded from a read plan the rows are read only when the plan asked
 	// for them, and a field could not say so.
@@ -310,6 +316,30 @@ func (t *Table) SetRows(rows []string) { t.rows = rows }
 // needRows is the guard of every read of the table's rows: true when they are
 // known (a table built whole, or one whose plan read them), and otherwise the
 // read is put in the snapshot's log.
+// SetProps sets the table's properties as read (a copy).
+func (t *Table) SetProps(p map[string]string) {
+	t.props = make(map[string]string, len(p))
+	for k, v := range p {
+		t.props[k] = v
+	}
+	t.propsRead = true
+}
+
+// Prop is the table's property name and whether it is present. On a table
+// loaded from a read plan whose properties no query read it is refused (the
+// planner read what its plan did not load) and says absent.
+func (t *Table) Prop(name string) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	if t.part != nil && !t.propsRead {
+		t.part.log.note(unloadedMessage + ": " + t.Name + " properties")
+		return "", false
+	}
+	v, ok := t.props[name]
+	return v, ok
+}
+
 func (t *Table) needRows() bool {
 	if t.part == nil || t.part.rows {
 		return true
