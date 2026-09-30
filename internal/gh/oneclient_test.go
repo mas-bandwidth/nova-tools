@@ -50,6 +50,7 @@ var ghAllowed = map[string]string{
 	"internal/wake/pr.go":            "nova-wake reads PRs through its gh wrapper; not a nova-sprint verb",
 	"internal/wake/forge.go":         "nova-wake, not a nova-sprint verb",
 	"internal/wake/run.go":           "nova-wake reads check-runs through its gh wrapper; not a nova-sprint verb",
+	"internal/workgh/query.go":       "nova-work's read-only GraphQL issue capture (import and verify); the one client is REST only; not a nova-sprint verb",
 }
 
 // TestOneGitHubClient (#4343 BUILD 1): every GitHub call in nova-sprint

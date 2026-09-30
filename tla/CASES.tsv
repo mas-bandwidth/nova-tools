@@ -245,6 +245,12 @@ MCSprintEventsRepairRankSelf.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprin
 MCSprintEventsRepairRearm.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
 MCSprintEventsRepairStaleRaise.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
 MCSprintEventsRepairPlace.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-repairs	required	-
+MCWorkImport.cfg	MCWorkImport.tla	pass	-	ignore-terminal	workimport	required	-
+MCWorkImportBrokenExternal.cfg	MCWorkImport.tla	invariant	ExternalStaysOpen	ignore-terminal	workimport	required	-
+MCWorkImportBrokenNoReceipt.cfg	MCWorkImport.tla	invariant	DestructiveOnlyWithReceipt	ignore-terminal	workimport	required	-
+MCWorkImportBrokenNoReopen.cfg	MCWorkImport.tla	invariant	ExportRestores	ignore-terminal	workimport	required	-
+MCWorkImportBrokenPartial.cfg	MCWorkImport.tla	invariant	TreeIsWhole	ignore-terminal	workimport	required	-
+MCWorkImportBrokenStale.cfg	MCWorkImport.tla	invariant	Lossless	ignore-terminal	workimport	required	-
 MCDirtyTick.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick	required	-
 MCDirtyTickThree.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-three	required	-
 MCDirtyTickSent.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
