@@ -4,6 +4,7 @@ package store
 // that has in fact applied: its notes are lost and "abandoned" is written.
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -53,9 +54,10 @@ func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 			<-wApplied
 		}
 	}
+	var released sync.Once // the tick's later steps (its tick-end) release too
 	B.onRelease = func(before bool) {
 		if !before {
-			close(wReleased)
+			released.Do(func() { close(wReleased) })
 		}
 	}
 	ws := &Store{B: W, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: func(time.Duration) {}}
