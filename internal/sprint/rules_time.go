@@ -57,11 +57,10 @@ import (
 // The numbers of the time rules, each with its section. They are the design's
 // own, named here for these rules: today's machine keeps its own (MaxRedeals
 // is 3 in steps_tick.go), and each difference is a question for the switch
-// (IT23) that the pull request lists.
+// (IT23) that the pull request lists. How many times a taken card that is late
+// is replaced (2.3 R11, unfinished) is RuleMaxRedeals, the bound R2 counts
+// against: it is the fleet rules' (rules_fleet.go, IT07), and R11 uses it.
 const (
-	// RuleMaxRedeals is how many times a taken card that is late is replaced
-	// (2.3 R11, unfinished): the bound R2 counts against too.
-	RuleMaxRedeals = 5
 	// RuleMaxRereads is how many more readers a late read may be given at one
 	// attempt (2.3 R11, unbegun and unreported).
 	RuleMaxRereads = 3
@@ -139,17 +138,17 @@ var (
 )
 
 // The words of the requests and the guards the time rules use (8.0, 1.0), and
-// of the entries and causes they name.
+// of the entries and causes they name. The guard memberup is the fleet rules'
+// guardMemberUp (rules_fleet.go, IT07).
 const (
 	requestOpen   = "open"
 	requestClose  = "close"
 	requestKnow   = "know"
 	requestUnhold = "unhold"
 
-	guardMemberUp = "memberup"
-	guardDue      = "due"
-	guardHold     = "hold"
-	guardClock    = "clock"
+	guardDue   = "due"
+	guardHold  = "hold"
+	guardClock = "clock"
 
 	// codeLimit and codeBudget are the refusals of layer 1 that halve a key
 	// (1.3.5); every other code of a bug parks it.
