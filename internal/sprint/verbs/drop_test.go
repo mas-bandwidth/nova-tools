@@ -236,3 +236,56 @@ func TestDropResumeByOp(t *testing.T) {
 		t.Fatal("a dropped primary keeps its reason")
 	}
 }
+
+// A part that ends a stream decides it on the state at apply (the model's
+// PartApply, final on T1): a card that enters the drained cell, or a later
+// one, between the part's read and its step refuses it RANGECOUNT, and the
+// part planned again drains it.
+func TestDropStreamDoneGuarded(t *testing.T) {
+	t.Parallel()
+	for _, cell := range []string{"s1:ready", "s1:review"} {
+		w := newRV(t)
+		w.stream("s1", sprint.StreamWaiting)
+		w.stream("s2", sprint.StreamWaiting)
+		w.card(sprint.Work, "s1:ready", "c2", 2, "kind", "work", "attempt", "0")
+		w.card(sprint.Work, "s2:ready", "d1", 1, "kind", "work", "attempt", "0")
+		h := &rvHook{before: func(n int) {
+			if n == 3 { // part 1's step, after its read
+				w.card(sprint.Work, cell, "c7", 7, "kind", "work", "attempt", "0")
+			}
+		}}
+		res, err := Drop(context.Background(), w.hooked(h), DropReq{Op: "g1", Streams: []string{"s1", "s2"}, Chunk: dropEach})
+		mustOK(t, "drop --stream s1,s2", res, err)
+		if res.Retries != 1 || w.at(sprint.Work, "c7") != "" || w.at(sprint.Work, "c2") != "" || w.at(sprint.Work, "d1") != "" {
+			t.Fatalf("%s: part 1 is refused once and planned again, and c7 drops: %d retries, c7 at %q", cell, res.Retries, w.at(sprint.Work, "c7"))
+		}
+		if len(w.dropping()) != 0 {
+			t.Fatalf("%s: the last part unfreezes: %v", cell, w.dropping())
+		}
+	}
+}
+
+// `drop --abort --op <op>` runs as printed: it reads the sprint's streams and
+// the marks of each, and unfreezes exactly the op's (the model's AbortApply).
+func TestDropAbortByOpAlone(t *testing.T) {
+	t.Parallel()
+	w := dropWorld(t)
+	w.card(sprint.Work, "s2:ready", "b7", 7, "kind", "work", "attempt", "0")
+	stopAfter(t, w, "dA", "", 2) // s1 frozen by dA
+	if _, err := Drop(context.Background(), w.hooked(&rvHook{kill: 2}), DropReq{Op: "dB", Streams: []string{"s2"}, Chunk: dropEach}); err == nil {
+		t.Fatal("want dB cut after its part 1")
+	}
+	n := w.trips()
+	res, err := DropAbort(context.Background(), w.env, DropAbortReq{Op: "dA"})
+	mustOK(t, "drop --abort --op dA", res, err)
+	wantTrips(t, res, n, 3)
+	if m := w.dropping(); m["s1"] != "" || m["s2"] != "dB" {
+		t.Fatalf("the abort unfreezes dA's streams and no other: %v", m)
+	}
+	if lines := w.noteLines(typeUnfrozen); len(lines) != 1 || len(lines[0]["about"].([]any)) != 1 {
+		t.Fatalf("the request line names s1 alone: %v", lines)
+	}
+	// An op that froze nothing has nothing to abort.
+	_, err = DropAbort(context.Background(), w.env, DropAbortReq{Op: "d9"})
+	refusedWith(t, err, sprintfn.CodeRequest)
+}
