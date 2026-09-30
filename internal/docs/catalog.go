@@ -100,7 +100,6 @@ var DefaultCatalog = []Entry{
 	E("internal/tlc", "TLC runner: the jar, the run, its results read, the case plan and the run records", "go test ./internal/tlc", "go test ./internal/tlc"),
 	E("internal/tool", "the one shape of a command: verbs, banner, help, version, refusals, and the output envelope rendered as lines or JSON", "go test ./internal/tool", "go test ./internal/tool"),
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
-	E("internal/tset", "atomic table-set wire, Redis client and in-memory twin", "go test ./internal/tset", "go test ./internal/tset"),
 	E("internal/tty", "whether a file is a terminal and how large its screen is", "go test ./internal/tty", "go test ./internal/tty"),
 	E("internal/typedrec", "typed RESULT record contract, its format and the disposition line", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
