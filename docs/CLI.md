@@ -714,8 +714,8 @@ a worker description (JSON) names the harness, the model, the key file and the
 directories it may read. native runs one card as one child inside nova-sandbox;
 batch runs many under a pool of slots (leases in a --slots-store directory);
 each result lands in the job directory under --root. Nothing has a default.
-first run: template and lint need nothing: print a card with template, save it,
-and lint it; running one needs a harness, a model's key file and nova-sandbox.
+first run: the lines under example: need nothing: a card, a worker description
+and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
@@ -772,6 +772,8 @@ never about the output.
 
 example:
   nova-swarm template --name read-pr
+  nova-swarm template --name worker
+  nova-swarm lint --rules
 ```
 
 ### First run
