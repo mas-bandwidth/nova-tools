@@ -140,7 +140,10 @@ the charge apply makes), and what remains is the sprint member's width:
 width of 1 or more is a member of the sprint's fleet; a machine with `slots` 0,
 or whose friends take the whole ceiling, is not. No field holds it: the width
 is derived on every read, so the inventory is the one place a machine's
-capacity is written. `nova-config machine width <name>` prints it and
+capacity is written. It is a static share, the same on every read of the same rows: the CI legs
+running on the machine and every other child hold slots of the ceiling moment
+by moment, and they are taken off at the take, by a lease from the machine's
+one slot store, never in the width. `nova-config machine width <name>` prints it and
 `machine list --json` carries it for every machine; both read the friends'
 beats from a Redis when a friend row carries slots (`Widths`,
 `internal/config/width.go`).

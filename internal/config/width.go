@@ -7,14 +7,21 @@ import (
 	"strconv"
 )
 
-// A machine's width is the room the sprint's member on it has: the machine's
-// ceiling (its slots, the machine row's one capacity field, written to
-// machine:<m>:ceiling) less the desired slots of the friends charged to it.
+// A machine's width is the share of the machine's ceiling the sprint's member
+// has: the ceiling (the machine row's slots, its one capacity field, written
+// to machine:<m>:ceiling) less the desired slots of the friends charged to it.
 // One ceiling per machine, shared by the friends and the sprint (the machine
 // budget ruling of 2026-09-27): a friend's slots are hers, the rest is the
 // member's. No field of the machine row holds it and none is typed; it is
 // always derived from the rows, so there is no second inventory to keep in
 // step with the first (docs/SPEC-CONFIG.md, "The sprint's width").
+//
+// It is the static share, the same on every read of the same rows, so that
+// fleet sync can write it and read it back unchanged. It is not the room left
+// now: the CI legs running on the machine (the beat's ci, nova-tools#4293)
+// and every other child hold slots of the ceiling moment by moment, and they
+// are taken off at the take, by a lease from the machine's one slot store
+// (the member takes min(width - held, free leases)), never here.
 //
 // A machine with slots above 0 is a sprint member when it has room left
 // (width 1 or more). A machine whose friends take the whole ceiling has width
@@ -26,8 +33,8 @@ import (
 // sprint.
 type MachineWidth struct {
 	Machine string
-	// Slots is the machine's ceiling, the row's slots field.
-	Slots int
+	// Ceiling is the machine's ceiling, the row's slots field.
+	Ceiling int
 	// Charged is the sum of the desired slots of the friends charged to the
 	// machine.
 	Charged int
@@ -95,9 +102,9 @@ func Widths(ctx context.Context, st Store, hosts HostReader) ([]MachineWidth, er
 	}
 	out := make([]MachineWidth, 0, len(machines))
 	for _, m := range machines {
-		w := MachineWidth{Machine: m.Name, Slots: m.Int("slots"), Charged: charged[m.Name]}
-		if w.Slots > w.Charged {
-			w.Width = w.Slots - w.Charged
+		w := MachineWidth{Machine: m.Name, Ceiling: m.Int("slots"), Charged: charged[m.Name]}
+		if w.Ceiling > w.Charged {
+			w.Width = w.Ceiling - w.Charged
 		}
 		out = append(out, w)
 	}
@@ -118,5 +125,5 @@ func WidthOf(ws []MachineWidth, name string) (w MachineWidth, found bool) {
 
 // Line is the width's one printed line.
 func (w MachineWidth) Line() string {
-	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + strconv.Itoa(w.Width) + " slots=" + strconv.Itoa(w.Slots) + " charged=" + strconv.Itoa(w.Charged) + " member=" + strconv.FormatBool(w.Member())
+	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + strconv.Itoa(w.Width) + " slots=" + strconv.Itoa(w.Ceiling) + " charged=" + strconv.Itoa(w.Charged) + " member=" + strconv.FormatBool(w.Member())
 }

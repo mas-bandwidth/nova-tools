@@ -126,7 +126,7 @@ and prints each one's generation.
 ` + machineWords() + `
 ` + fleetWords() + `
 ` + goalWords() + `
-exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
+exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
 
 `)
 	return b.String()

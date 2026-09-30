@@ -5,7 +5,8 @@
 // core) and internal/sprint/store (the binding to the table layer).
 //
 // Exit 0 done, 1 refused (a card or the store said no), 2 usage or a store
-// that did not answer.
+// that did not answer (fleet sync --check: there is drift), 3 (fleet sync: the
+// config cannot be read).
 package main
 
 import (

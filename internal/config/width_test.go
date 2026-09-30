@@ -85,7 +85,7 @@ func TestWidthIsSlotsLessTheFriendsChargedThere(t *testing.T) {
 	for _, w := range ws {
 		got[w.Machine] = w
 	}
-	if w := got["m1"]; w.Slots != 8 || w.Charged != 5 || w.Width != 3 || !w.Member() {
+	if w := got["m1"]; w.Ceiling != 8 || w.Charged != 5 || w.Width != 3 || !w.Member() {
 		t.Fatalf("m1: %+v", w)
 	}
 	if w := got["m2"]; w.Charged != 0 || w.Width != 4 {

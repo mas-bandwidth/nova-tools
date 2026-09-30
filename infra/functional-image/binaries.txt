@@ -59,6 +59,7 @@ sqlite3	apt	sqlite3
 ssh	absent	reaches another host, and the container has no network
 ssh-keygen	absent	only the nova-secrets keygen path for ssh keys calls it and its tests use a stand-in
 stty	absent	reads a password from a terminal; the tier has no terminal
+tailscale	absent	machine self asks the tailnet for this host's name only where the program is installed; the tier has no tailnet, and the tests that resolve a name hand in the status
 sudo	absent	edits the darwin packet filter for the sandbox; not something a container does
 sysctl	apt	procps
 taskkill	absent	Windows only; a Linux container has no Windows tasks

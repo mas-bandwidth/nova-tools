@@ -97,7 +97,7 @@ type widthJSON struct {
 }
 
 func toJSON(w config.MachineWidth) widthJSON {
-	return widthJSON{Machine: w.Machine, Slots: w.Slots, Charged: w.Charged, Width: w.Width, Member: w.Member()}
+	return widthJSON{Machine: w.Machine, Slots: w.Ceiling, Charged: w.Charged, Width: w.Width, Member: w.Member()}
 }
 
 // runMachineWidth is `machine width <name>`: the width of the sprint's member
