@@ -454,7 +454,8 @@ func TestFleetSyncRedealsToTheWidthsItSets(t *testing.T) {
 	ta.ok("fleet sync")
 	ta.ok("add --stream s1 --count 6")
 	ta.ok("start")
-	ta.ok("tick")
+	ta.ok("tick") // the fleet update, last in the tick, brings the members up
+	ta.ok("tick") // the pump deals to them
 	rows := ta.fleetRows()
 	held := func(m string) int {
 		a, _ := strconv.Atoi(rows[m]["ready"])
