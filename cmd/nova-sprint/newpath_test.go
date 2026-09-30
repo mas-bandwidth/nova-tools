@@ -580,3 +580,47 @@ func TestNewTableCoversThePresentVerbs(t *testing.T) {
 		t.Errorf("verbs the new path adds: %v, want [remove] (section 3)", added)
 	}
 }
+
+// TestDealOnNewPath: the tick deals through the command on the twin (2.3 R6;
+// errata 3 amendments 4 and 5). R6's read names every stream's front, from the
+// streams the tick's first read found, so the second tick deals, and never
+// stops the process on a front its read did not load (the repro of the
+// integration's gap 1, with the members beating so that they are up). One
+// stream of three goes m1, m2, m1; two streams go in turns, s1 then s2, round
+// the fleet, until the room (two ready cards a member) is taken.
+func TestDealOnNewPath(t *testing.T) {
+	t.Parallel()
+	dealt := func(na *npApp) []string {
+		var out []string
+		for _, l := range strings.Split(strings.TrimSpace(na.ok("log")), "\n") {
+			var line struct {
+				Kind, Table, To string
+				IDs             []string
+			}
+			if err := json.Unmarshal([]byte(l), &line); err != nil {
+				t.Fatalf("log line %q: %v", l, err)
+			}
+			if line.Kind == "create" && line.Table == sprint.Fleet && strings.HasSuffix(line.To, ":ready") {
+				for _, id := range line.IDs {
+					out = append(out, id+">"+strings.TrimSuffix(line.To, ":ready"))
+				}
+			}
+		}
+		return out
+	}
+	for _, c := range []struct {
+		add  []string
+		want string
+	}{
+		{[]string{"add --stream s1 --count 3"}, "s1-1.w1>m1 s1-2.w1>m2 s1-3.w1>m1"},
+		{[]string{"add --stream s1 --count 3", "add --stream s2 --count 2"}, "s1-1.w1>m1 s2-1.w1>m2 s1-2.w1>m1 s2-2.w1>m2"},
+	} {
+		na := newNPApp(t)
+		for _, l := range append(append([]string{"init", "reader add r1 r2", "fleet up m1 m2", "fleet beat m1 m2"}, c.add...), "start", "tick", "tick") {
+			na.ok(l)
+		}
+		if got := strings.Join(dealt(na), " "); got != c.want {
+			t.Fatalf("%v: dealt %s, want %s", c.add, got, c.want)
+		}
+	}
+}

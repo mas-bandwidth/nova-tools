@@ -114,14 +114,15 @@ const followPrimary = "primary"
 // round robin (1.4.2) is IT05's table (PriorityOf), taken where the rows are
 // registered so that a change to the order is a changed row there.
 var fleetRuleRows = []struct {
-	name string
-	read func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
-	plan func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
+	name    string
+	read    func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
+	plan    func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
+	readFor func(keys []AgendaKey, sh TickShape, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
 }{
-	{ruleSeen, readSeen, planSeen},
-	{ruleDown, readDown, planDown},
-	{ruleDeal, readDeal, planDeal},
-	{ruleLevel, readLevel, planLevel},
+	{ruleSeen, readSeen, planSeen, nil},
+	{ruleDown, readDown, planDown, nil},
+	{ruleDeal, readDeal, planDeal, readDealFor},
+	{ruleLevel, readLevel, planLevel, nil},
 }
 
 func init() {
@@ -130,7 +131,7 @@ func init() {
 		if !ok {
 			panic("sprint: the fleet rule " + r.name + " has no priority in RulePriorities")
 		}
-		RegisterRule(Rule{Name: r.name, Priority: p, Read: r.read, Plan: r.plan})
+		RegisterRule(Rule{Name: r.name, Priority: p, Read: r.read, Plan: r.plan, ReadFor: r.readFor})
 	}
 }
 
@@ -210,12 +211,15 @@ var (
 
 // fleetShape is what R6's and R7's reads name and Rule.Read is not given (8.0's
 // Read has the keys, the bounds and the halvings, and no snapshot): the streams
-// R6 asks front(s) of, and the members R7 asks the ready head of. The registered
-// reads have none: they read what they can without a name (the fleet, the
-// dropping marks and, for R6, the list of streams), and their plans refuse what
-// that leaves unseen (open question 4); the tick that knows the names reads with
-// dealReadFor and levelReadFor.
-type fleetShape struct{ Streams, Members []string }
+// R6 asks front(s) of, and the members R7 asks the ready head of. It is the
+// tick's TickShape: R6 registers ReadFor (readDealFor), which the tick calls with
+// the streams its first read found (the work table's rows), so that R6's read
+// names every stream's front (2.3 R6 "Read:"). The registered Read has no
+// names: it reads what it can without one (the fleet, the dropping marks, the
+// list of streams), and a plan made on it refuses what that leaves unseen
+// (unread; the tick refuses the plan by name). R7's read has no ReadFor yet
+// (open question 4).
+type fleetShape = TickShape
 
 // units is the members the fleet query is over: one for each member the shape
 // names, and 0, which is the design's most (MaxMembers), when it names none: a
@@ -1252,10 +1256,20 @@ func dealReadFor(sh fleetShape, b ReadBounds, halvings int) ReadPlan {
 // keeps its key; with no room, or no stream, there is nothing to deal and the key
 // goes. The tick that knows the streams reads with dealReadFor (open question 4).
 func readDeal(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
+	return readDealFor(keys, TickShape{}, b, halvings)
+}
+
+// readDealFor is R6's read given the tick's shape (Rule.ReadFor; 2.3 R6
+// "Read:"): the fleet and front(s) of each stream the tick's first read found,
+// so that the plan sees every stream's front. A shape with no stream lists the
+// streams instead (dealReadFor): a sprint with none has nothing to deal, and a
+// stream made after the tick's first read is one the plan says it did not see
+// (unread), which the tick refuses by name.
+func readDealFor(keys []AgendaKey, sh TickShape, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	if _, ok := sprintKey(ruleDeal, keys); !ok {
 		return ReadPlan{}, keys
 	}
-	return dealReadFor(fleetShape{}, b, halvings), nil
+	return dealReadFor(TickShape{Streams: sh.Streams}, b, halvings), nil
 }
 
 // dealStreams are the streams a deal plans over, in name order: the ones whose

@@ -99,6 +99,16 @@ func LoadPartial(rp ReadPlan, ans ReadAnswer) (*Snapshot, error) {
 	return loadPartial(rp, ans, testing.Testing())
 }
 
+// LoadPartialRefusing is LoadPartial that never panics at a read of what was
+// not loaded, in a test build too: the read is recorded, and the caller refuses
+// the plan by name (Snapshot.UnloadedErr). The tick loads its rules' reads with
+// it, so that a rule whose read came back short fails the tick naming what it
+// read and did not load, and never stops the process (1.3.5: a bug is parked
+// and named, never a crash).
+func LoadPartialRefusing(rp ReadPlan, ans ReadAnswer) (*Snapshot, error) {
+	return loadPartial(rp, ans, false)
+}
+
 func loadPartial(rp ReadPlan, ans ReadAnswer, strict bool) (*Snapshot, error) {
 	if err := rp.Validate(); err != nil {
 		return nil, err

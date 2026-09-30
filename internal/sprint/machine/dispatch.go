@@ -31,11 +31,13 @@ type Batch struct {
 // apart from those at another. The batches are in the rules' priority order,
 // which is the round robin's (1.4.2).
 func Dispatch(keys []sprint.AgendaKey, heldBack map[string]bool, halvings map[string]int, b Budget) []Batch {
-	return dispatch(sprint.RuleTable(), keys, heldBack, halvings, b)
+	return dispatch(sprint.RuleTable(), keys, heldBack, halvings, b, sprint.TickShape{})
 }
 
-// dispatch is Dispatch over a given rule table.
-func dispatch(rules []sprint.Rule, keys []sprint.AgendaKey, heldBack map[string]bool, halvings map[string]int, b Budget) []Batch {
+// dispatch is Dispatch over a given rule table, with the tick's shape: a rule
+// with a ReadFor reads with it, given the names the tick's first read found
+// (R6's front(s) of every stream).
+func dispatch(rules []sprint.Rule, keys []sprint.AgendaKey, heldBack map[string]bool, halvings map[string]int, b Budget, sh sprint.TickShape) []Batch {
 	byName := map[string]sprint.Rule{}
 	for _, r := range rules {
 		byName[r.Name] = r
@@ -87,7 +89,13 @@ func dispatch(rules []sprint.Rule, keys []sprint.AgendaKey, heldBack map[string]
 			out = append(out, Batch{Rule: g.rule, Rest: ks, NoRule: true})
 			continue
 		}
-		plan, rest := r.Read(ks, b.Read, g.h)
+		var plan sprint.ReadPlan
+		var rest []sprint.AgendaKey
+		if r.ReadFor != nil {
+			plan, rest = r.ReadFor(ks, sh, b.Read, g.h)
+		} else {
+			plan, rest = r.Read(ks, b.Read, g.h)
+		}
 		restSet := map[string]bool{}
 		for _, k := range rest {
 			restSet[k.Key] = true
