@@ -107,10 +107,23 @@ end)`
 			runnerRes, runnerErr = cRunner.FCall(ctx, "fct_f2_writeloop", []string{"dev-facts-f2"}, "1").Text()
 		}()
 
-		// Wait 1.5s for function execution to exceed 1000ms threshold
-		time.Sleep(1500 * time.Millisecond)
+		start := time.Now()
+		var killErr error
+		for time.Now().Sub(start) < 4*time.Second {
+			time.Sleep(50 * time.Millisecond)
+			if time.Now().Sub(start) < 1200*time.Millisecond {
+				continue
+			}
+			killErr = cKiller.FunctionKill(ctx).Err()
+			if killErr != nil && strings.Contains(killErr.Error(), "UNKILLABLE") {
+				break
+			}
+			if killErr != nil && strings.Contains(killErr.Error(), "NOTBUSY") {
+				continue
+			}
+			break
+		}
 
-		killErr := cKiller.FunctionKill(ctx).Err()
 		if killErr == nil || !strings.Contains(killErr.Error(), "UNKILLABLE") {
 			t.Fatalf("expected UNKILLABLE for writing function, got: %v", killErr)
 		}
@@ -140,9 +153,23 @@ end)`
 			runnerRes, runnerErr = cRunner.FCall(ctx, "fct_f2_readloop", nil).Text()
 		}()
 
-		time.Sleep(1500 * time.Millisecond)
+		start := time.Now()
+		var killErr error
+		for time.Now().Sub(start) < 4*time.Second {
+			time.Sleep(50 * time.Millisecond)
+			if time.Now().Sub(start) < 1200*time.Millisecond {
+				continue
+			}
+			killErr = cKiller.FunctionKill(ctx).Err()
+			if killErr == nil {
+				break
+			}
+			if strings.Contains(killErr.Error(), "NOTBUSY") {
+				continue
+			}
+			break
+		}
 
-		killErr := cKiller.FunctionKill(ctx).Err()
 		if killErr != nil {
 			t.Fatalf("expected OK (nil error) for killing no-write function, got: %v", killErr)
 		}
@@ -669,7 +696,7 @@ end)`
 			if err != nil {
 				t.Fatalf("xinfo: %v", err)
 			}
-			durations = append(durations, time.Since(t0))
+			durations = append(durations, time.Now().Sub(t0))
 		}
 		slices.Sort(durations)
 		return durations[len(durations)/2] // median
@@ -681,12 +708,12 @@ end)`
 	const largeSize = 500000
 	fillStart := time.Now()
 	res, err := c.FCall(ctx, "fct_f9_fill", []string{streamKey}, largeSize).Int()
-	fillDuration := time.Since(fillStart)
+	elapsedSec := float64(time.Now().Sub(fillStart).Milliseconds()) / 1000.0
 	if err != nil || res != largeSize {
-		t.Fatalf("fill %d failed in %v: res=%d err=%v", largeSize, fillDuration, res, err)
+		t.Fatalf("fill %d failed in %.3fs: res=%d err=%v", largeSize, elapsedSec, res, err)
 	}
-	if fillDuration > 20*time.Second {
-		t.Fatalf("fill %d took %v (> 20s bound)", largeSize, fillDuration)
+	if elapsedSec > 20.0 {
+		t.Fatalf("fill %d took %.3fs (> 20s bound)", largeSize, elapsedSec)
 	}
 
 	medLarge := sampleXInfo(30)
