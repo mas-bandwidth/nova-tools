@@ -44,6 +44,17 @@ On terms: this repo is MIT, see [LICENSE](../LICENSE), and nothing in this file
 adds to or subtracts from it. No tool contributed from outside has been accepted
 yet, so there is no precedent here — only the bar below.
 
+## The standard every PR meets
+
+[STANDARD.md](STANDARD.md) is how a nova tool is built: a tool is for an AI,
+general and never one fleet, correct by a model, performant by a number in the
+gate, minimal, tested, landed small and read cold. It is the rule every PR meets,
+and the one a new tool is built to first. It is embedded whole in the root
+[AGENTS.md](../AGENTS.md) (`make map` regenerates it from that file), so a
+contributor's harness reads it at the start of a session. Everything somebody
+needs to know while building or working on the tools goes into that file, in
+`docs/STANDARD.md`, and not into a second place.
+
 ## Why the bar is where it is
 
 1. **It is code, not prose.** The seed ships patterns you read and judge. A tool
