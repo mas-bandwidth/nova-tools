@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 type action struct {
@@ -331,7 +333,7 @@ func runTLC(ctx context.Context, root, jar, out string, traces []trace) (int, st
 	if err != nil {
 		return 0, "", err
 	}
-	cmd := exec.CommandContext(ctx, "java", "-XX:+UseParallelGC", "-Xmx512m",
+	cmd := subproc.Context(ctx, "java", "-XX:+UseParallelGC", "-Xmx512m",
 		"-Djava.io.tmpdir="+scratch, "-cp", jar, "tlc2.TLC", "-workers", "2",
 		"-metadir", filepath.Join(scratch, "states"), "-config", "SessionTrace.cfg", "SessionTrace.tla")
 	cmd.Dir, cmd.Stdout, cmd.Stderr = out, log, log
@@ -441,7 +443,7 @@ func run(jar, out string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "go", "test", "-tags", "functional", "-p", "2", "-parallel", "2",
+	cmd := subproc.Context(ctx, "go", "test", "-tags", "functional", "-p", "2", "-parallel", "2",
 		"-count=1", "-timeout", "50s", "-json", "./cmd/nova-table", "-run", "^TestShellRandomSequencesProduceSessionTrace$")
 	cmd.Dir, cmd.Stdout, cmd.Stderr = root, log, log
 	cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "NOVA_CI=1",

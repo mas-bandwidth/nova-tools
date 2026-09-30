@@ -271,7 +271,9 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	absKey, errKey := filepath.Abs(keyPath)
 	if errStore == nil && errKey == nil {
 		rel, err := filepath.Rel(absStore, absKey)
-		if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+		// filepath.IsLocal, not a ".." prefix test: a key file under a
+		// directory named "..cache" is inside the store.
+		if err == nil && rel != "." && filepath.IsLocal(rel) {
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
 				File:   keyPath,

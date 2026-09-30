@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // LocalRemote is a local bare git repository configured to enforce dev-integrity.
@@ -26,8 +28,7 @@ func NewLocalRemote(t *testing.T, defaultBranch string) *LocalRemote {
 	root := t.TempDir()
 	bareDir := filepath.Join(root, "remote.git")
 
-	cmd := exec.Command(gitBin, "init", "--bare", "--quiet", "--initial-branch="+defaultBranch, bareDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := gitrun.Combined(t.Context(), gitrun.Options{Bin: gitBin}, "init", "--bare", "--quiet", "--initial-branch="+defaultBranch, bareDir); err != nil {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
 

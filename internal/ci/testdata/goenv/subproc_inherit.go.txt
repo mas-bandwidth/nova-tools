@@ -1,0 +1,18 @@
+package fixture
+
+// A child `go` started through internal/subproc with no environment of its own: the same
+// hole as exec.Command("go", ...), reached through the door every child now goes through.
+// This fixture is what the class test must refuse.
+
+import (
+	"context"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+)
+
+func listDeps(dir string) ([]byte, error) {
+	cmd, cancel := subproc.Command(context.Background(), subproc.Go, "go", "list", "-deps", "./...")
+	defer cancel()
+	cmd.Dir = dir
+	return cmd.Output()
+}

@@ -1,14 +1,15 @@
 package swarm
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -305,13 +306,8 @@ func wallBaseRef(repoDir string) string {
 // empty string, because every caller here treats a missing answer as "no answer" and never
 // as zero.
 func gitOut(dir string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	out, _ := gitrun.Output(context.Background(), gitrun.Options{C: dir, Env: append(os.Environ(), "GIT_TERMINAL_PROMPT=0")}, args...)
+	return out
 }
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER

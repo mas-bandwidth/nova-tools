@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Home returns a new HOME holding <home>/nova-bench/secrets (the store, with
@@ -54,7 +55,8 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 	}
 	file := filepath.Join(store, seat+".yaml")
 	write(t, file, plain.String())
-	cmd := exec.Command(sops, "-e", "--age", seatPub+","+recPub, file)
+	cmd, cancel := subproc.Command(t.Context(), subproc.Tool, sops, "-e", "--age", seatPub+","+recPub, file)
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	sealed, err := cmd.Output()
 	if err != nil {
@@ -107,7 +109,8 @@ func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func genKey(t *testing.T, ageKeygen, path string) string {
 	t.Helper()
-	cmd := exec.Command(ageKeygen, "-o", path)
+	cmd, cancel := subproc.Command(t.Context(), subproc.Tool, ageKeygen, "-o", path)
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("age-keygen: %v: %s", err, out)
@@ -130,7 +133,8 @@ func genKey(t *testing.T, ageKeygen, path string) string {
 
 func run(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...)
+	cmd, cancel := subproc.CommandFor(t.Context(), subproc.BudgetOf(name, args), name, args...)
+	defer cancel()
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%s %v: %v: %s", name, args, err, out)
