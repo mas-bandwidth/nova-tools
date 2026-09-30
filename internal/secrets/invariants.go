@@ -262,6 +262,16 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 	return failures, mineCount, foreignCount
 }
 
+// scanReadFailure is a failed observation, not evidence that the scanned
+// subtree is clean. Keep it in the invariant's existing failure channel.
+func scanReadFailure(kind, root, path string, err error) CheckFailure {
+	file := path
+	if rel, relErr := filepath.Rel(root, path); relErr == nil {
+		file = rel
+	}
+	return CheckFailure{Kind: kind, File: file, Reason: "cannot inspect store entry: " + err.Error()}
+}
+
 // CheckInvariant5 verifies that no private key is stored under storeDir.
 func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	var failures []CheckFailure
@@ -280,8 +290,9 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 		}
 	}
 
-	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			failures = append(failures, scanReadFailure("store-private-key", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -291,7 +302,11 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 			return nil
 		}
 		data, err := os.ReadFile(path)
-		if err == nil && bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
+		if err != nil {
+			failures = append(failures, scanReadFailure("store-private-key", storeDir, path, err))
+			return nil
+		}
+		if bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
 			rel, _ := filepath.Rel(storeDir, path)
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
@@ -301,6 +316,9 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		failures = append(failures, scanReadFailure("store-private-key", storeDir, storeDir, walkErr))
+	}
 
 	return failures
 }
@@ -332,8 +350,9 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 	envLineRegex := regexp.MustCompile(`^[A-Z][A-Z0-9_]*:\s*(.*)$`)
 
-	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			failures = append(failures, scanReadFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -345,6 +364,7 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 		rel, err := filepath.Rel(storeDir, path)
 		if err != nil {
+			failures = append(failures, scanReadFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		rel = filepath.Clean(rel)
@@ -355,6 +375,7 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 		f, err := os.Open(path)
 		if err != nil {
+			failures = append(failures, scanReadFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		defer f.Close()
@@ -390,6 +411,9 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 		return nil
 	})
+	if walkErr != nil {
+		failures = append(failures, scanReadFailure("untracked-plaintext", storeDir, storeDir, walkErr))
+	}
 
 	return failures
 }
