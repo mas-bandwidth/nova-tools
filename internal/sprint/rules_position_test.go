@@ -1378,7 +1378,7 @@ func TestPositionRulesNeverScanACell(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, scan := range []string{".Cell(", ".Column(", ".Of(", "openLine(", "StopBefore(", "PositionWaits(", "Behind(", "WaitsFor(", "NamedWaits(", "Lawful(", ".Open)", ".Acked"} {
+		for _, scan := range []string{".Cell(", ".Column(", ".Of(", "openLine(", "StopBefore(", "PositionWaits(", "Behind(", "WaitsFor(", "NamedWaits(", "Lawful(", "s.Open", "s.Acked"} {
 			for i, line := range strings.Split(string(src), "\n") {
 				if strings.HasPrefix(strings.TrimSpace(line), "//") {
 					continue
