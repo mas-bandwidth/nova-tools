@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
 )
 
 // farCeiling bounds each read of a socket here, generously: a test that is not
@@ -37,6 +40,14 @@ func TestFlagsParse(t *testing.T) {
 		"a single dash and an equals sign": {
 			[]string{"-target=localhost:7000", "-delay=0s", "-listen=localhost:7001"},
 			config{"localhost:7001", "localhost:7000", 0},
+		},
+		"no delay, the bottom of the range the help documents": {
+			[]string{"--target", "127.0.0.1:7000", "--delay", "0s"},
+			config{"127.0.0.1:0", "127.0.0.1:7000", 0},
+		},
+		"the longest delay, the top of that range": {
+			[]string{"--target", "127.0.0.1:7000", "--delay", delayproxy.MaxDelay.String()},
+			config{"127.0.0.1:0", "127.0.0.1:7000", delayproxy.MaxDelay},
 		},
 		"a target off the machine, which only a person running the tool may ask for": {
 			[]string{"--target", "store.example:6379", "--delay", "128ms"},
@@ -81,14 +92,15 @@ func TestARunThatCannotBeServedIsRefusedAndNamesWhy(t *testing.T) {
 		args []string
 		want string
 	}{
-		"a listen address off the loopback": {[]string{"--listen", "0.0.0.0:7001", "--target", "127.0.0.1:7000", "--delay", "1ms"}, "not a loopback address"},
-		"a listen address with no port":     {[]string{"--listen", "127.0.0.1", "--target", "127.0.0.1:7000", "--delay", "1ms"}, "--listen"},
-		"a target with no port":             {[]string{"--target", "127.0.0.1", "--delay", "1ms"}, "target"},
-		"a delay with no unit":              {[]string{"--target", "127.0.0.1:7000", "--delay", "64"}, "delay"},
-		"a negative delay":                  {[]string{"--target", "127.0.0.1:7000", "--delay", "-1ms"}, "--delay"},
-		"a delay of an hour":                {[]string{"--target", "127.0.0.1:7000", "--delay", "1h"}, "--delay"},
-		"a flag it does not have":           {[]string{"--target", "127.0.0.1:7000", "--delay", "1ms", "--jitter", "3ms"}, "jitter"},
-		"a word that is no flag":            {[]string{"--target", "127.0.0.1:7000", "--delay", "1ms", "serve"}, `"serve"`},
+		"a listen address off the loopback":     {[]string{"--listen", "0.0.0.0:7001", "--target", "127.0.0.1:7000", "--delay", "1ms"}, "not a loopback address"},
+		"a listen address with no port":         {[]string{"--listen", "127.0.0.1", "--target", "127.0.0.1:7000", "--delay", "1ms"}, "--listen"},
+		"a target with no port":                 {[]string{"--target", "127.0.0.1", "--delay", "1ms"}, "target"},
+		"a delay with no unit":                  {[]string{"--target", "127.0.0.1:7000", "--delay", "64"}, "delay"},
+		"a negative delay":                      {[]string{"--target", "127.0.0.1:7000", "--delay", "-1ms"}, "--delay"},
+		"a delay of an hour":                    {[]string{"--target", "127.0.0.1:7000", "--delay", "1h"}, "--delay"},
+		"a delay a nanosecond past the longest": {[]string{"--target", "127.0.0.1:7000", "--delay", (delayproxy.MaxDelay + time.Nanosecond).String()}, "--delay"},
+		"a flag it does not have":               {[]string{"--target", "127.0.0.1:7000", "--delay", "1ms", "--jitter", "3ms"}, "jitter"},
+		"a word that is no flag":                {[]string{"--target", "127.0.0.1:7000", "--delay", "1ms", "serve"}, `"serve"`},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), c.args, &stdout, &stderr)
@@ -101,8 +113,34 @@ func TestARunThatCannotBeServedIsRefusedAndNamesWhy(t *testing.T) {
 	}
 }
 
+// flagEntry is one flag's own entry in the help's flags section: the line that
+// starts with the flag and the lines indented under it, up to the next flag. A
+// flag the synopsis or the prose names has no entry of its own.
+func flagEntry(help, name string) (string, bool) {
+	_, section, ok := strings.Cut(help, "\nflags:\n")
+	if !ok {
+		return "", false
+	}
+	var entry []string
+	in, found := false, false
+	for _, line := range strings.Split(section, "\n") {
+		if line == "" {
+			break // the section ends at its first blank line
+		}
+		if strings.HasPrefix(line, "  --") {
+			in = strings.HasPrefix(line, "  "+name+" ")
+			found = found || in
+		}
+		if in {
+			entry = append(entry, line)
+		}
+	}
+	return strings.Join(entry, "\n"), found
+}
+
 // The help is what a reader who has never seen the tool has: what it does, each
-// flag, what is held and what is not, the two lines it prints and the exit codes.
+// flag and what is said of it in its own entry, what is held and what is not,
+// the two lines it prints and the exit codes.
 func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 	t.Parallel()
 
@@ -115,13 +153,31 @@ func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 			t.Fatalf("%s: stdout is not the usage, or stderr = %q", flag, stderr.String())
 		}
 	}
+	// Each flag has an entry of its own, and the entry says what a reader needs of
+	// that flag: the synopsis and the other flags' entries cannot stand in for it.
+	for flag, need := range map[string][]string{
+		"--target": {"HOST:PORT", "Required", "dialled"},
+		"--delay":  {"DURATION", "Required", "round trip", delayproxy.MaxDelay.String()},
+		"--listen": {"HOST:PORT", "loopback", "Default"},
+	} {
+		entry, found := flagEntry(usage, flag)
+		if !found {
+			t.Errorf("the help has no entry for %s in its flags section", flag)
+			continue
+		}
+		for _, want := range need {
+			if !strings.Contains(entry, want) {
+				t.Errorf("the entry for %s does not say %q:\n%s", flag, want, entry)
+			}
+		}
+	}
 	for _, need := range []string{
-		"--target HOST:PORT", "--delay DURATION", "--listen HOST:PORT", // the flags
-		"Required",                        // which are
-		"round trip",                      // what a delay is as a distance
+		"proxy", "any TCP server", // what it is
 		"pipeline", "one after the other", // what is paid once and what is paid again
+		fmt.Sprintf("%d MiB", delayproxy.WindowBytes>>20), // and where a pipeline starts to pay again
 		"LISTEN OK addr=", "STOP OK writes=", // what it prints
-		"loopback", "exit:", // the limits and the exit codes
+		"redis-cli", // a client to try it with
+		"exit:",     // the exit codes
 	} {
 		if !strings.Contains(usage, need) {
 			t.Errorf("the help does not say %q", need)
