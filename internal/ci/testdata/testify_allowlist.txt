@@ -13,7 +13,6 @@
 # count and never adds a row. Converting a test lowers its row in the same commit.
 cmd/nova-bus:assert 836 bare assertions to convert to testify
 cmd/nova-bus:env 3 t.Setenv and Chdir sites to inject through config
-cmd/nova-cairn:assert 107 bare assertions to convert to testify
 cmd/nova-cairn:env 1 t.Setenv and Chdir sites to inject through config
 cmd/nova-check:assert 623 bare assertions to convert to testify
 cmd/nova-check:env 1 t.Setenv and Chdir sites to inject through config
@@ -77,9 +76,9 @@ internal/nsprint/store:env 9 t.Setenv and Chdir sites to inject through config
 internal/nsprint/testutil:assert 18 bare assertions to convert to testify
 internal/nsprint/testutil/pg:assert 10 bare assertions to convert to testify
 internal/nsprint/verbflag:assert 30 bare assertions to convert to testify
-internal/ntable:assert 1560 bare assertions to convert to testify
+internal/ntable:assert 357 bare assertions to convert to testify
 internal/onboarding:assert 160 bare assertions to convert to testify
-internal/oneline:assert 68 bare assertions to convert to testify
+internal/oneline:assert 24 bare assertions to convert to testify
 internal/oneline/audit:assert 1 bare assertions to convert to testify
 internal/record:assert 105 bare assertions to convert to testify
 internal/records:assert 494 bare assertions to convert to testify

@@ -25,10 +25,10 @@ func filledLibraries(body string) string {
 	return regexp.MustCompile(`(?m)^Libraries considered:.*$`).ReplaceAllString(body, "Libraries considered: testify for the asserts, used; nothing else found for this work")
 }
 
-// `template --name card` prints a card whose only finding is the Libraries considered
-// placeholder the writer fills; with the line filled it passes the lint: the twelve shape
-// rules, the typed-header rules and every child rule. It is linted for real (the verbatim
-// template shortcut of the card templates is not taken for it).
+// `template --name card` prints a card that passes the lint as printed: the twelve shape
+// rules, the typed-header rules and every child rule. Under a rules file carrying
+// [libraries-considered] its placeholder line is the one finding until filled. It is linted
+// for real (the verbatim template shortcut of the card templates is not taken for it).
 func TestCardTemplateLintsCleanWithTheChildRules(t *testing.T) {
 	t.Parallel()
 	exit, printed, stderr := runSwarm(t, "template", "--name", "card")
