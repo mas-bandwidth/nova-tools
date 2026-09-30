@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -251,16 +253,12 @@ func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
 	target := filepath.Join(root, "jobs", "card-1", "repo")
 	jobDir := filepath.Join(root, "jobs", "card-1")
 	for _, d := range []string{src, filepath.Dir(mirror), jobDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	execCmd(t, src, "git", "init", "-q")
 	execCmd(t, src, "git", "config", "user.name", "test")
 	execCmd(t, src, "git", "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644))
 	execCmd(t, src, "git", "add", "file.txt")
 	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
 	sha1 := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
@@ -286,21 +284,11 @@ func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
 			return stageGit(ctx, args...)
 		},
 	})
-	if !repointed {
-		t.Fatal("the set-url step never ran; the test did not reach the refusal")
-	}
-	if err == nil {
-		t.Fatalf("a checkout whose origin still names the mirror was staged: %+v", res)
-	}
-	if res.Staged {
-		t.Fatalf("Staged=true beside the refusal: %+v", res)
-	}
-	if !strings.Contains(err.Error(), "git remote set-url origin https://example.com/owner/repo.git failed in "+target) {
-		t.Fatalf("the refusal does not name the failed command and the checkout: %v", err)
-	}
-	if !strings.Contains(err.Error(), "No such remote") {
-		t.Fatalf("the refusal does not carry git's own words: %v", err)
-	}
+	require.True(t, repointed, "the set-url step never ran; the test did not reach the refusal")
+	require.Error(t, err, "a checkout whose origin still names the mirror was staged: %+v", res)
+	assert.False(t, res.Staged)
+	assert.Contains(t, err.Error(), "git remote set-url origin https://example.com/owner/repo.git failed in "+target, "the refusal names the failed command and the checkout")
+	assert.Contains(t, err.Error(), "No such remote", "the refusal carries git's own words")
 }
 
 // testWait is the allowed poll bound: NOVA_TEST_WAIT when set, thirty seconds

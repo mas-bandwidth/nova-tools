@@ -670,7 +670,9 @@ on exactly that (ideas#829).
 **The test.** `TestCardDerivedGitOperandsFollowTheSeparator`
 (`internal/ci/gitoperand_class_test.go`), with
 `TestGitOperandClassTestRefusesItsProbes`, which pins each shape it refuses and its
-neighbour that is fine, and reads the real `stage.go` with its `--` removed. A git
+neighbour that is fine, and reads the real `stage.go` with its `--` removed, and
+`TestGitOperandClassTestSeesTheCatFileSeparatorInStage`, which strips the separator from
+the `cat-file -e` call there, where `-e` takes no value, and must go red. A git
 call is a swarm git helper (`stageGit`, `baseGit`, `gitOut`, `gitOutput`), a `gitrun`
 runner found by import path, `exec.Command` or `exec.CommandContext` of the literal
 `"git"`, or an argv built apart from its call (a `[]string` literal that starts with a
