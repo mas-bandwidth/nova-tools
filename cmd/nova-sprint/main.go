@@ -24,7 +24,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	spverbs "github.com/mas-bandwidth/nova-tools/internal/sprint/verbs"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -58,15 +60,26 @@ type app struct {
 	// screen is the rows and columns of the screen a writer draws on, each 0
 	// when not known (the writer is not a terminal).
 	screen func(w io.Writer) (rows, cols int)
+	// newPath runs every verb on the new path (newpath.go, item IT23):
+	// internal/sprint/verbs over one sprintfn.Client. sprintClient opens that
+	// client, and configRows nova-config's store (init reads the coordinator
+	// there); np is what the path keeps between verbs.
+	newPath      bool
+	sprintClient func(ctx context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error)
+	configRows   func(ctx context.Context, dsn string) (spverbs.ConfigRows, func() error, error)
+	np           *newPathState
 }
 
 func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
+	a.sprintClient = a.newPathClient
+	a.configRows = newPathConfig
 	return a
 }
 
 func (a *app) close() {
+	a.closePath()
 	for _, c := range a.conns {
 		_ = c.Close()
 	}
@@ -201,6 +214,9 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 // run is the one entry point: the command line, and the driver, which runs
 // every verb it plays through it with an argument list.
 func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
+	if a.newPath {
+		return a.runNew(args, stdout, stderr)
+	}
 	defer verbflag.Recover(stdout, prog, banner(), &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
