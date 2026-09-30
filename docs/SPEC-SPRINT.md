@@ -205,10 +205,12 @@ and it is the coordinator's decision, receipted.
   member and takes it down; `fleet up <member>` releases the hold, adding a
   member the sprint does not know, and brings it up at once when its beat is
   fresh.
-- The tick's first part (presence) applies one change of derived status a
-  tick, ups first: a member going down has its unfinished work cards dealt to
-  the members up, or withdrawn when none is; a member coming up levels the
-  ready queues; each change writes one happened notification that says why.
+- The fleet update (presence) applies every change of derived status in one
+  batched plan: every member whose beat lapsed goes down, and every member
+  whose beat is fresh comes up. Unfinished work cards of down members are
+  redealt to up members below their width round the rolling index `deal_index`,
+  or withdrawn when none is up; ready queues are levelled across the up members;
+  each change writes one happened notification that says why.
   While STOPPED, beats are accepted and the fleet's cells show the derived
   status, but nothing is dealt; the first tick after `start` applies what
   changed.
@@ -231,10 +233,10 @@ id (`--op`) returns the original result, with no second counter or notification.
 
 ## 6. The readers
 
-- ask deals every primary in review that lacks reads to TWO DIFFERENT readers,
-  each to the shortest asked queue, keeping order. One read card per reader.
-  The machine's tick asks for every such primary; `ask` is the coordinator's
-  own.
+- ask deals every primary in review that lacks reads to TWO DIFFERENT readers
+  from the ask's rolling index (`ask_index`), taking streams in turn from
+  `stream_index_ask`, oldest by score. One read card per reader. The machine's
+  tick asks for every such primary; `ask` is the coordinator's own.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
   attempt only (the readers kept on the primary stay the pair it was asked
@@ -666,7 +668,7 @@ command that loads it.
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
-| run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet |
+| run | ticks on every line of the log (at most every 100 ms) or at the earliest due time (at most 1 s) |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>` |
@@ -804,13 +806,13 @@ their total. `run` is the process that ticks: it blocks on the epoch's log
 log's last id: one round trip a wait), and a line wakes it, so a step that
 frees room or makes cards ready (a finish, a merge, a drop, a release, fleet
 up, start) is ticked on at most TickFloor (100 ms) after the tick before
-began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
-moves nothing while STOPPED; `tick` is one tick by hand. The state
-is read at the start of each tick and before each of its parts: after `stop`
-returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
-wait. `inbox` says `machine: running`,
-`machine: running (catching up: <n> moves due)`, `machine: STOPPED`, or
-`machine: STOPPED (no tick for Ns)` when the state is
+began; a quiet log ticks it at the earliest due time (a beat lapse, a deadline,
+or at most 1 s) after the tick before began. It moves nothing while STOPPED;
+`tick` is one tick by hand. The state is read at the start of each tick and
+before each update: after `stop` returns STOPPED no update begins, and an
+update in flight finishes. Every verb works in both states; only the tick's
+duties wait. `inbox` says `machine: running`, `machine: running (catching up: <n> moves due)`,
+`machine: STOPPED`, or `machine: STOPPED (no tick for Ns)` when the state is
 RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
 verb says the same of a running machine after the progress
 (`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
@@ -820,39 +822,112 @@ one the header of `where` shows, which carries no progress; a failed tick keeps
 its error on the heartbeat, with the count of failed ticks in a row, and the
 line shows it. A tick that did nothing writes the heartbeat at most once every
 5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
-looked. `where` shows the same
-state as the one line under its title (section 1).
+looked. `where` shows the same state as the one line under its title (section 1).
 
-The machine stops itself when the sprint is done (section 8): the tick's last
-part, done, says so to the coordinator and, in the same step, sets the record
-STOPPED with the cause done; no part runs after it and the next ticks look.
-`inbox` then says `machine: DONE`, the header of `where` and the view say
-`DONE`, and the sprint line reads `STOPPED  9/9 100.0% done`. While the machine
-runs with every card landed, before that tick, the line has no ETA:
-`9/9 100.0% done in 1h2m0s  machine: running`, the time from the machine's
-first start of the sprint. An add of a card leaves the machine STOPPED and
-takes the cause off (`STOPPED`), and `start` runs it again; a start of a done
-sprint with nothing added stops again at its first tick; a `stop` of a done
-machine takes the cause off and writes nothing.
+The machine stops itself when the sprint is done (section 8): when every card is
+landed or dropped (nothing waiting, ready, working, in review or merging), the
+tick's last step writes one KNOW note to the coordinator ("the sprint is done: N
+landed, M dropped, took <duration> from the first start") and, in the same step,
+sets the record STOPPED with the cause `done`; no update runs after it and the
+next ticks only look. `inbox` then says `machine: DONE`, the header of `where`
+and the view say `DONE`, and the sprint line reads `STOPPED  9/9 100.0% done`.
+While the machine runs with every card landed, before that tick, the line has no
+ETA: `9/9 100.0% done in 1h2m0s  machine: running`, the time from the machine's
+first start of the sprint. An add of a card leaves the machine STOPPED and takes
+the cause off (`STOPPED`), and `start` runs it again; a start of a done sprint
+with nothing added stops again at its first tick; a `stop` of a done machine
+takes the cause off and writes nothing.
 
-A tick first finishes an operation pending past its grace (T5). It then reads
-the fence and the tables' shapes. It reads what is due from the state whenever
-it reads the whole sprint, and it reads the whole sprint when any table's
-revision changed, after `start`, after a tick that did not finish (a part that
-lost to other writers, a stale epoch, a halt, a failure, or moves left past a
-bound), and once every minute (TickFullEvery); otherwise it does nothing
-else. Otherwise it runs its parts in order, each one operation of the
-engine on a fresh read, sharing the fence with every verb: resolve (T1:
-every stream's waiting cards in score order; a card whose needs have all landed moves to ready; a sentinel is never
-moved, and is marked reached when all it needs has landed), resume (T7: a
-stream stopped only on a cross need whose card has landed), deal (T3), level
-(T4), ask (T2: two different readers for each primary in review with no read
-card at its attempt and work not failed), check (T6: section 9, and the
-no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
-stops). Each part is
-bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
-catch up, and the machine line says so. A card made ready is dealt in the same
-tick. Running a tick twice in a row changes nothing the second time.
+The machine's tick is dirty-driven. Glenn's rules govern its shape:
+"Each table gets one update in turn per-tick. 1. work streams, 2. readers, 3. merge, 4. fleet."
+"dirty bits are acted on IMMEDIATELY"
+"the tick doesn't end until all dirty bits are cleared."
+"the work table is only pumped once per-tick"
+"nothing advances the work stream table EXCEPT on the next tick ... the previous tick does queue up all the changes for the work stream table, to process start of next tick"
+"the other tables tick more frequently, to service the work stream table rate."
+"importantly, no new work moves from waiting -> ready -> working except on the FIRST PASS on the work stream table, once per-tick."
+
+Every table is updated in turn per tick, each in one batched plan over every row
+that needs it: batch always, never a row at a time. The tick first finishes an
+operation pending past its grace. Every tick reads and plans all four tables, in
+fixed order:
+
+1. **Work streams table:** The work table is pumped only once per tick, on this
+   first pass. Nothing advances the work stream table except on the next tick.
+   Its change queue is Layer 2's log: the pump reads all log lines since its
+   cursor (work cards finished ok or failed, reads completed, branches merged,
+   room freed) and applies them to the work table in one update. Waiting cards
+   whose needs have all landed (walking explicit needs and the implicit needs
+   of gate sentinels, with cycle checks) move from waiting to ready, in stream
+   turns from the work table's rolling index `stream_index` (each stream's
+   oldest card by score first). Sentinels are never moved, and are marked
+   reached when all they need has landed. Mechanical acceptances advance
+   primaries in review with two ok reads to merging, taking streams in turn from
+   `stream_index_accept`. Primaries requiring rework advance to ready or working.
+   Pullback (R19) is bounded by the budget alone. This first pass is the sole
+   place where cards advance waiting -> ready -> working; later pumps and dirty
+   re-runs move cards only forward from working onward or sideways (redeals).
+   Changes applied in the work pump queue updates for the other tables and set
+   their dirty bits.
+
+2. **Readers table:** Deals primaries in review that lack reads to two different
+   readers from the readers table's rolling index `ask_index`, taking streams in
+   turn from `stream_index_ask`, oldest by score. Failed work is not asked: it
+   waits for the coordinator. Replaces late reads (R11) round the rolling index
+   modulo the count of able readers. Updates reader cards to asked/reading in
+   one plan.
+
+3. **Merge table:** Resumes streams stopped only on cross-needs whose cards have
+   landed (T7). Prepares merge queues across streams in one step. The machine
+   queues accepted primaries into merging and notifies the coordinator; the
+   merge step itself is the coordinator's work ("accept is mechanical, but the
+   merge step is not"): the coordinator analyzes the batch per stream, rebases,
+   runs CI, lands in order, and reports `merge`; red CI, conflicts, or
+   merge-late notify the coordinator for judgment. The machine records landings
+   and stops, never landing a card by itself.
+
+4. **Fleet table:** Updates the whole fleet in one batched plan across all
+   members. Presence: every member whose beat lapsed goes down, and every member
+   whose beat is fresh comes up in the same plan; downs' unfinished cards are
+   redealt round up members below their width, or withdrawn if none is up.
+   Levelling (T4 / R7): reads whole queues up to the widest member (up to
+   1,024); moves newest cards from longer queues to members below their width
+   round `deal_index`. Deal (T3 / R6): fills up members to their width (default
+   64, up to 1,024; room = width - (ready + working)) in stream turns from
+   `stream_index`, one card at a time to the next up member round `deal_index`
+   below its width, dealing every ready card up to the step bound `TickMaxDeal`
+   (2,000 cards) in one tick. Member status, load, and done counts are updated in
+   the same batched plan.
+
+A step's writes set dirty bits on the affected tables. A dirty bit is simply the
+presence of pending entries in a table's change queue. Dirty bits are acted on
+immediately: a dirty table is pumped at once, in table order (readers, merge,
+fleet), before the tick can proceed. Its update may dirty other tables in turn.
+Because the work table is pumped only once per tick, and only the work pump
+introduces new work into ready or working, the chain of dirty updates settles to
+a fixpoint and terminates: the readers, merge, and fleet tables run as many
+updates as their dirty bits demand to service the work stream rate. The tick
+does not end until all dirty bits are cleared.
+
+Every placement across the tables uses a uint64 counter modulo the count: the
+fleet's `deal_index`, the readers' `ask_index`, and the work table's
+`stream_index`, `stream_index_ask`, and `stream_index_accept`. Each counter
+starts at 0, increments by one for each placement and by one for each name
+passed over, the next entity chosen by `counter modulo count` in sorted name
+order. Counters are stored as decimal properties on their respective tables,
+written atomically with the step's changes, persisting across plans, ticks,
+stops, and loops, and reset only on `clear`.
+
+The tick ends when all dirty bits are cleared. Deadlines, overdue conditions,
+and checks run at tick end. The coordinator is woken at the end of the tick,
+ONCE: the last step of a tick writes exactly ONE note of kind `tick-end`
+addressed to the coordinator, its text `judgments=N`, where N counts the open
+judgments and happened notes addressed to the coordinator in that tick. If
+nothing is addressed to the coordinator (N == 0), no tick-end note is written
+and no wake is issued. `inbox --wait` blocks on the notes stream for the next
+`tick-end` note, allowing the coordinator to wake once per tick with the entire
+batch ready to read and act on. Reminders are a background fallback, never the
+primary wake.
 
 The tick writes a judgment once while its condition holds and closes it when
 the condition clears (closing a primary's last judgment in review, it writes
