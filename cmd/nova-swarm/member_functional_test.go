@@ -206,13 +206,6 @@ func TestMemberFunctionalDriveWithFakeHarness(t *testing.T) {
 	testMemberFunctionalDrive(t)
 }
 
-// TestMemberDrivesASprintFromReadyToLandedOnAStore is an alias for
-// TestMemberFunctionalDriveWithFakeHarness preserving the initial entrypoint name.
-func TestMemberDrivesASprintFromReadyToLandedOnAStore(t *testing.T) {
-	t.Parallel()
-	testMemberFunctionalDrive(t)
-}
-
 func testMemberFunctionalDrive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
