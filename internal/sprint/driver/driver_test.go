@@ -56,7 +56,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	}, inbox: `{"groups":[{"kind":"judgment","type":"work came back failed","stream":"s1","count":2,"oldest":"2030-01-02T03:00:00Z"}]}`}
 	var out bytes.Buffer
 	facts := NewSeeded(7)
-	d := &Driver{Run: w.run, Base: []string{"--prefix", "dev-"}, Facts: facts, Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)},
+	d := &Driver{Run: w.run, Base: []string{"--redis", "127.0.0.1:1"}, Facts: facts, Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)},
 		Out: &out, Config: Config{Every: time.Second, Batch: 5}}
 	why, err := d.Loop()
 	if err != nil || why != "landed" {
@@ -70,7 +70,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 		lines = append(lines, strings.Join(a, " "))
 	}
 	all := strings.Join(lines, "\n")
-	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --prefix dev-", "take --as m1 --epoch 0 s1-4.w1@2 --prefix dev-", "read --as reader-a --ok --epoch 0 s1-2.r1.reader-a",
+	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --redis 127.0.0.1:1", "take --as m1 --epoch 0 s1-4.w1@2 --redis 127.0.0.1:1", "read --as reader-a --ok --epoch 0 s1-2.r1.reader-a",
 		"merge --stream s1 --batch 5"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("no %q in\n%s", want, all)
@@ -84,7 +84,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 		}
 	}
 	text := out.String()
-	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 --epoch 0 s1-4.w1@2 --prefix dev-", "TAKE OK moved=1 refused=0",
+	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 --epoch 0 s1-4.w1@2 --redis 127.0.0.1:1", "TAKE OK moved=1 refused=0",
 		"waits for the coordinator: work came back failed s1 x2 4m5s", "every stream has landed: 2/2 100.0% -> ETA"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the output lacks %q:\n%s", want, text)

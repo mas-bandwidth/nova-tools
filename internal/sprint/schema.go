@@ -82,7 +82,10 @@ const (
 )
 
 // Names is where one deployment keeps its tables and keys: every name carries
-// the prefix, so two deployments share a store without touching each other.
+// the prefix. The nova-sprint command never sets one (its tables are work,
+// merge, readers and fleet, its view sprint); the field stays because Layer 1
+// refuses an empty namespace, which the event-driven machine (sprintfn) passes
+// as the prefix, until that machine takes the tool's place (IT23).
 type Names struct{ Prefix string }
 
 // Table is the stored name of a logical table.

@@ -139,9 +139,12 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 		t.Fatalf("written twice: %+v", p)
 	}
 	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open, Prefix: "dev-"})
-	if len(g) != 1 || g[0].Type != NSprintDone || g[0].Commands[0].Lines[0] != "nova-sprint clear --confirm dev-" ||
+	if len(g) != 1 || g[0].Type != NSprintDone || g[0].Commands[0].Lines[0] != "nova-sprint clear --confirm dev-sprint" ||
 		g[0].Commands[1].Decision != "add" || g[0].Size != 0 {
 		t.Fatalf("the inbox: %+v", g)
+	}
+	if g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open}); len(g) != 1 || g[0].Commands[0].Lines[0] != "nova-sprint clear --confirm sprint" {
+		t.Fatalf("the inbox with no prefix: %+v", g)
 	}
 	w.must(Add(w.s, AddReq{Stream: "s3", Count: 1}))
 	if len(w.openOn(SprintSubject)) != 0 {

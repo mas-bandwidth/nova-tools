@@ -37,7 +37,7 @@ func TestGoalVerbsSetShowDropAndTheTickDelivers(t *testing.T) {
 	if !strings.Contains(out, "MOVED remind: REMINDER 1 to friend-a over "+route) {
 		t.Fatalf("tick: %s", out)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "reminder-a.txt")); !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", sprint t-, epoch 0\nkeep going\n") {
+	if b, _ := os.ReadFile(filepath.Join(dir, "reminder-a.txt")); !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", sprint sprint, epoch 0\nkeep going\n") {
 		t.Fatalf("file: %s", b)
 	}
 	// the frame holds the tables and no line about the people; goal show
@@ -111,14 +111,14 @@ func TestGoalSetDefaultRouteIsPrintedAndHelpNamesGoal(t *testing.T) {
 		if k == "NOVA_SPRINT_REMINDER_DIR" {
 			return dir
 		}
-		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-", "NOVA_SPRINT_ACTOR": "coordinator"}[k]
+		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_ACTOR": "coordinator"}[k]
 	}
 	ok := filepath.Join(dir, "ok.txt")
 	if err := os.WriteFile(ok, []byte("goal"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	if out := ta.ok("goal set friend-a --file " + ok); !strings.Contains(out, "route=file:"+filepath.Join(dir, "t-friend-a.txt")) {
+	if out := ta.ok("goal set friend-a --file " + ok); !strings.Contains(out, "route=file:"+filepath.Join(dir, "friend-a.txt")) {
 		t.Fatalf("default route: %s", out)
 	}
 	if out := ta.ok("help goal"); !strings.Contains(out, "goal set") || !strings.Contains(out, "every 5") && !strings.Contains(out, "5\nminutes") {
@@ -126,5 +126,24 @@ func TestGoalSetDefaultRouteIsPrintedAndHelpNamesGoal(t *testing.T) {
 	}
 	if out := ta.ok("help"); !strings.Contains(out, "nova-sprint goal show [<name>]") || !strings.Contains(out, "REMINDER <n> to <name>") {
 		t.Fatalf("help: %s", out)
+	}
+}
+
+// The reminder header names the sprint by its view, sprint.
+func TestReminderHeaderNamesTheSprint(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	dir := t.TempDir()
+	text := filepath.Join(dir, "goal.txt")
+	if err := os.WriteFile(text, []byte("keep going\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("goal set friend-a --file " + text + " --to file:" + filepath.Join(dir, "r.txt"))
+	ta.ok("start")
+	ta.ok("tick")
+	b, _ := os.ReadFile(filepath.Join(dir, "r.txt"))
+	if !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", sprint sprint, epoch 0\nkeep going\n") {
+		t.Fatalf("file: %s", b)
 	}
 }

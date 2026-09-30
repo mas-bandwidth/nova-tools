@@ -61,12 +61,12 @@ func (v goalView) line() string {
 
 // defaultGoalRoute is the file a person's reminder goes to when the route is
 // not given.
-func (a *app) defaultGoalRoute(prefix, name string) string {
+func (a *app) defaultGoalRoute(name string) string {
 	dir := a.getenv("NOVA_SPRINT_REMINDER_DIR")
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "nova-sprint-reminders")
 	}
-	return "file:" + filepath.Join(dir, prefix+name+".txt")
+	return "file:" + filepath.Join(dir, name+".txt")
 }
 
 // readGoalText reads the text file, refusing one over the bound without
@@ -115,7 +115,7 @@ func (a *app) cmdGoalSet(args []string, stdout, stderr io.Writer) int {
 	route := *to
 	if route == "" {
 		if g, err := st.Goals(ctx); err == nil && g.Find(pos[0]) < 0 {
-			route = a.defaultGoalRoute(c.prefix, pos[0])
+			route = a.defaultGoalRoute(pos[0])
 		}
 	}
 	g, created, err := st.SetGoal(ctx, pos[0], text, route)
@@ -218,7 +218,7 @@ doing) and a route. While the machine is RUNNING the tick delivers each
 person's goal down its route once when the machine starts and then every 5
 minutes of running time (time STOPPED does not count); nothing is delivered
 while it is STOPPED. The route file:<absolute path> gets the text, after one
-header line REMINDER <n> to <name> at <time>, sprint <prefix>, epoch <e>, in
+header line REMINDER <n> to <name> at <time>, sprint <name>, epoch <e>, in
 place of what the file held, so a watcher of the file sees one current
 reminder. The text is at most 8 KiB and is set from a file, and can be
 different for each person. A route that fails is one judgment on the inbox

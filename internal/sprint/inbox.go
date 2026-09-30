@@ -35,7 +35,7 @@ type InboxReq struct {
 	Streams  []StreamClock
 	Deadline time.Duration // a judgment open longer, in running time, is overdue
 	Stale    time.Duration // a moving stream unchanged longer, in running time, needs a look
-	Prefix   string        // the deployment's prefix, for the commands that name it
+	Prefix   string        // the deployment's prefix (empty for none), for the commands that name it
 	// Stopped is the time the machine was STOPPED between two clock
 	// readings: the deadlines count running time only, as the tick's do. nil
 	// is none.
@@ -342,11 +342,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case g.Type == NSprintDone:
 			switch d {
 			case "clear":
-				confirm := prefix
-				if confirm == "" {
-					confirm = "none"
-				}
-				add(d, cmd+"clear --confirm "+confirm)
+				add(d, cmd+"clear --confirm "+Names{Prefix: prefix}.View())
 			case "add":
 				add(d, cmd+"add --stream '<stream>' --count '<n>' --brief '<brief>'")
 			}

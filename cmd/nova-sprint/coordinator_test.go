@@ -42,7 +42,7 @@ func TestTheActorHasNoDefault(t *testing.T) {
 	ta.ok("init --members m1,m2 --readers reader-a,reader-b")
 	ta.ok("add --stream s1 --count 1")
 	ta.a.getenv = func(k string) string {
-		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": "t-"}[k]
+		return map[string]string{"NOVA_SPRINT_REDIS": "mem:0"}[k]
 	}
 	before := ta.applies()
 	for _, line := range []string{"add --stream s1 --count 1", "rank s1-1 --first", "start", "merge --stream s1", "ci s1-1 --green"} {
@@ -96,8 +96,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"reader add":  "reader add reader-d",
 		"wait":        "wait x --for 1m",
 		"ack":         "ack x --reason r",
-		"clear":       "clear --confirm t-",
-		"teardown":    "teardown --confirm t-",
+		"clear":       "clear --confirm sprint",
+		"teardown":    "teardown --confirm sprint",
 		"repair":      "repair",
 		"goal set":    "goal set friend-a --file /dev/null",
 		"goal drop":   "goal drop friend-a",
