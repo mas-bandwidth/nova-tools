@@ -199,7 +199,7 @@ func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 // off the table (gone): it names them, and acknowledging it waives those.
 func blockedNote(s *Snapshot, stream, id, who string, gone []string) Note {
 	n := judgment(NBlocked, stream, s.Now, 0, id)
-	n.What, n.Who, n.Needs = id+" needs "+strings.Join(gone, ",")+", dropped", who, gone
+	n.What, n.Who, n.Needs = id+" needs "+Preview(gone, ",")+", dropped", who, gone
 	return n
 }
 

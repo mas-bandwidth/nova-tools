@@ -812,9 +812,9 @@ func TestDownCutsAtTheChunkAndKeepsKey(t *testing.T) {
 // it dealt other cards too.
 func TestDownSkipsDroppingKeepsKey(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 2, "m1", "m2")
-	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 2}))
-	f.run(ruleDeal, "deal") // s1-1, s1-2, s2-1, s2-2: two on each member
+	f := newFleetT(t, 1, "m1", "m2")
+	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 3}))
+	f.run(ruleDeal, "deal") // in stream turns s1-1, s2-1, s2-2, s2-3: m1 holds s1-1 and s2-2
 	f.facts.Dropping["s1"] = true
 	f.now.R += 500_000
 	rp := f.plan(ruleDown, "down:m1")
@@ -827,7 +827,7 @@ func TestDownSkipsDroppingKeepsKey(t *testing.T) {
 			t.Fatalf("a card of a stream being dropped was dealt: %v", dealt)
 		}
 	}
-	if !hasUnit(rp, "s2-1.w1") && !hasUnit(rp, "s2-2.w1") {
+	if !hasUnit(rp, "s2-2.w1") {
 		t.Fatalf("the other stream's card was not dealt: %v", dealt)
 	}
 	if keyTexts(rp.Requeue) != "down:m1" || len(rp.Done) != 0 || len(rp.HeldBack) != 0 {

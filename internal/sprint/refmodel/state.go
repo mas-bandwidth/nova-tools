@@ -517,6 +517,35 @@ func (s State) sortByScore(ids []string) {
 	})
 }
 
+// streamTurns is the deal's order (the engine's dealTurns, 2.3 R6's front per
+// stream): one primary from each stream in turn, streams in name order, each
+// stream's in work order, so every stream with a ready primary is dealt to in
+// parallel.
+func (s State) streamTurns(ids []string) []string {
+	by := map[string][]string{}
+	var streams []string
+	for _, id := range ids {
+		st := s.Primaries[id].Stream
+		if _, ok := by[st]; !ok {
+			streams = append(streams, st)
+		}
+		by[st] = append(by[st], id)
+	}
+	sort.Strings(streams)
+	for _, st := range streams {
+		s.sortByScore(by[st])
+	}
+	out := make([]string, 0, len(ids))
+	for turn := 0; len(out) < len(ids); turn++ {
+		for _, st := range streams {
+			if turn < len(by[st]) {
+				out = append(out, by[st][turn])
+			}
+		}
+	}
+	return out
+}
+
 // MergeCell is the stream's primaries in a merge place, in work order.
 func (s State) MergeCell(stream, place string) []string {
 	var out []string

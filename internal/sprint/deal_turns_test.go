@@ -1,0 +1,174 @@
+package sprint
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// The deal works every stream in parallel (2.3 R6, front(s) per stream): one
+// card from each stream in turn, never one stream's backlog before another's
+// first card.
+
+// streamsOf30 is the fleet harness with 8 up members of room 2 and three
+// streams of 30 ready primaries, s1 added first (the lowest scores).
+func streamsOf30(t *testing.T) *fleetT {
+	t.Helper()
+	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
+	f := newFleetT(t, 30, members...)
+	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 30}))
+	f.w.must(Add(f.snap(), AddReq{Stream: "s3", Count: 30}))
+	return f
+}
+
+// workingBy is each stream's count of primaries in working.
+func workingBy(s *Snapshot, streams ...string) map[string]int {
+	out := map[string]int{}
+	for _, st := range streams {
+		out[st] = s.Work.Count(st, Working)
+	}
+	return out
+}
+
+// spread fails unless every stream has a card working and the counts differ by
+// at most one.
+func spread(t *testing.T, got map[string]int) {
+	t.Helper()
+	lo, hi := -1, 0
+	for _, n := range got {
+		if lo < 0 || n < lo {
+			lo = n
+		}
+		hi = max(hi, n)
+	}
+	if lo < 1 || hi-lo > 1 {
+		t.Fatalf("working by stream %v: every stream works, within one of each other", got)
+	}
+}
+
+// lowestWorking fails unless the stream's working primaries are its lowest
+// scored: the order within a stream is by score.
+func lowestWorking(t *testing.T, s *Snapshot, stream string) {
+	t.Helper()
+	var all []*Card
+	for _, c := range s.Work.Column(States...) {
+		if c.Row == stream && !IsSentinel(c) {
+			all = append(all, c)
+		}
+	}
+	SortCards(all)
+	n := s.Work.Count(stream, Working)
+	for i, c := range all {
+		if (c.Col == Working) != (i < n) {
+			t.Fatalf("%s: %s is %s at place %d of its stream; the %d lowest scored work", stream, c.ID, c.Col, i, n)
+		}
+	}
+}
+
+func TestDealWorksEveryStreamInParallel(t *testing.T) {
+	t.Parallel()
+	f := streamsOf30(t)
+	f.run(ruleDeal, "deal")
+	got := workingBy(f.snap(), "s1", "s2", "s3")
+	if got["s1"]+got["s2"]+got["s3"] != 16 {
+		t.Fatalf("working %v, want the room of 16 dealt", got)
+	}
+	spread(t, got)
+	for _, st := range []string{"s1", "s2", "s3"} {
+		lowestWorking(t, f.snap(), st)
+	}
+}
+
+func TestDealSkipsAStreamWithNoReadyCard(t *testing.T) {
+	t.Parallel()
+	f := streamsOf30(t)
+	for i := 1; i <= 30; i++ {
+		f.place(f.snap().Work, fmt.Sprintf("s2-%d", i), "s2", Waiting)
+	}
+	f.run(ruleDeal, "deal")
+	got := workingBy(f.snap(), "s1", "s2", "s3")
+	if got["s2"] != 0 || got["s1"] != 8 || got["s3"] != 8 {
+		t.Fatalf("working %v, want s2 skipped and the room of 16 split 8 and 8", got)
+	}
+}
+
+func TestTickDealWorksEveryStreamInParallel(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a")
+	for i := 1; i <= 8; i++ {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: fmt.Sprintf("m%d", i)}))
+	}
+	for _, st := range []string{"s1", "s2", "s3"} {
+		w.must(Add(w.s, AddReq{Stream: st, Count: 30}))
+	}
+	p, _ := TickDeal(w.s, TickReq{})
+	w.must(p)
+	got := workingBy(w.s, "s1", "s2", "s3")
+	if got["s1"]+got["s2"]+got["s3"] != 16 {
+		t.Fatalf("working %v, want the room of 16 dealt", got)
+	}
+	spread(t, got)
+	for _, st := range []string{"s1", "s2", "s3"} {
+		lowestWorking(t, w.s, st)
+	}
+}
+
+func TestDealTurnsOrder(t *testing.T) {
+	t.Parallel()
+	card := func(id, row string, score float64) *Card { return &Card{ID: id, Row: row, Score: score} }
+	cards := []*Card{
+		card("a3", "a", 3), card("a1", "a", 1), card("a2", "a", 2), card("a4", "a", 4),
+		card("c2", "c", 20), card("c1", "c", 10),
+		card("b1", "b", 100),
+	}
+	var ids []string
+	for _, c := range dealTurns(cards, []string{"a", "empty", "b", "c"}) {
+		ids = append(ids, c.ID)
+	}
+	want := []string{"a1", "b1", "c1", "a2", "c2", "a3", "a4"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("turns %v, want %v (a stream at a time in the given order, by score within, the empty one skipped)", ids, want)
+	}
+	// a stream not listed takes its turn after the listed ones
+	ids = ids[:0]
+	for _, c := range dealTurns(cards, []string{"c"}) {
+		ids = append(ids, c.ID)
+	}
+	if want := []string{"c1", "a1", "b1", "c2", "a2", "a3", "a4"}; !slices.Equal(ids, want) {
+		t.Fatalf("turns %v, want %v", ids, want)
+	}
+}
+
+// A card with a thousand needs is held by them, and says so in one short line:
+// the count and the first few, never every id.
+func TestHeldNeedsPreview(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1000)
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3", "s1-4"}}}))
+	needs := make([]string, 1000)
+	for i := range needs {
+		needs[i] = fmt.Sprintf("s1-%d", i+1)
+	}
+	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"big"}, Needs: needs}))
+	hd := mustHold(t, running(w), "big", HeldByWaiting)
+	if len(hd.Why) >= 300 || !strings.Contains(hd.Why, "needs 1000 of 1000 still open: s1-1 (") || !strings.Contains(hd.Why, "... and 992 more") {
+		t.Fatalf("%d bytes: %s", len(hd.Why), hd.Why)
+	}
+}
+
+func TestPreview(t *testing.T) {
+	t.Parallel()
+	few := []string{"a", "b", "c"}
+	if got := Preview(few, ","); got != "a,b,c" {
+		t.Fatalf("few: %q", got)
+	}
+	many := make([]string, 1000)
+	for i := range many {
+		many[i] = fmt.Sprintf("a-%d", i)
+	}
+	got := Preview(many, ", ")
+	if want := "a-0, a-1, a-2, a-3, a-4, a-5, a-6, a-7, ... and 992 more"; got != want {
+		t.Fatalf("many: %q, want %q", got, want)
+	}
+}
