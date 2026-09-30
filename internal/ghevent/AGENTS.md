@@ -5,4 +5,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../../AGENTS.md
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `testdata/` | GitHub delivery fixtures for the decoder | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
-| `wire/` | shared GitHub event stream identity without ingestion dependencies | `go test ./internal/ci` | `go test -tags functional ./internal/gh ./internal/wake` |
+| `wire/` | shared GitHub event stream identity without ingestion dependencies | `go test ./internal/ci` | `go test -tags functional ./internal/wake` |

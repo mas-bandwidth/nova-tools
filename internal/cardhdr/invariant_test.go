@@ -14,7 +14,7 @@ var goodCardLines = []string{
 	"RESULT: card-lint-one-invariant sha=0123456789ab",
 	"KIND: fix",
 	"INVARIANT: every push path refuses a card that is not one invariant.",
-	"PATHS: internal/cardhdr/invariant.go, cmd/nova-sprint/card.go, internal/nsprint/card/push.go",
+	"PATHS: internal/cardhdr/invariant.go, cmd/nova-sprint/card_story.go",
 	"CLASS-TEST: TestLintOneInvariantRefusesEachRule",
 	"PLATFORMS: darwin,linux",
 	"DONE-WHEN: `go test ./internal/cardhdr -run TestLintOneInvariantRefusesEachRule` passes in under 2 s.",
@@ -262,6 +262,7 @@ func TestSentences(t *testing.T) {
 
 func TestPackagesCountsDistinctPackages(t *testing.T) {
 	t.Parallel()
+	// A synthetic tree: the paths name a layout to resolve against and need not exist in the repository.
 	tree := []string{"cmd/nova-sprint/card.go", "cmd/nova-sprint/card_cut_from.go", "internal/cardhdr/cardhdr.go",
 		"internal/nsprint/card/push.go", "internal/nsprint/card/lint.go", "internal/nsprint/task/push.go"}
 	for paths, want := range map[string][]string{

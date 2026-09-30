@@ -14,7 +14,7 @@ end
 
 -- now_ms stays in the shared chunk: classify, prtoread, report, review, route
 -- and route_lease read it as an upvalue. Everything else in this file is one
--- do-block (like harvest.lua), so its locals never add to the library's
+-- do-block, so its locals never add to the library's
 -- 200-local main-function limit (dev crossed it at 6bf01359, #3487).
 do
 -- Every state write here is NS.card (02_card_move.lua): launched and beat
@@ -377,7 +377,7 @@ end)
 -- The six typed-record card kinds (typedrec.Kinds). A card hash kind outside
 -- this set (model, script) is a runner kind and sets no RESULT expectation.
 -- card push refuses any other KIND before the card is stored, naming this set
--- (internal/nsprint/card/kinds.go, nova-tools#3651); its KindMap maps a
+-- (nova-tools#3651); KindMap in internal/cardhdr maps a
 -- classification kind (go-verb, spec, ...) to one of these at cut time.
 local RESULT_KINDS = { ['fix'] = true, ['recut'] = true, ['port'] = true,
   ['docs-guard'] = true, ['report'] = true, ['read'] = true }

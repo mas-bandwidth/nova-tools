@@ -1,5 +1,4 @@
--- The friend beat loop's lease and the beat's models (seat-keeps-beat,
--- internal/nsprint/life/beatloop.go and friendbeat.go). Each is its own
+-- The friend beat loop's lease and the beat's models (seat-keeps-beat). Each is its own
 -- function so the friend seat (ns-friend, store/acl.go) runs it with the
 -- commands its row already has: HGET, HMGET, HSET, PEXPIRE, DEL, ZSCORE,
 -- HDEL. No SET: the lease is a hash, not a string.

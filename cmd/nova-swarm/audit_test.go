@@ -165,12 +165,6 @@ var swarmAudit = audit.Config{
 		// of this binary: the one line it holds is the gh script's own stderr, written by
 		// that script in the card's shell, never by nova-swarm.
 		`"github.com/mas-bandwidth/nova-tools/internal/nogh"`,
-		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
-		// slot lease and the in-flight cap. It holds no writer of its own: every call
-		// either returns a value this package prints through oneline.Field or an error
-		// this package renders through oneline.Err, and the Lua scripts run inside Redis
-		// and write only that instance's own keys.
-		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the

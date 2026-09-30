@@ -30,9 +30,8 @@
 --   land:gen                         string one counter for every sprint, no TTL
 --   s:<S>:land:enq:<repo>:<n>:<head> string the gen that owns the claim on that head
 --
--- A stream PR offered before #4079 is moved onto its unit record once by
--- nova-sprint land migrate (land_migrate.lua); nothing here reads the old
--- sprint-scoped record.
+-- Nothing here reads a sprint-scoped record of a stream PR offered before
+-- #4079; the unit record is the one it reads.
 --
 -- Facts read here (never written): ci:<repo>:<head>:gids and
 -- ci:<repo>:<head>:<gid> verdict (every gid OK, none is MISSING), and the

@@ -1,6 +1,5 @@
 -- The waiting-resolve duty's pass in one call (Glenn 2026-09-27: "You
--- always need to batch redis"; the Go pass, internal/nsprint/reconcile/
--- waiting_resolve.go, made five dependent round trips for it). The same
+-- always need to batch redis"; the pass it replaced made five dependent round trips for it). The same
 -- rounds, in the server: every stream of ws:order a pit stop does not hold,
 -- each stream's waiting set under the epoch, each waiter's DEPENDS-ON, the
 -- records those name (a task, or every stream member that names a repo#n),
