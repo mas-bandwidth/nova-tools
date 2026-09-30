@@ -213,23 +213,6 @@ func TestTickWithTwoReadyAndWidthTwoTakesTwoInOneVerb(t *testing.T) {
 	}
 }
 
-// TestTakeLimitIsTheRoom pins that the member asks for its whole room, not
-// for what its queue snapshot showed: a deal that lands between the queue
-// read and the take is taken in the same tick. Three places, one ready card
-// seen: `--limit 3`.
-func TestTakeLimitIsTheRoom(t *testing.T) {
-	t.Parallel()
-	g := newRig(Config{As: "m", Width: 3})
-	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
-	g.s.set("take", 0, takeJSON(t, pk("c1")))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
-	if got := g.s.lines("take"); !slices.Equal(got, []string{"take --as m --limit 3 --json --epoch 7"}) {
-		t.Fatalf("take lines: %q", got)
-	}
-}
-
 // TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch pins the report verb:
 // `finish --as m <id>@<gen> --report <line> --head <sha> --branch <b> --epoch <e>`
 // for a child that ended ok, the gen from the queue (not the packet taken).
@@ -707,4 +690,274 @@ func TestAReadBeginThatIsRefusedOrUnansweredStartsNothing(t *testing.T) {
 			t.Fatalf("err=%v started=%v, want an error and no start", err, g.r.started())
 		}
 	})
+}
+
+// reading is a reader's queue card, in flight.
+func reading(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "reading", Packet: p} }
+
+// asked is a reader's queue card, not yet begun.
+func asked(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "asked", Packet: p} }
+
+// TestAMovedClaimIsReapedNotReported pins that a child settles only the claim
+// it was launched for. The child ends ok, but the queue now shows the card at
+// another generation (a redeal), in another epoch (a clear), or, for a read,
+// at another attempt: its result is nobody's, so no finish or read is issued,
+// the child is dropped, and the new claim is run from the packet the queue
+// carries.
+func TestAMovedClaimIsReapedNotReported(t *testing.T) {
+	t.Parallel()
+	t.Run("a redeal: the generation moved", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 2})
+		old := pk("c1") // gen 1, epoch 7
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
+		moved := pk("c1")
+		moved.Gen = 2
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
+		g.s.reset()
+		acted, err := g.tick(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Removing the `l.gen != c.Packet.Gen` term of the moved-claim test in
+		// Member.Tick makes this fail: the old child is finished as c1@1.
+		if got := g.s.lines("finish"); len(got) != 0 {
+			t.Fatalf("a moved claim was reported: %q", got)
+		}
+		if acted != 1 || g.m.Running() != 1 {
+			t.Fatalf("acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
+		}
+		if ps := g.r.packets; len(ps) != 2 || ps[1].Gen != 2 || ps[1].Epoch != 7 {
+			t.Fatalf("started %+v, want the old launch then the gen-2 packet", ps)
+		}
+		if !strings.Contains(g.out.String(), "reap c1: the claim moved") {
+			t.Fatalf("the reap was not printed: %q", g.out.String())
+		}
+	})
+	t.Run("a clear: the epoch moved, the generation did not", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 2})
+		old := pk("c1") // gen 1, epoch 7
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
+		moved := pk("c1")
+		moved.Epoch = 8
+		g.s.set("queue", 0, queueJSON(t, 8, working("c1", 1, &moved)))
+		g.s.reset()
+		acted, err := g.tick(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Removing the `l.epoch != c.Packet.Epoch` term of the moved-claim test
+		// in Member.Tick makes this fail: the old child is finished under
+		// epoch 7 against a card of epoch 8.
+		if got := g.s.lines("finish"); len(got) != 0 {
+			t.Fatalf("a claim of another epoch was reported: %q", got)
+		}
+		if acted != 1 || g.m.Running() != 1 {
+			t.Fatalf("acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
+		}
+		if ps := g.r.packets; len(ps) != 2 || ps[1].Epoch != 8 || ps[1].Gen != 1 {
+			t.Fatalf("started %+v, want the old launch then the epoch-8 packet", ps)
+		}
+	})
+	t.Run("a read re-asked: the attempt moved", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "r", Width: 2, Reader: true})
+		old := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
+		moved := old
+		moved.Attempt = 2
+		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &moved)))
+		g.s.reset()
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		// Removing the `l.attempt != c.Packet.Attempt` term of the moved-claim
+		// test in Member.Tick makes this fail: attempt 1's verdict is filed
+		// against attempt 2.
+		if got := g.s.lines("report"); len(got) != 0 {
+			t.Fatalf("a read of another attempt was reported: %q", got)
+		}
+		if ps := g.r.packets; len(ps) != 2 || ps[1].Attempt != 2 || g.m.Running() != 1 {
+			t.Fatalf("started %+v running=%d, want the old launch then attempt 2", ps, g.m.Running())
+		}
+	})
+	t.Run("a child still running is left alone and not started over", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 2})
+		old := pk("c1")
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		moved := pk("c1")
+		moved.Gen = 2
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
+		if acted, err := g.tick(t); err != nil || acted != 0 {
+			t.Fatalf("acted=%d err=%v", acted, err)
+		}
+		// Removing the `continue` after `!l.child.Done()` in the moved-claim
+		// branch makes this fail: the card is reaped while its child runs, and
+		// a second child starts beside the first.
+		if len(g.r.packets) != 1 || g.m.Running() != 1 {
+			t.Fatalf("started %d, running %d: a moved claim's live child is reaped only when it ends", len(g.r.packets), g.m.Running())
+		}
+	})
+}
+
+// TestAReadWithNoVerdictIsLeftForTheSprint pins that a reader files a finding
+// only when it has one: a child that did not run, or ran and gave no verdict
+// (or one that is not ok or broken), leaves no `read` verb, the child is let
+// go, and the card stays reading for the sprint's lateness rule.
+func TestAReadWithNoVerdictIsLeftForTheSprint(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		res  Result
+	}{
+		{"ran, no verdict", Result{Ran: true, OK: true, Verdict: "", Report: "it ran"}},
+		{"ran, a word that is no verdict", Result{Ran: true, OK: true, Verdict: "maybe", Report: "it ran"}},
+		{"did not run, no verdict", Result{Ran: false, Verdict: "", Report: "the child ended without a result"}},
+		{"did not run, a stale verdict line", Result{Ran: false, Verdict: "ok", Report: "the child ended without a result"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newRig(Config{As: "r", Width: 1, Reader: true})
+			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+			if _, err := g.tick(t); err != nil {
+				t.Fatal(err)
+			}
+			g.r.child("r1").end(tc.res)
+			g.s.reset()
+			acted, err := g.tick(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Removing the `!r.Ran ||` term (the "did not run" cases) or the
+			// verdict-is-ok-or-broken term (the "no verdict" cases) of the
+			// reader's no-verdict test in Member.Tick makes this fail.
+			if got := g.s.lines("report"); len(got) != 0 {
+				t.Fatalf("a read with no finding was reported: %q", got)
+			}
+			if acted != 0 || g.m.Running() != 0 {
+				t.Fatalf("acted=%d running=%d, want 0 and 0: the child is dropped", acted, g.m.Running())
+			}
+			if !strings.Contains(g.out.String(), "no verdict") {
+				t.Fatalf("the drop was not printed: %q", g.out.String())
+			}
+			if got := g.s.lines("begin"); len(got) != 0 {
+				t.Fatalf("a read was begun: %q", got)
+			}
+		})
+	}
+}
+
+// TestAReadReportsOnlyItsVerdict pins that the verdict flag is the reader's
+// own word, never the harness's ok: `broken` files --broken even when the
+// child ran ok, and `ok` files --ok even when OK is false.
+func TestAReadReportsOnlyItsVerdict(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		res  Result
+		want string
+	}{
+		{"broken though the child ran ok", Result{Ran: true, OK: true, Verdict: "broken", Report: "the merge is wrong"}, "read --as r --broken r1 --finding the merge is wrong --epoch 7"},
+		{"ok though OK is false", Result{Ran: true, OK: false, Verdict: "ok", Report: "clean"}, "read --as r --ok r1 --finding clean --epoch 7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newRig(Config{As: "r", Width: 1, Reader: true})
+			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+			if _, err := g.tick(t); err != nil {
+				t.Fatal(err)
+			}
+			g.r.child("r1").end(tc.res)
+			g.s.reset()
+			if _, err := g.tick(t); err != nil {
+				t.Fatal(err)
+			}
+			// Replacing `r.Verdict == "broken"` with `!r.OK` in the read's
+			// report makes this fail in both cases.
+			if got := g.s.lines("report"); !slices.Equal(got, []string{tc.want}) {
+				t.Fatalf("report lines: %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadBeginNamesTheCards pins that the reads begun are named: two asked,
+// room for one, and the verb names the first asked in queue order (not the
+// sorted order), with the epoch; only that packet is started.
+func TestReadBeginNamesTheCards(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	first := Packet{Card: "zr", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	second := Packet{Card: "ar", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, asked("zr", &first), asked("ar", &second)))
+	acted, err := g.tick(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dropping the `len(ids) < room` bound of the named reads in Member.Tick
+	// makes this fail: both are named and both started, past the width.
+	if got := g.s.lines("begin"); !slices.Equal(got, []string{"read --as r --begin zr --epoch 7"}) {
+		t.Fatalf("begin lines: %q, want the first asked only", got)
+	}
+	if acted != 1 || !slices.Equal(g.r.started(), []string{"zr"}) || g.m.Running() != 1 {
+		t.Fatalf("acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
+	}
+}
+
+// TestTakeAsksForTheRoom pins the limit as the member's whole room, whatever
+// the queue showed ready: more ready than room asks for the room, fewer asks
+// for the room too, and a child already running takes its place out of it.
+func TestTakeAsksForTheRoom(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                         string
+		width, running, ready, limit int
+	}{
+		{"room 3, ready 5", 3, 0, 5, 3},
+		{"room 3, ready 1", 3, 0, 1, 3},
+		{"width 5 with 2 running, ready 5", 5, 2, 5, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newRig(Config{As: "m", Width: tc.width})
+			var cards []queueCard
+			for i := 0; i < tc.running; i++ {
+				p := pk("w" + strconv.Itoa(i))
+				cards = append(cards, working(p.Card, 1, &p))
+			}
+			for i := 0; i < tc.ready; i++ {
+				cards = append(cards, ready("c"+strconv.Itoa(i)))
+			}
+			g.s.set("queue", 0, queueJSON(t, 7, cards...))
+			g.s.set("take", 0, takeJSON(t))
+			if _, err := g.tick(t); err != nil {
+				t.Fatal(err)
+			}
+			// Replacing `strconv.Itoa(room)` with the ready count in the take
+			// verb's --limit makes the "ready 5" cases fail.
+			want := "take --as m --limit " + strconv.Itoa(tc.limit) + " --json --epoch 7"
+			if got := g.s.lines("take"); !slices.Equal(got, []string{want}) {
+				t.Fatalf("take lines: %q, want %q", got, want)
+			}
+		})
+	}
 }

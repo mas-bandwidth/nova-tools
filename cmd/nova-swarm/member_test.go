@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -286,5 +289,172 @@ func TestMemberRefusesAModelAndATokenBudgetThatEveryCardWouldRefuse(t *testing.T
 		if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
 			t.Errorf("%s %s: a directory was made before the refusal: %v", tc.flag, tc.value, err)
 		}
+	}
+}
+
+// TestLaunchNameIsTheCardAtItsGenerationInItsEpoch pins the name of one
+// launch, which names its slot, results root, log and pid file: a work card
+// is its id at its generation in its epoch, a read its id at its attempt in
+// its epoch, and a card dealt again is another launch.
+func TestLaunchNameIsTheCardAtItsGenerationInItsEpoch(t *testing.T) {
+	t.Parallel()
+	// Removing the `.g` + Gen part of the work name in launchName, or the
+	// `.a` + Attempt part of the read name, makes this fail.
+	if got := launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7}); got != "c.g2.e7" {
+		t.Errorf("work launch name = %q, want c.g2.e7", got)
+	}
+	if got := launchName(member.Packet{Card: "r", Kind: "read", Gen: 0, Attempt: 1, Epoch: 7}); got != "r.a1.e7" {
+		t.Errorf("read launch name = %q, want r.a1.e7", got)
+	}
+	if a, b := launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Epoch: 7}); a == b {
+		t.Errorf("one card at two generations is one launch name %q", a)
+	}
+	if a, b := launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 8}); a == b {
+		t.Errorf("one card at one generation in two epochs is one launch name %q", a)
+	}
+	if a, b := launchName(member.Packet{Card: "r", Kind: "read", Attempt: 1, Epoch: 7}), launchName(member.Packet{Card: "r", Kind: "read", Attempt: 2, Epoch: 7}); a == b {
+		t.Errorf("one read at two attempts is one launch name %q", a)
+	}
+}
+
+// TestReadResultReadsTheVerdictLine pins a read's verdict: the `verdict:`
+// line of RESULT.md, lower-cased, the first one kept, and "" when absent.
+func TestReadResultReadsTheVerdictLine(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, body, want string }{
+		{"ok", "rev: abc\nverdict: ok\n## One line\nclean\n", "ok"},
+		{"broken", "verdict: broken\n## One line\nthe merge is wrong\n", "broken"},
+		{"shouted is lower-cased", "verdict: BROKEN\n## One line\nwrong\n", "broken"},
+		{"spaces are trimmed", "  verdict:   Ok  \n", "ok"},
+		{"the first line wins", "verdict: ok\nverdict: broken\n", "ok"},
+		{"absent", "rev: abc\n## One line\nclean\n", ""},
+	} {
+		// Removing the strings.ToLower in readResult makes "shouted" fail;
+		// removing the `verdict:` branch makes every case but "absent" fail.
+		_, verdict, _ := readResult(resultFixture(t, tc.body))
+		if verdict != tc.want {
+			t.Errorf("%s: verdict = %q, want %q", tc.name, verdict, tc.want)
+		}
+	}
+	if _, verdict, _ := readResult(""); verdict != "" {
+		t.Errorf("no result file: verdict = %q, want empty", verdict)
+	}
+}
+
+// markerRunner is a nativeRunner whose own executable is a script that writes
+// a marker file when it is run: a fresh start leaves the marker, an adoption
+// never runs it. The slots and results sit under dir.
+func markerRunner(t *testing.T) (r *nativeRunner, slots, marker string) {
+	t.Helper()
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	marker = filepath.Join(dir, "marker")
+	self := filepath.Join(dir, "self.sh")
+	if err := testbin.WriteExecutable(self, []byte("#!/bin/sh\necho started > '"+marker+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	slots = filepath.Join(dir, "slots")
+	if err := os.MkdirAll(slots, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r = &nativeRunner{
+		self: self, sprintBin: "nova-sprint", harness: "/bin/true", model: "p/m", root: dir, slots: slots,
+		resultsRoot: filepath.Join(dir, "results"), deadline: 30 * time.Second, tokens: "unmetered", stderr: &bytes.Buffer{},
+	}
+	return r, slots, marker
+}
+
+// TestALiveChildIsAdoptedNotRunTwice pins the restart path: a launch whose
+// pid file names a live process is adopted, not started again. The pid file
+// here names this test's own process; Start starts nothing (no marker, no slot
+// or card file made, the pid file untouched) and the child it returns is not
+// done while that pid is alive.
+func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+	name := launchName(p)
+	pidPath := filepath.Join(slots, name+".pid")
+	self := strconv.Itoa(os.Getpid()) + "\n"
+	write(t, pidPath, self)
+	// Removing the `if pid := livePID(pidPath); pid > 0 {` adoption branch in
+	// nativeRunner.Start makes this fail: a second child is started over the
+	// first (the slot and card file appear, the pid file is overwritten).
+	ch, err := r.Start(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch.Done() {
+		t.Fatal("the adopted child is done while its pid is alive")
+	}
+	if b, _ := os.ReadFile(pidPath); string(b) != self {
+		t.Fatalf("the pid file was rewritten: %q", b)
+	}
+	for _, name := range []string{name, name + ".card.md", name + ".native.log"} {
+		if _, err := os.Stat(filepath.Join(slots, name)); !os.IsNotExist(err) {
+			t.Errorf("%s exists: a launch was begun over a live one (%v)", name, err)
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the harness path ran: %v", err)
+	}
+}
+
+// TestADeadPidFileIsIgnored pins the other half: a pid file that names a
+// process that is gone (one started and waited for) is stale, and the launch
+// starts fresh: the script runs, and the pid file is replaced then removed
+// when the child ends.
+func TestADeadPidFileIsIgnored(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	gone := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if processAlive(gone.Process.Pid) {
+		t.Skip("the pid of the finished process was reused")
+	}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+	pidPath := filepath.Join(slots, launchName(p)+".pid")
+	write(t, pidPath, strconv.Itoa(gone.Process.Pid)+"\n")
+	// Removing the `!processAlive(pid)` test in livePID makes this fail: the
+	// dead pid is adopted, and nothing is ever started.
+	ch, err := r.Start(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the child ends by itself (the script is one echo; an adopted dead pid
+	// closes the channel at once), so no timer is needed here
+	<-ch.(*nativeChild).done
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("a dead pid file led to no fresh start: %v", err)
+	}
+}
+
+// TestEveryIsBoundedUnderTheBeatDeadline pins --every at 5s, under the beat's
+// 15s deadline in the fleet: 6s is refused with exit 2 naming 5s and nothing
+// is made; 5s is accepted. The sprint binary is a path that does not exist,
+// so a run that gets past the refusal asks no store anything.
+func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
+	t.Parallel()
+	with := func(root, every string) []string {
+		return append(memberFull(root), "--every", every, "--sprint", filepath.Join(root, "absent-sprint"))
+	}
+	root := t.TempDir()
+	var out, errb bytes.Buffer
+	// Removing the `every.d > 5*time.Second` bound in cmdMember makes this fail.
+	if code := run(with(root, "6s"), strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "5s") {
+		t.Fatalf("--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("--every 6s: stdout %q, want empty", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
+		t.Fatalf("--every 6s made the slots before refusing: %v", err)
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run(with(t.TempDir(), "5s"), strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
+		t.Fatalf("--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
 	}
 }
