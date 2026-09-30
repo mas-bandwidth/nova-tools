@@ -136,6 +136,13 @@ var swarmAudit = audit.Config{
 		// nothing at all -- what it learns leaves it as values this package renders through
 		// oneline.Field on the NATIVE OK line.
 		`"sync"`,
+		// member.go: bufio only scans a RESULT.md line by line and holds no writer; what
+		// it reads is kept as values (the head, the one-line report) that reach a stream
+		// only as arguments of nova-sprint's verbs, never as a print of this binary.
+		// internal/member is the fleet member's loop; it prints only through the writer
+		// this verb hands it, and every argument it prints is a card id, a count or a
+		// verb name from the sprint's own JSON.
+		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/internal/member"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts
