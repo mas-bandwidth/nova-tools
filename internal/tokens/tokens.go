@@ -127,7 +127,6 @@ type Message struct {
 	Basis    string // UTC, or the zone a provider export declares
 	Model    string
 	Repo     string // already attributed by the reader, through repo.go's one function
-	Unit     string // the unit a source names (a ledger card); "-" when none
 	Counts   Counts
 	Rough    int    // how many `~` bus lines this message stands for
 	Turn     bool   // counted into turns= (the sources that count messages)
@@ -135,15 +134,10 @@ type Message struct {
 	Provider string // the provider prefix for model= on an AVG line; "" where unknown
 }
 
-// Key is exactly (day, model, repo, unit). Nobody's name is in it: the `who` of a bus line
-// and the window-or-child mark of a transcript are not columns, because a model on a repo
-// on a day is one row whoever drove it.
-//
-// The UNIT is in it because the question it answers cannot be asked otherwise: a row that
-// summed two units' spend under one (model, repo) could be split back only by guessing.
-// A source that names no unit puts every message on "-", which is one unit value, so the
-// key is exactly what it was and every existing day file still folds to the same rows.
-type Key struct{ Day, Model, Repo, Unit string }
+// Key is exactly (day, model, repo). Nobody's name is in it: the `who` of a bus line and
+// the window-or-child mark of a transcript are not columns, because a model on a repo on a
+// day is one row whoever drove it.
+type Key struct{ Day, Model, Repo string }
 
 // Row is one line of a day file while it is still being accumulated.
 type Row struct {
@@ -231,7 +225,7 @@ func (f *Folder) Add(label string, m Message) {
 			f.overlaps[pair]++
 		}
 	}
-	k := Key{Day: m.Day, Model: m.Model, Repo: m.Repo, Unit: orNoUnit(m.Unit)}
+	k := Key{Day: m.Day, Model: m.Model, Repo: m.Repo}
 	r, ok := f.rows[k]
 	if !ok {
 		r = &Row{Key: k, bases: map[string]bool{}, sources: map[string]bool{}}
@@ -285,10 +279,8 @@ func (f *Folder) DayRows(day string) (rows []*Row, mixed []Mixed) {
 		}
 		rows = append(rows, r)
 	}
-	// Sorted by the WHOLE key, (model, repo, unit). The rows come out of a map, and two
-	// units on one (model, repo) sorted by (model, repo) alone land in map order: the day
-	// file's reader then finds the second one "out of order" and drops its row, so a
-	// unit's spend vanished from `sum --by unit` on roughly one fold in five.
+	// Sorted by the whole key, (model, repo). The rows come out of a map, so the order is
+	// made here and not left to it.
 	sort.Slice(rows, func(i, j int) bool { return keyLess(rows[i].Key, rows[j].Key) })
 	sort.Slice(mixed, func(i, j int) bool { return keyLess(mixed[i].Key, mixed[j].Key) })
 	return rows, mixed
@@ -655,21 +647,7 @@ func readSource(path string) ([]byte, error) {
 	return raw, nil
 }
 
-// NoUnit is the cell a row carries when nothing named a unit: the `-` every absent value
-// in this tool is written as, never an empty cell and never a guess.
-const NoUnit = Dash
-
-// orNoUnit is the one place an absent unit becomes the dash. A message from a source that
-// names no unit arrives with an empty Unit, and an empty cell is the thing the day file
-// forbids.
-func orNoUnit(u string) string {
-	if u == "" {
-		return NoUnit
-	}
-	return u
-}
-
-// keyLess orders two keys of one day by (model, repo, unit), the order a day file's rows
+// keyLess orders two keys of one day by (model, repo), the order a day file's rows
 // are written in and the order its reader checks.
 func keyLess(a, b Key) bool {
 	if a.Model != b.Model {
@@ -678,5 +656,5 @@ func keyLess(a, b Key) bool {
 	if a.Repo != b.Repo {
 		return a.Repo < b.Repo
 	}
-	return orNoUnit(a.Unit) < orNoUnit(b.Unit)
+	return false
 }

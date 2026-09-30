@@ -448,14 +448,6 @@ zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
 and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
-`--by unit` prints the **units table** instead of the two `(model, repo)`
-tables: one `SUM UNIT` line per unit the month's rows named, `-` among them,
-heaviest first. The `-` group is printed and never hidden — the share of a
-month nobody attributed is the number that says how much of it names no unit,
-and it is the same reasoning as `unknown=` and `other=` on a fold's
-day line. `SUM TOTAL` and `SUM OK` carry `units=<n>` whichever table was
-printed.
-
 `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` is the one form that
 writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
 rows whose `started` stamp is on `--day`, and appends one row per `(model, repo)`
@@ -607,10 +599,9 @@ TOKENS AVG-ALL day=<d> tokens=<n> usd=<n> usd_per_mtok=<n|->
 SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n> turns=<n|->
 SUM PAIR model=<model> repo=<repo> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> days=<n>
 SUM MODEL model=<model> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> repos=<n>
-SUM UNIT unit=<unit|-> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> pairs=<n> days=<n>
-SUM TOTAL input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> turns=<n|-> pairs=<n> models=<n> units=<n>
-SUM MORE kind=<pair|model|unit> shown=<n> total=<t> nova-tokens sum --out <dir> --month <m> --max 0
-SUM OK month=<m> days=<n> missing=<n> pairs=<n> models=<n> units=<n> nonutc=<n>
+SUM TOTAL input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> turns=<n|-> pairs=<n> models=<n>
+SUM MORE kind=<pair|model> shown=<n> total=<t> nova-tokens sum --out <dir> --month <m> --max 0
+SUM OK month=<m> days=<n> missing=<n> pairs=<n> models=<n> nonutc=<n>
 SUM REFUSED: <reason>
 CHECK FAIL <path>: <reason>
 CHECK FAIL <path>:<line>: <reason>
@@ -709,12 +700,12 @@ fold with no `--out`, no `--repos` and a bad label says all three.
 
 ```
 nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:glenn,opencode:bench,swarm:deepseek,bus:emma,google:emma
-date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	sources	units
-2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn	-
-2026-09-11	deepseek-v3	serialize	812004	40211	-	-	-	0	utc	swarm:deepseek	-
-2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:emma	-
-2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:emma	-
-2026-09-11	mercury-2.5	freddy	4460950	7442	0	4910813	49649	0	utc	opencode:bench	-
+date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	sources
+2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn
+2026-09-11	deepseek-v3	serialize	812004	40211	-	-	-	0	utc	swarm:deepseek
+2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:emma
+2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:emma
+2026-09-11	mercury-2.5	freddy	4460950	7442	0	4910813	49649	0	utc	opencode:bench
 ```
 
 | column | meaning |
@@ -726,16 +717,19 @@ date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	so
 | `rough` | how many `~` bus lines fed this row |
 | `day_basis` | `utc` for a row dated from stamps; the export's own zone for a provider row that is a local-day total (rule 17) |
 | `sources` | sorted, comma-joined labels that fed this row |
-| `units` | the unit this row's spend names, or `-`; a fold writes `-` on every row, and the column is kept so the day files that carry a unit still read |
 
-Twelve columns, every one written on every row. A `-` in a type cell is a
+Eleven columns, every one written on every row. A `-` in a type cell is a
 fact about the source ("did not report"), not about the day, and `sum`
 counts them beside the totals it prints.
 
-**`units` is the twelfth and is APPENDED.** The reader takes EITHER width: a
-file whose header is the first eleven names is read with every row's unit `-`,
-and a file whose header is the twelve is read as it is written. A fold always
-writes twelve. Anything that is neither width is refused.
+**A twelfth column, `units`, is gone.** A day file written while it existed
+carries `units` as its twelfth header name and a twelfth cell on every row.
+The reader takes either header: the eleven names are read as they are written,
+and the twelve are read with the twelfth cell ignored, the rows that column
+alone kept apart (one `(model, repo)` on adjacent lines) added into the one
+row they make. A fold writes eleven, so the day after a fold the file is
+eleven wide. The version line stays `nova-tokens v1`: the eleven columns mean
+what they always did. Anything that is neither header is refused.
 
 The first line is the **version and stamp line** (rule 12; lesson 45), and
 `turns=` on it is the day's message count across the sources that count
@@ -743,8 +737,7 @@ messages, `-` when none did, summed by `sum` onto `SUM MONTH` and `SUM TOTAL`
 as `turns=`. A file
 whose first line is not `nova-tokens v1 …` is refused by `sum` and named by
 `check`, and the repair is `fold --day <d>`. Rows are sorted by
-`(model, repo, unit)` and are unique by it: a row that summed two units'
-spend under one `(model, repo)` could be split back only by guessing. The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename (rule 8).
+`(model, repo)` and are unique by it. The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename (rule 8).
 
 **Absent and empty are one state.** A day with no rows has no file. A fold
 never writes an empty day file and `check` names one as malformed.
@@ -1371,8 +1364,8 @@ every independent problem at once, a `### First run` in `docs/CLI.md`, a
 pin all three by executing them.
 
 1. **`internal/tokens/dayfile.go`**: the day file: the version and stamp
-   line with `turns=`, the twelve columns (an eleven-column file is read
-   too), strict parse (a row with ten columns is an
+   line with `turns=`, the eleven columns (a twelve-column file, written
+   while the `units` column existed, is read too with the twelfth ignored), strict parse (a row with ten columns is an
    error naming the line; a type cell is an integer or `-` and an empty
    cell is an error), sorted rows, the atomic write through `internal/atomicfile`
    and rename under the output lock, the shrink comparison with `-` on either

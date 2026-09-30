@@ -80,7 +80,7 @@ cmd/nova-version/testdata/versions.tsv:rowan 3
 cmd/nova-version/testdata/versions.tsv:stella 1
 docs/CLI.md:emma 3
 docs/CLI.md:freddy 1
-docs/CLI.md:glenn 2
+docs/CLI.md:glenn 1
 docs/CLI.md:johnny 2
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
