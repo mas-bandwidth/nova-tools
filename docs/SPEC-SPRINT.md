@@ -38,12 +38,17 @@ the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 column. A table with no rows is not shown, and a stream with no cards in any
 column is not shown in the work and merge tables; each shows again when it has
 a row. A row's first cell is its identity. `where --watch` redraws the frame in
-place once a second (`--every`, from 1ms to 1h): the cursor is hidden while it
-watches and restored when it ends or is interrupted; each frame is built whole
-and written with one write, from the top of the screen, every line cleared to
-its end and the screen below the frame cleared, so a shorter frame leaves
-nothing behind and nothing scrolls. `where` without `--watch` prints one
-frame; `where --json --watch` prints one object a second and draws nothing.
+place once a second (`--every`, any duration above 0): the cursor is hidden
+while it watches and restored when it ends or is interrupted (SIGINT or
+SIGTERM: exit 0); each frame is built whole and written with one write, however
+large, from the top of the screen, every line cleared to its end and the screen
+below the frame cleared, so a shorter frame leaves nothing behind. Nothing
+scrolls, at any size of the screen: a frame taller than the screen is cut at the
+bottom, and nothing is added to say so; a line is cut to one column less than
+the screen is wide; and where the size of the screen cannot be read (the output
+is not a terminal) the frame is written whole. `where` without `--watch` prints
+one frame, whole; `where --json --watch` prints one object a second and draws
+nothing.
 
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. One deployment's tables,
@@ -856,7 +861,7 @@ the same reading. A sentinel is never dealt, read or merged. When what it
 waits for has landed, been dropped or been waived, the step that ended the
 last of it (or the tick, as the backstop) marks it reached and writes one
 judgment. Only `release <id> --reason <text>`, by the sprint's coordinator
-(`init --coordinator`, shown by `where`), lands it; the same step moves what
+(`init --coordinator`; `where --json` carries it), lands it; the same step moves what
 waited behind it, up to the next sentinel, to ready as one set, marks reached
 any sentinel now due, and always writes a notification that it landed. A need
 it names that is dropped blocks it like any waiting card; ack waives the need.

@@ -47,15 +47,21 @@ type app struct {
 	getenv  func(string) string
 	now     func() time.Time
 	sleep   func(time.Duration)
-	backend func(addr string, names sprint.Names) (store.Backend, error)
+	backend func(ctx context.Context, addr string, names sprint.Names) (store.Backend, error)
 	conns   map[string]*redisconn.Conn
 	cached  map[string]store.Backend
 	meter   hostload.Source // how fleet beat measures this machine
 	loc     *time.Location  // the zone times print in: nil is the machine's local zone
+	// notify is how an interrupt reaches a command that runs until it is
+	// interrupted (where --watch): the context it returns is done at one.
+	notify func(ctx context.Context) (context.Context, context.CancelFunc)
+	// screen is the rows and columns of the screen a writer draws on, each 0
+	// when not known (the writer is not a terminal).
+	screen func(w io.Writer) (rows, cols int)
 }
 
 func newApp(getenv func(string) string) *app {
-	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local()}
+	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
 	return a
 }
@@ -69,7 +75,7 @@ func (a *app) close() {
 // redisBackend opens the store once per address, as nova-table dials it: the
 // address, then NOVA_SPRINT_REDIS_USER and the variable
 // NOVA_SPRINT_REDIS_PASSWORD_ENV names.
-func (a *app) redisBackend(addr string, names sprint.Names) (store.Backend, error) {
+func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
 	key := addr + "\x00" + names.Prefix
 	if b, ok := a.cached[key]; ok {
 		return b, nil
@@ -83,7 +89,7 @@ func (a *app) redisBackend(addr string, names sprint.Names) (store.Backend, erro
 				o.PasswordEnv = redisauth.DefaultPasswordEnv
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		var err error
 		conn, err = redisconn.Open(ctx, o, a.getenv)
@@ -160,7 +166,12 @@ func firstEnv(getenv func(string) string, names ...string) string {
 // current epoch (a restore a cut clear still owes performed first), so every
 // key it reads or writes is of that epoch. A command reads an earlier epoch
 // only through storeAt.
-func (a *app) store(c common) (*store.Store, error) {
+func (a *app) store(c common) (*store.Store, error) { return a.storeCtx(context.Background(), c) }
+
+// storeCtx is store, its reads made in ctx: a command that can be interrupted
+// (where --watch) hands the context it ends with, so the interrupt cuts a
+// read short.
+func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if strings.TrimSpace(c.redis) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
 	}
@@ -168,12 +179,11 @@ func (a *app) store(c common) (*store.Store, error) {
 		return nil, errors.New(why)
 	}
 	names := sprint.Names{Prefix: c.prefix}
-	b, err := a.backend(c.redis, names)
+	b, err := a.backend(ctx, c.redis, names)
 	if err != nil {
 		return nil, err
 	}
 	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
-	ctx := context.Background()
 	if st, err = st.Pinned(ctx); err != nil {
 		return nil, err
 	}
@@ -228,7 +238,12 @@ func refuse(stderr io.Writer, verb, what string) int {
 // storeAt is the store, reading an earlier epoch as it was when at is 0 or
 // more: a store for reads only.
 func (a *app) storeAt(c common, at int64) (*store.Store, error) {
-	st, err := a.store(c)
+	return a.storeAtCtx(context.Background(), c, at)
+}
+
+// storeAtCtx is storeAt, its reads made in ctx (see storeCtx).
+func (a *app) storeAtCtx(ctx context.Context, c common, at int64) (*store.Store, error) {
+	st, err := a.storeCtx(ctx, c)
 	if err != nil || at < 0 {
 		return st, err
 	}

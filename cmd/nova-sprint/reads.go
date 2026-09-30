@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -233,7 +230,7 @@ type whereRun struct {
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("where")
 	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
-	every := fs.Duration("every", time.Second, "the redraw interval with --watch, between 1ms and 1h")
+	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
@@ -242,12 +239,12 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	if *watch {
-		if *every < time.Millisecond || *every > time.Hour {
-			return refuse(stderr, "where", "--every wants a duration between 1ms and 1h, got "+every.String())
+		if *every <= 0 {
+			return refuse(stderr, "where", "--every wants a duration above 0, got "+every.String())
 		}
 		// an interrupt ends the watch, and the cursor comes back with it
 		var stop context.CancelFunc
-		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		ctx, stop = a.notify(ctx)
 		defer stop()
 	}
 	return a.whereLoop(ctx, whereRun{c: *c, watch: *watch, every: *every, stale: *stale, atEpoch: *atEpoch}, stdout, stderr)
@@ -259,15 +256,18 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer) int {
 	var w *watchWriter
 	if r.watch && !r.c.json {
-		w = newWatchWriter(stdout)
+		w = newWatchWriter(stdout, func() (int, int) { return a.screen(stdout) })
 		w.hideCursor()
 		defer w.showCursor()
 	}
 	for {
 		// every frame reads the sprint's epoch again: a clear while it
 		// watches shows the new epoch
-		st, err := a.storeAt(r.c, r.atEpoch)
+		st, err := a.storeAtCtx(ctx, r.c, r.atEpoch)
 		if err != nil {
+			if ctx.Err() != nil {
+				return 0 // an interrupt cut the read short: the watch is over, not failed
+			}
 			return refuse(stderr, "where", err.Error())
 		}
 		v, frame, err := a.where(ctx, st, r.stale)
