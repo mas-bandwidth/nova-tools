@@ -500,7 +500,14 @@ func (t *Twin) before(ctx context.Context, st *State, req *Request) (*Before, *R
 		}
 	}
 	for _, in := range req.Body.Intents {
-		ids := append([]string{in.Card}, in.Needs...)
+		var ids []string
+		// 8.0 gives a needmet and a needgone a Need and its Waiters and no Card:
+		// the empty Card is not an id to read (Layer 1 refuses it REQUEST), and
+		// the need, read below, is the card they are about (IT14).
+		if in.Card != "" || (in.Kind != IntentNeedMet && in.Kind != IntentNeedGone) {
+			ids = append(ids, in.Card)
+		}
+		ids = append(ids, in.Needs...)
 		if in.Need != "" {
 			ids = append(ids, in.Need)
 		}

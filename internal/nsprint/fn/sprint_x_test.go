@@ -61,8 +61,12 @@ func TestSprintXLuaParses(t *testing.T) {
 // it needs (8.0).
 func TestSprintXLuaLoadsAfterTheCoreBeforeTheFunctions(t *testing.T) {
 	t.Parallel()
-	if !(sprintFragments[0] < sprintXFile && sprintXFile < sprintFragments[len(sprintFragments)-1]) {
-		t.Fatalf("%s does not sort between %s and %s", sprintXFile, sprintFragments[0], sprintFragments[len(sprintFragments)-1])
+	frags, err := sprintFragments(sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(frags[0] < sprintXFile && sprintXFile < frags[len(frags)-1]) {
+		t.Fatalf("%s does not sort between %s and %s", sprintXFile, frags[0], frags[len(frags)-1])
 	}
 }
 
