@@ -99,7 +99,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{[]string{"verify"}, 2, []string{"--tree is required", "run: nova-work verify -h"}},
 		{[]string{"verify", "--tree", "/nonexistent/t.lisp"}, 2, []string{"VERIFY FAIL"}},
 		{[]string{"frob"}, 2, []string{"unknown verb", "import verify"}},
-		{[]string{}, 2, []string{"usage:"}},
+		{[]string{}, 2, []string{"run: nova-work help"}},
 	} {
 		code, out, errs := do(t, nil, c.args...)
 		if code != c.code {

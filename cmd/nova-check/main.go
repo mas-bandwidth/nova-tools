@@ -25,6 +25,8 @@ import (
 
 const usage = `nova-check: record-layer checks, for a nova self repo and for this family's own tools (see docs/SPEC.md)
 
+State lives on the filesystem in repository files, manifests (MANIFEST), anchor ledgers, dogfood receipt directories, and local git refs. Quickstart runs zero-dependency link and nocode validations. Attest verifies that loaded files match manifest checksums, while kernel and floors check size budgets and seed invariant alignment. Hygiene checks branch commits against author identity and secret leak rules, and dogfood ledger tracks operational verb receipts.
+
 usage:
   nova-check version    print this build identity (--version also accepted)
   nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make

@@ -89,7 +89,8 @@ func verbNames() []string {
 
 func banner() string {
 	var b strings.Builder
-	b.WriteString("nova-sprint: the sprint table: four tables on nova-table, the moves between them, and the coordinator's inbox\n\nusage:\n")
+	b.WriteString("nova-sprint: coordinates multi-agent sprint execution across work, merge, readers, and fleet tables with an inbox for coordinator judgments.\n\n")
+	b.WriteString("State lives in Redis under the sprint keyspace ({sprint}:table:*, {sprint}:card:*, {sprint}:log, {sprint}:inbox) or a local memory twin (--redis mem:<file>). Four tables—work, merge, readers, and fleet—track cards through generation-pinned moves. Workers take and finish cards, readers review landed work, and the machine ticks to deal ready cards and write judgments. The coordinator answers judgments through the inbox, while fleet members register liveness with periodic heartbeats.\n\nusage:\n")
 	for _, v := range verbs {
 		b.WriteString("  nova-sprint " + strings.TrimSpace(v.name+" "+v.syntax) + "\n")
 	}
@@ -129,6 +130,13 @@ and prints each one's generation.
 ` + goalWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
 
+example:
+  nova-sprint init --readers reader-a,reader-b --members m1:8
+  nova-sprint add --stream s1 --count 3 --brief-file brief.txt
+  nova-sprint start
+  nova-sprint inbox --wait
+  nova-sprint accept --read-ok
+  nova-sprint merge --stream s1 --batch 3
 `)
 	return b.String()
 }

@@ -43,6 +43,8 @@ import (
 
 const usage = `nova-tokens: token spend, folded per day, keyed by (day, model, repo) (see docs/SPEC-TOKENS.md)
 
+State lives on the filesystem as daily TSV ledger files in the directory specified by --out (e.g. ./out/YYYY-MM-DD.tsv), with optional monthly rollups in Redis. Daily runs fold token counts from declared sources (transcripts, swarm pools, message bus notes) without estimating missing data. Spend is strictly keyed by (day, model, repo) across five separated token categories. Fold operations refuse to decrease recorded spend (anti-shrink guarantee) and detect concurrent lane report conflicts. Check verifies ledger continuity, asserting that every calendar day has accounting without silent gaps.
+
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]

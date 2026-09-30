@@ -34,7 +34,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see docs/SPEC.md)
+const usage = `nova-fuse: guards untrusted input ingestion with a persistent JSON fuse box supporting soft per-surface quarantine and emergency lockdown (see docs/SPEC.md)
+
+State lives on the filesystem in a single JSON state file specified explicitly by --box <path>. Two emergency powers control input ingestion: quarantine suspends reads from a specific named surface, while lockdown halts all untrusted inputs globally. Any agent can blow a fuse instantly without prior coordination when suspicious input is encountered. Quarantine can be lifted when safe, whereas lockdown cannot be lifted programmatically and requires manual replacement. Check acts as the definitive read gate: exit 0 permits reading, exit 1 forbids it.
 
 usage:
   nova-fuse version    print this build identity (--version also accepted)

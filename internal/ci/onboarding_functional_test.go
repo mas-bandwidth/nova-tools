@@ -31,7 +31,10 @@ import (
 // transcript is now in docs/TESTS.md and cmd/nova-bus/firstrun_functional_test.go executes it.
 // An entry added here has to name a branch that is genuinely open, and it stops
 // firing the moment that branch's section lands.
-var notYetOnTheStandard = map[string]string{}
+var notYetOnTheStandard = map[string]string{
+	"nova-sprint": "origin/rowan/comfort-sprint-swarm",
+	"nova-work":   "origin/rowan/comfort-work",
+}
 
 func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	t.Parallel()

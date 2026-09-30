@@ -28,7 +28,9 @@ import (
 
 var version string
 
-const banner = `nova-work: every issue of every repository in one tree file, verified field for field (docs/SPEC-WORK-V1.md)
+const banner = `nova-work: imports GitHub issues for an organization into a single Lisp tree file and verifies them field for field against the API (docs/SPEC-WORK-V1.md)
+
+State lives on the filesystem in a single Lisp tree file (--out or --tree) representing an organization's complete issue history. Import reads all open and closed issues, comments, cross-references, and closing pull requests read-only from GitHub using the gh CLI. Verify reads the tree file and queries GitHub again to compare every issue field for field. Discrepancies are reported as MISSING, EXTRA, or DRIFT lines, where zero output lines proves exact correspondence.
 
 usage:
   nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
@@ -45,9 +47,13 @@ tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
 exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
-first run (a login gh can use, and a scratch directory):
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
+example:
+  nova-work version
+  nova-work help import
+  nova-work help verify
+  nova-work import --org mas-bandwidth --repo mas-bandwidth/nova-tools --dry-run
+  nova-work import --org mas-bandwidth --repo mas-bandwidth/nova-tools --out ./tree.lisp
+  nova-work verify --tree ./tree.lisp --repo mas-bandwidth/nova-tools
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
@@ -131,7 +137,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }
 // run is the command; q, when not nil, replaces the GitHub seam (tests).
 func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, banner)
+		fmt.Fprintln(stderr, "nova-work: no command given; run: nova-work help")
 		return 2
 	}
 	switch args[0] {

@@ -42,7 +42,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+const usage = `nova-swarm: executes and validates isolated, token-bounded task cards across local worker slots and containerized child agents (see docs/SPEC-SWARM.md)
+
+State lives on the filesystem in slot directories (<slot>/jobs/<id>), process leases (<job>/.lease), and task results (RESULT.md), plus Redis when joined to a sprint fleet. Task cards define bounded work executed inside OS-level sandboxes (nova-sandbox) with restricted filesystem roots. Concurrency slots manage machine capacity, while leases heartbeat execution liveness to protect long model turns. Verifiers enforce contract outcomes, and linters validate card structure before execution.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
