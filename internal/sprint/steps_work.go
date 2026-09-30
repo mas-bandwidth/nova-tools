@@ -208,15 +208,45 @@ func Add(s *Snapshot, r AddReq) Plan {
 			modOf(mods, st).unreach = in[0].id // it waits for them by their place
 		}
 	}
+	// The cycle check walks what the cards would wait for with the add in
+	// place: the needs they name, and the needs of their places in line (a
+	// card behind a sentinel needs it; a sentinel needs every card of its
+	// stream before it). Only a cycle through a card the add places or
+	// changes is one it closes (errata 3 amendment 7; design section 3, add).
 	edges := map[string][]string{}
+	var placed []*Card
+	var roots []string
 	for _, a := range in {
 		edges[a.id] = a.needs
+		col := Ready
+		if a.behind != "" || a.gate || r.Sentinel {
+			col = Waiting
+		}
+		for _, n := range a.needs {
+			if s.StateOf(n) != Landed {
+				col = Waiting
+			}
+		}
+		fields := map[string]string{"kind": "primary"}
+		if a.gate || r.Sentinel {
+			fields["kind"] = "sentinel"
+		}
+		placed = append(placed, &Card{ID: a.id, Row: r.Stream, Col: col, Score: a.score, Fields: fields})
+		roots = append(roots, a.id)
 	}
+	var changed []string
 	for id, m := range mods {
 		edges[id] = m.needs
+		changed = append(changed, id)
 	}
-	if cycle := NeedsCycle(s, edges); cycle != nil {
-		return refuseAll("the needs would make a cycle: " + strings.Join(cycle, " needs ") + "; nothing is written")
+	sort.Strings(changed)
+	waits := map[string]bool{}
+	for _, id := range pulled {
+		waits[id] = true
+	}
+	g := newNeedGraph(s, edges, placed, waits)
+	if cycle := g.closes(append(roots, changed...)); cycle != nil {
+		return refuseAll("the needs would make a cycle: " + g.tellLoop(cycle) + "; nothing is written")
 	}
 	if len(pulled) > 0 {
 		p.inserting = true
@@ -350,55 +380,6 @@ func admits(p Plan) bool {
 		}
 	}
 	return false
-}
-
-// NeedsCycle is a cycle the needs would make with the edges given (a primary
-// -> its needs, in place of its own), as the path around it from its first
-// primary back to it; nil when there is none.
-func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
-	needsOf := func(id string) []string {
-		if n, ok := edges[id]; ok {
-			return n
-		}
-		c := s.Work.Card(id)
-		return append(Split(c.F("needs")), PositionWaits(s, c, nil)...)
-	}
-	var path []string
-	on, done := map[string]bool{}, map[string]bool{}
-	var visit func(id string) []string
-	visit = func(id string) []string {
-		if on[id] {
-			for i, x := range path {
-				if x == id {
-					return append(append([]string{}, path[i:]...), id)
-				}
-			}
-		}
-		if done[id] {
-			return nil
-		}
-		on[id] = true
-		path = append(path, id)
-		for _, n := range needsOf(id) {
-			if c := visit(n); c != nil {
-				return c
-			}
-		}
-		on[id], done[id] = false, true
-		path = path[:len(path)-1]
-		return nil
-	}
-	ids := make([]string, 0, len(edges))
-	for id := range edges {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if c := visit(id); c != nil {
-			return c
-		}
-	}
-	return nil
 }
 
 // WaitsFor is what a primary still waits for: its needs that have not landed
