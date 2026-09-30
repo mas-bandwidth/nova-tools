@@ -93,6 +93,12 @@ func nsFieldAvailable(name, field string, exported map[string]string) bool {
 			}
 		}
 	}
+	// TSetSource's prelude also sets the build, which only the lifecycle
+	// fragment reads: ns_tset_define compares it with its caller's (the L1
+	// contract amendment, lifecycle, 2026-09-30).
+	if field == "tset_build" && name == "lua/table_set_lifecycle.lua" {
+		return true
+	}
 	// Every one of the sprint's files (profile_sprint.go: each lua/sprint_*.lua)
 	// is a tset fragment of the sprint profile: each opens with the same
 	// guard, which the legacy prelude leaves nil (errata 2 to the upper
@@ -201,6 +207,11 @@ func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
 	}{
 		{"lua/table_set.lua", "tset_profile", true},
 		{"lua/table_set_validate.lua", "tset_profile", true},
+		{"lua/table_set_lifecycle.lua", "tset_profile", true},
+		{"lua/table_set_lifecycle.lua", "tset_build", true},
+		{"lua/table_set.lua", "tset_build", false},
+		{"lua/task.lua", "tset_build", false},
+		{"lua/sprint_x.lua", "tset_build", false},
 		{"lua/table_set.lua", "tlog", true},
 		{"lua/task.lua", "tset_profile", false},
 		{"lua/table_set_unknown.lua", "tset_profile", false},

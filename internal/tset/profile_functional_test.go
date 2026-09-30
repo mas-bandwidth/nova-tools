@@ -74,7 +74,7 @@ func TestLegacyPreludeLoadsNoTsetFunctions(t *testing.T) {
 		t.Fatal(err)
 	}
 	functions := profileFunctions(t, fx.Client)
-	for _, name := range []string{"ns_tset_step", "ns_tset_read"} {
+	for _, name := range []string{"ns_tset_step", "ns_tset_read", "ns_tset_define", "ns_tset_teardown"} {
 		if _, present := functions[name]; present {
 			t.Errorf("legacy library registered %s", name)
 		}
@@ -171,8 +171,10 @@ func TestStandaloneIsolatedLoadOnly(t *testing.T) {
 }
 
 var profileAllowedFunctions = map[string][]string{
-	"ns_tset_step": nil,
-	"ns_tset_read": {"no-writes"},
+	"ns_tset_step":     nil,
+	"ns_tset_read":     {"no-writes"},
+	"ns_tset_define":   nil,
+	"ns_tset_teardown": nil,
 }
 
 // Inventory includes every old table/view callback, the old primitive, and
@@ -185,7 +187,7 @@ var profileForbiddenFunctions = []string{
 	"ns_table_read", "ns_table_read_set", "ns_table_row_add", "ns_table_row_del", "ns_table_row_set",
 	"ns_table_rows_add", "ns_table_rows_hide", "ns_table_set",
 	"ns_view_del", "ns_view_get", "ns_view_list", "ns_view_set", "ns_view_state",
-	"ns_sprint_step", "ns_tset_init", "ns_tset_teardown",
+	"ns_sprint_step", "ns_tset_init",
 }
 
 func profileFunctions(t *testing.T, c *redis.Client) map[string][]string {

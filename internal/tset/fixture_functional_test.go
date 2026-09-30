@@ -496,7 +496,10 @@ func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
 		Receipts:    make(map[Decimal]map[string]MemReceiptSnapshot),
 		ZSets:       make(map[string]map[string]string),
 	}
-	known := map[string]bool{fx.Space + "sprint:epoch": true}
+	// The lifecycle's view and receipt stream (lifecycle.go) are not table
+	// state: a defined space's snapshot passes over them.
+	known := map[string]bool{fx.Space + "sprint:epoch": true, fx.Space + "sprint:view": true,
+		fx.Space + "sprint:lifecycle": true}
 	for _, key := range keys {
 		if strings.HasPrefix(key, fx.Space+"sprint:epoch@") {
 			epoch := Decimal(strings.TrimPrefix(key, fx.Space+"sprint:epoch@"))
