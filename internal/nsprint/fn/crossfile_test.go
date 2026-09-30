@@ -22,8 +22,9 @@ var allowedGlobals = map[string]bool{
 	"string": true, "table": true, "math": true,
 	"tonumber": true, "tostring": true, "type": true, "pairs": true, "ipairs": true,
 	"next": true, "select": true, "unpack": true, "error": true, "pcall": true, "assert": true,
-	"getmetatable": true, // Lua builtin used to recognize Redis cjson array tables.
-	"NS":           true,
+	"getmetatable": true,                                         // Lua builtin used to recognize Redis cjson array tables.
+	"rawget":       true, "rawequal": true, "setmetatable": true, // Runtime callback-boundary primitives.
+	"NS": true,
 }
 
 // freeNames compiles one Lua file on its own (Lua 5.1, the Redis dialect) and
@@ -260,6 +261,25 @@ func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
 	}
 	if !allowedGlobals["getmetatable"] || allowedGlobals["getmetatabl"] {
 		t.Fatal("builtin allowance must remain exact")
+	}
+}
+
+// Callback boundary primitives are runtime Lua builtins, not broad namespace
+// exceptions. Their near-miss spellings must remain visible to the guard.
+func TestCrossFileCallbackBoundaryBuiltins(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"rawget", "rawequal", "setmetatable"} {
+		t.Run(name, func(t *testing.T) {
+			typo := name + "_typo"
+			reads, writes := freeNames(t, "runtime.lua", "return "+name+", "+typo)
+			if strings.Join(reads, ",") != name+","+typo || len(writes) != 0 {
+				t.Fatalf("builtin control reads=%v writes=%v", reads, writes)
+			}
+			if !allowedGlobals[name] || allowedGlobals[typo] {
+				t.Fatal("runtime builtin allowance must remain exact")
+			}
+		})
 	}
 }
 
