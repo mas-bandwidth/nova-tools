@@ -462,6 +462,104 @@ func TestOpenBeforeAndFirstSentinelFromTheRead(t *testing.T) {
 	}
 }
 
+// An rcount is a position (what OpenBefore reads) only when it counts the five
+// open cells of one stream, from the lowest score, below a bound: nothing else
+// is taken for one.
+func TestAnRCountIsAPositionOnlyOverTheOpenCellsOfOneStreamBelowABound(t *testing.T) {
+	t.Parallel()
+	open := OpenCells("s1")
+	for _, tt := range []struct {
+		name     string
+		q        RCountQ
+		position bool
+	}{
+		{"the five open cells below a bound", RCountQ{Table: Work, Cells: open, Min: "-inf", Max: "(9"}, true},
+		{"the same with no lower bound written", RCountQ{Table: Work, Cells: open, Max: "(9"}, true},
+		{"a lower bound", RCountQ{Table: Work, Cells: open, Min: "2", Max: "(9"}, false},
+		{"an exclusive lower bound", RCountQ{Table: Work, Cells: open, Min: "(2", Max: "(9"}, false},
+		{"a lower bound of zero", RCountQ{Table: Work, Cells: open, Min: "0", Max: "(9"}, false},
+		{"cells of two streams", RCountQ{Table: Work, Cells: []string{"s1:waiting", "s2:ready", "s1:working", "s1:review", "s1:merging"}, Min: "-inf", Max: "(9"}, false},
+		{"a landed cell for a merging one", RCountQ{Table: Work, Cells: []string{"s1:waiting", "s1:ready", "s1:working", "s1:review", "s1:landed"}, Min: "-inf", Max: "(9"}, false},
+		{"one cell twice and one missing", RCountQ{Table: Work, Cells: []string{"s1:waiting", "s1:waiting", "s1:working", "s1:review", "s1:merging"}, Min: "-inf", Max: "(9"}, false},
+		{"four cells of the five", RCountQ{Table: Work, Cells: open[:4], Min: "-inf", Max: "(9"}, false},
+		{"the readers' table", RCountQ{Table: Readers, Cells: open, Min: "-inf", Max: "(9"}, false},
+	} {
+		rp := ReadPlan{RCounts: []RCountQ{tt.q}}
+		counts := make([]int, len(tt.q.Cells))
+		for i := range counts {
+			counts[i] = 1
+		}
+		s, err := loadPartial(rp, ReadAnswer{Tset: []TsetAnswer{{Counts: counts, Sum: len(counts)}}}, false)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		got := OpenBefore(s, "s1", 9)
+		if tt.position && got != len(counts) {
+			t.Errorf("%s: OpenBefore = %d, want the rcount's sum %d", tt.name, got, len(counts))
+		}
+		if !tt.position && (got != -1 || len(s.Unloaded()) != 1) {
+			t.Errorf("%s: OpenBefore = %d and %d reads refused: an rcount that is no position was taken for one", tt.name, got, len(s.Unloaded()))
+		}
+	}
+}
+
+// A stream with no sentinel has no position at its score: the front answer's
+// zero sigma and zero n_before are not a count.
+func TestOpenBeforeOfAStreamWithNoSentinelIsNotZero(t *testing.T) {
+	t.Parallel()
+	rp := ReadPlan{Sprint: []SprintQ{{Kind: QueryFront, Stream: "s2"}}}
+	ans := ReadAnswer{Sprint: []Answer{{Front: &FrontAnswer{Stream: "s2"}}}}
+	s, err := loadPartial(rp, ans, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, score := range []float64{0, 5} {
+		if got := OpenBefore(s, "s2", score); got != -1 {
+			t.Errorf("OpenBefore(s2, %v) = %d, want -1: no sentinel, and no rcount", score, got)
+		}
+	}
+	if len(s.Unloaded()) != 2 {
+		t.Errorf("refused: %v", s.Unloaded())
+	}
+	if g := FirstSentinel(s, "s2"); g != nil || len(s.Unloaded()) != 2 {
+		t.Errorf("the first sentinel of a stream whose front says none: %+v", g)
+	}
+}
+
+// A sprint with no streams, members or readers has none: the query that lists
+// them read them, and read nothing.
+func TestAListingQueryThatReturnsNoRowsHasNoRows(t *testing.T) {
+	t.Parallel()
+	for kind, tables := range map[string][]string{QueryStreams: {Work, Merge}, QueryFleet: {Fleet}, QueryReaders: {Readers}} {
+		s, err := LoadPartial(ReadPlan{Sprint: []SprintQ{{Kind: kind}}}, ReadAnswer{Sprint: []Answer{{Kind: kind}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range tables {
+			tab := s.T(name)
+			if got := tab.Rows(); len(got) != 0 || tab.HasRow("s1") {
+				t.Errorf("%s: %s has rows %v", kind, name, got)
+			}
+			if got := tab.Column(Ready); len(got) != 0 {
+				t.Errorf("%s: Column on %s gave %v", kind, name, ids(got))
+			}
+		}
+		if len(s.Unloaded()) != 0 {
+			t.Errorf("%s: a listing of no rows was refused: %v", kind, s.Unloaded())
+		}
+		// The tables it does not list are still unread.
+		for _, name := range []string{Work, Merge, Fleet, Readers} {
+			listed := false
+			for _, l := range tables {
+				listed = listed || l == name
+			}
+			if !listed {
+				mustPanic(t, func() { s.T(name).Rows() })
+			}
+		}
+	}
+}
+
 func TestPositionsOfASnapshotBuiltWhole(t *testing.T) {
 	t.Parallel()
 	s := wholeSnapshot([]string{"s1"}, nil,
@@ -599,7 +697,7 @@ func TestLoadPartialMergesWhatSeveralQueriesReadOfOneRecord(t *testing.T) {
 	}
 }
 
-func TestLoadPartialSharesNothingWithTheAnswer(t *testing.T) {
+func TestLoadPartialTablesShareNoRecordWithTheAnswer(t *testing.T) {
 	t.Parallel()
 	rp, ans := sampleRead()
 	_, ansBefore := sampleRead()
@@ -612,6 +710,12 @@ func TestLoadPartialSharesNothingWithTheAnswer(t *testing.T) {
 	s.Work.Card("g1").Fields["kind"] = "changed"
 	if !reflect.DeepEqual(ans.Tset, ansBefore.Tset) || !reflect.DeepEqual(ans.Sprint, ansBefore.Sprint) {
 		t.Fatal("a change to the snapshot changed the answer it was loaded from")
+	}
+	// The snapshot keeps the plan and the answer as the caller gave them (the
+	// doc says so): the records of its tables are copies, and these are not.
+	given := tsetAt(t, rp, &ans, AnswerIDs, 0, Work)
+	if kept := tsetAt(t, rp, &s.Partial.Answer, AnswerIDs, 0, Work); &kept.Records[0] != &given.Records[0] {
+		t.Error("Partial.Answer is not the caller's answer")
 	}
 	// And a card with no fields map gains none in the answer.
 	bare := &Card{ID: "p1", Row: "s1", Col: "ready"}

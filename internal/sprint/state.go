@@ -16,14 +16,70 @@ type Card struct {
 	Score    float64
 	Rev      uint64
 	Fields   map[string]string
+
+	// load says which fields a card loaded from a read plan holds (its
+	// projection): nil on a card built whole, all of whose fields are held.
+	load *cardLoad
+}
+
+// cardLoad is which fields of a record a read plan loaded: every one (a record
+// asked for whole), or the fields the queries that read it named, together.
+type cardLoad struct {
+	whole  bool
+	fields map[string]bool
+	log    *unloadedLog
+}
+
+// newCardLoad is what a query that named these fields (none: every field)
+// loads of the records it returns.
+func newCardLoad(fields []string, log *unloadedLog) *cardLoad {
+	l := &cardLoad{whole: len(fields) == 0, log: log}
+	if !l.whole {
+		l.fields = make(map[string]bool, len(fields))
+		for _, f := range fields {
+			l.fields[f] = true
+		}
+	}
+	return l
+}
+
+// with is what a record holds when this load and o both read it: every field
+// of either.
+func (l *cardLoad) with(o *cardLoad) *cardLoad {
+	switch {
+	case l == o:
+		return l
+	case l == nil || o == nil:
+		return nil // a card built whole holds every field
+	case l.whole:
+		return l
+	case o.whole:
+		return o
+	}
+	m := &cardLoad{fields: make(map[string]bool, len(l.fields)+len(o.fields)), log: l.log}
+	for f := range l.fields {
+		m.fields[f] = true
+	}
+	for f := range o.fields {
+		m.fields[f] = true
+	}
+	return m
 }
 
 // Placed says the card has a place in its table.
 func (c *Card) Placed() bool { return c != nil && c.Col != "" }
 
-// F is a field, "" when absent.
+// F is a field, "" when absent. On a card loaded from a read plan, a field
+// that no query that read the card named is refused (1.0: every rule read names
+// its fields): the read panics in a test build, and in a release build is
+// recorded (Snapshot.Unloaded) and gives "", which would otherwise read as
+// absent. A field that was read and has no value is absent.
 func (c *Card) F(name string) string {
 	if c == nil {
+		return ""
+	}
+	if c.load != nil && !c.load.whole && !c.load.fields[name] {
+		c.load.log.note(unloadedFieldMessage + ": " + c.ID + " " + name)
 		return ""
 	}
 	return c.Fields[name]
@@ -63,6 +119,10 @@ type Table struct {
 // not load (1.5.2): the cell's cards, or a count or a position the read did
 // not ask for, so that a scan cannot come back unnoticed.
 const unloadedMessage = "the planner read a cell its plan did not load"
+
+// unloadedFieldMessage is the same for a field of a record that the plan read
+// without it.
+const unloadedFieldMessage = "the planner read a field its plan did not load"
 
 // MaxUnloadedNoted is how many such reads a snapshot keeps to name (a planner
 // that scans a table would otherwise write a line for every cell it meets).
@@ -165,7 +225,7 @@ func (t *Table) index() {
 		}
 		k := [2]string{c.Row, c.Col}
 		t.cells[k] = append(t.cells[k], c)
-		if p := c.F("primary"); p != "" {
+		if p := c.Fields["primary"]; p != "" { // the table's own index, not a planner's read
 			t.byPrimary[p] = append(t.byPrimary[p], c)
 		}
 	}

@@ -53,6 +53,27 @@ func PriorityOf(name string) (int, bool) {
 	return 0, false
 }
 
+// keyRules are the words of keys that a rule of another name serves (2.3): the
+// keys of `askwait` (a reader added) are R8's (ask), the keys `made:<n>` and
+// `made@<seq>` (work cards created) are R4's (needs), and `idle:<stream>` is
+// R11's (late). A key whose word is a rule's own name is served by that rule.
+var keyRules = map[string]string{
+	"askwait": ruleAsk,
+	"made":    ruleNeeds,
+	"idle":    ruleLate,
+}
+
+// ServingRule is the rule that serves a key: the rule the key's word names
+// (RuleOf), or, for a word in keyRules, the rule that serves keys of that word.
+// Every key ingest makes has a rule with a priority (PriorityOf).
+func ServingRule(key string) string {
+	word := RuleOf(key)
+	if rule, ok := keyRules[word]; ok {
+		return rule
+	}
+	return word
+}
+
 // ruleSet is a registry of rules. The tick's is defaultRules; a test makes its
 // own, so that the rules it registers are not the tick's.
 type ruleSet struct {

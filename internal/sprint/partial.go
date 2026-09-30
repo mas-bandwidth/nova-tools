@@ -34,6 +34,13 @@ var rowsOf = map[string][]string{
 	QueryReaders: {Readers},
 }
 
+// countsOf are the tables whose cells a query counts for each row it lists: the
+// members' cells of the fleet, the readers' of the readers (1.0).
+var countsOf = map[string]string{
+	QueryFleet:   Fleet,
+	QueryReaders: Readers,
+}
+
 // Partial is what a snapshot loaded from a read plan was loaded from: the plan
 // and its answer, kept whole so that a rule reads the results of a query by
 // its index, and what the loading derived from them.
@@ -68,12 +75,17 @@ func misaligned(format string, a ...any) error {
 // the rows the composite queries listed, the positions `front` answered and the
 // lines it returned. Every table of the sprint exists in the snapshot, and any
 // cell of it that the read did not load is refused (Table.Loaded). The answer
-// is not changed and the snapshot shares none of its records. The clock, the
-// coordinator and the open judgments are not in a read of the tables: the
-// caller sets them.
+// is not changed, and the records in the snapshot's tables are copies that
+// share nothing with it; the snapshot keeps the plan and the answer themselves
+// (Partial.Plan and Partial.Answer), the caller's slices, maps and records, to
+// be read and not changed. The clock, the coordinator and the open judgments are
+// not in a read of the tables: the caller sets them.
 //
 // In a test build a planner that reads what was not loaded panics; in a
-// release build it is recorded, and Snapshot.Unloaded names it (1.5.2).
+// release build it is recorded, and Snapshot.Unloaded names it (1.5.2). What is
+// not loaded is a cell not read whole, a count, position, row or line the plan
+// did not ask for, the cards of a primary no follow read, and a field of a
+// record that no query that read it named.
 func LoadPartial(rp ReadPlan, ans ReadAnswer) (*Snapshot, error) {
 	return loadPartial(rp, ans, testing.Testing())
 }
@@ -165,17 +177,19 @@ func (d Decimal) Uint64() (uint64, error) {
 	return n, nil
 }
 
-// put places a copy of the card in the table: the snapshot shares nothing
-// with the answer it was loaded from. A record the table already has, read by
-// another query of the same read with another projection, gains this one's
-// fields (both are of one snapshot, so a field they share has one value) and
-// takes its place, score and revision.
-func put(t *Table, c *Card) {
+// put places a copy of the card in the table: the table's records share
+// nothing with the answer's (Partial.Answer keeps the answer as the caller
+// gave it). ld says which fields the query that read it named. A record the
+// table already has, read by another query of the same read with another
+// projection, gains this one's fields (both are of one snapshot, so a field
+// they share has one value) and takes its place, score and revision.
+func put(t *Table, c *Card, ld *cardLoad) {
 	if old := t.Cards[c.ID]; old != nil {
 		old.Row, old.Col, old.Score, old.Rev = c.Row, c.Col, c.Score, c.Rev
 		for k, v := range c.Fields {
 			old.Fields[k] = v
 		}
+		old.load = old.load.with(ld)
 		t.Put(old)
 		return
 	}
@@ -184,6 +198,7 @@ func put(t *Table, c *Card) {
 	for k, v := range c.Fields {
 		cc.Fields[k] = v
 	}
+	cc.load = ld
 	t.Put(&cc)
 }
 
@@ -196,6 +211,7 @@ func (p *Partial) loadIDs(s *Snapshot, name string, ids []string, a TsetAnswer) 
 	if len(a.Records) != len(ids) {
 		return misaligned("%s: %d ids read, %d records answered", name, len(ids), len(a.Records))
 	}
+	whole := newCardLoad(nil, t.part.log) // an ids query names no fields: whole records (6)
 	for i, c := range a.Records {
 		if c == nil {
 			continue
@@ -203,7 +219,7 @@ func (p *Partial) loadIDs(s *Snapshot, name string, ids []string, a TsetAnswer) 
 		if c.ID != ids[i] {
 			return misaligned("%s: record %d is %q, the id read is %q", name, i, c.ID, ids[i])
 		}
-		put(t, c)
+		put(t, c, whole)
 	}
 	return nil
 }
@@ -236,6 +252,9 @@ func (p *Partial) loadRange(s *Snapshot, i int, q RangeQ, a TsetAnswer) error {
 		return misaligned("range %d names a cell and a key, or neither, or half a cell", i)
 	}
 	if keyForm {
+		if q.Records {
+			return misaligned("range %d reads the sorted set %q with records: only a cell has any (L1 7)", i, q.Key)
+		}
 		return nil // a sorted set of the sprint: the answer is read by its index
 	}
 	t := s.T(q.Table)
@@ -243,11 +262,12 @@ func (p *Partial) loadRange(s *Snapshot, i int, q RangeQ, a TsetAnswer) error {
 	if t == nil || !ok {
 		return misaligned("range %d reads the cell %q of the table %q", i, q.Cell, q.Table)
 	}
+	ld := newCardLoad(q.Fields, t.part.log)
 	for j, c := range a.Records {
 		if c == nil || c.ID != a.IDs[j] || c.Row != row || c.Col != col {
 			return misaligned("range %d: record %d is not the member %q of %s", i, j, a.IDs[j], q.Cell)
 		}
-		put(t, c)
+		put(t, c, ld)
 	}
 	if q.Records && !a.HasMore && unbounded(q.Min, q.Max) {
 		t.part.whole[[2]string{row, col}] = true
@@ -258,6 +278,13 @@ func (p *Partial) loadRange(s *Snapshot, i int, q RangeQ, a TsetAnswer) error {
 // loadRCount loads an rcount. One over every score is a count; one over the
 // stream's open cells below a bound is a position, which OpenBefore reads.
 func (p *Partial) loadRCount(s *Snapshot, i int, q RCountQ, a TsetAnswer) error {
+	sum := 0
+	for _, n := range a.Counts {
+		sum += n
+	}
+	if sum != a.Sum {
+		return misaligned("rcount %d: the counts sum to %d, the answer's sum is %d", i, sum, a.Sum)
+	}
 	if unbounded(q.Min, q.Max) {
 		return p.count(s, "rcount", i, q.Table, q.Cells, a.Counts)
 	}
@@ -359,12 +386,13 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 		if a.Kind != "" && a.Kind != q.Kind {
 			return misaligned("composite query %d is %q, the answer is %q", i, q.Kind, a.Kind)
 		}
+		ld := newCardLoad(q.Fields, p.log)
 		for _, r := range a.Records {
 			t := s.T(r.Table)
 			if t == nil || r.Card == nil {
 				return misaligned("composite query %d returned a record of the table %q", i, r.Table)
 			}
-			put(t, r.Card)
+			put(t, r.Card, ld)
 		}
 		if len(a.Rows) > 0 {
 			tables, ok := rowsOf[q.Kind]
@@ -375,6 +403,19 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 				t := s.T(name)
 				t.SetRows(append([]string(nil), a.Rows...))
 				t.part.rows = true
+			}
+		}
+		if len(a.Counts) > 0 {
+			name, ok := countsOf[q.Kind]
+			if !ok {
+				return misaligned("composite query %d (%s) gives counts, and no such query does", i, q.Kind)
+			}
+			t := s.T(name)
+			for _, c := range a.Counts {
+				if c.Row == "" || c.Col == "" || c.N < 0 {
+					return misaligned("composite query %d gives the count %d of the cell %q:%q", i, c.N, c.Row, c.Col)
+				}
+				t.part.counts[[2]string{c.Row, c.Col}] = c.N
 			}
 		}
 		if _, lists := rowsOf[q.Kind]; lists && len(a.Rows) == 0 {

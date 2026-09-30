@@ -21,6 +21,53 @@ func fieldsOf(n int) []string {
 	return out
 }
 
+// The design's numbers, each written out: the constants are checked against
+// the design and not against themselves, so that a wrong one is found here and
+// not passed by every test that uses it.
+func TestTheDesignsNumbersArePinned(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		what      string
+		got, want int
+	}{
+		{"streams of a sprint (0.1 F1-20)", MaxStreams, 250},
+		{"fleet members (0.1 F1-20)", MaxMembers, 250},
+		{"readers (0.1 F1-20: members + readers + 2 x streams at most 1,024)", MaxReaders, 1024},
+		{"queries in one read (AL4, L1 6)", MaxReadQueries, 1024},
+		{"a range's limit (L1 7)", MaxRangeLimit, 2000},
+		{"ids in one generated line (1.0)", MaxLineIDs, 2000},
+		{"about ids of a note line (1.0)", MaxAboutIDs, 4000},
+		{"bytes of one generated line (1.0: 1 MiB)", MaxLineBytes, 1 << 20},
+		{"records of a read (L1 6)", MaxReadRecords, 10000},
+		{"range ids of a read (L1 6)", MaxReadRangeIDs, 20000},
+		{"bytes a read may fetch (L1 6: 8 MiB)", MaxReadBytes, 8 << 20},
+		{"bytes of a whole record (1.8, measured)", WholeRecordBytes, 976},
+		{"records of the read cards of a primary (1.0: rcards)", followCosts[FollowRCards], 15},
+		{"needs of a card (1.0: needs)", followCosts[FollowNeeds], 64},
+		{"records of any other follow (1.0)", followCostDefault, 1},
+		{"follows of 1.0", len(Follows), 10},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s: %d, the design says %d", c.what, c.got, c.want)
+		}
+	}
+	if got, want := L1ReadBounds(), (ReadBounds{Queries: 1024, Records: 10000, RangeIDs: 20000, Bytes: 8388608}); got != want {
+		t.Errorf("layer 1's bounds: %+v, want %+v", got, want)
+	}
+	// The size of a sprint's streams, members and readers is what a listing
+	// query reads, with no bound given.
+	for kind, want := range map[string]int{QueryStreams: 2 * 250, QueryFleet: 250, QueryReaders: 1024} {
+		if got := QueryCost(SprintQ{Kind: kind}).Records; got != want {
+			t.Errorf("%s at its most reads %d records, want %d", kind, got, want)
+		}
+	}
+	// The deal read of 250 streams is the design's: L = 13, and 10,000 records.
+	rp, l := dealReadPlan(250, 0, 64)
+	if l != 13 || rp.Cost().Records != 10000 {
+		t.Errorf("the deal read at 250 streams: L %d, %d records", l, rp.Cost().Records)
+	}
+}
+
 func TestQueryCostTable(t *testing.T) {
 	t.Parallel()
 	list := func(n int) IDSource { return IDSource{Kind: SourceIDs, IDs: make([]string, n)} }

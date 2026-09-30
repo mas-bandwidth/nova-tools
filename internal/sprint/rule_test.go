@@ -2,6 +2,9 @@ package sprint
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
 	"strings"
 	"sync"
@@ -156,10 +159,65 @@ func TestRulePrioritiesAreTheOrderOfTheDesign(t *testing.T) {
 	if got := names(rs.table()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("rule table %v", got)
 	}
-	// The names are the rules of the keys 2.1 makes (ingest.go's), where it has them.
-	for _, name := range []string{ruleResolve, ruleDeal, ruleAsk, ruleAccept, ruleRework, ruleNeeds, ruleCross, ruleDone, ruleHeld, ruleLevel, ruleDown, ruleBehind, ruleLate} {
-		if _, ok := PriorityOf(name); !ok {
-			t.Errorf("the key rule %q has no priority", name)
+}
+
+// ingestRuleWords are the words of the keys ingest.go makes: every string
+// constant of its `rule...` block, read from the source so that a word added
+// there is found here and not forgotten.
+func ingestRuleWords(t *testing.T) map[string]string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "ingest.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	words := map[string]string{}
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
 		}
+		for _, sp := range gd.Specs {
+			vs := sp.(*ast.ValueSpec)
+			for i, name := range vs.Names {
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !strings.HasPrefix(name.Name, "rule") || !ok || lit.Kind != token.STRING {
+					continue
+				}
+				words[name.Name] = strings.Trim(lit.Value, `"`)
+			}
+		}
+	}
+	return words
+}
+
+func TestEveryKeyIngestMakesIsServedByARuleWithAPriority(t *testing.T) {
+	t.Parallel()
+	words := ingestRuleWords(t)
+	if len(words) < 14 {
+		t.Fatalf("read %d rule words from ingest.go: %v", len(words), words)
+	}
+	for name, word := range words {
+		rule := ServingRule(word + ":x")
+		if p, ok := PriorityOf(rule); !ok || p == 0 {
+			t.Errorf("%s (%q): the key is served by %q, which has no priority", name, word, rule)
+		}
+		if rule != ServingRule(word+"@7") || rule != ServingRule(word) {
+			t.Errorf("%s (%q): the key's shape changes its rule", name, word)
+		}
+	}
+	// The keys whose word is another rule's: askwait is R8's, made is R4's, idle is R11's.
+	for key, want := range map[string]string{
+		"askwait": "ask", "made:n1": "needs", "made@7": "needs", "idle:s1": "late",
+		"ask:p1": "ask", "ask@48213": "ask", "deal": "deal", "held@9": "held", "resolve:s1": "resolve",
+	} {
+		if got := ServingRule(key); got != want {
+			t.Errorf("ServingRule(%q) = %q, want %q", key, got, want)
+		}
+	}
+	if got := ServingRule("nothing:at:all"); got != "nothing" {
+		t.Errorf("a word that is no rule's is its own: %q", got)
+	}
+	if _, ok := PriorityOf(ServingRule("nothing:at:all")); ok {
+		t.Error("a word that is no rule's has a priority")
 	}
 }
