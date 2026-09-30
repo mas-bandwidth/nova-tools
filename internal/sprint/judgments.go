@@ -527,9 +527,12 @@ func streamList(stream string) []string {
 // streamDropping says the stream is being dropped or removed ({p}dropping@e):
 // a mark in the snapshot's Dropping, or in the dropping marks a read plan
 // asked for. A snapshot loaded from a read plan that did not ask for the marks
-// says no stream is dropping: the read plan for the inbox (IT22) has to read
-// the marks of the streams of the judgments it prints, as it reads the cards
-// by id the conditions name.
+// is refused as posDropping refuses it (posNotLoaded: Unloaded names the
+// marks, and the caller refuses the plan, UnloadedErr): the read plan for the
+// inbox (IT22) has to read the marks of the streams of the judgments it
+// prints, as it reads the cards by id the conditions name.
+//
+// Follows dropcond in tla/SprintEvents.tla (errata 3, H8).
 func streamDropping(s *Snapshot, stream string) bool {
 	if s == nil || stream == "" {
 		return false
@@ -537,10 +540,7 @@ func streamDropping(s *Snapshot, stream string) bool {
 	if s.Dropping[stream] != "" {
 		return true
 	}
-	if pos := posOf(s); pos != nil && pos.askedDropping {
-		return pos.dropping[stream]
-	}
-	return false
+	return posDropping(s, stream)
 }
 
 // stalledDecisions are the decisions a stalled card's place allows that its

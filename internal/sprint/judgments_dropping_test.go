@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -140,15 +141,95 @@ func TestStreamDroppingReadsTheMarksAsked(t *testing.T) {
 	if !streamDropping(whole, "s1") || streamDropping(whole, "s2") || streamDropping(whole, "") {
 		t.Fatalf("a whole snapshot's marks: s1 dropping %v, s2 %v", streamDropping(whole, "s1"), streamDropping(whole, "s2"))
 	}
-	asked := &Snapshot{Partial: &Partial{}}
+	asked := &Snapshot{Partial: &Partial{log: &unloadedLog{}}}
 	pos := asked.Partial.position()
 	pos.askedDropping, pos.dropping["s1"] = true, true
 	if !streamDropping(asked, "s1") || streamDropping(asked, "s2") {
 		t.Fatalf("a read that asked for the marks: s1 dropping %v, s2 %v", streamDropping(asked, "s1"), streamDropping(asked, "s2"))
 	}
-	unasked := &Snapshot{Partial: &Partial{}}
+	if got := asked.Unloaded(); len(got) != 0 {
+		t.Fatalf("a read that asked for the marks is refused: %v", got)
+	}
+	unasked := &Snapshot{Partial: &Partial{log: &unloadedLog{}}}
 	unasked.Partial.position().dropping["s1"] = true
 	if streamDropping(unasked, "s1") {
 		t.Fatalf("a read that did not ask for the marks says s1 is dropping")
+	}
+	if got := unasked.Unloaded(); len(got) != 1 || !strings.Contains(got[0], "the dropping marks") {
+		t.Fatalf("a read that did not ask for the marks is refused as %v, want the dropping marks", got)
+	}
+}
+
+// A partial snapshot whose read did not ask for the dropping marks is refused
+// by Printed (Unloaded names the marks, so the caller refuses the plan and
+// prints nothing on it), for every decision that changes a card: it never
+// reads as "no stream is dropping". Follows dropcond in tla/SprintEvents.tla
+// (errata 3, H8).
+func TestPrintedRefusesAReadWithoutTheDroppingMarks(t *testing.T) {
+	t.Parallel()
+	for _, tc := range droppingCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w, o := seedNamed(t, tc.seed)
+			at := *w.s
+			at.Dropping = nil
+			at.Partial = &Partial{log: &unloadedLog{}}
+			Printed(&at, o)
+			got := at.Unloaded()
+			if tc.left && !slices.ContainsFunc(got, func(m string) bool { return strings.Contains(m, "the dropping marks") }) {
+				t.Fatalf("Printed on a read without the marks, refused %q: %q is not refused", got, tc.decision)
+			}
+			// the same read with the marks asked is not refused for them
+			ok := *w.s
+			ok.Dropping = nil
+			ok.Partial = &Partial{log: &unloadedLog{}}
+			ok.Partial.position().askedDropping = true
+			Printed(&ok, o)
+			if slices.ContainsFunc(ok.Unloaded(), func(m string) bool { return strings.Contains(m, "the dropping marks") }) {
+				t.Fatalf("a read that asked for the marks is refused for them: %q", ok.Unloaded())
+			}
+		})
+	}
+}
+
+// nonCardVerbs are the verbs of verbGuards whose decisions never change a card
+// of the stream they act on: DROPPING does not refuse them. ack is neither: it
+// changes a card by the judgment it answers (ackChangesACard).
+var nonCardVerbs = map[string]bool{
+	"wait": true, "fleet up": true, "fleet down": true, "fleet beat": true, "reader add": true,
+	"goal set": true, "goal drop": true, "start": true, "stop": true, "clear": true,
+	"card": true, "where": true, "log": true,
+	// the whole stream or sprint, no card of it
+	"remove": true,
+	// the op's own command: its parts are the op's, not refused
+	verbSameCommand: true,
+}
+
+// Every verb that a decision can name (verbGuards) is classified for the
+// DROPPING clause, as one that changes a card (changesACard), ack (by its
+// judgment), or one that does not (nonCardVerbs): a new verb cannot print while
+// its stream is being dropped unclassified.
+func TestEveryGuardedVerbIsClassifiedForDropping(t *testing.T) {
+	t.Parallel()
+	for verb := range verbGuards {
+		n := 0
+		for _, in := range []bool{changesACard[verb], nonCardVerbs[verb], verb == "ack"} {
+			if in {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("verb %q is in %d of changesACard, nonCardVerbs and ack, want one", verb, n)
+		}
+	}
+	for verb := range changesACard {
+		if _, ok := verbGuards[verb]; !ok {
+			t.Errorf("changesACard holds %q, which has no guard", verb)
+		}
+	}
+	for verb := range nonCardVerbs {
+		if _, ok := verbGuards[verb]; !ok {
+			t.Errorf("nonCardVerbs holds %q, which has no guard", verb)
+		}
 	}
 }
