@@ -62,8 +62,6 @@ var specAllowlist = []allowlistEntry{
 
 	// Other records
 	{file: "internal/secrets/seal.go", fn: "preflight", record: "git-HEAD"},
-	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
-	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
 
 	// part=B (merge/verdict.go ParseDispositionLine, dispositionWholeLine)
 	// moved into typedrec.ParseDisposition; their two entries are gone.
@@ -661,15 +659,15 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// The spec's list after part B and the deleted packages: 5 entries, none tagged part=B.
+		// The spec's list after part B and the deleted packages: 3 entries, none tagged part=B.
 		partB := 0
 		for _, a := range specAllowlist {
 			if a.partB {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 5 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 5 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 3 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 3 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/require"
 )
 
 // eventBound and recordBound are the bounds the specification states for the
@@ -34,9 +35,7 @@ func TestBatchEventAndRecordStayWithinTheirBoundsAtTheLargestActor(t *testing.T)
 		seedTwo(t, ctx, c)
 		size := func(op string, n int) (delta, event, record int) {
 			ans, err := rawApply(ctx, c, manifestWithActor(probeRev(ctx, c), op, strings.Repeat(tc.char, n), `{"id":"a","expect":{}}`))
-			if err != nil || ans[0] != "OK" {
-				t.Fatalf("%s: %.200v %v", tc.name, ans, err)
-			}
+			require.True(t, replyOpens(ans, err, "OK"), "%s: %.200v %v", tc.name, ans, err)
 			delta = len(fmt.Sprint(ans[1].([]any)[6]))
 			for _, v := range c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values {
 				event += len(fmt.Sprint(v))
@@ -75,9 +74,7 @@ func TestBatchRecordStaysWithinItsBoundAtTheLargestEscapedDelta(t *testing.T) {
 		return strings.Join(ents, ",")
 	}
 	ans, err := rawApply(ctx, c, manifestWithActor(probeRev(ctx, c), "largest", "p", entries(26)))
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("26 fields on 128 members: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "26 fields on 128 members: %.200v %v", ans, err)
 	event := 0
 	for _, v := range c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values {
 		event += len(fmt.Sprint(v))

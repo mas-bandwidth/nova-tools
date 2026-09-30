@@ -7,12 +7,14 @@ package ntable_test
 
 import (
 	"fmt"
-	"reflect"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBatchFurtherMalformedManifestsRefusedByServerAndValidator(t *testing.T) {
@@ -110,12 +112,7 @@ func TestBatchFurtherMalformedManifestsRefusedByServerAndValidator(t *testing.T)
 		"absent with place":      head(`"members":[{"id":"n","expect":{"absent":true,"place":{"row":"build","col":"ready"}}}]}`),
 		"member no expect":       head(`"members":[{"id":"a"}]}`),
 	}
-	names := make([]string, 0, len(cases))
-	for k := range cases {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	for n, name := range names {
+	for n, name := range slices.Sorted(maps.Keys(cases)) {
 		raw := strings.Replace(cases[name], `"operation_id":"m"`, fmt.Sprintf(`"operation_id":"f%d"`, n), 1)
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, raw)
@@ -125,12 +122,8 @@ func TestBatchFurtherMalformedManifestsRefusedByServerAndValidator(t *testing.T)
 		} else if len(ans) < 2 || ans[0] != "REFUSED" {
 			t.Errorf("%s: the server accepts: %v", name, trunc(ans))
 		}
-		if verr == nil {
-			t.Errorf("%s: the Go validator accepts", name)
-		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("%s: the store changed", name)
-		}
+		assert.Error(t, verr, "%s: the Go validator accepts", name)
+		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
 }
 
@@ -144,31 +137,21 @@ func TestBatchSurrogateEscapesAreRefusedAlikeByServerAndValidator(t *testing.T) 
 
 	pair := manifestWith(probeRev(ctx, c), "pair", member(`😀`))
 	m, err := ntable.ValidateBatchManifestRaw([]byte(pair))
-	if err != nil {
-		t.Fatalf("a valid pair is refused by the validator: %v", err)
-	}
-	if m.Members[0].Set["k"] != "\U0001F600" {
-		t.Errorf("the validator decoded the pair as %q", m.Members[0].Set["k"])
-	}
+	require.NoError(t, err, "a valid pair is refused by the validator")
+	assert.Equal(t, "\U0001F600", m.Members[0].Set["k"], "the validator decoded the pair as %q", m.Members[0].Set["k"])
 	if ans, err := rawApply(ctx, c, pair); err != nil || ans[0] != "OK" {
 		t.Fatalf("a valid pair is refused by the server: %v %v", trunc(ans), err)
 	}
-	if got := c.HGet(ctx, ntable.MemberKey("a"), "k").Val(); got != "\U0001F600" {
-		t.Errorf("the pair was stored as %q", got)
-	}
+	got := c.HGet(ctx, ntable.MemberKey("a"), "k").Val()
+	assert.Equal(t, "\U0001F600", got, "the pair was stored as %q", got)
 
 	for i, v := range []string{`\ud800`, `\udc00`, `\ud800x`, `\ud800A`, `\udc00\ud800`, `x\ud83d`, `\ud83d\ude0`} {
 		raw := manifestWith(probeRev(ctx, c), fmt.Sprintf("lone%d", i), member(v))
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, raw)
-		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
-			t.Errorf("%s: the server: %v %v", v, trunc(ans), err)
-		}
-		if _, verr := ntable.ValidateBatchManifestRaw([]byte(raw)); verr == nil {
-			t.Errorf("%s: the Go validator accepts it", v)
-		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("%s: the store changed", v)
-		}
+		assert.True(t, replyOpens(ans, err, "REFUSED"), "%s: the server: %v %v", v, trunc(ans), err)
+		_, verr := ntable.ValidateBatchManifestRaw([]byte(raw))
+		assert.Error(t, verr, "%s: the Go validator accepts it", v)
+		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", v)
 	}
 }

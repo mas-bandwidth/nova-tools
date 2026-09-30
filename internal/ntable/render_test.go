@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // counts builds a count-only table of the given rows for the render tests.
@@ -34,9 +36,8 @@ func TestRenderEmptyTableShowsItsHeaderAndFooter(t *testing.T) {
 		"----+--\n" +
 		"----+--\n" +
 		"    | 0\n"
-	if got := ntable.Render(empty, ntable.RenderOpts{}); got != want {
-		t.Fatalf("empty table rendered:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(empty, ntable.RenderOpts{})
+	require.Equal(t, want, got, "empty table rendered:\n%s\nwant:\n%s", got, want)
 	zeros := counts([]string{"a", "b"}, map[string][]int64{"x": {0, 0}, "y": {0, 0}}, []string{"x", "y"})
 	want = "row | a | b\n" +
 		"----+---+--\n" +
@@ -44,9 +45,8 @@ func TestRenderEmptyTableShowsItsHeaderAndFooter(t *testing.T) {
 		"y   | 0 | 0\n" +
 		"----+---+--\n" +
 		"    | 0 | 0\n"
-	if got := ntable.Render(zeros, ntable.RenderOpts{}); got != want {
-		t.Fatalf("zero rows shown:\n%s\nwant:\n%s", got, want)
-	}
+	got = ntable.Render(zeros, ntable.RenderOpts{})
+	require.Equal(t, want, got, "zero rows shown:\n%s\nwant:\n%s", got, want)
 }
 
 // TestRenderOneRowAndTotal: the header, the rule, the row, the rule and the
@@ -61,9 +61,8 @@ func TestRenderOneRowAndTotal(t *testing.T) {
 		"swarm: cards |     150 |     5\n" +
 		"-------------+---------+------\n" +
 		"             |     150 |     5\n"
-	if got := ntable.Render(one, ntable.RenderOpts{}); got != want {
-		t.Fatalf("one row:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(one, ntable.RenderOpts{})
+	require.Equal(t, want, got, "one row:\n%s\nwant:\n%s", got, want)
 }
 
 // TestRenderWidthsAndHiddenRows: a fixed width pads the label column; a
@@ -82,9 +81,7 @@ func TestRenderWidthsAndHiddenRows(t *testing.T) {
 		"-----------+--\n" +
 		"           | ?\n"
 	got := ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10})
-	if got != want {
-		t.Fatalf("widths and hidden rows:\n%s\nwant:\n%s", got, want)
-	}
+	require.Equal(t, want, got, "widths and hidden rows:\n%s\nwant:\n%s", got, want)
 	tb.Rows[2].Cells[0].Unread = false
 	tb.Rows[1].Hidden = false
 	tb.Columns[0].Width = 4
@@ -96,9 +93,8 @@ func TestRenderWidthsAndHiddenRows(t *testing.T) {
 		"c          |    3\n" +
 		"-----------+-----\n" +
 		"all        |    5\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10}); got != want {
-		t.Fatalf("column width and footer label:\n%s\nwant:\n%s", got, want)
-	}
+	got = ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10})
+	require.Equal(t, want, got, "column width and footer label:\n%s\nwant:\n%s", got, want)
 }
 
 // TestRenderProjectionsAndFolds: members, first and last cells, the union
@@ -130,9 +126,8 @@ func TestRenderProjectionsAndFolds(t *testing.T) {
 		"B row | bo,cy     | -      | -      | 9\n" +
 		"------+-----------+--------+--------+--\n" +
 		"      | ann,bo,cy |        |        | 9\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{}); got != want {
-		t.Fatalf("projections and folds:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{})
+	require.Equal(t, want, got, "projections and folds:\n%s\nwant:\n%s", got, want)
 	for i := range tb.Columns {
 		tb.Columns[i].Fold = ntable.None
 	}
@@ -140,9 +135,8 @@ func TestRenderProjectionsAndFolds(t *testing.T) {
 		"------+--------+--------+--------+--\n" +
 		"a     | ann,bo | ann    | bo     | 7\n" +
 		"B row | bo,cy  | -      | -      | 9\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{}); got != want {
-		t.Fatalf("no fold, no footer:\n%s\nwant:\n%s", got, want)
-	}
+	got = ntable.Render(tb, ntable.RenderOpts{})
+	require.Equal(t, want, got, "no fold, no footer:\n%s\nwant:\n%s", got, want)
 }
 
 // TestRenderLastLeftColumnIsNotPadded: a left-aligned last column is
@@ -166,9 +160,7 @@ func TestRenderLastLeftColumnIsNotPadded(t *testing.T) {
 		"----+---+----\n" +
 		"    | 1 |\n"
 	got := ntable.Render(tb, ntable.RenderOpts{})
-	if got != want {
-		t.Fatalf("left last column:\n%q\nwant:\n%q", got, want)
-	}
+	require.Equal(t, want, got, "left last column:\n%q\nwant:\n%q", got, want)
 }
 
 // TestParseColumnsAndWidths: the declaration grammar and its defaults.
@@ -176,18 +168,14 @@ func TestParseColumnsAndWidths(t *testing.T) {
 	t.Parallel()
 
 	cols, err := ntable.ParseColumns("stream:text:none:stream,waiting,ready:count:max:Ready,who:members:union")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []ntable.Column{
 		{Name: "stream", Projection: ntable.Text, Fold: ntable.None, Label: "stream"},
 		{Name: "waiting", Projection: ntable.Count, Fold: ntable.Sum},
 		{Name: "ready", Projection: ntable.Count, Fold: ntable.Max, Label: "Ready"},
 		{Name: "who", Projection: ntable.Members, Fold: ntable.Union},
 	}
-	if len(cols) != len(want) {
-		t.Fatalf("parsed %d columns, want %d", len(cols), len(want))
-	}
+	require.Len(t, cols, len(want), "parsed %d columns, want %d", len(cols), len(want))
 	for i := range want {
 		if cols[i] != want[i] {
 			t.Errorf("column %d = %+v, want %+v", i, cols[i], want[i])
@@ -202,9 +190,8 @@ func TestParseColumnsAndWidths(t *testing.T) {
 	if err != nil || w["stream"] != 25 || w["n"] != 3 {
 		t.Fatalf("ParseWidths = %v %v", w, err)
 	}
-	if _, err := ntable.ParseWidths("stream=x"); err == nil {
-		t.Error("ParseWidths(stream=x) accepted")
-	}
+	_, err = ntable.ParseWidths("stream=x")
+	assert.Error(t, err, "ParseWidths(stream=x) accepted")
 }
 
 // TestRenderPutsTheRowLabelFirstAndTitles (Glenn 2026-09-27, the live
@@ -222,15 +209,12 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 		"beta  |       0 |     0\n" +
 		"------+---------+------\n" +
 		"      |       2 |     1\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"}); got != want {
-		t.Fatalf("row label first and a title:\n%s\nwant:\n%s", got, want)
-	}
-	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); !strings.HasPrefix(got, "empty\n") {
-		t.Fatalf("an empty table with a title shows its header: %q", got)
-	}
-	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); !strings.HasPrefix(got, "row\n") {
-		t.Fatalf("an empty table without a title shows its header: %q", got)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"})
+	require.Equal(t, want, got, "row label first and a title:\n%s\nwant:\n%s", got, want)
+	got = ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"})
+	require.True(t, strings.HasPrefix(got, "empty\n"), "an empty table with a title shows its header: %q", got)
+	got = ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{})
+	require.True(t, strings.HasPrefix(got, "row\n"), "an empty table without a title shows its header: %q", got)
 }
 
 // TestRenderFormulaAndTextCells (Glenn 2026-09-27, the live session: "a new
@@ -244,9 +228,7 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 func TestRenderFormulaAndTextCells(t *testing.T) {
 	t.Parallel()
 	cols, err := ntable.ParseColumns("waiting,ready,working,done,wpct:pct(waiting):pooled:waiting%,status:text:none")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "streams", Columns: cols, FooterLabel: "total"}
 	mk := func(key string, n ...int64) ntable.Row {
 		r := ntable.NewRow(tb, key)
@@ -267,19 +249,15 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 		"empty   |       0 |     0 |       0 |    0 | 0.0%     |\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"total   |       6 |     3 |       4 |    0 | 46.2%    |\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"}); got != want {
-		t.Fatalf("formula and text cells:\n%s\nwant:\n%s", got, want)
-	}
-	if _, err := ntable.ParseColumns("wpct:pct(nothere)"); err == nil || !strings.Contains(err.Error(), "count column named nothere") {
-		t.Fatalf("a pct of a missing column: %v", err)
-	}
-	if _, err := ntable.ParseColumns("who:members:avg"); err == nil {
-		t.Fatal("avg over members was accepted")
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"})
+	require.Equal(t, want, got, "formula and text cells:\n%s\nwant:\n%s", got, want)
+	_, err = ntable.ParseColumns("wpct:pct(nothere)")
+	require.ErrorContains(t, err, "count column named nothere", "a pct of a missing column")
+	_, err = ntable.ParseColumns("who:members:avg")
+	require.Error(t, err, "avg over members was accepted")
 	// the mean of percentages is refused; the pooled share is the fold (Glenn 2026-09-27)
-	if _, err := ntable.ParseColumns("waiting,wpct:pct(waiting):avg"); err == nil || !strings.Contains(err.Error(), "not accurate") {
-		t.Fatalf("avg over a pct column: %v", err)
-	}
+	_, err = ntable.ParseColumns("waiting,wpct:pct(waiting):avg")
+	require.ErrorContains(t, err, "not accurate", "avg over a pct column")
 	if c, err := ntable.ParseColumn("wpct:pct(waiting)"); err != nil || c.Fold != ntable.Pooled {
 		t.Fatalf("the default fold of a pct column: %+v %v", c, err)
 	}
@@ -292,9 +270,7 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
 	t.Parallel()
 	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting):pooled:waiting%")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "s", Columns: cols, Hidden: []string{"waiting"}}
 	r := ntable.NewRow(tb, "a")
 	r.Cells[0].Count = 3
@@ -305,9 +281,8 @@ func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
 		"a |     1 | 75.0%\n" +
 		"--+-------+---------\n" +
 		"  |     1 | 75.0%\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{Title: "s"}); got != want {
-		t.Fatalf("hidden column:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{Title: "s"})
+	require.Equal(t, want, got, "hidden column:\n%s\nwant:\n%s", got, want)
 }
 
 // TestRenderFormulaPropagatesUnread (Stella's read of #4456): a pct cell
@@ -315,37 +290,30 @@ func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
 func TestRenderFormulaPropagatesUnread(t *testing.T) {
 	t.Parallel()
 	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting)")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "s", Columns: cols}
 	r := ntable.NewRow(tb, "a")
 	r.Cells[0].Count = 3
 	r.Cells[1].Unread = true
 	tb.Rows = []ntable.Row{r}
 	got := ntable.Render(tb, ntable.RenderOpts{Title: "s"})
-	if !strings.Contains(got, "a |       3 |     ? | ?\n") || !strings.Contains(got, "  |       3 |     ? | ?\n") {
-		t.Fatalf("unread propagation:\n%s", got)
-	}
+	require.Contains(t, got, "a |       3 |     ? | ?\n", "unread propagation:\n%s", got)
+	require.Contains(t, got, "  |       3 |     ? | ?\n", "unread propagation:\n%s", got)
 }
 
 func TestKnownEmptyPercentageBodyAndFooter(t *testing.T) {
 	t.Parallel()
 	cols, err := ntable.ParseColumns("ready,done,progress:pct(done)")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	table := ntable.Table{Name: "empty", Columns: cols, FooterLabel: "total"}
 	table.Rows = []ntable.Row{ntable.NewRow(table, "r")}
 	got := ntable.Render(table, ntable.RenderOpts{})
-	if strings.Count(got, "0.0%") != 2 || strings.Contains(got, "?") {
-		t.Fatalf("known empty row/footer: %s", got)
-	}
+	require.Equal(t, 2, strings.Count(got, "0.0%"), "known empty row/footer: %s", got)
+	require.NotContains(t, got, "?", "known empty row/footer: %s", got)
 	table.Rows[0].Cells[0].Unread = true
 	got = ntable.Render(table, ntable.RenderOpts{})
-	if strings.Contains(got, "0.0%") || strings.Count(got, "?") != 4 {
-		t.Fatalf("unread row/footer: %s", got)
-	}
+	require.NotContains(t, got, "0.0%", "unread row/footer: %s", got)
+	require.Equal(t, 4, strings.Count(got, "?"), "unread row/footer: %s", got)
 }
 
 // TestSummaryLineIsTheStateAloneWhileThereIsOne: a view's state is its summary
@@ -354,9 +322,7 @@ func TestKnownEmptyPercentageBodyAndFooter(t *testing.T) {
 func TestSummaryLineIsTheStateAloneWhileThereIsOne(t *testing.T) {
 	t.Parallel()
 	cols, err := ntable.ParseColumns("ready,done")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "w", Columns: cols}
 	r := ntable.NewRow(tb, "s")
 	r.Cells[0].Count, r.Cells[1].Count = 3, 1
@@ -370,14 +336,11 @@ func TestSummaryLineIsTheStateAloneWhileThereIsOne(t *testing.T) {
 		{ntable.View{Summary: "done"}, "1/4 25.0% -> ETA"},
 		{ntable.View{}, ""},
 	} {
-		if got := ntable.SummaryLine(c.v, tb); got != c.want {
-			t.Errorf("%+v: %q, want %q", c.v, got, c.want)
-		}
+		got := ntable.SummaryLine(c.v, tb)
+		assert.Equal(t, c.want, got, "%+v: %q, want %q", c.v, got, c.want)
 	}
 	for text, ok := range map[string]bool{"": true, "STOPPED": true, "a\nb": false, "\x1b[2J": false, strings.Repeat("x", ntable.MaxViewState): true, strings.Repeat("x", ntable.MaxViewState+1): false} {
-		if ntable.ValidViewState(text) != ok {
-			t.Errorf("ValidViewState(%q) = %v", text, !ok)
-		}
+		assert.Equal(t, ok, ntable.ValidViewState(text), "ValidViewState(%q) = %v", text, !ok)
 	}
 }
 
@@ -396,13 +359,11 @@ func TestRenderTablesShowsEveryTableAndEveryRow(t *testing.T) {
 	}
 	work.Rows = nil
 	got = ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{})
-	if !strings.HasPrefix(got, "work ") || !strings.Contains(got, "\n\nreaders ") {
-		t.Fatalf("work has no row: it shows its header and footer, then a blank line, then readers:\n%s", got)
-	}
+	require.True(t, strings.HasPrefix(got, "work "), "work has no row: it shows its header and footer, then a blank line, then readers:\n%s", got)
+	require.Contains(t, got, "\n\nreaders ", "work has no row: it shows its header and footer, then a blank line, then readers:\n%s", got)
 	work.HiddenTable = true
-	if got := ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{}); !strings.HasPrefix(got, "readers ") {
-		t.Fatalf("a table set hidden is not drawn and leaves no gap:\n%s", got)
-	}
+	got = ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{})
+	require.True(t, strings.HasPrefix(got, "readers "), "a table set hidden is not drawn and leaves no gap:\n%s", got)
 
 }
 
@@ -413,9 +374,7 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ fold, want string }{{ntable.Sum, "72"}, {ntable.Max, "64"}} {
 		cols, err := ntable.ParseColumns("n:count,w:text:" + tc.fold)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		tab := ntable.Table{Name: "t", Columns: cols}
 		for k, v := range map[string]string{"a": "64", "b": "8", "c": ""} {
 			r := ntable.NewRow(tab, k)
@@ -424,16 +383,14 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 		}
 		out := ntable.Render(tab, ntable.RenderOpts{})
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-		if last := lines[len(lines)-1]; !strings.HasSuffix(last, "| "+tc.want) {
-			t.Errorf("fold %s: footer %q wants %s", tc.fold, last, tc.want)
-		}
+		last := lines[len(lines)-1]
+		assert.True(t, strings.HasSuffix(last, "| "+tc.want), "fold %s: footer %q wants %s", tc.fold, last, tc.want)
 		if !strings.Contains(out, "| 64\n") || !strings.Contains(out, "|  8\n") {
 			t.Errorf("fold %s: cells are not right-aligned:\n%s", tc.fold, out)
 		}
 		tab.Rows[0].Texts["w"] = "many"
-		if out := ntable.Render(tab, ntable.RenderOpts{}); !strings.Contains(out, "?") {
-			t.Errorf("fold %s: a cell that is no number leaves the fold known:\n%s", tc.fold, out)
-		}
+		out = ntable.Render(tab, ntable.RenderOpts{})
+		assert.Contains(t, out, "?", "fold %s: a cell that is no number leaves the fold known:\n%s", tc.fold, out)
 	}
 }
 

@@ -18,20 +18,15 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func probeTable(t *testing.T) (*redis.Client, context.Context) {
 	t.Helper()
 	c, _ := store(t)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", r, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	newTable(t, c, demo()).rows("build", "test")
 	return c, ctx
 }
 
@@ -40,13 +35,10 @@ func probeTable(t *testing.T) (*redis.Client, context.Context) {
 func operationRecord(t *testing.T, c *redis.Client, table, epoch, opID string) map[string]string {
 	t.Helper()
 	raw, err := c.HGet(context.Background(), ntable.DefKey(table)+":ops", epoch+":"+opID).Result()
-	if err != nil {
-		t.Fatalf("operation record %s:%s of %s: %v", epoch, opID, table, err)
-	}
+	require.NoError(t, err, "operation record %s:%s of %s: %v", epoch, opID, table, err)
 	var rec map[string]string
-	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-		t.Fatalf("operation record %s: %v", raw, err)
-	}
+	err = json.Unmarshal([]byte(raw), &rec)
+	require.NoError(t, err, "operation record %s: %v", raw, err)
 	return rec
 }
 
@@ -65,9 +57,8 @@ func seedTwo(t *testing.T, ctx context.Context, c *redis.Client) {
 			{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 1}, Set: map[string]string{"role": "x"}},
 			{ID: "b", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "test", Col: "ready", Score: 2}},
 		}}
-	if _, err := ntable.ApplyBatch(ctx, c, m); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.ApplyBatch(ctx, c, m)
+	require.NoError(t, err)
 }
 
 // Raw FCALL refusals: every one refuses and leaves the store bit-identical.
@@ -111,18 +102,15 @@ func TestBatchRawRefusalsWriteNothing(t *testing.T) {
 		"late absent-not-bool guard": firstOK + `,{"id":"b","expect":{"absent":"no"}}`,
 	}
 	for name, members := range cases {
-		if got := probeRev(ctx, c); got != rev {
-			t.Fatalf("table revision moved to %s before %s", got, name)
-		}
+		got := probeRev(ctx, c)
+		require.Equal(t, rev, got, "table revision moved to %s before %s", got, name)
 		before := storeImage(t, c)
 		raw := fmt.Sprintf(head, "op-"+strings.ReplaceAll(name, " ", "-"), members)
 		ans, err := rawApply(ctx, c, raw)
 		after := storeImage(t, c)
 		refused := err == nil && len(ans) >= 2 && ans[0] == "REFUSED"
 		changed := !reflect.DeepEqual(before, after)
-		if changed {
-			t.Errorf("%s: STORE CHANGED (partial or full write)", name)
-		}
+		assert.False(t, changed, "%s: STORE CHANGED (partial or full write)", name)
 		if err != nil {
 			t.Errorf("%s: a raw error reply leaves the script: %v", name, err)
 		} else if !refused {
@@ -164,9 +152,8 @@ func TestBatchAbsentMustBeTrueOnTheServer(t *testing.T) {
 			rev = probeRev(ctx, c)
 		}
 	}
-	if _, err := ntable.ValidateBatchManifestRaw([]byte(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"1","operation_id":"x","members":[{"id":"n","expect":{"absent":0}}]}`)); err == nil {
-		t.Errorf("Go validator accepted absent:0")
-	}
+	_, err := ntable.ValidateBatchManifestRaw([]byte(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"1","operation_id":"x","members":[{"id":"n","expect":{"absent":0}}]}`))
+	assert.Error(t, err, "Go validator accepted absent:0")
 }
 
 // Temporal sequences.
@@ -180,9 +167,7 @@ func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 			{ID: "a", Expect: &ntable.MemberExpect{Revision: "1", Place: &ntable.PlaceExpect{Row: "build", Col: "ready"}}, Move: &ntable.MemberMoveOp{Row: "test", Col: "working"}},
 		}}
 	r1, err := ntable.ApplyBatch(ctx, c, m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// 1. replay identical (lost reply then retry): same receipt, no writes
 	img := storeImage(t, c)
 	r2, err := ntable.ApplyBatch(ctx, c, m)
@@ -190,14 +175,11 @@ func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 		t.Errorf("replay: r1=%+v r2=%+v err=%v", r1, r2, err)
 	}
 	// 2. ordinary verb then stale batch (new op id, old revisions)
-	if _, err := ntable.CellMove(ctx, c, "demo", "test", "working", "done", "a"); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellMove(ctx, c, "demo", "test", "working", "done", "a")
+	require.NoError(t, err)
 	ra, _ := ntable.ReadSetMembers(ctx, c, "demo", []string{"a"})
 	am, _ := ra.Member("a")
-	if am.Revision != 3 {
-		t.Errorf("ordinary writer did not advance member revision: %d, want 3", am.Revision)
-	}
+	assert.Equal(t, uint64(3), am.Revision, "ordinary writer did not advance member revision: %d, want 3", am.Revision)
 	stale := m
 	stale.OperationID = "op-seq-stale"
 	stale.Members = []ntable.BatchMemberEntry{{ID: "a", Expect: &ntable.MemberExpect{Revision: "2"}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}
@@ -221,23 +203,17 @@ func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 	changed := m
 	changed.Actor = "other"
 	_, err = ntable.ApplyBatch(ctx, c, changed)
-	if err == nil {
-		t.Errorf("changed request with same op id accepted")
-	}
+	assert.Error(t, err, "changed request with same op id accepted")
 	// 5. remove then create the same id
 	rev = probeRev(ctx, c)
 	rm := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "op-rm", Actor: "p",
 		Members: []ntable.BatchMemberEntry{{ID: "b", Expect: &ntable.MemberExpect{}, Remove: true}}}
 	rr, err := ntable.ApplyBatch(ctx, c, rm)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cr := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: strconv.FormatUint(rr.After, 10), OperationID: "op-cr", Actor: "p",
 		Members: []ntable.BatchMemberEntry{{ID: "b", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 3}}}}
 	_, err = ntable.ApplyBatch(ctx, c, cr)
-	if err == nil {
-		t.Errorf("create after remove accepted though the record is retained")
-	}
+	assert.Error(t, err, "create after remove accepted though the record is retained")
 	// 5b. the removed (unplaced) member can be re-placed by a move? spec: move needs placement
 	mv := cr
 	mv.OperationID = "op-mv-unplaced"
@@ -255,9 +231,7 @@ func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 		t.Errorf("a no-op batch: %+v %v; want outcome noop, one table revision step, changed 0", rn, err)
 	}
 	// 7. ONE PLACE: hidden duplicate placement then create refuses
-	if err := c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err())
 	rev = probeRev(ctx, c)
 	gh := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "op-ghost", Actor: "p",
 		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 3}}}}
@@ -268,16 +242,11 @@ func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 	}
 	// 8. read set is read-only and refuses as FCALL? it is flagged no-writes.
 	img = storeImage(t, c)
-	if _, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"a", "b", "missing"}); err != nil {
-		t.Errorf("read set: %v", err)
-	}
-	if !reflect.DeepEqual(storeImage(t, c), img) {
-		t.Errorf("read set wrote")
-	}
+	_, err = ntable.ReadSetMembers(ctx, c, "demo", []string{"a", "b", "missing"})
+	assert.NoError(t, err, "read set")
+	assert.Equal(t, img, storeImage(t, c), "read set wrote")
 	rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", `{"members":["a",7,{"x":1}]}`).Slice()
-	if err != nil || len(rs) < 2 || rs[0] != "REFUSED" || rs[1] != "ARGS" {
-		t.Errorf("a read set with non-string ids: %v %v; want REFUSED ARGS", trunc(rs), err)
-	}
+	assert.True(t, replyOpens(rs, err, "REFUSED", "ARGS"), "a read set with non-string ids: %v %v; want REFUSED ARGS", trunc(rs), err)
 }
 
 // The first write of an epoch, by a batch or by an ordinary verb, leaves that
@@ -287,28 +256,20 @@ func TestBatchFirstWriteOfAnEpochKeepsItsHistory(t *testing.T) {
 	for _, viaBatch := range []bool{false, true} {
 		c, tb := epochFixture(t)
 		ctx := context.Background()
-		if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err())
 		if viaBatch {
 			rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 			raw := `{"schema":1,"table":"epoch-test","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"e1","actor":"p","members":[{"id":"f","expect":{"absent":true}}]}`
 			ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
-			if err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("apply at epoch 1: %v %v", trunc(ans), err)
-			}
+			require.True(t, replyOpens(ans, err, "OK"), "apply at epoch 1: %v %v", trunc(ans), err)
 		} else if err := ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}); err != nil {
 			t.Fatalf("member create at epoch 1: %v", err)
 		}
-		if def := c.HGetAll(ctx, "table:epoch-test:1:definition").Val(); def["order"] == "" {
-			t.Errorf("viaBatch=%v: the epoch-1 definition snapshot has no order: %v", viaBatch, def)
-		}
-		if err := c.HSet(ctx, tb.EpochKey, "n", 2).Err(); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ntable.ReadAt(ctx, c, tb.Name, 1); err != nil {
-			t.Errorf("viaBatch=%v: the history of epoch 1 is unreadable: %v", viaBatch, err)
-		}
+		def := c.HGetAll(ctx, "table:epoch-test:1:definition").Val()
+		assert.NotEmpty(t, def["order"], "viaBatch=%v: the epoch-1 definition snapshot has no order: %v", viaBatch, def)
+		require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
+		_, err := ntable.ReadAt(ctx, c, tb.Name, 1)
+		assert.NoError(t, err, "viaBatch=%v: the history of epoch 1 is unreadable: %v", viaBatch, err)
 	}
 }
 
@@ -330,13 +291,9 @@ func TestBatchOverBoundGuardsRefuseByName(t *testing.T) {
 			t.Errorf("%s: %v %v; want a LIMIT refusal", name, trunc(ans), err)
 			continue
 		}
-		if len(fmt.Sprint(ans)) > 200 {
-			t.Errorf("%s: the refusal is %d bytes; it echoes the input", name, len(fmt.Sprint(ans)))
-		}
+		assert.LessOrEqual(t, len(fmt.Sprint(ans)), 200, "%s: the refusal is %d bytes; it echoes the input", name, len(fmt.Sprint(ans)))
 	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refused over-bound manifest changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refused over-bound manifest changed the store")
 }
 
 // A move score that is not a number is refused by name, never silently replaced
@@ -348,9 +305,7 @@ func TestBatchMoveScoreMustBeANumber(t *testing.T) {
 	for i, v := range []string{`"abc"`, `null`, `true`} {
 		raw := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"%s","operation_id":"ms-%d","actor":"p","members":[{"id":"a","expect":{},"move":{"row":"test","col":"done","score":%s}}]}`, probeRev(ctx, c), i, v)
 		ans, err := rawApply(ctx, c, raw)
-		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "SCORE" {
-			t.Errorf("move with score %s: %v %v; want REFUSED SCORE", v, trunc(ans), err)
-		}
+		assert.True(t, replyOpens(ans, err, "REFUSED", "SCORE"), "move with score %s: %v %v; want REFUSED SCORE", v, trunc(ans), err)
 	}
 }
 
@@ -362,9 +317,7 @@ func TestBatchMoveToTheCurrentCellIsANoop(t *testing.T) {
 	m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "same", Actor: "p",
 		Members: []ntable.BatchMemberEntry{{ID: "a", Expect: &ntable.MemberExpect{Revision: "1"}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}}
 	r, err := ntable.ApplyBatch(ctx, c, m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	d := r.BatchDelta.Members[0]
 	if d.AfterRev != "1" || r.Outcome != "noop" || r.BatchDelta.ChangedCount != 0 {
 		t.Errorf("same-cell move is not a member no-op")
@@ -378,13 +331,9 @@ func TestBatchCreateWithoutScoreIsRefusedBeforeTheStore(t *testing.T) {
 	c, ctx := probeTable(t)
 	before := storeImage(t, c)
 	raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"ns","members":[{"id":"n","expect":{"absent":true},"create":{"row":"build","col":"ready"}}]}`
-	if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err == nil || !strings.Contains(err.Error(), "create requires score") {
-		t.Errorf("a create without a score: %v; want the validator to refuse it", err)
-	}
-	if _, err := ntable.ValidateBatchManifestRaw([]byte(`{"table":"demo","operation_id":"ns2","members":[]}`)); err == nil {
-		t.Errorf("a manifest without schema, epoch and expected_table_revision was accepted")
-	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("the store changed")
-	}
+	_, err := ntable.ValidateBatchManifestRaw([]byte(raw))
+	assert.ErrorContains(t, err, "create requires score", "a create without a score: %v; want the validator to refuse it", err)
+	_, err = ntable.ValidateBatchManifestRaw([]byte(`{"table":"demo","operation_id":"ns2","members":[]}`))
+	assert.Error(t, err, "a manifest without schema, epoch and expected_table_revision was accepted")
+	assert.Equal(t, before, storeImage(t, c), "the store changed")
 }
