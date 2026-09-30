@@ -715,9 +715,10 @@ usage:
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+                       (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
@@ -2094,10 +2095,17 @@ The summary line carries the table revision before and after (`table_revision=<b
 the selected, guard-only and changed entry counts, `replay=yes` when the receipt is the one recorded for an
 operation already applied, and the trips; then the commit receipt; then one `MEMBER` line per member with its
 place, score and `member_revision` before and after and its changed application fields as one JSON object of
-`[before, after]` pairs (`null` is absent; `-` is an unplaced member or an absent score). A score is the exact
-decimal string the store holds. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes
+`[before, after]` pairs (`null` is absent; `-` is an unplaced member or an absent score). A value of more than
+64 bytes is not printed: it is `{"bytes":<length>,"sha1":"<digest>"}`, in a before-value as in an after-value,
+and a field whose two sides are both such values is always listed, its two digests side by side, because a
+digest identifies a value and does not prove two values equal. A score is the exact decimal string the store
+holds. A batch whose receipt would exceed 1 MiB (`receipt bytes`, the manifest bound) is refused with
+`code=LIMIT` and `changed=no`, naming the bound and the computed size; change fewer members or fields in one
+manifest. `--receipt=false` suppresses the `TABLE RECEIPT` line. A request that changes
 nothing prints `outcome=noop` and, like any accepted batch, advances the table revision by one. Running the same
-manifest again applies nothing and prints the original receipt with `replay=yes`.
+manifest again applies nothing and prints the original receipt with `replay=yes`. The command checks a manifest against the
+current rules before it sends it, so it replays only a request the current rules accept; a refusal made before
+sending says that, says this call changed nothing and says nothing about an earlier call with the same operation id.
 
 `--json` prints the receipt as one line of JSON for a program: `table`, `operation_id`, `epoch`,
 `table_revision` (`{"before", "after"}`), `outcome`, `selected`, `guards`, `changed`, `event`, `replay` (a

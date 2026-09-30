@@ -6,6 +6,7 @@ package ntable_test
 // row add refuse the one past the bound by name, and nothing is written.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -102,5 +103,53 @@ func TestTableRowsAreBounded(t *testing.T) {
 	requireLimit(t, "row add past the bound", err, "rows per table", ntable.LimitRows, ntable.LimitRows+1)
 	if _, err := ntable.RowAdd(ctx, c, "tall", "r7", ntable.RowSpec{}); err != nil {
 		t.Errorf("re-adding a row that exists at the bound: %v", err)
+	}
+}
+
+// A bind leaves the table with exactly the rows it names, so the row bound holds
+// for it as for row add: refused before anything changes, through the library and
+// through the function itself.
+func TestBindRowsAreBounded(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := t.Context()
+	cols, err := ntable.ParseColumns("a,b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := func(n int) ntable.Table {
+		rows := make([]ntable.Row, n)
+		for i := range rows {
+			rows[i] = ntable.Row{Key: fmt.Sprintf("r%d", i), Cells: make([]ntable.Cell, len(cols))}
+		}
+		return ntable.Table{Name: "bound", Columns: cols, Rows: rows}
+	}
+	if err := ntable.Bind(ctx, c, table(3), now); err != nil {
+		t.Fatalf("a bind of three rows: %v", err)
+	}
+	before := storeImage(t, c)
+
+	// the library refuses before it sends
+	err = ntable.Bind(ctx, c, table(ntable.LimitRows+1), now)
+	requireLimit(t, "bind past the bound (library)", err, "rows per table", ntable.LimitRows, ntable.LimitRows+1)
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("a refused bind changed the store")
+	}
+
+	// the function refuses too, as a raw call with the definition the table has
+	fields := c.HGetAll(ctx, ntable.DefKey("bound")).Val()
+	def, _ := json.Marshal(fields)
+	rows := make([]string, ntable.LimitRows+1)
+	for i := range rows {
+		rows[i] = fmt.Sprintf(`{"key":"r%d"}`, i)
+	}
+	body := `{"fields":` + string(def) + `,"rows":[` + strings.Join(rows, ",") + `]}`
+	ans, err := c.FCall(ctx, ntable.FnBind, []string{ntable.DefKey("bound")}, "bound", body, `{"epoch":"0","actor":"","fence":"","idem":""}`).Slice()
+	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "rows per table" ||
+		fmt.Sprint(ans[3]) != fmt.Sprint(ntable.LimitRows) || fmt.Sprint(ans[4]) != fmt.Sprint(ntable.LimitRows+1) {
+		t.Fatalf("raw bind past the bound: %v %v", trunc(ans), err)
+	}
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("a raw bind refused for its rows changed the store")
 	}
 }

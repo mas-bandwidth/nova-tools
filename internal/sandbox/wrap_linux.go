@@ -69,8 +69,12 @@ var resolvConfPath = "/etc/resolv.conf"
 // read-only and skip-if-absent, exactly like every other root -- a machine with no resolver
 // config is the machine's shape, not a caller's mistake.
 func linuxRoots() []string {
+	return linuxRootsAt(resolvConfPath)
+}
+
+func linuxRootsAt(confPath string) []string {
 	roots := append([]string{}, linuxReadRoots...)
-	dir := resolverConfigDirectory(resolvConfPath)
+	dir := resolverConfigDirectory(confPath)
 	if dir == "" {
 		return roots
 	}
@@ -113,7 +117,11 @@ func Available() (string, bool) {
 // there is no Landlock to have one. It is a function and not a const because this is the
 // one platform whose answer is the machine's rather than the build's.
 func ABI() string {
-	abi, ok := available()
+	return ABIWith(available)
+}
+
+func ABIWith(abiFn func() (int, bool)) string {
+	abi, ok := abiFn()
 	if !ok {
 		return "-"
 	}
@@ -124,7 +132,11 @@ func ABI() string {
 // whether that is below the one the kernel reports. The tool prints `used=<n>` only when
 // the two differ, so the line on an ordinary machine is the line it has always been.
 func ClampedABI() (int, bool) {
-	abi, ok := available()
+	return ClampedABIWith(available)
+}
+
+func ClampedABIWith(abiFn func() (int, bool)) (int, bool) {
+	abi, ok := abiFn()
 	if !ok {
 		return 0, false
 	}
@@ -148,7 +160,11 @@ func NetEnforceable() bool {
 
 // Note is the one clause the check verb prints about this backend.
 func Note() string {
-	abi, ok := available()
+	return NoteWith(available)
+}
+
+func NoteWith(abiFn func() (int, bool)) string {
+	abi, ok := abiFn()
 	if !ok {
 		return "no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list"
 	}
@@ -182,7 +198,16 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	if os.Geteuid() == 0 {
 		return ExitRefused, refuse("sandbox_failed", "this tool does not run as root: rule 2 is that the wall holds for an ordinary unprivileged user, and a root child is outside what this policy was measured against")
 	}
-	abi, ok := available()
+	abiFn := available
+	if p.LandlockABI != nil {
+		abiFn = p.LandlockABI
+	} else if p.Available != nil {
+		abiFn = func() (int, bool) {
+			_, ok := p.Available()
+			return 0, ok
+		}
+	}
+	abi, ok := abiFn()
 	if !ok {
 		return ExitRefused, refuse("no_sandbox", "this kernel has no landlock: it is below 5.13, or landlock is not compiled in, or it is not in the boot-time lsm= list. This tool does not run a command it cannot contain")
 	}

@@ -137,3 +137,34 @@ func TestBatchInvalidTableName(t *testing.T) {
 		t.Fatalf("expected invalid name error, got: %v", err)
 	}
 }
+
+// A refusal the library makes before it sends says so: this call changed nothing,
+// and it says nothing about an earlier call with the same operation id, which the
+// store may have applied under looser rules and would replay.
+func TestBatchRefusalBeforeSendingIsAboutThisCallOnly(t *testing.T) {
+	t.Parallel()
+	set := map[string]string{}
+	for i := 0; i <= ntable.LimitSetFields; i++ {
+		set[strings.Repeat("f", 1+i%5)+strings.Repeat("g", i/5)] = "v"
+	}
+	manifest := func(members ...ntable.BatchMemberEntry) ntable.BatchManifest {
+		return ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: "3", OperationID: "op-1", Members: members}
+	}
+	cases := map[string]ntable.BatchManifest{
+		"a manifest error": func() ntable.BatchManifest { m := manifest(); m.Schema = 2; return m }(),
+		"a bound":          manifest(ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}, Set: set}),
+		"a refusal code":   manifest(ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}, Set: map[string]string{"x": "1"}, Unset: []string{"x"}}),
+	}
+	for name, m := range cases {
+		_, err := ntable.ApplyBatch(context.Background(), nil, m)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		for _, want := range []string{"changed=no", "this call changed nothing", "earlier call with the same operation id"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: %q lacks %q", name, err, want)
+			}
+		}
+	}
+}
