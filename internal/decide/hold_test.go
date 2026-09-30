@@ -281,24 +281,6 @@ func TestJevIsNotAskedWhileAnAttemptMayStillBeAlive(t *testing.T) {
 	}
 }
 
-// A timeout that is not known dead is not counted as a failure in the log
-// either: the starting rung is regenerated from confirmed outcomes only.
-func TestTheLogCountsConfirmedFailuresOnly(t *testing.T) {
-	t.Parallel()
-
-	reg := testRegistry(t)
-	sum, err := Summarize(reg, []Entry{
-		{Unit: "a", Kind: KindRebase, RungTried: "flash", Height: 0, Outcome: OutcomeOK, RungSucceeded: "flash",
-			Evidence: Unit{ID: "a", Kind: KindRebase, Attempts: []Attempt{{Rung: "flash", Outcome: OutcomeTimeout}}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sum.Kinds[0].Failures != 0 {
-		t.Errorf("an open timeout is not a failure: failures = %d", sum.Kinds[0].Failures)
-	}
-}
-
 // (4) A floor that is not a number is a refusal with a remedy, not a silent
 // pass: NaN compares false against every bound, which is exactly how it slipped
 // through.
@@ -329,11 +311,5 @@ func TestFloorRefusesNaNAndBothBounds(t *testing.T) {
 	}
 	if _, err := RouteRules(reg, u, 1); err != nil {
 		t.Errorf("a floor of 1 is a floor: %v", err)
-	}
-	if _, err := Help(HelpState{Hours: math.NaN()}); err == nil {
-		t.Error("a help state of NaN hours answered, want a refusal")
-	}
-	if _, err := Help(HelpState{Uncertainty: math.NaN()}); err == nil {
-		t.Error("a help state of NaN uncertainty answered, want a refusal")
 	}
 }

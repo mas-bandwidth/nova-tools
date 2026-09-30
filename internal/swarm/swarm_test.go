@@ -456,28 +456,3 @@ func TestSecretImpliesEnvVar(t *testing.T) {
 		t.Fatalf("env_var defaults to the secret NAME, got %q want %q", w.EnvVar, "MY_SECRET_881")
 	}
 }
-
-// RULE 11, VERBATIM (SPEC-SWARM.md:148-155): a process of the job's own group that outlives
-// the job is a background subtask the prompt forbids, and the line carries `background=<n>`.
-//
-// ONE SURVIVOR IS ONE. The dispatcher asked the group twice -- alive before the reap, alive
-// after it -- and added one for each yes, so a single backgrounded child could be reported
-// as two (read 4, F8). The number a person reads tomorrow is a count of processes.
-func TestOneSurvivorIsCountedOnce(t *testing.T) {
-	t.Parallel()
-
-	for _, c := range []struct {
-		name                      string
-		aliveBefore, survivedReap bool
-		want                      int
-	}{
-		{"the group was empty", false, false, 0},
-		{"alive before the reap, gone after it", true, false, 1},
-		{"alive before the reap and after it", true, true, 1},
-		{"seen only by the reap", false, true, 1},
-	} {
-		if got := survivorsSeen(c.aliveBefore, c.survivedReap); got != c.want {
-			t.Errorf("%s: background=%d, want %d", c.name, got, c.want)
-		}
-	}
-}

@@ -24,5 +24,3 @@ keep internal/nsprint/verbflag
 # stand on the rest, so it stays tested until it is lifted out.
 internal/decide
 keep internal/decide
-# internal/decide
-keep internal/decide/questions

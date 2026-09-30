@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -108,3 +109,36 @@ func FinalizeByHand(p *Pool, id string, now time.Time) (int, string) {
 
 // FindAnywhere finds a task's sidecar in whichever state it sits.
 func (p *Pool) FindAnywhere(id string) (Sidecar, bool) { return p.findSidecar(id) }
+
+func (p *Pool) findSidecar(id string) (Sidecar, bool) {
+	for _, state := range []string{Running, Done, Failed, Pending} {
+		if sc, err := p.ReadSidecar(state, id); err == nil {
+			return sc, true
+		}
+	}
+	return Sidecar{}, false
+}
+
+// countLines counts the lines of a record -- the job's `note` file, created through a
+// rename before the worker starts and appended to by the coordinator afterwards. A read
+// that collided with that creation would print `notes=0` for notes that were sent, so it
+// waits the collision out; a file that is not there is still 0.
+func countLines(path string) int {
+	raw, err := readFileSteady(path)
+	if err != nil {
+		return 0
+	}
+	body := strings.TrimRight(string(raw), "\n")
+	if body == "" {
+		return 0
+	}
+	return strings.Count(body, "\n") + 1
+}
+
+func parseStamp(s string, fallback time.Time) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return fallback
+	}
+	return t
+}

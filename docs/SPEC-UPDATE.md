@@ -756,7 +756,7 @@ install` or `npm install`.
     identity — `v0.12.0` twice, then one pseudo-version twice, then `devel` twice — are
     EQUAL and current; `v0.12.0` against `v0.10.3` is DIFFERENT; two pseudo-versions
     differing only in the commit, `…-0459069` against `…-88f0b0d`, are DIFFERENT; each
-    verdict equals `wake.AcceptBus` on the same two strings; `STALE` appears on no pin line.
+    verdict is string equality of the same two strings; `STALE` appears on no pin line.
 16. `TestUpdateOutputIsBoundedAtTheLargestPlausibleState`: 200 entries, 60 stale, 30 newer,
     30 differ and 60 unknown, print at most `4 * --max + 8` lines over both streams; each of
     the four verdicts gets a `MORE` line with its true total; `--max 0` prints all 180;

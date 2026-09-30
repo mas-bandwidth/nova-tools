@@ -13,15 +13,22 @@ import (
 // both came back as decisions at exit 0, carrying the provider's confidence as
 // if the machinery had agreed with them.
 
+// The three answers of the question the report offered.
+const (
+	helpContinue      = "continue"
+	helpAskAllFriends = "ask-all-friends"
+	helpAskGlenn      = "ask-glenn"
+)
+
 // helpQuestion is the offered set from the report: continue, ask all friends,
 // ask Glenn -- and nothing else.
 func helpQuestion() map[string]Question {
 	return map[string]Question{"help": {
 		Instructions: "continue, ask all friends, or ask Glenn?",
 		Choice: map[string]string{
-			HelpContinue:      "carry on",
-			HelpAskAllFriends: "ask every friend",
-			HelpAskGlenn:      "ask Glenn, and only after the friends",
+			helpContinue:      "carry on",
+			helpAskAllFriends: "ask every friend",
+			helpAskGlenn:      "ask Glenn, and only after the friends",
 		},
 	}}
 }
@@ -45,7 +52,7 @@ func TestChoiceAnswerOutsideTheCriteriaIsAProviderError(t *testing.T) {
 	if err == nil {
 		t.Fatal("an answer the question never offered came back as a decision")
 	}
-	for _, want := range []string{"deepseek-flash", "help", HelpContinue, HelpAskAllFriends, HelpAskGlenn} {
+	for _, want := range []string{"deepseek-flash", "help", helpContinue, helpAskAllFriends, helpAskGlenn} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal must name %q: %v", want, err)
 		}
@@ -70,7 +77,7 @@ func TestEmptyChoiceAboveTheFloorIsAProviderError(t *testing.T) {
 	if err == nil {
 		t.Fatal("an empty choice above the floor came back as a decision")
 	}
-	for _, want := range []string{"help", HelpAskGlenn} {
+	for _, want := range []string{"help", helpAskGlenn} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal must name %q: %v", want, err)
 		}
@@ -90,7 +97,7 @@ func TestValidateAnswers(t *testing.T) {
 		wantErr []string
 	}{
 		"an offered choice stands": {
-			answers: map[string]Answer{"help": {Type: "choice", Choice: HelpAskAllFriends, Confidence: 0.94}},
+			answers: map[string]Answer{"help": {Type: "choice", Choice: helpAskAllFriends, Confidence: 0.94}},
 		},
 		"a score stands": {
 			answers: map[string]Answer{"risk": {Type: "score", Score: 1, Confidence: 0.94}},
@@ -100,11 +107,11 @@ func TestValidateAnswers(t *testing.T) {
 		},
 		"a choice outside the criteria": {
 			answers: map[string]Answer{"help": {Type: "choice", Choice: "deepseek-flash", Confidence: 0.94}},
-			wantErr: []string{"deepseek-flash", HelpAskGlenn},
+			wantErr: []string{"deepseek-flash", helpAskGlenn},
 		},
 		"no choice at all": {
 			answers: map[string]Answer{"help": {Type: "choice", Confidence: 0.99}},
-			wantErr: []string{"help", HelpContinue},
+			wantErr: []string{"help", helpContinue},
 		},
 		"a choice question answered with a score": {
 			answers: map[string]Answer{"help": {Type: "score", Score: 2, Confidence: 0.99}},
