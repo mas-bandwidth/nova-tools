@@ -49,11 +49,13 @@ type fakeRedis struct {
 	revs  map[string]int64
 	log   []string
 	beats map[string]*config.Beat
+	// hosts is where each friend's own beat says she runs.
+	hosts map[string]string
 	opens int
 }
 
 func newFakeRedis() *fakeRedis {
-	return &fakeRedis{views: map[string]map[string]config.View{}, revs: map[string]int64{}, beats: map[string]*config.Beat{}}
+	return &fakeRedis{views: map[string]map[string]config.View{}, revs: map[string]int64{}, beats: map[string]*config.Beat{}, hosts: map[string]string{}}
 }
 func (f *fakeRedis) Read(_ context.Context, kind string) (map[string]config.View, int64, error) {
 	out := map[string]config.View{}
@@ -74,6 +76,13 @@ func (f *fakeRedis) Beats(_ context.Context, names []string) (map[string]*config
 		if b := f.beats[n]; b != nil {
 			out[n] = b
 		}
+	}
+	return out, nil
+}
+func (f *fakeRedis) FriendHosts(_ context.Context, names []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, n := range names {
+		out[n] = f.hosts[n]
 	}
 	return out, nil
 }
@@ -111,6 +120,8 @@ type harness struct {
 	hostname string
 	// override, when set, is the store openStore hands out instead of store.
 	override pgStore
+	// tailnet is what `tailscale status --json` prints; "" is no tailnet.
+	tailnet string
 }
 
 func newHarness() *harness {
@@ -133,6 +144,12 @@ func (h *harness) deps() deps {
 		openRedis: func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
 		now:       func() time.Time { return time.Unix(1700000000, 0) },
 		hostname:  func() (string, error) { return h.hostname, nil },
+		tailscale: func(context.Context) ([]byte, error) {
+			if h.tailnet == "" {
+				return nil, config.ErrNoTailnet
+			}
+			return []byte(h.tailnet), nil
+		},
 	}
 }
 

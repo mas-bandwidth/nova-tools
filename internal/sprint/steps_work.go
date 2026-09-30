@@ -948,9 +948,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 
 // FleetReq is a fleet move: a member up or down, or the ready queues
 // levelled (the tick's moves, as a member's derived status changes), or the
-// coordinator's hold on a member (hold) and its release (release).
+// coordinator's hold on a member (hold) and its release (release), or the
+// whole fleet made to match the inventory (sync).
 type FleetReq struct {
-	Op     string // up, down, level, hold, release
+	Op     string // up, down, level, hold, release, sync
 	Member string
 	Who    string
 	// Fresh says the member's last beat is within BeatDeadline: release
@@ -964,6 +965,12 @@ type FleetReq struct {
 	// Width, above zero, is the member's width set by up or release (the
 	// machine's child cap, width.go); zero leaves the width as it is.
 	Width int `json:",omitempty"`
+	// Sync, with Op sync, is every machine the inventory says is a member
+	// and its width (fleet_sync.go); Member is empty.
+	Sync []SyncMember `json:",omitempty"`
+	// HeldBy, with hold, marks the hold as made by that mechanism (the sync's,
+	// fleet_sync.go) and not the coordinator's: the control card's held_by.
+	HeldBy string `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -975,7 +982,11 @@ func FleetStep(s *Snapshot, r FleetReq) Plan {
 	// every card the step places on a member (a down member's cards dealt
 	// again, the levelling) goes round the fleet from the deal's rolling index
 	// and moves it (round.go, errata 3 amendment 5), written with the step
-	rr := dealRoundWith(s, append([]string{r.Member}, r.Live...)...)
+	extra := append([]string{r.Member}, r.Live...)
+	for _, m := range r.Sync {
+		extra = append(extra, m.Name)
+	}
+	rr := dealRoundWith(s, extra...)
 	moves := roundMoves{}
 	p := Lawful(fleetStepPlan(s, r, rr, moves))
 	roundWrites(&p, rr, moves)
@@ -1071,7 +1082,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				set[FieldWidth] = itoa(r.Width)
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
-				unset = append(unset, "held")
+				unset = append(unset, "held", FieldHeldBy)
 				if !comeUp {
 					line = r.Member + " released, down until it beats"
 				}
@@ -1094,8 +1105,10 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		return downPlan(s, r, up, rr, moves, memberLoads(s, up), memberWidths(s, up))
 	case "level":
 		level(s, &p, s.UpMembers(), rr, moves)
+	case "sync":
+		return fleetSyncPlan(s, r, rr, moves)
 	default:
-		p.refuse(r.Op, "fleet wants up, down, level, hold or release")
+		p.refuse(r.Op, "fleet wants up, down, level, hold, release or sync")
 	}
 	return p
 }
@@ -1122,13 +1135,28 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		set["status"], set["since"] = Down, stamp(s.Now)
 		n = statusNote(s, r, NMemberDown, "down")
 	}
-	if r.Op == "hold" && ctl.F("held") == "" {
+	var unset []string
+	switch {
+	case r.Op == "hold" && ctl.F("held") == "":
 		set["held"] = stamp(s.Now)
 		line = r.Member + " held down"
+		// who made the hold: the sync marks its own, so that it alone releases
+		// it (fleet_sync.go); a coordinator's hold carries no mark, and a
+		// mark left by an earlier hold is cleared
+		if r.HeldBy != "" {
+			set[FieldHeldBy] = r.HeldBy
+		} else {
+			unset = append(unset, FieldHeldBy)
+		}
+	case r.Op == "hold" && r.HeldBy == "":
+		// the coordinator holds a member that is already held (the sync's hold
+		// included): the hold is now the coordinator's, and the sync's mark
+		// goes, so the sync never releases it
+		unset = append(unset, FieldHeldBy)
 	}
 	var head []Change
-	if len(set) > 0 {
-		head = append(head, change(Fleet, setEntry(ctl, set)))
+	if len(set) > 0 || len(unset) > 0 {
+		head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
 	}
 	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 	SortCards(cards)

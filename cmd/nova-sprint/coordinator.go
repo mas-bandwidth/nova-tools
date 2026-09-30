@@ -31,7 +31,7 @@ var verbClasses = map[string]string{
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
 	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator,
 	"resume": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
-	"fleet level": classCoordinator, "reader add": classCoordinator, "wait": classCoordinator,
+	"fleet level": classCoordinator, "fleet sync": classCoordinator, "reader add": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
