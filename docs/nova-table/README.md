@@ -540,7 +540,8 @@ once and exits, with no clear. With explicit table names, every tick is exactly 
 title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
 `store unreachable since <time>` line under it, and stderr says why once. While
 the store answers the frame is the table and nothing else: no age, no counter. A signal ends it,
-exit 0.
+exit 0. If continuous watch cannot write stdout or publish to `--out`, it stops
+immediately at exit 1 and names the output destination to repair on stderr.
 
 ## Module integration and deployment
 
