@@ -31,6 +31,17 @@ type machineOut struct {
 	Parts   []store.PartResult `json:"parts,omitempty"`
 }
 
+// runReport is run's structured report for a program under --json.
+type runReport struct {
+	Result verbResult        `json:"result"`
+	Facts  map[string]any    `json:"facts"`
+	Tick   *store.TickResult `json:"tick,omitempty"`
+	Notes  int               `json:"notes"`
+	Sprint string            `json:"sprint,omitempty"`
+	Moved  []string          `json:"moved"`
+	Error  string            `json:"error,omitempty"`
+}
+
 func (a *app) cmdMachineStart(args []string, stdout, stderr io.Writer) int {
 	return a.setMachine("start", true, args, stdout, stderr)
 }
@@ -215,8 +226,10 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
-	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
-	a.runLoop(context.Background(), st, c.max, 0, stdout, stderr)
+	if !c.json {
+		fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
+	}
+	a.runLoop(context.Background(), st, c.max, 0, stdout, stderr, c.json)
 	return 0
 }
 
@@ -240,27 +253,64 @@ const (
 // and the rows it changed in each (errata 3 amendment 10), and every tick that
 // failed; an error is printed always and the loop goes on, waiting longer
 // after each failure in a row, up to TickBackoffCap.
-func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer) {
+func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer, jsonOut ...bool) {
 	failures := 0
 	was := ""
 	// every line before the loop is seen: the first tick reads the state whole
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
+	isJSON := len(jsonOut) > 0 && jsonOut[0]
+	ticksRan := 0
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
+		ticksRan++
 		began := a.now()
 		res, err := st.Tick(ctx)
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)
 		}
-		if res.State != was && res.State != "" {
-			fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
-			was = res.State
-		}
-		if err != nil || res.State == store.Running || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" || res.Halted != "" {
-			fmt.Fprintf(stdout, "%s tick\n", a.now().Format("15:04:05"))
-			a.printTick(res, err, max, stdout, stderr)
-			if line := sprintLine(ctx, st); line != "" {
-				fmt.Fprintln(stdout, line)
+		if isJSON {
+			line := sprintLine(ctx, st)
+			o := machineOut{Tick: &res, Notes: res.Notes(), Sprint: line, Moved: res.Moved()}
+			if o.Moved == nil {
+				o.Moved = []string{}
+			}
+			status := "ok"
+			exitCode := 0
+			if err != nil {
+				o.Error = err.Error()
+				status = "failed"
+				exitCode = 1
+			}
+			rep := runReport{
+				Result: verbResult{Verb: "run", Status: status, Exit: exitCode},
+				Facts: map[string]any{
+					"state":   res.State,
+					"idle":    res.Idle,
+					"moved":   o.Moved,
+					"notes":   o.Notes,
+					"sprint":  o.Sprint,
+					"error":   o.Error,
+					"repairs": len(res.Repaired),
+				},
+				Tick:   o.Tick,
+				Notes:  o.Notes,
+				Sprint: o.Sprint,
+				Moved:  o.Moved,
+				Error:  o.Error,
+			}
+			b, _ := json.Marshal(rep)
+			fmt.Fprintln(stdout, string(b))
+		} else {
+			if res.State != was && res.State != "" {
+				fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
+				was = res.State
+			}
+			if err != nil || res.State == store.Running || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" || res.Halted != "" {
+				fmt.Fprintf(stdout, "%s tick\n", a.now().Format("15:04:05"))
+				a.printTick(res, err, max, stdout, stderr)
+				if line := sprintLine(ctx, st); line != "" {
+					fmt.Fprintln(stdout, line)
+				}
 			}
 		}
 		if n != 0 && i == n-1 {
@@ -274,6 +324,13 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		}
 		failures = 0
 		cursor, why = a.pace(ctx, st, res.Epoch, cursor, began)
+	}
+	if isJSON && ticksRan == 0 {
+		m, _, _ := st.Machine(ctx)
+		printVerbJSON(stdout, "run", 0, map[string]any{
+			"state": m.StateWord(),
+			"ticks": 0,
+		})
 	}
 }
 

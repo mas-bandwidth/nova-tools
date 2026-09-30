@@ -502,6 +502,39 @@ func token(verbName string) string {
 	return strings.ToUpper(strings.ReplaceAll(verbName, " ", "-"))
 }
 
+// verbResult is the result envelope for a verb's structured JSON output.
+type verbResult struct {
+	Verb   string `json:"verb"`
+	Status string `json:"status"`
+	Exit   int    `json:"exit"`
+}
+
+// verbResponse is the standard response shape for verbs emitting --json.
+type verbResponse struct {
+	Result verbResult     `json:"result"`
+	Facts  map[string]any `json:"facts"`
+}
+
+func jsonVerbResult(verb string, exit int) verbResult {
+	status := "ok"
+	if exit != 0 {
+		status = "failed"
+	}
+	return verbResult{
+		Verb:   verb,
+		Status: status,
+		Exit:   exit,
+	}
+}
+
+func printVerbJSON(stdout io.Writer, verb string, exit int, facts map[string]any) {
+	b, _ := json.Marshal(verbResponse{
+		Result: jsonVerbResult(verb, exit),
+		Facts:  facts,
+	})
+	fmt.Fprintln(stdout, string(b))
+}
+
 // output is a step's report for a program.
 type output struct {
 	store.Result
@@ -1343,8 +1376,22 @@ func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "reader add", err.Error())
 	}
 	if err := st.B.RowsAdd(context.Background(), st.Names.Table(sprint.Readers), names); err != nil {
+		if c.json {
+			printVerbJSON(stdout, "reader add", 1, map[string]any{
+				"reader": strings.Join(names, ","),
+				"error":  err.Error(),
+			})
+			return 1
+		}
 		fmt.Fprintf(stderr, "%s reader add: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if c.json {
+		printVerbJSON(stdout, "reader add", 0, map[string]any{
+			"reader":  strings.Join(names, ","),
+			"readers": names,
+		})
+		return 0
 	}
 	fmt.Fprintf(stdout, "READER-ADD OK readers=%s\n", strings.Join(names, ","))
 	return 0
@@ -1396,8 +1443,43 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 		err = fmt.Errorf("%s", res.Refused[0].Why)
 	}
 	if err != nil {
+		if c.json {
+			state := store.Stopped
+			done := "false"
+			if mach, _, mErr := st.Machine(context.Background()); mErr == nil {
+				state = mach.StateWord()
+				if mach.Done() {
+					done = "true"
+				}
+			}
+			printVerbJSON(stdout, "wait", 1, map[string]any{
+				"state": state,
+				"done":  done,
+				"error": err.Error(),
+				"note":  pos[0],
+			})
+			return 1
+		}
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if c.json {
+		state := store.Stopped
+		done := "false"
+		if mach, _, mErr := st.Machine(context.Background()); mErr == nil {
+			state = mach.StateWord()
+			if mach.Done() {
+				done = "true"
+			}
+		}
+		printVerbJSON(stdout, "wait", 0, map[string]any{
+			"state": state,
+			"done":  done,
+			"note":  pos[0],
+			"held":  held,
+			"until": at.UTC().Format(time.RFC3339),
+		})
+		return 0
 	}
 	if held {
 		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
@@ -1483,8 +1565,22 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 	}
 	n, err := st.Teardown(context.Background())
 	if err != nil {
+		if c.json {
+			printVerbJSON(stdout, "teardown", 1, map[string]any{
+				"sprint": want,
+				"error":  err.Error(),
+			})
+			return 1
+		}
 		fmt.Fprintf(stderr, "%s teardown: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if c.json {
+		printVerbJSON(stdout, "teardown", 0, map[string]any{
+			"sprint": want,
+			"keys":   n,
+		})
+		return 0
 	}
 	fmt.Fprintf(stdout, "TEARDOWN OK sprint=%s keys=%d\n", oneline.Escape(want), n)
 	return 0
@@ -1508,8 +1604,23 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	res, err := st.Clear(ctx)
 	if err != nil {
+		if c.json {
+			printVerbJSON(stdout, "clear", 2, map[string]any{
+				"sprint": want,
+				"error":  err.Error(),
+			})
+			return 2
+		}
 		fmt.Fprintf(stderr, "%s clear: %s\n", prog, oneline.Escape(err.Error()))
 		return 2
+	}
+	if c.json {
+		printVerbJSON(stdout, "clear", 0, map[string]any{
+			"sprint":     want,
+			"epoch_from": res.From,
+			"epoch_to":   res.To,
+		})
+		return 0
 	}
 	var held []string
 	for _, k := range []string{"primaries", "work cards", "read cards", "merge cards", "open judgments"} {

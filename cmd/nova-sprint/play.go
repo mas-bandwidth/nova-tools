@@ -71,12 +71,30 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	facts.Red = *red
 	// the chances the source will draw with, printed once the loop may play
 	header := fmt.Sprintf("chances: %s red=%g seed=%d every=%s", facts.Drawn(), facts.Red, *seed, *every)
-	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout, Header: header,
+	out := stdout
+	if c.json {
+		out = io.Discard
+	}
+	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: out, Header: header,
 		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks, Hold: *hold, Silent: silent}}
 	why, err := d.Loop()
 	if err != nil {
+		if c.json {
+			printVerbJSON(stdout, "play", 2, map[string]any{
+				"error": err.Error(),
+				"seed":  *seed,
+			})
+			return 2
+		}
 		fmt.Fprintf(stderr, "%s play: %s\n", prog, oneline.Escape(err.Error()))
 		return 2
+	}
+	if c.json {
+		printVerbJSON(stdout, "play", 0, map[string]any{
+			"stopped": why,
+			"seed":    *seed,
+		})
+		return 0
 	}
 	fmt.Fprintf(stdout, "PLAY OK stopped=%s seed=%d\n", why, *seed)
 	return 0
