@@ -264,7 +264,8 @@ func npCases() []npCase {
 		{verb: "goal set", setup: npInit, line: "goal set p1 --file {dir}/goal.txt", code: exitBug, want: []string{"GOAL-SET FAIL", "code=REQUEST", "the write path does not carry goals yet"}},
 		{verb: "goal set", setup: npInit, line: "goal set p1 --file {dir}/goal.txt --to file:/x", code: exitRefused, want: []string{"--to is not on the new path"}},
 		{verb: "goal show", setup: npInit, line: "goal show p1", code: exitRefused, want: []string{"GOAL-SHOW FAIL", "code=REQUEST", "no read of a person's goal yet"}},
-		{verb: "goal show", line: "goal show", code: exitRefused, want: []string{"takes one name"}},
+		{verb: "goal show", setup: npInit, line: "goal show", code: exitRefused, want: []string{"GOAL-SHOW FAIL", "code=REQUEST", "no read of the goals yet"}},
+		{verb: "goal show", line: "goal show p1 p2", code: exitRefused, want: []string{"takes one name, or none for every goal"}},
 		{verb: "goal drop", setup: npInit, line: "goal drop p1", code: exitBug, want: []string{"GOAL-DROP FAIL", "code=REQUEST"}},
 
 		// IT17: the machine's loop.
@@ -342,6 +343,15 @@ func npCases() []npCase {
 		// play: R8's driver over the entry point, on the new path.
 		{verb: "play", setup: npTicking, line: "play --ticks 1 --simulation", code: 0, want: []string{"chances:", "tick 1", "PLAY OK stopped=ticks"}},
 		{verb: "play", setup: npWorld, line: "play --ticks 1 --simulation", code: exitRefused, want: []string{"no machine is running (NOT TICKING)"}},
+	}
+}
+
+// TestNewPathBannerNamesNoPrefix (the 4806 read, m1): the new path's help
+// names no --prefix and no NOVA_SPRINT_PREFIX, which it refuses.
+func TestNewPathBannerNamesNoPrefix(t *testing.T) {
+	t.Parallel()
+	if b := newBanner(); strings.Contains(b, "--prefix") || strings.Contains(b, "NOVA_SPRINT_PREFIX") {
+		t.Errorf("the banner names the prefix:\n%s", b)
 	}
 }
 

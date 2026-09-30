@@ -277,15 +277,19 @@ func init() {
 				}
 				return spverbs.GoalSet(ctx, e, spverbs.GoalReq{Op: p.c.op, Person: p.words[0], Goal: text})
 			}},
-		{name: "goal show", syntax: "<name>", item: "IT18", words: wordsAny,
+		{name: "goal show", syntax: "[<name>]", item: "IT18", words: wordsAny,
 			check: func(p *parsed) error {
-				if len(p.words) != 1 {
-					return fmt.Errorf("takes one name: the new path reads one person's goal")
+				if len(p.words) > 1 {
+					return fmt.Errorf("takes one name, or none for every goal")
 				}
 				return nil
 			},
 			call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
-				return spverbs.GoalShow(ctx, e, spverbs.GoalReq{Person: p.words[0]})
+				req := spverbs.GoalReq{}
+				if len(p.words) == 1 {
+					req.Person = p.words[0]
+				}
+				return spverbs.GoalShow(ctx, e, req)
 			}},
 		{name: "goal drop", syntax: "<name>", item: "IT18", words: wordsOne,
 			call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
@@ -624,10 +628,10 @@ func newBanner() string {
 	}
 	b.WriteString(`
 Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
-NOVA_REDIS_ADDR), --prefix <p> (else NOVA_SPRINT_PREFIX), --actor <name> (else
-NOVA_SPRINT_ACTOR), --op <id> (the same op and arguments again return the
-recorded result; other arguments are refused), --epoch <n> (the epoch the
-caller holds), --json and --max <n>.
+NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR), --op <id> (the same
+op and arguments again return the recorded result; other arguments are
+refused), --epoch <n> (the epoch the caller holds), --json and --max <n>. The
+sprint's namespace is the layer's own: there is no prefix to name.
 
 exit codes: 0 done, 2 refused, 3 a bug refusal (the store refused the step
 with a code that is a bug, 1.3.5 of the design)
