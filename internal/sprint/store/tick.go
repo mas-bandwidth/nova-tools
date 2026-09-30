@@ -389,6 +389,16 @@ type TickResult struct {
 	// work, readers, merge and fleet, then each table another update wrote,
 	// in the order written, then "end" (errata 3 amendment 12).
 	Order []string `json:"order,omitempty"`
+	// Times is how long each part the tick ran took, in order, its drains
+	// before it included: what a tick spends its time on.
+	Times []PartTime `json:"times,omitempty"`
+}
+
+// PartTime is one part of a tick and the time its step took.
+type PartTime struct {
+	Table string        `json:"table,omitempty"`
+	Name  string        `json:"name"`
+	Took  time.Duration `json:"took_ns"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -602,7 +612,9 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the
 		// clear overtook writes nothing more
+		ended := time.Now()
 		res.TickEnd, err = st.tickEnd(ctx)
+		res.Times = append(res.Times, PartTime{Name: "tick end", Took: time.Since(ended)})
 	}
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
@@ -752,7 +764,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	seen.Full = now
 	// Every fleet cell up to date before the parts, the control cards read:
 	// the revisions it leaves are what this tick saw.
+	synced := time.Now()
 	wrote, err := st.SyncFleet(ctx)
+	res.Times = append(res.Times, PartTime{Name: "fleet display", Took: time.Since(synced)})
 	if err != nil && st.clearedUnder(ctx, res) {
 		return last, nil
 	}
@@ -773,7 +787,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err != nil {
 		return last, err
 	}
+	read := time.Now()
 	snap, _, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	res.Times = append(res.Times, PartTime{Name: "first read", Took: time.Since(read)})
 	unfinished := seen
 	unfinished.Full = time.Time{}
 	if errors.Is(err, errCleared) {
@@ -931,6 +947,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain = table == sprint.Work, drain
+		began := time.Now()
 		r, err := t.st.Run(t.ctx, step)
 		for _, d := range r.Drained {
 			// a drain the part's step made before it planned is the tick's
@@ -947,6 +964,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				t.res.addRows(sprint.PlanRows(planned))
 			}
 		}
+		t.res.Times = append(t.res.Times, PartTime{Table: table, Name: part.Name, Took: time.Since(began)})
 		t.ran = true
 		var cleared *ClearedError
 		if errors.As(err, &cleared) {

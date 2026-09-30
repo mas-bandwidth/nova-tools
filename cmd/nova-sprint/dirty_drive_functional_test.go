@@ -51,6 +51,7 @@ type driveTick struct {
 	queued int // entries in the work queue when the tick ended
 	err    string
 	wall   time.Duration
+	times  []store.PartTime // what the tick spent its time on, part by part
 }
 
 // driveSampleAt is the landed count of each stream, every driveSample ticks.
@@ -225,7 +226,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began)}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), times: res.Times}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
 			}
@@ -508,6 +509,20 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		whyCount, idle, didSomething, settle, maxOrder, slowest.Round(time.Millisecond),
 		tickEnds, wroteNote, reads, accepted, refused, strings.Join(seen, ", "),
 		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean, strings.TrimRight(table.String(), "\n"))
+	for _, tk := range ticks {
+		if tk.wall == slowest {
+			var parts []string
+			for _, pt := range tk.times {
+				name := pt.Name
+				if pt.Table != "" {
+					name = pt.Table + " " + name
+				}
+				parts = append(parts, fmt.Sprintf("%s %s", name, pt.Took.Round(time.Millisecond)))
+			}
+			report += fmt.Sprintf("\n  the slowest tick (%d) part by part: %s", tk.n, strings.Join(parts, ", "))
+			break
+		}
+	}
 	fmt.Fprintln(os.Stderr, report)
 	t.Log("\n" + report)
 }
