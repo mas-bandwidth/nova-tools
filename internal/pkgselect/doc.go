@@ -11,7 +11,8 @@
 //   - the heavy packages are dealt first, one to a shard, and every other live
 //     package round-robin after them (deal.go);
 //   - the CI fan-out is the selection dealt onto the runner groups, with the
-//     macOS legs kept for the code that differs on macOS (matrix.go).
+//     macOS legs kept for the code that differs on macOS, and dealt at all only
+//     where the target branch is dev or main (DarwinOn, matrix.go).
 //
 // Everything that starts a process goes through a Runner, so a test answers
 // `git` and `go list` from a table and never starts either. The verbs in
