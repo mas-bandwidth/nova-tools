@@ -197,9 +197,11 @@ func MirrorCloneArgs(mirror, target string, noCheckout bool) []string {
 
 // refuseOptionLike is the refusal of a card value git would read as an option. Every git
 // call below also puts its card-derived operands behind `--` or `--end-of-options`
-// (internal/ci TestCardDerivedGitOperandsFollowTheSeparator holds that), so a value that
-// starts with `-` is never a flag; no repository, sha or ref a card can mean starts with
-// one, so staging refuses it by name instead of handing git a string it cannot use.
+// (internal/ci TestCardDerivedGitOperandsFollowTheSeparator holds that; the branch is
+// switched to with `git switch -C`, because `git checkout` 2.43 reads a rev after
+// `--end-of-options` as a path), so a value that starts with `-` is never a
+// flag; no repository, sha or ref a card can mean starts with one, so staging refuses it
+// by name instead of handing git a string it cannot use.
 func refuseOptionLike(what, value string) error {
 	if strings.HasPrefix(value, "-") {
 		return fmt.Errorf("staging refused: %s %q starts with '-'; a repository, sha or ref never does", what, value)
@@ -405,25 +407,25 @@ func StageCard(opts StageOptions) (StageResult, error) {
 				return fail("fetch", out, ferr)
 			}
 		}
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "--end-of-options", baseSha)
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", baseSha)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			return fail("checkout", out, cerr)
 		}
 	case cb.Ref != "":
 		// The clone's remote-tracking ref first (the mirror's branch), then the ref as
 		// written (a tag or a sha the clone holds).
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "--end-of-options", "origin/"+cb.Ref)
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", "origin/"+cb.Ref)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			if stageTimedOut(ctx, cerr) {
 				return fail("checkout", out, cerr)
 			}
-			coCmd = stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "--end-of-options", cb.Ref)
+			coCmd = stageGit(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", cb.Ref)
 			if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 				return fail("checkout", out, cerr)
 			}
 		}
 	default:
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch)
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			return fail("checkout", out, cerr)
 		}

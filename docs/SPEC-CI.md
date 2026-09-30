@@ -655,7 +655,9 @@ the function assign `WaitDelay`, not that it be the very command.
 
 **The rule.** A git call under `internal/swarm` and `cmd/nova-swarm` puts every
 operand that is not a literal behind `--`, or behind `--end-of-options` for a rev
-that `--` would turn into a path. A card is untrusted input: its `base-repo:`,
+that `--` would turn into a path (staging switches to the card's sha with
+`git switch -C`, which honours it on every git the benches carry; `git checkout` 2.43
+does not). A card is untrusted input: its `base-repo:`,
 `base-sha:`, `BASE:` ref and `PR-HEAD:` reach git, and a value that starts with `-`
 is read as an option when nothing separates it. Staging also refuses such a value
 by name before any git runs.

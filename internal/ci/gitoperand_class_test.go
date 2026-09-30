@@ -53,7 +53,7 @@ var gitOperandSubcommands = map[string]bool{
 	"clone": true, "fetch": true, "checkout": true, "remote": true, "rev-parse": true,
 	"cat-file": true, "show": true, "ls-tree": true, "grep": true, "rev-list": true,
 	"config": true, "init": true, "add": true, "commit": true, "push": true, "pull": true,
-	"diff": true, "log": true, "branch": true, "worktree": true, "merge-base": true,
+	"diff": true, "log": true, "switch": true, "branch": true, "worktree": true, "merge-base": true,
 }
 
 // gitOperandValueOptions take the next argument as their value, so that argument is the
@@ -246,8 +246,8 @@ func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 	}{
 		{"set-url with a card value and no separator", head + "func f(ctx context.Context, repo string) { stageGit(ctx, \"-C\", \"d\", \"remote\", \"set-url\", \"origin\", repo) }", 1},
 		{"set-url behind --", head + "func f(ctx context.Context, repo string) { stageGit(ctx, \"-C\", \"d\", \"remote\", \"set-url\", \"origin\", \"--\", repo) }", 0},
-		{"checkout of a sha with no separator", head + "func f(ctx context.Context, sha string) { stageGit(ctx, \"checkout\", \"-q\", \"-B\", \"b\", sha) }", 1},
-		{"checkout of a sha behind --end-of-options", head + "func f(ctx context.Context, sha string) { stageGit(ctx, \"checkout\", \"-q\", \"-B\", \"b\", \"--end-of-options\", sha) }", 0},
+		{"switch to a sha with no separator", head + "func f(ctx context.Context, sha string) { stageGit(ctx, \"switch\", \"-q\", \"-C\", \"b\", sha) }", 1},
+		{"switch to a sha behind --end-of-options", head + "func f(ctx context.Context, sha string) { stageGit(ctx, \"switch\", \"-q\", \"-C\", \"b\", \"--end-of-options\", sha) }", 0},
 		{"a rev suffixed, no separator", head + "func f(sha string) { baseGit(\"r\", \"rev-parse\", \"--verify\", sha+\"^{commit}\") }", 1},
 		{"a rev suffixed, behind --end-of-options", head + "func f(sha string) { baseGit(\"r\", \"rev-parse\", \"--verify\", \"--end-of-options\", sha+\"^{commit}\") }", 0},
 		{"a literal prefix makes the operand safe", head + "func f(ref string) { baseGit(\"r\", \"checkout\", \"origin/\"+ref) }", 0},
