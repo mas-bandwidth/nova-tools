@@ -199,8 +199,12 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 	if r.Version != "07d35212591f" || r.Raw != "model:tag 07d35212591f 4GB" {
 		t.Fatal(r)
 	}
-	if identity(Entry{Name: "model", Kind: "model"}, "model:tag 07d35212591f 4GB", true).Known() {
-		t.Fatal("untagged match")
+	missing := identity(Entry{Name: "model", Kind: "model"}, "model:tag 07d35212591f 4GB", true)
+	if missing.Known() || missing.Reason != "model_not_found" ||
+		!strings.Contains(missing.Remedy, "configured model runtime") ||
+		!strings.Contains(missing.Remedy, "status or list command") ||
+		strings.Contains(missing.Remedy, "nova-local") {
+		t.Fatal("missing model remedy", missing)
 	}
 	for _, s := range []string{"v0.12.0", "devel", "v0.12.1-0.foo"} {
 		r := entryRead{Entry: Entry{Kind: "pin"}, Installed: identity(Entry{Kind: "pin"}, "nova-wake "+s, false), Latest: identity(Entry{Kind: "pin"}, "nova-bus "+s, false)}
@@ -347,11 +351,17 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	read := command(t, "read", state)
 	write := command(t, "write", state, "{version}")
 	p := manifest(t, row("x", "tool", read, "local:"+printer(t, "v1.2.0\n"), write), row("model:tag", "model", "should-not-run", "ollama:model:tag", write))
-	for _, a := range [][]string{{"apply", "--file", p}, {"apply", "--file", p, "wrong"}, {"apply", "--file", p, "model:tag"}, {"apply", "--file", p, "--all"}} {
+	for _, a := range [][]string{{"apply", "--file", p}, {"apply", "--file", p, "wrong"}, {"apply", "--file", p, "--all"}} {
 		c, _, _ := run(t, Environment{}, a...)
 		if c != 2 {
 			t.Fatal(a, c)
 		}
+	}
+	c, _, modelErr := run(t, Environment{}, "apply", "--file", p, "model:tag")
+	if c != 2 || !strings.Contains(modelErr, "configured model runtime") ||
+		!strings.Contains(modelErr, "status or list command") ||
+		strings.Contains(modelErr, "nova-local") {
+		t.Fatal("model apply remedy", c, modelErr)
 	}
 	c, out, err := run(t, Environment{}, "apply", "--file", p, "x", "--version", "1.2.0")
 	if c != 0 {

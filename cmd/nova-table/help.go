@@ -44,12 +44,12 @@ func init() {
 			return app.cmdMember(append([]string{"create"}, a...), o, e)
 		}},
 		{"member find", "<table> <id>", "member find demo b1", (*application).cmdMemberFind},
-		{"member read", "<table> <id>... | <table> --cell <row:col>", "member read demo b1 b2", (*application).cmdMemberRead},
-		{"batch", "(<manifest-file> | - | '<json>')", "batch manifest.json", (*application).cmdBatch},
+		{"member read", "<table> (<id>... | --cell <row:col>...) [--at-epoch <n>] [--json]", "member read demo b1 b2", (*application).cmdMemberRead},
+		{"batch", "(<manifest-file> | - | '<json>') [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]", "batch manifest.json", (*application).cmdBatch},
 		{"check", "<table>", "check demo", (*application).cmdCheck},
 		{"clear", "<table>", "clear demo", (*application).cmdClear},
 		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
-		{"render", "<table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
+		{"render", "(<table> [--at-epoch <n>] | --view <name>) [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
 		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]", "watch --view work --once", (*application).cmdWatch},
 		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"set"}, a...), o, e)

@@ -95,7 +95,7 @@ one page is refused, since GitHub caps both below it. Each connection's count is
 GitHub's `totalCount`, and a repository's issue count against the listing's, so a repository that
 changed while it was read is refused ("run again"), never half-captured.
 
-**Not captured** (decision 3): reactions, the edit history of a body or comment, timeline events
+**Not captured**: reactions, the edit history of a body or comment, timeline events
 other than cross-references (labelled, assigned, closed, renamed), project items, issue types,
 sub-issues and pins. Pull requests are not issues and are not in the tree; they appear only as
 the sources of references and as linked pull requests.

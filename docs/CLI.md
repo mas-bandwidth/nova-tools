@@ -728,64 +728,118 @@ MIT, see [LICENSE](../LICENSE).
 
 ## nova-swarm
 
+`nova-swarm` runs one-task workers through a harness. `native` runs one card; `batch` runs a supplied card list; `member` runs this machine as a member of an existing `nova-sprint` fleet. Member mode does not provision the fleet. The local card run remains the small tracer, with fleet membership as a separate layer.
+
 ```
 nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
-  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+  nova-swarm doctor    [--path <file>] [--local <file>]   compare PATH and local build stamps
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path>) [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--slots <lo>-<hi>] [--slots-store <dir> --owner <name>] [--then <command>] [--benches <file> --bench <name>[,<name>...]] [--no-route --reason <text>] [--route] [--route-registry <file>] [--route-floor <n>] [--route-log <file>] [--route-usage <file>] [--route-key-env <name>] [--route-base-url <url>] [--auth <file>] [--worker <file>]
                        (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
-                       (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
-  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
-  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>]
-  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (--fleet checks a launcher script for the coordinator's /bin/bash 3.2)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm profile   --jobs <glob>
+  nova-swarm native    --harness <path> (--model <provider/model> | --worker <file>) --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--sandbox <path> | --no-wall] [--no-shared-caches] [--results-root <dir>] [--sweep-now] [--usage-interval <duration>] [--events-store <host:port>] [--bench <name>] [--stage-timeout <duration>] [--repo <name>...] [--recipient <name>...]
+  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <positive-n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor <0..1>] [--default <worker json>] [--key-env <name>] [--base-url <url>]
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
-                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
-                        --force frees it anyway and can oversubscribe the bench: an operator's act,
-                        never a card's and never a manager's default)
+                       (a live lease is KEPT; --force releases it and can oversubscribe the bench)
   nova-swarm slots list --store <dir>
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO; 2 could not run:
-a missing flag, an unreadable pool or worker description, a key file that is
-absent or empty, a bad invocation.
+exit codes: 0 success; 1 a completed operation reported a negative result; 2 invocation or operation refused; 3 a route was below its floor or a batch --then command was skipped.
+```
 
-NO GUESSED ANYTHING. There is no default pool, no default worker description, no
-default number of workers, no default deadline, and no default token budget.
-batch takes --cards; native and route require --card; lint takes --card, or
---fleet or --rules instead; verify takes --card as an option and reads it only
-when given (because a card this tool chose would be a guess about somebody
-else's task); the remaining verbs take no card flag. --tokens is required on
-batch, native and member because a budget this tool supplied would be a guess about
-somebody else's task, and --tokens unmetered is a caller's statement that this
-provider has no live accounting and the deadline is the only stop. Zero is
-refused for tokens.
+### What each verb does
 
-THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
-description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
-never an argument, never a log line, never in a file this tool writes. The
-harness config this tool writes carries the variable's NAME, never its value.
+- `version` prints the build identity.
+- `doctor` compares the first `nova-swarm` on `PATH` with `~/.local/bin/nova-swarm`. The process preflight currently applies to `batch` and `native`.
+- `batch` reads a card list, runs under batch deadlines and idle rules, then gathers results. Routing is on by default; `--no-route` requires `--reason`. Without `--runner`, cards go through this binary's `native` command. A custom `--runner` receives label, slot, model, card path, root, and the budget word as six arguments; it can ignore that word.
+- `verify` checks the result disposition against the contract and writes a receipt.
+- `lint` checks a card, checks a launcher script with `--fleet`, or prints card rules. Card checks can include typed-header, coordinator child-rule, lineup, trust-fixture, and base-evidence checks. `--child-rules` checks the rules a coordinator gives a child; `template --name card` prints a card template for that contract.
+- `template` prints a named built-in template. `profile` aggregates phase durations from native job timeline files and starts no worker.
+- `native` runs one card through the configured harness with the supplied deadline, idle bound, and token budget. It takes job and slot-directory leases. Its wall is on by default; `--no-wall` explicitly disables containment.
+- `member` loops over an existing sprint member's queue and starts one native child per assigned work packet. Reader mode begins requested reads and reports their completion. It does not provision a sprint fleet.
+- `route` classifies a card against the routes table. A below-floor decision selects the configured default and returns exit 3; it is a routing suggestion, not authorization to launch.
+- `slots` provides the separate bench lease broker (`init`, `take`, `release`, `list`). `worker check` validates a worker description and launch-related environment.
 
-EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md). The job directory and
-its data home are the only writable paths; the slot directory and whatever
-read_roots names in the worker description are readable; the key file, ~/.ssh and
-the gh configuration are in neither list and the kernel denies them.
-A command that runs outside the wall and dies
-inside it is missing a read_roots entry.
+### Output forms
 
-Every listing is a cap and a count: --max, default 20, 0 for all, one MORE line
-naming the remedy. The counts are the truth about the POOL,
-never about the output.
+```
+BATCH REFUSED: <reason>
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
+BATCH THEN rc=<n>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
+BATCH NOTE slot=<n> stale-lock id=<id> taken
+BATCH NOTE <label> RESULT.md copied up from <path>
+NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
+NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc|unknown-acceptance>
+NATIVE REFUSED: <reason>
+RESULT OK <label> line2=<disposition>
+RESULT REFUSED <label> <reason>
+ABSTAIN <label> reason=signature sig=<signature> class=<class>
+LINT OK card=<name> checks=<n> bytes=<n> cap=<n>
+LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<text>
+LINT MORE card=<name> findings=<n> remedy=<command>
+LINT SIZE card=<name> bytes=<n> cap=<n> advisory=true
+LINT NOT-A-CARD card=<name> template=<name> remedy=<text>
+LINT OK script=<name> checks=<n> bytes=<n>
+LINT DRIFT script=<name> <check>: <line>: <excerpt> remedy=<text>
+LINT MORE script=<name> findings=<n> remedy=<command>
+LINT RULE <name> remedy=<text>
+ROUTE card=<path> kind=<kind> conf=<n> complexity=<n> needs_strong=<n> private=<n> worker=<name> floor=<n> below=<names>
+ROUTE REFUSED reason=<reason> <detail>
+SLOTS INIT OK store=<dir> owner=<owner> capacity=<n> reserve=<n> share=<n>
+SLOTS OK owner=<owner> granted=<n> held=<n> share=<n> free=<n>
+SLOTS REFUSED owner=<owner> want=<n> held=<n> share=<n> free=<n> holders=<names>
+SLOTS RELEASED store=<dir> owner=<owner> ...
+SLOTS KEPT store=<dir> owner=<owner> live=<n>
+SLOT <id> owner=<owner> pid=<pid> label=<label> until=<time> state=<live|DRIFT|expired> [kind=<kind>] [weight=<n>] [stranded=1]
+DOCTOR OK stamp=<stamp>
+DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory
+DOCTOR DRIFT path=<binary> stamp=<stamp>
+DOCTOR DRIFT local=<binary> stamp=<stamp>
+DOCTOR REFUSED <path binary> shadows <local binary>; ...
+DOCTOR UNREADABLE reading the version of <path|local>=<binary>: <cause>; <the other binary>; ...
+PROFILE job=<path> ...
+WORKER OK <name> model=<model> provider=<provider> class=<class>
+WORKER DRIFT <field>: <reason>
+WORKER MORE findings=<n> remedy=<command>
+MEMBER <member|reader> as=<name> width=<n> every=<duration> sprint=<binary> harness=<path> model=<provider/model>
+tick <n> acted=<n> running=<n> <time>
+start <card> attempt=<n> gen=<n> running=<n>/<n>
+read <card>: no verdict (ran=<bool> verdict=<value>); left for the sprint to re-ask
+MEMBER OK as=<name> ticks=<n> running=<n>
+```
+
+Capped listings use `--max` (default 20; `0` means all) and report full-result counts. `slots list` has no `--max` and is currently uncapped, so it does not meet that general rule.
+
+### No guessed inputs and explicit budgets
+
+There is no default worker description, worker count, deadline, or token budget. `batch` takes `--cards`; `native` and `route` require `--card`; `lint` takes `--card`, `--fleet`, or `--rules`; `verify` accepts an optional `--card`; the other current verbs do not take a card. Token counts must be positive. `--tokens unmetered` means the caller says the provider has no live usage accounting, so the deadline is the stop. A `batch --runner` receives the budget word as an argument, but batch cannot enforce provider usage if that arbitrary runner ignores it.
+
+### Key handling: requirement and implementation
+
+The security requirement is that a key is read as data, never sourced, passed as an argument, or printed. A worker description that names a secret keeps the key in the environment and writes no auth file. The legacy `native --auth <file>` path is different: it copies the provider key into the job data home as a mode-0600 file and removes the copy when the run ends. That current behavior conflicts with the no-key-file requirement; it is disclosed here as an unresolved implementation mismatch, not as an approved exception. The harness config carries the variable name, not the value.
+
+### Containment requirement and current implementation
+
+The requirement is that every job runs inside `nova-sandbox` ([SPEC-SANDBOX.md](SPEC-SANDBOX.md)). `native` applies the wall by default: the job directory and its data home are writable, declared roots are readable, and other paths are denied. `native --no-wall` explicitly bypasses that requirement. `batch --runner` launches the supplied command directly instead of wrapping it in `native`, so that path also does not satisfy the requirement. These are current implementation behaviors, not contract exceptions. A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
+
+### Capped listings
+
+Capped listings accept `--max <n>` (usually default 20, `0` for all) and report counts for the complete result set, not only displayed rows. `slots list` currently has no `--max` and is uncapped; it does not satisfy the general listing rule.
 
 example:
-  nova-swarm template --name read-pr
+
+```sh
+nova-swarm template --name read-pr
 ```
 
 ### First run
@@ -841,30 +895,18 @@ it. Put the verdict line last. When there is nothing to report, write
 `findings: 0`.
 ```
 
-### The harness contract
+### Native harness details
 
-Every job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md). `native` proves the wall
-before launching: the job directory and its data home are the only writable paths, the
-slot directory and whatever `read_roots` names in the worker description are readable; the
-key file, `~/.ssh` and the `gh` configuration are in neither list and the kernel denies them.
+With native's wall enabled, a command that runs outside the wall and dies inside it is missing a `read_roots` entry.
 
-A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
-
-- **Its working directory is the JOB directory**, and `NOVA_SWARM_JOB` is the job directory — the only place the worker writes. `XDG_DATA_HOME` is that job's own data home.
+- **Its working directory is the job directory.** `NOVA_SWARM_JOB` names that directory and `XDG_DATA_HOME` names the per-job data home.
 - **Its arguments are `harness_args`**, with `{model}` replaced by the description's model, `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where `harness_args` names no `{prompt}`, the prompt file is appended LAST.
 - **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and renaming it: a report is a revision, and a half-written one is never read.
 - **Its stdout and stderr are `<job>/harness-output.log`**, capturing all harness output.
 
-`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
-hundred lines of Go, and the whole test suite runs against it with no provider, no network
-and no key worth anything. It is the shortest way to see the contract, and to test a pool
-of your own before a real model touches it.
+`cmd/nova-swarm/testdata/fakeharness` is a compact example of this protocol. It helps inspect the harness interface; its presence does not prove a real provider or launch path satisfies every contract requirement.
 
-**`native` takes directory leases (`.lease`, `.slot-lease`).** A bench's capacity is one number,
-`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
-is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
-reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
-card. `--slots-store` and `--owner` flags are accepted and ignored by `native`.
+**`native` takes job and slot-directory leases (`.lease`, `.slot-lease`).** Bench capacity is managed by the separate slot broker and dealer. `native` does not read or write the bench-capacity store; `--slots-store` and `--owner` are compatibility inputs accepted by the native path, not capacity leases.
 
 **The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
 own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
@@ -915,82 +957,132 @@ shadow with, and the check passes on the PATH binary alone. No flag skips the ch
 [`nova-sprint`](#nova-sprint) fleet. It beats with its load, reads the queue,
 reports children that have ended, takes up to its free width, and starts each
 taken packet as one `native` child. `--reader` instead begins asked reads and
-reports them through `read --ok` or `read --broken`.
+reports their completed verdicts.
 
 The command needs the sprint executable and its inherited store configuration,
 an existing member or reader, and a configured harness. It does not create the
 fleet. Supply the member name and width, the harness and model, a work root,
 and each child's deadline and token budget. `--auth`, `--config` and `--worker`
 carry the corresponding native inputs. The root holds `slots/` and `results/`
-unless explicit `--slots` and `--results-root` paths are supplied.
+unless explicit `--slots` and `--results-root` paths are supplied. Each launch is
+identified by card, epoch, and work generation or read attempt; its slot and results
+paths are launch-specific. If its pid file still names a live process, the member
+adopts that child instead of starting a duplicate.
 
-`--every` sets the loop interval (default 3s). `--once` and a positive `--ticks <n>` bound loop
-passes, not child completion: a pass can launch a child that is still running
-when the member invocation returns. Use `nova-swarm member --help` for all
-flags and [the quickstart](nova-swarm-quickstart.md#join-a-configured-sprint-fleet)
-for setup and a repeating member example.
+`--every` sets the loop interval (default 3s, accepted range 1ms–5s). `--once`
+runs one pass; a positive `--ticks <n>` stops after that many passes. Neither waits
+for children launched on its final pass, so the invocation can return while a child
+is still running. Tick errors are printed but do not prevent `MEMBER OK` or a successful
+exit. A reader child that ends without a verdict is reported as having no verdict; it
+holds no width and is not run again until the sprint moves that card. Use
+`nova-swarm member --help` for all flags and
+[the quickstart](nova-swarm-quickstart.md#join-a-configured-sprint-fleet) for setup and a repeating member example.
 
 ## nova-sandbox
 
-Runs one command under OS-enforced containment using `sandbox-exec` on macOS
-or Landlock on supported Linux kernels. Windows has no implemented backend and
-refuses to wrap a command. Run `nova-sandbox check` to inspect backend availability
-on your machine before use.
-The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md).
+Runs one command under an OS-enforced filesystem wall. The supported wrapper
+backends are `sandbox-exec` on macOS and Landlock on Linux when the running
+kernel supports it. The bare wrapper has no Windows backend and refuses to run a
+command there. Start with `nova-sandbox check` on the machine that will run the
+work. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) is normative.
 
-Three lists and no defaults. `--read <dir>` is readable and **not** writable, so
-N workers share one copy of an input named once; `--read-noexec <dir>` is the
-same grant **without execute**; `--write <dir>` is readable and writable and is
-**required**, because a command with no writable directory is a misconfiguration
-and not a tighter sandbox. Everything else on disk is denied, the credential file
-included — which is the whole point: the key stays with the person who owns it,
-and the wall is what says so.
+### Public forms
 
-**`--read` carries execute; `--read-noexec` is how you say it must not.**
-Landlock's read subset is `EXECUTE|READ_FILE|READ_DIR` and the darwin profile
-grants `process-exec*` globally, so under `--read` a program anywhere in the tree
-RUNS. For a cache or a data tree this user can write to — a module cache, a
-`node_modules`, a downloads directory — that is a way in, and `--read-noexec`
-grants the reading and takes the execute back (on darwin as a last-wins
-`deny process-exec*` after the global grant, on linux by dropping `fsExecute`
-from the rule). A path named in both lists is a **refusal**, not a merge: one
-asks for execute and the other takes it away. The `SANDBOX OK` and `POLICY OK`
-lines count the two separately, `read=<n> read-noexec=<n>`.
+```
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>...
+             [--net-deny] [--net-listen] [--net-allow <host:port>]...
+             [--cwd <dir>] [--tmp <dir>] [--name <container>]
+             [--acl tool|caller] [--gpu none|metal] -- <command> <args...>
 
-**Every path is yours and none is guessed.** A `--read`, a `--read-noexec`, a
-`--write`, a `--cwd` or a `--tmp` that does not exist is a refusal and is never
-created, and `HOME`
-must resolve **inside a `--write`** — the caller sets it — because almost every
-tool derives a path from it and an inherited `HOME` is denied by the wall. That
-is one flag on every line below, and leaving it off is the first thing a first
-run gets wrong.
+nova-sandbox probe --write <dir>... [--read <dir>...]
+             [--read-noexec <dir>...] [--secret <path>] [--net-deny]
+             [--net-listen] [--gpu none|metal]
+
+nova-sandbox policy --read <dir>... [--read-noexec <dir>...]
+             --write <dir>... [--net-deny] [--net-listen]
+             [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>]
+             [--name <container>] [--gpu none|metal]
+             [-- <command> <args...>]
+
+nova-sandbox check
+nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go]
+             [--read <dir>]... [--container <disk>]
+             [--out <dir> [--artifact <relpath>]... [--out-max-bytes <64m>]]
+             -- <command> <args...>                                      # darwin
+nova-sandbox run --name <n> --scratch <dir> [--place job|wsb]
+             [--timeout <30m>] [--memory <4g>] [--cpu <50>] [--go]
+             [--read <dir>]... -- <command> <args...>                    # windows
+nova-sandbox reap [--dry-run]                                             # darwin
+nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+nova-sandbox egress plan --run <id> --policy <file> --model-host <host>
+             --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>]
+             [--veth <if>] --out <file>
+nova-sandbox egress apply --plan <file> --run <id>                        # linux
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop --run <id>                                      # linux
+nova-sandbox version
+nova-sandbox help
+```
+
+`nova-sandbox help` prints the top-level usage. `nova-sandbox help <verb>`
+and a public verb's direct help form print help before validating the run.
+`probe-step` is an internal, guarded child of `probe`; it is not a public
+command.
+
+### The wrapper, its paths, and its network
+
+`--read` is readable and not writable. It carries execute permission, so use
+it for a program or toolchain the command runs. `--read-noexec` is readable
+but not executable and is the appropriate grant for data or a cache that the
+same user can populate. `--write` is readable and writable and is required.
+The flags are repeatable, have no defaults, and a path in both read forms or in
+a read and write form is refused rather than merged.
+
+Every caller path is resolved, absolute, and must already exist. `--cwd` and
+`--tmp` must be inside a write root; their defaults are the first write root
+and its tool-created temporary directory. Set `HOME` inside a write root
+before invoking the tool. The command can read only the platform roots and
+named read/write roots, and can write only named write roots.
+
+`--net-deny` means enforced network denial or refusal. Without it,
+`net=nopromise` is reported. `--net-listen` grants inbound IP and cannot
+combine with `--net-deny`; `--net-allow <host:port>` grants a named loopback
+destination. `--gpu none|metal` records the explicit local-GPU mode without
+adding a general device grant.
+
+`--name` and `--acl` are parsed for cross-platform argv compatibility.
+They are accepted and ignored by the current macOS and Linux bare-wrapper
+paths, while the bare wrapper refuses on Windows because its AppContainer
+backend is absent. They are not a current Windows containment feature.
 
 ### First run
 
-The `probe` and wrapped-command blocks below are multi-line shell commands; paste each whole block, not one line of it.
+The `probe` and wrapped-command blocks below are multi-line shell commands;
+paste each whole block, not one line of it.
 
 Ask the machine what it can enforce, then prove the wall before the first job:
 
 ```
 $ nova-sandbox check
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+CHECK OK backend=sandbox-exec abi=- net=enforceable hosts=none note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
 ```
 
-Invalid flags or unexpected arguments refuse with exit 2 naming the flag as typed:
+Invalid flags or unexpected arguments refuse with exit 2 naming the flag as
+typed:
 
 ```
 $ nova-sandbox check --bogus
 CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h
 ```
 
-Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
+Unknown verbs refuse explicitly with exit 2 rather than falling into the bare
+wrapper:
 
 ```
 $ nova-sandbox bogus
 SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help
 ```
-
-Prove the wall before the first job:
 
 ```
 $ mkdir -p /path/to/pool/jobs/j1/home
@@ -1005,14 +1097,11 @@ PROBE STEP name=read_root expect=allow got=allow path=/path/to/.local/bin/nova-s
 PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 ```
 
-`probe` runs **five** checks under the real policy for this platform, not two: a
-wall that denies the work as well as the secret is broken, and a two-check probe
-would call it a pass. `--secret <path>` names the file the probe proves it
-cannot read — the path is not the secret, and its contents are never read — and
-it must be **outside** both lists, since a secret inside a named directory is a
-misconfiguration rather than a failed check. The `HOME=` prefix is not
-decoration: rule 9's check runs before the policy is built, so a probe run with
-the dispatcher's own `HOME` is refused before it starts.
+`probe` exercises the write boundary, the optional secret boundary and the
+tool's own read root under the real generated policy. A secret's path is not its
+contents; `--secret` must lie outside every named root, and the probe never
+reads the contents. The `HOME=` prefix is required because the policy checks it
+before the probe starts.
 
 Then wrap the command. This example uses an empty repository initialized on
 branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
@@ -1029,211 +1118,90 @@ No commits yet
 nothing to commit (create/copy files and use "git add" to track)
 ```
 
-What a first run gets wrong, and what each one wants:
+### Inspecting and proving a policy
 
-- **No `HOME` inside a `--write`.** `PROBE REFUSED … HOME <dir> is outside every
-  --write`. Give the job a data home of its own: `mkdir -p <jobdir>/home` and
-  `HOME=<jobdir>/home`. A `--read` is not enough — the first config write dies
-  there.
-- **No `--write`, or no `--secret` on a probe.** Both are required and neither
-  has a default. They are named **together**, in one refusal, so a first run is
-  not sequenced into one run per mistake (nova-tools #104).
-- **A toolchain outside the wall.** A command that runs outside the wall and
-  dies inside it is missing a `--read`: a toolchain in a user directory is
-  exactly a caller-supplied read-only root, so name it. Name a cache or a data
-  tree with `--read-noexec` instead, and keep `--read` for what the job runs.
-- **A `--cwd` outside every named path.** It denies `getcwd(3)`, and every git
-  command dies there before it reads anything.
-- **Expecting a network promise without asking for one.** Without `--net-deny`
-  the tool makes no promise about the network and the line says
-  `net=nopromise`; `--net-deny` is an **enforced** denial or a refusal, never a
-  hope.
+`policy` prints the generated policy and starts no command. The command after
+`--` is optional; when omitted, the tool uses `sh` only to derive the
+command root. Its meaningful flags are the read/write, cwd, tmp, name, network
+and GPU controls shown above.
 
-`nova-sandbox policy` prints what would be generated without running anything,
-which is the fastest way to see the wall a set of flags actually makes.
+`probe` accepts the same read roots plus `--secret`, `--net-deny`,
+`--net-listen` and `--gpu`. It runs once before work begins. The current CLI
+also parses `probe --max`, `--net-allow`, `--cwd`, `--tmp`, `--name`
+and `--acl`, but does not apply them to the probe policy; do not use those
+flags as probe controls. Similarly, the current policy path parses `--secret`,
+`--max` and `--acl` without applying them. `check` currently has no
+operational flag: despite the specification's `check [--max <n>]` form, the
+CLI refuses `--max`. These are implementation/documentation gaps, not
+alternate supported interfaces.
 
-### A disposable place, on darwin
+### Disposable places
 
-The flags above give a command a **wall** around a directory you own and keep.
-`nova-sandbox run` gives it a **place** instead, and then takes the place away:
+On Darwin, `run` creates an APFS volume named `nova-<name>` with the required
+`--size` quota. The volume is the command's sole write root; its work
+directory, HOME and temporary directory live there. The command runs in its own
+process group. On normal exit, error, signal or timeout, the group is stopped,
+the volume is deleted, and `SANDBOX DONE` reports the result. A failed delete
+prints `SANDBOX LEAK` and exits 3. `reap [--dry-run]` is the Darwin recovery
+verb for volumes left by a killed runner.
 
-```
-$ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
-SANDBOX STEP name=create state=start
-SANDBOX STEP name=create state=done ms=2395
-SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Volumes/nova-j1/work ...
-SANDBOX STEP name=delete state=start
-SANDBOX STEP name=delete state=done ms=1426
-SANDBOX DONE name=j1 exit=0 wall=9.500 freed=32768
-```
+`--out` is the one writable path off a Darwin volume. After the command exits,
+the named artifacts are copied to `<out>/<name>/` before deletion. Its default
+artifact names are `RESULT.md`, `usage.tsv` and `repo.bundle` when present;
+`--artifact` names additional relative paths and `--out-max-bytes` caps the
+total. A card that needs to hand off Git work creates `repo.bundle` and passes
+an `--out` directory. `--go` adds GOROOT and GOMODCACHE as read roots from
+`go env`.
 
-An APFS volume of its own in the boot container, quota'd by `--size`, is the
-command's only writable directory — `TMPDIR`, `HOME` and the working directory
-are all on it — and on exit, whether that exit is clean, an error, a signal or
-`--timeout`, the whole process group is killed and the volume is unmounted and
-deleted. **There is no cleanup step**, because nothing of the run is left on the
-boot volume to clean. It needs no `sudo`. A delete that fails prints
-`SANDBOX LEAK` with the one `diskutil` command that removes it and exits 3,
-never silently.
+On Linux, `run` refuses: a card's disposable place is its image, so use the
+bare wrapper with the image root as `--write`.
 
-**A commit leaves as a bundle, through `--out`.** Everything on the volume is
-deleted, so a card that committed something needs one writable path out.
-`--out <dir>` opens it: after the command exits and before the volume is deleted,
-the named artifacts are copied to `<dir>/<name>/` and one line says what left.
+On Windows, `--scratch` is required and absolute, `--size` is refused
+because the command cannot enforce a per-directory NTFS quota, and `--out`
+and `--container` are refused. The default `--place job` requires both a Job
+Object and AppContainer wall. The current Windows build has no AppContainer
+backend, so it refuses with `reason=no_sandbox` before it creates or looks up
+the scratch directory. A deleted scratch directory does not count as
+containment. `--memory` and `--cpu` are Job Object limits only when that
+body can run; they validate but have no resource-limit effect on Darwin or
+Linux. `--place wsb` takes the separate Windows Sandbox path, requires
+`--timeout`, and is subject to feature and single-instance checks. This
+path conflicts with SPEC-SANDBOX rule 2, which excludes VM/Hyper-V requirements;
+it is not an approved exception or a verified native Windows worker configuration.
 
-```
-$ nova-sandbox run --name j1 --size 8g --out ./handoff \
-               -- /bin/sh -c 'cd repo && git bundle create ../repo.bundle HEAD && echo DONE > ../RESULT.md'
-SANDBOX STEP name=out state=start
-SANDBOX STEP name=out state=done ms=3
-SANDBOX OUT name=j1 files=2 bytes=21174
-SANDBOX DONE name=j1 exit=0 wall=11.220 freed=1048576
-```
+### Egress and worktrees
 
-The default set is `RESULT.md`, `usage.tsv` and `repo.bundle`, each taken **if
-present**; `--artifact <relpath>` names another set, repeatable, relative to the
-card's working directory, and an artifact you name and did not write is a
-refusal. Every path is resolved inside the volume — an absolute path, a `..` or
-a symlink is refused — and the whole set is measured before a byte is written
-and refused over `--out-max-bytes` (default `64m`). `git bundle create
-repo.bundle <branch>` as the card's last step is the documented way a commit
-leaves; the other side reads it with `git fetch ./repo.bundle <branch>`. A
-handoff that fails after a command that exited 0 makes the run
-`SANDBOX REFUSED reason=out_failed`, exit 125, because a zero would say the
-artifacts are there.
+`egress plan` and `egress check` run on every platform. `plan` resolves
+the reviewed allowlist once, writes a ruleset to `--out`, and audits that
+ruleset before returning. `check` rereads and audits a plan. `apply` and
+`drop` are Linux-only: they apply or delete the one run-specific nftables
+table, and refuse elsewhere. `plan` uses `--run`, `--policy`,
+`--model-host`, `--resolver`, optional `--bench-cidr`, and one traffic
+selector (`--uid` or `--veth`). `apply` uses `--plan` and `--run`;
+`check` uses `--plan`; `drop` uses `--run`.
 
-On linux `run` refuses with one remedy line: a card is already disposable there
-— it runs inside its image — so name the image root as `--write` on the bare
-form instead.
-
-### The same place, on windows
-
-`run` on windows is **the same verb**: the same five steps, the same receipt, the
-same `SANDBOX LEAK` and the same exit codes. What differs is the place and a
-handful of flags ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), rules W1–W12):
-
-```
-$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
-```
-
-- **The place is a Job Object plus `<scratch>\nova-<n>`, and the two are one
-  unit.** The job is what the darwin side gets from a process group: closing the
-  tool's last handle terminates the whole tree, including a grandchild a harness
-  abandoned, because the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and
-  never permits breakaway. The child is put in the job **at creation**, with
-  `PROC_THREAD_ATTRIBUTE_JOB_LIST` on the same attribute list as the wall, so
-  there is no window in which it is alive and outside one.
-- **`--scratch` is required** and must be an existing absolute path. There is no
-  default: not the TEMP variable, not the user profile.
-- **`--size` is refused**, with `reason=size_unenforceable`. NTFS quotas are per
-  user per volume, a directory quota is a server role and a per-run quota is a
-  VHDX needing administrator rights. A ceiling the tool only measures is not a
-  ceiling, so this is a refusal and not a note — the same rule `--net-deny`
-  already follows. Both remedies are on the line.
-- **`--memory` and `--cpu` are the job's caps**, and they are the one place this
-  tool limits memory or CPU at all. Both are accepted and ignored on darwin and
-  linux, so one caller writes one argv for three platforms.
-- **`--place wsb`** is Windows Sandbox: full disposability, because the guest's
-  disk is discarded when the window closes. It is Pro and Enterprise only, it is
-  **one instance per machine** — so it is the review place and never the swarm's
-  — and it requires `--timeout`, because the guest's status comes back through a
-  file in the mapped folder or not at all.
-- **WSL is never the answer**, not as the wall, not as the place and not as a
-  fallback: containment that only holds inside WSL is containment on a machine
-  the card was not sent to.
-
-**This is not measured on a Windows machine.** The estate has none as of
-2026-09-18. The verb's sequence is proven against a fake on every host, the
-binary cross-compiles and vets for `GOOS=windows`, and until the **wall**
-(AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
-the half that is missing — a place without a wall is hygiene, not containment.
-
-**A card that builds Go wants `--go`**, which adds the toolchain's own two roots
-to the read set — `GOROOT` and `GOMODCACHE`, as `go env` reports them — so that
-neither has to be named by hand in every argv. `nova-sandbox run --help` prints
-the verb's own usage.
-
-**Two runs at once are safe, and the tool is what makes them so.** Creating the
-volume is the one step that cannot be shared: two `diskutil apfs addVolume`
-running at the same time leave the new volume's root owned by `root:wheel`
-instead of you, it never settles, and the run dies at `mkdir` with `permission
-denied` before its card starts — measured in a 20-run soak on the Studio,
-2026-09-18, three of four concurrent runs and then four of four. `run`
-serializes creation across processes with a lock file under your own cache
-directory, and checks the new root is yours and writable before it hands it to
-anything. Nothing else is serialized: the runs themselves overlap freely.
-
-**A `--timeout` that passes prints `SANDBOX TIMEOUT after=<d>`** and asks the
-operating system nothing. A deadline is not a path the wall refused, so the
-`SANDBOX DENIED` query below is skipped for it.
-
-### Clearing up after a `SIGKILL`
-
-`run` deletes its volume on every path out it can take. `SIGKILL` is not one of
-them — the tool is gone before it can delete anything, so the volume stays
-mounted and the command's own children are reparented to PID 1 **still holding
-it open**, which is why a later `diskutil apfs deleteVolume` will not clear it
-either. Nothing survives to print `SANDBOX LEAK`, and `check` does not look:
-`check` asks what the backend can enforce, not what the machine is still
-holding.
-
-`nova-sandbox reap` is the verb that looks. It lists every `nova-*` volume —
-that prefix is the whole of its authority — kills whatever holds each one open
-(`SIGTERM`, then `SIGKILL` after a short grace) and deletes it, one line each:
-
-```
-$ nova-sandbox reap
-SANDBOX REAP volume=nova-j1 procs=1 deleted=yes
-SANDBOX REAP OK volumes=1
-
-$ nova-sandbox reap --dry-run
-SANDBOX REAP OK volumes=0
-```
-
-It **never takes a volume from a live run**: `run` leaves a
-`.nova-sandbox-owner` marker at its volume root carrying its pid and that
-process's start time — both, because a pid is a number the OS hands out again —
-and a volume whose marker names a running tool is reported and left alone. Exit
-is **0** when the machine is clean and **3** when anything remained, including
-every `--dry-run` that found something, which is what makes `reap --dry-run` a
-gate a card can end on. `--dry-run` prints and touches nothing.
-
-**When a contained command exits non-zero**, the tool asks the operating system
-what it refused and prints one line per path, with the flag that would have
-allowed it:
-
-```
-SANDBOX DENIED path=/opt op=read remedy="--read /opt"
-```
-
-macOS 26 does not report a `sandbox-exec -p` profile's violations to the unified
-log at all (measured; `(with report)` and `(trace ...)` are both unavailable), so
-on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of the
-allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
-measurement.
-
-### worktree
-
-Materialises one pull request's exact head in an isolated scratch tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's 0/1/2 grammar (0 the verb ran, 2 could not run), reads the repository through git on `PATH`, and reads the pull request through the forge client (`gh`).
+`worktree` materialises one pull request head in a GUID scratch tree. It is
+not a wall and follows the ordinary 0/1/2 verb grammar. `--repo` and
+`--scratch` name existing absolute paths. Use either `--pr <id>`, with an
+optional `--base <branch>`, or `--prune`; do not combine the modes. The
+current parser can silently ignore an unknown worktree flag, so the grammar
+above is the supported set until that CLI validation gap is repaired.
 
 ```
 $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
 WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
 ```
 
-A subsequent invocation on the same clean head reuses the existing tree rather than rebuilding it:
-
-```
-$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
-WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
-```
-
-`--prune` walks `<scratch>/*.pr`, inspects process usage, and deletes idle trees older than 24 hours:
+`--prune` examines recorded scratch trees and removes only idle stale entries:
 
 ```
 $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
 WORKTREE OK removed=0 kept=1
 ```
+
+The egress parser also accepts the union of its subverb flags, and current
+`apply` or `drop` can ignore flags that belong only to `plan`. Use only the
+subverb-specific flags listed above.
 
 ## nova-tokens
 
@@ -2173,7 +2141,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
 | `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages, then one `TABLE PROP table= <name>=<value>` line for each of the table's properties (values a batch manifest writes with its members, such as a rolling index), in name order; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
-| `render <table>` | Prints a text table; an empty table prints its header and footer |
+| `render <table>` | Prints a text table; an empty table prints its header and, when a column folds, its footer |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically; `--check` runs a read-only invariant check per table per tick and shows a stall row on failure |
 | `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view, replacing its title and summary together; summary uses the first table |

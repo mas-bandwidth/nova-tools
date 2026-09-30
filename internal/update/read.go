@@ -46,6 +46,11 @@ var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7
 
 type Read struct{ Raw, Version, Path, Reason, Remedy, Source string }
 
+func modelOwnerRemedy(name string) string {
+	return "owner: use the configured model runtime to obtain " + name +
+		" and verify with its status or list command (for Ollama: ollama pull " + name + "; ollama list)"
+}
+
 func (r Read) Known() bool      { return r.Reason == "" }
 func firstLine(s string) string { s, _, _ = strings.Cut(s, "\n"); return strings.TrimSuffix(s, "\r") }
 func opaque(line string) bool {
@@ -84,7 +89,7 @@ func identity(e Entry, raw string, report bool) Read {
 			}
 		}
 		r.Reason = "model_not_found"
-		r.Remedy = "owner: ollama pull " + e.Name + "; nova-local status --list"
+		r.Remedy = modelOwnerRemedy(e.Name)
 		return r
 	}
 	if report && opaque(r.Raw) {

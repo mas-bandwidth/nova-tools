@@ -175,17 +175,19 @@ reply header.
 
 ## Tests this spec demands
 
-The tests below cover `wait --on-note`, the specified `receipt --verdict`
-extension, `send --file` preflight, and `reply`. Disposable local remotes and
-injected clocks keep the relevant failures reproducible; no test needs a live
-service or a real secret.
+The list below states the required tests for `wait --on-note`, the specified
+`receipt --verdict` extension, `send --file` preflight, and `reply`. Existing
+tests cover parts of the implemented verbs; `receipt --verdict` and the
+`wait --cc` data option remain unimplemented obligations. Disposable local
+remotes and injected clocks can keep these failures reproducible without a
+live service or a real secret.
 
 1. `TestWaitOnNotePrintsOnlyTheNote` — a To: note wakes exactly one `WAIT OK` status line and its `INBOX NOTE`/body, and no `INBOX OPEN` frame or carrying count ever prints.
 2. `TestWaitOnNoteWakesOnToOnly` — the wake is To: only (addr=to the default); a Cc: note is data, not a wake.
 3. `TestWaitOnNoteWritesNothingWithoutAdvance` — `wait --on-note` writes nothing unless `--advance` is given.
 4. `TestWaitOnNoteAdvanceMovesTheCursorLikeInbox` — with `--advance` it moves and pushes the caller's cursor as `inbox --advance` does.
 5. `TestWaitOnNoteNamesEveryField` — the wake output names the id, sender, repository-relative path, byte count and the existing frame fields.
-6. `TestWaitOnNoteNeverWakesOnAnEmptyTick` — an empty tick prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
+6. `TestWaitOnNoteNeverWakesOnAnEmptyTick` — an empty tick prints nothing and keeps waiting; only the overall deadline prints `WAIT TIMEOUT`, with no note frame or parent wake.
 7. `TestWaitOnNoteRearmsAfterAHarnessCap` — a service manager restarts the unit at the cap and the restarted wait resumes with the note's arrival not lost.
 8. `TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap` — one note's body is bounded to `--max-bytes` (default 65536, hard ceiling 1048576).
 9. `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — one wake returns at most `--max-notes` notes (default 20, ceiling 1000) and at most `--max-bytes` body bytes, stopping at whichever bound is reached first.

@@ -494,7 +494,7 @@ func apply(entries []Entry, name string, o options, out, errs io.Writer, env Env
 		return refusal(errs, "APPLY", fmt.Errorf("name %s absent from %s (%d entries; name one exact entry)", name, o.file, len(entries)))
 	}
 	if e.Kind == "model" {
-		return refusal(errs, "APPLY", fmt.Errorf("model %s is not installed by this tool (owner: ollama pull %s; nova-local status --list)", name, name))
+		return refusal(errs, "APPLY", fmt.Errorf("model %s is not installed by this tool (%s)", name, modelOwnerRemedy(name)))
 	}
 	if len(e.Apply) == 0 {
 		return refusal(errs, "APPLY", fmt.Errorf("%s is installed by hand (follow the owner's installation procedure)", name))

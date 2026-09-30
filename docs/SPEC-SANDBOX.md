@@ -810,8 +810,10 @@ looks up or creates the scratch. The current Windows build has no AppContainer
 backend, so this is its present result rather than a claim that a deleted
 directory supplies containment. `--place wsb` uses Windows Sandbox as the
 boundary, requires `--timeout`, and is limited to one instance on a machine.
-It is available only where the Windows Sandbox feature is available. The run
-path never uses WSL as a wall, place or fallback.
+It is available only where the Windows Sandbox feature is available. That
+implemented path conflicts with rule 2, which excludes VM/Hyper-V requirements;
+it is an unresolved implementation mismatch, not an exception to that rule.
+The run path never uses WSL as a wall, place or fallback.
 
 ### `run --help`
 

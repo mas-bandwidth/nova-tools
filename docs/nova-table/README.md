@@ -314,7 +314,7 @@ nova-table help [<verb> [<subverb>]]
 | `check` | Audits record/set links in both directions, including hidden cells |
 | `clear` | `TABLE CLEAR table=<t> rows=<n> ms=<n>`; one call; the definition stays |
 | `show` | `TABLE table=<t> columns=<n> rows=<n> trips=1 epoch=<n> revision=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<projected-value> ...` per row, including hidden rows/columns, and `TABLE PROP` lines for table properties |
-| `render` | table text, including the header and footer when there are no rows; `--view` prints one stored-view frame with timestamp, title and summary |
+| `render` | table text, including the header and, when a column folds, the footer when there are no rows; `--view` prints one stored-view frame with timestamp, title and summary |
 | `watch` | the text, once per tick, in place or to `--out` |
 | `view set`, `view state`, `view show`, `view list`, `view del` | Manages stored view configuration and its displayed state |
 | `shell` | Reads commands on one resident connection; each line retains its normal verb behavior |
@@ -544,7 +544,7 @@ never a false 0, and so does the fold over it. A row hidden with `set --hide`
 stays in the fold.
 
 **The empty rule.** A table always renders: an empty table prints its title
-header and its footer, with no body line and no placeholder. A row with all
+header and, when a column folds, its footer, with no body line and no placeholder. A row with all
 zero counts prints like any other.
 
 ## Watching

@@ -17,7 +17,8 @@ Optional flags name the remaining sources and the reading's execution:
 repeatable `--by`, `--json`, `--now <RFC3339>`, `--gh <executable>`,
 `--git <executable>` and `--timeout <seconds>`. The executable flags select
 the child programs used for forge and repository reads; `--now` fixes the
-reading's clock for an exact replay.
+clock used for time-window calculations. Repeating a reading also requires
+the forge, checkout, files and saved state to remain the same.
 
 ## What a stream is
 

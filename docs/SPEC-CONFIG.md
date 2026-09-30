@@ -247,8 +247,10 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
 **Every row write is also a history row, in the same transaction.** `add`
 records `before = null, after = the row`; `set` records the row before and
 after; `remove` records `before = the row, after = null`. `actor` is `--as`
-(or `NOVA_FRIEND`), required on each row write. There is no path that changes
-a row without a record, and no path that edits history.
+(or `NOVA_FRIEND`), required on each row-verb write. No `add`, `set` or `remove`
+changes a row without a history record, and no path edits history. Schema
+migrations create the initial `fleet` and `sprint` singleton rows without a
+history record.
 
 **A kind's revision** is the greatest `history.id` of its rows, 0 for a
 kind never written. It is what `apply` stamps into Redis. Revisions are
@@ -365,8 +367,9 @@ failure fail the Ansible invocation instead of yielding an empty inventory.
 
 ## Lines
 
-One typed line per event; values go through `oneline.Field`, an empty value
-prints as `-`.
+The row, status, apply, migrate and width verbs print typed lines; values go
+through `oneline.Field`, and an empty value prints as `-`. `inventory` prints
+JSON, while successful `machine self` prints only the resolved name.
 
 ```
 CONFIG ADD kind=<k> name=<n> rev=<id>

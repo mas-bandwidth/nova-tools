@@ -133,10 +133,12 @@ choice, and working alternatives remain welcome.
 ## Tests this spec demands
 
 `cmd/nova-bus` and `internal/bus` own preparation and prepared send;
-`internal/update` owns the version reporter's pending/delivered state. The tests
-below exercise the contract with disposable local Git remotes, injected clocks,
-temporary directories, and process-death boundaries. Their names identify the
-intended coverage, not a claim that every failure mode has runtime evidence.
+`internal/update` owns the version reporter's pending/delivered state. The list
+below states test obligations, not a claim that every named test or failure
+mode has runtime evidence. Existing tests exercise parts of the contract with
+disposable local Git remotes, injected clocks, temporary directories, and
+process-death boundaries. Named obligations without a matching test, including
+`TestPrepareWritesNoBusState`, remain owed until they have direct evidence.
 
 1. `TestPrepareDecidingTests` — `prepare` reads the explicit bus and draft, reusing participant/recipient/draft validation, and computes the existing deterministic note ID.
 2. `TestMakeAndValidatePreparedArtifact` — `prepare` assigns Date once (injected clock) before any mutation.

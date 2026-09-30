@@ -1,6 +1,15 @@
-# TESTS.md: the first-run transcripts the tests execute
+# TESTS.md: first-run transcripts and coverage status
 
 Every `$` line under a `### First run` heading below is run by a test against the fixture named beside it, and what the tool prints is compared with what is written here by SHAPE: the two-token event prefix and the field names in order, per [docs/ONBOARDING.md](ONBOARDING.md) point 5(c). The values are deliberately not compared, so that this file stays a document instead of becoming a fixture -- but every block below was produced by RUNNING the tool, so the values are a run's own and not anybody's memory of one. [docs/CLI.md](CLI.md) explains the tools; this file is what they do today. Change a tool, change this file in the same commit, or the test says so.
+
+The installed command census is 18: `nova-bus`, `nova-cairn`, `nova-check`,
+`nova-ci`, `nova-config`, `nova-fuse`, `nova-memory`, `nova-redis`,
+`nova-sandbox`, `nova-secrets`, `nova-self-talk`, `nova-sprint`, `nova-swarm`,
+`nova-table`, `nova-tokens`, `nova-update`, `nova-version`, and `nova-work`.
+Sixteen sections below carry a `### First run` transcript. The Sprint and Work
+sections record coverage still owed; they contain no transcript and make no
+first-run test or passing-run claim. Their existing command tests do not replace
+the fixture and transcript checks required by [docs/ONBOARDING.md](ONBOARDING.md).
 
 ## Reading a block
 
@@ -823,3 +832,37 @@ build |     1 |       1 |    0
 ------+-------+---------+-----
       |     1 |       1 |    0
 ```
+
+## nova-sprint
+
+First-run transcript owed. `cmd/nova-sprint/main_test.go` exercises command
+lines through `app.run` with an in-memory sprint store and controlled clock;
+`cmd/nova-sprint/inbox_test.go` checks that help shows an inbox worked example.
+The `where` frame golden files cover display shape. None of these tests reads a
+Sprint transcript from this file, and the current `cmd/nova-sprint/testdata/`
+contains only those frame goldens. No output is recorded here as an executed
+first run.
+
+The missing fixture should run the public first commands from a fresh sprint,
+with explicit store/library and actor setup for any stateful steps, capture
+stdout and stderr separately, and compare the documented transcript shape.
+The help example also needs runnable fresh-state commands to meet the existing
+onboarding standard; the current inbox illustration uses already-existing
+judgment IDs and is not a fresh-state first run.
+
+## nova-work
+
+First-run transcript owed. `cmd/nova-work/main_test.go` exercises `import` and
+`verify` against the recorded `internal/workgh/testdata/reliable` GitHub-query
+replay, including a zero-difference verify, a changed-field drift, dry run,
+budget refusal, and help/refusal checks. It checks selected output fragments;
+it does not read or compare a Work transcript from this file. There is no
+`cmd/nova-work/firstrun_test.go` or command-local first-run fixture.
+
+A first-run fixture can use that recorded query replay to run the documented
+commands without a live GitHub login, capture both streams, and compare their
+actual transcript shape here. A real invocation of `import` or `verify` still
+requires access to the selected GitHub repositories. The current help banner's
+`<org>` and `<org>/<repo>` lines are placeholders, so a runnable `example:`
+block and its executed fixture remain owed under the existing onboarding
+standard. No placeholder output is presented as a run.
