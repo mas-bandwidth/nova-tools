@@ -106,16 +106,6 @@ func ReadFailedRun(f FailForge, sel RunSelector, jobFilter string) (int64, Faile
 		if j.Cancelled() {
 			report.Cancelled++
 		}
-		// The forge's own conclusion and the failed step's name are the mechanical facts
-		// the CI-red reading classes a red by. They travel beside the report so the
-		// reading never guesses at a line of the log.
-		report.RedJobs = append(report.RedJobs, RedJob{
-			Name:       j.Name,
-			Conclusion: j.Conclusion,
-			Step:       FailedStepName(j),
-			Attempt:    j.Attempt,
-			SHA:        j.HeadSHA,
-		})
 		said := report.findings()
 		report.Cancels = append(report.Cancels, CancelledSteps(j)...)
 		log, err := f.JobLog(j.ID)
