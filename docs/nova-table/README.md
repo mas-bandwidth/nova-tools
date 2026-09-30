@@ -100,10 +100,11 @@ kinds of cell:
   *projection*: `count` (the set's size, Glenn's |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
   (the lowest and highest scored member), or `text` (a value per row, set
-  by `row set`, blank when none; no set). `pct(<count-column>)` is a formula
-  over count cells, with no set of its own.
+  by `row set`, blank when none; no set). `pct(<count-column>)`,
+  `pct(<count-column>/<a>+<b>)` and `sum(<a>+<b>)` are formulas over count
+  cells, with no set of their own.
 - **Footer cells.** One per column, the column's *fold* over the body:
-  `sum` (the default for a count), `max` or `avg` of the counts, `union` of the
+  `sum` (the default for a count and a `sum(...)`), `max` or `avg` of the counts, `union` of the
   members, `pooled` for percentages, or `none` (blank). The footer row carries the table's footer
   label (blank by default; use `--footer total` to name it). A table whose columns all fold `none` prints no
   footer row.
@@ -275,13 +276,14 @@ nova-table member read <table> <id>... | <table> --cell <row:col>
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
-nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
-nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
+nova-table render <table> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--width <col=n,...>] [--label-width <n>]
 nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del <name>
-nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--once]
 ```
 
 | verb | prints |
@@ -295,7 +297,7 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
 | `row sort` | `TABLE ROW SORT table=<t> by=<key> desc=<bool> keep=<bool>`, or `manual=true` |
 | `col add` | `TABLE COL ADD table=<t> col=<c> place=<...>`; last unless a place is named |
-| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a percentage reads it |
+| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a formula reads it |
 | `col move` | `TABLE COL MOVE table=<t> col=<c> place=<...>`; the other columns keep their order |
 | `cell add`, `cell remove` | `TABLE CELL table=<t> row=<r> col=<c> n=<count after>`; `--score` is the member's place (the unix ms when omitted) |
 | `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
@@ -330,6 +332,18 @@ and their receipts remain. Dropping or renaming a table does not rewrite a view;
 edit or delete the reference explicitly. A view summary names a **count** column
 in its first table, such as `done`, not a `pct(done)` formula.
 
+`view set` replaces title and summary together, so one left out is cleared.
+Every table of a view is drawn, and every row of it, empty or not.
+
+`view state <name> <text>` gives a view a state: while it has one, the summary
+line is that text alone, in place of the counts, the percent and the ETA, and
+`--clear` removes it so the counts show again. A state is one line of at most
+64 bytes. `view set` leaves a view's state as it is; `view show` prints it. A
+tool that fills a view writes its state with its own record in one
+transaction (`ntable.QueueViewState`), so the two never disagree:
+`nova-sprint` writes `STOPPED` with the machine's state record on `stop`,
+`clear` and `init`, and clears it on `start`.
+
 ## Editing, batches and rename
 
 `set` validates the entire definition edit before writing. Removing a nonempty
@@ -337,8 +351,12 @@ owned set, changing it to text or a formula, or removing nonempty text is refuse
 move/remove members or clear text first. Bound external sets remain untouched.
 `row set` writes text values stored by column; later row metadata or binding
 edits retain those text values and row visibility. `pct(<count-column>)` computes
-the named count divided by all count columns in the row. Its default footer is
-`pooled`: sum the counts first, then divide. A percentage cannot fold `avg`.
+the named count divided by all count columns in the row; `pct(<count-column>/<a>+<b>)`
+the named count divided by the named count columns `a`, `b` of the row, for example
+`okpct:pct(ok/ok+failed):pooled:ok%`; `sum(<a>+<b>)` the named count columns of the
+row added, for example `done:sum(ok+failed)`. Every column a formula names is a
+count column of the table, hidden or not. A percentage's default footer is
+`pooled`: sum the numerators and the denominators first, then divide. A percentage cannot fold `avg`.
 A stored definition with the former `pct:avg` rule can be repaired using
 `set --columns`; replacement columns are validated under the current rules.
 
@@ -379,7 +397,8 @@ Stored views are presentation configuration, separate from table epoch receipts.
 A view write validates all references and command permissions before either its
 hash or registry is changed. `watch --view` reloads the view each frame and reads
 its tables in one pipeline: two application exchanges, including a summary.
-The timestamp, title, pooled summary and tables form the frame. The summary uses
+The timestamp, title, summary line and tables form the frame. The summary line is
+the view's state alone while it has one, and otherwise the pooled summary, which uses
 the same table snapshot as the body; unread inputs print `?`. ETA has no value
 until change-stream rate sampling is implemented. Edit a view to change its
 tables or title without restarting watch.
@@ -478,7 +497,7 @@ While a sort stands, `row move` and `row order` are refused and name
 `row sort <table> --manual`. `col del` refuses a column that holds members
 (naming all blocking rows and members, with one batch `cell remove` command per
 occupied cell), a text column with a value (clear
-it with `row set <table> <row> <col>=`), a column a `pct(...)` column reads
+it with `row set <table> <row> <col>=`), a column a `pct(...)` or `sum(...)` column reads
 (remove that one first) and the last column. Quote a column spec that has
 parentheses: the shell reads `pct(busy)` unquoted as a pattern.
 
@@ -502,24 +521,25 @@ characters as literal escapes (for example, newline as `\x0a` and ESC as `\x1b`)
 Widths are measured after escaping. Stored values remain unchanged; text cannot
 add a row or execute a terminal control sequence.
 Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
-never a false 0, and so does the fold over it. `--hide-zero-rows` hides a
-row whose count cells are all zero and all read; the fold is still the
-column's, hidden rows included.
+never a false 0, and so does the fold over it. A row hidden with `set --hide`
+stays in the fold.
 
-**The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string, including its title: no placeholder and no gap.
+**The empty rule.** A table always renders: an empty table prints its title
+header and its footer, with no body line and no placeholder. A row with all
+zero counts prints like any other.
 
 ## Watching
 
 `watch` renders the named tables once per `--every` (1s), one blank line
-between two that print, `--title` first. With no `--out` it draws in place
+between two, `--title` first. With no `--out` it draws in place
 on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 so a reader sees one whole table. `--once` renders
 once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
 title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
-`stale: <n>s` line under it, and stderr says why once. A signal ends it,
+`store unreachable since <time>` line under it, and stderr says why once. While
+the store answers the frame is the table and nothing else: no age, no counter. A signal ends it,
 exit 0.
 
 ## Module integration and deployment
@@ -541,7 +561,7 @@ the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
 `ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
 commands and authorized key patterns. Writers also need `HDEL`, `TYPE`,
 `XINFO STREAM` and `XADD` for records and receipt preflight; revision counters
-use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` and grants for `view:*` and `views`. The explicit maintenance check needs
+use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` (and `ns_view_state` to set a state) and grants for `view:*` and `views`. The explicit maintenance check needs
 `FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
 reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before

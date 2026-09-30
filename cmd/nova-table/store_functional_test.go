@@ -26,7 +26,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	}{
 		{[]string{"create", "--redis", addr}, "wants one table name: create <table> --columns"},
 		{[]string{"create", "demo", "--redis", addr}, "--columns wants the columns, name[:projection[:fold[:label]]] each"},
-		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
+		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text, pct(<count column>), pct(<count column>/<a>+<b>) or sum(<a>+<b>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
 		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del, move, order, sort"},
@@ -117,19 +117,21 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 			"tests |     0 |       0 | bo\n" +
 			"------+-------+---------+-------\n" +
 			"all   |     1 |       0 | ann,bo\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows", "--label-width", "8"}, "jobs     | ready | working | who\n" +
+		{[]string{"render", "jobs", "--label-width", "8"}, "jobs     | ready | working | who\n" +
 			"---------+-------+---------+-------\n" +
 			"build    |     1 |       0 | ann\n" +
+			"tests    |     0 |       0 | bo\n" +
 			"---------+-------+---------+-------\n" +
-			"all      |     1 |       0 | ann,bo\n"}, // the fold is the column's, hidden rows included
+			"all      |     1 |       0 | ann,bo\n"}, // an all-zero row shows
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=3 rows=2\n"},
 		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
 		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
 		{[]string{"set", "jobs", "--columns", "ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=5 trips=1\n"},
 		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
+		{[]string{"render", "jobs"}, "jobs  | ready | working | who    | ready% | note\n" +
 			"------+-------+---------+--------+--------+------\n" +
 			"build |     1 |       0 | ann    | 100.0% | green\n" +
+			"tests |     0 |       0 | bo     | 0.0%   |\n" +
 			"------+-------+---------+--------+--------+------\n" +
 			"sum   |     1 |       0 | ann,bo | 100.0% |\n"},
 		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=11 trips=1\n"},

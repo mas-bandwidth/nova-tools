@@ -1,6 +1,5 @@
 -- The waiting-resolve duty's pass in one call (Glenn 2026-09-27: "You
--- always need to batch redis"; the Go pass, internal/nsprint/reconcile/
--- waiting_resolve.go, made five dependent round trips for it). The same
+-- always need to batch redis"; the pass it replaced made five dependent round trips for it). The same
 -- rounds, in the server: every stream of ws:order a pit stop does not hold,
 -- each stream's waiting set under the epoch, each waiter's DEPENDS-ON, the
 -- records those name (a task, or every stream member that names a repo#n),
@@ -13,6 +12,13 @@
 -- No shebang: the loader prepends the library header; this file sorts after
 -- 02_card_move.lua and reaches it through NS.
 do
+  -- cfg_owner is the sprint's configured repository owner (HGET cfg:sprint
+  -- owner), read once per pass: the owner of a bare repo#n or bare repository
+  -- name that nothing else names. No owner is written in this file: an
+  -- entry with no owner from its text, its card's repo field or the config is
+  -- refused with the reason, never given one.
+  local cfg_owner = ''
+
   local function str(v)
     if v == nil or v == false then return '' end
     return tostring(v)
@@ -38,10 +44,24 @@ do
     return out
   end
 
-  -- ref_key is reconcile.wrRefKey: owner/repo#n (the owner defaulting to
-  -- mas-bandwidth, prkey.DefaultOwner), lower-cased, for an owner/repo#n,
-  -- repo#n or GitHub issue/PR URL; '' for anything else.
-  local function ref_key(s)
+  -- owner_of is the owner of an owner/name repo field, or ''.
+  local function owner_of(repo)
+    return string.match(trim(repo), '^([%w_.-]+)/[%w_.-]+$') or ''
+  end
+
+  -- owner_for is the owner a bare name on this card takes: the owner of the
+  -- card's own repo field, else the sprint's configured owner, else ''.
+  local function owner_for(card_repo)
+    local o = owner_of(card_repo)
+    if o ~= '' then return o end
+    return cfg_owner
+  end
+
+  -- ref_key is reconcile.wrRefKey: owner/repo#n, lower-cased, for an
+  -- owner/repo#n, repo#n or GitHub issue/PR URL; '' for anything else. A bare
+  -- repo#n takes the owner given as fallback; with none it returns '' and
+  -- true (no owner), which the caller refuses.
+  local function ref_key(s, fallback)
     s = trim(s)
     local owner, name, n = string.match(s, '^([%w_.-]+)/([%w_.-]+)#(%d+)$')
     if not owner then
@@ -59,7 +79,8 @@ do
       end
     end
     if not name then return '' end
-    if owner == '' then owner = 'mas-bandwidth' end
+    if owner == '' then owner = str(fallback) end
+    if owner == '' then return '', true end
     return string.lower(owner .. '/' .. name .. '#' .. n)
   end
 
@@ -69,8 +90,9 @@ do
   end
 
   -- parse_deps is reconcile.wrParse: the entries with their kind (task,
-  -- ref, or neither) and key; none is true for "none" or "-" alone.
-  local function parse_deps(text)
+  -- ref, noowner or neither) and key; none is true for "none" or "-" alone.
+  -- fallback is the owner for a bare repo#n (owner_for the waiter's card).
+  local function parse_deps(text, fallback)
     local parts = split_deps(text)
     if #parts == 0 then
       local t = trim(text)
@@ -83,8 +105,10 @@ do
       if id then
         if is_id(id) then dep.kind, dep.key = 'task', id end
       else
-        local k = ref_key(p)
-        if k ~= '' then
+        local k, no_owner = ref_key(p, fallback)
+        if no_owner then
+          dep.kind = 'noowner'
+        elseif k ~= '' then
           dep.kind, dep.key = 'ref', k
         elseif is_id(p) and p ~= 'none' then
           dep.kind, dep.key = 'task', p
@@ -99,15 +123,16 @@ do
     return state == 'landed' or where == 'landed' or (where == 'done' and ok ~= 'fail')
   end
 
-  -- full is prkey.Full: owner/name, a bare name under the default owner;
-  -- nil for anything else.
-  local function full(repo)
+  -- full is prkey.Full: owner/name, a bare name under the fallback owner;
+  -- nil for anything else, and for a bare name with no owner to take.
+  local function full(repo, fallback)
     repo = trim(repo)
     if repo == '' or string.find(repo, '[ :\t\r\n]') then return nil end
     local owner, name = string.match(repo, '^([^/]+)/([^/]+)$')
     if not owner then
       if string.find(repo, '/', 1, true) then return nil end
-      owner, name = 'mas-bandwidth', repo
+      owner, name = str(fallback), repo
+      if owner == '' then return nil end
     end
     return owner .. '/' .. name
   end
@@ -116,8 +141,9 @@ do
   -- fields name, and its pr number under its repo (or its ref's).
   local function names(pr, ref, origin, repo)
     local out = {}
+    local fallback = owner_for(repo)
     for _, s in ipairs({ ref, origin, pr }) do
-      local k = ref_key(s)
+      local k = ref_key(s, fallback)
       if k ~= '' then out[#out + 1] = k end
     end
     local n = trim(pr)
@@ -125,11 +151,11 @@ do
     if n ~= '' and string.match(n, '^%d+$') then
       local r = repo
       if r == '' then
-        local k = ref_key(ref)
+        local k = ref_key(ref, fallback)
         if k ~= '' then r = string.sub(k, 1, (string.find(k, '#[^#]*$') or 1) - 1) end
       end
       if r ~= '' then
-        local f = full(r)
+        local f = full(r, fallback)
         if f then out[#out + 1] = string.lower(f .. '#' .. n) end
       end
     end
@@ -150,6 +176,8 @@ do
   local function resolve_pass(keys, args)
     local actor = str(args[1])
     if actor == '' then actor = 'reconciler' end
+    cfg_owner = str(redis.call('HGET', 'cfg:sprint', 'owner'))
+    if not string.match(cfg_owner, '^[%w_.-]+$') then cfg_owner = '' end
     local holds, i = {}, 2
     while args[i] do
       local kind, n = args[i], tonumber(args[i + 1]) or 0
@@ -204,11 +232,11 @@ do
     -- round 3: each waiter's DEPENDS-ON, phase and kind; a plan is no waiter
     local kept = {}
     for _, w in ipairs(waiters) do
-      local v = redis.call('HMGET', 'task:' .. w.id, 'blocked_on', 'phase', 'kind')
+      local v = redis.call('HMGET', 'task:' .. w.id, 'blocked_on', 'phase', 'kind', 'repo')
       if str(v[3]) ~= 'plan' then
         w.blocked_on = trim(v[1])
         w.stitch = str(v[2]) == 'stitch'
-        w.deps, w.none = parse_deps(w.blocked_on)
+        w.deps, w.none = parse_deps(w.blocked_on, owner_for(v[4]))
         kept[#kept + 1] = w
       end
     end
@@ -291,7 +319,17 @@ do
     for _, w in ipairs(waiters) do
       local r = line_of(w.stream)
       local met = w.none
-      if not w.none and #w.deps > 0 then
+      local unowned = ''
+      for _, d in ipairs(w.deps) do
+        if d.kind == 'noowner' then unowned = d.raw break end
+      end
+      if unowned ~= '' then
+        -- no owner to name the entry under: refused with the reason, left waiting
+        met = false
+        r.still = r.still + 1
+        r.refused[#r.refused + 1] = { w.id, 'no owner for ' .. unowned ..
+          ': write owner/repo#n, give the card an owner/name repo, or set cfg:sprint owner' }
+      elseif not w.none and #w.deps > 0 then
         met = true
         for _, d in ipairs(w.deps) do
           local st = 'unknown'
@@ -307,7 +345,9 @@ do
           end
         end
       end
-      if not met then
+      if unowned ~= '' then
+        -- refused above, counted in still
+      elseif not met then
         r.still = r.still + 1
       else
         local gk = w.stream .. '\0' .. w.blocked_on

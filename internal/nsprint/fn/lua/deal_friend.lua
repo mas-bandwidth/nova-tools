@@ -1,6 +1,6 @@
 -- The friend deal (nova-tools #3873): ready -> working to a friend, and a
 -- card no live consumer may take back to waiting. Called only by the
--- reconciler's deal duty (internal/nsprint/reconcile/deal_friend.go), which
+-- reconciler's deal duty, which
 -- reads every ws:<stream>:ready in ws:order rank order, honours WHO and kind,
 -- and hands each friend its batch in one call per tick.
 --

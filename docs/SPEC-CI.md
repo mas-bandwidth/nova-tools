@@ -935,9 +935,8 @@ never lost, and whose classifier's default case PRINTS, relays the progress line
 as a bus line, counts it as a change in the world, and ends a poll before the
 mail arrives.
 **The test.** `TestEveryNovaBusConsumerDropsProgressLines`
-(`internal/ci/busprogress_class_test.go`); the two halves it indexes are
-`TestProgressNeverEntersTheProtocolStream` in `cmd/nova-bus` and
-`TestProgressIsNeverRelayedAsABusLine` in `internal/wake`.
+(`internal/ci/busprogress_class_test.go`); the producer half it indexes is
+`TestProgressNeverEntersTheProtocolStream` in `cmd/nova-bus`, and the consumer half is this test itself.
 **Its allowlist.** None. The registry is `internal/bus/protocol.go` and a
 consumer either reaches it or discards both streams; a start that reads nothing
 back is not a consumer and is not held to this.
@@ -1185,7 +1184,7 @@ per-package timing.
 it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
 deal over the live packages (`live-packages.sh`), with the measured heavy list
-(`internal/ci`, `internal/gh`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
+(`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
 `cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`) dealt
 first, one per shard. Every shard
 restores the `<os>-gorace-` cache (the race build cache, the module cache and the
@@ -1923,10 +1922,10 @@ value (the real clock handed to a seam), or a `context.WithTimeout` /
 refused unless internal/ci/sleeps-skips_allowlist.txt names the package
 directory and the top-level function it is written in. A wait through an
 injected clock seam is not a wall-clock wait and is not found: the seams the
-tree has are internal/wake.Clock, internal/bus's lockClock, internal/swarm's
-batchClock and pullClock, internal/nsprint/land.Clock, internal/log.Clock and
+tree has are internal/bus's lockClock, internal/swarm's
+batchClock and pullClock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
-internal/merge, internal/gh and internal/swarm.
+internal/swarm.
 **The mistake it prevents.** A load gate makes the wall-time verdict depend on
 the machine: the same head red at one load and green at another. And a change
 that adds a SLEEPS skip and its ledger row in one diff would pass without the
@@ -1949,7 +1948,7 @@ wall-clock waits the tree still carries, grandfathered or SLEEPS-skipped.
 **Its allowlist.** `internal/ci/sleeps-skips_allowlist.txt`,
 `pkg<TAB>Func<TAB>where`, read through `slowtests.ParseSleeps`, the reader
 `make test`'s CI-SLEEPS check uses. It only shrinks.
-**Its remedy line.** `inject a clock (internal/wake.Clock, an injected Sleep
+**Its remedy line.** `inject a clock (an injected Sleep
 func) or tag the file //go:build functional (the ledger only shrinks)`.
 **Its narrowings.** It reads the test files only: a wall-clock wait inside the
 code under test (a production retry that sleeps) is invisible to it, and the
@@ -1961,9 +1960,7 @@ context deadline handed to the code under test and waited on there is not seen.
 **The rule.** Every list file under `internal/ci/testdata/` (`*allowlist*.txt`,
 `*.allow`, `*_examples.txt`) is loaded by a call to `loadAllowlist` or
 `allowlist.Load`, and no Go file anywhere in the tree reads one with
-`os.ReadFile`, `os.Open` or `readFile`; the lander's guard
-(`internal/nsprint/land/guard`) reads `namedpaths_allowlist.txt` through the
-helper too.
+`os.ReadFile`, `os.Open` or `readFile`.
 **The mistake it prevents.** A class test with its own list format and no update
 path turns every removal into a hand-written script rewriting its list, a round
 trip per list per change. The helper gives every list one reader and one `NOVA_CI_UPDATE=1`
@@ -2082,13 +2079,13 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
 36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists.
-39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (GitHub is a git remote only). **The mistake it prevents:** one PR can cost ~60 REST calls, and a token's hourly budget spent freezes every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl` and `internal/swarm/templates.go` (an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: the verbs that read a brief or a post, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
-40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (a card is only ever in no set, or in one of these sets; several writers keeping the sets let a table's counts drift from the cards). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
-41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and the lander's `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (the links between a table and its cards are always valid). **The mistake it prevents:** a table printing counts no card record can account for, because several files each keep their own copy of a set, so a move in one leaves a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` and the stream lander's standalone script (`internal/nsprint/land/stream/*.lua`) (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding the lander script's two ws writes (its park) and `ns_card_resume`'s pool write in `card_pool.lua` until they fold into the one move; the legacy ledger writers are a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), empty: any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua ...): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
+39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (GitHub is a git remote only). **The mistake it prevents:** one PR can cost ~60 REST calls, and a token's hourly budget spent freezes every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** `internal/swarm/templates.go` and every card fixture under `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a source that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: the verbs that read a brief or a post, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
+40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (a card is only ever in no set, or in one of these sets; several writers keeping the sets let a table's counts drift from the cards). Fixtures that seed a throwaway store (a `*fixture*.go` file) are the only exceptions. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
+41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (the links between a table and its cards are always valid). **The mistake it prevents:** a table printing counts no card record can account for, because several files each keep their own copy of a set, so a move in one leaves a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding `ns_card_resume`'s pool write in `card_pool.lua` until it folds into the one move; the legacy ledger writers are a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), empty: any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua ...): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting`, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD. **The mistake it prevents:** a bench or friend keeping two ledgers beside its working set, so the width a table prints, the width a take is refused at and the width the dealer reserves against can each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working ...): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
-43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — the one-thread form leaves most children of a wrapper at nice 0) BEFORE the exec: `RunWrapper` (`internal/nsprint/card/wrapper.go`, before `proc.start()`), `Run` (`internal/nsprint/card/run.go`, before `cmd.Start()`) and `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`); the card paths default their `Yield` seam to the package's `yieldToCI` (`yield = yieldToCI`, assigned once in `nice.go` to `yield.ToCI`), and no production caller sets a `Yield` of its own (CI over work is a permanent setting: work creates more CI, so without it the fleet is unstable). **The mistake it prevents:** copies at nice 0 share the cores evenly with the CI legs on the same machines, so with the slots raised the load per core climbs past 4 and a CI shard nears the two-minute cap: more work means slower CI means more work waiting. **The sweep:** the three named exec paths, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `production may set the wrapper's yield only in nice.go, to yield.ToCI`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/nsprint/card/nice_test.go` gives the wrapper a recording `Yield` and wants it called once, before the ledger's first read, and wants a failing one refused with `yield to CI: ...`; `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it).
-44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`, measured with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, a machine can host friends and CI both), and every slot subtraction in Go and Lua in the live packages under `cmd/` and `internal/` (the reading CI's selection uses, deprecated/PACKAGES) — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `deal.Bench.Free`, `taskcard.FreeSlots` (the deal pass and the progress duty's room), `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, `DF.take` and `DF.open` in `deal_friend.lua`, `task.WidthFrom`, the friend ladder's underfull, and `preflight`'s fleet rows (a bench's free slots are its declared slots minus the CI legs running on it). **The mistake it prevents:** a deal that fills every bench to its declared slots whether or not a CI leg is already on it lands a leg beside a full bench, and the copies take its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least eight such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench ...`, or `the beat must write the CI leg count as ci (args[21]) every beat`. **The control:** `TestBenchFreeShrinksByCILegs` (deal), `TestFreeSlotsShrinkByCILegs` (taskcard) and `TestCountCILegsCountsRunnerWorkers` (life) pin the arithmetic and the count; `TestDealAndFillTakeCILegsOffABenchsSlots` and `TestBenchBeatCarriesCILegs` (`-tags functional`) prove it in Redis.
-45. `TestEveryTableSetIsNamedByTheEpochRule` / `TestEpochNameRuleCatchesAnInjectedName` — no Lua file of the library or the stream lander and no non-test Go file under `cmd/` or `internal/` (fixtures included) spells a table set's name but through the epoch rule: a literal `ws:<s>:...` (`'ws:' ..`, `"ws:"+`, `"ws:%`, a two-segment ws literal), `<kind>:<name>:cards:` (or a bare `:cards:` piece) or `s:<S>:pool|waiting`, and no epoch-0 helper (`StreamKey`, `FriendKey`, `BenchCardsKey`, `BenchWorkingKey`, `WSKey`, `FriendCardsKey`, `PoolViewKey`, `keyPool`, `keyWaiting`, `ws.Key`, `Consumer.Key`) appears (numbers from an async writer that are not of the current table's sequence display as zero). **The mistake it prevents:** one path that names a set literally rather than through the epoch — a deal pass reading `s:<S>:pool` — reads epoch 0 after the first clear and never sees a card pushed after it, and a guard that matches one name shape is off from epoch 1. **The allowlist:** `epochRuleLines`, the rule's own lines only (`ws.KeyAt`/`key0`, `ws.ConsumerKeyAt` in `internal/nsprint/ws`; `cm_ckey`, `cm_wskey` in `02_card_move.lua`; the lander script's `wskey`), each a whole line, and a row whose line is gone fails (the list only shrinks). The global ws keys (`ws:order`, `ws:names`, `ws:log`, `ws:checkpoint`, `ws:done0`) are one segment and not table sets. **The remedy line:** `a table set named outside the epoch rule (name it through ws.KeyAt|ConsumerKeyAt|SprintListAt, or NS.card.ckey|wskey|skey, keyed by the epoch ...): <file>:<line>: <code>`. **The control:** `TestEpochNameRuleCatchesAnInjectedName` feeds every known spelling and each epoch-0 helper and wants each caught, and wants the helpers keyed by the epoch, the global ws keys, a comment and `ci:<repo>:<head>:waiting` left alone.
+43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — the one-thread form leaves most children of a wrapper at nice 0) BEFORE the exec: `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`), and no production caller sets a `Yield` of its own (CI over work is a permanent setting: work creates more CI, so without it the fleet is unstable). **The mistake it prevents:** copies at nice 0 share the cores evenly with the CI legs on the same machines, so with the slots raised the load per core climbs past 4 and a CI shard nears the two-minute cap: more work means slower CI means more work waiting. **The sweep:** the named exec path, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it).
+44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`, measured with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, a machine can host friends and CI both), and every slot subtraction in Go and Lua in the live packages under `cmd/` and `internal/` (the reading CI's selection uses, deprecated/PACKAGES) — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, and `DF.take` and `DF.open` in `deal_friend.lua` (a bench's free slots are its declared slots minus the CI legs running on it). **The mistake it prevents:** a deal that fills every bench to its declared slots whether or not a CI leg is already on it lands a leg beside a full bench, and the copies take its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least six such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench ...`, or `the beat must write the CI leg count as ci (args[21]) every beat`.
+45. `TestEveryTableSetIsNamedByTheEpochRule` / `TestEpochNameRuleCatchesAnInjectedName` — no Lua file of the library and no non-test Go file under `cmd/` or `internal/` (fixtures included) spells a table set's name but through the epoch rule: a literal `ws:<s>:...` (`'ws:' ..`, `"ws:"+`, `"ws:%`, a two-segment ws literal), `<kind>:<name>:cards:` (or a bare `:cards:` piece) or `s:<S>:pool|waiting`, and no epoch-0 helper (`StreamKey`, `FriendKey`, `BenchCardsKey`, `BenchWorkingKey`, `WSKey`, `FriendCardsKey`, `PoolViewKey`, `keyPool`, `keyWaiting`, `ws.Key`, `Consumer.Key`) appears (numbers from an async writer that are not of the current table's sequence display as zero). **The mistake it prevents:** one path that names a set literally rather than through the epoch — a deal pass reading `s:<S>:pool` — reads epoch 0 after the first clear and never sees a card pushed after it, and a guard that matches one name shape is off from epoch 1. **The allowlist:** `epochRuleLines`, the rule's own lines only (`cm_ckey`, `cm_wskey` in `02_card_move.lua`), each a whole line, and a row whose line is gone fails (the list only shrinks). The global ws keys (`ws:order`, `ws:names`, `ws:log`, `ws:checkpoint`, `ws:done0`) are one segment and not table sets. **The remedy line:** `a table set named outside the epoch rule (name it through ws.KeyAt|ConsumerKeyAt|SprintListAt, or NS.card.ckey|wskey|skey, keyed by the epoch ...): <file>:<line>: <code>`. **The control:** `TestEpochNameRuleCatchesAnInjectedName` feeds every known spelling and each epoch-0 helper and wants each caught, and wants the helpers keyed by the epoch, the global ws keys, a comment and `ci:<repo>:<head>:waiting` left alone.
 
 ### `cap` — every job two minutes, permanently, on every platform
 
@@ -2131,9 +2128,7 @@ set in seconds. Never a larger number.
 
 **The rule.** No Markdown file in the tree outside `testdata/` (the docs,
 `AGENTS.md`, `TESTING.md`, the READMEs), no card template (`CardTemplateDirs`),
-no brief source (the `briefSources` the no-gh rule reads) and neither Go file
-that writes a harness card's standard lines (`internal/nsprint/taskcard/complete.go`,
-`internal/nsprint/card/copy.go`) spells `go test`, with any flags, over `./...`
+and no brief source (the `briefSources` the no-gh rule reads) spells `go test`, with any flags, over `./...`
 or over one of the three trees that are most of it (`./cmd/...`,
 `./internal/...`, `./tools/...`).
 The door is `nova-ci local`: the packages
@@ -2185,7 +2180,7 @@ not defined`, `command -v nova` or `which nova` — so it neither runs nor probe
 an installed build.
 **The mistake it prevents.** With the signed webhook receiver behind a tailscale
 funnel kept off by design, and nothing allowed to poll GitHub for a check state
-(`TestNoPollingPathsRemain`), `ev:github` stays empty unless the run reports
+(the no-polling rule), `ev:github` stays empty unless the run reports
 itself. The runners are ours and run as the bench seat, so the run does: one
 `ev:github` row (internal/cireceipt). A receipt that silently did not happen
 must never read as one that did, which is why the step must fail the job. The
@@ -2274,51 +2269,81 @@ was ADDED to `internal/ci/testdata/deleted-tests.txt` in the same change; a
 row that names no deletion of the change is red too. On a pull request the
 checkout is the merge ref and the first parent is dev's tip, so the set is
 exactly what merging the change deletes from dev; in the merge queue the
-same; on dev, a squash's own effect. On the promotion of dev to main (the
-`pull_request` event with `GITHUB_BASE_REF` main and `GITHUB_HEAD_REF` dev
-whose payload's head repository is this repository, read by `promotionSkip`)
-the comparison does not run and the run logs a NOTE saying why: the first
-parent is main's tip, so the set would be every deletion dev accumulated
-since the last promotion, each declared in the change that made it on dev,
-where this rule ran; main takes pull requests only, so no other event carries
-a promotion, and a fork's branch named dev is refused by the head
-repository. Once the promotion has landed, a main run (`mainRun`: `push`,
-`workflow_dispatch` or `schedule` on `refs/heads/main`, main being the
-default branch where schedules run; or no GitHub environment with main
-checked out, so a local audit agrees with CI) at a two-parent merge keeps
-the first-parent comparison and excuses what dev itself did
-(`excuseDevDeletions`): a deletion is excused only when dev's history since
-the last promotion (`git log --no-renames <merge-base>..<second-parent>
---diff-filter=D --name-only`, the second parent's ancestry above the merge
-base with the first parent) deleted the path AND the second parent's tree
-lacks it, so a file dev deleted once and restored is still dev's, and a file
-dev deleted before the last promotion that main holds again is main's; a row
-added in the change is excused when that history deleted its path. The
-second parent must be dev's: `git merge-base --is-ancestor <second-parent>
-refs/remotes/origin/dev` must hold, which dev's non-fast-forward rule keeps
-true for every promotion, and `origin/dev` is read for that confirmation
-only, never as the history, so the verdict for one main sha never changes as
-dev advances; a second parent outside dev's history, or one `origin/dev`
-cannot vouch for here (stale, or shallow), excuses nothing and is a finding
-of its own naming the fetch. What is not excused is a
-finding as everywhere: a file main alone had and the merge lost, since dev
-never deleted it. And the merge's own change is checked against the
-second parent: every guarded path dev's tip has and HEAD lacks is a finding
-unless a row added beyond dev declares it, which first-parent comparison
-alone never sees. The NOTE names how many deletions and rows the history
-excused. A one-parent commit on main is compared with its parent as
-everywhere. The ancestry must be complete: the main-run steps of ci.yml
-(`test`, `test-hosted`) and certification.yml (`test`), on the default
-branch, run `git fetch --no-tags --filter=blob:none --unshallow origin
-+dev:refs/remotes/origin/dev` after checkout (commits and trees, the whole
-history; a workspace that is already complete takes the same fetch without
-`--unshallow`); when the second parent's ancestry is cut by a shallow
-graft, or the second parent is missing, nothing is excused, the readable
-comparisons run (the first parent's, and the second parent's tree whenever
-that commit is present, as it is at `fetch-depth: 2`), and the unreadable
-history is a finding of its own naming that fetch, so a main run never
-passes on a history it could not read, and the verdict for one main sha
-never depends on what dev did later.
+same; on dev, a squash's own effect. On a promotion — dev to main or
+sprint/foundation to dev (the `pull_request` event with `GITHUB_BASE_REF` main
+and `GITHUB_HEAD_REF` dev, or `GITHUB_BASE_REF` dev and `GITHUB_HEAD_REF`
+sprint/foundation, whose payload's head repository is this repository, read by
+`promotionSkip`) the comparison does not run and the run logs a NOTE saying why:
+the first parent is the base branch's tip, so the set would be every deletion
+the head branch accumulated since the last promotion, each declared in the
+change that made it on that branch, where this rule ran; a fork's branch named
+dev or sprint/foundation is refused by the head repository. On
+sprint/foundation to dev the skip drops the stale-base check too (a head that
+lacks files dev has reads as a deletion only in the comparison the skip
+drops), so it has one precondition, read from git (`promotionBaseCheck`): dev
+is expected to be an ancestor of the head's history at promotion time, dev
+merged into sprint/foundation first; `git merge-base --is-ancestor` of the
+merge ref's first parent (dev's tip) and second parent (the head) must hold.
+When it does not, or the head's ancestry is cut by a shallow graft so it
+cannot be read, or the checkout is not a merge ref, the skip is not taken: the
+full comparison runs and the NOTE says why (fail closed). The promotion pull
+request's runs fetch the head's full history (`git fetch --no-tags
+--filter=blob:none --unshallow origin
++sprint/foundation:refs/remotes/origin/sprint/foundation`) to answer it. Once
+the promotion has landed, a landing run (`landingRun`) at a two-parent merge
+keeps the first-parent comparison and excuses what the promoted branch itself
+did (`excuseDevDeletions`). A main run (`mainRun`: `push`, `workflow_dispatch`
+or `schedule` on `refs/heads/main`, main being the default branch where
+schedules run; or no GitHub environment with main checked out, so a local
+audit agrees with CI) excuses dev's history. A dev run (`devRun`: a merge-queue
+group for dev, ref `refs/heads/gh-readonly-queue/dev/...`; `push` or
+`workflow_dispatch` on `refs/heads/dev`; or no GitHub environment with dev
+checked out) excuses sprint/foundation's, the same rule one branch down: the
+group carries no head branch name, so the landed promotion is read from git as
+a merge commit whose second parent is an ancestor of
+`refs/remotes/origin/sprint/foundation`. Below, "the side branch" is dev on a
+main run and sprint/foundation on a dev run. A deletion is excused only when
+the side branch's history since the last promotion (`git log --no-renames
+<merge-base>..<second-parent> --diff-filter=D --name-only`, the second
+parent's ancestry above the merge base with the first parent) deleted the path
+AND the second parent's tree lacks it, so a file the side branch deleted once
+and restored is still its own, and a file it deleted before the last promotion
+that the base branch holds again is the base branch's; a row added in the
+change is excused when that history deleted its path. The second parent must
+be the side branch's: `git merge-base --is-ancestor <second-parent>
+refs/remotes/origin/<side-branch>` must hold, which the side branch's
+non-fast-forward rule keeps true for every promotion, and the ref is read for
+that confirmation only, never as the history, so the verdict for one sha never
+changes as the side branch advances. On main a second parent outside dev's
+history, or one `origin/dev` cannot vouch for here (stale, or shallow),
+excuses nothing and is a finding of its own naming the fetch. On dev a merge
+commit whose second parent is not sprint/foundation's is not a promotion: it
+excuses nothing and is compared as everywhere, with a NOTE and no finding of
+its own; a missing or shallow `origin/sprint/foundation` is the finding naming
+the fetch, as on main. What is not excused is a finding as everywhere: a file
+the base branch alone had and the merge lost, since the side branch never
+deleted it. And the merge's own change is checked against the second parent:
+every guarded path the side branch's tip has and HEAD lacks is a finding
+unless a row added beyond it declares it, which first-parent comparison alone
+never sees. The NOTE names how many deletions and rows the history excused. A
+one-parent commit on main or dev is compared with its parent as everywhere:
+the dev queue's merge method is squash, so a promotion that lands through the
+queue as a squash is the ordinary comparison and is red for every deletion the
+promoted branch made; only a promotion that lands as a merge commit is read as
+one (the squash of the same tree is not excused). The ancestry must be
+complete: the landing steps of ci.yml (`test`, `test-hosted`) and
+certification.yml (`test`) run `git fetch --no-tags --filter=blob:none
+--unshallow origin +dev:refs/remotes/origin/dev` after checkout on the default
+branch, and `git fetch --no-tags --filter=blob:none --unshallow origin
++sprint/foundation:refs/remotes/origin/sprint/foundation` on a dev run at a
+merge commit and on the promotion pull request (a workspace that is already
+complete takes the same fetch without `--unshallow`); when the second parent's
+ancestry is cut by a shallow graft, or the second parent is missing, nothing is
+excused, the readable comparisons run (the first parent's, and the second
+parent's tree whenever that commit is present, as it is at `fetch-depth: 2`),
+and the unreadable history is a finding of its own naming that fetch, so a
+landing run never passes on a history it could not read, and the verdict for
+one sha never depends on what the side branch did later.
 **The mistake it prevents.** A branch rebased with a stale tree that lacks
 files dev gained an hour before — a class test, its allowlist and its controls —
 undoes the fixes they held when it merges. Every check on the merge is green,
@@ -2340,9 +2365,20 @@ row green, a row naming no deletion red, an old row declaring nothing.
 `TestGuardedByMergeRuleReadsThePath` and
 `TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
 `TestPromotionSkipReadsTheEvent` pins the promotion shape against its
-reversed witnesses (the same event into dev, a feature branch into main, a
-fork's branch named dev, an absent payload, a push, a merge-queue group, no
-environment); `TestMainRunReadsTheEventRefAndBranch` pins the main-run shape
+reversed witnesses (the same event into dev from a feature branch, a feature
+branch into main, sprint/foundation into main, another sprint branch into dev,
+dev into sprint/foundation, a fork's branch named dev or sprint/foundation, an
+absent payload, a push, a merge-queue group, no environment), so a loosened
+promotion form (any base, a `sprint/` prefix) is red;
+`TestPromotionBaseCheckReadsTheAncestry` pins the skip's ancestry precondition
+over a merge ref built as GitHub builds it (dev's tip an ancestor of the head
+passes; a head cut from before dev moved is refused naming dev's tip; dev to
+main has no precondition; a one-parent checkout is refused; a depth-2 checkout
+is refused naming the fetch, and passes after it);
+`TestDevRunReadsTheEventRefAndBranch` pins the dev-run shape against its own
+(main's events, another branch's queue, a dev-prefixed branch's queue,
+sprint/foundation's push, a pull request's merge ref, a local run off dev);
+`TestMainRunReadsTheEventRefAndBranch` pins the main-run shape
 against its own (the same events on dev, a pull request's merge ref, a
 merge-queue group, a local run off main or detached);
 `TestExcuseDevDeletionsReadsHistoryAndDevTree` pins the filter; and
@@ -2362,7 +2398,21 @@ new file is red for it (control 2); a squash on main is red as everywhere; a
 depth-2 clone is red for the shallow history itself, naming the fetch, beside
 the readable findings (control 3); a feature branch off the base that deletes
 a test, merged into main, is red for the test and for the second parent
-outside dev's history (control 4). `TestMainRunNeverPassesOnAShallowAncestry`
+outside dev's history (control 4). `TestDevLandingExcusesWhatFoundationDeleted`,
+`TestDevLandingHoldsItsTreeControls`, `TestDevLandingExcusesOnlyFoundationsHistory`
+and `TestDevLandingFailsClosedOnAnUnreadableHistory` are the same witnesses one
+branch down, over a repository of sprint/foundation's shape (foundation deletes
+one file with a row, deletes another and restores it, trims the rows, adds a
+file; dev adds a file of its own): the landed promotion, a merge commit whose
+second parent is foundation's tip, is green under a merge-queue group, a push
+to dev and no environment on dev, and red as a squash of the same tree, for
+the file foundation deleted; red off dev (a pull request's merge ref, a feature
+branch, main's queue); a merge missing a file foundation deleted and restored
+(control 1), a file dev never had (control 2) or a file foundation never had
+(dev's own) is red for it; a feature branch merged into dev is compared as
+everywhere; and a checkout with no `origin/sprint/foundation`, or a depth-2
+one, is red naming the fetch, green after it (control 3).
+`TestMainRunNeverPassesOnAShallowAncestry`
 is the counterexample that shape must refuse: a merge whose tree is main's
 tip, losing dev's new test, has an empty first-parent diff, and a depth-2
 clone of it is red twice, for the shallow history and for the test against
@@ -2418,9 +2468,9 @@ property, deadlock policy, execution group, gate and debt. Layer one's required
 gate covers MemberTable, EpochMemberTable, TableEdit, TableOrder, TableSession,
 TableFirstContact, RedisFn and FirstConn, including their negative witnesses.
 The epoch fixed-point instance has its own group so it does not spend the main
-epoch instance's budget. Other measured cases remain recorded. CardMachine and
-LandWatch have explicit failed measurement debt; they are not counted as passing
-proofs or silently replaced by smaller configurations.
+epoch instance's budget. Other measured cases remain recorded. CardMachine has
+explicit failed measurement debt; it is not counted as a passing proof or
+silently replaced by a smaller configuration.
 
 `tla/RUNS.tsv` retains each measured module/configuration, generated and distinct
 states, elapsed time, result, exit, declared expectation, budget and run mode.
@@ -2494,10 +2544,19 @@ the original failed measurement.
 
 **The rule.** No living Go file under `cmd/` or `internal/` (outside `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (Rule 1: everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
 **The mistake it prevents.** Code written with hardcoded machine names, friend identities or private accounts cannot be reused or operated as a general platform, leaks private infrastructure details into public source, and prevents running the tool suite against different fleets or configurations.
-**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
+**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestTSetNamespaceGeneralityBoundary` for the exact namespace exception, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** `internal/ci/testdata/generality_allowlist.txt`, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
-**Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
+**Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. In `internal/tset` and files that directly import it, the exact Go identifiers `space` and `Space` and the JSON field tag `json:"space"` denote a deployment namespace, so the scanner exempts those syntax nodes. In `internal/tset/wire.go`, it also exempts the literal JSON key `"space"` only in its map-to-`.Space`, `strictObject`, and `unmarshalRequired` schema contexts. Compound identifiers, other tag keys, comments, and ordinary string literals still count when they name a machine. This does not expand the token inventory or the shrink-only allowlist ceiling.
+
+### `generality-text` — the same rule over every living text file that is not Go
+
+**The rule.** The `generality` rule binds the whole tree, not only `.go` files: no living text file outside `deprecated/` carries a machine, host, friend or person name, a tailnet address, or a home path that names a user. A fleet's store address, its coordinator seat, its user names and its home paths belong in its own configuration and receipts, never in a shipped `fleet/*.tsv`, `*.yml`, `templates/*.j2`, workflow, script, Lua function or document; a doc example uses a generic name or a placeholder.
+**The mistake it prevents.** A scan that read only `.go` files let one fleet's tailnet address, coordinator seat, user names and home paths ride in through files the scan never opened.
+**The test.** `TestGeneralityText` (`internal/ci/generality_text_class_test.go`), with `TestGeneralityTextFindings` for what a line's findings are, `TestGeneralityTextScope` for which files are read, `TestGeneralityTextContactDoc` for the contact addresses that pass in `docs/SECURITY.md` only, and `TestGeneralityTextWitness` for the reversed witnesses (a new finding in a `.yml`, `.tsv`, `.j2`, `.md`, `.lua`, `.sh`, Makefile or workflow fails; a second occurrence in a listed file fails; a fixture row needs a reason and a finding).
+**What is found.** The name inventory of `generality_class_test.go` (no name is added by this test), and three patterns: `tailnet-address` (an IPv4 address in `100.64.0.0/10`, an IPv6 address under the tailnet prefix, a `.ts.net` hostname; the two ranges written as CIDRs are the concept and pass), `home-path` (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>` whose name is not a generic one: a documented placeholder, a container user this repository defines, a hosted runner's), and any reference to the organisation's account other than the project's own public links, which are its identity and not fleet names (a documented pattern, not list rows): the repository's own path (the module path and issue references), the seed repository it grows from, the secrets store design's repository, (each anchored on the left: the start of a line, a character that cannot continue a path, or a URL prefix, so a longer path that merely ends in one does not pass), and the project's two published contact addresses, those exact addresses and no other local part, in `docs/SECURITY.md` only.
+**Its lists.** `internal/ci/testdata/generality_text_fixtures_allowlist.txt`, `path reason`, whole files that are recorded data (captured output, a verbatim excerpt of a real record, a recorded reply of a public repository), a reason on every row; and `internal/ci/testdata/generality_text_allowlist.txt`, `path:token count`, the debt that existed when the scan was widened. Both only shrink: an unlisted finding, a rising count, a falling count and a stale row each fail, and `NOVA_CI_UPDATE=1` removes rows and never adds one.
+**Its narrowings.** The scan reads the files the shared walk finds with a suffix of `.lua .tsv .yml .yaml .j2 .md .sh .json .txt .ini .tmpl .tla .lisp .sexp .cfg .card .sql .py .ps1 .jsonl .log .notes`, and the files named `Makefile` and `Containerfile`; `.go` files are the other test's, and `deprecated/` and `.git` are never read. There is no marked-example exemption: a doc example is written with a generic name. A `[:space:]` character class is syntax and not a finding.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

@@ -3,8 +3,7 @@
 // should be a concept of ordered sets" / "The work stream table is really just
 // a series of ordered sets, per-cell" / "and the value printed, happens to be
 // for each cell, |s|" / "(but it doesn't need to be always)"). It knows
-// nothing about sprints: the sprint table's stream block is its first table
-// (internal/nsprint/table/streams.go), and the nova-table tool is its face.
+// nothing about sprints: the nova-table tool is its face.
 //
 // A table has three kinds of cell (Glenn, the same day: "there are cells
 // that are headers for columns, and cells that are headers for rows" / "and
@@ -82,18 +81,98 @@ const (
 // A formula projection (SPEC-NOVA-TABLE, computed cells; Glenn 2026-09-27:
 // "waiting% ... the % of waiting tasks as a % of all tasks in that row"):
 // pct(<col>) is the named count column as a percentage of the row's count
-// columns together. A formula cell holds no set: computed at render, never
-// stored, never written.
-const pctPrefix = "pct("
+// columns together; pct(<col>/<a>+<b>+...) is the named count column as a
+// percentage of the named count columns a, b, ... of the row; sum(<a>+<b>+...)
+// is the named count columns of the row added. A formula cell holds no set:
+// computed at render, never stored, never written.
+const (
+	pctPrefix = "pct("
+	sumPrefix = "sum("
+)
 
 // IsFormula is whether a projection is computed rather than read.
 func IsFormula(projection string) bool {
-	return strings.HasPrefix(projection, pctPrefix) && strings.HasSuffix(projection, ")")
+	return (strings.HasPrefix(projection, pctPrefix) || strings.HasPrefix(projection, sumPrefix)) && strings.HasSuffix(projection, ")")
 }
 
-// FormulaArg is the column a pct(<col>) projection names.
+// IsPct is whether a projection is a percentage, pct(...).
+func IsPct(projection string) bool {
+	return IsFormula(projection) && strings.HasPrefix(projection, pctPrefix)
+}
+
+// IsSum is whether a projection is a sum of count columns, sum(...).
+func IsSum(projection string) bool {
+	return IsFormula(projection) && strings.HasPrefix(projection, sumPrefix)
+}
+
+// FormulaArg is the text between a formula's parentheses.
 func FormulaArg(projection string) string {
-	return strings.TrimSuffix(strings.TrimPrefix(projection, pctPrefix), ")")
+	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(projection, pctPrefix), sumPrefix), ")")
+}
+
+// Formula is a formula projection read: for pct, Part is the numerator and
+// Over the named denominator (nil: every count column of the row); for sum,
+// Over is the columns added and Part is empty.
+type Formula struct {
+	Sum  bool
+	Part string
+	Over []string
+}
+
+// Inputs is every column the formula reads, each once, in the order written.
+func (f Formula) Inputs() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range append([]string{f.Part}, f.Over...) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// ParseFormula reads a formula projection: pct(<col>), pct(<col>/<a>+<b>+...)
+// or sum(<a>+<b>+...). The error says what is wrong with the text; that the
+// named columns exist and are counts is the table's check (ValidateColumns).
+func ParseFormula(projection string) (Formula, error) {
+	if !IsFormula(projection) {
+		return Formula{}, fmt.Errorf("%q is not a formula; a formula is pct(<col>), pct(<col>/<a>+<b>) or sum(<a>+<b>)", projection)
+	}
+	arg := FormulaArg(projection)
+	terms := func(s string) ([]string, error) {
+		parts := strings.Split(s, "+")
+		seen := map[string]bool{}
+		for _, p := range parts {
+			if !ValidName(p) {
+				return nil, fmt.Errorf("%s names %q, which is not a column name; name columns joined by +, for example ok+failed", projection, p)
+			}
+			if seen[p] {
+				return nil, fmt.Errorf("%s names %s twice; name each column once", projection, p)
+			}
+			seen[p] = true
+		}
+		return parts, nil
+	}
+	if IsSum(projection) {
+		over, err := terms(arg)
+		if err != nil {
+			return Formula{}, err
+		}
+		return Formula{Sum: true, Over: over}, nil
+	}
+	part, denom, named := strings.Cut(arg, "/")
+	if !ValidName(part) {
+		return Formula{}, fmt.Errorf("%s wants a count column before the /, for example pct(ok/ok+failed), not %q", projection, part)
+	}
+	if !named {
+		return Formula{Part: part}, nil
+	}
+	over, err := terms(denom)
+	if err != nil {
+		return Formula{}, err
+	}
+	return Formula{Part: part, Over: over}, nil
 }
 
 // HasSet is whether a column's cells are ordered sets in the store (text
@@ -187,6 +266,10 @@ type Table struct {
 	HiddenTable bool     // the whole table kept and read, not drawn by watch (set --hidden / --visible)
 	Sort        string   // the standing row sort (row sort --keep): name, -name, label, -label; empty is by hand
 	Rows        []Row
+	// Props are the table's properties at the snapshot's epoch, name -> value
+	// (nil when it has none): values a batch writes with its members, such as
+	// a rolling index (L1 contract amendment, table properties).
+	Props map[string]string
 }
 
 // IsHidden is whether a column is kept but not drawn.
@@ -252,6 +335,10 @@ func EpochPrefix(table string, epoch uint64) string {
 }
 
 func RowsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":rows" }
+
+// PropsKeyAt is the table's properties at the epoch (L1 contract amendment,
+// table properties): a hash of name -> value beside the rows key.
+func PropsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":props" }
 func RowKeyAt(table, row string, epoch uint64) string {
 	return EpochPrefix(table, epoch) + ":row:" + row
 }
@@ -315,7 +402,8 @@ func ValidateColumns(cols []Column) error {
 }
 
 // validateColumn checks one column's grammar; with cols (the whole table) it
-// also checks that a pct(<col>) names a count column of that table.
+// also checks that every column a formula names is a count column of that
+// table.
 func validateColumn(c Column, cols []Column) error {
 	if !ValidName(c.Name) {
 		return fmt.Errorf("column %q wants a name of letters, digits, _ . and -", c.Name)
@@ -326,36 +414,37 @@ func validateColumn(c Column, cols []Column) error {
 	switch {
 	case c.Projection == Count, c.Projection == Members, c.Projection == First, c.Projection == Last, c.Projection == Text:
 	case IsFormula(c.Projection):
+		f, err := ParseFormula(c.Projection)
+		if err != nil {
+			return fmt.Errorf("column %s: %v", c.Name, err)
+		}
 		if cols != nil {
-			arg := FormulaArg(c.Projection)
-			found := false
-			for _, o := range cols {
-				if o.Name == arg && o.Projection == Count {
-					found = true
-				}
-			}
-			if !found {
-				return fmt.Errorf("column %s is pct(%s), which wants a count column named %s in the same table", c.Name, arg, arg)
+			if err := formulaInputs(c, f, cols); err != nil {
+				return err
 			}
 		}
 	default:
-		return fmt.Errorf("column %s wants a projection of count, members, first, last, text or pct(<count column>), not %q", c.Name, c.Projection)
+		return fmt.Errorf("column %s wants a projection of count, members, first, last, text, pct(<count column>), pct(<count column>/<a>+<b>) or sum(<a>+<b>), not %q", c.Name, c.Projection)
 	}
+	counts := c.Projection == Count || IsSum(c.Projection)
 	switch c.Fold {
 	case None:
 	case Sum, Max:
-		if c.Projection != Count {
-			return fmt.Errorf("column %s folds %s, which wants the count projection, not %s", c.Name, c.Fold, c.Projection)
+		// a text column holding whole numbers folds sum or max too (the fleet's
+		// width column): a blank cell is 0, a cell that is no whole number
+		// makes the fold "?"
+		if !counts && c.Projection != Text {
+			return fmt.Errorf("column %s folds %s, which wants the count projection or sum(...) (or text of whole numbers), not %s", c.Name, c.Fold, c.Projection)
 		}
 	case Avg:
-		if IsFormula(c.Projection) {
+		if IsPct(c.Projection) {
 			return fmt.Errorf("column %s folds avg over percentages, which is not accurate; fold pooled (the counts summed over the rows, then the share)", c.Name)
 		}
-		if c.Projection != Count {
+		if !counts {
 			return fmt.Errorf("column %s folds avg, which wants a count column, not %s", c.Name, c.Projection)
 		}
 	case Pooled:
-		if !IsFormula(c.Projection) {
+		if !IsPct(c.Projection) {
 			return fmt.Errorf("column %s folds pooled, which wants a pct column, not %s", c.Name, c.Projection)
 		}
 	case Union:
@@ -368,8 +457,29 @@ func validateColumn(c Column, cols []Column) error {
 	return nil
 }
 
+// formulaInputs refuses a formula column whose named columns are not all
+// count columns of cols (hidden columns count: a formula reads them).
+func formulaInputs(c Column, f Formula, cols []Column) error {
+	for _, name := range f.Inputs() {
+		k := -1
+		for i, o := range cols {
+			if o.Name == name {
+				k = i
+			}
+		}
+		switch {
+		case k < 0:
+			return fmt.Errorf("column %s is %s, which wants a count column named %s in the same table; declare %s as a count column (set --hide keeps it out of sight)", c.Name, c.Projection, name, name)
+		case cols[k].Projection != Count:
+			return fmt.Errorf("column %s is %s, which reads %s, a %s column; a formula reads count columns only: name a count column, or declare %s as a count column", c.Name, c.Projection, name, cols[k].Projection, name)
+		}
+	}
+	return nil
+}
+
 // ParseColumn reads one column declaration, name[:projection[:fold[:label]]]
-// (defaults: count, sum for a count column and none otherwise, the name).
+// (defaults: count, sum for a count or sum(...) column, pooled for a pct
+// column and none otherwise, the name).
 func ParseColumn(spec string) (Column, error) {
 	parts := strings.SplitN(spec, ":", 4)
 	c := Column{Name: parts[0], Projection: Count}
@@ -377,9 +487,9 @@ func ParseColumn(spec string) (Column, error) {
 		c.Projection = parts[1]
 	}
 	switch {
-	case c.Projection == Count:
+	case c.Projection == Count, IsSum(c.Projection):
 		c.Fold = Sum
-	case IsFormula(c.Projection):
+	case IsPct(c.Projection):
 		c.Fold = Pooled
 	default:
 		c.Fold = None

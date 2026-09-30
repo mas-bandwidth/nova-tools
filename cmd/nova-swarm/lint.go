@@ -50,7 +50,12 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
 // `deadline-p95` (#2636) -- with `donewhen-test-name` (#3083), which fire only under
 // `--base-check`.
-const cardLintChecks = 22
+//
+// The child rules of internal/swarm/lintchild.go -- one `rule-<name>` per sentence of the
+// brief the coordinator gives every child and one `step-<what>` per forbidden command --
+// join the same set, so `--rules` prints them and this count includes them. They are
+// checked under `--child-rules`, and always by `nova-sprint add` over every brief.
+var cardLintChecks = 22 + len(swarm.CardChildRemedies)
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -96,7 +101,7 @@ var cardLintRemedies = map[string]string{
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
 func init() {
-	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies} {
+	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies, swarm.CardChildRemedies} {
 		for name, remedy := range table {
 			if _, clash := cardLintRemedies[name]; clash {
 				panic("nova-swarm lint: two remedies for the rule " + name)
@@ -710,6 +715,12 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
 	// pass: its check draws a finding that says MISSING and names the flag.
 	baseCheck := f.fs.Bool("base-check", false, "")
+	// `--child-rules` IS THE ASK FOR THE RULES THE COORDINATOR GIVES EVERY CHILD. A card
+	// written for a bench worker under the twelve shape rules carries none of them, and a
+	// card written for a child of the coordinator carries all of them: the flag says which
+	// card this is, the way `--typed` does. `nova-sprint add` holds every brief to them
+	// without being asked.
+	childRules := f.fs.Bool("child-rules", false, "")
 	repoDir := f.fs.String("repo", ".", "")
 	legsPath := f.fs.String("legs", "", "")
 	p95Path := f.fs.String("p95", "", "")
@@ -788,7 +799,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// <t>` piped into `lint --card` used to report result-first drift on the template's first
 	// line (issue #1471). The card templates pass, and a template that is not a card answers
 	// by name rather than as a drift.
-	if tmpl := matchingTemplate(raw); tmpl != "" {
+	if tmpl := matchingTemplate(raw); tmpl != "" && tmpl != "card" {
 		if swarm.IsCardTemplate(tmpl) {
 			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
 			return 0
@@ -842,6 +853,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// cut before the key existed. `--typed` is the ask.
 	if *typed {
 		for _, hf := range swarm.LintCardDepends(raw, lineup) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
+	}
+	if *childRules {
+		for _, hf := range swarm.LintCardChild(raw) {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
 	}

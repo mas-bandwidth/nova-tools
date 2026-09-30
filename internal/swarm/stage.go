@@ -50,8 +50,7 @@ func CardRepoURL(value string) string {
 }
 
 // ReadCardBase is THE reader of which repository a card works in, at which sha: staging
-// (StageCard) and the push-time lint (internal/nsprint/card) both call it, so the repo a card
-// is admitted with is the repo it is staged from. It reads the first 40 lines. Precedence:
+// (StageCard) calls it, so the repo a card is staged from is the repo it names. It reads the first 40 lines. Precedence:
 // `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card carries), then
 // the first github clone URL anywhere in the card (CardCloneRepos). The sha is `base-sha:`,
 // else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s value before any @.
@@ -180,7 +179,7 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 }
 
 // MirrorCloneArgs is the git argv of the one staging convention, for cards (StageCard) and
-// for ci run (internal/nsprint/ci): a local clone of the bench mirror that borrows its
+// for ci run: a local clone of the bench mirror that borrows its
 // objects and dissociates, so staging never reads the network and a later gc of the
 // mirror cannot take objects from under the clone. noCheckout leaves the worktree empty
 // for a caller that checks out an exact sha next.

@@ -1,0 +1,28 @@
+# generality_text_fixtures_allowlist.txt -- whole files whose fleet, person or host names
+# are RECORDED DATA: captured output or a verbatim excerpt of a real record, kept as it was
+# written because a test reads what the real thing looked like. Not a parking place for a
+# synthetic fixture that merely uses our names: those are in generality_text_allowlist.txt
+# as debt, to be replaced by generic names.
+#
+# Format: path reason (the reason is required and names what is recorded)
+#
+# The list only shrinks: a row for a file with no finding any more fails the test, a new
+# row is a refusal unless the file is a capture. Checked by TestGeneralityText
+# (docs/SPEC-CI.md#generality-text).
+#
+# ceiling: 15
+cmd/nova-tokens/testdata/units/pitstop-2026-09-18-units.lisp a verbatim excerpt of a real work set, copied as written
+internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
+internal/ci/testdata/failed/merge-darwin-timeout.log captured CI job output of a failed run
+internal/ci/testdata/failed/windows-sandbox.log captured CI job output of a failed run
+internal/ci/testdata/generality_allowlist.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality_text_allowlist.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/tlc/testdata/temporal-new.log captured TLC model checker output
+internal/tlc/testdata/temporal-old.log captured TLC model checker output
+internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
+internal/workgh/testdata/reliable/call-02.json recorded GitHub GraphQL reply for a public repository
+internal/workgh/testdata/reliable/call-03.json recorded GitHub GraphQL reply for a public repository
+internal/worklang/testdata/pitstop-2026-09-18-units.lisp a verbatim excerpt of a real work set, copied as written
+internal/worklang/testdata/pitstop-amended.lisp a verbatim excerpt of a real work set, copied as written
+internal/worklang/testdata/pitstop-cut.lisp a cut of a real work set taken verbatim, defects included
+internal/worklang/testdata/pitstop-shape.lisp a faithful excerpt of a real work set, copied as written

@@ -32,15 +32,12 @@ import (
 var legacyLedgerWriters = map[string]int{}
 
 // knownTableWriters are table-set writes outside the move file the rule
-// tolerates, per file, a ratchet that only goes down: the stream lander's
-// standalone EVAL script (internal/nsprint/land/stream/land_stream.lua,
-// swept since nova-tools#4238) moves a member between ws sets itself, and
-// ns_card_resume (card_pool.lua) puts a parked card back in its sprint's
-// pool (s:<S>[:<e>]:pool, a name the rule knows through NS.card.skey and
-// ws.SprintListAt since #4238) with its own ZADD. The follow-ups fold the
-// first into ns_tcard_land_stream and the second into CARD.move, and lower
-// these to 0.
-var knownTableWriters = map[string]int{"land/stream/land_stream.lua": 2, "card_pool.lua": 1}
+// tolerates, per file, a ratchet that only goes down: ns_card_resume
+// (card_pool.lua) puts a parked card back in its sprint's pool
+// (s:<S>[:<e>]:pool, a name the rule knows through NS.card.skey and
+// ws.SprintListAt since #4238) with its own ZADD. The follow-up folds it into
+// CARD.move and lowers this to 0.
+var knownTableWriters = map[string]int{"card_pool.lua": 1}
 
 // theMoveFile is the one writer.
 const theMoveFile = "02_card_move.lua"
@@ -51,7 +48,7 @@ var (
 	// a table set is named by a literal ('ws:' .., 'bench:' .. ':cards:'), by
 	// the epoch-keyed helpers of 02_card_move.lua (NS.card.ckey|wskey, a
 	// file's CARD alias, cm_ckey|cm_wskey), by W.key, DF.key, TM.key, or by
-	// the lander script's own wskey (nova-tools#4238)
+	// a file's own wskey (nova-tools#4238)
 	tmLuaHelper = `(NS\.card\.|CARD\.|cm_|DF\.)(ckey|wskey|skey)\(|(W|DF|TM)\.key\(|wskey\(`
 	tmLuaTable  = regexp.MustCompile(`^('ws:'\s*\.\.|` + tmLuaHelper + `|'(bench|friend):'\s*\.\..*':cards:)`)
 	tmLuaLedger = regexp.MustCompile(`^'(bench|friend):'\s*\.\..*':(living|starting)'`)
@@ -60,8 +57,8 @@ var (
 	tmGoWrite = regexp.MustCompile(`\.(ZAdd|ZAddNX|ZAddXX|ZAddArgs|ZIncrBy|ZRem|ZRemRangeByScore|ZRemRangeByRank|ZUnionStore|` +
 		`ZInterStore|ZPopMin|ZPopMax|SAdd|SRem|SMove|Del|Unlink|Rename|RenameNX)\(ctx, ([^,)]+)`)
 	// a Go key is a literal, a retired helper (kept so a resurrected one is
-	// caught) or one of the epoch-keyed helpers of internal/nsprint/ws/epoch.go
-	// and their package twins (nova-tools#4238)
+	// caught) or one of the epoch-keyed helpers and their package twins
+	// (nova-tools#4238)
 	tmGoKey = regexp.MustCompile(`^("ws:"\s*\+|"(bench|friend):"\s*\+.*":cards:|"(bench|friend):"\s*\+.*":(living|starting)"|` +
 		`(\w+\.)?(BenchStartingKey|BenchLivingKey|FriendCardsKey|StreamKey|FriendKey|WSKey|BenchCardsKey|BenchWorkingKey|PoolViewKey|` +
 		`KeyAt|ConsumerKeyAt|SprintListAt|StreamKeyAt|FriendKeyAt|BenchCardsKeyAt|BenchWorkingKeyAt|WSKeyAt|FriendCardsKeyAt|PoolViewKeyAt)\(|` +
@@ -118,7 +115,7 @@ func luaTableWrites(name, src string) []tableWrite {
 // goTableWrites is the Go half over one non-test file's source.
 func goTableWrites(rel, src string) []string {
 	base := rel[strings.LastIndex(rel, "/")+1:]
-	if strings.Contains(base, "fixture") || strings.HasPrefix(rel, "internal/nsprint/ws/wstest/") {
+	if strings.Contains(base, "fixture") {
 		return nil
 	}
 	var out []string
@@ -157,26 +154,6 @@ func luaSources(t *testing.T) map[string]string {
 	}
 	if _, ok := out[theMoveFile]; !ok || len(out) < 10 {
 		t.Fatalf("read %d Lua files from %s, without %s: the rule is reading the wrong tree", len(out), dir, theMoveFile)
-	}
-	// the stream lander's standalone script, outside the library (#4238)
-	landDir := filepath.Join(repoRoot(t), "internal", "nsprint", "land", "stream")
-	ents, err = os.ReadDir(landDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	swept := 0
-	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".lua") {
-			b, err := os.ReadFile(filepath.Join(landDir, e.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
-			out["land/stream/"+e.Name()] = string(b)
-			swept++
-		}
-	}
-	if swept == 0 {
-		t.Fatalf("read no Lua from %s: the lander's script is not swept", landDir)
 	}
 	return out
 }
@@ -294,7 +271,7 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 		if got := goTableWrites("cmd/nova-sprint/evil.go", line); len(got) == 0 {
 			t.Errorf("the rule missed a Go writer: %s", line)
 		}
-		if got := goTableWrites("internal/nsprint/table/sprint_fixture.go", line); len(got) != 0 {
+		if got := goTableWrites("internal/ntable/sprint_fixture.go", line); len(got) != 0 {
 			t.Errorf("the rule refused a fixture: %v", got)
 		}
 	}

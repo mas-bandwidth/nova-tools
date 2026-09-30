@@ -18,6 +18,8 @@ const (
 	LimitReadSetMembers   = 1024
 	LimitColumns          = 1000               // columns per table
 	LimitRows             = 100000             // rows per table
+	LimitManifestProps    = 64                 // properties a manifest sets, expects or expects absent (each)
+	LimitTableProps       = 64                 // properties a table holds at an epoch
 	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
 	LimitBatchValueBytes  = 16 << 20           // bytes of the field values a batch's entries name, before and after
 	limitNameManifest     = "manifest bytes"
@@ -32,6 +34,8 @@ const (
 	limitNameReadSet      = "read set members"
 	limitNameColumns      = "columns per table"
 	limitNameRows         = "rows per table"
+	limitNameManifestProp = "properties per manifest"
+	limitNameTableProps   = "properties per table"
 	limitNameReceipt      = "receipt bytes"
 	limitNameBatchValues  = "value bytes per batch"
 )

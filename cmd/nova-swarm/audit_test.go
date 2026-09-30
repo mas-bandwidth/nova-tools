@@ -136,6 +136,13 @@ var swarmAudit = audit.Config{
 		// nothing at all -- what it learns leaves it as values this package renders through
 		// oneline.Field on the NATIVE OK line.
 		`"sync"`,
+		// member.go: bufio only scans a RESULT.md line by line and holds no writer; what
+		// it reads is kept as values (the head, the one-line report) that reach a stream
+		// only as arguments of nova-sprint's verbs, never as a print of this binary.
+		// internal/member is the fleet member's loop; it prints only through the writer
+		// this verb hands it, and every argument it prints is a card id, a count or a
+		// verb name from the sprint's own JSON.
+		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/internal/member"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts
@@ -158,21 +165,11 @@ var swarmAudit = audit.Config{
 		// of this binary: the one line it holds is the gh script's own stderr, written by
 		// that script in the card's shell, never by nova-swarm.
 		`"github.com/mas-bandwidth/nova-tools/internal/nogh"`,
-		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
-		// slot lease and the in-flight cap. It holds no writer of its own: every call
-		// either returns a value this package prints through oneline.Field or an error
-		// this package renders through oneline.Err, and the Lua scripts run inside Redis
-		// and write only that instance's own keys.
-		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the
 		// chosen id -- is put through oneline.Field before it is printed.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
-		// lanes (pull, SPEC-JOBS section 5) reads queue/lanes/ and writes the
-		// card files it places; it never writes to a stream, and every id it
-		// returns is put through oneline.Field before this package prints it.
-		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
 		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
 		// it IS a writer of this package's stream: `native` hands events.Writer the run's
 		// own stderr so a card that could not be measured says so. It cannot write past

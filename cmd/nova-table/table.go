@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	epochKey := fs.String("epoch-key", "", "hash key naming the epoch domain (empty means epoch 0)")
 	epochField := fs.String("epoch-field", "n", "field in the epoch hash")
 	memberPrefix := fs.String("member-prefix", "", "member record prefix (default table::member:)")
-	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold")
+	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold, sum to the sum fold")
 	footer := fs.String("footer", ntable.DefaultFooter, "the footer row's label (none by default)")
 	widths := fs.String("width", "", "fixed column widths, col=n,...")
 	pos, err := parseInterleaved(fs, args)
@@ -46,7 +47,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: create <table> --columns <name[:projection[:fold[:label]]],...>")
 	}
 	if *columns == "" {
-		return refuse(stderr, verb, "--columns wants the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold")
+		return refuse(stderr, verb, "--columns wants the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold, sum to the sum fold")
 	}
 	cols, err := ntable.ParseColumns(*columns)
 	if err != nil {
@@ -305,6 +306,16 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, b.String())
 	}
+	// the table's properties, one line each, in name order (L1 contract
+	// amendment, table properties, section 4)
+	names := make([]string, 0, len(t.Props))
+	for name := range t.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(stdout, "TABLE PROP table=%s %s=%s\n", t.Name, name, field(t.Props[name]))
+	}
 	// A cell that did not come back prints as ? above, never as a false 0; show is
 	// the record of the table, so it also says which cell and why, and exits 1.
 	unread := 0
@@ -325,7 +336,6 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 
 // renderFlags declares the render flags render and watch share.
 type renderFlags struct {
-	hideZero   *bool
 	widths     *string
 	labelWidth *int
 }
@@ -336,14 +346,13 @@ func declareRenderFlags(fs interface {
 	String(name, value, usage string) *string
 }) renderFlags {
 	return renderFlags{
-		hideZero:   fs.Bool("hide-zero-rows", false, "hide a row whose count cells are all zero"),
 		widths:     fs.String("width", "", "fixed column widths for this render, col=n,..."),
 		labelWidth: fs.Int("label-width", 0, "fixed width of the row-label column for this render (0: as wide as the labels)"),
 	}
 }
 
 func (f renderFlags) opts() (ntable.RenderOpts, error) {
-	opts := ntable.RenderOpts{HideZeroRows: *f.hideZero, LabelWidth: *f.labelWidth}
+	opts := ntable.RenderOpts{LabelWidth: *f.labelWidth}
 	if *f.labelWidth < 0 {
 		return opts, fmt.Errorf("--label-width: %d is negative", *f.labelWidth)
 	}
@@ -369,7 +378,7 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, err.Error())
 	}
 	if (*view != "" && len(pos) != 0) || (*view == "" && len(pos) != 1) {
-		return refuse(stderr, verb, "wants one table name or --view <name>: render <table> | --view <name> [--hide-zero-rows] [--width col=n,...]")
+		return refuse(stderr, verb, "wants one table name or --view <name>: render <table> | --view <name> [--width col=n,...]")
 	}
 	if *view != "" && *atEpoch != "" {
 		return refuse(stderr, verb, "--at-epoch applies to a table; stored views read the active epochs")
@@ -407,7 +416,7 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
-	// the table and nothing else: an empty table prints nothing at all
+	// the table and nothing else: an empty table prints its header and footer
 	opts.Title = t.Name
 	if _, err := io.WriteString(stdout, ntable.Render(t, opts)); err != nil {
 		return refuse(stderr, verb, "stdout: "+err.Error())
@@ -418,16 +427,20 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 // cmdView manages presentation configuration independently of table receipts.
 func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "view", "wants set, show, list or del")
+		return refuse(stderr, "view", "wants set, state, show, list or del")
 	}
 	sub := args[0]
-	if sub != "set" && sub != "show" && sub != "list" && sub != "del" {
-		return refuse(stderr, "view", "unknown subverb "+sub+"; wants set, show, list or del")
+	if sub != "set" && sub != "state" && sub != "show" && sub != "list" && sub != "del" {
+		return refuse(stderr, "view", "unknown subverb "+sub+"; wants set, state, show, list or del")
 	}
 	verb := "view " + sub
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	var tables, title, summary string
+	var clearState bool
+	if sub == "state" {
+		fs.BoolVar(&clearState, "clear", false, "clear the state: the summary line shows the counts again")
+	}
 	if sub == "set" {
 		fs.StringVar(&tables, "tables", "", "the tables, comma-separated, in order")
 		fs.StringVar(&title, "title", "", "the view's title line")
@@ -440,7 +453,14 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	if sub == "list" && len(pos) != 0 {
 		return refuse(stderr, verb, "takes no view name")
 	}
-	if sub != "list" && len(pos) != 1 {
+	switch {
+	case sub == "state" && clearState && len(pos) != 1:
+		return refuse(stderr, verb, "wants one view name with --clear: view state <name> (<text> | --clear)")
+	case sub == "state" && !clearState && len(pos) != 2:
+		return refuse(stderr, verb, "wants a view name and its state text: view state <name> (<text> | --clear)")
+	case sub == "state" && !clearState && (pos[1] == "" || !ntable.ValidViewState(pos[1])):
+		return refuse(stderr, verb, fmt.Sprintf("a state is one line of at most %d bytes; --clear removes it", ntable.MaxViewState))
+	case sub != "list" && sub != "state" && len(pos) != 1:
 		return refuse(stderr, verb, "wants one view name")
 	}
 	var list []string
@@ -467,12 +487,21 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q summary=%s trips=%d\n", pos[0], strings.Join(list, ","), title, field(summary), trips.N())
+	case "state":
+		text := ""
+		if !clearState {
+			text = pos[1]
+		}
+		if err := ntable.ViewState(ctx, c, pos[0], text); err != nil {
+			return st.refusal(stderr, verb, err)
+		}
+		fmt.Fprintf(stdout, "VIEW STATE view=%s state=%q trips=%d\n", pos[0], text, trips.N())
 	case "show":
 		v, err := ntable.ViewGet(ctx, c, pos[0])
 		if err != nil {
 			return st.refusal(stderr, verb, err)
 		}
-		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), trips.N())
+		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s state=%q trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), v.State, trips.N())
 	case "list":
 		names, err := ntable.ViewList(ctx, c)
 		if err != nil {

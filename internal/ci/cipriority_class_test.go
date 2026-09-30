@@ -30,14 +30,8 @@ import (
 // before the first exec in the same function: (file, function, yield call,
 // exec call).
 var niceExecPaths = []struct{ file, fn, yield, exec string }{
-	{"internal/nsprint/card/wrapper.go", "func RunWrapper(", "yield()", "proc.start()"},
-	{"internal/nsprint/card/run.go", "func Run(", "yield()", "cmd.Start()"},
 	{"cmd/nova-ci/local.go", "func cmdLocal(", "yield.ToCI()", "localCapture("},
 }
-
-// wrapperDefault is how the two card paths reach the real setpriority: the
-// config's Yield seam (a test's) falls back to the package's yieldToCI.
-const wrapperDefault = "yield = yieldToCI"
 
 func TestCopiesRunNiced(t *testing.T) {
 	t.Parallel()
@@ -81,40 +75,10 @@ func TestCopiesRunNiced(t *testing.T) {
 		case yi > ei:
 			t.Errorf("%s %s: %s stands after %s: a yield after the exec yields nothing", p.file, p.fn, p.yield, p.exec)
 		}
-		if p.yield == "yield()" {
-			if di := strings.Index(body, wrapperDefault); di < 0 || di > yi {
-				t.Errorf("%s %s: the yield must default to the package's yieldToCI (`%s`) before it is called", p.file, p.fn, wrapperDefault)
-			}
-		}
 	}
 
-	// 3. The wrapper's yield is the real one: production assigns yieldToCI
-	// once, to yield.ToCI, and nowhere else (the tests swap it), and no
-	// production caller gives a WrapperConfig or RunConfig a Yield of its
-	// own (the seam is for tests).
-	dir := filepath.Join(root, "internal/nsprint/card")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assigns := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		src := readFile(t, filepath.Join(dir, e.Name()))
-		for _, line := range strings.Split(src, "\n") {
-			if strings.Contains(line, "yieldToCI =") {
-				assigns++
-				if e.Name() != "nice.go" || !strings.Contains(line, "yield.ToCI") {
-					t.Errorf("%s: %q: production may set the wrapper's yield only in nice.go, to yield.ToCI", e.Name(), strings.TrimSpace(line))
-				}
-			}
-		}
-	}
-	if assigns != 1 {
-		t.Errorf("internal/nsprint/card sets yieldToCI %d times in production, want exactly once (nice.go)", assigns)
-	}
+	// 3. No production caller gives a copy a Yield of its own (the seam is
+	// for tests).
 	tree := repoTree(t)
 	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
 		for i, line := range strings.Split(string(f.Src), "\n") {
@@ -161,6 +125,23 @@ func goSlotLines(fset *token.FileSet, f *ast.File) map[int]bool {
 // namesCILegs is what a slot computation must name to be taking the CI legs
 // off: the Go field or variable ci/CI, or the Lua TM.ci_legs.
 var namesCILegs = regexp.MustCompile(`\bci\b|\bCI\b|TM\.ci_legs\(`)
+
+// staticShareExempt are the slot computations that are not free slots and so
+// need not take the CI legs off, each with its reason. A line is exempt only
+// by its file and its exact code; every other line is judged by the rule.
+//
+// internal/config/width.go: the sprint's width is the static share nova-config
+// declares, the machine's slots less the slots of the friends charged to it.
+// It is the same on every read of the same rows, so `nova-sprint fleet sync`
+// can write it and read it back unchanged; a width that followed the CI legs
+// would drift with every CI run. The legs are taken off at take time, by the
+// lease a member holds in the machine's one slot store (`nova-swarm slots
+// take`, cmd/nova-swarm/slots.go cmdSlotsTake over internal/swarm
+// TakeSlotLeases; H2's lease-before-take: the member takes min(width - held,
+// free leases)), so no slot is oversubscribed.
+var staticShareExempt = map[string]string{
+	"internal/config/width.go": "w.Width = w.Slots - w.Charged",
+}
 
 func TestSlotsShrinkByCILegs(t *testing.T) {
 	t.Parallel()
@@ -220,14 +201,16 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 				continue
 			}
 			checked++
+			if staticShareExempt[f.Rel] == code {
+				continue
+			}
 			if !namesCILegs.MatchString(code) {
 				t.Errorf("%s:%d: %q computes free slots without the CI legs running on the bench (nova-tools#4293)", f.Rel, i+1, code)
 			}
 		}
 	}
-	// The rule was written against eight; the two Go deal passes
-	// (internal/nsprint/deal, internal/nsprint/taskcard) and the preflight
-	// row are deprecated, and the six live ones are the Lua in
+	// The rule was written against eight; the Go deal passes and the
+	// preflight row are gone, and the six live ones are the Lua in
 	// internal/nsprint/fn: ns_cm_work, TM.room, the width, deal.lua's
 	// re-check and the friend deal's two. Fewer means one moved out of the
 	// sweep's reach. A friend is not free of legs: the Studio hosts friends

@@ -86,6 +86,9 @@ var rootAllowedKeys = map[string]bool{
 	"operation_id":            true,
 	"actor":                   true,
 	"members":                 true,
+	"props":                   true,
+	"prop_expect":             true,
+	"prop_absent":             true,
 }
 
 var memberAllowedKeys = map[string]bool{
@@ -319,13 +322,14 @@ func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 			isArray := func() bool { d, ok := tok.(json.Delim); return ok && d == '[' }
 			_, isString := tok.(string)
 			switch {
-			case top.path == "member" && (top.lastKey == "expect" || top.lastKey == "create" || top.lastKey == "move" || top.lastKey == "set"),
+			case top.path == "root" && (top.lastKey == "props" || top.lastKey == "prop_expect"),
+				top.path == "member" && (top.lastKey == "expect" || top.lastKey == "create" || top.lastKey == "move" || top.lastKey == "set"),
 				top.path == "expect" && (top.lastKey == "place" || top.lastKey == "fields"),
 				top.path == "fields":
 				if !isObject() {
 					return nil, wrongType(where, "an object", tok)
 				}
-			case top.path == "root" && top.lastKey == "members",
+			case top.path == "root" && (top.lastKey == "members" || top.lastKey == "prop_absent"),
 				top.path == "member" && top.lastKey == "unset",
 				top.path == "field_guard" && top.lastKey == "one_of":
 				if !isArray() {
@@ -341,7 +345,7 @@ func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 				top.path == "member" && top.lastKey == "id",
 				(top.path == "place" || top.path == "create" || top.path == "move") && (top.lastKey == "row" || top.lastKey == "col"),
 				top.path == "field_guard" && top.lastKey == "equals",
-				top.path == "set":
+				top.path == "set", top.path == "props":
 				if !isString {
 					return nil, wrongType(where, "a string", tok)
 				}
@@ -373,6 +377,9 @@ func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 					switch top.path {
 					case "root":
 						childPath = "object"
+						if top.lastKey == "props" || top.lastKey == "prop_expect" {
+							childPath = "props"
+						}
 					case "members":
 						childPath = "member"
 						childLower = make(map[string]bool)
@@ -419,6 +426,9 @@ func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 						if top.lastKey == "members" {
 							childPath = "members"
 						}
+						if top.lastKey == "prop_absent" {
+							childPath = "prop_absent"
+						}
 					case "member":
 						if top.lastKey == "unset" {
 							childPath = "unset"
@@ -463,6 +473,10 @@ func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 			case "unset":
 				if !isString {
 					return nil, wrongType(where, "a field name (a string)", tok)
+				}
+			case "prop_absent":
+				if !isString {
+					return nil, wrongType(where, "a property name (a string)", tok)
 				}
 			case "one_of":
 				if !isString {
@@ -604,8 +618,11 @@ func validateManifestSemantics(m *BatchManifest) error {
 	if !word(m.OperationID) {
 		return rule("OPERATION", "", nil, "operation_id must be a nonempty string without control characters")
 	}
-	if len(m.Members) == 0 {
-		return rule("MANIFEST", "", ErrMalformedManifest, "a manifest names at least one member")
+	if len(m.Members) == 0 && len(m.Props)+len(m.PropExpect)+len(m.PropAbsent) == 0 {
+		return rule("MANIFEST", "", ErrMalformedManifest, "a manifest names at least one member or table property")
+	}
+	if err := validateProps(m); err != nil {
+		return err
 	}
 	if !uintString(m.Epoch) {
 		return rule("EPOCH", "", nil, "epoch must be a decimal uint64 string")
@@ -682,6 +699,40 @@ func validateManifestSemantics(m *BatchManifest) error {
 				return rule("SCORE", e.ID, ErrInvalidScore, "expected a finite JSON number")
 			}
 		}
+	}
+	return nil
+}
+
+// validateProps is T.static_props: the table properties a manifest sets and
+// expects are identifiers with string values, at most LimitManifestProps of
+// each, and no property is expected both present and absent (L1 contract
+// amendment, table properties, section 4).
+func validateProps(m *BatchManifest) error {
+	for _, set := range []map[string]string{m.Props, m.PropExpect} {
+		if err := over(limitNameManifestProp, LimitManifestProps, len(set), ""); err != nil {
+			return err
+		}
+		for name, v := range set {
+			if !ValidName(name) {
+				return rule("ARGS", "", nil, "property %q wants letters, digits, _ . and -", bounded(name))
+			}
+			if err := over(limitNameFieldValue, LimitFieldValueBytes, len(v), ""); err != nil {
+				return err
+			}
+		}
+	}
+	if err := over(limitNameManifestProp, LimitManifestProps, len(m.PropAbsent), ""); err != nil {
+		return err
+	}
+	named := map[string]bool{}
+	for _, name := range m.PropAbsent {
+		if !ValidName(name) {
+			return rule("ARGS", "", nil, "property %q wants letters, digits, _ . and -", bounded(name))
+		}
+		if _, both := m.PropExpect[name]; both || named[name] {
+			return rule("ARGS", "", nil, "prop_absent names property %q twice or one prop_expect names", bounded(name))
+		}
+		named[name] = true
 	}
 	return nil
 }

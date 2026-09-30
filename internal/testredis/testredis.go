@@ -30,6 +30,17 @@
 // NOVA_CI=1, which the CI workflows set: a skip there would let a green run be
 // a run that never executed the store. A redis-server that is found and does
 // not come up fails the test anywhere.
+//
+// THE IMAGE OF A STORE. Image reads every key under a prefix, with its type
+// and a sum of its content and expiry time, by SCAN and pipelines, from any
+// server; Diff names the keys added, removed and changed between two images,
+// in key order. A test that must show a step wrote nothing takes an image
+// before the step and one after it and expects an empty Diff: see image.go.
+//
+// A STORE AT A DISTANCE. Far puts a proxy in front of a store a test owns,
+// listening on the loopback, that holds each write of the client back by a
+// delay before it forwards it, so a limit is judged at the distance the real
+// store stands at and not at the loopback's. It stops with the test.
 package testredis
 
 import (

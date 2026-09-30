@@ -85,11 +85,12 @@ func TestWatchDrawsInPlaceTheTableAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestWatchKeepsTheLastGoodTableWithOneStaleLine: a read that fails leaves
-// the last good text standing with one `stale: <n>s` line under it, says
-// so on stderr once, and says once more when the store answers again; a
-// failure before any read draws `stale: never read`.
-func TestWatchKeepsTheLastGoodTableWithOneStaleLine(t *testing.T) {
+// TestWatchKeepsTheLastGoodTableWithOneUnreachableLine: a read that fails
+// leaves the last good text standing with one `store unreachable since
+// <time>` line under it (the time of the first failed read, the same on every
+// failing tick), says so on stderr once, and says once more when the store
+// answers again; a successful tick draws the table and no counter.
+func TestWatchKeepsTheLastGoodTableWithOneUnreachableLine(t *testing.T) {
 	t.Parallel()
 
 	ticks := make(chan time.Time)
@@ -122,11 +123,14 @@ func TestWatchKeepsTheLastGoodTableWithOneStaleLine(t *testing.T) {
 	if code := <-done; code != 0 {
 		t.Fatalf("watch exited %d", code)
 	}
-	want := clearScreen + "stale: never read\n" +
+	want := clearScreen + "store unreachable since 03:00:00\n" +
 		clearScreen + table +
-		clearScreen + table + "stale: 7s\n" +
-		clearScreen + table + "stale: 14s\n" +
+		clearScreen + table + "store unreachable since 03:00:14\n" +
+		clearScreen + table + "store unreachable since 03:00:14\n" +
 		clearScreen + table
+	if strings.Contains(out.buf.String(), "stale") {
+		t.Fatalf("watched output holds a stale counter:\n%q", out.buf.String())
+	}
 	if got := out.buf.String(); got != want {
 		t.Fatalf("watched output:\n%q\nwant:\n%q", got, want)
 	}
@@ -174,9 +178,8 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 
 // TestRenderAllJoinsTablesWithOneBlankLine: the view's title first, every
 // table as a block headed by its name (Glenn 2026-09-27: "tables need a
-// title"), one blank line between blocks, and an empty table no block at
-// all and no gap (Glenn 2026-09-27: "When a table has no rows, it should
-// automatically hide. When it has rows again, it should show").
+// title"), one blank line between blocks, and an empty table a block too,
+// its header and footer (the owner's ruling, 2026-09-30).
 func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	t.Parallel()
 
@@ -184,14 +187,15 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	b.Name = "other"
 	empty := ntable.Table{Name: "empty", Columns: a.Columns}
 	ra, rb := ntable.Render(a, ntable.RenderOpts{Title: "demo"}), ntable.Render(b, ntable.RenderOpts{Title: "other"})
-	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\n"+rb {
+	re := ntable.Render(empty, ntable.RenderOpts{Title: "empty"})
+	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\n"+re+"\n"+rb {
 		t.Fatalf("two tables and an empty one:\n%q", got)
 	}
 	if got := renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{}); got != "SPRINT\n\n"+ra {
 		t.Fatalf("with a title:\n%q", got)
 	}
-	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != "" {
-		t.Fatalf("an empty table alone renders %q, want nothing", got)
+	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != re || re == "" {
+		t.Fatalf("an empty table alone renders %q, want its header and footer %q", got, re)
 	}
 	if strings.Contains(ra, "\n\n") {
 		t.Fatal("a render holds a blank line")
@@ -200,22 +204,51 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 
 func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
 	t.Parallel()
-	if got := viewSummary(demoTable(0), "ready"); got != "0/0 0.0% -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, demoTable(0)); got != "0/0 0.0% -> ETA" {
 		t.Fatalf("empty known counts: %s", got)
 	}
 	tb := demoTable(3)
 	tb.Hidden = []string{"ready"}
 	tb.Rows[0].Hidden = true
-	if got := viewSummary(tb, "ready"); got != "3/3 100.0% -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb); got != "3/3 100.0% -> ETA" {
 		t.Fatalf("hidden counts: %s", got)
 	}
 	tb.Rows[0].Cells[1].Unread = true
-	if got := viewSummary(tb, "ready"); got != "?/? ? -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb); got != "?/? ? -> ETA" {
 		t.Fatalf("unknown count: %s", got)
 	}
 	tb.Rows[0].Cells[1].Unread = false
-	if got := viewSummary(tb, "missing"); got != "?/? ? -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "missing"}, tb); got != "?/? ? -> ETA" {
 		t.Fatalf("missing column: %s", got)
+	}
+}
+
+// A view's frame: while the view has a state, the summary line is that state
+// alone, with no counts, percent or ETA; without one, the counts.
+func TestAViewsFrameShowsItsStateAloneAsTheSummaryLine(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(3)
+	for _, c := range []struct{ state, want string }{
+		{"STOPPED", "SPRINT TABLE\n\nSTOPPED\n\n"},
+		{"", "SPRINT TABLE\n\n3/3 100.0% -> ETA\n\n"},
+	} {
+		viewGet := func(context.Context, redis.Cmdable, string) (ntable.View, error) {
+			return ntable.View{Name: "sprint", Title: "SPRINT TABLE", Tables: []string{"demo"}, Summary: "ready", State: c.state}, nil
+		}
+		snapshotter := func(redis.Cmdable, []string) func(context.Context) ([]ntable.Table, error) {
+			return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{tb}, nil }
+		}
+		got, err := viewReaderWith(nil, "sprint", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, frame, _ := strings.Cut(got, "\n\n") // the clock line first
+		if !strings.HasPrefix(frame, c.want) {
+			t.Fatalf("state %q: frame\n%s\nwant it to open with %q", c.state, frame, c.want)
+		}
+		if c.state != "" && strings.Contains(frame, "ETA") {
+			t.Fatalf("state %q: the frame still counts:\n%s", c.state, frame)
+		}
 	}
 }
 
@@ -367,5 +400,25 @@ func TestAppendStalls(t *testing.T) {
 	}
 	if got := appendStalls("", []string{"stall: a: b"}); got != "stall: a: b\n" {
 		t.Fatalf("empty text: got %q", got)
+	}
+}
+
+// A stored view's frame draws every table and every row, all-zero or not.
+func TestViewReaderDrawsZeroRowsOfEveryTable(t *testing.T) {
+	t.Parallel()
+	zero, kept := demoTable(0), demoTable(0)
+	kept.Name = "kept"
+	viewGet := func(context.Context, redis.Cmdable, string) (ntable.View, error) {
+		return ntable.View{Name: "v", Tables: []string{"demo", "kept"}}, nil
+	}
+	snapshotter := func(redis.Cmdable, []string) func(context.Context) ([]ntable.Table, error) {
+		return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{zero, kept}, nil }
+	}
+	got, err := viewReaderWith(nil, "v", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "demo") || !strings.Contains(got, "kept") || !strings.Contains(got, "build") {
+		t.Fatalf("demo (all zero) and kept are both drawn:\n%s", got)
 	}
 }

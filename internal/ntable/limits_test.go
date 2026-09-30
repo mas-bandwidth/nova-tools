@@ -75,6 +75,8 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 		limitNameReadSet:      LimitReadSetMembers,
 		limitNameColumns:      LimitColumns,
 		limitNameRows:         LimitRows,
+		limitNameManifestProp: LimitManifestProps,
+		limitNameTableProps:   LimitTableProps,
 		limitNameReceipt:      LimitReceiptBytes,
 		limitNameBatchValues:  LimitBatchValueBytes,
 	}

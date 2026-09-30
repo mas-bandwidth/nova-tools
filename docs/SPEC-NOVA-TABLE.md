@@ -35,6 +35,28 @@ backed by Redis data structures.
   - `text`: Plain string value stored in the row record, not an ordered set.
   - `pct(<count-column>)`: Percentage calculation of the named count column
     relative to the sum of all count columns in that row.
+  - `pct(<count-column>/<a>+<b>+...)`: Percentage calculation of the named count
+    column relative to the sum of the named count columns `a`, `b`, ... of that
+    row, for example `okpct:pct(ok/ok+failed):pooled:ok%`. The numerator need not
+    be one of the denominator's columns.
+  - `sum(<a>+<b>+...)`: The named count columns of that row added, printed and
+    right-aligned as a count, for example `done:sum(ok+failed)`.
+
+  The three formula projections hold no set: they are computed at render and
+  never written. Every column a formula names is a count column of the same
+  table (hidden or not); a missing column, a column that is not a count (text,
+  members, first, last or another formula), a name given twice, or an empty term
+  is refused at `create`, `set --columns` and `col add`, and `col del` refuses a
+  column a formula reads, naming the formula. A formula cell prints `?` when a
+  count it reads does not come back; `pct(<count-column>)` reads every count
+  column of the row, the named forms only the columns they name. A percentage
+  whose denominator is zero prints the known-empty `0.0%`.
+  Folds: a count or `sum(...)` column folds `sum` (the default), `max` or `avg`;
+  a percentage folds `pooled` (the default): the numerators summed over the rows
+  divided by the denominators summed over the rows, never a mean of the rows'
+  percentages. A `text` column holding whole numbers folds `sum` or `max` too
+  (`width:text:sum`): its cells print right-aligned, a blank cell is 0, and a
+  cell that is no whole number makes the fold `?`. Hidden rows count in every fold.
 - **Row**: A declared horizontal entity identified by a row key. Holds an optional
   display label, an optional member exclusion (`--exclude`), an optional owner
   verb (`--owner`), an array of cells matching the table's declared columns, and
@@ -125,9 +147,10 @@ nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <nam
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
-nova-table render <table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
-nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+nova-table render <table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
 nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del  <name>
@@ -291,8 +314,18 @@ list or separate implementation of the transaction is permitted.
 
 A version-1 manifest contains table, epoch, expected_table_revision, operation_id,
 actor and a members array. Epoch/revision counters are decimal strings bounded as
-uint64; they never traverse floating-point numbers. A manifest names at least one member: an empty `members` array refuses, so a request
-that does nothing cannot advance the table revision. Members have unique IDs across
+uint64; they never traverse floating-point numbers. A manifest names at least one member or table property: an empty `members`
+array with no property refuses, so a request that names nothing cannot advance the table revision.
+
+A manifest may also carry the table's properties (L1 contract amendment, table
+properties): `props` (name -> value, the values it sets), `prop_expect` (name ->
+value, each present and equal) and `prop_absent` (names, each absent). Names are
+identifiers, values strings of at most 64 KiB, at most 64 of each in a manifest and
+64 properties in a table at an epoch. The expectations are checked before any write
+and refuse the whole batch as `PROPGUARD`, naming the property; the properties are
+written in the same atomic call as the members, a property whose value differs is a
+change (the batch's outcome is `changed`, its delta lists it under `props`), and an
+epoch starts with none. `show` prints them as `TABLE PROP` lines. Members have unique IDs across
 the entire array. Each entry has an `expect` record and zero or more compatible
 changes. Read-only guard entries have no changes. All referenced rows/columns must
 be declared and owned. Unknown schema fields and duplicate JSON keys refuse. Every value has one JSON
@@ -404,6 +437,8 @@ A test compares the shared constants with this table:
 | read set members | 1024 |
 | columns per table | 1000 |
 | rows per table | 100000 |
+| properties per manifest | 64 |
+| properties per table | 64 |
 | receipt bytes | 1048576 |
 | value bytes per batch | 16777216 |
 

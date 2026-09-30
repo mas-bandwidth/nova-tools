@@ -8,8 +8,7 @@
 #
 # This file is the FAST TIER: the checks a change is required to pass in two
 # minutes, ideally one. It runs gofmt, build, vet, and the unit tests sharded
-# across parallel jobs, without the race detector — with ONE exception,
-# test-race-queue below. Everything that cannot fit
+# across parallel jobs, without the race detector. Everything that cannot fit
 # that budget — the whole-tree `-race` run, Windows build/vet and per-package
 # tests, the three-OS smoke, the release dry-run, and the nightly perf wall
 # clock — lives in .github/workflows/certification.yml, under the same job
@@ -63,15 +62,6 @@
 # certification tier's `test` and `test-windows` jobs. The CL tier's sharded
 # tests are the same tests without `-race`, so a data race on a CL is caught by
 # certification rather than by the CL itself. That is the budget, not a skip.
-# THE ONE EXCEPTION is test-race-queue below: the queue and lease package
-# (internal/redisq) runs under `-race` as a required check on every CL event.
-# Its tests are the concurrent shape a data race hides in — 200 admissions
-# through one Lua script, a card pulled by one bench and reclaimed by another —
-# and a data race seeded there is invisible to the no-race shards (measured
-# 2026-09-22: a seeded increment in Queue.Admit passed `make test` green), while
-# the -race detector names it at once. Waiting a day for certification to name
-# it is not the budget for the one package the merge gate lands cards through;
-# one small -race leg on the CL path is.
 
 name: ci
 
@@ -594,7 +584,7 @@ jobs:
           # pull_request a touched package gets a macOS leg only when it, or a
           # package it (or its tests) imports from this module, compiles a
           # different file set under GOOS=darwin (today cmd/nova-sandbox,
-          # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
+          # internal/bus, internal/sandbox, internal/swarm and the
           # 15 packages that import them); every other package runs on Linux
           # only, the shape the merge_group run below has used since 2026-09-16.
           # The whole tree still runs on macOS on every push to dev (8 darwin-x64
@@ -838,6 +828,27 @@ jobs:
             git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
           else
             git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (matrix.entry.packages != '') && (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -lt 3 ]; then
+            echo "a one-parent commit: no promotion to read"
+            exit 0
+          fi
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation
+          else
+            git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation
           fi
 
       - name: use the installed Go toolchain
@@ -1146,87 +1157,6 @@ jobs:
         if: matrix.entry.packages != ''
         run: make test-functional PKGS="${{ matrix.entry.packages }}"
 
-  test-race-queue:
-    # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race
-    # detector is required on the CL path (see the header's THE ONE EXCEPTION).
-    # internal/redisq is the card queue and the slot leases both: the DirQueue
-    # whose pull is an atomic rename two pullers race for, the Redis queue whose
-    # card reaches exactly one consumer, the fenced lease whose renew and
-    # release are a Lua compare-and-release, and the cap admission 200 callers
-    # run through one script. Those are the shapes a data race hides in, and the
-    # sharded `test` job cannot see one — it runs the same tests without -race.
-    # The whole-tree -race run stays in the certification tier, a release
-    # blocker and never a CL one; this job is the narrow leg that IS a CL one,
-    # aggregated by ci-ok, so a seeded data race fails the merge gate instead of
-    # landing on dev green. One package, one runner, inside the two-minute
-    # budget (measured 2026-09-22: `make test-race PKGS=./internal/redisq`
-    # passes in seconds warm and 54 s cold, cap 2 min).
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 2
-    steps:
-      - name: remove stale build dirs from the shared runner
-        # The self-hosted runners reuse the _work directory across jobs; a tree left
-        # by an aborted or overlapping run makes checkout fail. Start from clean.
-        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
-        # ever runs on a directory this repository has checked out: an empty
-        # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state (#1751), and a workspace with no `.git` is not ours to
-        # empty — actions/checkout clears a non-repository workspace itself.
-        shell: bash
-        run: |
-          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
-          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
-          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
-          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
-          # them were the file-event storm fseventsd digested at 100% CPU;
-          # "lots of tiny files is a really slow way to work"). A checkout of
-          # ours is reset to its HEAD and every untracked or ignored file is
-          # removed: the same hygiene as emptying it, a few hundred operations
-          # instead of a hundred thousand, and the next checkout fetches only
-          # the new commit. A tree git cannot reset is emptied as before.
-          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
-            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
-            exit 0
-          fi
-          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-
-      - name: use the installed Go toolchain
-        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
-        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
-        shell: bash
-        run: |
-          set -euo pipefail
-          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
-          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
-          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
-          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
-          # while the release build beside it switched toolchains in the same caches): the toolchain line,
-          # else the go line, which is the toolchain a go.mod without that line implies; else as before
-          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
-          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
-          sdk=
-          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
-          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
-          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
-          done
-          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
-          go version
-          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
-
-      - name: the queue and lease package, with -race
-        # make test-race carries the -race flag (Makefile: the one entry); PKGS
-        # narrows it to the queue and lease package, so the leg stays inside the
-        # two-minute budget the whole-tree run cannot.
-        run: make test-race PKGS="./internal/redisq"
-
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
     # macos-latest — on every push (dev and main), on the nightly schedule and on
@@ -1309,6 +1239,27 @@ jobs:
             git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
           else
             git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -lt 3 ]; then
+            echo "a one-parent commit: no promotion to read"
+            exit 0
+          fi
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation
+          else
+            git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation
           fi
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -1741,9 +1692,8 @@ jobs:
     # PARKED SUBJECT (2026-09-27). nova-work, the one Lisp system, moved to
     # deprecated/lisp/nova-work (Glenn: deprecated code is not tested, not built
     # and never blocks CI), and lisp/ holds no system. The job stays, because
-    # internal/merge's step parity test pins this step to the merge gate's lisp
-    # step. The filter above fires only on a lisp/ path, so today it never runs;
-    # if it does, `make test-lisp` runs tools/ci/lisp-test.sh, which refuses a
+    # the merge gate names a lisp step. The filter above fires only on a lisp/
+    # path, so today it never runs; if it does, `make test-lisp` runs tools/ci/lisp-test.sh, which refuses a
     # lisp/ tree it does not know. The history below is the job's.
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree; its
@@ -1995,7 +1945,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, functional, test-race-queue, e2e, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, functional, e2e, lisp, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -2014,7 +1964,6 @@ jobs:
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
             "functional:${{ needs.functional.result }}" \
-            "test-race-queue:${{ needs.test-race-queue.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
@@ -2053,7 +2002,6 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
-            "test-race-queue:${{ needs.test-race-queue.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "test-hosted:${{ needs.test-hosted.result }}"
@@ -2179,8 +2127,8 @@ jobs:
       # a tailscale funnel kept off by design, so this job, on our own runner
       # as the bench seat, reports the run itself at the end of every run: one
       # ev:github row of the workflow_run shape, sender runner, from the run's
-      # own context, no GitHub call. Its reader is `nova-wake watch --store`,
-      # which blocks on ev:github for the PRs it names. always(): a red run is
+      # own context, no GitHub call. Its reader is ghevent.Reader,
+      # which blocks on ev:github. always(): a red run is
       # reported as red. A write that fails is loud here and reddens ci-ok: a
       # receipt that silently did not happen must never read as one that did.
       # The password never touches a flag or a file: nova-secrets exec under

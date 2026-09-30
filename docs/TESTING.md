@@ -5,6 +5,9 @@ The class tests in `internal/ci` (indexed in [SPEC-CI.md](SPEC-CI.md), under
 Every list only shrinks, and every one is read and written by the one helper,
 `internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`, nova-tools#4339).
 
+How to run each tier and use the store helpers of `internal/testredis` in a test:
+[FOUNDATION-TESTING.md](FOUNDATION-TESTING.md).
+
 ## The two tiers
 
 Only run the tests the change needs. Unit tests are minimal and frugal.
@@ -34,6 +37,14 @@ request. Keep them few and cheap: one server per package (`TestMain`) rather
 than one per test, and the same two-minute cap as every job. On a working machine
 they run inside one container per run, `make test-functional-container
 PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
+
+One narrow fixture exception is `internal/tset`: its functional tests start a
+Redis server per test or subtest. Each fixture loads its own standalone,
+composed, or private-probe Function library, and tests may use `FUNCTION FLUSH`
+or `FLUSHDB`; sharing a `TestMain` server would let parallel fixtures replace
+one another's library or clear one another's keys. This exception applies only
+to the tset fixture. Those tests still use the normal functional tag and runner,
+including the pinned two-core container policy above.
 
 ### Table epoch actions and receipt replay
 

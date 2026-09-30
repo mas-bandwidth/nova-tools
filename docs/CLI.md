@@ -715,9 +715,10 @@ usage:
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+                       (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
@@ -1358,7 +1359,7 @@ and clears this release's own files out of `--retire`. Run it **on the coordinat
 refuses and says so.
 
 ```sh
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from hulk:/home/gaffer/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench1:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
 ```
 
 `adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
@@ -1745,6 +1746,8 @@ nova-config <kind> show <name>                                           # one l
 nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
 nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
+nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]  # the room the sprint's member has: slots less the slots of the friends charged to the machine (every friend with no beat on the store is charged to the coordinator machine); above 0 it is a member (a Redis when a friend row carries slots)
+nova-config machine self [--check] [--pg <dsn>]                          # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
 nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
@@ -1963,7 +1966,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `row order <table> <row>...` | Puts the named rows first; the rest keep their order |
 | `row sort <table> [--by name/label/<col>] [--desc] [--keep]` | Sorts once; `--keep` maintains name/label order, `--manual` ends it |
 | `col add <table> <spec> [--first/--last/--before/--after]` | Adds one column, last unless a place is named |
-| `col del <table> <col>` | Removes an empty column with no formula dependency |
+| `col del <table> <col>` | Removes an empty column no formula (`pct(...)`, `sum(...)`) reads |
 | `col move <table> <col> --first/--last/--before/--after` | Moves one column |
 | `cell add/remove <table> <row> <col> <member>...` | Adds or removes a batch; add takes `--score` |
 | `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
@@ -1974,12 +1977,13 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `batch (<manifest-file> \| - \| '<json>')` | Applies an atomic batch manifest (file, stdin or inline JSON) of member mutations and preconditions |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
-| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
-| `render <table>` | Prints a text table; an empty table prints nothing |
+| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages, then one `TABLE PROP table= <name>=<value>` line for each of the table's properties (values a batch manifest writes with its members, such as a rolling index), in name order; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
+| `render <table>` | Prints a text table; an empty table prints its header and footer |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
-| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view; summary uses the first table |
-| `view show <name>` | Prints view configuration, including summary |
+| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view, replacing its title and summary together; summary uses the first table |
+| `view state <name> (<text> \| --clear)` | Sets the view's state: while set, the summary line is that text alone, in place of the counts; `--clear` shows the counts again |
+| `view show <name>` | Prints view configuration, including summary and state |
 | `view list` | Lists view names |
 | `view del <name>` | Deletes the view configuration, preserving tables |
 | `watch --view <name>` | Reloads configuration each frame; edits appear without restarting |
@@ -2005,8 +2009,10 @@ COL MOVE table= col= place= [of=]`. `col add <table>
 `TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
 COL DEL table= col=` and is refused, exit 1, writing nothing, while the
 column holds a member (the refusal names all blocking rows and members, with a
-batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
-the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+batch `cell remove` command for each occupied cell) or a text value, while a formula column (`pct(...)` or `sum(...)`) reads it, and when it is
+the last column. `col add` of a formula over a column the table does not have is
+refused with the `col add` of that column as the remedy; over a column that is not
+a count, with `show` as the remedy. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Batch mutation
 
@@ -2169,17 +2175,22 @@ next newline. Failures name their input line. See the
 ### Columns, identity and output
 
 `--columns` is `name[:projection[:fold[:label]]]`, comma-separated. The projections
-are `count` (default), `members`, `first`, `last`, `text`, and
-`pct(<count-column>)`. Text is blank until `row set` writes it; the row label
+are `count` (default), `members`, `first`, `last`, `text`, `pct(<count-column>)`,
+`pct(<count-column>/<a>+<b>)` and `sum(<a>+<b>)`. Text is blank until `row set` writes it; the row label
 always has a separate leading cell. Quote specs containing parentheses, for
 example `'ready,done,note:text,progress:pct(done)'`, so zsh passes them unchanged.
 
-Folds are `sum` (count default), `max`, `avg` (count only), `union` (members),
-`pooled` (percentage default), or `none`. Percentages divide their named count by
-all count columns. Pooled footers divide the summed counts, not the row
+Folds are `sum` (count and sum default), `max`, `avg` (count and sum only), `union` (members),
+`pooled` (percentage default), or `none`. `pct(<col>)` divides its named count by
+all count columns of the row; `pct(<col>/<a>+<b>)` divides it by the named count
+columns `a`, `b` of the row; `sum(<a>+<b>)` adds the named count columns of the row.
+Every column a formula names is a count column of the table, hidden or not; any
+other is refused at `create`, `set --columns` and `col add`. For example
+`'ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%'`. Pooled footers
+divide the summed numerators by the summed denominators, not the row
 percentages. Known-empty percentages are `0.0%`; an unread dependency is `?`.
 `--footer <label>` names the otherwise blank footer label. `--width col=n,...`
-sets column widths; render/watch also accept `--label-width` and `--hide-zero-rows`.
+sets column widths; render/watch also accept `--label-width`.
 Hidden rows and columns continue contributing to formulas and folds.
 
 One member has one owned placement per table. A duplicate add names its current
@@ -2219,4 +2230,4 @@ for an isolated store and the function-library loading command.
 
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
 connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
-the last good frame and one stale-age line until recovery; Ctrl-C exits 0.
+the last good frame and one `store unreachable since <time>` line until recovery (a frame that reads fine carries no age line); Ctrl-C exits 0.

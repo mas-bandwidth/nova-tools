@@ -226,5 +226,5 @@ Payload: one INPUT OK path= sha256= line per input, sorted by path, then INPUTS 
 files= fingerprint=, all on stdout. Refusals go to stderr. Exit 0, or 2 when the case is not
 declared, the plan is refused, or a configuration or module cannot be read or names a module
 that is neither a file nor a standard one.
-first run: tlacheck inputs --root . --case MCFileLock.cfg
+first run: tlacheck inputs --root . --case MCFirstConn.cfg
 `

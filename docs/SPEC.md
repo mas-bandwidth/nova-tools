@@ -5041,7 +5041,7 @@ is trusted.
 ## The efficiency card, nova-bus
 
 The card is a measurement, taken read-only against the live checkout
-`/Users/glenn/rowan-working/rowan-stella` as Rowan. That bus held **3,401
+`<bus-checkout>` as the keeper. That bus held **3,401
 notes** on disk, **65 MB** of `.git`, and one reader carrying `carrying=986`.
 This section is the part of the efficiency-card set that binds `nova-bus`.
 

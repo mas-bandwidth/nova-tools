@@ -25,6 +25,7 @@ func TestParseTableRefusal(t *testing.T) {
 		{"WHERE", typedrec.TableRefusalWhere},
 		{"COLEXISTS", typedrec.TableRefusalColExists},
 		{"DEPENDS", typedrec.TableRefusalDepends},
+		{"FORMULA", typedrec.TableRefusalFormula},
 		{"LASTCOL", typedrec.TableRefusalLastCol},
 		{"SORTED", typedrec.TableRefusalSorted},
 		{"SORTKEY", typedrec.TableRefusalSortKey},
@@ -55,6 +56,7 @@ func TestParseTableRefusal(t *testing.T) {
 		{"STREAMTYPE", typedrec.TableRefusalStreamType},
 		{"EPOCHAHEAD", typedrec.TableRefusalEpochAhead},
 		{"PLACEGUARD", typedrec.TableRefusalPlaceGuard},
+		{"PROPGUARD", typedrec.TableRefusalPropGuard},
 		{"UNRECOGNIZED", typedrec.TableRefusalUnknown},
 	}
 	for _, tc := range cases {

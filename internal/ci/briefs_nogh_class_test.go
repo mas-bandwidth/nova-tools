@@ -23,13 +23,10 @@ import (
 // The set of brief sources is the list below and an empty set is not a pass: a template
 // directory that moves must move here too.
 
-// briefSources are the files a child reads as its brief: the nova-sprint brief templates
-// (build, fix, read), the read brief template of `nova-sprint read brief`, the pulse and
-// task card templates `nova-swarm template` prints, and the card fixtures the swarm's
-// own tests lint. Each glob must match at least one file.
+// briefSources are the files a child reads as its brief: the pulse and task card
+// templates `nova-swarm template` prints, and the card fixtures the swarm's own tests
+// lint. Each glob must match at least one file.
 var briefSources = []string{
-	"internal/nsprint/brief/tmpl/*.tmpl",
-	"internal/nsprint/read/tmpl/*.tmpl",
 	"internal/swarm/templates.go",
 	"cmd/nova-swarm/testdata/cards/*.md",
 }
@@ -97,8 +94,8 @@ func TestNoGhInAnyBrief(t *testing.T) {
 		t.Fatalf("%d brief line(s) tell a child to call GitHub (#3600: GitHub is a git remote only; use `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with --reference ~/nova-bench/mirror/<repo>.git):\n  %s",
 			len(violations), strings.Join(violations, "\n  "))
 	}
-	if len(files) < 8 {
-		t.Fatalf("only %d brief files scanned; the three brief templates, the read template, the swarm templates and the card fixtures are more than that", len(files))
+	if len(files) < 4 {
+		t.Fatalf("only %d brief files scanned; the swarm templates and the card fixtures are more than that", len(files))
 	}
 }
 

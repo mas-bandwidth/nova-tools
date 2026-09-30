@@ -57,6 +57,11 @@ flags:
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
+exit codes: 0 ran and passed, 1 check found the store red (one line per
+failure), 2 could not run or refused (one line naming the remedy); exec ends with
+the command's own status, and 125 when exec itself refused and the command never
+ran.
+
 example:
   nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
   nova-secrets names  --store ./secrets --as rowan

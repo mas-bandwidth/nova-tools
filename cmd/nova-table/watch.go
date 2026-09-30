@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +28,10 @@ import (
 // Each read-only snapshot holds the shape and cells; the screen holds the table and nothing
 // else (Glenn: "it should only contain that table data, no bullshit around
 // it") -- no clock, no tick time, no key names; a store that did not answer
-// leaves the last good text standing with ONE line, stale: <n>s, under it.
+// leaves the last good text standing with ONE line, store unreachable since
+// <time>, under it, and only while the read fails: no counter ticks while the
+// store answers (owner's finding on the stale counter: "I don't want to see
+// this please. It is not helpful to me.").
 
 // clearScreen is the ANSI home-and-clear sequence.
 const clearScreen = "\033[H\033[2J"
@@ -132,10 +134,11 @@ func viewReaderWith(
 		if len(v.Tables) == 0 {
 			return oneline.Escape(v.Title) + "\n(no tables in view " + oneline.Escape(name) + ")\n", nil
 		}
-		// The view's frame, Glenn's layout (2026-09-27): the time to the
-		// second, a blank line, the title, a blank line, the summary
-		// "x/y z% -> ETA" when the view names a done column, a blank line,
-		// the tables. Nothing else goes in.
+		// The view's frame (2026-09-27): the time to the second, a blank
+		// line, the title, a blank line, the summary line, a blank line, the
+		// tables. Nothing else goes in. The summary line is the view's state
+		// alone while it has one ("STOPPED", nothing more), else
+		// "x/y z% -> ETA" when the view names a done column.
 		tables, err := snapshotter(c, v.Tables)(ctx)
 		if err != nil {
 			return "", err
@@ -147,13 +150,12 @@ func viewReaderWith(
 			b.WriteString(oneline.Escape(v.Title))
 			b.WriteString("\n\n")
 		}
-		if v.Summary != "" {
-			// Reuse the same snapshot as the table body. Unread input stays
-			// unknown in the summary, including hidden rows and columns.
-			b.WriteString(viewSummary(tables[0], v.Summary))
+		// The summary reuses the same snapshot as the table body.
+		if line := ntable.SummaryLine(v, tables[0]); line != "" {
+			b.WriteString(line)
 			b.WriteString("\n\n")
 		}
-		b.WriteString(renderAll("", tables, opts))
+		b.WriteString(ntable.RenderTables("", tables, opts))
 		if check && checker != nil {
 			var stalls []string
 			for _, t := range tables {
@@ -254,73 +256,27 @@ func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]nt
 	}
 }
 
-// viewSummary pools the first table's counts from the displayed snapshot.
-// ETA has no value until change-stream rate sampling is available.
-func viewSummary(t ntable.Table, column string) string {
-	found := false
-	for _, col := range t.Columns {
-		if col.Name == column && col.Projection == ntable.Count {
-			found = true
-		}
-	}
-	if !found {
-		return "?/? ? -> ETA"
-	}
-	var part, total int64
-	for _, r := range t.Rows {
-		for k, col := range t.Columns {
-			if col.Projection != ntable.Count {
-				continue
-			}
-			if k >= len(r.Cells) || r.Cells[k].Unread {
-				return "?/? ? -> ETA"
-			}
-			total += r.Cells[k].Count
-			if col.Name == column {
-				part += r.Cells[k].Count
-			}
-		}
-	}
-	pct := "0.0%" // empty known totals use the same numeric display as other percentages
-	if total > 0 {
-		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
-	}
-	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
-}
-
 func isReplyError(err error) bool {
 	var re redis.Error
 	return errors.As(err, &re)
 }
 
 // renderAll is the title line, then every table's render, one blank line
-// between two that print; an empty table prints nothing and leaves no gap.
+// between two; an empty table prints its header and footer.
 func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) string {
-	var parts []string
-	if title != "" {
-		parts = append(parts, oneline.Escape(title)+"\n")
-	}
-	for _, t := range tables {
-		if t.HiddenTable {
-			continue // set --hidden: kept and read, not drawn (Glenn 2026-09-27: "hide it" / "show it again", no restart)
-		}
-		o := opts
-		o.Title = t.Name // every block says which table it is (Glenn 2026-09-27)
-		if text := ntable.Render(t, o); text != "" {
-			parts = append(parts, text)
-		}
-	}
-	return strings.Join(parts, "\n")
+	return ntable.RenderTables(title, tables, opts)
 }
 
 // watchLoop draws once per tick until ctx ends (a signal: exit 0): in
 // place on w (clearScreen then the text) when out is "", else to out by
 // atomic rename. A tick whose read fails draws the last good text with one
-// stale: line under it, and says why on stderr once, and once more on
-// recovery. The ticks and the clock are handed in so a test injects both.
+// `store unreachable since <time>` line under it (the time of the first
+// failed read, so the line is the same on every failing tick), and says why
+// on stderr once, and once more on recovery. A tick whose read succeeds draws
+// the table and nothing else. The ticks and the clock are handed in so a test injects both.
 func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Context) (string, error), ticks <-chan time.Time, now func() time.Time, out string) int {
 	var last string
-	var lastGood time.Time
+	var failedSince time.Time
 	failing := false
 	for {
 		text, err := read(ctx)
@@ -328,21 +284,18 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 			return 0
 		}
 		if err == nil {
-			last, lastGood = text, now()
+			last = text
 			if failing {
 				fmt.Fprintln(stderr, "nova-table watch: Redis answers again")
 				failing = false
 			}
 		} else {
 			if !failing {
+				failedSince = now()
 				fmt.Fprintf(stderr, "nova-table watch: %s; the last good table stands until it answers\n", oneline.Escape(err.Error()))
 				failing = true
 			}
-			if lastGood.IsZero() {
-				text = "stale: never read\n"
-			} else {
-				text = last + fmt.Sprintf("stale: %ds\n", int64(now().Sub(lastGood).Seconds()))
-			}
+			text = last + "store unreachable since " + failedSince.Format("15:04:05") + "\n"
 		}
 		if out == "" {
 			if _, err := io.WriteString(w, clearScreen+text); err != nil {

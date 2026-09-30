@@ -40,24 +40,7 @@ internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured
 internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
 internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
 internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
-internal/nsprint/capacity	TestL20b	#4221 calls time.Sleep
-internal/nsprint/card	TestWrapperOwnsOneCardEndToEnd	#4221 calls time.Sleep
-internal/nsprint/card	TestWrapperFillsTheResult	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/ci	TestControl54CancelledLegRerunsOnceThenEndsRed	#4221 calls time.Sleep
-internal/nsprint/ci	TestControl54TimedOutLegRerunsOnceThenEndsRed	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/nsprint/ci	TestParityCountsEveryActionsPassedHead	#4221 calls time.Sleep
-internal/nsprint/land	TestL15	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/land/guard	TestGuardsOnThisRepository	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/life	TestBenchBeatSingleInstance	#4221 calls time.Sleep
-internal/nsprint/reconcile	TestControl09OneAssignmentOneReceipt	#4221 calls time.Sleep
-internal/nsprint/reconcile	TestHeartbeatHoldsLeaseThroughLongDuty	#4221 calls time.Sleep
-internal/nsprint/reconcile	TestLandDutyLandsEveryReadStreamInOneBatch	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/reconcile	TestLandDutyOneWorkerPerRepoAndNextTickMerges	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/reconcile	TestControl10StaleInstanceCannotDeal	#4221 calls time.Sleep
-internal/nsprint/reconcile	TestRouteConsumerSweepBoundsRestarts	#4221 calls time.Sleep
-internal/nsprint/verbs	TestVerbsUnused	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/sprinttable	TestRefreshInTheUnitGroupDiesWithTheUnit	#4221 calls time.Sleep
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestBatchPrefixLine1WithLongerTailAccepted	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/swarm	TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog	#4221 waits on the wall clock, failed on a 2026-09-25 run
@@ -80,24 +63,7 @@ cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
 internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
 internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
 internal/fleet	TestRunBenchesConcurrentlyOverlapsCallbacks	seed #4413: time.NewTimer at parallel_test.go:101
-internal/merge	TestWithFetchedReportTipKeepsConcurrentPinsThroughGC	seed #4413: time.After at fetchedreporttip_test.go:174
-internal/nsprint/card	fakeHarness	seed #4413: time.Sleep at wrapper_test.go:82
-internal/nsprint/card	harnessRun.report	seed #4413: time.After at wrapper_test.go:219
-internal/nsprint/card	harnessRun.waitFile	seed #4413: time.Sleep at wrapper_test.go:210
-internal/nsprint/card	harnessRun.waitFor	seed #4413: time.After at wrapper_test.go:193
-internal/nsprint/deal	barrierSession.Run	seed #4413: time.After at parallel_test.go:111
-internal/nsprint/deal	processGone	seed #4413: time.After at pass_test.go:400 and 1 more
-internal/nsprint/deal	runPass	seed #4413: time.After at pass_test.go:391
-internal/nsprint/deal	wedgedSession.Run	seed #4413: time.After at parallel_test.go:222
-internal/nsprint/launch	fixtureWrapper	seed #4413: time.Sleep at launch_test.go:73
-internal/nsprint/launch	waitReady	seed #4413: time.Sleep at launch_test.go:127
-internal/nsprint/lessons	TestMain	seed #4413: time.Sleep at lessons_test.go:31
-internal/nsprint/lessons	TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives	seed #4413: time.NewTimer at lessons_test.go:299
-internal/nsprint/pr	until	seed #4413: time.After at harness_test.go:35
-internal/nsprint/preflight	fakeSession.LaunchDry	seed #4413: time.After at fleet_test.go:44
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
-internal/sprinttable	startRefresh	seed #4413: time.After at session_unix_test.go:194
-internal/sprinttable	waitUnit	seed #4413: time.After at session_unix_test.go:217
 internal/swarm	TestAnIdleSlotAsksOnAnEventNotAPoll	seed #4413: time.After at slotwait_test.go:37 and 1 more
 internal/swarm	TestCountRefusalsDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:195
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81

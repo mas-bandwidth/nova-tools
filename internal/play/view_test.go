@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -112,4 +113,13 @@ This record was explicitly excluded.
 			t.Errorf("viewing rewrote %s: hash %s, want %s", path, got, h)
 		}
 	}
+}
+
+func writeSource(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

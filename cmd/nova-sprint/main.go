@@ -1,0 +1,291 @@
+// nova-sprint: the sprint table (docs/SPEC-SPRINT.md). Four tables on
+// nova-table (work, readers, merge, fleet), the moves between them, and the
+// notifications that bring the coordinator its decisions. Every verb takes a
+// set and is one step; the command is a face over internal/sprint (the pure
+// core) and internal/sprint/store (the binding to the table layer).
+//
+// Exit 0 done, 1 refused (a card or the store said no), 2 usage or a store
+// that did not answer (fleet sync --check: there is drift), 3 (fleet sync: the
+// config cannot be read).
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/redis/go-redis/v9"
+)
+
+const prog = "nova-sprint"
+
+// version is empty in every ordinary build; a release stamps it with
+// -ldflags "-X main.version=<tag>".
+var version string
+
+func main() {
+	a := newApp(os.Getenv)
+	defer a.close()
+	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// app is one process's view of the store: its connection, opened once and
+// shared by every verb it runs (the driver runs many), its clock, and how it
+// sleeps. Tests give it a backend of their own.
+type app struct {
+	getenv  func(string) string
+	now     func() time.Time
+	sleep   func(time.Duration)
+	backend func(ctx context.Context, addr string, names sprint.Names) (store.Backend, error)
+	conns   map[string]*redisconn.Conn
+	cached  map[string]store.Backend
+	meter   hostload.Source // how fleet beat measures this machine
+	// inventory reads the machines of nova-config and their widths (fleet
+	// sync): tests give it the config's in-memory store.
+	inventory inventoryFn
+	loc       *time.Location // the zone times print in: nil is the machine's local zone
+	// notify is how an interrupt reaches a command that runs until it is
+	// interrupted (where --watch): the context it returns is done at one.
+	notify func(ctx context.Context) (context.Context, context.CancelFunc)
+	// screen is the rows and columns of the screen a writer draws on, each 0
+	// when not known (the writer is not a terminal).
+	screen func(w io.Writer) (rows, cols int)
+	// ticked, when set, is told of each tick run begins: its count, when it
+	// began, and why (the loop's start, a line on the log, the clock of a
+	// quiet log, a retry).
+	ticked func(n int, began time.Time, why string)
+}
+
+func newApp(getenv func(string) string) *app {
+	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
+	a.backend = a.redisBackend
+	a.inventory = a.readInventory
+	return a
+}
+
+func (a *app) close() {
+	for _, c := range a.conns {
+		_ = c.Close()
+	}
+}
+
+// redisBackend opens the store once per address, as nova-table dials it: the
+// address, then NOVA_SPRINT_REDIS_USER and the variable
+// NOVA_SPRINT_REDIS_PASSWORD_ENV names.
+func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
+	key := addr
+	if b, ok := a.cached[key]; ok {
+		return b, nil
+	}
+	conn, ok := a.conns[addr]
+	if !ok {
+		var err error
+		conn, err = a.openConn(ctx, addr)
+		if err != nil {
+			return nil, err
+		}
+		if err := libraryMatches(ctx, conn.Client(), addr); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		a.conns[addr] = conn
+	}
+	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
+	a.cached[key] = b
+	return b, nil
+}
+
+// openConn dials the address as nova-table does: the address, then
+// NOVA_SPRINT_REDIS_USER and the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
+// names, bounded to 10 s.
+func (a *app) openConn(ctx context.Context, addr string) (*redisconn.Conn, error) {
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	if a.getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if a.getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return redisconn.Open(ctx, o, a.getenv)
+}
+
+// libraryMatches refuses a store whose loaded table function library is not
+// this build's (one FUNCTION LIST, once per process and address): every write
+// through a library of another build would be refused or unreadable.
+func libraryMatches(ctx context.Context, c *redis.Client, addr string) error {
+	source, err := fn.Source()
+	if err != nil {
+		return err
+	}
+	code, found, err := fn.Loaded(ctx, c)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !found:
+		return fmt.Errorf("the store at %s holds no %s function library; run: nova-redis fn load --addr %s", addr, fn.Library, addr)
+	case fn.Sum(code) != fn.Sum(source):
+		return fmt.Errorf("the store at %s holds %s library %s, and this build is %s; run: nova-redis fn load --addr %s", addr, fn.Library, fn.Sum(code), fn.Sum(source), addr)
+	}
+	return nil
+}
+
+// common is the flags every store verb takes.
+type common struct {
+	verb             string // the verb's name: its class (coordinator.go)
+	coordinator      string // init --coordinator: the coordinator it names
+	redis, actor, op string
+	json             bool
+	max              int
+	epoch            int64       // the epoch the caller holds; -1 is none
+	group            groupReport // set by --group, for the verb's report
+	// packets, when set, is what the step hands its actor (take: each
+	// card's packet), read after the step and printed with its report.
+	packets func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet
+	handed  []sprint.Packet
+}
+
+func (c *common) register(fs flagSet, getenv func(string) string) {
+	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
+	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
+	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
+	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
+	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none")
+}
+
+func firstEnv(getenv func(string) string, names ...string) string {
+	for _, n := range names {
+		if v := getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// store is the one way a command reaches the store: pinned to the sprint's
+// current epoch (a restore a cut clear still owes performed first), so every
+// key it reads or writes is of that epoch. A command reads an earlier epoch
+// only through storeAt.
+func (a *app) store(c common) (*store.Store, error) { return a.storeCtx(context.Background(), c) }
+
+// storeCtx is store, its reads made in ctx: a command that can be interrupted
+// (where --watch) hands the context it ends with, so the interrupt cuts a
+// read short.
+func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
+	if a.getenv("NOVA_SPRINT_PREFIX") != "" {
+		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
+	}
+	if strings.TrimSpace(c.redis) == "" {
+		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+	}
+	if why := needsActor(c); why != "" {
+		return nil, errors.New(why)
+	}
+	names := sprint.Names{}
+	b, err := a.backend(ctx, c.redis, names)
+	if err != nil {
+		return nil, err
+	}
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
+	if st, err = st.Pinned(ctx); err != nil {
+		return nil, err
+	}
+	if why, err := coordinatorOnly(ctx, st, c); err != nil || why != "" {
+		if err == nil {
+			err = errors.New(why)
+		}
+		return nil, err
+	}
+	return st, nil
+}
+
+// run is the one entry point: the command line, and the driver, which runs
+// every verb it plays through it with an argument list.
+func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
+	defer verbflag.Recover(stdout, prog, banner(), &code)
+	if len(args) == 0 {
+		return refuse(stderr, "", "no verb; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
+	}
+	if args[0] == "help" || verbflag.IsHelp(args[0]) {
+		return helpCommand(args[1:], stdout, stderr)
+	}
+	if args[0] == "--version" || args[0] == "version" {
+		fmt.Fprintln(stdout, versionLine())
+		return 0
+	}
+	for _, v := range verbs {
+		words := strings.Fields(v.name)
+		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.name {
+			return v.run(a, args[len(words):], stdout, stderr)
+		}
+	}
+	if args[0] == "fleet" || args[0] == "reader" || args[0] == "goal" {
+		for _, w := range args[1:] {
+			if w == "--prefix" || w == "-prefix" || strings.HasPrefix(w, "--prefix=") || strings.HasPrefix(w, "-prefix=") {
+				return refuse(stderr, args[0], noPrefix)
+			}
+		}
+		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
+	}
+	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
+}
+
+// refuse is a usage refusal: exit 2.
+// noPrefix is what a --prefix flag or a NOVA_SPRINT_PREFIX variable is refused
+// with.
+const noPrefix = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
+
+// errNoPrefix is the error of a --prefix flag: a verb reports it as it is,
+// never wrapped in what the verb was parsing.
+var errNoPrefix = errors.New(noPrefix)
+
+// argErr is what a verb refuses its arguments with: the words, then the error;
+// a --prefix flag is the one line errNoPrefix, alone.
+func argErr(words string, err error) string {
+	if errors.Is(err, errNoPrefix) {
+		return err.Error()
+	}
+	return fmt.Sprint(words, err)
+}
+
+func refuse(stderr io.Writer, verb, what string) int {
+	where := prog
+	if verb != "" {
+		where += " " + verb
+	}
+	if !strings.Contains(what, "; run: ") {
+		what += "; run: nova-sprint " + strings.TrimSpace(verb+" -h")
+	}
+	fmt.Fprintf(stderr, "%s: %s\n", where, oneline.Escape(what))
+	return 2
+}
+
+// storeAt is the store, reading an earlier epoch as it was when at is 0 or
+// more: a store for reads only.
+func (a *app) storeAt(c common, at int64) (*store.Store, error) {
+	return a.storeAtCtx(context.Background(), c, at)
+}
+
+// storeAtCtx is storeAt, its reads made in ctx (see storeCtx).
+func (a *app) storeAtCtx(ctx context.Context, c common, at int64) (*store.Store, error) {
+	st, err := a.storeCtx(ctx, c)
+	if err != nil || at < 0 {
+		return st, err
+	}
+	return st.At(uint64(at)), nil
+}

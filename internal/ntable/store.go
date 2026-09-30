@@ -52,6 +52,7 @@ var (
 	ErrMemberRevision    = errors.New("member revision mismatch")
 	ErrFieldGuard        = errors.New("failed field guard")
 	ErrPlaceGuard        = errors.New("failed place guard")
+	ErrPropGuard         = errors.New("failed property guard")
 	ErrOpConflict        = errors.New("operation ID conflict")
 	ErrLimit             = errors.New("limit exceeded")
 	ErrReservedField     = errors.New("reserved field write")
@@ -386,7 +387,7 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalNoMember:
 		cause = errors.New("wants at least one member")
 	case typedrec.TableRefusalNoView:
-		cause = errors.New("no such view")
+		cause = ErrNoView
 		remedy = "nova-table view set " + shellWord(o.table) + " --tables <a,b,...>"
 	case typedrec.TableRefusalViewTable:
 		if len(reply) != 3 {
@@ -410,8 +411,21 @@ func (o operation) refused(reply []any) error {
 		remedy = "nova-table col move " + shellWord(o.table) + " " + shellWord(o.col) + " --last"
 	case typedrec.TableRefusalDepends:
 		o.col = fmt.Sprint(reply[2])
-		cause = fmt.Errorf("column %q is a percentage of it; remove that column first", reply[3])
+		cause = fmt.Errorf("column %q is a formula that reads it; remove that column first", reply[3])
 		remedy = "nova-table col del " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[3]))
+	case typedrec.TableRefusalFormula:
+		if len(reply) != 5 {
+			return fmt.Errorf("%s: malformed formula refusal", o.location())
+		}
+		o.col = fmt.Sprint(reply[2])
+		arg, found := fmt.Sprint(reply[3]), fmt.Sprint(reply[4])
+		if found == "missing" {
+			cause = fmt.Errorf("it reads column %q, which the table does not have; add %q as a count column first", arg, arg)
+			remedy = "nova-table col add " + shellWord(o.table) + " " + shellWord(arg)
+		} else {
+			cause = fmt.Errorf("it reads column %q, a %s column; a formula reads count columns only: name a count column", arg, found)
+			remedy = "nova-table show " + shellWord(o.table)
+		}
 	case typedrec.TableRefusalLastCol:
 		o.col = fmt.Sprint(reply[2])
 		cause = errors.New("a table keeps at least one column")
@@ -469,6 +483,14 @@ func (o operation) refused(reply []any) error {
 		}
 		if o.member != "" {
 			remedy = memberReadCommand(o.table, o.member)
+		}
+	case typedrec.TableRefusalPropGuard:
+		// a table property's expectation (the manifest's prop_expect or
+		// prop_absent) did not hold: L1 contract amendment, table properties
+		if len(reply) >= 4 {
+			cause = fmt.Errorf("%w: table %q property %q", ErrPropGuard, reply[2], reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrPropGuard, words(reply[2:]))
 		}
 	case typedrec.TableRefusalPlaceGuard:
 		if len(reply) >= 5 {
@@ -1155,6 +1177,62 @@ type View struct {
 	Tables  []string
 	Title   string
 	Summary string // the count column of the first table the summary line counts as done ("" for no line)
+	// State, when set, is the summary line, alone, in place of the counts:
+	// the state of whatever fills the view ("STOPPED"). ViewState writes it;
+	// ViewSet leaves it as it is.
+	State string
+}
+
+// MaxViewState bounds a view's state text, in bytes.
+const MaxViewState = 64
+
+// ValidViewState says a state text is one a view takes: empty (none), or one
+// line of at most MaxViewState bytes with no control characters.
+func ValidViewState(text string) bool {
+	if len(text) > MaxViewState {
+		return false
+	}
+	for _, r := range text {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrNoView is a view that is not there.
+var ErrNoView = errors.New("no such view")
+
+// ViewState sets a view's state text, the summary line shown alone in place
+// of the counts while it is set; "" clears it and the counts show again. The
+// view must exist.
+func ViewState(ctx context.Context, c redis.Cmdable, name, text string) error {
+	if !ValidViewState(text) {
+		return fmt.Errorf("view %q: a state is one line of at most %d bytes", name, MaxViewState)
+	}
+	_, err := (operation{table: name, view: true}).call(ctx, c, fnViewState, false, text)
+	return err
+}
+
+const fnViewState = "ns_view_state"
+
+// QueueViewState queues ViewState on a pipeline or a transaction, so a caller
+// writes a view's state in the same MULTI/EXEC as a record of its own (the
+// state it shows); ViewStateResult reads the queued call's answer after Exec.
+func QueueViewState(ctx context.Context, p redis.Pipeliner, name, text string) *redis.Cmd {
+	return p.FCall(ctx, fnViewState, []string{"view:" + name}, name, text)
+}
+
+// ViewStateResult is the answer of a call QueueViewState queued, after Exec:
+// nil, a refusal (errors.Is ErrNoView when the view is not there), or the
+// store's error.
+func ViewStateResult(name string, cmd *redis.Cmd) error {
+	o := operation{table: name, view: true}
+	reply, err := cmd.Slice()
+	if err != nil {
+		return fmt.Errorf("%s: %s: %w%s", o.location(), fnViewState, err, runUnlessNamed(err, o.remedy()))
+	}
+	return o.refused(reply)
 }
 
 // ViewSet writes a view; every table must exist.
@@ -1176,7 +1254,7 @@ func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	v := View{Name: name, Title: h["title"], Summary: h["summary"]}
+	v := View{Name: name, Title: h["title"], Summary: h["summary"], State: h["state"]}
 	if t := strings.TrimSpace(h["tables"]); t != "" {
 		v.Tables = strings.Split(t, ",")
 	}
@@ -1226,6 +1304,13 @@ type BatchManifest struct {
 	OperationID           string             `json:"operation_id"`
 	Actor                 string             `json:"actor,omitempty"`
 	Members               []BatchMemberEntry `json:"members"`
+	// Props are the table's properties the batch sets, PropExpect the ones it
+	// expects present with a value and PropAbsent the ones it expects absent,
+	// checked before any write and applied in the same atomic call as the
+	// members (L1 contract amendment, table properties, section 4).
+	Props      map[string]string `json:"props,omitempty"`
+	PropExpect map[string]string `json:"prop_expect,omitempty"`
+	PropAbsent []string          `json:"prop_absent,omitempty"`
 }
 
 // BatchMemberEntry defines expectations and mutations for one member.
@@ -1283,17 +1368,21 @@ type BatchDelta struct {
 	GuardCount    int                `json:"guard_count"`
 	ChangedCount  int                `json:"changed_count"`
 	Members       []BatchMemberDelta `json:"members"`
+	// Props are the table's properties the batch changed, name -> new value
+	// (L1 contract amendment, table properties).
+	Props map[string]string `json:"props,omitempty"`
 }
 
 func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	type rawBatchDelta struct {
-		OperationID   string          `json:"operation_id"`
-		Digest        string          `json:"digest"`
-		Actor         string          `json:"actor"`
-		SelectedCount int             `json:"selected_count"`
-		GuardCount    int             `json:"guard_count"`
-		ChangedCount  int             `json:"changed_count"`
-		Members       json.RawMessage `json:"members"`
+		OperationID   string            `json:"operation_id"`
+		Digest        string            `json:"digest"`
+		Actor         string            `json:"actor"`
+		SelectedCount int               `json:"selected_count"`
+		GuardCount    int               `json:"guard_count"`
+		ChangedCount  int               `json:"changed_count"`
+		Members       json.RawMessage   `json:"members"`
+		Props         map[string]string `json:"props"`
 	}
 	var raw rawBatchDelta
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1305,6 +1394,7 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	b.SelectedCount = raw.SelectedCount
 	b.GuardCount = raw.GuardCount
 	b.ChangedCount = raw.ChangedCount
+	b.Props = raw.Props
 	if len(raw.Members) > 0 && string(raw.Members) != "{}" && string(raw.Members) != "null" {
 		var m []BatchMemberDelta
 		if err := json.Unmarshal(raw.Members, &m); err != nil {

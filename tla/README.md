@@ -5,7 +5,6 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | Module | Instance | What it is |
 |---|---|---|
 | `CardMachine.tla` | `MCCardMachine` | the card's life over cells (the copy model of 02_card_move.lua), the corrected design after its three findings |
-| `LandWatch.tla` | `MCLandWatch` | the land watch's watcher (land_watch.lua): stamps, slow and wall, one note per stay (findings L1 to L3) |
 | `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
@@ -14,6 +13,11 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `FirstConn.tla` | `MCFirstConn*` | `internal/redisconn`'s first connection: the probe Open sends, taken and answered in the store's place only after HELLO was accepted, with seven reversed witnesses |
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
+| `SetTable.tla` | `MCSetTable*` | Layer 1 of the sprint foundation (`tset/1`), from its contract at revision 4: one atomic step over several tables, guards at apply time, one place, receipts matched by intent with a status, epochs and advance with rowset guards, the explicit fence and the settlement of an unknown outcome; thirteen reversed witnesses, and one goal the contract disclaims. `README-SetTable.md` says the rest |
+| `SetTableLog.tla` | `MCSetTableLog*` | the sprint foundation's Layer 2, the log (design/L2-CONTRACT.md revision 1 with the coordinator's decisions on it), composed with Layer 1 revision 4 (design/L1-CONTRACT.md as amended, sha256 `e055d64d...`) by its section 1 and four of its section 10 alignments: one line per effective entry and one per note in the table's own commit, ids `<seq>-0` from one XINFO reading with no gap, history lists that name exactly the lines of their card with the caller's abouts, a refusal that writes nothing, replay equal to the tables, page cursors that neither skip nor repeat (cardlines by the pair of list index and item index, an item being one line and member id), a lost reply's resend that writes nothing again (caller notes require op), the fence (its receipt only, no line, never seen by the log plan), a guard-only rowset with no line, final occupancy; eighteen reversed witnesses, the revision-1 notes rule kept as an expected failure, and three goal configurations that fail on the contract model (a paged replay of the live epoch while verbs run, decided; a runtime error between the table and log commands, decided scope; a deleted log key, stated scope). `README-SetTableLog.md` says the rest, including what is not modelled |
+| `SprintEvents.tla` | `MCSprintEvents*` | the upper layers of nova-sprint (layers 3 to 8 of the event-driven tick design, standing on the models of layers 1 and 2): the log turned into keys, due times in running time, the rules with plan and apply separate, the tick, the verbs; 29 reversed witness configurations (W1 to W27, W7 split in two, and W5's reach half, which breaks reach and unreach and not the verb), 27 of which fail with the property their row names while W1 and W25 pass because the design holds there in depth, each with its unbroken control; goal cases that fail for the seventeen holes the model found (thirteen in the design as written, four in repairs errata 3 decided, three of them decided in its amendment 2 and repaired here; H12 and H15 on the bench), each decided repair with a case that passes. The larger runs are in `sprintevents-bench/`, outside `CASES.tsv`. `README-SprintEvents.md` says the rest, including what is not modelled |
+| `WorkImport.tla` | `MCWorkImport*` | nova-work v1 (docs/SPEC-WORK-V1.md section 1): an issue under import (absent, fetched, in the tree, mirrored, closed by the destructive mode, re-opened by export) and a repository's sync, with outside edits at any time; a tree is written only whole, only a verify receipt at GitHub's current version licenses a close, an issue the import closed is held by the tree exactly, an external issue is never closed, export restores; five reversed witnesses |
+| `DirtyTick.tla` | `MCDirtyTick*` | the sprint machine's tick as the owner shaped it on 2026-09-30, before it is built: four tables updated in turn (work, readers, merge, fleet), a queue per table as its dirty bit, readers, merge and fleet drained until empty, the work table written only by the one pump at the start of each tick; placements by counter modulo the count, width, one wake at the tick's end; 16 reversed witnesses and three goals for the holes it found (a placement blind to the fleet's status never ends the tick; room read from an undrained fleet queue over-fills a machine; the v2.1 rules write the work table in their own steps). `README-DirtyTick.md` says the rest |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
@@ -38,7 +42,7 @@ go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
 go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -deadlock tla/MCCardMachine.tla
-timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock tla/MCLandWatch.tla
+timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock tla/MCFirstConn.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -config tla/MCFuseBox.cfg tla/MCFuseBox.tla
 ```
 
@@ -204,66 +208,6 @@ kernel was changed to refuse, the model was not. Bounds of the instance: a
 combined sort-and-move places at `--first` or `--last`, a combined
 sort-and-order names one row. A depth-5 run of the edit model with one member (1,652,467
 distinct states, no error) took 92 s on the same bench and is not in the set.
-## The file lock (FileLock)
-
-`FileLock.tla`: a lock on a file across processes, the design of the shared
-module `internal/filelock`: one holder at a time, and a way to ask who holds
-it. Written from the locks the tools already carry (`internal/bus`, `merge`,
-`tokens`, `swarm`, `wake`, `update`) and against the first candidate,
-nova-tools#4473 at d653eb53e. A bounded design model with reversed witnesses,
-not a refinement proof. What it leaves out is listed in its header.
-
-The rule it stands on is `internal/merge/lock.go`'s: the kernel releases the
-lock when its holder dies, so there is nothing to break and no age to compute.
-The lock is the kernel's lock on the file and nothing else. What is written in
-the file is a note and never what decides. The file is never removed.
-
-What it holds the module to:
-
-- the lock is never handed to two callers (`MutualExclusion`), and who holds it
-  holds the file at the path by the kernel's lock (`HolderHoldsThePath`);
-- the path names one file for ever (`OneFileForEver`);
-- the file names its holder (`HolderIsNamed`);
-- "held" is said only of a holder and "free" never of one, by a probe or by a
-  refusal (`HeldIsTrue`): a probe asks for a shared lock, and a refused taker
-  asks for one too before it says "held", so an asker is never taken for a
-  holder; a taker that only askers kept out answers "busy";
-- who takes the lock is told, truly, whether the last holder released it
-  (`UncleanIsTold`): release clears the note, so a note found is a holder that
-  never released, whatever became of its pid;
-- the kernel's lock is only ever with a live process that knows it has it, so
-  a death leaves nothing for anybody to clear (`NothingToClear`).
-
-Run as the other table models are, every config at once, each in its own temp
-directory under a 60 s cap:
-
-    for cfg in MCFileLock*.cfg; do c=${cfg%.cfg}
-      mkdir -p /tmp/tlc-$c
-      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
-        -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCFileLock.tla > $c.log 2>&1 &
-    done; wait
-
-Measured on space, 2026-09-27, load 10, all nine at once: 5 s wall.
-
-| config | result | time |
-|---|---|---|
-| `MCFileLock` | no error, 37,611 distinct states, three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, UncleanIsTold, NothingToClear | 3 s |
-| `MCFileLockFour` | no error, 160,832 distinct states, four processes, each pid reused once: the same eight | 5 s |
-| `MCFileLockBrokenStale` | MutualExclusion violated in 21 states: a holder dies; two processes find the lock stale and both clear it; the first removes the file and takes a new one at the path; the second opens that new file, finds no name in it, and removes it; both then create a file and hold (d653eb53e filelock_unix.go: 167, 197, 206, 217, 221, then 57, 64, 70) | 2 s |
-| `MCFileLockBrokenExProbe` | HeldIsTrue violated in 6 states: a probe has the exclusive lock for an instant, and a taker is refused as "held" with nobody holding (d653eb53e filelock_unix.go: 171, then 64, 96, 104; `internal/wake/lockprobe_unix.go` 49 on dev) | 2 s |
-| `MCFileLockBrokenSentinel` | NothingToClear violated in 4 states: the holder dies and the lock stays taken (`lock_other.go` of `internal/bus`, `tokens`, `swarm`; `internal/wake/lockprobe_other.go` says so of itself) | 2 s |
-| `MCFileLockCandidate` | the candidate as it is ("stale" and "exprobe" together): HeldIsTrue violated in 6 states, MutualExclusion as above | 2 s |
-| `MCFileLockBrokenPidLive` | HeldIsTrue violated: a probe that reads the note and asks whether the pid answers says "free" of a taker that has not yet written its name | 2 s |
-| `MCFileLockBrokenUnlink` | MutualExclusion violated in 11 states: release removes the file under a taker that has it open | 2 s |
-| `MCFileLockBrokenKeepStamp` | UncleanIsTold violated: release leaves the name, and the next taker is told the last holder never released | 2 s |
-
-Stale, ExProbe and Sentinel are in code that exists, each checked by hand
-against the lines named. The first Stale counterexample TLC gave did not
-survive that check (it counted as a holder a process the code makes give up),
-so the invariant was tightened to locks handed to a caller, and the trace above
-is the one that holds. PidLive, Unlink and KeepStamp are misimplementations the
-invariants are shown to catch.
-
 ## The shell (TableSession)
 
 `TableSession.tla`: `nova-table shell` as a state machine, the design that

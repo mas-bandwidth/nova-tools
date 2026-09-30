@@ -46,3 +46,858 @@ internal/nsprint/webhook/webhook_test.go a functional test of deprecated nsprint
 internal/swarm/grammar_run_test.go swarm.Run has had no caller since 5f9e39d0 on 09-24; the pool last ran by hand on 09-11/12; sprint v1's dispatch layer supersedes it
 internal/ci/ci_spin_class_test.go reverted with #4685: the class test enforced no ceiling (it built its entries from the ceiling itself and never compared with the first parent)
 internal/ci/testdata/ci_spin.txt reverted with #4685: the class test enforced no ceiling (it built its entries from the ceiling itself and never compared with the first parent)
+deprecated/cmd/nova-board/add_firstuse_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/audit_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/fold_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/issue179_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/main_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/version_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-card/closedaddr_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/main_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/refusal_record_functional_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/refusal_record_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/refusal_unkept_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-decide/accounting_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/classify_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/decisions_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/down_friends_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/examplelines_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/flagdocs_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/floorkinds_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/hold_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/issue1451_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/issue2034_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/jevstream_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/logsink_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/main_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/mandatory_reader_cli_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/outcome_append_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/outcome_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/questionpair_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/review_prompt_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/review_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/route_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/settled_receipt_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/stepup_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_default_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_malformed_marker_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_observations_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/usage_witness_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/verb_help_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/wait_usage_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-friend/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/friend_functional_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/here_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/list_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/main_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-merge/admin_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/atomic_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/atomic_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/audit_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch1661_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch1661_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_sibling_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_sibling_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/carriedhold2550_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/cas_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/classify_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/contract_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/dogfood_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/dogfood_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_hold_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_hold_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_safepath_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_verb_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/footguns_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/help_verbs_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/helpers_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/helpers_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/hold_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/hold_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/hostedred_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue1835_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue2167_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue2683_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue3016_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/lanefixture_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/lessons_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/publication_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/readitem_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/source_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/timeout_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/version_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-play/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-play is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-play/main_test.go deleted 2026-09-30 from deprecated/; nova-play is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/docsnippet_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/hook_dispatch_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/issue1451_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/issue1451exit_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/issue_cli_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/main_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-review/decide_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/guard_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/issue2063_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/main_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/mutate_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/port_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/root_packet_review_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/slow_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/spec_grammar_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/spec_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/version_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-sprint/acl_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/acl_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/adopt_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/backpressure_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/bench_role_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/capacity_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_from_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_from_paths_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_from_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_parent_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_parent_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_rerun_paths_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_fsck_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_harness_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_harness_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_moves_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_moves_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_push_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_render_merge_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_render_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_show_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/census_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_final_gh_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_github_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_run_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_runner_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/control42_redis_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/copy_gate_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/cost_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/devred_read_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/digest_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/digest_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/doctor_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/doctor_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/firstrun_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/firstrun_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_build_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_churn_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_helpers_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_play_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_play_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_ps_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_release_exec_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_release_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fndeploy_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fndeploy_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fnload_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fnload_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/help_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/hold_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/hold_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/idem_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/jev_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/jev_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_duty_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_eval_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_eval_shadow_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_eval_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_nolocal_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_nolocal_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_pr_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_run_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_stream_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_stream_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_whole_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_whole_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_writer_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_writer_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_exec_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_unit_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_unit_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lessons_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/life_beat_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/life_row_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/line_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lineup_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/main_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/main_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/mirror_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/note_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/one_count_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/one_count_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pidalive_unix_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pitstop_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pitstop_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/plan_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pr_key_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pr_key_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pr_reap_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/preflight_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/quack_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_brief_pr_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_copies_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ready_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/reconcile_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/reconcile_trips_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/registry_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/review_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/rote_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/route_duty_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/route_report_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/routes_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/routes_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/routes_tier_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/seat_profile_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/seat_profile_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/seat_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/self_update_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/silent_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/silent_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/slow_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/spec_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_acl_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_clear_epoch_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_clear_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_fold_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stitch_land_doors_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_life_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_life_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_paths_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_paths_repair_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_bound_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_check_control_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_loop_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_loop_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_out_atomic_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_streams_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/task_card_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/task_card_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/task_seat_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/verbs_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/why_l17_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/why_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/width_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/worker_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ws_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ws_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-test/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-test is replaced by cmd/nova-ci slowtests and tools/functionalrun
+deprecated/cmd/nova-test/status_test.go deleted 2026-09-30 from deprecated/; nova-test is replaced by cmd/nova-ci slowtests and tools/functionalrun
+deprecated/cmd/nova-wake/advance_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/audit_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/awake_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/awake_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/deadline_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/efficiency_card_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_helpers_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_helpers_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue1451_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue1517_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue2200_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue487_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/laneread_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/lessons_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/lessons_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/main_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/main_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/pin_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/pin_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/probe_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/recovery_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/serve_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/serve_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/store_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/storewatch_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/versionflags_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/watch_config_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/watch_config_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/internal/board/derive_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/dir_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/eff84_board_efficiency_spec_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/event_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/issue_author_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/issue_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/decide/redtriage/triage_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/dispatch/dispatch_test.go deleted 2026-09-30 from deprecated/; nova-wake support package, replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/internal/docs/capacity_proposal_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2206_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2208_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2226_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2229_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2232_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2233_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2236_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/nexttools_board_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/novatest_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/novatest_verbs_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/portfolio_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/windows_bench_standard_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/friendread/count_test.go deleted 2026-09-30 from deprecated/; nova-merge support package, replaced by cmd/nova-sprint merge and the lander
+deprecated/internal/jevcalib/prompt_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/jevcalib/rule_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/nsprint/fn/probe_sets_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/internal/nsprint/store/acl_cards_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/internal/nsprint/store/acl_epoch_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/internal/post/hook/hook_test.go deleted 2026-09-30 from deprecated/; nova-post support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/post/issue/issue_test.go deleted 2026-09-30 from deprecated/; nova-post support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/prereview/base_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/body_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/ci_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/export_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/gate_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/prereview_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/toolpr_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/guard_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/mutate_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/openfindings_travel_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/record_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/revert_nocompile_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/seed_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/swarm/effort_spec_test.go deleted 2026-09-30 from deprecated/; a wording guard of SPEC-SWARM-PROFILES.md, replaced by cmd/nova-swarm and docs/SPEC-SWARM.md
+deprecated/nova-bus-decide/decide_test.go deleted 2026-09-30 from deprecated/; nova-bus inbox --decide classifier, replaced by cmd/nova-bus carrying messages only
+deprecated/nova-bus-decide/private_test.go deleted 2026-09-30 from deprecated/; nova-bus inbox --decide classifier, replaced by cmd/nova-bus carrying messages only
+deprecated/tools/testdur/benches_test.go deleted 2026-09-30 from deprecated/; nova-test support tool, replaced by cmd/nova-ci slowtests
+internal/civerdict/civerdict_test.go dead: no living importer, the owner 2026-09-30
+internal/ctxindex/ctxindex_test.go dead: no living importer, the owner 2026-09-30
+internal/filelock/filelock_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/filelock/filelock_test.go dead: no living importer, the owner 2026-09-30
+internal/filelock/filelock_unix_test.go dead: no living importer, the owner 2026-09-30
+internal/filelock/property_test.go dead: no living importer, the owner 2026-09-30
+internal/fleet/state/redis_test.go dead: no living importer, the owner 2026-09-30
+internal/fleet/state/state_test.go dead: no living importer, the owner 2026-09-30
+internal/gh/await_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/gh/client_test.go dead: no living importer, the owner 2026-09-30
+internal/gh/oneclient_test.go dead: no living importer, the owner 2026-09-30
+internal/gh/ref_test.go dead: no living importer, the owner 2026-09-30
+internal/jev/jev_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/absentholder3032_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/audit_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/blocked_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/carriedhold_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/checkoutlock_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/cisource_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/clampedhold3443_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/eff83_efficiency_card_spec_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/enqueue_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/fetchedreporttip_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/foldfetchedtip_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/foldreadonly_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/gate_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/gh_verdict_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/gitpath_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/guard_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/holdanyhead_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/integrate_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/issue2185_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/landing_capture_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/lock_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/maintenance_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/mentionhold_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/parsereview_untyped_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/queuegh_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/raced_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/readerrule_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/readitem_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/rebase_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/refname_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/reviewers_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/source_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/state_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/step_parity_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/step_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/uncapped_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/verdict_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/wait_base_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/wait_test.go dead: no living importer, the owner 2026-09-30
+internal/merge/whocase_test.go dead: no living importer, the owner 2026-09-30
+internal/metrics/metrics_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/acl/acl_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/adopt/adopt_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/adopt/adopt_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/beat/beat_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/benchrole/role_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/benchrole/role_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/brief/card_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/awake_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/budget_refused_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/capacity_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/l20b_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/pipeline_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/redis_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/capacity/worker_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/bench_role_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/bench_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/card_read4429_rowanopus_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/claim_fn_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/copy_friend_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/copy_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/copy_ledger_harvest_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/copy_ledger_read_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/copy_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/cut_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/depends_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/drain_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/end_result_record_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/end_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/export_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/gate_3551_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/gate_3551_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/ghost_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/harvestcopy/askpass_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/harvestcopy/fix_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/harvestcopy/harvest_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/harvestcopy/prbody_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/header_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/kinds_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/kinds_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/member_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/mirror_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/never_disappear_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/nice_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/noscript_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/pool_line_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/push_batch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/push_body_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/push_donewhen_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/push_invariant_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/push_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/push_token_env_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/quack_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/route_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/run_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/run_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/sentinel_dep_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/slow_external_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/stream_paths_doors_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/stream_paths_gate_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/stream_paths_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/stream_register_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wall_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wall_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/worker_line_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_commit_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_nocommit_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_nocommit_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_refused_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_refused_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_result_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_result_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_spec_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_spec_real_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_spec_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/card/wrapper_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/cap_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/cap_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/ci_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/control54_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/env_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/env_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/export_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/fleet_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/mirror_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/pair_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/parity_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/parity_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/run_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/terminated_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/terminated_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ci/waiting_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/consumers_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/firstread_shape_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/firstread_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/okfriend_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/okfriend_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/prread_carry_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/prread_sprints_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/review_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/route_pitstop_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/route_slow_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/route_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/routecut_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/runner_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/consume/runner_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/cost/import_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/backpressure_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/cilegs_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/fleet_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/fn_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/fn_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/metrics_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/oneledger_3877_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/parallel_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/parallel_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/pass_control12_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/pass_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/pitstop_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/pitstop_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/proc_unix_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/proc_windows_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/rank_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/ready_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/ready_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/refusals_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/role_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/slow_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/slow_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/deal/source_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/digest/digest_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/digest/digest_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/disposition/control_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/disposition/line_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/disposition/score_read_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/file/file_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/file/issuer_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleet/churn_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleet/fleet_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleet/fleet_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleet/ps_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/compile_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/converge_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/fleetbuild_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/helpers_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/play_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/probe_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/release_answers_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/release_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fleetbuild/selfupdate_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/ci_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/estimate_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/fold_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/land_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/rote_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/routes_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/fold/split_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/friend/apply_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/friend/apply_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/friend/friend_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/friend/friend_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/jev/jev_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/jev/ledger_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/jev/sentinel_classification_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/adapters_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/adapters_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/carry_merge_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/control42_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/controls_b6_defects_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/controls_b6_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/eval_controls_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/eval_controls_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/fleet_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/guard/guard_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/land_fixture_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/land_fixture_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/load_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/metrics_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/prrecord_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/retired_key_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/select_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/select_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/duty_parts_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/duty_parts_git_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/fixture_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/git_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/pr_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/serial_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/serial_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/stream_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/stream/stream_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/land/unit_fixture_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/launch/envfile_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/launch/launch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/launch/realwrapper_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/launch/stop_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/lessons/lessons_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/beatloop_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/beatloop_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/cilegs_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/cilegs_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/cmdlog_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/cpu_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/events_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/facts_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/friendbeat_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/life_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/owner_doors_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/owner_epoch_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/owner_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/owner_process_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/owner_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/procs_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/ps_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/redis_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/row_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/stella_ghost_probe_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/wake_stale_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/wakehealth_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/life/wakehealth_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/line/carry_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/line/store_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/mirror/mirror_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/note/note_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pipeerr/pipeerr_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pitstop/held_parity_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pitstop/held_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pitstop/pitstop_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pitstop/pitstop_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pr/harness_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pr/harness_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pr/pr_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/pr/pr_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/beatlauncher_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/fleet_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/fleetrows_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/fleetrows_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/lineup_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/localtest_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/probe_stage_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/seat_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/store_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/preflight/store_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/prkey/prkey_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/event_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/pr_brief_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/pr_brief_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/read_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/read_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/task_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/read/task_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ready/ready_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reap/reap_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reap/reap_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/bound_duties_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/controls_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/controls_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/deal_fixture_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/deal_width_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/devred_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/done_already_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/done_already_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/expire_library_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/export_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/fleet_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/heartbeat_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/land_duty_serial_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/land_duty_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/land_watch_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/land_watch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/land_watch_trips_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/lease_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/progress_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/progress_land_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/progress_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/rebalance_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/refill_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/refill_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/required_timeout_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/retry_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/retrycap_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/retrycap_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/route_consumers_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/route_pr_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/stitch_brief_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/waiting_resolve_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/waiting_resolve_trips_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/reconcile/wedge_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/route/allowed_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/route/fold_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/route/preamble_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/route/spread_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/spec/spec_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/sprint/fold_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/sprint/plan_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/sprint/sprint_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/behind_status_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/check_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/check_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/consumer_table_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/epoch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/events_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/friend_load_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/host_row_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_bash_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_bash_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_bash_windows_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_cards_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_nomirror_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/live_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/load_pitstop_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/pitstop_title_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/silent_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/sprint_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/sprint_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/streams_records_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/table_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/table_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/table/worker_models_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/claim_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/cost_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/lease_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/lease_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/list_batch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/paths_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/paths_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/push_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/take_batch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/take_count_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/take_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/task/width_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/cancel_each_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/ci_final_gh_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/cilegs_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/complete_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/complete_spec_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/complete_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/cutledger_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/export_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/freeslots_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/frontier_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/hierarchy_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/hierarchy_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/moves_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/onestore_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/pass_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/pushmany_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/reads_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/review_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/stitch_brief_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/taskcard_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/wiring_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/taskcard/worker_pause_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/verbs/unused_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/webhook/foldref_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/webhook/nopoll_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/webhook/prrecord_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/webhook/runner_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/webhook/runner_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/epoch_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/epoch_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/paths_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/progress_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/rowan_opus_read4412_probe_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/sentinel_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/sentinel_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/ws_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/ws_read4429_rowanopus_test.go dead: no living importer, the owner 2026-09-30
+internal/nsprint/ws/ws_test.go dead: no living importer, the owner 2026-09-30
+internal/presence/issue3277_test.go dead: no living importer, the owner 2026-09-30
+internal/presence/presence_test.go dead: no living importer, the owner 2026-09-30
+internal/presence/redis_test.go dead: no living importer, the owner 2026-09-30
+internal/presence/seat_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/dirq_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/issue2196_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/issue2197_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/issue2277_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/issue3277_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/prefixbytes_test.go dead: no living importer, the owner 2026-09-30
+internal/redisq/redisq_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/build_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/dispatch_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/heartbeat_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/helpers_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/push_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/real_rules_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/stopped_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/storetier_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/tick_errors_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/tick_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/tick_limits_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/machine/tick_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/verbs/epochs_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/verbs/machine_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/verbs/machine_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/verbs/settle_branches_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/verbs/settle_test.go dead: no living importer, the owner 2026-09-30
+internal/sprint/verbs/verbs_test.go dead: no living importer, the owner 2026-09-30
+internal/sprintline/line_test.go dead: no living importer, the owner 2026-09-30
+internal/sprinttable/plist_test.go dead: no living importer, the owner 2026-09-30
+internal/sprinttable/session_unix_test.go dead: no living importer, the owner 2026-09-30
+internal/testpg/recorder_test.go dead: no living importer, the owner 2026-09-30
+internal/testpg/testpg_functional_test.go dead: no living importer, the owner 2026-09-30
+internal/testpg/testpg_test.go dead: no living importer, the owner 2026-09-30
+internal/docs/issue2282_test.go dead: its only subject is internal/presence, which has no living importer, the owner 2026-09-30
+internal/wake/busprogress_test.go internal/wake is deleted (dead code: the retired nova-wake tool's package, nothing living called it but one string comparison, inlined in internal/update); the progress-line rule keeps TestProgressNeverEntersTheProtocolStream in cmd/nova-bus and TestEveryNovaBusConsumerDropsProgressLines in internal/ci
+internal/wake/daemon_test.go internal/wake is deleted (dead code; the tick-end wake of cmd/nova-sprint replaced the serve loop)
+internal/wake/evgithub_test.go the ev:github reader moved to internal/ghevent (Reader, opened through redisconn); its cases are exercised by the receipt functional tests in internal/cireceipt and cmd/nova-ci
+internal/wake/laneread_functional_test.go internal/wake is deleted (dead code: the retired nova-wake lane reads)
+internal/wake/resp3_functional_test.go internal/wake is deleted (dead code: a second Redis connection pool beside internal/redisconn)
+internal/wake/resp3_test.go internal/wake is deleted (dead code: a second Redis connection pool beside internal/redisconn)
+internal/wake/slotlease_functional_test.go internal/wake is deleted (dead code: a second slot-lease format; internal/swarm/lease.go owns leases)
+internal/wake/slotlease_test.go internal/wake is deleted (dead code: a second slot-lease format; internal/swarm/lease.go owns leases)
+internal/wake/state_test.go internal/wake is deleted (dead code: the retired nova-wake watch state)
+internal/wake/waitbookkeeping_test.go internal/wake is deleted (dead code: the retired nova-wake wait bookkeeping)
+internal/wake/waitbookkeepingspec_test.go internal/wake is deleted (dead code: the retired nova-wake wait bookkeeping spec)
+internal/jobs/admission_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/duplicateneeds_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue1796_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue2239_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue2240_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue2250_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/jobs_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/worklang/admit_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/expand_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/expandfields_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/issue2187_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/issue2246_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/swarm/pull_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+internal/swarm/pullbatch_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+internal/swarm/pullcard_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+internal/swarm/pullsubmit_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+internal/swarm/pullworker_functional_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+internal/swarm/pullworker_test.go the pull pool is deleted (dead code: PullLanes, PullSubmit, PullBatch, PullQueue, RunPullWorker and the pull card lease functions have no caller in any shipped tool; nova-swarm has no pull verb)
+internal/play/issue2194_test.go internal/play/play.go is deleted (dead code: the annotation, reply and export library has no caller; nova-memory view uses view.go alone, whose tests stay)
+internal/play/play_test.go internal/play/play.go is deleted (dead code: the annotation, reply and export library has no caller; nova-memory view uses view.go alone, whose tests stay); writeSource moved to view_test.go
+internal/decide/chain_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/decisions_test.go the decisions table is deleted with OpenDecisions and UseDecisions (dead code: nothing in a shipped tool attached a table, so Client.record wrote no row)
+internal/decide/floors_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/harvestclass_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/help_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/issue2254_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/ledgerstream_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/logsink_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/questionfile_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/questions/questions_test.go internal/decide/questions is deleted (dead code: imported only by the deleted decide chain and harvest classifier)
+internal/decide/readers_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/record_concurrent_test.go the decisions table is deleted with OpenDecisions and UseDecisions (dead code: nothing in a shipped tool attached a table, so Client.record wrote no row)
+internal/decide/testline_grammar_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/tune1_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/tune_default_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/tune_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/decide/worktype_test.go the file it tested in internal/decide is deleted (dead code: the who-reads, help, harvest, tune, floors, worktype and chain decisions and the Jev ledger writers have no caller in a shipped tool); the live route path keeps its own tests
+internal/events/decide_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
+internal/events/fold_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
+internal/events/redis_integration_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
+internal/events/slow_test.go the Decision and Jev event kinds and the SQLite fold are deleted (dead code: no shipped tool folds the stream or writes those kinds); the stream writer keeps its tests
+internal/swarm/decide_export_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/decide_triage_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/launch_bound_functional_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/prepare_recovery_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/read6_budgetword_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/read6_recovery_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/run_slots_identity_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/stop_remedy_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)
+internal/swarm/unreadable_slot_test.go the code it drove is deleted (dead code: swarm.Run, the dispatcher and its finish half, Triage and taskDecider have no caller in a shipped tool; nova-swarm batch is the dispatcher)

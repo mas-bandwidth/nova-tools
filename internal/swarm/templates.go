@@ -93,6 +93,26 @@ const templateFixCard = `fix-card — take one card and land the fix
    pick it up with no other context.
 `
 
+// templateCard is the card the coordinator starts from: the contract line, the RULES
+// paragraph with every rule of CardChildRules quoted verbatim (lintchild.go), the task,
+// and the steps. It passes `nova-swarm lint --card --child-rules` as printed, and it is
+// what `nova-sprint add` holds every brief to: a card without the paragraph is refused
+// before anything is written. The <angle> words are the writer's to fill.
+var templateCard = "RESULT: <label> sha=<sha12>\n" +
+	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
+	"Deadline: finish within <n> minutes.\n" +
+	"\n" +
+	ChildRulesParagraph() +
+	"\n" +
+	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, the private GOCACHE path, and every file you may touch.>\n" +
+	"\n" +
+	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOCACHE=<private cache path> GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.\n" +
+	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
+	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
+	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
+	"STEP 5. Commit on your own branch with the trailer, push it with a plain git push, and open the pull request against <base>. The body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
+	"STEP 6. Write RESULT.md: line 1 is line 1 of this card; under it the PR number and sha, every test package line, and what you could not do and why, in under 80 lines.\n"
+
 // templateResult is the ONE shape a report has, so the fold is mechanical and a person
 // reads counts. The parser in result.go parses exactly this and nothing else.
 const templateResult = "# <task>\n" + `
@@ -455,6 +475,8 @@ func Template(name string) (string, error) {
 		return templateSetup, nil
 	case "capacity":
 		return templateCapacity, nil
+	case "card":
+		return templateCard, nil
 	case "read":
 		return pulseRead, nil
 	case "fix":
@@ -475,7 +497,7 @@ func Template(name string) (string, error) {
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity",
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity", "card",
 		"read", "fix", "text", "replay", "drift", "tone", "models.tsv"}
 	sort.Strings(names)
 	return names
@@ -511,6 +533,9 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "capacity" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `capacity` is the per-friend offer and routing-log form of issue #176, printed by `template --name capacity`")
+	}
+	if name == "card" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `card` is a whole card with its RULES paragraph, printed by `template --name card`, the shape the coordinator starts from")
 	}
 	if IsPulseTemplate(name) {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template of SPEC-PULSE rule 4, printed by `template --name %s`, not a task template", name, name)
