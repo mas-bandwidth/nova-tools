@@ -80,12 +80,15 @@ type env struct {
 	h      host
 	exeDir string // the directory of the running binary
 	cwd    string // the working directory
+	// systemDir is where the system-wide systemd units are: /etc/systemd/system on a
+	// bench, a directory of the test's own in a test, so no test reads the host's.
+	systemDir string
 }
 
 func main() {
 	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
-	os.Exit(run(os.Args[1:], env{stdout: os.Stdout, h: osHost{}, exeDir: filepath.Dir(exe), cwd: cwd}))
+	os.Exit(run(os.Args[1:], env{stdout: os.Stdout, h: osHost{}, exeDir: filepath.Dir(exe), cwd: cwd, systemDir: "/etc/systemd/system"}))
 }
 
 // run is the whole tool. An unknown argument is refused as drift, loudly: a
@@ -115,6 +118,7 @@ func run(args []string, e env) int {
 		goWant:  process["NOVA_GO"],
 		want:    process["NOVA_WANT"],
 		harness: process["NOVA_HARNESS"],
+		systemDir: e.systemDir,
 	}
 	if w.goWant == "" {
 		w.goWant = wantedGo(e)

@@ -76,6 +76,8 @@ type witness struct {
 	goWant  string // the wanted go, as `go version` names it
 	want    string // the wanted nova version
 	harness string // NOVA_HARNESS, an explicit harness binary
+
+	systemDir string // the system-wide systemd unit directory; empty reads the user units only
 }
 
 // drift prints one finding.
@@ -238,10 +240,12 @@ func (w *witness) checkRunners() {
 		}
 		// (2) the unit file carries the standard stanzas.
 		var unitFile string
-		for _, c := range []string{
-			filepath.Join(w.home, ".config", "systemd", "user", unit),
-			filepath.Join("/etc/systemd/system", unit),
-		} {
+		unitDirs := []string{filepath.Join(w.home, ".config", "systemd", "user")}
+		if w.systemDir != "" {
+			unitDirs = append(unitDirs, w.systemDir)
+		}
+		for _, d := range unitDirs {
+			c := filepath.Join(d, unit)
 			if w.isRegular(c) {
 				unitFile = c
 				break

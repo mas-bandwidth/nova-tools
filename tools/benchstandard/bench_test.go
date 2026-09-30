@@ -292,7 +292,7 @@ func conformingBench(t *testing.T) *bench {
 func (b *bench) standard(args ...string) (int, string) {
 	b.t.Helper()
 	var buf bytes.Buffer
-	code := run(args, env{stdout: &buf, h: b.h, exeDir: b.t.TempDir(), cwd: b.t.TempDir()})
+	code := run(args, env{stdout: &buf, h: b.h, exeDir: b.t.TempDir(), cwd: b.t.TempDir(), systemDir: b.t.TempDir()})
 	return code, buf.String()
 }
 

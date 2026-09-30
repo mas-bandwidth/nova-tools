@@ -126,7 +126,7 @@ func TestTheWantedGoTracksGoMod(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf strings.Builder
-	code := run(nil, env{stdout: &buf, h: b.h, exeDir: filepath.Join(tree, "bin"), cwd: t.TempDir()})
+	code := run(nil, env{stdout: &buf, h: b.h, exeDir: filepath.Join(tree, "bin"), cwd: t.TempDir(), systemDir: b.t.TempDir()})
 	if code != 1 || !strings.Contains(buf.String(), "DRIFT go version [go version go1.26.5 linux/amd64] want go1.99.0\n") {
 		t.Errorf("exit %d:\n%s", code, buf.String())
 	}
@@ -136,7 +136,7 @@ func TestTheWantedGoTracksGoMod(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf.Reset()
-	run(nil, env{stdout: &buf, h: b.h, exeDir: t.TempDir(), cwd: sub})
+	run(nil, env{stdout: &buf, h: b.h, exeDir: t.TempDir(), cwd: sub, systemDir: b.t.TempDir()})
 	if !strings.Contains(buf.String(), "want go1.99.0") {
 		t.Errorf("the go.mod above the working directory was not read:\n%s", buf.String())
 	}
@@ -150,7 +150,7 @@ func TestNovaGoOverridesGoMod(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf strings.Builder
-	code := run(nil, env{stdout: &buf, h: b.h, exeDir: filepath.Join(tree, "bin"), cwd: tree})
+	code := run(nil, env{stdout: &buf, h: b.h, exeDir: filepath.Join(tree, "bin"), cwd: tree, systemDir: b.t.TempDir()})
 	if code != 0 {
 		t.Errorf("NOVA_GO=go1.26.5 was overridden by go.mod:\n%s", buf.String())
 	}
