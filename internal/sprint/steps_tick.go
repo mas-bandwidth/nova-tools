@@ -243,9 +243,10 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // T3. TickDeal deals ready primaries in stream turns (dealTurns: one from each
-// stream in turn, each stream's oldest first by score), each to the up
-// member with the shortest ready queue, keeping every ready queue no longer
-// than MaxReadyPerMember; a withdrawn card is dealt again at a new
+// stream in turn, each stream's oldest first by score), each to the next up
+// member round the fleet with room (Deal: the rolling index of round.go,
+// errata 3 amendment 5), keeping every ready queue no longer than
+// MaxReadyPerMember; a withdrawn card is dealt again at a new
 // generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {

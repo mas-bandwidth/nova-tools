@@ -115,7 +115,7 @@ func (n *State) tickResume() {
 
 // tickDeal is T3: ready primaries in stream turns (one from each stream in
 // turn, streams in name order, each stream's oldest first by score), each to the up
-// member with the shortest ready queue, no ready queue longer than
+// next member round the fleet (NextMember), no ready queue longer than
 // MaxReadyPerMember; with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
 func (n *State) tickDeal(choice map[string]string) error {
@@ -169,12 +169,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 		}
 		m := choice[p]
 		if m == "" {
-			for _, x := range room {
-				if n.ShortestIn(x, room) {
-					m = x
-					break
-				}
-			}
+			m = n.NextMember(room)
 		}
 		next, err := Start(*n, p, m, MaxReadyPerMember)
 		if err != nil {
@@ -213,23 +208,7 @@ func (s State) defaultPair(p string) []string {
 	if pair := s.Primaries[p].Pair; len(pair) > 0 {
 		return append([]string(nil), pair...)
 	}
-	var out []string
-	for len(out) < 2 {
-		best := ""
-		for _, r := range s.Readers {
-			if has(out, r) {
-				continue
-			}
-			if best == "" || s.AskedLen(r) < s.AskedLen(best) {
-				best = r
-			}
-		}
-		if best == "" {
-			return out
-		}
-		out = append(out, best)
-	}
-	return out
+	return s.NextReaders(p, 2)
 }
 
 // Release is the spec's release (section 16): the coordinator alone lands

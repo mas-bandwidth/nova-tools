@@ -11,8 +11,10 @@ import (
 )
 
 // coordinate is a coordinator by rule: accept what two readers passed, rework
-// what came back failed or broken, resume a stopped stream. It is what the
-// person at the inbox does, typed as the same verbs.
+// what came back failed or broken, resume a stopped stream, and leave a stream
+// stopped for another stream's card to the machine, which resumes it when that
+// card lands (T7): resume refuses it while the card is not landed. It is what
+// the person at the inbox does, typed as the same verbs.
 func (ta *testApp) coordinate() {
 	ta.t.Helper()
 	_, _, _ = ta.do("accept --read-ok")
@@ -26,6 +28,8 @@ func (ta *testApp) coordinate() {
 		case g.Type == sprint.NWorkFailed || g.Type == sprint.NReadBroken:
 			ta.ok(fmt.Sprintf("rework --group %s --expect %d --fix 'the fix'", g.ID, g.Size))
 			return // read the inbox again next round
+		case g.Type == sprint.NCross:
+			continue
 		case strings.HasPrefix(g.Type, "stream stopped"):
 			ta.ok("resume --stream " + g.Stream + " --did 'resolved'")
 			return

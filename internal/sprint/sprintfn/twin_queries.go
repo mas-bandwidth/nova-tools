@@ -1146,6 +1146,10 @@ func (t *Twin) queryPhase(st *State, q SprintQuery) (json.RawMessage, *Refusal) 
 // the cells a listing counts for each row.
 const maxTableColumns = 32
 
+// maxQueryProps is the most table properties a fleet or readers query names:
+// a table's (L1 contract amendment, table properties).
+const maxQueryProps = 64
+
 // sourceSize is how many ids a source names at most, and the probes that find
 // them: a list costs none, a head one range read, a line one line.
 func sourceSize(src sprint.IDSource) (n, probes int) {

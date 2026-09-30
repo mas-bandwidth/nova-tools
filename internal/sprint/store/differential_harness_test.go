@@ -807,13 +807,20 @@ func moved(pre, post refmodel.State) map[string]string {
 
 // tickChoices is the choices a tick made: the member each primary's card was
 // dealt to, the member each ready card was levelled to, the readers each
-// primary was asked of.
+// primary was asked of. A card dealt and levelled in one tick (a generation
+// more than its deal gives it) shows only where the level put it: its deal is
+// left to the model's rule (the next member round the fleet, errata 3
+// amendment 5) and its member is the level's choice.
 func tickChoices(pre, post refmodel.State) refmodel.TickChoices {
 	ch := refmodel.TickChoices{Deal: map[string]string{}, Level: map[string]string{}, Ask: map[string][]string{}}
 	for id, w := range post.Work {
 		b, ok := pre.Work[id]
 		switch {
 		case w.Place == refmodel.FReady && (!ok || b.Place == refmodel.FWithdrawn):
+			if (!ok && w.Gen != 1) || (ok && w.Gen != b.Gen+1) {
+				ch.Level[id] = w.Member
+				continue
+			}
 			ch.Deal[w.Primary] = w.Member
 		case ok && w.Place == refmodel.FReady && b.Place == refmodel.FReady && b.Member != w.Member:
 			ch.Level[id] = w.Member

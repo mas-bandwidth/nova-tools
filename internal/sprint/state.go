@@ -148,6 +148,7 @@ type Table struct {
 	// read plan they are known only when a query read them (propsRead).
 	props     map[string]string
 	propsRead bool
+	propsOf   map[string]bool // on a table loaded from a read plan, the properties a query named
 
 	// rows are the table's rows in order, read by Rows and set by SetRows: on a
 	// table loaded from a read plan the rows are read only when the plan asked
@@ -325,6 +326,24 @@ func (t *Table) SetProps(p map[string]string) {
 	t.propsRead = true
 }
 
+// setPropsRead records the properties a query of a read plan named and the
+// values it read of them.
+func (t *Table) setPropsRead(names []string, values map[string]string) {
+	if t.props == nil {
+		t.props = map[string]string{}
+	}
+	if t.propsOf == nil {
+		t.propsOf = map[string]bool{}
+	}
+	for _, n := range names {
+		t.propsOf[n] = true
+		if v, ok := values[n]; ok {
+			t.props[n] = v
+		}
+	}
+	t.propsRead = true
+}
+
 // Prop is the table's property name and whether it is present. On a table
 // loaded from a read plan whose properties no query read it is refused (the
 // planner read what its plan did not load) and says absent.
@@ -332,8 +351,8 @@ func (t *Table) Prop(name string) (string, bool) {
 	if t == nil {
 		return "", false
 	}
-	if t.part != nil && !t.propsRead {
-		t.part.log.note(unloadedMessage + ": " + t.Name + " properties")
+	if t.part != nil && (!t.propsRead || !t.propsOf[name]) {
+		t.part.log.note(unloadedMessage + ": " + t.Name + " property " + name)
 		return "", false
 	}
 	v, ok := t.props[name]
