@@ -111,9 +111,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
+			u.Closes = closesFor(s.Open, AskAnotherResolves, c.ID)
 		} else {
-			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
+			u.Closes = closesFor(s.Open, AskResolves, c.ID)
 		}
 		asked := map[string]string{}
 		for _, rd := range chosenReaders {
