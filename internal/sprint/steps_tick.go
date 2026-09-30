@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -252,35 +253,94 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	due := 0
-	var ready []*Card
-	var conds []cond
-	for _, c := range s.Work.Column(Ready) {
-		if wc := AtRedealBound(s, c); wc != nil {
-			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
-				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
-			continue
+	up := s.UpMembers()
+	room := 0
+	for _, m := range up {
+		room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
+	}
+	maxNeeded := 0
+	if len(up) > 0 {
+		maxNeeded = min(room, TickMaxMoves)
+	}
+
+	var rows []string
+	if s.Work != nil {
+		rows = slices.Clone(s.Work.Rows())
+		if len(rows) == 0 {
+			s.Work.index()
+			for k := range s.Work.cells {
+				if k[1] == Ready {
+					rows = append(rows, k[0])
+				}
+			}
 		}
-		if !IsSentinel(c) {
-			ready = append(ready, c)
+		slices.Sort(rows)
+		rows = slices.Compact(rows)
+	}
+
+	var redealBound map[string]*Card
+	if s.Fleet != nil {
+		for _, wc := range s.Fleet.Column(Withdrawn) {
+			if wc.Int("redeals") >= MaxRedeals {
+				if p := wc.F("primary"); p != "" {
+					if redealBound == nil {
+						redealBound = map[string]*Card{}
+					}
+					redealBound[p] = wc
+				}
+			}
 		}
 	}
-	ready = dealTurns(ready, nil)
-	up := s.UpMembers()
-	if len(up) == 0 && len(ready) > 0 {
+
+	var conds []cond
+	totalReady := 0
+	candidates := make(map[string][]*Card, len(rows))
+	var activeStreams []string
+
+	for _, st := range rows {
+		cell := s.Work.Cell(st, Ready)
+		hasEligible := false
+		for _, c := range cell {
+			if redealBound != nil {
+				if wc := redealBound[c.ID]; wc != nil {
+					conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
+						what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
+					continue
+				}
+			}
+			if IsSentinel(c) {
+				continue
+			}
+			totalReady++
+			if maxNeeded > 0 && len(candidates[st]) < maxNeeded {
+				candidates[st] = append(candidates[st], c)
+			}
+			hasEligible = true
+		}
+		if hasEligible && len(candidates[st]) > 0 {
+			activeStreams = append(activeStreams, st)
+		}
+	}
+
+	if len(up) == 0 && totalReady > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
-			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
+			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", totalReady)})
 	}
 	if len(up) > 0 {
-		room := 0
-		for _, m := range up {
-			room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
-		}
-		n := min(room, TickMaxMoves, len(ready))
-		due = min(room, len(ready)) - n
+		n := min(maxNeeded, totalReady)
+		due = min(room, totalReady) - n
 		if n > 0 {
-			ids := make([]string, n)
-			for i := range ids {
-				ids[i] = ready[i].ID
+			ids := make([]string, 0, n)
+			for turn := 0; len(ids) < n; turn++ {
+				for _, st := range activeStreams {
+					cards := candidates[st]
+					if turn < len(cards) {
+						ids = append(ids, cards[turn].ID)
+						if len(ids) == n {
+							break
+						}
+					}
+				}
 			}
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
@@ -292,7 +352,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 // AtRedealBound is the primary's withdrawn work card when it is at its
 // redeal bound: the tick deals it no more. nil when it is not.
 func AtRedealBound(s *Snapshot, pr *Card) *Card {
-	if pr == nil || pr.Col != Ready {
+	if pr == nil || pr.Col != Ready || s.Fleet == nil || pr.Int("attempt") == 0 {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))

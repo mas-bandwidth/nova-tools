@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The deal works every stream in parallel (2.3 R6, front(s) per stream): one
@@ -186,6 +187,80 @@ func TestAHeldReadyCardCountsWhatIsAheadInTheDealsOrder(t *testing.T) {
 		hd := Holder(h, h.Snap.Now, id)
 		if want := fmt.Sprintf("0 free, %d ready ahead of it", ahead); !strings.Contains(hd.String(), want) {
 			t.Errorf("%s: %s, want %q", id, hd, want)
+		}
+	}
+}
+
+func TestDealTurnMatchesDealTurnsDirectly(t *testing.T) {
+	t.Parallel()
+	s := &Snapshot{
+		Now:     time.Now(),
+		Work:    NewTable(Work),
+		Fleet:   NewTable(Fleet),
+		Merge:   NewTable(Merge),
+		Readers: NewTable(Readers),
+	}
+	streams := []string{"zebra", "alpha", "middle"}
+	s.Work.SetRows(streams)
+
+	// Add cards with different counts per stream, ties in scores, and a sentinel
+	rawCards := []*Card{
+		{ID: "z1", Row: "zebra", Col: Ready, Score: 10},
+		{ID: "z2", Row: "zebra", Col: Ready, Score: 20},
+		{ID: "z-sentinel", Row: "zebra", Col: Ready, Score: 15, Fields: map[string]string{"kind": "sentinel"}},
+		{ID: "a1", Row: "alpha", Col: Ready, Score: 5},
+		{ID: "a2", Row: "alpha", Col: Ready, Score: 5}, // tie
+		{ID: "a3", Row: "alpha", Col: Ready, Score: 30},
+		{ID: "m1", Row: "middle", Col: Ready, Score: 1},
+	}
+	var nonSentinels []*Card
+	for _, c := range rawCards {
+		s.Work.Put(c)
+		if !IsSentinel(c) {
+			nonSentinels = append(nonSentinels, c)
+		}
+	}
+
+	expectedOrder := dealTurns(nonSentinels, nil)
+	c := newHeld(HeldState{Snap: s, Running: true}, s.Now)
+
+	for expectedIdx, card := range expectedOrder {
+		gotTurn := c.dealTurn(card.ID)
+		if gotTurn != expectedIdx {
+			t.Errorf("card %s (row %s, score %v): dealTurn=%d, want %d", card.ID, card.Row, card.Score, gotTurn, expectedIdx)
+		}
+	}
+}
+
+func TestTickDealMatchesDealTurnsOrder(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
+	for _, st := range []string{"s1", "s2", "s3"} {
+		w.must(Add(w.s, AddReq{Stream: st, Count: 10}))
+	}
+
+	var ready []*Card
+	for _, c := range w.s.Work.Column(Ready) {
+		if !IsSentinel(c) {
+			ready = append(ready, c)
+		}
+	}
+	expected := dealTurns(ready, nil)
+	// room = 2 members * 2 max = 4
+	p, due := TickDeal(w.s, TickReq{})
+	if due != 0 {
+		t.Fatalf("due=%d, want 0", due)
+	}
+	if len(p.Units) != 4 {
+		t.Fatalf("units=%d, want 4", len(p.Units))
+	}
+	for i := range 4 {
+		wantID := expected[i].ID
+		gotID := p.Units[i].Key
+		if gotID != wantID {
+			t.Errorf("unit[%d]: primary=%s, want %s", i, gotID, wantID)
 		}
 	}
 }

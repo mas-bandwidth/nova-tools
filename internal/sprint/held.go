@@ -1,7 +1,9 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -182,27 +184,110 @@ type held struct {
 	judged map[string][]string
 	memo   map[string]Hold
 	on     map[string]bool
-	// turn is each ready primary's place in the deal's order (dealTurns),
-	// computed once on first use.
-	turn map[string]int
+	// readyStreams is each stream with at least one non-sentinel ready card,
+	// in alphabetical order, along with card and sentinel counts, computed
+	// on first use by initReady.
+	readyStreams []readyStream
+	readyInit    bool
+}
+
+type readyStream struct {
+	name      string
+	count     int
+	sentinels int
+}
+
+func (c *held) initReady() {
+	if c.readyInit {
+		return
+	}
+	c.readyInit = true
+	if c.s.Work == nil {
+		return
+	}
+	rows := slices.Clone(c.s.Work.Rows())
+	if len(rows) == 0 {
+		c.s.Work.index()
+		for k := range c.s.Work.cells {
+			if k[1] == Ready {
+				rows = append(rows, k[0])
+			}
+		}
+	}
+	slices.Sort(rows)
+	rows = slices.Compact(rows)
+
+	for _, r := range rows {
+		cell := c.s.Work.Cell(r, Ready)
+		if len(cell) == 0 {
+			continue
+		}
+		cnt, sent := 0, 0
+		for _, card := range cell {
+			if IsSentinel(card) {
+				sent++
+			} else {
+				cnt++
+			}
+		}
+		if cnt > 0 {
+			c.readyStreams = append(c.readyStreams, readyStream{name: r, count: cnt, sentinels: sent})
+		}
+	}
 }
 
 // dealTurn is the ready primary's place in the deal's order (dealTurns over the
 // ready primaries, sentinels aside): how many the deal takes before it.
 func (c *held) dealTurn(id string) int {
-	if c.turn == nil {
-		var ready []*Card
-		for _, x := range c.s.Work.Column(Ready) {
-			if !IsSentinel(x) {
-				ready = append(ready, x)
+	if c.s.Work == nil {
+		return 0
+	}
+	pr := c.s.Work.Placed(id)
+	if pr == nil || pr.Col != Ready || IsSentinel(pr) {
+		return 0
+	}
+	c.initReady()
+	cell := c.s.Work.Cell(pr.Row, Ready)
+	if len(cell) == 0 {
+		return 0
+	}
+	idx := sort.Search(len(cell), func(i int) bool {
+		if cell[i].Score != pr.Score {
+			return cell[i].Score > pr.Score
+		}
+		return cell[i].ID >= pr.ID
+	})
+	if idx >= len(cell) || cell[idx].ID != pr.ID {
+		return 0
+	}
+	stIdx, found := slices.BinarySearchFunc(c.readyStreams, pr.Row, func(s readyStream, target string) int {
+		return cmp.Compare(s.name, target)
+	})
+	if !found {
+		return 0
+	}
+	k := idx
+	if c.readyStreams[stIdx].sentinels > 0 {
+		sentBefore := 0
+		for _, card := range cell[:idx] {
+			if IsSentinel(card) {
+				sentBefore++
 			}
 		}
-		c.turn = map[string]int{}
-		for i, x := range dealTurns(ready, nil) {
-			c.turn[x.ID] = i
+		k -= sentBefore
+	}
+	ahead := 0
+	for _, s := range c.readyStreams {
+		if s.count <= k {
+			ahead += s.count
+		} else {
+			ahead += k
+			if s.name < pr.Row {
+				ahead++
+			}
 		}
 	}
-	return c.turn[id]
+	return ahead
 }
 
 // heldParts is the tick's parts the rule asks what the next tick does: every
