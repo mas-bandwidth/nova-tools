@@ -218,6 +218,18 @@ func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
 		{"lua/sprint_j.lua", "tset", true},
 		{"lua/sprint_j.lua", "tlog", true},
 		{"lua/sprint_j.lua", "unknown", false},
+		{"lua/sprint_intents.lua", "tset_profile", true},
+		{"lua/sprint_intents.lua", "tset", true},
+		{"lua/sprint_intents.lua", "tlog", true},
+		{"lua/sprint_intents.lua", "unknown", false},
+		{"lua/sprint_parts.lua", "tset_profile", true},
+		{"lua/sprint_parts.lua", "tset", true},
+		{"lua/sprint_parts.lua", "tlog", true},
+		{"lua/sprint_parts.lua", "unknown", false},
+		{"lua/sprint_queries.lua", "tset_profile", true},
+		{"lua/sprint_queries.lua", "tset", true},
+		{"lua/sprint_queries.lua", "tlog", true},
+		{"lua/sprint_queries.lua", "unknown", false},
 		{"lua/task.lua", "tset", false},
 		// Every lua/sprint_*.lua is a sprint file, a later item's included: the
 		// guard, NS.tset and NS.tlog are seams for it by its name, and the

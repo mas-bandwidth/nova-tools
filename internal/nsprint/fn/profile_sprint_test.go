@@ -103,12 +103,33 @@ func TestEverySprintFileOnDiskIsCovered(t *testing.T) {
 	if got := fragmentNames(frags); !reflect.DeepEqual(got, disk) {
 		t.Fatalf("the sprint profile covers %v, the lua/ directory holds %v", got, disk)
 	}
+	if !reflect.DeepEqual(SprintFragmentFiles, disk) {
+		t.Fatalf("SprintFragmentFiles is %v, disk is %v", SprintFragmentFiles, disk)
+	}
 	if len(disk) < 2 || disk[0] != sprintCoreFragment || disk[len(disk)-1] != sprintFnFragment {
 		t.Fatalf("the sprint files are %v, want %s first and %s last", disk, sprintCoreFragment, sprintFnFragment)
 	}
 	for _, name := range disk {
 		if !isSprintFragment(name) {
 			t.Errorf("%s is on the disk and in the profile, and isSprintFragment refuses it", name)
+		}
+	}
+}
+
+// TestSprintFragmentFilesExplicitInventory verifies that the explicit inventory
+// SprintFragmentFiles matches the sprint profile fragments loaded from sources.
+func TestSprintFragmentFilesExplicitInventory(t *testing.T) {
+	t.Parallel()
+	frags, err := SprintFragments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fragmentNames(frags); !reflect.DeepEqual(got, SprintFragmentFiles) {
+		t.Fatalf("SprintFragments() = %v, want SprintFragmentFiles %v", got, SprintFragmentFiles)
+	}
+	for _, name := range SprintFragmentFiles {
+		if !isSprintFragment(name) {
+			t.Errorf("isSprintFragment(%q) = false, want true", name)
 		}
 	}
 }

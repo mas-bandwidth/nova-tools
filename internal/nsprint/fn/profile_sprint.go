@@ -24,6 +24,26 @@ const TSetSprint TSetProfile = "sprint"
 // write function and the one read function (1.0).
 var SprintFunctions = []string{"ns_sprint_step", "ns_sprint_read"}
 
+// SprintFragmentFiles names the sprint profile's reviewed Lua files in load
+// order. Like tsetFragments in tset_loader.go, this inventory explicitly
+// documents and bounds the reviewed fragments:
+//   1. sprint_00_core.lua: SP registry definition
+//   2. sprint_intents.lua: intent derivation
+//   3. sprint_j.lua: judgments
+//   4. sprint_parts.lua: tick parts
+//   5. sprint_queries.lua: composite queries
+//   6. sprint_x.lua: execution and derivation engine (Component X)
+//   7. sprint_zz_fn.lua: function registrations
+var SprintFragmentFiles = []string{
+	"lua/sprint_00_core.lua",
+	"lua/sprint_intents.lua",
+	"lua/sprint_j.lua",
+	"lua/sprint_parts.lua",
+	"lua/sprint_queries.lua",
+	"lua/sprint_x.lua",
+	"lua/sprint_zz_fn.lua",
+}
+
 // sprintGlob names the sprint profile's Lua files: every lua/sprint_*.lua, in
 // sorted order, which is the load order of the legacy library's glob and so of
 // the sprint profile after the composed fragments. A later item adds its file
