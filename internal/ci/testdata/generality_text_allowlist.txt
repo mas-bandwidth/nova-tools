@@ -16,7 +16,7 @@
 # - A count that falls, or a row with no finding, fails until the row shrinks.
 # - NOVA_CI_UPDATE=1 removes such rows and never adds one.
 #
-# ceiling: 250
+# ceiling: 245
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/revert-on-red.sh:glenn 1
 .github/workflows/certification.yml:space 2
@@ -91,7 +91,7 @@ docs/SPEC-CI.md:hulk 1
 docs/SPEC-CI.md:mas-bandwidth 1
 docs/SPEC-CI.md:mini 1
 docs/SPEC-CI.md:rowan 2
-docs/SPEC-CI.md:space 9
+docs/SPEC-CI.md:space 8
 docs/SPEC-CI.md:studio 2
 docs/SPEC-CI.md:superman 1
 docs/SPEC-CI.md:vision 1

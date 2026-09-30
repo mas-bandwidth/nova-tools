@@ -539,7 +539,7 @@ func TestRaceDepsRefuseAFailedList(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no go.mod")
 	f = newFake(map[string]Result{"go list ./...": {Stdout: imports("cmd/gone")}})
-	_, err := RaceDeps(f.run, tree(t))
+	_, err = RaceDeps(f.run, tree(t))
 	require.Error(t, err, "a tree of only deprecated packages is a refusal")
 	assert.Contains(t, err.Error(), "no live package")
 }
