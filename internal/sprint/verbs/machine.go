@@ -23,7 +23,7 @@ import (
 // every row and creates every control card in one step.
 const (
 	MembersAndStreamsMax = sprintfn.SprintMembersMax // 250
-	RowsMax              = tset.MaxRowsWithAdvance  // 1,024 rows in a step with advance (L1 6)
+	RowsMax              = tset.MaxRowsWithAdvance   // 1,024 rows in a step with advance (L1 6)
 )
 
 // EntriesMax is a step's entries (L1 6; 1.0's bounds table).
