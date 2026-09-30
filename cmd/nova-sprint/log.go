@@ -24,7 +24,7 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the log of an earlier epoch (before a clear), as it was")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "log", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "log", argErr("takes no words ", err))
 	}
 	var from time.Time
 	if *since != "" {

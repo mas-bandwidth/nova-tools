@@ -228,7 +228,7 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	for {
 		if err := verbflag.Parse(fs, args); err != nil {
 			if strings.Contains(err.Error(), "flag provided but not defined: -prefix") {
-				return nil, errors.New(noPrefix)
+				return nil, errNoPrefix
 			}
 			return nil, err
 		}
@@ -1199,7 +1199,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("repair")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "repair", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "repair", argErr("takes no words ", err))
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -1242,7 +1242,7 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view, sprint")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "teardown", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "teardown", argErr("takes no words ", err))
 	}
 	want := confirmName()
 	if *confirm != want {
@@ -1266,7 +1266,7 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view, sprint")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "clear", fmt.Sprint("takes no words ", err))
+		return refuse(stderr, "clear", argErr("takes no words ", err))
 	}
 	want := confirmName()
 	if *confirm != want {

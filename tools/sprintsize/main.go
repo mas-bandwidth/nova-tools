@@ -62,7 +62,10 @@ func run() []step {
 }
 
 // sprintExists says the store already holds a sprint: nova-sprint where reads
-// it (exit 0) and refuses when there is none.
+// it (exit 0) and refuses when there is none. Any non-zero exit counts as no
+// sprint, so a store that cannot be read fails open here; the guard is for a
+// local store only (localStore), and the teardown that follows fails loudly on
+// a store that cannot be reached.
 func sprintExists(bin string, env []string) bool {
 	cmd := exec.Command(bin, "where")
 	cmd.Env = env

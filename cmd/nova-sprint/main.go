@@ -171,14 +171,14 @@ func (a *app) store(c common) (*store.Store, error) { return a.storeCtx(context.
 // (where --watch) hands the context it ends with, so the interrupt cuts a
 // read short.
 func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
+	if a.getenv("NOVA_SPRINT_PREFIX") != "" {
+		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
+	}
 	if strings.TrimSpace(c.redis) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
 	}
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
-	}
-	if a.getenv("NOVA_SPRINT_PREFIX") != "" {
-		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
 	}
 	names := sprint.Names{}
 	b, err := a.backend(ctx, c.redis, names)
@@ -219,6 +219,11 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}
 	if args[0] == "fleet" || args[0] == "reader" || args[0] == "goal" {
+		for _, w := range args[1:] {
+			if w == "--prefix" || w == "-prefix" || strings.HasPrefix(w, "--prefix=") || strings.HasPrefix(w, "-prefix=") {
+				return refuse(stderr, args[0], noPrefix)
+			}
+		}
 		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
 	}
 	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
@@ -228,6 +233,19 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 // noPrefix is what a --prefix flag or a NOVA_SPRINT_PREFIX variable is refused
 // with.
 const noPrefix = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
+
+// errNoPrefix is the error of a --prefix flag: a verb reports it as it is,
+// never wrapped in what the verb was parsing.
+var errNoPrefix = errors.New(noPrefix)
+
+// argErr is what a verb refuses its arguments with: the words, then the error;
+// a --prefix flag is the one line errNoPrefix, alone.
+func argErr(words string, err error) string {
+	if errors.Is(err, errNoPrefix) {
+		return err.Error()
+	}
+	return fmt.Sprint(words, err)
+}
 
 func refuse(stderr io.Writer, verb, what string) int {
 	where := prog
