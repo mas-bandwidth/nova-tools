@@ -114,6 +114,9 @@ type Step struct {
 	// drain: it reads the queue with its tables and its commit takes what it
 	// read off the queue (sprint.Drain).
 	Pump, Drain bool
+	// DrainMax, above zero, is the most entries of the queue's head a drain
+	// takes: the pump's second drain takes only what its first requeued.
+	DrainMax int
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -251,7 +254,7 @@ func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprin
 	if err != nil {
 		return snap, Fence{Gen: gen}, err
 	}
-	snap.QueueLen = f2.Queued
+	snap.QueueLen, snap.Running = f2.Queued, f2.Running
 	f2.Gen = gen
 	return snap, f2, nil
 }
@@ -351,17 +354,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return r, err
 			}
 		}
-		if fence.Queued > 0 && !step.Drain && (step.Pump || !fence.Running) {
+		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
 			// A STOPPED machine has no next tick: the queue it left is drained
-			// before any step, which then writes the work table itself. A pump
-			// part other than the drain does the same when a step queued a change
-			// after the tick's first read: it never writes a card a queued change
-			// still expects elsewhere (a drop queued on a ready card, the deal
-			// moving the card to working first, is refused at the drain and lost).
+			// before any step, which then writes the work table itself. Past
+			// MaxDrains (a world that keeps queueing) the step plans on the
+			// queued view and queues on top, as while RUNNING.
 			drains++
-			if drains > MaxDrains {
-				return res, fmt.Errorf("the work table's queue holds %d changes that %d drains did not take; run: nova-sprint check", fence.Queued, MaxDrains)
-			}
 			dr, err := st.Run(ctx, DrainStep())
 			if err != nil {
 				return res, fmt.Errorf("draining the work table's queue: %w", err)
@@ -372,14 +370,25 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if step.Drain || !step.Pump && fence.Queued > 0 {
+		var held map[string]bool // work cards a queued change names: a pump part leaves them
+		if step.Drain || fence.Queued > 0 {
 			q, err := st.B.QueueRead(ctx)
 			if err != nil {
 				return res, err
 			}
-			if step.Drain {
+			switch {
+			case step.Drain:
+				if step.DrainMax > 0 && len(q) > step.DrainMax {
+					q = q[:step.DrainMax]
+				}
 				snap.Queue = q
-			} else {
+			case step.Pump:
+				// "changes queued after the pump's drain wait for the next
+				// tick": a pump part plans on the table as the drain left it
+				// and moves no card a later queued change names, so that
+				// change still finds the card where it expects it
+				held = sprint.QueuedCards(q)
+			default:
 				// A step other than the pump plans on the work table as the
 				// pump will leave it: its changes queue after the ones before
 				// it, each where they leave the card (sprint.Drain).
@@ -388,6 +397,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))
+		if len(held) > 0 {
+			plan = sprint.LeaveQueued(plan, held)
+		}
 		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
 			return allOrNone(res, plan), nil
 		}
@@ -532,8 +544,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 }
 
 // MaxDrains bounds the drains a step makes of a STOPPED machine's queue
-// before it runs: a drain leaves at most a card's removal after its creation
-// for the next, so two take any queue.
+// before it runs (a drain leaves at most a card's removal after its creation
+// for the next, so two take a queue no one adds to), and the pump's drains
+// of its own requeued removals.
 const MaxDrains = 4
 
 // DrainStep is the pump's drain: the work table's whole queue applied in one

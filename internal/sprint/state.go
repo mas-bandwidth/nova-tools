@@ -589,6 +589,10 @@ type Snapshot struct {
 	// that drains it.
 	QueueLen int
 	Queue    []QueuedChange
+	// Running says the machine was RUNNING as the step read the sprint: its
+	// pump accepts a primary with two ok reads, so no step opens a "ready to
+	// accept" judgment for it ("accept is mechanical").
+	Running bool
 }
 
 // T is the loaded table by logical name.

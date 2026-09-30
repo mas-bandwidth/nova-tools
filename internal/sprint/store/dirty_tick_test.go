@@ -302,3 +302,124 @@ func TestEveryDrainIsNamed(t *testing.T) {
 		t.Fatalf("a STOPPED machine keeps a queue of %d", len(q))
 	}
 }
+
+// "accept is mechanical": on a RUNNING machine the reads that make a primary
+// acceptable open no "ready to accept" judgment (no wake for nothing), and
+// the next pump accepts it; on a STOPPED machine the judgment opens as
+// before, the coordinator's to answer.
+func TestAReadOnARunningMachineOpensNoReadyToAccept(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.machine()
+	h.work("m1")
+	h.work("m2")
+	h.machine() // review, asked
+	h.readAll()
+	if n := len(h.openOf(sprint.NReadyToAccept)); n != 0 {
+		t.Fatalf("the reads on a running machine opened %d ready-to-accept judgments", n)
+	}
+	h.machine() // the pump accepts
+	for _, id := range []string{"s1-1", "s1-2"} {
+		if st := h.table().StateOf(id); st != sprint.Merging {
+			t.Fatalf("%s is %s after the pump, want merging", id, st)
+		}
+	}
+	h.clean("accepted by the pump")
+
+	g := newHarness(t)
+	g.setup(1)
+	g.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	g.work("m1")
+	g.work("m2")
+	g.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	g.readAll()
+	if n := len(g.openOf(sprint.NReadyToAccept)); n != 1 {
+		t.Fatalf("the reads on a stopped machine opened %d ready-to-accept judgments, want 1", n)
+	}
+}
+
+// "changes queued after the pump's drain wait for the next tick": a world
+// that queues changes all through the pump (here a drop of a ready card
+// between the drain and the deal, and more at every part) never fails the
+// tick, the card a queued change names is not moved by this pump (the deal
+// leaves it, saying so), and the next tick's drain applies the change.
+func TestChangesQueuedDuringThePumpWaitForTheNextTick(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
+	h.startMachine()
+	dropped, ranks := false, 0
+	busy := func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+		if !dropped {
+			dropped = true
+			h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "the world"}))
+		}
+		ranks++
+		h.must(RankStep(sprint.RankReq{IDs: []string{"s1-3"}, First: ranks%2 == 0}))
+		return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+	}
+	work := sprint.TickTables[0]
+	parts := []sprint.TickPartDef{work.Parts[0]}
+	for _, p := range work.Parts[1:] {
+		parts = append(parts, sprint.TickPartDef{Name: "world", Fn: busy}, p)
+	}
+	work.Parts = parts
+	h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+	res := h.machine()
+	if ranks < MaxDrains+1 {
+		t.Fatalf("the world queued %d times during the pump, want more than %d", ranks, MaxDrains)
+	}
+	if st := h.table().StateOf("s1-1"); st != sprint.Ready {
+		t.Fatalf("s1-1, dropped during the pump, is %s on the table: the pump moved a card a queued change names", st)
+	}
+	left := false
+	for _, p := range res.Parts {
+		for _, r := range p.Refused {
+			left = left || r.Key == "s1-1" && strings.Contains(r.Why, "waits for the next tick")
+		}
+	}
+	if !left {
+		t.Fatalf("the deal left s1-1 silently: %+v", res.Parts)
+	}
+	h.st.Updates = nil
+	h.machine()
+	if c := h.table().Work.Card("s1-1"); c.Placed() {
+		t.Fatalf("the next tick's drain did not apply the drop: s1-1 at %s", c.Col)
+	}
+	h.clean("the drop applied a tick later")
+}
+
+// The pump's second drain (a card added and dropped before one drain: the
+// removal is requeued and drained at once) is named in the tick's report,
+// its moves and its time.
+func TestThePumpsSecondDrainIsInTheReport(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"brief"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"brief"}}, Reason: "gone"}))
+	res := h.machine()
+	drains := 0
+	for _, p := range res.Parts {
+		if p.Name == sprint.PartDrain {
+			drains++
+		}
+	}
+	if drains != 2 {
+		t.Fatalf("the tick names %d drains, want the drain and its second: %+v", drains, res.Parts)
+	}
+	timed := false
+	for _, pt := range res.Times {
+		timed = timed || pt.Name == sprint.PartDrain
+	}
+	if !timed {
+		t.Fatalf("the drains' time is not in the report: %+v", res.Times)
+	}
+	if c := h.table().Work.Card("brief"); c.Placed() {
+		t.Fatalf("brief is on the table after the tick: %s", c.Col)
+	}
+}
