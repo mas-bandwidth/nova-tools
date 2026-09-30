@@ -467,16 +467,55 @@ func fixtureHistoryKey(space, epoch, about string) string {
 
 func fixtureDoneKey(space, epoch string) string { return space + "sprint:done@" + epoch }
 
+// semanticSnapshotKeys makes one bounded, full-DB key-name pass before a
+// semantic snapshot. Returning an error lets a negative control verify that
+// an out-of-namespace write is detected without intercepting testing.T.Fatal.
+func semanticSnapshotKeys(ctx context.Context, client *redis.Client, namespace string) ([]string, error) {
+	if err := commitProbeOnlyDBZero(client); err != nil {
+		return nil, fmt.Errorf("semantic snapshot DB boundary: %w", err)
+	}
+	const maxKeys, maxScanCalls = 100_000, 10_000
+	seen := make(map[string]bool)
+	var cursor uint64
+	for calls := 0; ; calls++ {
+		if calls == maxScanCalls {
+			return nil, fmt.Errorf("semantic snapshot exceeded %d SCAN calls", maxScanCalls)
+		}
+		batch, next, err := client.Scan(ctx, cursor, "", 1000).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range batch {
+			if !strings.HasPrefix(key, namespace) {
+				return nil, fmt.Errorf("semantic snapshot found out-of-namespace key %q", key)
+			}
+			seen[key] = true
+			if len(seen) > maxKeys {
+				return nil, fmt.Errorf("semantic snapshot exceeded %d keys", maxKeys)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
 // SemanticSnapshot reads the model's observable table state directly from
-// Redis. It is separate from the whole-key TYPE/DUMP image used on refusals:
-// successful parity checks should compare rows, cells, records and receipts,
-// while a refusal image must also catch unexpected keys and value types.
+// Redis. Its full-DB key-name pass catches escaped writes on success, while
+// the separate TYPE/DUMP refusal image also checks key value and type changes.
 func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
 	t.Helper()
 	ctx := context.Background()
-	keys, err := fx.Client.Keys(ctx, fx.Space+"*").Result()
+	keys, err := semanticSnapshotKeys(ctx, fx.Client, fx.Space)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("semantic snapshot keys: %v", err)
 	}
 	activeHash, err := fx.Client.HGetAll(ctx, fx.Space+"sprint:epoch").Result()
 	if err != nil {

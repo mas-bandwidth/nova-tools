@@ -159,6 +159,11 @@ func commitProbeRawCall(t *testing.T, c *redis.Client, raw string) commitProbeRe
 	if err := json.Unmarshal(encoded, &reply); err != nil {
 		t.Fatalf("raw FCALL reply %q is not JSON: %v", encoded, err)
 	}
+	if reply.Status == "refused" {
+		if err := refusalArrayEnvelope(encoded); err != nil {
+			t.Fatalf("raw FCALL refusal %q has invalid detail arrays: %v", encoded, err)
+		}
+	}
 	return reply
 }
 
@@ -294,6 +299,7 @@ func commitProbeRefusal(t *testing.T, c *redis.Client, model *Mem, space, code s
 	before := commitProbeImage(t, c)
 	raw := commitProbeRequest(t, space, "refused-operation", entries)
 	var modelBefore MemSnapshot
+	var modelRef *Refusal
 	if model != nil {
 		var err error
 		modelBefore, err = model.Snapshot(space)
@@ -305,9 +311,8 @@ func commitProbeRefusal(t *testing.T, c *redis.Client, model *Mem, space, code s
 			t.Fatalf("model request decode: %v", err)
 		}
 		_, modelErr := model.Step(context.Background(), step)
-		var modelRef *Refusal
 		if !errors.As(modelErr, &modelRef) || modelRef.Code != code {
-			t.Errorf("model want %s: %v", code, modelErr)
+			t.Fatalf("model want %s: %v", code, modelErr)
 		}
 		modelAfter, err := model.Snapshot(space)
 		if err != nil {
@@ -320,6 +325,11 @@ func commitProbeRefusal(t *testing.T, c *redis.Client, model *Mem, space, code s
 	reply := commitProbeRawCall(t, c, raw)
 	if reply.Status != "refused" || reply.Code != code {
 		t.Errorf("want refused %s; got status=%q code=%q", code, reply.Status, reply.Code)
+	}
+	if modelRef != nil {
+		if !sameL1RefusalDetail(modelRef.Detail, reply.Detail) {
+			t.Errorf("%s machine-readable detail differs: Mem=%+v Lua=%+v", code, modelRef.Detail, reply.Detail)
+		}
 	}
 	after := commitProbeImage(t, c)
 	if !reflect.DeepEqual(before, after) {

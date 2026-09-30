@@ -143,6 +143,29 @@ func TestL1OnlyMemLuaTenThousandRandomSteps(t *testing.T) {
 	}
 }
 
+func TestCompareSnapshotRejectsSuccessfulOutsideNamespaceKey(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.Define(t, compareTable, "ready", "busy")
+	fx.Activate(t)
+	if _, err := newFixtureRedis(t, fx.Client).Step(context.Background(), Step{
+		Epoch: "0", Space: fx.Space,
+		Entries: []Entry{{Kind: "rows", Table: compareTable, Add: []string{"r0"}}},
+	}); err != nil {
+		t.Fatalf("setup successful step: %v", err)
+	}
+	if _, err := semanticSnapshotKeys(context.Background(), fx.Client, fx.Space); err != nil {
+		t.Fatalf("successful fixture key set: %v", err)
+	}
+	const escaped = "outside:successful-step"
+	if err := fx.Client.Set(context.Background(), escaped, "escaped", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := semanticSnapshotKeys(context.Background(), fx.Client, fx.Space); err == nil || !strings.Contains(err.Error(), escaped) {
+		t.Fatalf("out-of-namespace key was not rejected: %v", err)
+	}
+}
+
 func newCompareHarness(t *testing.T) *compareHarness {
 	t.Helper()
 	fx := newTSetFixture(t)

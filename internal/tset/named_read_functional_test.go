@@ -3,9 +3,11 @@
 package tset
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -106,8 +108,42 @@ func readContractPlan(space string, firstSmall bool) ReadPlan {
 	return ReadPlan{Epoch: "0", Space: space, Mode: "atomic", Queries: queries}
 }
 
+func refusalArrayEnvelope(raw []byte) error {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return err
+	}
+	var detail map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["detail"], &detail); err != nil || detail == nil {
+		return fmt.Errorf("refusal detail must be an object: %v", err)
+	}
+	for _, name := range []string{"ids", "cells", "rows"} {
+		encoded := bytes.TrimSpace(detail[name])
+		if len(encoded) == 0 || encoded[0] != '[' {
+			return fmt.Errorf("refusal detail.%s must be a JSON array", name)
+		}
+		var values []json.RawMessage
+		if err := json.Unmarshal(encoded, &values); err != nil {
+			return fmt.Errorf("refusal detail.%s: %w", name, err)
+		}
+		for i, value := range values {
+			if trimmed := bytes.TrimSpace(value); len(trimmed) == 0 || trimmed[0] != '"' {
+				return fmt.Errorf("refusal detail.%s[%d] must be a string", name, i)
+			}
+		}
+	}
+	return nil
+}
+
+// Compare only the represented L1 machine detail. The message is prose, and
+// nil versus empty Go slices normalize only for this in-memory comparison;
+// refusalArrayEnvelope independently checks that raw Lua fields are arrays.
+func sameL1RefusalDetail(a, b RefusalDetail) bool {
+	return reflect.DeepEqual(comparableDetail(a), comparableDetail(b))
+}
+
 func checkReadRefusalPair(t *testing.T, fx *tsetFixture, mem *Mem,
-	plan ReadPlan, code, budget string, queryIndex *int) {
+	plan ReadPlan, code, budget string, queryIndex *int) RefusalDetail {
 	t.Helper()
 	beforeMem, err := mem.Snapshot(fx.Space)
 	if err != nil {
@@ -123,6 +159,9 @@ func checkReadRefusalPair(t *testing.T, fx *tsetFixture, mem *Mem,
 		t.Fatalf("Mem refusal leaked %d answers", len(memReply.Answers))
 	}
 	raw := readLuaRaw(t, fx, plan)
+	if err := refusalArrayEnvelope(raw); err != nil {
+		t.Fatalf("Lua refusal wire shape: %v; raw=%s", err, raw)
+	}
 	var luaRef Refusal
 	if err := json.Unmarshal(raw, &luaRef); err != nil || luaRef.Code != code || luaRef.Status != "refused" {
 		t.Fatalf("Lua read: raw=%q err=%v, want %s", raw, err, code)
@@ -145,6 +184,9 @@ func checkReadRefusalPair(t *testing.T, fx *tsetFixture, mem *Mem,
 		*luaRef.Detail.QueryIndex != *queryIndex) {
 		t.Fatalf("query index differs: Mem=%+v Lua=%+v", memRef.Detail, luaRef.Detail)
 	}
+	if !sameL1RefusalDetail(memRef.Detail, luaRef.Detail) {
+		t.Fatalf("read refusal detail differs: Mem=%+v Lua=%+v", memRef.Detail, luaRef.Detail)
+	}
 	afterMem, err := mem.Snapshot(fx.Space)
 	if err != nil {
 		t.Fatal(err)
@@ -155,6 +197,7 @@ func checkReadRefusalPair(t *testing.T, fx *tsetFixture, mem *Mem,
 	if afterRedis := commitProbeImage(t, fx.Client); !reflect.DeepEqual(beforeRedis, afterRedis) {
 		t.Fatal("read refusal changed Redis whole-key TYPE/DUMP image")
 	}
+	return luaRef.Detail
 }
 
 func TestAtomicReadNeverReturnsPartial(t *testing.T) {
@@ -224,5 +267,50 @@ func TestRefuseEPOCHGONE(t *testing.T) {
 	assertReadFixtureParity(t, fx, mem)
 	plan := ReadPlan{Epoch: "0", Space: fx.Space, Mode: "atomic",
 		Queries: []ReadQuery{{Kind: "rows", Table: "work"}}}
-	checkReadRefusalPair(t, fx, mem, plan, "EPOCHGONE", "", nil)
+	detail := checkReadRefusalPair(t, fx, mem, plan, "EPOCHGONE", "", nil)
+	if detail.ActiveEpoch != "1" {
+		t.Fatalf("EPOCHGONE active_epoch=%q, want observed epoch 1", detail.ActiveEpoch)
+	}
+}
+
+func TestRefusalDetailComparatorNegativeControls(t *testing.T) {
+	t.Parallel()
+	base := RefusalDetail{ActiveEpoch: "1", Budget: "cell", IDs: []string{"a"}}
+	for _, tc := range []struct {
+		name string
+		edit func(*RefusalDetail)
+	}{
+		{"active epoch", func(d *RefusalDetail) { d.ActiveEpoch = "" }},
+		{"limit", func(d *RefusalDetail) { n := int64(4); d.Limit = &n }},
+		{"actual", func(d *RefusalDetail) { n := int64(5); d.Actual = &n }},
+		{"query index", func(d *RefusalDetail) { n := 0; d.QueryIndex = &n }},
+		{"known ID", func(d *RefusalDetail) { d.IDs = []string{"b"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			changed := base
+			tc.edit(&changed)
+			if sameL1RefusalDetail(base, changed) {
+				t.Fatal("distinct machine-readable refusal detail compared equal")
+			}
+		})
+	}
+	if !sameL1RefusalDetail(RefusalDetail{IDs: []string{}}, RefusalDetail{}) {
+		t.Fatal("nil and empty Go detail slices should have the same wire meaning")
+	}
+	valid := []byte(`{"detail":{"ids":[],"cells":[],"rows":[]}}`)
+	if err := refusalArrayEnvelope(valid); err != nil {
+		t.Fatalf("valid empty arrays: %v", err)
+	}
+	for _, bad := range []string{
+		`{"detail":{"ids":null,"cells":[],"rows":[]}}`,
+		`{"detail":{"cells":[],"rows":[]}}`,
+		`{"detail":{"ids":[],"cells":[],"rows":"not an array"}}`,
+		`{"detail":{"ids":[],"cells":[1],"rows":[]}}`,
+		`{"detail":{"ids":[null],"cells":[],"rows":[]}}`,
+	} {
+		if err := refusalArrayEnvelope([]byte(bad)); err == nil {
+			t.Fatalf("accepted invalid refusal arrays: %s", bad)
+		}
+	}
 }
