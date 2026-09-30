@@ -30,9 +30,6 @@ const (
 	// own work (the owner's rule, errata 3 amendment 10: every row of every
 	// table moves every tick, never a row at a time).
 	TickMaxMoves = TickMaxDeal
-	// TickMaxNotes bounds the judgments one part of a tick writes; the rest
-	// are due, and the next tick writes them.
-	TickMaxNotes = 50
 )
 
 // Deadlines, each against running time: time the machine was STOPPED does
@@ -136,23 +133,66 @@ type TickPart struct {
 	Due  int
 }
 
-// TickParts is the tick's parts in their fixed order. Repair of a pending
-// operation (T5) comes first and needs the store: the binding does it.
-var TickParts = []struct {
+// TickPartDef is a part of the tick by name, with its planner.
+type TickPartDef struct {
 	Name string
 	Fn   TickPartFn
-}{
-	{"presence", TickPresence},
-	{"resolve", TickResolve},
-	{"resume", TickResume},
-	{"deal", TickDeal},
-	{"level", TickLevel},
-	{"ask", TickAsk},
+}
+
+// TableUpdate is one table's update in a tick: its parts, each an existing
+// planner over every row of the table that needs it, run in order.
+type TableUpdate struct {
+	Table string
+	Parts []TickPartDef
+}
+
+// PartDrain is the name of the work pump's first part: the work table's
+// queue applied in one update (Drain). It needs the queue, which the store
+// reads with the part's step: it has no planner here.
+const PartDrain = "drain"
+
+// TickTables is the tick's shape, in the owner's words (2026-09-30, errata 3
+// amendment 12): "Each table gets one update in turn per-tick. 1. work
+// streams, 2. readers, 3. merge, 4. fleet." The work table's update is the
+// pump, run once a tick: its queue drained, then its cards advanced (a
+// waiting card to ready, a ready card to working by the deal, a card in
+// review with two ok reads to merging); "no new work moves from waiting ->
+// ready -> working except on the FIRST PASS on the work stream table, once
+// per-tick". The readers', the merge's and the fleet's updates each write
+// their own table, and queue their changes of the work table for the next
+// tick's pump; a table another update wrote is updated again, at once, until
+// none is ("the tick doesn't end until all dirty bits are cleared"). The
+// model is tla/DirtyTick.tla.
+var TickTables = []TableUpdate{
+	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
+	{Readers, []TickPartDef{{"ask", TickAsk}}},
+	{Merge, []TickPartDef{{"resume", TickResume}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}, {"level", TickLevel}}},
+}
+
+// TickEnd is the tick's end, once the tables are settled: what is always
+// true held, the deadlines and the overdue judgments, and the done part last.
+// It writes notes, no table.
+var TickEnd = []TickPartDef{
 	{"check", TickCheck},
 	{"deadlines", TickDeadlines},
 	{"overdue", TickOverdue},
 	{PartDone, TickDone},
 }
+
+// TickParts is every part with a planner in the order a tick first runs them:
+// the four tables' updates, then the end.
+var TickParts = func() []TickPartDef {
+	var out []TickPartDef
+	for _, u := range TickTables {
+		for _, p := range u.Parts {
+			if p.Fn != nil {
+				out = append(out, p)
+			}
+		}
+	}
+	return append(out, TickEnd...)
+}()
 
 // Tick is every part's plan over one observed state. Each part is computed
 // from the same state; the binding runs them in order, each on a fresh read.
@@ -165,22 +205,85 @@ func Tick(s *Snapshot, r TickReq) []TickPart {
 	return out
 }
 
+// NReadyToMerge is the note the pump addresses to the coordinator once a
+// tick for each stream it queued accepted cards in: the merge is the
+// coordinator's ("accept is mechanical, but the merge step is not").
+const NReadyToMerge = "ready to merge"
+
+// NTickEnd is the tick-end note (errata 3 amendment 8): one a tick, to the
+// coordinator, only when the tick addressed the coordinator, its text
+// judgments=N.
+const NTickEnd = "tick-end"
+
+// TickEndNote is the tick-end note of a tick that addressed n items to the
+// coordinator.
+func TickEndNote(coordinator string, n int, now time.Time) Note {
+	return Note{Kind: Happened, Type: NTickEnd, To: coordinator, Who: MachineActor, At: now,
+		What: "judgments=" + itoa(n), SprintLevel: true}
+}
+
+// TickAccept is R9 as the machine's (the owner's ruling of 2026-09-30:
+// "accept is mechanical, but the merge step is not"): every primary in review
+// with ok reads from two different readers at its head moves to merging and
+// into its stream's merge queue, in stream turns from the accept's index, in
+// the pump's one plan (Accept). The coordinator is told once for each stream
+// the tick queued cards in, "ready to merge" with the cards in order: the
+// merge is the coordinator's.
+func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
+	eligible := func(c *Card) string {
+		if c.F("result") == "failed" || len(okReaders(s, c)) < 2 {
+			return "not two ok reads"
+		}
+		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
+			return "its merge record is " + placeWord(m)
+		}
+		if s.StreamCtl(c.Row) == nil {
+			return "no merge row"
+		}
+		return ""
+	}
+	var ids []string
+	for _, c := range eligibleTurns(s.Work.Column(Review), eligible, streamRound(s, PropAcceptStreamIndex)) {
+		ids = append(ids, c.ID)
+	}
+	if len(ids) == 0 {
+		return Plan{}, 0
+	}
+	p := Accept(s, AcceptReq{Sel: Sel{Only: ids}, Who: r.who()})
+	by := map[string][]string{}
+	var streams []string
+	for _, u := range p.Units {
+		if !contains(ids, u.Key) {
+			continue
+		}
+		if _, ok := by[u.Stream]; !ok {
+			streams = append(streams, u.Stream)
+		}
+		by[u.Stream] = append(by[u.Stream], u.Key)
+	}
+	sort.Strings(streams)
+	for _, st := range streams {
+		n := happened(NReadyToMerge, st, s.Now, by[st]...)
+		n.Who, n.To = r.who(), s.Coordinator
+		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint merge --stream %s", len(by[st]), Preview(by[st], " "), st)
+		p.Notes = append(p.Notes, n)
+	}
+	return p, 0
+}
+
 // Empty says a plan writes nothing.
 func (p Plan) Empty() bool {
 	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0 && len(p.Updates) == 0
 }
 
-// bound keeps the first TickMaxMoves units and the first TickMaxNotes
-// unit-less notes, and says how many it left out: those are due.
+// bound keeps the first TickMaxMoves units, and says how many it left out:
+// those are due. Notes have no bound but the step's: every judgment a part
+// finds is written in its tick (the owner's rule: never a row at a time).
 func bound(p Plan) (Plan, int) {
 	due := 0
 	if len(p.Units) > TickMaxMoves {
 		due += len(p.Units) - TickMaxMoves
 		p.Units = p.Units[:TickMaxMoves]
-	}
-	if len(p.Notes) > TickMaxNotes {
-		due += len(p.Notes) - TickMaxNotes
-		p.Notes = p.Notes[:TickMaxNotes]
 	}
 	return p, due
 }
@@ -332,7 +435,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		return "asked, or its work failed"
 	}
-	for _, c := range eligibleTurns(s.Work.Column(Review), askable, streamRound(s, PropAskStreamIndex)) {
+	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
 		if len(ids) < TickMaxMoves {
 			ids = append(ids, c.ID)
 		} else {
@@ -507,7 +610,7 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		marked[OpenKey(o.Note.What, o.Subject())] = true
 	}
-	written, due := 0, 0
+	due := 0
 	for _, id := range order {
 		j := byID[id]
 		if !overdue(j.note) {
@@ -522,11 +625,6 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		if len(fresh) == 0 {
 			continue
 		}
-		if written >= TickMaxNotes {
-			due++
-			continue
-		}
-		written++
 		sort.Strings(fresh)
 		n := j.note
 		past := fmt.Sprintf("%s of running time", DeadlineJudgment)
@@ -633,8 +731,8 @@ func (c cond) subjects() []string {
 	return c.primaries
 }
 
-// notify writes a judgment for each condition not open already (bounded by
-// TickMaxNotes), and closes every open judgment of the types whose condition
+// notify writes a judgment for each condition not open already, every one in
+// the tick, and closes every open judgment of the types whose condition
 // no longer holds: each judgment is written once and never every tick. It
 // returns how many conditions it left unwritten past the bound: those are
 // due.
@@ -679,7 +777,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		n.What = what
 		p.Updates = append(p.Updates, n)
 	}
-	written, due := 0, 0
+	due := 0
 	for _, c := range conds {
 		fresh := false
 		for _, sub := range c.subjects() {
@@ -693,11 +791,6 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		if !fresh {
 			continue
 		}
-		if written >= TickMaxNotes {
-			due++
-			continue
-		}
-		written++
 		n := Note{Kind: Judgment, Type: c.typ, Stream: c.stream, Primaries: c.primaries, Count: len(c.primaries), What: c.what,
 			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true, Card: c.card}
 		n.Decisions = append([]string(nil), c.decisions...)

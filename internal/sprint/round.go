@@ -50,7 +50,8 @@ const (
 	// was asked of round the readers.
 	PropAskIndex = "ask_index"
 	// PropStreamIndex is the work table's property of the deal: the stream of
-	// the last primary dealt (streamTurns). PropAskStreamIndex and
+	// the last primary dealt (streamTurns). PropAskStreamIndex (the readers
+	// table's: the ask is the readers' update) and
 	// PropAcceptStreamIndex are the ask's and the accept's: each step that
 	// takes cards across the streams keeps its own, so that one step's move
 	// never resets another's rotation (a shared index moved by an ask of one
@@ -254,6 +255,16 @@ func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s
 // k/n, give or take one, and the one a step gives the extra card to is the
 // last served, so the next step starts past it. The index survives a stop and
 // a start of the machine; a clear starts the next epoch at the first stream.
+
+// askStreamRound is the ask's rolling index over the streams, a property of
+// the readers table: the ask is the readers' update, and only the pump writes
+// the work table while the machine runs (errata 3 amendment 12).
+func askStreamRound(s *Snapshot) *round {
+	if s.Work == nil || s.Readers == nil {
+		return newRound(nil, "")
+	}
+	return tableRound(s.Readers, PropAskStreamIndex, s.Work.Rows())
+}
 
 // streamRound is a step's rolling index over the streams (the work table's
 // rows), the work table's property name.

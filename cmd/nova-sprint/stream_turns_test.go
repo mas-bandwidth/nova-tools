@@ -30,7 +30,11 @@ func (ta *testApp) streamIndexes() string {
 	}
 	var out []string
 	for _, p := range []string{sprint.PropStreamIndex, sprint.PropAskStreamIndex, sprint.PropAcceptStreamIndex} {
-		v, _ := s.Work.Prop(p)
+		t := s.Work
+		if p == sprint.PropAskStreamIndex {
+			t = s.Readers
+		}
+		v, _ := t.Prop(p)
 		out = append(out, p+"="+v)
 	}
 	return strings.Join(out, " ")

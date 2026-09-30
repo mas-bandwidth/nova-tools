@@ -40,7 +40,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	// in stream turns from the ask's stream index on the work table
 	// (streamTurns), so a limit asks of every stream alike, and the index moves
 	// past the stream of the last primary asked
-	srr := streamRound(s, PropAskStreamIndex)
+	srr := askStreamRound(s)
 	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
