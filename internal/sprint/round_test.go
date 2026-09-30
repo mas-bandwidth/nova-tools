@@ -212,3 +212,97 @@ func TestR8GoesRoundTheReaders(t *testing.T) {
 		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
 	}
 }
+
+// The index is one for the fleet, not one a stream: three streams, one card a
+// deal from each in turn, and every member's count is within one of the
+// others fleet-wide after each deal, equal after each round of 8.
+func TestTheDealGoesRoundTheFleetAcrossStreams(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a")
+	for i := 1; i <= 8; i++ {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: fmt.Sprintf("m%d", i)}))
+	}
+	streams := []string{"s1", "s2", "s3"}
+	for _, st := range streams {
+		w.must(Add(w.s, AddReq{Stream: st, Count: 8}))
+	}
+	members := w.s.Fleet.Rows()
+	dealt := map[string]int{}
+	for i := 0; i < 24; i++ {
+		id := fmt.Sprintf("%s-%d", streams[i%3], i/3+1)
+		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
+		wc := w.s.Fleet.Card(WorkCardID(id, 1))
+		if want := fmt.Sprintf("m%d", i%8+1); wc.Row != want {
+			t.Fatalf("deal %d (%s) went to %s, want %s", i+1, id, wc.Row, want)
+		}
+		dealt[wc.Row]++
+		workIt(w, wc)
+		evenly(t, fmt.Sprintf("after deal %d", i+1), dealt, members, (i+1)%8 == 0)
+	}
+}
+
+// R6 over 10 streams of 3: each run deals the room in stream turns, and the
+// members' counts stay within one fleet-wide after every run.
+func TestR6GoesRoundTheFleetOverTenStreams(t *testing.T) {
+	t.Parallel()
+	f := newFleetT(t, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+	for i := 1; i <= 10; i++ {
+		f.w.must(Add(f.snap(), AddReq{Stream: fmt.Sprintf("s%02d", i), Count: 3}))
+	}
+	members := f.snap().Fleet.Rows()
+	dealt := map[string]int{}
+	for run := 1; len(f.snap().Work.Column(Ready)) > 0; run++ {
+		if run > 10 {
+			t.Fatalf("not dealt in 10 runs")
+		}
+		f.run(ruleDeal, "deal")
+		cs := f.snap().Fleet.Column(Ready)
+		for _, wc := range cs {
+			dealt[wc.Row]++
+		}
+		for _, wc := range cs {
+			workIt(f.w, wc)
+		}
+		evenly(t, fmt.Sprintf("after run %d", run), dealt, members, false)
+	}
+	total := 0
+	for _, n := range dealt {
+		total += n
+	}
+	if total != 30 {
+		t.Fatalf("dealt %d, want 30", total)
+	}
+}
+
+// The ask's index is one for the readers: primaries of three streams asked in
+// turn keep every reader within one of the others.
+func TestTheAskGoesRoundTheReadersAcrossStreams(t *testing.T) {
+	t.Parallel()
+	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
+	w := newWorld(t, readers...)
+	for i := 1; i <= 8; i++ {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: fmt.Sprintf("m%d", i)}))
+	}
+	streams := []string{"s1", "s2", "s3"}
+	var ids []string
+	for i := 0; i < 18; i++ {
+		ids = append(ids, fmt.Sprintf("%s-%d", streams[i%3], i/3+1))
+	}
+	for _, st := range streams {
+		w.must(Add(w.s, AddReq{Stream: st, Count: 6}))
+	}
+	for _, id := range ids {
+		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
+		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
+	}
+	asked := map[string]int{}
+	for i, id := range ids {
+		w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
+		for _, rd := range readers {
+			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
+				asked[rd]++
+			}
+		}
+		evenly(t, fmt.Sprintf("after ask %d", i+1), asked, readers, (2*(i+1))%len(readers) == 0)
+	}
+}
