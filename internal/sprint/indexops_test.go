@@ -413,6 +413,32 @@ func TestOnlyACardWithNeedsLeavingWaitingIsRemovedFromWait(t *testing.T) {
 	wantLines(t, "a waiting card with no needs", opLines(t, iw("p4", "s1", Waiting, 40, "kind", "primary"), nil), "elig:s1 -p4")
 }
 
+// The design removes a card that leaves waiting from every wait:<n> it is in,
+// which are the needs it had before the change: a change that also rewrites the
+// card's needs takes it out of the wait of each of its old needs, and of none
+// of the new.
+func TestACardLeavingWaitingIsRemovedFromTheWaitOfItsNeedsBeforeTheChange(t *testing.T) {
+	t.Parallel()
+	before := iw("p5", "s1", Waiting, 50, "kind", "primary", "needs", "p1,p2", "open", "2")
+	wantLines(t, "leaves for ready with other needs", opLines(t, before, ixAt(before, Ready, "needs", "p7,p8", "open", "")),
+		"fresh:s1 +p5@50", "wait:p1 -p5", "wait:p2 -p5")
+	wantLines(t, "leaves for ready with one of its needs and a new one", opLines(t, before, ixAt(before, Ready, "needs", "p2,p9", "open", "")),
+		"fresh:s1 +p5@50", "wait:p1 -p5", "wait:p2 -p5")
+	wantLines(t, "leaves for ready with no needs", opLines(t, before, ixAt(before, Ready, "needs", "", "open", "")),
+		"fresh:s1 +p5@50", "wait:p1 -p5", "wait:p2 -p5")
+	wantLines(t, "leaves the table, kept with no place and other needs", opLines(t, before, ixWith(ixUnplaced(before), "needs", "p7")),
+		"wait:p1 -p5", "wait:p2 -p5")
+	wantLines(t, "leaves the table, kept with no place and no needs", opLines(t, before, ixWith(ixUnplaced(before), "needs", "")),
+		"wait:p1 -p5", "wait:p2 -p5")
+	sentinel := iw("g1", "s1", Waiting, 60, "kind", "sentinel", "needs", "p3", "open", "1")
+	wantLines(t, "a sentinel released with other needs", opLines(t, sentinel, ixAt(sentinel, Landed, "needs", "p4")),
+		"sent:s1 -g1", "wait:p3 -g1")
+	// A card that has no needs before the change has no wait to leave, whatever it names after.
+	bare := iw("p6", "s1", Waiting, 70, "kind", "primary")
+	wantLines(t, "no needs before, needs after", opLines(t, bare, ixAt(bare, Ready, "needs", "p1", "open", "1")),
+		"elig:s1 -p6", "fresh:s1 +p6@70")
+}
+
 func TestIndexOpsRefusesWhatItCannotRead(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
@@ -569,6 +595,73 @@ func TestAStepFoldsItsCardsIntoOneOpPerKey(t *testing.T) {
 	}
 	if _, err := StepIndexOps([]IndexChange{{nil, iw("p1", "s1", Waiting, 1, "open", "x")}}); err == nil {
 		t.Error("a malformed field in a step was not refused")
+	}
+}
+
+// A step names a card by its table and its id. Real steps change two cards of
+// one id in two tables (accept moves the primary p1 in the work table and
+// creates the merge card p1 in the merge table), so that is one step of two
+// cards; the same card of one table named twice is one card changed twice.
+func TestAStepThatNamesOneIdInTwoTablesIsAcceptedAndOneCardTwiceIsRefused(t *testing.T) {
+	t.Parallel()
+	stepLines := func(changes []IndexChange) ([]string, error) {
+		ops, err := StepIndexOps(changes)
+		var out []string
+		for _, o := range ops {
+			out = append(out, o.String())
+		}
+		return out, err
+	}
+	mergeCard := func(id string) *IndexCard {
+		return &IndexCard{Table: Merge, ID: id, Row: "s1", Col: Queued, Score: 10, Fields: ifields("kind", "merge", "primary", id, "stream", "s1")}
+	}
+
+	// The accept of p1: the work card p1 moves review -> merging, the merge card p1 is created, and the
+	// stream's control card starts merging.
+	accept := []IndexChange{
+		{iw("p1", "s1", Review, 10, "kind", "primary", "attempt", "1"), iw("p1", "s1", Merging, 10, "kind", "primary", "attempt", "1")},
+		{nil, mergeCard("p1")},
+		{ictl("s1", "state", StreamWaiting), ictl("s1", "state", StreamMerging, "due_mergeidle", "1800")},
+	}
+	got, err := stepLines(accept)
+	if err != nil {
+		t.Fatalf("an accept step, the work card p1 and the merge card p1 in one step, was refused: %v", err)
+	}
+	wantLines(t, "accept", got, "due +mergeidle:s1@1800")
+
+	// The same id in two tables, each card with ops of its own: both cards' ops are in the step, in either order.
+	work := IndexChange{iw("p1", "s1", Waiting, 10, "kind", "primary"), iw("p1", "s1", Ready, 10, "kind", "primary")}
+	fleet := IndexChange{nil, ifl("p1", "m1", Ready, "kind", "work", "due_untaken", "900")}
+	readers := IndexChange{nil, ird("p1", "ra", Asked, "kind", "read", "due_unbegun", "600")}
+	for _, order := range [][]IndexChange{{work, fleet, readers}, {readers, fleet, work}} {
+		got, err := stepLines(order)
+		if err != nil {
+			t.Fatalf("one id in three tables was refused: %v", err)
+		}
+		wantLines(t, "one id in the work, fleet and readers tables", got,
+			"due +unbegun:p1@600 +untaken:p1@900", "elig:s1 -p1", "fresh:s1 +p1@10")
+	}
+
+	// The same card of one table named twice is refused, whatever else the step holds and whichever of its
+	// changes come first, and the refusal names the table it is in.
+	for _, row := range []struct {
+		what    string
+		changes []IndexChange
+		want    string
+	}{
+		{"a merge card created twice", []IndexChange{{nil, mergeCard("p1")}, {nil, mergeCard("p1")}}, "merge card p1 is changed twice"},
+		{"a merge card created and then removed", []IndexChange{{nil, mergeCard("p1")}, {mergeCard("p1"), nil}}, "merge card p1 is changed twice"},
+		{"a fleet card twice", []IndexChange{fleet, fleet}, "fleet card p1 is changed twice"},
+		{"a work card twice with another table's card of its id between", []IndexChange{work, fleet, {iw("p1", "s1", Ready, 10, "kind", "primary"), nil}}, "work card p1 is changed twice"},
+		{"the accept with its merge card named twice", append(append([]IndexChange{}, accept...), IndexChange{mergeCard("p1"), nil}), "merge card p1 is changed twice"},
+	} {
+		ops, err := StepIndexOps(row.changes)
+		if err == nil || !strings.Contains(err.Error(), row.want) {
+			t.Errorf("%s: error %v, want one naming %q", row.what, err, row.want)
+		}
+		if ops != nil {
+			t.Errorf("%s: ops %v returned beside the refusal", row.what, ops)
+		}
 	}
 }
 

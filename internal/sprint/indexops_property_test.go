@@ -37,6 +37,7 @@ type indexCover struct {
 	added, removed, rescored map[string]int // members by index, a due kind as due:<kind>
 	steps, calls, none       int
 	needmet, waitfor         int
+	rewrote                  int // wait removals that took a member out, for a card whose needs the same change rewrote
 }
 
 func newIndexCover() *indexCover {
@@ -53,6 +54,7 @@ func (c *indexCover) sum(o *indexCover) {
 		}
 	}
 	c.steps, c.calls, c.none, c.needmet, c.waitfor = c.steps+o.steps, c.calls+o.calls, c.none+o.none, c.needmet+o.needmet, c.waitfor+o.waitfor
+	c.rewrote += o.rewrote
 }
 
 // label is the index a member belongs to: its name, and for a due entry its kind.
@@ -83,6 +85,9 @@ func (c *indexCover) assert(t *testing.T) {
 	if c.removed[IndexWait] == 0 || c.needmet == 0 || c.waitfor == 0 {
 		t.Errorf("wait: %d removals by IndexOps that took a member out, %d needmet, %d waitfor", c.removed[IndexWait], c.needmet, c.waitfor)
 	}
+	if c.rewrote == 0 {
+		t.Error("no card left waiting in the change that rewrote its needs, with a wait removal that took it out")
+	}
 	if c.none == 0 {
 		t.Error("no change was one that touches no indexed field")
 	}
@@ -101,7 +106,7 @@ func (c *indexCover) log(t *testing.T) {
 	for _, m := range Moves {
 		ms = append(ms, fmt.Sprintf("%s %d", lifecycleKey(m), c.moves[lifecycleKey(m)]))
 	}
-	t.Logf("%d steps, %d IndexOps calls, %d touching no indexed field, %d needmet, %d waitfor; %s; moves: %s", c.steps, c.calls, c.none, c.needmet, c.waitfor, strings.Join(ls, "; "), strings.Join(ms, "; "))
+	t.Logf("%d steps, %d IndexOps calls, %d touching no indexed field, %d needmet, %d waitfor, %d wait removals of a card whose needs the change rewrote; %s; moves: %s", c.steps, c.calls, c.none, c.needmet, c.waitfor, c.rewrote, strings.Join(ls, "; "), strings.Join(ms, "; "))
 }
 
 // indexSim is the random walk's population, its running indexes, and the
@@ -210,6 +215,27 @@ func (s *indexSim) needsFor() []string {
 	return out
 }
 
+// rewrittenNeeds is the needs a card is given by a change that also takes it out
+// of waiting, none at all now and then: cards that are not open and never will
+// be (landed, dropped, or an id no card has), so that the card, if it comes back
+// to waiting, finds no need open; the design has no add for a card whose needs
+// change while it stays waiting, so the walk changes them only as it leaves.
+func (s *indexSim) rewrittenNeeds() string {
+	var closed []string
+	for _, c := range s.records(Work, func(c *IndexCard) bool { return !s.isOpen(c.ID) }) {
+		closed = append(closed, c.ID)
+	}
+	var out []string
+	for range s.rng.IntN(4) {
+		if len(closed) > 0 && s.chance(70) {
+			out = append(out, closed[s.rng.IntN(len(closed))])
+		} else {
+			out = append(out, "x"+strconv.Itoa(1+s.rng.IntN(5)))
+		}
+	}
+	return strings.Join(out, ",")
+}
+
 func simWorkCreate(s *indexSim) (b, a *IndexCard, none, ok bool) {
 	if len(s.records(Work, nil)) >= 10 {
 		return nil, nil, false, false
@@ -273,6 +299,9 @@ func simWorkMove(s *indexSim) (b, a *IndexCard, none, ok bool) {
 	}
 	m := moves[s.rng.IntN(len(moves))]
 	a = ixAt(c, m.To)
+	if c.Col == Waiting && s.chance(30) {
+		a = ixWith(a, waitNeedsField, s.rewrittenNeeds()) // it leaves waiting with other needs than it had
+	}
 	attempt, _ := strconv.Atoi(c.Fields["attempt"])
 	switch m.Verb {
 	case "resolve":
@@ -302,7 +331,11 @@ func simWorkDrop(s *indexSim) (b, a *IndexCard, none, ok bool) {
 	if c == nil {
 		return nil, nil, false, false
 	}
-	return c, ixUnplaced(c), false, true
+	a = ixUnplaced(c)
+	if c.Col == Waiting && s.chance(30) {
+		a = ixWith(a, waitNeedsField, s.rewrittenNeeds()) // it leaves the table with other needs than it had
+	}
+	return c, a, false, true
 }
 
 // simForget removes the record of a card that has landed or was dropped, which
@@ -569,6 +602,9 @@ func (s *indexSim) derive(before, after *IndexCard, none bool) {
 			switch {
 			case in:
 				s.cover.removed[label(o.Key, r)]++
+				if o.Key.Index == IndexWait && before != nil && after != nil && before.Fields[waitNeedsField] != after.Fields[waitNeedsField] {
+					s.cover.rewrote++
+				}
 			case o.Key.Index != IndexWait:
 				s.t.Fatalf("%s removes %s, which is not in the index\n%s -> %s\n%s", o.Key, r, showCard(before), showCard(after), s.trace())
 			}
