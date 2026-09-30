@@ -1256,7 +1256,15 @@ func (e *boundError) Error() string {
 // none): the tick's twin applies them (twin.go).
 func (st *Store) apply(ctx context.Context, op OpRecord) (bool, []receipt, error) {
 	var receipts []receipt
+	sent := 0 // the manifests applied in one exchange (BatchApplier) so far
 	for i, man := range op.Manifests {
+		if i < sent {
+			continue
+		}
+		if n := st.applyTogether(ctx, op.Manifests, i, &receipts); n > 0 {
+			sent = i + n
+			continue
+		}
 		rc, err := st.send(ctx, man)
 		if err == nil {
 			if rc.BatchDelta != nil {
@@ -1287,6 +1295,41 @@ func (st *Store) apply(ctx context.Context, op OpRecord) (bool, []receipt, error
 		return false, nil, &CutError{Op: op.ID, Table: man.Table, Cause: err}
 	}
 	return true, receipts, nil
+}
+
+// BatchApplier is a store that applies several manifests of one table in
+// one round trip, each its own batch, none between them (Redis's
+// MULTI/EXEC).
+type BatchApplier interface {
+	ApplyAll(ctx context.Context, ms []ntable.BatchManifest) ([]ntable.Receipt, []error)
+}
+
+// applyTogether applies the run of manifests of one table from index i in one
+// exchange, where the store can and the run holds more than one: it returns
+// how many applied, their receipts appended. A manifest the store refused, or
+// did not confirm, is sent again one at a time (apply's own handling, which
+// sends the same bytes: the table layer applies a batch once); every one
+// after it in the run was refused on the table revision it expected, and is
+// sent again after it.
+func (st *Store) applyTogether(ctx context.Context, ms []ntable.BatchManifest, i int, receipts *[]receipt) int {
+	ba, ok := st.B.(BatchApplier)
+	if !ok {
+		return 0
+	}
+	j := i + 1
+	for j < len(ms) && ms[j].Table == ms[i].Table {
+		j++
+	}
+	if j-i < 2 {
+		return 0
+	}
+	rcs, errs := ba.ApplyAll(ctx, ms[i:j])
+	n := 0
+	for n < len(rcs) && errs[n] == nil && rcs[n].BatchDelta != nil {
+		*receipts = append(*receipts, receipt{man: ms[i+n], rc: rcs[n]})
+		n++
+	}
+	return n
 }
 
 // unreadableReceipt says the store answered with a receipt this build cannot

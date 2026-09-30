@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -105,6 +106,12 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 
 	loop := newApp(func(k string) string { return env[k] })
 	defer loop.close()
+	loop.checkTwin = func(twin, fresh *sprint.Snapshot) error {
+		if d := store.TwinDiff(twin, fresh); d != "" {
+			return errors.New(d)
+		}
+		return nil
+	}
 	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
 	if st == nil {
 		t.Fatalf("run: %d", code)
@@ -121,6 +128,12 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	cancel()
 	<-done
 
+	// the loop's twin never disagreed with the store's own counts
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(l, "TIMES ") && !strings.Contains(l, " mismatch=0:") {
+			t.Errorf("the loop's twin did not add up to the store's counts: %s", l)
+		}
+	}
 	ticks := loopDeals(out.String())
 	if len(ticks) < 3 {
 		t.Fatalf("%d ticks dealt, want at least 3: %s", len(ticks), out.String())

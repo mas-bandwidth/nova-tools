@@ -410,6 +410,9 @@ type PartTime struct {
 	Reads int64 `json:"reads"`
 	Rows  int64 `json:"rows"`
 	Stale int64 `json:"stale,omitempty"`
+	// Mismatch is the tables the twin read whole because its records did
+	// not add up to the store's counts (twin.go): 0 in a correct twin.
+	Mismatch int64 `json:"mismatch,omitempty"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.

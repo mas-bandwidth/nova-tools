@@ -255,6 +255,14 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 				return nil, err
 			}
 			tw.tables[load[i]].Revision = shape.Revision
+			if why := countsAgree(tw.tables[load[i]], shape, st.epoch); why != "" {
+				// the records the twin holds do not add up to the store's own
+				// counts at the revision both are of: the table is read whole
+				// (counted, Stats.mismatch), whatever the cause
+				st.stats().mismatch.Add(1)
+				delete(tw.tables, load[i])
+				whole = append(whole, shape)
+			}
 		}
 	}
 	if len(whole) > 0 {
@@ -364,6 +372,30 @@ func (st *Store) catchUp(ctx context.Context, tw *Twin, name string, shape ntabl
 		}
 	}
 	return nil
+}
+
+// countsAgree says the twin's table holds, in each cell, as many placed
+// records as the store's shape of the same revision counts there (the row's
+// excluded member, which the counts leave out, not counted): "" when it
+// does, else the first cell that differs.
+func countsAgree(t *sprint.Table, shape ntable.Table, epoch uint64) string {
+	for _, row := range shape.Rows {
+		for k, col := range shape.Columns {
+			if !col.HasSet() || k >= len(row.Cells) {
+				continue
+			}
+			n := t.Count(row.Key, col.Name)
+			if row.Exclude != "" {
+				if c := t.Placed(sprint.CardID(row.Exclude)); c != nil && c.Row == row.Key && c.Col == col.Name {
+					n--
+				}
+			}
+			if int64(n) != row.Cells[k].Count {
+				return fmt.Sprintf("%s %s:%s holds %d, the store counts %d", t.Name, row.Key, col.Name, n, row.Cells[k].Count)
+			}
+		}
+	}
+	return ""
 }
 
 // wholeTable reads one table of the twin whole.

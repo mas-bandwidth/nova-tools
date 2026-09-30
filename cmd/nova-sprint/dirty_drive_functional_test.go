@@ -230,6 +230,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
 			}
+			if m := res.Cost().Mismatch; m > 0 && tk.err == "" {
+				// the loop's twin did not add up to the store's own counts
+				tk.err = fmt.Sprintf("the twin read %d tables whole on a count mismatch: %s", m, res.TimesLine())
+			}
 			ticks = append(ticks, tk)
 			// a sample every driveSample ticks, and at every tick while the loop
 			// has ticked fewer times than that: a tick that deals or lands

@@ -215,6 +215,14 @@ func (r *Redis) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Recei
 	return ntable.ApplyBatch(ctx, r.C, m)
 }
 
+// ApplyAll applies manifests of one table in one round trip (one
+// MULTI/EXEC): each its own batch, as Apply applies it.
+func (r *Redis) ApplyAll(ctx context.Context, ms []ntable.BatchManifest) ([]ntable.Receipt, []error) {
+	return ntable.ApplyBatches(ctx, r.C, ms)
+}
+
+var _ BatchApplier = (*Redis)(nil)
+
 func (r *Redis) Create(ctx context.Context, t ntable.Table) error {
 	now := time.Now
 	if r.Now != nil {

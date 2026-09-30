@@ -1613,22 +1613,70 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 // ahead of it ErrEpochAhead. Operation records do not expire, but a drop of the
 // table ends them.
 func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (Receipt, error) {
+	body, err := batchBody(&manifest)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return batchReceipt(manifest, c.FCall(ctx, FnApply, []string{DefKey(manifest.Table)}, manifest.Table, body))
+}
+
+// ApplyBatches applies manifests of one table in one round trip, in one
+// MULTI/EXEC: each is its own batch, applied or refused as ApplyBatch
+// applies it, and none runs between them, so a refused one leaves every one
+// after it refused on the table revision it expected. The receipts and errors
+// are each manifest's; a manifest refused before sending (a rule or a bound
+// this process checks) is its error, and none after it is sent.
+func ApplyBatches(ctx context.Context, c redis.Cmdable, manifests []BatchManifest) ([]Receipt, []error) {
+	rcs, errs := make([]Receipt, len(manifests)), make([]error, len(manifests))
+	bodies := make([]string, 0, len(manifests))
+	for i := range manifests {
+		body, err := batchBody(&manifests[i])
+		if err != nil {
+			errs[i] = err
+			for k := i + 1; k < len(manifests); k++ {
+				errs[k] = fmt.Errorf("table %q batch %q: not sent: an earlier batch was refused before sending", manifests[k].Table, manifests[k].OperationID)
+			}
+			break
+		}
+		bodies = append(bodies, body)
+	}
+	if len(bodies) == 0 {
+		return rcs, errs
+	}
+	tx := c.TxPipeline()
+	cmds := make([]*redis.Cmd, len(bodies))
+	for i, body := range bodies {
+		cmds[i] = tx.FCall(ctx, FnApply, []string{DefKey(manifests[i].Table)}, manifests[i].Table, body)
+	}
+	_, _ = tx.Exec(ctx) // each command's reply, or the exchange's error, is read with it
+	for i, cmd := range cmds {
+		rcs[i], errs[i] = batchReceipt(manifests[i], cmd)
+	}
+	return rcs, errs
+}
+
+// batchBody is a manifest's request, checked before it is sent.
+func batchBody(manifest *BatchManifest) (string, error) {
 	if !ValidName(manifest.Table) {
-		return Receipt{}, &ManifestError{Msg: fmt.Sprintf("table %q: invalid name: a table name wants letters, digits, _ . and -; run: nova-table help", manifest.Table)}
+		return "", &ManifestError{Msg: fmt.Sprintf("table %q: invalid name: a table name wants letters, digits, _ . and -; run: nova-table help", manifest.Table)}
 	}
 	if manifest.Members == nil {
 		manifest.Members = []BatchMemberEntry{}
 	}
 	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
-	body, err := payload(manifest)
+	body, err := payload(*manifest)
 	if err != nil {
-		return Receipt{}, err
+		return "", err
 	}
 	if _, verr := ValidateBatchManifestRaw([]byte(body)); verr != nil {
-		return Receipt{}, o.beforeSending(verr)
+		return "", o.beforeSending(verr)
 	}
-	key := DefKey(manifest.Table)
-	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)
+	return body, nil
+}
+
+// batchReceipt is the receipt of a manifest's apply, or its error.
+func batchReceipt(manifest BatchManifest, cmd *redis.Cmd) (Receipt, error) {
+	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
 	reply, err := cmd.Slice()
 	if err != nil {
 		return Receipt{}, fmt.Errorf("%s: %w: %w (changed=unknown); send the same manifest again with the same operation id %q: it returns the original receipt if the batch was applied and applies it if it was not; run: %s",

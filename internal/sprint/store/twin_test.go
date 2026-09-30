@@ -37,6 +37,9 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 		if i == 0 {
 			want = int64(len(All))
 		}
+		if c.Mismatch != 0 {
+			t.Fatalf("tick %d: the twin's records did not add up to the store's counts %d times: %s", i+1, c.Mismatch, res.TimesLine())
+		}
 		if c.Reads != want {
 			t.Fatalf("tick %d: %d tables read whole, want %d: %s", i+1, c.Reads, want, res.TimesLine())
 		}

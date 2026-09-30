@@ -29,6 +29,9 @@ type Stats struct {
 	rows  atomic.Int64 // records read, by any read set
 	twin  atomic.Int64 // reads a step answered from the tick's twin instead of the store
 	stale atomic.Int64 // reads of the twin refused as stale: another writer wrote since
+	// mismatch is the tables whose records, caught up, did not add up to the
+	// store's counts of the same revision: each read whole (twin.go)
+	mismatch atomic.Int64
 }
 
 // stats is the store's counters, made on first use.
@@ -54,20 +57,20 @@ func (st *Store) trips() int64 {
 type meter struct {
 	st                      *Store
 	began                   time.Time
-	trips, reads, rows, stl int64
+	trips, reads, rows, stl, mis int64
 }
 
 // meter starts measuring a part.
 func (st *Store) meter() meter {
 	s := st.stats()
-	return meter{st: st, began: time.Now(), trips: st.trips(), reads: s.reads.Load(), rows: s.rows.Load(), stl: s.stale.Load()}
+	return meter{st: st, began: time.Now(), trips: st.trips(), reads: s.reads.Load(), rows: s.rows.Load(), stl: s.stale.Load(), mis: s.mismatch.Load()}
 }
 
 // part is what the part cost since its meter began.
 func (m meter) part(table, name string) PartTime {
 	s := m.st.stats()
 	return PartTime{Table: table, Name: name, Took: time.Since(m.began), Trips: m.st.trips() - m.trips,
-		Reads: s.reads.Load() - m.reads, Rows: s.rows.Load() - m.rows, Stale: s.stale.Load() - m.stl}
+		Reads: s.reads.Load() - m.reads, Rows: s.rows.Load() - m.rows, Stale: s.stale.Load() - m.stl, Mismatch: s.mismatch.Load() - m.mis}
 }
 
 // Cost is a tick's times summed: its wall time and every part's trips, reads
@@ -79,6 +82,7 @@ func (r TickResult) Cost() PartTime {
 		out.Reads += p.Reads
 		out.Rows += p.Rows
 		out.Stale += p.Stale
+		out.Mismatch += p.Mismatch
 	}
 	return out
 }
@@ -89,7 +93,7 @@ func (r TickResult) Cost() PartTime {
 func (r TickResult) TimesLine() string {
 	c := r.Cost()
 	var b strings.Builder
-	fmt.Fprintf(&b, "TIMES %dms trips=%d reads=%d rows=%d stale=%d:", c.Took.Milliseconds(), c.Trips, c.Reads, c.Rows, c.Stale)
+	fmt.Fprintf(&b, "TIMES %dms trips=%d reads=%d rows=%d stale=%d mismatch=%d:", c.Took.Milliseconds(), c.Trips, c.Reads, c.Rows, c.Stale, c.Mismatch)
 	for _, p := range r.Times {
 		name := p.Name
 		if p.Table != "" {
