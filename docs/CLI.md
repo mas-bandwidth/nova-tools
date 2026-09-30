@@ -1359,7 +1359,7 @@ and clears this release's own files out of `--retire`. Run it **on the coordinat
 refuses and says so.
 
 ```sh
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from hulk:/home/gaffer/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench1:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
 ```
 
 `adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
