@@ -24,6 +24,10 @@ var allowedGlobals = map[string]bool{
 	"next": true, "select": true, "unpack": true, "error": true, "pcall": true, "assert": true,
 	"getmetatable": true, // Lua builtin used to recognize Redis cjson array tables.
 	"NS":           true,
+	// The load's deliberate stop (sprint_00_core.lua): a refused registration
+	// reads this global, which no library defines, so FUNCTION LOAD fails
+	// naming it (fact F12).
+	"sprint_registration_refused": true,
 }
 
 // freeNames compiles one Lua file on its own (Lua 5.1, the Redis dialect) and
