@@ -66,7 +66,8 @@ usage:
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
-reports, a day that would shrink, a check finding, a report with nothing to show; 2 could
+reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
+a check finding, a report with nothing to show; 2 could
 not run: a missing flag, a bad flag value, a duplicate label, sqlite3 absent when
 --opencode is given, a second fold holding the lock.
 
@@ -794,8 +795,16 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d quiet=%d",
 		daysWritten, rowsWritten, len(sources), unreadable.Total(), unparsed.Total(),
 		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), quiet)
+	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
+	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
+	// so); every message dropped, with none folded, is a fold that did not do its job:
+	// exit 1 with the counts (the third cold rating of the tools, 2026-09-30).
+	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
-		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0
+		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0 || allDropped
+	if allDropped {
+		fmt.Fprintf(stderr, "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+	}
 	if bad {
 		fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
 	} else {
@@ -957,6 +966,22 @@ func noidAndDup(sources []*tokens.Source) string {
 		return ""
 	}
 	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
+}
+
+// allDroppedWhy is the tail of the TOKENS FAIL line for a fold that dropped every message.
+const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
+
+// allMessagesDropped says whether the sources read at least one message and dropped every
+// one of them for having no id (rule 4): the count dropped, the count read (dropped, plus
+// the messages folded), and whether that is the whole of it. Some dropped and some folded
+// is false: the TOKENS NOTE names that one.
+func allMessagesDropped(sources []*tokens.Source) (dropped, of int, all bool) {
+	folded := 0
+	for _, s := range sources {
+		dropped += s.Stat.NoID
+		folded += len(s.Stream)
+	}
+	return dropped, dropped + folded, dropped > 0 && folded == 0
 }
 
 func firstUnparsed(sources []*tokens.Source) (kind, note, own string) {

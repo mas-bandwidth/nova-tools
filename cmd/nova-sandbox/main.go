@@ -276,7 +276,11 @@ type flags struct {
 	bad                         []sandbox.Refusal
 }
 
-func parse(args []string) flags {
+func parse(args []string) flags { return parseVerb("", args) }
+
+// parseVerb is parse for the named verb: an argument it does not know is refused with that
+// verb's help to run (unknownArg).
+func parseVerb(verb string, args []string) flags {
 	f := flags{max: 20}
 	want := func(i int, flag string) (string, int) {
 		if i+1 >= len(args) {
@@ -342,8 +346,9 @@ func parse(args []string) flags {
 			}
 			f.max, f.maxSet = n, true
 		default:
-			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
-				Text: oneline.Escape(a) + " is not a flag this tool has; run: nova-sandbox help"})
+			text, took := unknownArg(args, i, verb)
+			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: text})
+			i += took
 		}
 	}
 	return f
@@ -511,7 +516,7 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 // a key delivered by nova-secrets exec has no file). A wall that denies the work too is
 // broken, and a two-check probe would call it a pass.
 func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
-	f := parse(args)
+	f := parseVerb("probe", args)
 	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
 	// a bare `probe` named the missing --secret, and named the missing --write only on
 	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
@@ -967,7 +972,7 @@ func policyText(p *sandbox.Policy) (string, error) {
 // profiles/darwin-check.sh can be run against the profile THIS TOOL generates, so that
 // the script and the tool cannot drift apart (rule 15: generated, never hand-edited).
 func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
-	f := parse(args)
+	f := parseVerb("policy", args)
 	if len(f.bad) > 0 {
 		for _, r := range f.bad {
 			fmt.Fprintf(stderr, "POLICY REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))

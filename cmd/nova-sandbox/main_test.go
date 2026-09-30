@@ -1561,7 +1561,7 @@ func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
 		if code == 0 {
 			t.Fatalf("%s was accepted by the policy verb", flag)
 		}
-		if !strings.Contains(errOut, "is not a flag this tool has") {
+		if !strings.Contains(errOut, "unknown flag "+flag+"; run: nova-sandbox help policy") {
 			t.Fatalf("%s was refused for the wrong reason: %s", flag, errOut)
 		}
 	}

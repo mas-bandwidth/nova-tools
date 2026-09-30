@@ -63,7 +63,7 @@ near the end, and the sections below say how each is met.
    message id on every streamed line; the last line for an id carries the
    message's final usage, and that is the one counted. Within one source, a
    second occurrence of an id is `dup=<n>` on the `TOKENS SOURCE` line, never a
-   second count. A message with no id is counted in `noid=<n>` and not folded.
+   second count. A message with no id is counted in `noid=<n>` and not folded: some dropped is a `TOKENS NOTE`, and a fold whose every message was dropped, with none folded, is `FOLD FAIL dropped=<n> of <n>: no message had an id; run: nova-tokens sources ...` and exit 1.
 5. **Repo attribution is one written rule, and `unknown` is a named bucket
    with its share printed.** The rule is in **repo attribution** below. It is
    one function with one statement, parameterized by the source's way of
@@ -585,7 +585,7 @@ token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
-| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show |
+| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a fold that dropped every message for having no id (`FOLD FAIL dropped=<n> of <n>`), a check finding, a `report` with nothing to show |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
@@ -625,6 +625,7 @@ TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<label
 TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day|partial|quiet> shown=<n> total=<t> <remedy>
 TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
 TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
+FOLD FAIL dropped=<n> of <n>: no message had an id, so none was folded; run: nova-tokens sources <the same source flags> --day <d> to see noid= per source
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
