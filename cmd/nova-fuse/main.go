@@ -42,7 +42,7 @@ usage:
   nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
   nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
-  nova-fuse quarantine --box <path> <surface> "<reason>"   stop reading one surface (soft)
+  nova-fuse quarantine --box <path> <surface> "<reason>" [--dry-run]   stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> <surface>         rescind your own quarantine (soft, both directions)
   nova-fuse lift lockdown                                  REFUSED by design -- a blown fuse is REPLACED,
                                                            only in a live conversation with your person
@@ -55,7 +55,7 @@ clear), bad invocation, or a lift this tool refuses by design.
 
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
-it. The help is nova-fuse help.
+it. The help is nova-fuse help [<verb>].
 
 status lists at most --max quarantines (default 20, and 0 means all) after its
 count line, then one STATUS MORE kind=quarantine shown=<n> total=<t> line
@@ -130,6 +130,9 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	switch cmd {
 	case "help", "-h", "--help":
+		if cmd == "help" && len(rest) > 0 {
+			return cmdHelp(rest, stdout, stderr)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
@@ -563,7 +566,10 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 // cmdQuarantine stops ONE surface.
 func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok, parsed := parseBox("quarantine", rest, stderr)
+	var dryRun bool
+	box, positional, ok, parsed := parseBoxWith("quarantine", rest, stderr, func(fs *flag.FlagSet) {
+		fs.BoolVar(&dryRun, "dry-run", false, "validate inputs and print the rule that would be added and the box path, write nothing")
+	})
 	if !parsed {
 		return 2
 	}
@@ -579,6 +585,14 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if !ok {
 		return 2
+	}
+
+	if dryRun {
+		fmt.Fprintf(stdout, "QUARANTINE PLAN box=%s quarantine=%s: %s\n",
+			oneline.Field(box), oneline.Field(surface), oneline.Escape(reason))
+		fmt.Fprintf(stdout, "QUARANTINE DRY-RUN OK box=%s quarantine=%s: nothing written\n",
+			oneline.Field(box), oneline.Field(surface))
+		return 0
 	}
 
 	b, readErr := fuse.ReadBox(box)
