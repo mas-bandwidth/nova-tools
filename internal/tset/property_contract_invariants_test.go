@@ -423,3 +423,133 @@ func TestPropertyContractR3MemDecimalHLENByteAccounting(t *testing.T) {
 		})
 	}
 }
+
+// TestPropertyContractR3MemSuccessorAccounting verifies that on clean advance:
+// 1. An absent propguard charges 1 successor HLEN cell probe and 1 HGET field observation.
+// 2. A subsequent new-name prop reuses that capacity without double-charging HLEN.
+// 3. Ordinary nonadvance propguards do NOT charge successor HLEN.
+func TestPropertyContractR3MemSuccessorAccounting(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("advance_absent_propguard_charges_successor_hlen", func(t *testing.T) {
+		t.Parallel()
+		const sp = "r3-succ-guard:"
+		m := r1r2r3MemFixture(t, sp)
+
+		op, intent := "adv-guard", "advance with absent propguard"
+		step := Step{
+			Epoch: "0", Space: sp,
+			Op:     &op,
+			Intent: &intent,
+			Entries: []Entry{
+				{Kind: "advance", AdvanceFrom: "0"},
+				{Kind: "propguard", Table: "cards", Name: "absent_guard", Value: nil},
+			},
+		}
+
+		reply, err := m.Step(ctx, step)
+		if err != nil || reply.Status != "ok" || reply.EpochAfter != "1" {
+			t.Fatalf("advance + propguard failed: reply=%+v err=%v", reply, err)
+		}
+		var counters struct {
+			CellProbes        int `json:"cell_probes"`
+			FieldObservations int `json:"field_observations"`
+			FetchedBytes      int `json:"raw_fetched_bytes"`
+		}
+		if err := json.Unmarshal(reply.Counters, &counters); err != nil {
+			t.Fatalf("unmarshal counters: %v", err)
+		}
+		// Successor HLEN probe must contribute 1 cell probe and 1 fetched byte (len("0") = 1).
+		if counters.CellProbes != 1 {
+			t.Fatalf("cell_probes = %d, want 1", counters.CellProbes)
+		}
+		// HGET for absent_guard contributes 1 field observation and 0 fetched bytes.
+		if counters.FieldObservations != 1 {
+			t.Fatalf("field_observations = %d, want 1", counters.FieldObservations)
+		}
+		if counters.FetchedBytes != 1 {
+			t.Fatalf("raw_fetched_bytes = %d, want 1", counters.FetchedBytes)
+		}
+	})
+
+	t.Run("advance_absent_propguard_plus_new_prop_no_double_charge", func(t *testing.T) {
+		t.Parallel()
+		const sp = "r3-succ-nodbl:"
+		m := r1r2r3MemFixture(t, sp)
+
+		val := "v"
+		op, intent := "adv-guard-prop", "advance with absent propguard and prop"
+		step := Step{
+			Epoch: "0", Space: sp,
+			Op:     &op,
+			Intent: &intent,
+			Entries: []Entry{
+				{Kind: "advance", AdvanceFrom: "0"},
+				{Kind: "propguard", Table: "cards", Name: "absent_guard", Value: nil},
+				{Kind: "prop", Table: "cards", Name: "new_prop", Value: &val},
+			},
+		}
+
+		reply, err := m.Step(ctx, step)
+		if err != nil || reply.Status != "ok" || reply.EpochAfter != "1" {
+			t.Fatalf("advance + propguard + prop failed: reply=%+v err=%v", reply, err)
+		}
+		var counters struct {
+			CellProbes        int `json:"cell_probes"`
+			FieldObservations int `json:"field_observations"`
+			FetchedBytes      int `json:"raw_fetched_bytes"`
+		}
+		if err := json.Unmarshal(reply.Counters, &counters); err != nil {
+			t.Fatalf("unmarshal counters: %v", err)
+		}
+		// Exactly 1 cell probe: successor HLEN is reused, not double charged.
+		if counters.CellProbes != 1 {
+			t.Fatalf("cell_probes = %d, want 1 (no double charge)", counters.CellProbes)
+		}
+		// Two field observations: absent_guard and new_prop.
+		if counters.FieldObservations != 2 {
+			t.Fatalf("field_observations = %d, want 2", counters.FieldObservations)
+		}
+		if counters.FetchedBytes != 1 {
+			t.Fatalf("raw_fetched_bytes = %d, want 1", counters.FetchedBytes)
+		}
+	})
+
+	t.Run("nonadvance_propguard_no_successor_hlen", func(t *testing.T) {
+		t.Parallel()
+		const sp = "r3-nonadv-guard:"
+		m := r1r2r3MemFixture(t, sp)
+
+		step := Step{
+			Epoch: "0", Space: sp,
+			Entries: []Entry{
+				{Kind: "propguard", Table: "cards", Name: "absent_guard", Value: nil},
+			},
+		}
+
+		reply, err := m.Step(ctx, step)
+		if err != nil || reply.Status != "ok" {
+			t.Fatalf("nonadvance propguard failed: reply=%+v err=%v", reply, err)
+		}
+		var counters struct {
+			CellProbes        int `json:"cell_probes"`
+			FieldObservations int `json:"field_observations"`
+			FetchedBytes      int `json:"raw_fetched_bytes"`
+		}
+		if err := json.Unmarshal(reply.Counters, &counters); err != nil {
+			t.Fatalf("unmarshal counters: %v", err)
+		}
+		// Nonadvance propguard does NOT charge successor HLEN: 0 cell probes.
+		if counters.CellProbes != 0 {
+			t.Fatalf("cell_probes = %d, want 0", counters.CellProbes)
+		}
+		if counters.FieldObservations != 1 {
+			t.Fatalf("field_observations = %d, want 1", counters.FieldObservations)
+		}
+		if counters.FetchedBytes != 0 {
+			t.Fatalf("raw_fetched_bytes = %d, want 0", counters.FetchedBytes)
+		}
+	})
+}
+

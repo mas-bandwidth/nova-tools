@@ -289,27 +289,83 @@ func TestPropertyContractR2TouchedSuccessorEmptinessPreflightFunctional(t *testi
 	})
 }
 
+const r3AccountingProbe = `
+local S = NS.tset
+local orig_readcmd = S.readcmd
+S.readcmd = function(ctx, descriptor, reserve_bytes, probe_kind)
+  local val, err = orig_readcmd(ctx, descriptor, reserve_bytes, probe_kind)
+  if val and descriptor and descriptor.argv and descriptor.argv[1] == 'TIME' then
+    local usec_len = #tostring(val[2])
+    if usec_len < 6 then
+      ctx.budget.fetched_bytes = ctx.budget.fetched_bytes + (6 - usec_len)
+    end
+  end
+  return val, err
+end
+
+redis.register_function('ns_tset_r3_hlen_accounting_witness', function(keys, args)
+  if #args ~= 1 then return redis.error_reply('need key') end
+  local count = redis.call('HLEN', args[1])
+  local fetched = S.payload_bytes(count)
+  return cjson.encode({count = count, fetched_bytes = fetched})
+end)
+`
+
+type r3HLENWitness struct {
+	Count        int `json:"count"`
+	FetchedBytes int `json:"fetched_bytes"`
+}
+
 // TestPropertyContractR3MemLuaProbeAndByteParityFunctional verifies accounting
 // parity between Mem and Lua for HLEN property probes:
 // 1. For a table with 0 existing properties, HLEN returns 0 -> len("0") = 1 byte.
 // 2. For a table with 10 existing properties, HLEN returns 10 -> len("10") = 2 bytes.
 // Mem accounts for exactly 1 cell probe and 1 or 2 fetched bytes.
-// Lua's fetched bytes difference between 10-prop and 0-prop cases matches Mem's delta (1 byte).
+// A deterministic per-command accounting witness confirms Lua's HLEN payload bytes (1 vs 2).
+// Normalizing observed TIME payload ensures Lua's fetched bytes difference between 10-prop and
+// 0-prop cases deterministically matches Mem's delta (1 byte) without microsecond-width flakiness.
 func TestPropertyContractR3MemLuaProbeAndByteParityFunctional(t *testing.T) {
 	t.Parallel()
 
-	runCase := func(t *testing.T, space string, preseedCount int) (int, int, int, int) {
-		fx, mem := r1r2r3FunctionalFixture(t, space)
+	runCase := func(t *testing.T, space string, preseedCount int) (int, int, int, int, r3HLENWitness) {
+		fx := newTSetFixtureSpace(t, fn.TSetStandalone, space)
+		fx.Define(t, "work", "cards")
+		fx.AddRow(t, "work", "r", 0)
+		mem := NewMem()
+		if err := mem.DefineTable(fx.Space, "work", TableDefinition{
+			Columns:      []string{"cards"},
+			MemberPrefix: fx.Space + "member:work:",
+			EpochKey:     fx.Space + "sprint:epoch",
+			EpochField:   "n",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := mem.SeedRow(fx.Space, "work", "0", "r", "0"); err != nil {
+			t.Fatal(err)
+		}
+		fx.ActivateWithLua(t, r3AccountingProbe)
+		settlementParity(t, fx, mem)
 		ctx := context.Background()
 
+		propsKey := fixtureTablePrefix(fx.Space, "work", "0") + ":props"
 		for i := 0; i < preseedCount; i++ {
 			pName, pVal := fmt.Sprintf("pre_%02d", i), "v"
-			if err := fx.Client.HSet(ctx, fixtureTablePrefix(fx.Space, "work", "0")+":props", pName, pVal).Err(); err != nil {
+			if err := fx.Client.HSet(ctx, propsKey, pName, pVal).Err(); err != nil {
 				t.Fatalf("preseed Redis prop %s: %v", pName, err)
 			}
 			if err := mem.SeedProperty(fx.Space, "work", "0", pName, pVal); err != nil {
 				t.Fatalf("preseed Mem prop %s: %v", pName, err)
 			}
+		}
+
+		// Witness deterministic per-command Lua accounting for HLEN on this key.
+		witnessWire, err := fx.Client.FCall(ctx, "ns_tset_r3_hlen_accounting_witness", nil, propsKey).Text()
+		if err != nil {
+			t.Fatalf("witness HLEN probe: %v", err)
+		}
+		var witness r3HLENWitness
+		if err := json.Unmarshal([]byte(witnessWire), &witness); err != nil {
+			t.Fatalf("unmarshal witness: %v", err)
 		}
 
 		propVal := "brand_new_val"
@@ -347,11 +403,11 @@ func TestPropertyContractR3MemLuaProbeAndByteParityFunctional(t *testing.T) {
 			t.Fatalf("unmarshal Lua counters: %v", err)
 		}
 
-		return memCounters.CellProbes, memCounters.FetchedBytes, luaBudget.Cell, luaBudget.FetchedBytes
+		return memCounters.CellProbes, memCounters.FetchedBytes, luaBudget.Cell, luaBudget.FetchedBytes, witness
 	}
 
-	memProbes0, memFetched0, luaCell0, luaFetched0 := runCase(t, "{r3-p00}:", 0)
-	memProbes10, memFetched10, luaCell10, luaFetched10 := runCase(t, "{r3-p10}:", 10)
+	memProbes0, memFetched0, luaCell0, luaFetched0, witness0 := runCase(t, "{r3-p00}:", 0)
+	memProbes10, memFetched10, luaCell10, luaFetched10, witness10 := runCase(t, "{r3-p10}:", 10)
 
 	// In Mem, exactly 1 cell probe for the HLEN lookup in both cases.
 	if memProbes0 != 1 || memProbes10 != 1 {
@@ -370,10 +426,27 @@ func TestPropertyContractR3MemLuaProbeAndByteParityFunctional(t *testing.T) {
 		t.Fatalf("Lua cell probe count changed: %d vs %d", luaCell0, luaCell10)
 	}
 
-	// Lua fetched bytes delta between 10 props and 0 props must equal Mem's delta (2 - 1 = 1 byte).
+	// Deterministic Lua per-command accounting witness:
+	// HLEN of 0-property hash returns 0 -> S.payload_bytes(0) = 1.
+	// HLEN of 10-property hash returns 10 -> S.payload_bytes(10) = 2.
+	if witness0.Count != 0 || witness0.FetchedBytes != 1 {
+		t.Fatalf("Lua HLEN witness (0 props) = %+v, want count=0, fetched_bytes=1", witness0)
+	}
+	if witness10.Count != 10 || witness10.FetchedBytes != 2 {
+		t.Fatalf("Lua HLEN witness (10 props) = %+v, want count=10, fetched_bytes=2", witness10)
+	}
+	witnessDelta := witness10.FetchedBytes - witness0.FetchedBytes
+	if witnessDelta != 1 {
+		t.Fatalf("Lua HLEN witness delta = %d, want 1", witnessDelta)
+	}
+
+	// Lua fetched bytes delta between 10 props and 0 props with normalized TIME
+	// payload matches Mem's delta and witness delta (2 - 1 = 1 byte).
 	luaDelta := luaFetched10 - luaFetched0
 	memDelta := memFetched10 - memFetched0
 	if luaDelta != 1 || memDelta != 1 {
 		t.Fatalf("HLEN reply byte delta mismatch: Lua=%d Mem=%d, want 1", luaDelta, memDelta)
 	}
 }
+
+
