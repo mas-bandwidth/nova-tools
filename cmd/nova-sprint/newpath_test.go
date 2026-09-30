@@ -93,7 +93,7 @@ type npApp struct {
 	a    *app
 	m    *tset.Mem
 	tw   *sprintfn.Twin
-	log  *sprintfn.LogStub
+	log  *sprintfn.MemLog
 	rec  *recorder
 	mu   sync.Mutex
 	now  time.Time
@@ -110,7 +110,7 @@ func newNPApp(t *testing.T) *npApp {
 			t.Fatalf("define %s: %v", table, err)
 		}
 	}
-	na := &npApp{t: t, m: m, log: sprintfn.NewLogStub(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC), dir: t.TempDir()}
+	na := &npApp{t: t, m: m, log: sprintfn.NewMemLog(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC), dir: t.TempDir()}
 	na.tw = sprintfn.NewTwin(m, na.log, npNames)
 	na.tw.UseQueries()
 	na.tw.UseIntents()

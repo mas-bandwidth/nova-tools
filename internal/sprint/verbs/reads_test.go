@@ -581,8 +581,8 @@ func TestLogAfterClearReadsTheActiveEpoch(t *testing.T) {
 			v.Epoch, fresh.Epoch, res.Trips, len(v.Lines), len(now))
 	}
 	for i := range now {
-		if string(v.Lines[i]) != string(now[i]) {
-			t.Fatalf("line %d is %s, want epoch 1's %s", i+1, v.Lines[i], now[i])
+		if want := semanticLine(now[i]); string(v.Lines[i]) != string(want) {
+			t.Fatalf("line %d is %s, want epoch 1's %s", i+1, v.Lines[i], want)
 		}
 	}
 	w.cc.Reset()

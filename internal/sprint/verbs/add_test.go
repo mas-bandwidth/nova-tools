@@ -36,7 +36,7 @@ var addColumns = map[string][]string{
 
 type addWorld struct {
 	t   *testing.T
-	log *sprintfn.LogStub
+	log *sprintfn.MemLog
 	m   *tset.Mem
 	tw  *sprintfn.Twin
 	cc  *Counting
@@ -54,7 +54,7 @@ func newAddWorld(t *testing.T) *addWorld {
 			t.Fatalf("define %s: %v", table, err)
 		}
 	}
-	w := &addWorld{t: t, m: m, log: sprintfn.NewLogStub(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	w := &addWorld{t: t, m: m, log: sprintfn.NewMemLog(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
 	w.tw = sprintfn.NewTwin(m, w.log, addNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()

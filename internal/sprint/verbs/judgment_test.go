@@ -60,7 +60,7 @@ func newJRWorld(t *testing.T) *jrWorld {
 		}
 	}
 	w := &jrWorld{t: t, now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
-	w.tw = sprintfn.NewTwin(m, sprintfn.NewLogStub(), jrNames)
+	w.tw = sprintfn.NewTwin(m, sprintfn.NewMemLog(), jrNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()
 	w.tw.SetClock(func() time.Time {
@@ -334,7 +334,7 @@ func (w *jrWorld) lineAt(seq uint64) sprint.Event {
 	through := tset.Decimal(strconv.FormatUint(seq, 10))
 	rd := w.read(&sprintfn.ReadRequest{Tset: []tset.ReadQuery{{Kind: "lines", AfterSeq: tset.Decimal(strconv.FormatUint(seq-1, 10)),
 		ThroughSeq: &through, Limit: 1}}})
-	ev, err := sprint.ParseEvent(string(through)+"-0", rd.Tset[0].Lines[0])
+	ev, err := sprint.ParseEvent(string(through)+"-0", semanticLine(rd.Tset[0].Lines[0]))
 	if err != nil {
 		w.t.Fatal(err)
 	}

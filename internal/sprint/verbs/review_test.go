@@ -38,7 +38,7 @@ var rvColumns = map[string][]string{
 type rv struct {
 	t   *testing.T
 	tw  *sprintfn.Twin
-	log *sprintfn.LogStub
+	log *sprintfn.MemLog
 	cc  *Counting
 	env *Env
 	mu  sync.Mutex
@@ -54,7 +54,7 @@ func newRV(t *testing.T) *rv {
 			t.Fatalf("define %s: %v", table, err)
 		}
 	}
-	w := &rv{t: t, log: sprintfn.NewLogStub(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	w := &rv{t: t, log: sprintfn.NewMemLog(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
 	w.tw = sprintfn.NewTwin(m, w.log, rvNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()

@@ -95,6 +95,23 @@ type InboxView struct {
 	NoticesMore bool           `json:"notices_more,omitempty"`
 }
 
+// semanticLine is an item of a lines or cardlines page as the verbs read and
+// print it: Layer 1's item {seq, n, d} carries the stored body verbatim in d
+// (L1 7), which the machine reads the same way (machine's lineBody); the verbs
+// read it in L2 4's semantic words (sprintfn.SemanticLine: seq, kind, at_ms,
+// table, about, meta, ...). An item with no string d is the line itself.
+func semanticLine(raw json.RawMessage) json.RawMessage {
+	var item struct {
+		Seq tset.Decimal `json:"seq"`
+		N   string       `json:"n"`
+		D   *string      `json:"d"`
+	}
+	if json.Unmarshal(raw, &item) != nil || item.D == nil {
+		return raw
+	}
+	return sprintfn.SemanticLine(tset.LogLine{Seq: item.Seq, N: item.N, D: *item.D})
+}
+
 // noteSeqRE is a note id's seq and epoch.
 var noteSeqRE = regexp.MustCompile(`^n([1-9][0-9]{0,15})(?:~([1-9][0-9]{0,19}))?$`)
 
@@ -263,7 +280,7 @@ func judgmentGroups(ids []string, rd *sprintfn.ReadReply) ([]sprint.Group, error
 		if len(rd.Tset[i].Lines) != 1 {
 			return nil, fmt.Errorf("inbox: note %s has no line", id)
 		}
-		if err := json.Unmarshal(rd.Tset[i].Lines[0], &lines[i]); err != nil {
+		if err := json.Unmarshal(semanticLine(rd.Tset[i].Lines[0]), &lines[i]); err != nil {
 			return nil, fmt.Errorf("inbox: note %s's line: %w", id, err)
 		}
 	}
@@ -329,7 +346,7 @@ func noticeGroups(a tset.ReadAnswer) ([]sprint.Group, string, error) {
 	last := ""
 	for _, raw := range a.Lines {
 		var l noteLine
-		if err := json.Unmarshal(raw, &l); err != nil {
+		if err := json.Unmarshal(semanticLine(raw), &l); err != nil {
 			return nil, "", fmt.Errorf("inbox: a line after the cursor: %w", err)
 		}
 		var seq string
@@ -1108,7 +1125,9 @@ func Log(ctx context.Context, e *Env, req LogReq) (Result, error) {
 	res.Epoch = epoch
 	v := LogView{Epoch: epoch, Next: req.Since, Exhausted: page.Exhausted}
 	if req.Card != "" {
-		v.Lines = page.Items
+		for _, raw := range page.Items {
+			v.Lines = append(v.Lines, semanticLine(raw))
+		}
 		if len(page.Next) > 0 && string(page.Next) != "null" {
 			var c tset.CardCursor
 			if err := json.Unmarshal(page.Next, &c); err != nil {
@@ -1122,13 +1141,16 @@ func Log(ctx context.Context, e *Env, req LogReq) (Result, error) {
 			if json.Unmarshal(page.Next, &next) != nil {
 				next = string(page.Next)
 			}
+			// A lines page's next is the first seq not returned (L1's lines
+			// row); the view's Next is the seq the next page reads after.
 			n, err := strconv.ParseUint(next, 10, 64)
-			if err != nil {
+			if err != nil || n == 0 {
 				return res, fmt.Errorf("log: the page's next %s is not a seq", page.Next)
 			}
-			v.Next = n
+			v.Next = n - 1
 		}
-		for _, raw := range page.Items {
+		for _, item := range page.Items {
+			raw := semanticLine(item)
 			if req.Stream != "" {
 				var l struct {
 					Seq string `json:"seq"`
