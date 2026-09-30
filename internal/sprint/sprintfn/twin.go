@@ -667,8 +667,8 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 	for i, q := range rr.Tset {
 		switch {
 		case q.Kind == "range" && strings.HasPrefix(q.Key, t.prefix+"sprint:"):
-			// Layer 1's range in its raw key form reads any sorted set of the
-			// space (L1 7), the sprint's own keys among them: the agenda's and
+			// Layer 1's range in its raw key form reads any sorted set under
+			// the deployment's prefix (L1 7), the sprint's own keys among them: the agenda's and
 			// the held queue's heads of RT1 (1.4.2). The twin holds those keys
 			// itself, and tset.Mem serves the raw form from its fixtures only.
 			if refusedAt >= 0 {

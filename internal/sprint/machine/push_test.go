@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -14,10 +13,11 @@ import (
 // routes is a deliverer that records each push, fails a route named "bad", and
 // holds a route named "slow" until it is let go.
 type routes struct {
-	mu    sync.Mutex
-	got   []store.Reminder
-	slow  chan struct{}
-	calls int
+	mu      sync.Mutex
+	got     []store.Reminder
+	slow    chan struct{}
+	entered chan struct{}
+	calls   int
 }
 
 type route struct {
@@ -35,6 +35,7 @@ func (d route) Deliver(m store.Reminder) error {
 	case "bad":
 		return errors.New("no such route")
 	case "slow":
+		d.r.entered <- struct{}{}
 		<-d.r.slow
 	}
 	d.r.mu.Lock()
@@ -49,7 +50,7 @@ func (d route) Deliver(m store.Reminder) error {
 // does not wait for it (2.3, R14).
 func TestPushOnePerPeriod(t *testing.T) {
 	t.Parallel()
-	rs := &routes{slow: make(chan struct{})}
+	rs := &routes{slow: make(chan struct{}), entered: make(chan struct{}, 1)}
 	t.Cleanup(func() { close(rs.slow) })
 	p := newPusher(rs.deliver)
 	claim := func(person, route string, gen uint64, r int64) Claim {
@@ -71,12 +72,16 @@ func TestPushOnePerPeriod(t *testing.T) {
 	if out := p.run(ctx, []Claim{claim("bob", "bad", 1, 1000)}); len(out) != 1 || out[0].Delivered || out[0].Err == "" {
 		t.Fatalf("a failing route: %+v", out)
 	}
-	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	out := p.run(short, []Claim{claim("cy", "slow", 1, 1000)})
-	if len(out) != 1 || !out[0].TimedOut || out[0].Delivered || time.Since(start) > PushLimit {
-		t.Fatalf("a slow route: %+v after %v", out, time.Since(start))
+	// A route that does not return: the push gives up when its context ends
+	// (PushLimit, or the caller's sooner end), and the loop does not wait.
+	stop, cancel := context.WithCancel(ctx)
+	go func() {
+		<-rs.entered
+		cancel()
+	}()
+	out := p.run(stop, []Claim{claim("cy", "slow", 1, 1000)})
+	if len(out) != 1 || !out[0].TimedOut || out[0].Delivered {
+		t.Fatalf("a slow route: %+v", out)
 	}
 }
 
