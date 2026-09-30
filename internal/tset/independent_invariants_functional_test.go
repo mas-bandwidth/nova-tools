@@ -308,7 +308,7 @@ func independentReceipt(value, epoch string, markers map[string]bool) bool {
 		Result      string `json:"result"`
 	}
 	if json.Unmarshal([]byte(value), &r) != nil || r.EpochBefore != epoch || !markers[r.EpochAfter] ||
-		(r.Status != "ok" && r.Status != "fenced") || r.Changed < 0 || r.Changed > 2000 ||
+		(r.Status != "ok" && r.Status != "fenced") || r.Changed < 0 || r.Changed > MaxMemberCandidates+MaxPropEntries ||
 		!independentUint(r.FirstSeq, false) || !independentUint(r.LastSeq, false) ||
 		len(r.Result) > 4096 || len(r.Digest) != 40 {
 		return false

@@ -5,6 +5,7 @@ package tset
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -211,5 +212,86 @@ func settlementUnchanged(t *testing.T, fx *tsetFixture, mem *Mem,
 	}
 	if after := settlementMemImage(t, mem, fx.Space); !reflect.DeepEqual(beforeMem, after) {
 		t.Fatal("read or replay changed the Mem snapshot")
+	}
+}
+
+// TestReceiptChangedBoundOver2000WithProperties verifies that a step creating
+// 2,000 members plus 1 or more table properties records changed > 2000 in its
+// receipt and allows both exact replay and done query without refusal or DRIFT
+// (addressing receipt poisoning when changed was bounded by member_candidates).
+func TestReceiptChangedBoundOver2000WithProperties(t *testing.T) {
+	t.Parallel()
+	fx, mem := settlementFixture(t)
+	ids := make([]string, MaxMemberCandidates)
+	scores := make([]string, MaxMemberCandidates)
+	for i := 0; i < MaxMemberCandidates; i++ {
+		ids[i] = fmt.Sprintf("card-%04d", i)
+		scores[i] = "1"
+	}
+	propVal := "active"
+	op, intent := "op-2000-members-prop", "step with 2000 members and table property"
+	step := Step{
+		Epoch:  "0",
+		Space:  fx.Space,
+		Op:     &op,
+		Intent: &intent,
+		Entries: []Entry{
+			{
+				Kind:   "create",
+				Table:  "work",
+				To:     "r:cards",
+				IDs:    ids,
+				Scores: scores,
+			},
+			{
+				Kind:  "prop",
+				Table: "work",
+				Name:  "status",
+				Value: &propVal,
+			},
+		},
+	}
+	fresh := settlementStep(t, fx, mem, step)
+	if fresh.Status != "ok" || fresh.Replay || fresh.Changed <= MaxMemberCandidates {
+		t.Fatalf("fresh reply = %+v, want status ok, replay false, changed > %d", fresh, MaxMemberCandidates)
+	}
+	if fresh.Changed != MaxMemberCandidates+1 {
+		t.Fatalf("fresh changed = %d, want %d", fresh.Changed, MaxMemberCandidates+1)
+	}
+
+	settlementDone(t, fx, mem, "0", op, intent, "ok", "")
+
+	// Direct query to verify the done slot receipt has the expected changed count.
+	plan := ReadPlan{Epoch: "0", Space: fx.Space, Mode: "atomic", Queries: []ReadQuery{{
+		Kind: "done", Ops: []DoneIdentity{{Epoch: "0", Op: op, IntentDigest: intentDigest(intent)}},
+	}}}
+	for name, read := range map[string]func() (ReadReply, error){
+		"Lua": func() (ReadReply, error) { return newFixtureRedis(t, fx.Client).Read(context.Background(), plan) },
+		"Mem": func() (ReadReply, error) { return mem.Read(context.Background(), plan) },
+	} {
+		reply, err := read()
+		if err != nil || len(reply.Answers) != 1 || len(reply.Answers[0].Done) != 1 {
+			t.Fatalf("%s done reply = %+v / %v", name, reply, err)
+		}
+		slot := reply.Answers[0].Done[0]
+		if slot.Receipt == nil || slot.Receipt.Changed != fresh.Changed {
+			t.Fatalf("%s done slot receipt changed = %v, want %d", name, slot.Receipt, fresh.Changed)
+		}
+	}
+
+	before := commitProbeImage(t, fx.Client)
+	beforeMem := settlementMemImage(t, mem, fx.Space)
+	replay := settlementStep(t, fx, mem, step)
+	if !replay.Replay || replay.Status != "ok" || replay.Changed != fresh.Changed {
+		t.Fatalf("replay = %+v, want replay true, status ok, changed %d", replay, fresh.Changed)
+	}
+	settlementUnchanged(t, fx, mem, before, beforeMem)
+
+	rawReceipt, err := fx.Client.HGet(context.Background(), fixtureDoneKey(fx.Space, "0"), op).Result()
+	if err != nil {
+		t.Fatalf("fetch stored Redis receipt: %v", err)
+	}
+	if !independentReceipt(rawReceipt, "0", map[string]bool{"0": true}) {
+		t.Fatalf("stored receipt failed independentReceipt invariant: %s", rawReceipt)
 	}
 }
