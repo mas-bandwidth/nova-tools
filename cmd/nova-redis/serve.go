@@ -103,7 +103,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	program, err := d.lookPath(redisServerProgram)
 	if err != nil {
-		fmt.Fprintf(stderr, "SERVE FAIL err=%s\n", oneline.Err(fmt.Errorf("%s not found on PATH: %w", redisServerProgram, err)))
+		fmt.Fprintf(stderr, "SERVE FAIL err=%s remedy=%q\n", oneline.Err(fmt.Errorf("%s not found on PATH: %w", redisServerProgram, err)), "install redis-server or make its executable available on PATH for this process")
 		return 1
 	}
 	spec := launchSpec{
@@ -118,7 +118,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := d.launch(ctx, spec, stdout, stderr); err != nil {
-		fmt.Fprintf(stderr, "SERVE FAIL err=%s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "SERVE FAIL err=%s remedy=%q\n", oneline.Err(err), "read the launch error and any redis-server output above; check the explicit --bind and --port and access to --dir against that cause")
 		return 1
 	}
 	fmt.Fprintf(stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(binds, ",")), port)
