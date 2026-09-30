@@ -1,0 +1,81 @@
+{
+  "test": "TestSprintsizeL1SizeRun",
+  "cards": 100000,
+  "profile": "composed",
+  "target_branch": "origin/emma/upper-grand-master-e14",
+  "target_commit": "03b28a0a3245151c88771195c7310faf92d6e570",
+  "verified_branch": "emma/upper-grand-master-e14-100k-verified",
+  "timestamp": "2026-09-30T18:13:04Z",
+  "container_run": "20260930t181006-eec9b7da",
+  "wall_clock_seconds": 176.5,
+  "redis_version": "8.10.2",
+  "invariants": {
+    "memory_per_card_local_bytes": 229.4,
+    "memory_per_card_proxy_bytes": 245.4,
+    "l1_19_local_p50_ms": 2.104,
+    "l1_19_proxy_p50_ms": 2.736,
+    "l1_19_limit_ms": 10.0,
+    "l1_19_verdict": "INSIDE",
+    "zero_memory_leaks": true,
+    "lua_memory_bytes_before": 32768,
+    "lua_memory_bytes_after": 32768
+  },
+  "local_route": {
+    "rows": {
+      "L1-1": { "store_slowlog": "p50=152.745ms p99=164.47ms max=164.47ms", "client_wall": "p50=156.848ms p99=170.240ms", "commands": "32022/32022/32022", "probes": "cell 4008/4008/4008; field 4000/4000/4000", "limit": "2s", "verdict": "OVER" },
+      "L1-2": { "store_slowlog": "p50=126.24ms p99=126.24ms max=126.24ms", "client_wall": "p50=129.817ms p99=129.817ms", "commands": "28018/28018/28018", "probes": "cell 4007/4007/4007; field 0/0/0", "limit": "25ms", "verdict": "OVER" },
+      "L1-3": { "store_slowlog": "p50=152.687ms p99=152.687ms max=152.687ms", "client_wall": "p50=155.509ms p99=155.509ms", "commands": "36018/36018/36018", "probes": "cell 6007/6007/6007; field 0/0/0", "limit": "25ms", "verdict": "OVER" },
+      "L1-4": { "store_slowlog": "p50=869µs p99=869µs max=869µs", "client_wall": "p50=1.170ms p99=1.170ms", "commands": "36/36/36", "probes": "cell 10/10/10; field 0/0/0", "limit": "2ms", "verdict": "INSIDE" },
+      "L1-5": { "store_slowlog": "p50=142.655ms p99=142.655ms max=142.655ms", "client_wall": "p50=146.274ms p99=146.274ms", "commands": "32020/32020/32020", "probes": "cell 4007/4007/4007; field 0/0/0", "limit": "25ms", "verdict": "OVER" },
+      "L1-6": { "store_slowlog": "p50=182.771ms p99=182.771ms max=182.771ms", "client_wall": "p50=186.926ms p99=186.926ms", "commands": "36022/36022/36022", "probes": "cell 4008/4008/4008; field 6000/6000/6000", "limit": "25ms", "verdict": "OVER" },
+      "L1-7": { "store_slowlog": "p50=130.773ms p99=130.773ms max=130.773ms", "client_wall": "p50=134.584ms p99=134.584ms", "commands": "24044/24044/24044", "probes": "cell 4014/4014/4014; field 0/0/0", "limit": "30ms", "verdict": "OVER" },
+      "L1-8": { "store_slowlog": "p50=6.608ms p99=6.608ms max=6.608ms", "client_wall": "p50=7.239ms p99=7.239ms", "commands": "676/676/676", "probes": "cell 132/132/132; field 1/1/1", "limit": "5ms", "verdict": "OVER" },
+      "L1-9": { "store_slowlog": "p50=85.762ms p99=85.762ms max=85.762ms", "client_wall": "p50=89.616ms p99=89.616ms", "limit": "30ms", "verdict": "OVER" },
+      "L1-10": { "store_slowlog": "p50=598.68ms p99=598.68ms max=598.68ms", "client_wall": "p50=673.265ms p99=673.265ms", "commands": "32024/32024/32024", "probes": "cell 4007/4007/4007; field 2000/2000/2000", "limit": "60ms", "verdict": "OVER" },
+      "L1-11": { "store_slowlog": "p50=2.127ms p99=2.316ms max=2.316ms", "client_wall": "p50=2.380ms p99=2.638ms", "commands": "36/36/36", "probes": "cell 10/10/10; field 0/0/0", "limit": "2ms", "verdict": "OVER" },
+      "L1-12": { "store_slowlog": "p50=150.354ms p99=153.054ms max=153.054ms", "client_wall": "p50=154.119ms p99=156.164ms", "commands": "36018/36018/36018", "probes": "cell 6007/6007/6007; field 0/0/0", "limit": "see row", "verdict": "INSIDE" },
+      "L1-13": { "store_slowlog": "p50=487µs p99=823µs max=2.454ms", "client_wall": "p50=662.5µs p99=1.062ms", "commands": "36/36/36", "probes": "cell 10/10/10; field 0/0/0", "limit": "2ms", "verdict": "INSIDE" },
+      "L1-14": { "store_slowlog": "p50=329µs p99=329µs max=329µs", "client_wall": "p50=553µs p99=553µs", "limit": "1ms", "verdict": "INSIDE" },
+      "L1-15": { "store_slowlog": "p50=1.925ms p99=1.925ms max=1.925ms", "client_wall": "p50=2.341ms p99=2.341ms", "commands": "110/110/110", "probes": "cell 22/22/22; field 48/48/48", "limit": "2ms", "verdict": "INSIDE" },
+      "L1-16": { "store_slowlog": "p50=930µs p99=930µs max=930µs", "client_wall": "p50=1.213ms p99=1.213ms", "commands": "24/24/24", "probes": "cell 11/11/11; field 0/0/0", "limit": "1ms", "verdict": "INSIDE" },
+      "L1-17": { "store_slowlog": "p50=154.044ms p99=741.663ms max=741.663ms", "client_wall": "p50=171.289ms p99=813.082ms", "commands": "12014/60030/60030", "probes": "cell 2006/10014/10014; field 6000/22000/22000", "limit": "see row", "verdict": "OVER" },
+      "L1-18": { "store_slowlog": "p50=253.872ms p99=253.872ms max=253.872ms", "client_wall": "p50=258.585ms p99=258.585ms", "commands": "12414/12414/12414", "probes": "cell 6206/6206/6206; field 0/0/0", "limit": "10ms", "verdict": "OVER" },
+      "L1-19": { "store_slowlog": "p50=2.104ms p99=5.106ms max=5.106ms", "client_wall": "p50=2.359ms p99=5.331ms", "commands": "220/1418/1418", "probes": "cell 107/706/706; field 0/0/0", "limit": "10ms", "verdict": "INSIDE" },
+      "L1-20": { "store_slowlog": "p50=12.211ms p99=12.211ms max=12.211ms", "client_wall": "p50=12.806ms p99=12.806ms", "commands": "1290/1290/1290", "probes": "cell 630/630/630; field 0/0/0", "limit": "20ms", "verdict": "INSIDE" },
+      "L1-21": { "record_plus_amortized_cell_bytes_per_card": 229.4, "verdict": "INSIDE", "used_memory_before": 4731824, "used_memory_after": 60238008, "dataset_before": 1252472, "dataset_after": 36154624, "peak": 71721136, "lua_before": 32768, "lua_after": 32768 }
+    }
+  },
+  "proxy_route": {
+    "rows": {
+      "L1-1": { "store_slowlog": "p50=154.838ms p99=203.156ms max=203.156ms", "client_wall": "p50=288.493ms p99=335.778ms", "commands": "32022/32022/32022", "probes": "cell 4008/4008/4008; field 4000/4000/4000", "limit": "2s", "verdict": "OVER" },
+      "L1-2": { "store_slowlog": "p50=126.282ms p99=126.282ms max=126.282ms", "client_wall": "p50=258.115ms p99=258.115ms", "commands": "28018/28018/28018", "probes": "cell 4007/4007/4007; field 0/0/0", "limit": "25ms", "verdict": "OVER" },
+      "L1-3": { "store_slowlog": "p50=152.672ms p99=152.672ms max=152.672ms", "client_wall": "p50=284.555ms p99=284.555ms", "commands": "36018/36018/36018", "probes": "cell 6007/6007/6007; field 0/0/0", "limit": "25ms", "verdict": "OVER" },
+      "L1-4": { "store_slowlog": "p50=830µs p99=830µs max=830µs", "client_wall": "p50=130.233ms p99=130.233ms", "commands": "36/36/36", "probes": "cell 10/10/10; field 0/0/0", "limit": "2ms", "verdict": "INSIDE" },
+      "L1-5": { "store_slowlog": "p50=133.826ms p99=133.826ms max=133.826ms", "client_wall": "p50=265.257ms p99=265.257ms", "commands": "32020/32020/32020", "probes": "cell 4007/4007/4007; field 0/0/0", "limit": "25ms", "verdict": "OVER" },
+      "L1-6": { "store_slowlog": "p50=179.35ms p99=179.35ms max=179.35ms", "client_wall": "p50=311.482ms p99=311.482ms", "commands": "36022/36022/36022", "probes": "cell 4008/4008/4008; field 6000/6000/6000", "limit": "25ms", "verdict": "OVER" },
+      "L1-7": { "store_slowlog": "p50=128.03ms p99=128.03ms max=128.03ms", "client_wall": "p50=261.157ms p99=261.157ms", "commands": "24044/24044/24044", "probes": "cell 4014/4014/4014; field 0/0/0", "limit": "30ms", "verdict": "OVER" },
+      "L1-8": { "store_slowlog": "p50=5.619ms p99=5.619ms max=5.619ms", "client_wall": "p50=135.400ms p99=135.400ms", "commands": "676/676/676", "probes": "cell 132/132/132; field 1/1/1", "limit": "5ms", "verdict": "OVER" },
+      "L1-9": { "store_slowlog": "p50=84.241ms p99=84.241ms max=84.241ms", "client_wall": "p50=216.898ms p99=216.898ms", "limit": "30ms", "verdict": "OVER" },
+      "L1-10": { "store_slowlog": "p50=599.756ms p99=599.756ms max=599.756ms", "client_wall": "p50=806.727ms p99=806.727ms", "commands": "32024/32024/32024", "probes": "cell 4007/4007/4007; field 2000/2000/2000", "limit": "60ms", "verdict": "OVER" },
+      "L1-11": { "store_slowlog": "p50=638µs p99=655µs max=655µs", "client_wall": "p50=129.901ms p99=131.837ms", "commands": "36/36/36", "probes": "cell 10/10/10; field 0/0/0", "limit": "2ms", "verdict": "INSIDE" },
+      "L1-12": { "store_slowlog": "p50=155.924ms p99=161.907ms max=161.907ms", "client_wall": "p50=290.567ms p99=295.298ms", "commands": "36018/36018/36018", "probes": "cell 6007/6007/6007; field 0/0/0", "limit": "see row", "verdict": "INSIDE" },
+      "L1-13": { "store_slowlog": "p50=609µs p99=2.137ms max=2.414ms", "client_wall": "p50=129.633ms p99=131.940ms", "commands": "36/36/36", "probes": "cell 10/10/10; field 0/0/0", "limit": "2ms", "verdict": "INSIDE" },
+      "L1-14": { "store_slowlog": "p50=301µs p99=301µs max=301µs", "client_wall": "p50=131.713ms p99=131.713ms", "limit": "1ms", "verdict": "INSIDE" },
+      "L1-15": { "store_slowlog": "p50=2.84ms p99=2.84ms max=2.84ms", "client_wall": "p50=131.926ms p99=131.926ms", "commands": "110/110/110", "probes": "cell 22/22/22; field 48/48/48", "limit": "2ms", "verdict": "OVER" },
+      "L1-16": { "store_slowlog": "p50=705µs p99=705µs max=705µs", "client_wall": "p50=130.382ms p99=130.382ms", "commands": "24/24/24", "probes": "cell 11/11/11; field 0/0/0", "limit": "1ms", "verdict": "INSIDE" },
+      "L1-17": { "store_slowlog": "p50=155.245ms p99=738.773ms max=738.773ms", "client_wall": "p50=300.663ms p99=936.492ms", "commands": "12014/60030/60030", "probes": "cell 2006/10014/10014; field 6000/22000/22000", "limit": "see row", "verdict": "OVER" },
+      "L1-18": { "store_slowlog": "p50=255.127ms p99=255.127ms max=255.127ms", "client_wall": "p50=392.603ms p99=392.603ms", "commands": "12414/12414/12414", "probes": "cell 6206/6206/6206; field 0/0/0", "limit": "10ms", "verdict": "OVER" },
+      "L1-19": { "store_slowlog": "p50=2.736ms p99=5.363ms max=5.363ms", "client_wall": "p50=131.712ms p99=134.825ms", "commands": "220/1418/1418", "probes": "cell 107/706/706; field 0/0/0", "limit": "10ms", "verdict": "INSIDE" },
+      "L1-20": { "store_slowlog": "p50=13.323ms p99=13.323ms max=13.323ms", "client_wall": "p50=143.054ms p99=143.054ms", "commands": "1290/1290/1290", "probes": "cell 630/630/630; field 0/0/0", "limit": "20ms", "verdict": "INSIDE" },
+      "L1-21": { "record_plus_amortized_cell_bytes_per_card": 245.4, "verdict": "INSIDE", "used_memory_before": 57358920, "used_memory_after": 113819376, "dataset_before": 44904240, "dataset_after": 82806616, "peak": 123614480, "lua_before": 32768, "lua_after": 32768 }
+    }
+  },
+  "post_run_resident_memory": {
+    "used_memory": 111999936,
+    "used_memory_dataset": 91271528,
+    "used_memory_peak": 171150776,
+    "used_memory_rss": 137428992,
+    "used_memory_vm_functions": 1728512,
+    "used_memory_vm_eval": 32768
+  }
+}
