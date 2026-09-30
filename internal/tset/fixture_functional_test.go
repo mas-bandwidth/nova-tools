@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -64,7 +65,12 @@ func newTSetFixtureProfile(t *testing.T, profile fn.TSetProfile) *tsetFixture {
 func newTSetFixtureSpace(t *testing.T, profile fn.TSetProfile, space string) *tsetFixture {
 	t.Helper()
 	addr := testutil.Start(t)
-	client := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
+	client := redis.NewClient(&redis.Options{
+		Addr:         addr,
+		MaxRetries:   -1,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	})
 	t.Cleanup(func() { _ = client.Close() })
 	fx := &tsetFixture{Client: client, Space: space, Epoch: "0", profile: profile, t: t, tables: []string{}}
 	fx.seedEpoch(t)
