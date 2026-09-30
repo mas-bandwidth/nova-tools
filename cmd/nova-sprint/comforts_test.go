@@ -33,10 +33,12 @@ func TestAddBriefFileStoresTheBriefByteForByte(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
+	// the brief is the card lint's passing brief, then the paragraphs under test
+	rules := strings.TrimSuffix(passingBrief("Fix the empty case."), "\n")
 	for _, c := range []struct{ name, file, want string }{
-		{"paragraphs", "Fix the empty case.\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï\n", "Fix the empty case.\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï"},
-		{"two newlines leave one", "one line\n\n", "one line\n"},
-		{"no newline", "one line", "one line"},
+		{"paragraphs", rules + "\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï\n", rules + "\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï"},
+		{"two newlines leave one", rules + "\n\n", rules + "\n"},
+		{"no newline", rules, rules},
 	} {
 		path := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-")+".md")
 		if err := os.WriteFile(path, []byte(c.file), 0o600); err != nil {
@@ -146,11 +148,29 @@ func TestTheCoordinatorsMergeNeedsNoEpoch(t *testing.T) {
 		t.Fatalf("the coordinator's merge with no --epoch: %d\n%s%s", code, out, errs)
 	}
 	ta.ok("clear --confirm sprint")
+	before = ta.applies()
+	if code, _, errs := ta.raw("merge --stream s1 --batch 3 --actor outsider --epoch 0"); code == 0 || !strings.Contains(errs, "cleared") || ta.applies() != before {
+		t.Fatalf("an outsider's merge with a stale epoch: %d %s", code, errs)
+	}
 	if code, _, errs := ta.raw("merge --stream s1 --batch 3 --epoch 0"); code == 0 || !strings.Contains(errs, "cleared") {
 		t.Fatalf("the coordinator's merge at the epoch before the clear: %d %s", code, errs)
 	}
 	if code, out, errs := ta.raw("merge --stream s1 --batch 3"); strings.Contains(out+errs, "--epoch <n>") || strings.Contains(out+errs, "cleared") {
 		t.Fatalf("the coordinator's merge with no --epoch after a clear reads the new epoch: %d\n%s%s", code, out, errs)
+	}
+}
+
+// An outside actor attempting a merge with a stale epoch after a clear is
+// refused naming the clear.
+func TestOutsidersStaleEpochMergeIsRefusedNamingTheClear(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("clear --confirm sprint")
+	before := ta.applies()
+	code, _, errs := ta.raw("merge --stream s1 --batch 1 --actor outsider --epoch 0")
+	if code != 1 || !strings.Contains(errs, "cleared at") || !strings.Contains(errs, "epoch is now 1") || ta.applies() != before {
+		t.Fatalf("outsider merge with stale epoch: exit %d, err %q", code, errs)
 	}
 }
 
@@ -164,9 +184,11 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	ta.deal(3)
+	ta.ok("add --stream s2 --count 1")
+	ta.deal(4)
 	ta.failOnce("m1", "s1-1.w1@1", "the tests went red")
 	ta.failOnce("m1", "s1-2.w1@1", "the tests went red")
+	ta.failOnce("m1", "s2-1.w1@1", "abandoned idea")
 	ta.ok("take --as m1 s1-3.w1@1")
 	ta.ok("finish --as m1 s1-3.w1@1")
 	var in struct {
@@ -175,23 +197,45 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 		Done      bool
 	}
 	ta.json("inbox", &in)
-	// the stopped machine's judgment, and the failed work's
-	if len(in.Judgments) != 2 || in.Done || len(in.Happened) == 0 {
+	// the stopped machine's judgment, and the failed work's (one per stream)
+	if len(in.Judgments) != 3 || in.Done || len(in.Happened) == 0 {
 		t.Fatalf("the inbox: %+v", in)
 	}
-	j := byType(t, in.Judgments, sprint.NWorkFailed)
-	if j.ID == "" || j.Kind != sprint.Judgment || j.Type != sprint.NWorkFailed || j.Stream != "s1" || j.Size != 2 ||
-		strings.Join(j.Cards, ",") != "s1-1,s1-2" || len(j.Notes) == 0 || j.Waited == "" {
-		t.Fatalf("the judgment: %+v", j)
+	j1 := byStream(t, in.Judgments, "s1")
+	if j1.ID == "" || j1.Kind != sprint.Judgment || j1.Type != sprint.NWorkFailed || j1.Size != 2 ||
+		strings.Join(j1.Cards, ",") != "s1-1,s1-2" || len(j1.Notes) == 0 ||
+		j1.What != "the tests went red" || j1.Due == nil || j1.Due.IsZero() || j1.Waited != "2s" {
+		t.Fatalf("the s1 judgment: %+v", j1)
 	}
-	var rework []string
-	for _, a := range j.Answers {
-		if strings.HasPrefix(a.Decision, "rework") {
+	j2 := byStream(t, in.Judgments, "s2")
+	if j2.ID == "" || j2.Kind != sprint.Judgment || j2.Type != sprint.NWorkFailed || j2.Size != 1 ||
+		strings.Join(j2.Cards, ",") != "s2-1" || len(j2.Notes) == 0 ||
+		j2.What != "abandoned idea" || j2.Due == nil || j2.Due.IsZero() || j2.Waited != "0s" {
+		t.Fatalf("the s2 judgment: %+v", j2)
+	}
+	var rework, drop1 []string
+	for _, a := range j1.Answers {
+		switch {
+		case strings.HasPrefix(a.Decision, "rework"):
 			rework = a.Commands
+		case a.Decision == "drop":
+			drop1 = a.Commands
 		}
 	}
-	if len(rework) != 1 || !strings.HasPrefix(rework[0], "nova-sprint rework --group "+j.ID+" --expect 2 --answers ") {
-		t.Fatalf("the answers: %+v", j.Answers)
+	if len(rework) != 1 || !strings.HasPrefix(rework[0], "nova-sprint rework --group "+j1.ID+" --expect 2 --answers ") {
+		t.Fatalf("the s1 rework answers: %+v", j1.Answers)
+	}
+	if len(drop1) != 1 || !strings.HasPrefix(drop1[0], "nova-sprint drop --group "+j1.ID+" --expect 2 --reason '<why>' --answers ") {
+		t.Fatalf("the s1 drop answers: %+v", j1.Answers)
+	}
+	var drop2 []string
+	for _, a := range j2.Answers {
+		if a.Decision == "drop" {
+			drop2 = a.Commands
+		}
+	}
+	if len(drop2) != 1 || !strings.HasPrefix(drop2[0], "nova-sprint drop --group "+j2.ID+" --expect 1 --reason '<why>' --answers ") {
+		t.Fatalf("the s2 drop answers: %+v", j2.Answers)
 	}
 	var h inboxHappened
 	for _, x := range in.Happened {
@@ -204,9 +248,12 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 	}
 	// the line as printed answers the judgment
 	ta.ok(strings.TrimPrefix(rework[0], "nova-sprint "))
+	// the drop line as printed, with '<why>' filled in, answers the judgment
+	dropCmd := strings.Replace(drop2[0], "'<why>'", "'not needed'", 1)
+	ta.ok(strings.TrimPrefix(dropCmd, "nova-sprint "))
 	ta.json("inbox", &in)
 	if len(in.Judgments) != 1 || in.Judgments[0].Type == sprint.NWorkFailed {
-		t.Fatalf("the judgments after the answer: %+v", in.Judgments)
+		t.Fatalf("the judgments after the answers: %+v", in.Judgments)
 	}
 }
 
@@ -219,6 +266,18 @@ func byType(t *testing.T, js []inboxJudgment, typ string) inboxJudgment {
 		}
 	}
 	t.Fatalf("no judgment %q in %+v", typ, js)
+	return inboxJudgment{}
+}
+
+// byStream is the judgment of a stream.
+func byStream(t *testing.T, js []inboxJudgment, stream string) inboxJudgment {
+	t.Helper()
+	for _, j := range js {
+		if j.Stream == stream {
+			return j
+		}
+	}
+	t.Fatalf("no judgment for stream %q in %+v", stream, js)
 	return inboxJudgment{}
 }
 

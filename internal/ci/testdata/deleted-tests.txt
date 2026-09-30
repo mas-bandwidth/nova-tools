@@ -46,3 +46,337 @@ internal/nsprint/webhook/webhook_test.go a functional test of deprecated nsprint
 internal/swarm/grammar_run_test.go swarm.Run has had no caller since 5f9e39d0 on 09-24; the pool last ran by hand on 09-11/12; sprint v1's dispatch layer supersedes it
 internal/ci/ci_spin_class_test.go reverted with #4685: the class test enforced no ceiling (it built its entries from the ceiling itself and never compared with the first parent)
 internal/ci/testdata/ci_spin.txt reverted with #4685: the class test enforced no ceiling (it built its entries from the ceiling itself and never compared with the first parent)
+deprecated/cmd/nova-board/add_firstuse_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/audit_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/fold_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/issue179_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/main_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-board/version_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/cmd/nova-card/closedaddr_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/main_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/refusal_record_functional_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/refusal_record_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-card/refusal_unkept_test.go deleted 2026-09-30 from deprecated/; nova-card is replaced by cmd/nova-sprint card, take and finish
+deprecated/cmd/nova-decide/accounting_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/classify_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/decisions_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/down_friends_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/examplelines_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/flagdocs_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/floorkinds_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/hold_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/issue1451_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/issue2034_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/jevstream_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/logsink_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/main_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/mandatory_reader_cli_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/outcome_append_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/outcome_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/questionpair_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/review_prompt_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/review_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/route_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/settled_receipt_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/stepup_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_default_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_malformed_marker_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_observations_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/tune_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/usage_witness_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/verb_help_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-decide/wait_usage_test.go deleted 2026-09-30 from deprecated/; nova-decide is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-friend/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/friend_functional_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/here_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/list_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-friend/main_test.go deleted 2026-09-30 from deprecated/; nova-friend is retired, unproven, the owner 2026-09-30; friends are peers over cmd/nova-bus
+deprecated/cmd/nova-merge/admin_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/atomic_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/atomic_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/audit_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch1661_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch1661_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_sibling_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_sibling_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/batch_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/carriedhold2550_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/cas_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/classify_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/contract_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/dogfood_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/dogfood_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_hold_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_hold_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_safepath_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/fold_verb_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/footguns_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/help_verbs_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/helpers_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/helpers_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/hold_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/hold_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/hostedred_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue1835_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue2167_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue2683_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/issue3016_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/lanefixture_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/lessons_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/publication_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/readitem_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/source_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/timeout_functional_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-merge/version_test.go deleted 2026-09-30 from deprecated/; nova-merge is replaced by cmd/nova-sprint merge and the lander
+deprecated/cmd/nova-play/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-play is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-play/main_test.go deleted 2026-09-30 from deprecated/; nova-play is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/docsnippet_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/hook_dispatch_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/issue1451_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/issue1451exit_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/issue_cli_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-post/main_test.go deleted 2026-09-30 from deprecated/; nova-post is retired, unproven, the owner 2026-09-30
+deprecated/cmd/nova-review/decide_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/guard_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/issue2063_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/main_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/mutate_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/port_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/root_packet_review_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/slow_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/spec_grammar_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/spec_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-review/version_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/cmd/nova-sprint/acl_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/acl_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/adopt_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/backpressure_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/bench_role_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/capacity_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_from_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_from_paths_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_from_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_parent_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_parent_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_rerun_paths_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_cut_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_fsck_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_harness_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_harness_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_moves_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_moves_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_push_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_render_merge_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_render_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/card_show_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/census_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_final_gh_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_github_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_run_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ci_runner_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/control42_redis_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/copy_gate_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/cost_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/devred_read_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/digest_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/digest_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/doctor_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/doctor_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/firstrun_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/firstrun_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_build_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_churn_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_helpers_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_play_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_play_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_ps_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_release_exec_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_release_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fleet_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fndeploy_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fndeploy_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fnload_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/fnload_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/help_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/hold_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/hold_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/idem_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/jev_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/jev_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_duty_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_eval_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_eval_shadow_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_eval_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_nolocal_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_nolocal_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_pr_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_run_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_stream_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_stream_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_whole_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_whole_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_writer_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/land_writer_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_exec_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_unit_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lander_unit_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lessons_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/life_beat_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/life_row_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/line_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/lineup_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/main_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/main_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/mirror_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/note_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/one_count_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/one_count_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pidalive_unix_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pitstop_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pitstop_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/plan_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pr_key_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pr_key_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/pr_reap_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/preflight_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/quack_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_brief_pr_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_copies_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/read_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ready_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/reconcile_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/reconcile_trips_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/registry_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/review_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/rote_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/route_duty_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/route_report_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/routes_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/routes_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/routes_tier_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/seat_profile_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/seat_profile_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/seat_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/self_update_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/silent_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/silent_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/slow_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/spec_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_acl_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_clear_epoch_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_clear_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_fold_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/sprint_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stitch_land_doors_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_life_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_life_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_paths_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/stream_paths_repair_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_bound_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_check_control_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_loop_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_loop_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_out_atomic_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_streams_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/table_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/task_card_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/task_card_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/task_seat_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/verbs_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/why_l17_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/why_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/width_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/worker_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ws_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-sprint/ws_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint is replaced by the rebuilt cmd/nova-sprint on internal/sprint
+deprecated/cmd/nova-test/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-test is replaced by cmd/nova-ci slowtests and tools/functionalrun
+deprecated/cmd/nova-test/status_test.go deleted 2026-09-30 from deprecated/; nova-test is replaced by cmd/nova-ci slowtests and tools/functionalrun
+deprecated/cmd/nova-wake/advance_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/audit_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/awake_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/awake_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/deadline_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/efficiency_card_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_helpers_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_helpers_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/events_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/firstrun_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue1451_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue1517_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue2200_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/issue487_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/laneread_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/lessons_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/lessons_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/main_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/main_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/pin_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/pin_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/probe_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/recovery_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/serve_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/serve_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/store_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/storewatch_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/versionflags_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/watch_config_functional_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/cmd/nova-wake/watch_config_test.go deleted 2026-09-30 from deprecated/; nova-wake is replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/internal/board/derive_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/dir_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/eff84_board_efficiency_spec_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/event_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/issue_author_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/board/issue_test.go deleted 2026-09-30 from deprecated/; nova-board is replaced by cmd/nova-sprint (tables on nova-table)
+deprecated/internal/decide/redtriage/triage_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/dispatch/dispatch_test.go deleted 2026-09-30 from deprecated/; nova-wake support package, replaced by the tick-end wake, cmd/nova-sprint inbox --wait
+deprecated/internal/docs/capacity_proposal_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2206_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2208_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2226_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2229_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2232_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2233_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/issue2236_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/nexttools_board_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/novatest_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/novatest_verbs_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/portfolio_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/docs/windows_bench_standard_test.go deleted 2026-09-30 from deprecated/; a wording guard of a retired spec or record, retired, unproven, the owner 2026-09-30
+deprecated/internal/friendread/count_test.go deleted 2026-09-30 from deprecated/; nova-merge support package, replaced by cmd/nova-sprint merge and the lander
+deprecated/internal/jevcalib/prompt_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/jevcalib/rule_test.go deleted 2026-09-30 from deprecated/; nova-decide support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/nsprint/fn/probe_sets_functional_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/internal/nsprint/store/acl_cards_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/internal/nsprint/store/acl_epoch_test.go deleted 2026-09-30 from deprecated/; the old nova-sprint runtime is replaced by internal/sprint
+deprecated/internal/post/hook/hook_test.go deleted 2026-09-30 from deprecated/; nova-post support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/post/issue/issue_test.go deleted 2026-09-30 from deprecated/; nova-post support package, retired, unproven, the owner 2026-09-30
+deprecated/internal/prereview/base_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/body_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/ci_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/export_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/gate_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/prereview_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/prereview/toolpr_test.go deleted 2026-09-30 from deprecated/; nova-review support package, replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/guard_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/mutate_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/openfindings_travel_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/record_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/revert_nocompile_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/review/seed_test.go deleted 2026-09-30 from deprecated/; nova-review is replaced by cmd/nova-sprint read and the readers table
+deprecated/internal/swarm/effort_spec_test.go deleted 2026-09-30 from deprecated/; a wording guard of SPEC-SWARM-PROFILES.md, replaced by cmd/nova-swarm and docs/SPEC-SWARM.md
+deprecated/nova-bus-decide/decide_test.go deleted 2026-09-30 from deprecated/; nova-bus inbox --decide classifier, replaced by cmd/nova-bus carrying messages only
+deprecated/nova-bus-decide/private_test.go deleted 2026-09-30 from deprecated/; nova-bus inbox --decide classifier, replaced by cmd/nova-bus carrying messages only
+deprecated/tools/testdur/benches_test.go deleted 2026-09-30 from deprecated/; nova-test support tool, replaced by cmd/nova-ci slowtests

@@ -459,9 +459,10 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if groups == nil {
 			groups = []sprint.Group{}
 		}
+		mach, _, _ := st.Machine(ctx)
 		machine := st.MachineLine(ctx)
 		judgments, happened := inboxActs(groups, a.now())
-		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": machine == "machine: "+store.DoneState,
+		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
 			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)

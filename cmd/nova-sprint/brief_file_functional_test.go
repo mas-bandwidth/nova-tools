@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -37,12 +38,22 @@ func TestAddBriefFileOnTheStore(t *testing.T) {
 		}
 		return out.String()
 	}
-	const brief = "Fix the empty case.\n\nThen:\n\t- keep the tab\n  - keep the indent, \"quotes\", 'ticks', ünï\n"
+	// the card lint's passing brief, then the paragraphs under test
+	brief := passingBrief("Fix the empty case.") + "\nThen:\n\t- keep the tab\n  - keep the indent, \"quotes\", 'ticks', ünï\n"
 	path := filepath.Join(t.TempDir(), "brief.md")
 	if err := os.WriteFile(path, []byte(brief+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("init", "--readers", "reader-a,reader-b", "--members", "m1")
+	// a brief that fails the card lint is refused on the store, exit 2, and writes nothing
+	bare := filepath.Join(t.TempDir(), "bare.md")
+	if err := os.WriteFile(bare, []byte("Fix the empty case.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := a.run([]string{"add", "--stream", "s0", "--count", "1", "--brief-file", bare}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "LINT DRIFT brief rule-gocache") || out.Len() != 0 {
+		t.Fatalf("a brief without the child rules: exit %d, out %q, err %q; want exit 2 with the lint's lines", code, out.String(), errb.String())
+	}
 	run("add", "--stream", "s1", "--count", "1", "--brief-file", path)
 	run("fleet", "beat", "m1")
 	run("start")
