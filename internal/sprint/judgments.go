@@ -38,11 +38,21 @@ import (
 //	which say the kind of deadline as well as the card): a subject alone
 //	does not carry either.
 //	two decisions on one line (2.2): "return <suspect> and resume --did" is
-//	two Decisions, since a Decision has one verb. The rows "stream stopped:
-//	conflict on a card" and "stream stopped: stream branch red" offer rework
-//	of a card that stands in merging, which rework refuses (return it first);
-//	it is printed only for a card rework accepts, so while the stream is
-//	stopped on it, never.
+//	two Decisions, since a Decision has one verb.
+//	the four "stream stopped" rows (2.2): a stopped stream stays stopped, and
+//	its judgment open, until resume (spec rule 9), whatever the coordinator
+//	does to its cards, so a decision on a card is printed only while a card
+//	the judgment names (cardsOf: the card it stopped on, the suspects, the
+//	batch) is one its verb takes: return while one is in merging, drop while
+//	one is open on the table, rework while one is in review or at its redeal
+//	bound (rework refuses a card in merging: return it first), and rank of
+//	the card a cross stop needs while that card is on the table and not
+//	landed. After the decision, resume is still printed, and the decision
+//	just taken is not. Answerable holds these three verbs to their planner
+//	on the cards the judgment names: accepted when it takes at least one.
+//	a repeat (2.2): a judgment marked for a primary that came back a second
+//	time for the same cause gets card, "stop and look" (RepeatDecision), as
+//	its last decision when its row does not list it.
 //	"ci red on a primary" lists accept with no condition, and accept needs ok
 //	reads from two different readers at the head: it is printed only while
 //	they stand, as the row "returned to review" says of it. "reads
@@ -63,7 +73,8 @@ import (
 //	decisions of "a verb in parts stopped before its end" that depend on the
 //	op's verb (the op's verb). None is printed until a snapshot carries what
 //	its condition reads. "The same command with --op <op>" is no decision of
-//	one verb: it is left out.
+//	one verb: it is in the row as verbSameCommand, behind the same condition,
+//	and its guard refuses until a snapshot holds the op's verb.
 //	fleet down <member> "its own whole deadline" (2.2) counts wall time from
 //	the member's own stamp, since a snapshot has no STOPPED history; the
 //	verb accepts the member either way.
@@ -77,8 +88,14 @@ import (
 //	with variables (k, s, p, r, G) is the row's own words.
 //	RuleAnswerable is 15, the next number after the spec's rules (section 9
 //	of docs/SPEC-SPRINT.md); the spec has no rule for it.
-//	the redeal bound is the present MaxRedeals, and the attempts bound is the
-//	card's field bound, which the design names (1.3.1).
+//	the redeal bound is the present MaxRedeals (3), and the attempts bound is
+//	the card's field bound, which the design names (1.3.1): Answerable holds a
+//	decision to today's planners, so the conditions use today's number; the
+//	design's is 5 (R2, R11), and the switch (IT23) moves both through
+//	AtRedealBound.
+//	the condition of a decision takes the Open (Decision.Accepted; 8.0 has the
+//	subject), since what a stopped stream's decision acts on is named by its
+//	note.
 
 // JudgmentType is one row of table 2.2: a type of judgment, who raises it and
 // on what, the key that wakes its owner rule when it closes, the decisions it
@@ -115,9 +132,11 @@ type Decision struct {
 	Verb string
 	// Args are the words after the verb, as the table prints them.
 	Args []string
-	// Accepted is whether the decision is offered in the state s for the
-	// subject the judgment is open on.
-	Accepted func(s *Snapshot, subject string) (bool, string)
+	// Accepted is whether the decision is offered in the state s for the open
+	// judgment o. It takes the Open, not only its subject (8.0 has the
+	// subject): a stopped stream's judgment names the cards its decisions act
+	// on in its note, and they are in no other place of a snapshot.
+	Accepted func(s *Snapshot, o Open) (bool, string)
 }
 
 // String is the decision as a command line: the verb and its arguments.
@@ -167,6 +186,13 @@ const (
 	maxReadCards = 15
 	// typeStalled is the row whose decisions follow the place of its card.
 	typeStalled = "stalled"
+	// verbCard is the verb that shows a card: the decision "stop and look"
+	// (RepeatDecision) is.
+	verbCard = "card"
+	// verbSameCommand is the decision of "a verb in parts stopped before its
+	// end" that repeats the op's own command with --op (2.2): the op's verb is
+	// in no snapshot, so it is a decision no guard can hold to a planner.
+	verbSameCommand = "the same command"
 	// probeIDBase names the card, and the stream, a guard probes an add with.
 	probeIDBase = "probe"
 	// The words a guard gives a verb that wants one.
@@ -200,8 +226,15 @@ func decide(verb string, args ...string) Decision {
 	return Decision{Verb: verb, Args: args}
 }
 
-// decideWhen is a decision offered only where the condition holds.
+// decideWhen is a decision offered only where the condition holds in the
+// state of the subject the judgment is open on.
 func decideWhen(cond func(*Snapshot, string) (bool, string), verb string, args ...string) Decision {
+	return Decision{Verb: verb, Args: args, Accepted: func(s *Snapshot, o Open) (bool, string) { return cond(s, o.Subject()) }}
+}
+
+// decideWhenNamed is a decision offered only where the condition holds in the
+// state of the cards the judgment names (cardsOf).
+func decideWhenNamed(cond func(*Snapshot, Open) (bool, string), verb string, args ...string) Decision {
 	return Decision{Verb: verb, Args: args, Accepted: cond}
 }
 
@@ -226,13 +259,14 @@ var judgmentRows = []JudgmentType{
 	{Type: "a stream has had no merge step past its deadline", Subject: subjStream, OwnerKey: keyOf("late:mergeidle:"), RaisedBy: []string{"R11"}, TickKept: true,
 		Decisions: []Decision{decideWhen(somethingQueued, "merge", "--stream", "s"), decide("card"), decide("wait")}},
 	{Type: "stream stopped: conflict on a card", Subject: subjStream, OwnerKey: keyNone, RaisedBy: []string{"merge"},
-		Decisions: []Decision{decide("resume", "--stream", "s", "--did"), decideWhen(stuckCardReworkable, "rework", "<card>"), decide("drop", "<card>")}},
+		Decisions: []Decision{decide("resume", "--stream", "s", "--did"), decideWhenNamed(cardsReworkable, "rework", "<card>"), decideWhenNamed(cardsOpen, "drop", "<card>")}},
 	{Type: "stream stopped: stream branch red", Subject: subjStream, OwnerKey: keyNone, RaisedBy: []string{"merge"},
-		Decisions: []Decision{decide("return", "<suspect>"), decide("resume", "--did"), decideWhen(stuckCardReworkable, "rework", "<suspect>")}},
+		Decisions: []Decision{decideWhenNamed(cardsReturnable, "return", "<suspect>"), decide("resume", "--did"), decideWhenNamed(cardsReworkable, "rework", "<suspect>")}},
 	{Type: "stream stopped: needs a card of another stream first", Subject: subjStream, OwnerKey: keyFixed("cross"), RaisedBy: []string{"merge"},
-		Decisions: []Decision{decide("rank", "<needed card>"), decide("card"), decide("return", "<card>"), decide("drop", "<card>"), decide("wait")}},
+		Decisions: []Decision{decideWhenNamed(neededCardOpen, "rank", "<needed card>"), decide("card"), decideWhenNamed(cardsReturnable, "return", "<card>"),
+			decideWhenNamed(cardsOpen, "drop", "<card>"), decide("wait")}},
 	{Type: "stream stopped: the merge queue rejected", Subject: subjStream, OwnerKey: keyNone, RaisedBy: []string{"merge"},
-		Decisions: []Decision{decide("resume", "--did"), decide("return"), decide("drop")}},
+		Decisions: []Decision{decide("resume", "--did"), decideWhenNamed(cardsReturnable, "return"), decideWhenNamed(cardsOpen, "drop")}},
 	{Type: "ci red on a primary", Subject: subjPrimary, OwnerKey: keyNone, RaisedBy: []string{"ci"}, Ack: true,
 		Decisions: []Decision{decide("rework", "--fix"), decideWhen(readsStand, "accept"), decide("drop"), decide("card"), decide("ack")}},
 	{Type: "returned to review", Subject: subjPrimary, OwnerKey: keyNone, RaisedBy: []string{"return"},
@@ -261,7 +295,8 @@ var judgmentRows = []JudgmentType{
 	{Type: "the machine is STOPPED and moves are due", Subject: subjSprint, OwnerKey: keyNone, RaisedBy: []string{"R17"}, TickKept: true,
 		Decisions: []Decision{decide("start"), decide("wait", "--for", "d", "--reason")}},
 	{Type: "a verb in parts stopped before its end", Subject: subjOp, OwnerKey: keyOf("late:cut:"), RaisedBy: []string{"R11"}, Ack: true, TickKept: true,
-		Decisions: []Decision{decideWhen(unread("the op's verb"), "drop", "--abort", "--op", "<op>"),
+		Decisions: []Decision{decideWhen(unread("the op's verb"), verbSameCommand, "with", "--op", "<op>"),
+			decideWhen(unread("the op's verb"), "drop", "--abort", "--op", "<op>"),
 			decideWhen(unread("the op's verb"), "remove", "--abort", "--op", "<op>"),
 			decideWhen(unread("the op's verb"), "ack"), decide("wait")}},
 }
@@ -345,7 +380,7 @@ func printedIn(table map[string]JudgmentType, s *Snapshot, o Open) []Decision {
 	offer := func(ds []Decision) {
 		for _, d := range ds {
 			if d.Accepted != nil {
-				if ok, _ := d.Accepted(s, subject); !ok {
+				if ok, _ := d.Accepted(s, o); !ok {
 					continue
 				}
 			}
@@ -356,6 +391,12 @@ func printedIn(table map[string]JudgmentType, s *Snapshot, o Open) []Decision {
 		offer(place(s, subject))
 	}
 	offer(row.Decisions)
+	// A primary that comes back a second time for the same cause is marked on
+	// that cause's judgment, with "stop and look" added to its decisions (2.2,
+	// as today, RepeatDecision): to look is card.
+	if o.Note.Marked && !slices.ContainsFunc(out, func(d Decision) bool { return d.Verb == verbCard }) {
+		out = append(out, decide(verbCard))
+	}
 	return out
 }
 
@@ -553,7 +594,7 @@ func primaryOfCard(subject string) string {
 func freeReaders(s *Snapshot, pr *Card) []string {
 	attempt := pr.Int("attempt")
 	var out []string
-	for _, r := range s.Readers.Rows {
+	for _, r := range s.Readers.Rows() {
 		if s.Readers.Card(ReadCardID(pr.ID, attempt, r)) == nil {
 			out = append(out, r)
 		}
@@ -631,20 +672,81 @@ func somethingQueued(s *Snapshot, subject string) (bool, string) {
 	return true, ""
 }
 
-// stuckCardReworkable: rework of the card a stopped stream stands on is
-// accepted for a card in review or at the redeal bound; a card in merging is
-// returned first (2.2 lists rework for it, and the verb refuses merging).
-// Reads the stream's stuck cell and their primaries.
-func stuckCardReworkable(s *Snapshot, subject string) (bool, string) {
-	st := strings.TrimPrefix(subject, "stream:")
-	if s.Merge != nil {
-		for _, m := range s.Merge.Cell(st, Stuck) {
-			if pr := placedPrimary(s, m.ID); pr != nil && (pr.Col == Review || AtRedealBound(s, pr) != nil) {
-				return true, ""
-			}
+// namedCards are the primaries a decision of the judgment acts on that are on
+// the work table: what cardsOf names, in its order, each once.
+func namedCards(s *Snapshot, o Open) []*Card {
+	var out []*Card
+	seen := map[string]bool{}
+	for _, id := range cardsOf(o) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if c := placedPrimary(s, id); c != nil {
+			out = append(out, c)
 		}
 	}
-	return false, "the card stream " + st + " stopped on is in merging: rework refuses it, return it first"
+	return out
+}
+
+// cardsReturnable: return is accepted while a card the judgment names is in
+// merging, queued or stuck in its stream or with no merge card, or is an
+// orphan (in review with its merge card still queued or stuck): the stopped
+// stream stays stopped and its judgment open after a return, so a card
+// already returned is no card to return (rule 9). Reads the cards the note
+// names and their merge cards.
+func cardsReturnable(s *Snapshot, o Open) (bool, string) {
+	for _, c := range namedCards(s, o) {
+		var m *Card
+		if s.Merge != nil {
+			m = s.Merge.Placed(c.ID)
+		}
+		inQueue := m == nil || m.Col == Queued || m.Col == Stuck
+		if (c.Col == Merging && inQueue) || (c.Col == Review && m != nil && (m.Col == Queued || m.Col == Stuck)) {
+			return true, ""
+		}
+	}
+	return false, "no card of " + o.Subject() + " is in merging: return takes a card from merging, and the stream stays stopped after it"
+}
+
+// cardsOpen: drop is accepted while a card the judgment names is open on the
+// table (waiting, ready, working, review or merging): the stream stays
+// stopped and its judgment open after a drop. Reads the cards the note names.
+func cardsOpen(s *Snapshot, o Open) (bool, string) {
+	for _, c := range namedCards(s, o) {
+		if IsOpen(c.Col) {
+			return true, ""
+		}
+	}
+	return false, "no card of " + o.Subject() + " is open on the table: drop takes an open card"
+}
+
+// cardsReworkable: rework is accepted while a card the judgment names is in
+// review, or in ready at the redeal bound; a card in merging is returned
+// first (2.2 lists rework for a card a stream stopped on, and the verb refuses
+// merging). The card is the one the note names, not one in the stream's
+// stuck cell, which is empty once it is returned. Reads the cards the note
+// names.
+func cardsReworkable(s *Snapshot, o Open) (bool, string) {
+	for _, c := range namedCards(s, o) {
+		if c.Col == Review || (s.Fleet != nil && AtRedealBound(s, c) != nil) {
+			return true, ""
+		}
+	}
+	return false, "no card of " + o.Subject() + " is in review or at its redeal bound: rework refuses a card in merging, return it first"
+}
+
+// neededCardOpen: rank of the card a cross stop needs is accepted while that
+// card is on the table and not landed (landed is final). Reads the needed card.
+func neededCardOpen(s *Snapshot, o Open) (bool, string) {
+	c := placedPrimary(s, o.Note.Other)
+	if o.Note.Other == "" || c == nil {
+		return false, "the card " + o.Subject() + " needs is not on the table"
+	}
+	if c.Col == Landed {
+		return false, "the card " + o.Subject() + " needs has landed: landed is final"
+	}
+	return true, ""
 }
 
 // unread is the condition of a decision whose row depends on state a Snapshot
@@ -678,6 +780,8 @@ var verbGuards = map[string]verbGuard{
 	"ack":        guardAck,
 	"wait":       guardWait,
 	"remove":     guardRemove,
+	// the op's own command: no snapshot holds its verb
+	verbSameCommand: guardSameCommand,
 	// no planner in this package: accepted in every state a judgment names
 	"fleet beat": guardAlways,
 	"reader add": guardAlways,
@@ -693,12 +797,40 @@ var verbGuards = map[string]verbGuard{
 
 func guardAlways(*Snapshot, Open, Decision) (bool, string) { return true, "" }
 
+// guardSameCommand: the op's own verb is in no snapshot, so no planner can
+// hold the decision that repeats it: it is accepted nowhere until one can.
+func guardSameCommand(*Snapshot, Open, Decision) (bool, string) {
+	return false, "the op's verb is not in a snapshot: the decision is not printed"
+}
+
 // accepts is the planner's answer: accepted when it refuses nothing.
 func accepts(verb string, p Plan) (bool, string) {
 	if len(p.Refused) > 0 {
 		return false, verb + " refuses " + p.Refused[0].Key + ": " + p.Refused[0].Why
 	}
 	return true, ""
+}
+
+// acceptsSome is the planner's answer for a decision on one of the cards a
+// judgment names (a suspect of a batch, a card of it): accepted when it takes
+// at least one of them, since the decision is made on one and the stream stays
+// stopped, and its judgment open, after it.
+func acceptsSome(verb string, p Plan, cards []string) (bool, string) {
+	if len(p.Refused) < len(cards) {
+		return true, ""
+	}
+	return accepts(verb, p)
+}
+
+// distinct is the ids once each, in order.
+func distinct(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func hasArg(d Decision, arg string) bool { return contains(d.Args, arg) }
@@ -762,19 +894,19 @@ func guardAdd(s *Snapshot, o Open, d Decision) (bool, string) {
 }
 
 func guardDrop(s *Snapshot, o Open, _ Decision) (bool, string) {
-	cards := cardsOf(o)
+	cards := distinct(cardsOf(o))
 	if len(cards) == 0 {
 		return false, "the judgment names no card to drop"
 	}
-	return accepts("drop", Drop(s, DropReq{Sel: Sel{IDs: cards}, Reason: answerReason, Who: s.Coordinator}))
+	return acceptsSome("drop", Drop(s, DropReq{Sel: Sel{IDs: cards}, Reason: answerReason, Who: s.Coordinator}), cards)
 }
 
 func guardRework(s *Snapshot, o Open, _ Decision) (bool, string) {
-	cards := cardsOf(o)
+	cards := distinct(cardsOf(o))
 	if len(cards) == 0 {
 		return false, "the judgment names no card to rework"
 	}
-	return accepts("rework", Rework(s, ReworkReq{Sel: Sel{IDs: cards}, Fix: answerFix, Who: s.Coordinator}))
+	return acceptsSome("rework", Rework(s, ReworkReq{Sel: Sel{IDs: cards}, Fix: answerFix, Who: s.Coordinator}), cards)
 }
 
 func guardAsk(s *Snapshot, o Open, d Decision) (bool, string) {
@@ -794,11 +926,11 @@ func guardAccept(s *Snapshot, o Open, _ Decision) (bool, string) {
 }
 
 func guardReturn(s *Snapshot, o Open, _ Decision) (bool, string) {
-	cards := cardsOf(o)
+	cards := distinct(cardsOf(o))
 	if len(cards) == 0 {
 		return false, "the judgment names no card to return"
 	}
-	return accepts("return", Return(s, ReturnReq{Sel: Sel{IDs: cards}, Reason: answerReason, Who: s.Coordinator}))
+	return acceptsSome("return", Return(s, ReturnReq{Sel: Sel{IDs: cards}, Reason: answerReason, Who: s.Coordinator}), cards)
 }
 
 func guardResume(s *Snapshot, o Open, _ Decision) (bool, string) {
@@ -820,10 +952,11 @@ func guardRank(s *Snapshot, o Open, _ Decision) (bool, string) {
 // first, else one the fleet does not know (release adds it).
 func guardFleetUp(s *Snapshot, _ Open, _ Decision) (bool, string) {
 	member := probeIDBase
-	if len(s.Fleet.Rows) > 0 {
-		member = s.Fleet.Rows[0]
+	rows := s.Fleet.Rows()
+	if len(rows) > 0 {
+		member = rows[0]
 	}
-	for _, m := range s.Fleet.Rows {
+	for _, m := range rows {
 		if s.MemberCtl(m).F("status") != Up {
 			member = m
 			break

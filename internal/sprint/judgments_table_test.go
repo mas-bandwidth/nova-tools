@@ -83,7 +83,7 @@ var table22 = []judgmentWant{
 	{"the machine is STOPPED and moves are due", "sprint", "", "",
 		[]string{"start", "wait --for d --reason"}, true, false, []string{"R17"}},
 	{"a verb in parts stopped before its end", "op", "o", "late:cut:o",
-		[]string{"drop --abort --op <op>", "remove --abort --op <op>", "ack", "wait"}, true, true, []string{"R11"}},
+		[]string{"the same command with --op <op>", "drop --abort --op <op>", "remove --abort --op <op>", "ack", "wait"}, true, true, []string{"R11"}},
 }
 
 func TestJudgmentsMatch22(t *testing.T) {
@@ -246,20 +246,34 @@ var sectionThreeVerbs = []string{
 
 func TestEveryDecisionIsAVerb(t *testing.T) {
 	t.Parallel()
+	// The one decision that is no verb of section 3: "the same command with
+	// --op <op>" (2.2), whose verb is the op's own, in no snapshot. It is in the
+	// table behind a condition that never holds, and its guard refuses it.
+	isVerb := func(verb string) bool { return slices.Contains(sectionThreeVerbs, verb) || verb == verbSameCommand }
 	for typ, row := range Judgments {
 		for _, d := range row.Decisions {
-			if !slices.Contains(sectionThreeVerbs, d.Verb) {
+			if !isVerb(d.Verb) {
 				t.Errorf("%q offers %q, and %q is no verb of section 3", typ, d.String(), d.Verb)
 			}
 			if _, ok := verbGuards[d.Verb]; !ok {
 				t.Errorf("%q offers %q, and no guard holds %q to its planner", typ, d.String(), d.Verb)
 			}
+			if d.Verb == verbSameCommand {
+				if d.Accepted == nil {
+					t.Errorf("%q offers %q in every state, and no snapshot holds the op's verb", typ, d.String())
+				} else if ok, _ := d.Accepted(&Snapshot{}, Open{}); ok {
+					t.Errorf("%q: the condition of %q holds", typ, d.String())
+				}
+			}
 		}
 	}
 	for verb := range verbGuards {
-		if !slices.Contains(sectionThreeVerbs, verb) {
+		if !isVerb(verb) {
 			t.Errorf("a guard for %q, which is no verb of section 3", verb)
 		}
+	}
+	if ok, _ := verbGuards[verbSameCommand](&Snapshot{}, Open{}, Decision{}); ok {
+		t.Errorf("the guard of the op's own command accepts it")
 	}
 	// repair is no verb until layer 1's AL7 and the check land (3).
 	if slices.Contains(sectionThreeVerbs, "repair") {
@@ -779,7 +793,7 @@ func toReviewTaken(w *world, id string) {
 func TestAnswerableSeeded(t *testing.T) {
 	t.Parallel()
 	covered := map[string]bool{}
-	for _, sd := range slices.Concat(seeds, conditionSeeds) {
+	for _, sd := range allSeeds() {
 		covered[sd.typ] = true
 		t.Run(sd.name, func(t *testing.T) {
 			t.Parallel()
@@ -803,7 +817,7 @@ func TestAnswerableSeeded(t *testing.T) {
 // seedNamed builds the seeded state of that name.
 func seedNamed(t *testing.T, name string) (*world, Open) {
 	t.Helper()
-	for _, sd := range slices.Concat(seeds, conditionSeeds) {
+	for _, sd := range allSeeds() {
 		if sd.name == name {
 			return sd.build(t)
 		}
@@ -965,18 +979,6 @@ func TestAnswerableFlagsStaleJudgments(t *testing.T) {
 				return o
 			}, nil,
 			[]string{`offers "rework --fix": rework refuses s1-1`, `offers "drop": drop refuses s1-1`}},
-		{"a card returned since", "stream stopped: cross",
-			func(w *world, o Open) Open {
-				w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
-				return o
-			}, nil,
-			[]string{`offers "return <card>": return refuses s1-1`}},
-		{"the needed card dropped since", "stream stopped: cross",
-			func(w *world, o Open) Open {
-				w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s2-1"}}, Reason: "obsolete"}))
-				return o
-			}, nil,
-			[]string{`offers "rank <needed card>": rank refuses s2-1`}},
 		{"a stream resumed since", "stream stopped: conflict",
 			func(w *world, o Open) Open {
 				w.must(Resume(w.s, ResumeReq{Stream: "s1", Did: "fixed"}))
@@ -987,7 +989,12 @@ func TestAnswerableFlagsStaleJudgments(t *testing.T) {
 			func(w *world, o Open) Open { w.s.Coordinator = ""; return o }, nil,
 			[]string{`offers "wait --for d --reason": wait answers a judgment, and the sprint has no coordinator`}},
 		{"a stream that names no card", "stream stopped: rejected",
-			func(w *world, o Open) Open { o.Note.Primaries, o.Note.Card = nil, ""; return o }, nil,
+			func(w *world, o Open) Open { o.Note.Primaries, o.Note.Card = nil, ""; return o },
+			func() map[string]JudgmentType {
+				return withRow("stream stopped: the merge queue rejected", func(r *JudgmentType) {
+					r.Decisions = []Decision{decide("return"), decide("drop")}
+				})
+			},
 			[]string{`offers "return": the judgment names no card to return`, `offers "drop": the judgment names no card to drop`}},
 		{"a work card no member holds", "a work card is late, taken",
 			func(w *world, o Open) Open {
@@ -1091,7 +1098,7 @@ func TestPrintedIsForJudgmentsOfTheTable(t *testing.T) {
 // the row's list less the decisions whose condition is false.
 func TestPrintedIsTheRowLessWhatItsConditionsRefuse(t *testing.T) {
 	t.Parallel()
-	for _, sd := range slices.Concat(seeds, conditionSeeds) {
+	for _, sd := range allSeeds() {
 		if sd.typ == "stalled" {
 			continue
 		}
@@ -1104,7 +1111,7 @@ func TestPrintedIsTheRowLessWhatItsConditionsRefuse(t *testing.T) {
 					want = append(want, d.String())
 					continue
 				}
-				if ok, why := d.Accepted(w.s, o.Subject()); ok {
+				if ok, why := d.Accepted(w.s, o); ok {
 					want = append(want, d.String())
 				} else if why == "" {
 					t.Errorf("%q: a condition that does not hold says nothing", d.String())
@@ -1123,10 +1130,11 @@ func TestPrintedIsTheRowLessWhatItsConditionsRefuse(t *testing.T) {
 func benchmarkSnapshot(n int) *Snapshot {
 	s := &Snapshot{Now: t0.Add(24 * time.Hour), Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet),
 		Coordinator: "coordinator", Actor: "coordinator"}
-	s.Readers.Rows = []string{"reader-a", "reader-b", "reader-c"}
-	s.Fleet.Rows = []string{"m1", "m2"}
-	s.Work.Rows, s.Merge.Rows = []string{"s1"}, []string{"s1"}
-	for _, m := range s.Fleet.Rows {
+	s.Readers.SetRows([]string{"reader-a", "reader-b", "reader-c"})
+	s.Fleet.SetRows([]string{"m1", "m2"})
+	s.Work.SetRows([]string{"s1"})
+	s.Merge.SetRows([]string{"s1"})
+	for _, m := range s.Fleet.Rows() {
 		s.Fleet.Put(&Card{ID: CtlID(m), Row: m, Col: Ctl, Fields: map[string]string{"kind": "member", "status": Up}})
 	}
 	s.Merge.Put(&Card{ID: CtlID("s1"), Row: "s1", Col: Ctl, Fields: map[string]string{"kind": "stream", "state": StreamMerging}})
@@ -1138,7 +1146,7 @@ func benchmarkSnapshot(n int) *Snapshot {
 		s.Work.Put(&Card{ID: id + "-w", Row: "s1", Col: Waiting, Score: float64(n + i + 1), Fields: map[string]string{"kind": "primary", "stream": "s1", "needs": "ghost"}})
 		s.Fleet.Put(&Card{ID: WorkCardID(id, 1), Row: "m1", Col: Working, Score: float64(i + 1), Fields: map[string]string{
 			"kind": "work", "primary": id, "attempt": "1", "gen": "1", "first_taken": stamped, "taken": stamped}})
-		for j, r := range s.Readers.Rows {
+		for j, r := range s.Readers.Rows() {
 			if i%3 == 2 && j == 2 {
 				continue
 			}
@@ -1154,58 +1162,102 @@ func benchmarkSnapshot(n int) *Snapshot {
 	return s
 }
 
-// benchmarkOpen is the 1,000 open judgments: every type of the table that
-// reads a snapshot, over the primaries of the snapshot.
+// benchmarkOpen is the n open judgments: every type of the table that reads a
+// snapshot, over the primaries of the snapshot; the stream judgments name
+// cards, as merge's note does.
 func benchmarkOpen(primaries, n int) []Open {
 	types := []string{
 		"cannot ask", "a card reached its bound", "a work card is past its deadline", "a read card is past its deadline",
 		"stream stopped: conflict on a card", "ci red on a primary", "returned to review", "reads exhausted",
 		"stranded in review", "stalled", "the machine could not move a card", "a primary is blocked on something missing",
 		"an invariant is broken", "a stream has had no merge step past its deadline",
+		"stream stopped: stream branch red", "stream stopped: needs a card of another stream first", "stream stopped: the merge queue rejected",
 	}
 	var out []Open
 	for i := 0; i < n; i++ {
 		typ := types[i%len(types)]
 		id := fmt.Sprintf("p%04d", i%primaries)
+		next := fmt.Sprintf("p%04d", (i+1)%primaries)
 		subject := id
+		note := Note{ID: fmt.Sprintf("j%d", i), Kind: Judgment, Type: typ, Stream: "s1", Count: 1}
 		switch typ {
 		case "a work card is past its deadline":
 			subject = WorkCardID(id, 1)
 		case "a read card is past its deadline":
 			subject = ReadCardID(id, 1, "reader-a")
-		case "stream stopped: conflict on a card", "a stream has had no merge step past its deadline":
+		case "a stream has had no merge step past its deadline":
 			subject = StreamSubject("s1")
+		case "stream stopped: conflict on a card":
+			subject, note.StreamLevel, note.Card, note.Primaries = StreamSubject("s1"), true, id, []string{id}
+		case "stream stopped: stream branch red":
+			subject, note.StreamLevel, note.Suspects, note.Primaries = StreamSubject("s1"), true, []string{id}, []string{id, next}
+		case "stream stopped: needs a card of another stream first":
+			subject, note.StreamLevel, note.Card, note.Other, note.Primaries = StreamSubject("s1"), true, id, next, []string{id, next}
+		case "stream stopped: the merge queue rejected":
+			subject, note.StreamLevel, note.Primaries = StreamSubject("s1"), true, []string{id, next}
 		}
-		note := Note{ID: fmt.Sprintf("j%d", i), Kind: Judgment, Type: typ, Stream: "s1", Count: 1}
 		out = append(out, Open{Key: OpenKey(note.ID, subject), Note: note})
 	}
 	return out
 }
 
 // The size of the benchmark: the 1,000 open judgments of the limit (8.1,
-// IT06), over 500 primaries.
-const (
-	benchOpenJudgments = 1000
-	benchPrimaries     = 500
-)
+// IT06). The primaries they name are at most 1,000, one each, and that is the
+// most cards a snapshot loaded for them holds (about seven for each primary:
+// the primary, its work card, its read cards and a card of the stream); the
+// snapshot the inbox loads is that one, not the sprint's whole table.
+const benchOpenJudgments = 1000
 
 // BenchmarkPrinted1000 is the limit of IT06: Printed over 1,000 open
-// judgments in at most 10 ms of Go time (8.1, IT06).
+// judgments in at most 10 ms of Go time (8.1, IT06), on a snapshot the inbox
+// has just loaded: each run makes a fresh one (the timer is stopped while it
+// is built), so the first read of each table builds its index inside the time
+// measured. The sizes are 500 primaries (two judgments each), the most the
+// 1,000 judgments can name (1,000 primaries), and 5,000, which is a whole
+// sprint's table with the judgments naming a fifth of it: the index grows with
+// the snapshot, so the time does, at about a microsecond a primary.
 func BenchmarkPrinted1000(b *testing.B) {
-	s := benchmarkSnapshot(benchPrimaries)
-	open := benchmarkOpen(benchPrimaries, benchOpenJudgments)
-	s.Open = open
-	b.ReportAllocs()
-	b.ResetTimer()
-	printed := 0
-	for i := 0; i < b.N; i++ {
-		printed = 0
-		for _, o := range open {
-			printed += len(Printed(s, o))
-		}
+	for _, primaries := range []int{500, 1000, 5000} {
+		b.Run(fmt.Sprintf("primaries=%d", primaries), func(b *testing.B) {
+			open := benchmarkOpen(primaries, benchOpenJudgments)
+			b.ReportAllocs()
+			printed := 0
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				s := benchmarkSnapshot(primaries)
+				s.Open = open
+				b.StartTimer()
+				printed = 0
+				for _, o := range open {
+					printed += len(Printed(s, o))
+				}
+			}
+			if printed == 0 {
+				b.Fatalf("nothing printed: the benchmark measures nothing")
+			}
+		})
 	}
-	if printed == 0 {
-		b.Fatalf("nothing printed: the benchmark measures nothing")
+}
+
+// benchSink keeps a benchmark's result from being optimised away.
+var benchSink int
+
+// BenchmarkAnswerable1000 measures Answerable over the same 1,000 open
+// judgments, on a snapshot just loaded. The design gives it no limit (each
+// decision runs the planner of its verb, over the whole snapshot): the number
+// is for IT26's check and for any gate that runs it on a large state.
+func BenchmarkAnswerable1000(b *testing.B) {
+	for _, primaries := range []int{500, 1000, 5000} {
+		b.Run(fmt.Sprintf("primaries=%d", primaries), func(b *testing.B) {
+			open := benchmarkOpen(primaries, benchOpenJudgments)
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				s := benchmarkSnapshot(primaries)
+				b.StartTimer()
+				benchSink += len(Answerable(s, open))
+			}
+		})
 	}
 }
 
