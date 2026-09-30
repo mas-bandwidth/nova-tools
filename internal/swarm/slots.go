@@ -104,6 +104,12 @@ func slotLeaseFile(store, id string) string {
 	return filepath.Join(slotStoreDir(store), id, "lease")
 }
 
+// LoadSlotShares reads <store>/shares.tsv: rows `capacity\t<n>`,
+// `reserve\t<n>` and `<owner>\t<n>`.
+func LoadSlotShares(store string) (capacity, reserve int, shares map[string]int, err error) {
+	return loadSlotShares(store)
+}
+
 // loadSlotShares reads <store>/shares.tsv: rows `capacity\t<n>`,
 // `reserve\t<n>` and `<owner>\t<n>`. Capacity is required; reserve defaults
 // to 0; an owner with no row holds share 0.

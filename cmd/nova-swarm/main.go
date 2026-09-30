@@ -390,6 +390,7 @@ type batchFlags struct {
 	routeKeyEnv   *string
 	routeBaseURL  *string
 	workerFile    *string
+	asJSON        *bool
 }
 
 func batchFlagSet() (*flags, *batchFlags) {
@@ -434,6 +435,7 @@ func batchFlagSet() (*flags, *batchFlags) {
 		routeKeyEnv:   f.fs.String("route-key-env", decide.DefaultKeyEnv, ""),
 		routeBaseURL:  f.fs.String("route-base-url", decide.DefaultBaseURL, ""),
 		workerFile:    f.fs.String("worker", "", ""),
+		asJSON:        verbflag.JSON(f.fs),
 	}
 	return f, bf
 }
@@ -479,7 +481,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer) int {
 	}
 	return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile, *tokens,
 		routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
-			usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
+			usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, *bf.asJSON, stdout, stderr)
 }
 
 // cmdBatchGather executes a TSV of cards: it starts one runner process per card, waits
@@ -542,7 +544,7 @@ func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 	return in
 }
 
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile, tokens string, route routeFlags, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile, tokens string, route routeFlags, asJSON bool, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	// THE BUDGET WORD is validated by the same f.tokens as native. A non-number
 	// or zero is refused before launch. What is CARRIED is the
@@ -612,6 +614,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 		Route:     routed,
 		RouteSkip: route.reason,
 		Worker:    w,
+		JSON:      asJSON,
 		Stdout:    stdout, Stderr: stderr,
 	})
 }
@@ -701,6 +704,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 
 func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("template")
+	asJSON := verbflag.JSON(f.fs)
 	name := f.fs.String("name", "", "")
 	if !f.parse(args, stderr) {
 		return 2
@@ -715,6 +719,9 @@ func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm template: %s\n", oneline.Err(err))
 		return 2
+	}
+	if *asJSON {
+		return printJSONEnvelope(stdout, "template", "ok", 0, map[string]any{"name": *name}, nil, []string{body})
 	}
 	// A template is printed VERBATIM because it is a document a person redirects into a
 	// file, not an event line: escaping it would fold it into one unusable line. Every

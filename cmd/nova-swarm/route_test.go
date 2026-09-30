@@ -102,6 +102,29 @@ func TestRouteFixComplexity1PicksMuse(t *testing.T) {
 	if !strings.Contains(stdout, "ROUTE card=") {
 		t.Fatalf("output missing ROUTE card=: %q", stdout)
 	}
+
+	// Test --json mode on the same setup
+	exit, stdout, stderr = runSwarm(t, "route", "--card", card, "--routes", routes, "--base-url", srv.URL, "--json")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0 (stdout=%q stderr=%q)", exit, stdout, stderr)
+	}
+	var env struct {
+		Result struct {
+			Verb   string `json:"verb"`
+			Status string `json:"status"`
+			Exit   int    `json:"exit"`
+		} `json:"result"`
+		Facts map[string]any `json:"facts"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &env); err != nil {
+		t.Fatalf("unmarshal json: %v\noutput:\n%s", err, stdout)
+	}
+	if env.Result.Verb != "route" || env.Result.Status != "ok" || env.Result.Exit != 0 {
+		t.Fatalf("unexpected envelope result: %+v", env.Result)
+	}
+	if env.Facts["kind"] != "fix" || env.Facts["worker"] != muse {
+		t.Fatalf("unexpected envelope facts: %+v", env.Facts)
+	}
 }
 
 // The same card with touches_private 0.9 skips the public row and lands on

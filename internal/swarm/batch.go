@@ -25,6 +25,7 @@ package swarm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -150,6 +151,7 @@ type BatchInput struct {
 	// (SPEC-DECIDE housekeeping H4, #1625). Empty means the launcher routes; a
 	// launcher cannot skip without a reason.
 	RouteSkip string
+	JSON      bool
 	Stdout    io.Writer
 	Stderr    io.Writer
 	// clock is the batch's time source. nil means the real clock; a test injects a
@@ -1023,6 +1025,100 @@ func Batch(in BatchInput) int {
 		if same && !ran {
 			uniform = token
 		}
+	}
+
+	if in.JSON {
+		thenRC := -1
+		thenSkipped := false
+		if in.Then != "" {
+			if done == len(cards) && stalled == 0 && idle == 0 {
+				cmd := exec.Command("sh", "-c", in.Then)
+				cmd.Dir = in.Root
+				cmd.Env = append(os.Environ(),
+					"BATCH_ID="+in.ID,
+					"BATCH_DONE="+strconv.Itoa(done),
+					"BATCH_N="+strconv.Itoa(len(cards)))
+				rc := 0
+				if err := cmd.Run(); err != nil {
+					if ee, ok := err.(*exec.ExitError); ok {
+						rc = ee.ExitCode()
+					} else {
+						rc = -1
+					}
+				}
+				thenRC = rc
+			} else {
+				thenSkipped = true
+			}
+		}
+		exitCode := 0
+		if thenSkipped {
+			exitCode = 3
+		} else if abstain > 0 || held > 0 || len(holds) > 0 {
+			exitCode = 1
+		}
+		facts := map[string]any{
+			"id":      in.ID,
+			"n":       len(cards),
+			"done":    done,
+			"abstain": abstain,
+			"in":      totalIn,
+			"out":     totalOut,
+			"usd":     formatUSD(total),
+			"idle":    idle,
+			"stalled": stalled,
+		}
+		if held > 0 {
+			facts["held"] = held
+		}
+		if partial > 0 {
+			facts["partial"] = partial
+		}
+		if uniform != "" {
+			facts["uniform-abstain"] = uniform
+		}
+		if in.Then != "" {
+			if thenSkipped {
+				facts["then"] = "skipped"
+			} else {
+				facts["then_rc"] = thenRC
+			}
+		}
+		items := make([]any, 0, len(rows))
+		for _, r := range rows {
+			item := map[string]any{
+				"label": r.label,
+				"slot":  r.slot,
+				"state": r.state,
+				"log":   r.logLines,
+			}
+			if r.state == "done" {
+				item["line"] = r.line2
+			} else if r.reason != "" {
+				item["reason"] = r.reason
+			}
+			if r.killed >= 0 {
+				item["killed"] = r.killed
+			}
+			items = append(items, item)
+		}
+		status := "ok"
+		if exitCode != 0 {
+			status = "failed"
+		}
+		envelope := map[string]any{
+			"result": map[string]any{
+				"verb":   "batch",
+				"status": status,
+				"exit":   exitCode,
+			},
+			"facts": facts,
+			"items": items,
+		}
+		enc := json.NewEncoder(in.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(envelope)
+		return exitCode
 	}
 
 	// The packet's grammar. The BATCH line first, then one line per card in admission

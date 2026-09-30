@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -684,6 +685,7 @@ func fleetNameByte(c byte) bool {
 
 func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
+	asJSON := verbflag.JSON(f.fs)
 	card := f.fs.String("card", "", "the card file to lint before any spend")
 	// `--fleet <file>` IS THE LAUNCHER'S OWN LINT (issue #2012). A card is checked for
 	// what it costs a bench to run; a fleet script is checked for what it costs the
@@ -733,6 +735,20 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// the binary and a clone months behind it, so the rules are asked of the binary. It takes
 	// no card, because the question is asked before there is one.
 	if *rules {
+		if *asJSON {
+			names := cardLintRuleNames()
+			var items []any
+			for _, name := range names {
+				items = append(items, map[string]any{
+					"rule":   name,
+					"remedy": cardLintRemedies[name],
+				})
+			}
+			return printJSONEnvelope(stdout, "lint", "ok", 0, map[string]any{
+				"rules":      len(names),
+				"violations": 0,
+			}, items, nil)
+		}
 		for _, name := range cardLintRuleNames() {
 			fmt.Fprintf(stdout, "LINT RULE %s remedy=%s\n", oneline.Field(name), oneline.Escape(cardLintRemedies[name]))
 		}
@@ -763,8 +779,33 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		name := filepath.Base(*fleet)
 		findings := lintFleetScript(raw)
 		if len(findings) == 0 {
+			if *asJSON {
+				return printJSONEnvelope(stdout, "lint", "ok", 0, map[string]any{
+					"rules":      fleetLintChecks,
+					"violations": 0,
+					"script":     name,
+					"bytes":      len(raw),
+				}, []any{}, nil)
+			}
 			fmt.Fprintf(stdout, "LINT OK script=%s checks=%d bytes=%d\n", oneline.Field(name), fleetLintChecks, len(raw))
 			return 0
+		}
+		if *asJSON {
+			var items []any
+			for _, fd := range findings {
+				items = append(items, map[string]any{
+					"check":   fd.check,
+					"line":    fd.line,
+					"excerpt": fd.excerpt,
+					"remedy":  fleetLintRemedy(fd.check),
+				})
+			}
+			return printJSONEnvelope(stdout, "lint", "failed", 1, map[string]any{
+				"rules":      fleetLintChecks,
+				"violations": len(findings),
+				"script":     name,
+				"bytes":      len(raw),
+			}, items, nil)
 		}
 		printed := findings
 		more := false
@@ -802,8 +843,30 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// by name rather than as a drift.
 	if tmpl := matchingTemplate(raw); tmpl != "" && tmpl != "card" {
 		if swarm.IsCardTemplate(tmpl) {
+			if *asJSON {
+				return printJSONEnvelope(stdout, "lint", "ok", 0, map[string]any{
+					"rules":      cardLintChecks,
+					"violations": 0,
+					"card":       name,
+					"bytes":      len(raw),
+					"cap":        cardMaxBytes,
+				}, []any{}, nil)
+			}
 			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
 			return 0
+		}
+		if *asJSON {
+			return printJSONEnvelope(stdout, "lint", "failed", 1, map[string]any{
+				"rules":      cardLintChecks,
+				"violations": 1,
+				"card":       name,
+				"template":   tmpl,
+			}, []any{
+				map[string]any{
+					"check":  "not-a-card",
+					"remedy": "not a card; lint --card wants a card, and the card templates are read-pr, probe-row, fix-card",
+				},
+			}, nil)
 		}
 		fmt.Fprintf(stdout, "LINT NOT-A-CARD card=%s template=%s remedy=%s\n",
 			oneline.Field(name), oneline.Field(tmpl),
@@ -915,11 +978,52 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// hitting it: a card at 11k looked exactly like a card at 2k. Every lint says how big
 	// this card is and what the cap is, on the OK line and, below, on the drift path.
 	if len(drifts) == 0 {
+		if *asJSON {
+			var noteLines []string
+			for _, fd := range notes {
+				noteLines = append(noteLines, fmt.Sprintf("card=%s %s: %d: %s remedy=%s",
+					oneline.Field(name), oneline.Field(fd.check), fd.line,
+					oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+					oneline.Escape(remedy(fd.check))))
+			}
+			return printJSONEnvelope(stdout, "lint", "ok", 0, map[string]any{
+				"rules":      cardLintChecks,
+				"violations": 0,
+				"card":       name,
+				"bytes":      len(raw),
+				"cap":        cardMaxBytes,
+			}, []any{}, noteLines)
+		}
 		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
 		for _, fd := range notes {
 			note(fd)
 		}
 		return 0
+	}
+	if *asJSON {
+		var items []any
+		for _, fd := range drifts {
+			items = append(items, map[string]any{
+				"check":   fd.check,
+				"line":    fd.line,
+				"excerpt": fd.excerpt,
+				"remedy":  remedy(fd.check),
+			})
+		}
+		var noteLines []string
+		for _, fd := range notes {
+			noteLines = append(noteLines, fmt.Sprintf("card=%s %s: %d: %s remedy=%s",
+				oneline.Field(name), oneline.Field(fd.check), fd.line,
+				oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+				oneline.Escape(remedy(fd.check))))
+		}
+		return printJSONEnvelope(stdout, "lint", "failed", 1, map[string]any{
+			"rules":      cardLintChecks,
+			"violations": len(drifts),
+			"card":       name,
+			"bytes":      len(raw),
+			"cap":        cardMaxBytes,
+		}, items, noteLines)
 	}
 	printed := drifts
 	more := false

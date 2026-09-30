@@ -47,6 +47,7 @@ func cmdSlots(args []string, stdout, stderr io.Writer) int {
 // a live store is a hand edit of shares.tsv, which is a two-column TSV a person can read.
 func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots init")
+	asJSON := verbflag.JSON(f.fs)
 	store := f.fs.String("store", "", "")
 	owner := f.fs.String("owner", "", "")
 	capacity := f.fs.Int("capacity", 0, "")
@@ -106,6 +107,15 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.Err(cerr))
 		return 2
 	}
+	if *asJSON {
+		return printJSONEnvelope(stdout, "slots init", "ok", 0, map[string]any{
+			"store":    *store,
+			"owner":    *owner,
+			"capacity": *capacity,
+			"reserve":  0,
+			"share":    *share,
+		}, nil, nil)
+	}
 	fmt.Fprintf(stdout, "SLOTS INIT OK store=%s owner=%s capacity=%d reserve=%d share=%d\n",
 		oneline.Field(*store), oneline.Field(*owner), *capacity, 0, *share)
 	return 0
@@ -118,6 +128,7 @@ func slotsSubdir(store string) string { return filepath.Join(store, "slots") }
 
 func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots take")
+	asJSON := verbflag.JSON(f.fs)
 	store := f.fs.String("store", "", "")
 	owner := f.fs.String("owner", "", "")
 	n := f.fs.Int("n", 0, "")
@@ -145,12 +156,31 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	}
 	want := *n * swarm.SlotAdmissionWeight(*kind)
 	if ok {
+		if *asJSON {
+			return printJSONEnvelope(stdout, "slots take", "ok", 0, map[string]any{
+				"owner":   *owner,
+				"granted": len(ids),
+				"held":    held,
+				"share":   share,
+				"free":    free,
+			}, nil, nil)
+		}
 		fmt.Fprintf(stdout, "SLOTS OK owner=%s granted=%d held=%d share=%d free=%d\n",
 			oneline.Field(*owner), len(ids), held, share, free)
 		return 0
 	}
 	if holders == "" {
 		holders = "-"
+	}
+	if *asJSON {
+		return printJSONEnvelope(stderr, "slots take", "refused", 2, map[string]any{
+			"owner":   *owner,
+			"want":    want,
+			"held":    held,
+			"share":   share,
+			"free":    free,
+			"holders": holders,
+		}, nil, nil)
 	}
 	fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s\n",
 		oneline.Field(*owner), want, held, share, free, oneline.Escape(holders))
@@ -159,6 +189,7 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 
 func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots release")
+	asJSON := verbflag.JSON(f.fs)
 	store := f.fs.String("store", "", "")
 	owner := f.fs.String("owner", "", "")
 	label := f.fs.String("label", "", "")
@@ -188,6 +219,20 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm slots release: %s\n", oneline.Err(err))
 		return 2
 	}
+	if *asJSON {
+		status := "ok"
+		exit := 0
+		if live > 0 {
+			status = "failed"
+			exit = 2
+		}
+		return printJSONEnvelope(stdout, "slots release", status, exit, map[string]any{
+			"owner":    *owner,
+			"released": released,
+			"held":     held,
+			"live":     live,
+		}, nil, nil)
+	}
 	fmt.Fprintf(stdout, "SLOTS RELEASED owner=%s released=%d held=%d live=%d\n",
 		oneline.Field(*owner), released, held, live)
 	if live > 0 {
@@ -200,6 +245,7 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 
 func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots list")
+	asJSON := verbflag.JSON(f.fs)
 	store := f.fs.String("store", "", "")
 	if !f.parse(args, stderr) {
 		return 2
@@ -213,6 +259,35 @@ func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm slots list: %s\n", oneline.Err(err))
 		return 2
+	}
+	if *asJSON {
+		capacity, _, _, _ := swarm.LoadSlotShares(*store)
+		active := 0
+		var items []any
+		for _, l := range leases {
+			if l.State(now) == "live" {
+				active++
+			}
+			items = append(items, map[string]any{
+				"id":       l.ID,
+				"owner":    l.Owner,
+				"pid":      l.Pid,
+				"label":    l.Label,
+				"until":    l.Until.UTC().Format(time.RFC3339),
+				"state":    l.State(now),
+				"kind":     l.Kind,
+				"weight":   l.Units(),
+				"stranded": l.Stranded(now),
+			})
+		}
+		if items == nil {
+			items = []any{}
+		}
+		return printJSONEnvelope(stdout, "slots list", "ok", 0, map[string]any{
+			"store":    *store,
+			"capacity": capacity,
+			"active":   active,
+		}, items, nil)
 	}
 	for _, l := range leases {
 		fmt.Fprintln(stdout, l.Line(now))

@@ -19,12 +19,14 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 func cmdRoute(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("route")
+	asJSON := verbflag.JSON(f.fs)
 	card := f.fs.String("card", "", "")
 	routes := f.fs.String("routes", "", "")
 	floor := f.fs.Float64("floor", 0.9, "")
@@ -62,6 +64,12 @@ func cmdRoute(args []string, stdout, stderr io.Writer) int {
 		if re, ok := err.(*swarm.RouteError); ok {
 			reason = re.Reason
 		}
+		if *asJSON {
+			return printJSONEnvelope(stderr, "route", "refused", 2, map[string]any{
+				"reason": reason,
+				"error":  err.Error(),
+			}, nil, nil)
+		}
 		fmt.Fprintf(stderr, "ROUTE REFUSED reason=%s %s\n", oneline.Field(reason), oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
@@ -76,6 +84,26 @@ func cmdRoute(args []string, stdout, stderr io.Writer) int {
 	worker := result.Worker
 	if strings.TrimSpace(worker) == "" {
 		worker = "-"
+	}
+	if *asJSON {
+		status := "ok"
+		exitCode := 0
+		if result.BelowFloor {
+			status = "below_floor"
+			exitCode = 3
+		}
+		return printJSONEnvelope(stdout, "route", status, exitCode, map[string]any{
+			"card":         filepath.Base(*card),
+			"kind":         result.Kind,
+			"conf":         result.KindConf,
+			"complexity":   result.Complexity,
+			"needs_strong": result.NeedsStrong,
+			"private":      result.Private,
+			"worker":       worker,
+			"floor":        *floor,
+			"below":        result.Below,
+			"below_floor":  result.BelowFloor,
+		}, nil, nil)
 	}
 	fmt.Fprintf(stdout, "ROUTE card=%s kind=%s conf=%.2f complexity=%d needs_strong=%.2f private=%.2f worker=%s floor=%.2f below=%s\n",
 		oneline.Field(filepath.Base(*card)), oneline.Field(result.Kind), result.KindConf, result.Complexity,

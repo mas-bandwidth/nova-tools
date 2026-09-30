@@ -49,6 +49,12 @@ func New(name string) *flag.FlagSet {
 	return fs
 }
 
+// JSON registers the standard --json flag on fs with the family's one usage text,
+// returning a pointer to the parsed bool.
+func JSON(fs *flag.FlagSet) *bool {
+	return fs.Bool("json", false, "print one JSON object for a program instead of the lines")
+}
+
 // Parse is fs.Parse with the help rule applied, for a flag set the verb built
 // itself. -h, -help or --help raises Help; any other result is exactly what
 // fs.Parse returns, and a parse error writes exactly what it wrote before

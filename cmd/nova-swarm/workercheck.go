@@ -53,14 +53,23 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " worker", "the only worker subcommand is `check <description.json> [--env] [--max <n>]`")
 	}
 	rest := args[1:]
-	path, requireEnv, max := "", false, bounded.Default
+	path, requireEnv, max, asJSON := "", false, bounded.Default, false
 	for i := 0; i < len(rest); i++ {
 		switch {
 		case workerHelpFlag(rest[i]):
 			fs := flag.NewFlagSet("worker check", flag.ContinueOnError)
 			fs.Bool("env", false, "")
 			fs.Int("max", bounded.Default, "")
+			_ = verbflag.JSON(fs)
 			panic(verbflag.Help{FS: fs})
+		case rest[i] == "--json":
+			asJSON = true
+		case strings.HasPrefix(rest[i], "--json="):
+			b, err := strconv.ParseBool(strings.TrimPrefix(rest[i], "--json="))
+			if err != nil {
+				return refuse(stderr, " worker check", fmt.Sprintf("--json is true or false, got %q", strings.TrimPrefix(rest[i], "--json=")))
+			}
+			asJSON = b
 		case rest[i] == "--env":
 			requireEnv = true
 		case strings.HasPrefix(rest[i], "--env="):
@@ -102,6 +111,26 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	}
 
 	w, drifts := checkWorkerDescription(path, requireEnv, os.Getenv)
+	if asJSON {
+		if len(drifts) == 0 {
+			return printJSONEnvelope(stdout, "worker check", "ok", 0, map[string]any{
+				"name":     w.Name,
+				"model":    w.Model,
+				"provider": w.Provider,
+				"class":    dash(w.Class),
+			}, nil, nil)
+		}
+		var items []any
+		for _, d := range drifts {
+			items = append(items, map[string]any{
+				"field": d.field,
+				"why":   d.why,
+			})
+		}
+		return printJSONEnvelope(stdout, "worker check", "failed", 2, map[string]any{
+			"drifts": len(drifts),
+		}, items, nil)
+	}
 	if len(drifts) == 0 {
 		fmt.Fprintf(stdout, "WORKER OK %s model=%s provider=%s class=%s\n",
 			oneline.Field(w.Name), oneline.Field(w.Model), oneline.Field(w.Provider), oneline.Field(dash(w.Class)))

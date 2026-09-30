@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
@@ -363,6 +364,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 
 func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("doctor")
+	asJSON := verbflag.JSON(f.fs)
 	pathFlag := f.fs.String("path", "", "")
 	localFlag := f.fs.String("local", "", "")
 	if !f.parse(args, stderr) {
@@ -371,13 +373,50 @@ func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	r := e.compareBinaries(e.resolveBinaries(*pathFlag, *localFlag))
 	if !r.refused() {
 		if r.stamp == "" {
+			if *asJSON {
+				return printJSONEnvelope(stdout, "doctor", "ok", 0, map[string]any{
+					"stamp":   "",
+					"message": "nothing to compare: no nova-swarm on PATH and none under the local directory",
+				}, nil, nil)
+			}
 			// No binary was read: there is nothing to compare, and the line says so rather
 			// than reporting a stamp nobody read.
 			fmt.Fprintln(stdout, "DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory")
 			return 0
 		}
+		if *asJSON {
+			facts := map[string]any{
+				"stamp": doctorExcerpt(r.stamp),
+			}
+			if r.pathBinary != "" {
+				facts["path"] = r.pathBinary
+			}
+			if r.localBinary != "" {
+				facts["local"] = r.localBinary
+			}
+			return printJSONEnvelope(stdout, "doctor", "ok", 0, facts, nil, nil)
+		}
 		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", doctorExcerpt(r.stamp))
 		return 0
+	}
+	if *asJSON {
+		facts := map[string]any{
+			"shadowed": r.shadowed,
+		}
+		if r.pathBinary != "" {
+			facts["path"] = r.pathBinary
+		}
+		if r.localBinary != "" {
+			facts["local"] = r.localBinary
+		}
+		var items []any
+		for _, u := range r.unreadable {
+			items = append(items, map[string]any{
+				"binary": u.binary,
+				"cause":  u.cause,
+			})
+		}
+		return printJSONEnvelope(stderr, "doctor", "failed", 2, facts, items, nil)
 	}
 	writeDoctorRefusal(stderr, r)
 	return 2

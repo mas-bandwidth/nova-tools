@@ -361,3 +361,18 @@ func TestRecoverWithShowsTheToolsLinesAboveTheFlags(t *testing.T) {
 		t.Errorf("Insert of nothing: %q", got)
 	}
 }
+
+func TestJSONRegistersStandardFlag(t *testing.T) {
+	t.Parallel()
+	fs := New("verb")
+	j := JSON(fs)
+	if j == nil || *j {
+		t.Fatalf("JSON() = %v, want false", j)
+	}
+	if err := Parse(fs, []string{"--json"}); err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if !*j {
+		t.Fatalf("expected --json to parse as true")
+	}
+}
