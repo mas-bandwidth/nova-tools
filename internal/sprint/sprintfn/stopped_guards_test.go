@@ -13,11 +13,12 @@ import (
 // R17's step at the largest look a sprint can make: the read is at most
 // MaxReadRecords cards (10,000) over MaxStreams streams, with MaxMembers
 // members (250), each with a control card and a beat. The guards of the step
-// are one for each table's cards, two counters, and a control card and a beat
+// are two for each table's cards (its fold and its version), two counters, and a control card and a beat
 // for each member: they do not grow with the cards, so the step encodes inside
 // the request bound (4 MiB, both halves) and inside the count of guard-only
 // members a step may name (stepbuild.LimitGuardOnly), where a guard for each
-// card would not. Follows stopinputs in tla/SprintEvents.tla (errata 3, H14,
+// card would not. Each table read adds its fold and its version, which carries
+// the fold to the store. Follows stopinputs in tla/SprintEvents.tla (errata 3, H14,
 // H17) and the bounds of section 6.
 func TestStoppedStepAtTheLargestLookEncodes(t *testing.T) {
 	t.Parallel()
@@ -41,7 +42,7 @@ func TestStoppedStepAtTheLargestLookEncodes(t *testing.T) {
 	if len(p.Guards) == 0 {
 		t.Fatalf("the look plans no step: %+v", p)
 	}
-	most := 4 + 1 + 2 + 2*sprint.MaxMembers // the clock, the tables' folds (one here), the counters, a member's control card and beat
+	most := 4 + 2 + 2 + 2*sprint.MaxMembers // the clock, the table's fold and version (one table here), the counters, a member's control card and beat
 	if len(p.Guards) > most {
 		t.Fatalf("the step carries %d guards, want at most %d", len(p.Guards), most)
 	}

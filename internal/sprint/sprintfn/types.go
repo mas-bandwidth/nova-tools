@@ -459,6 +459,47 @@ type SprintPart struct {
 	// TickEnd is R18's write on the last step of a tick (1.2, 1.4.2), nil when
 	// the step is not a tick's last.
 	TickEnd *TickEnd
+	// Time is the time rules' writes to the sprint's own keys (rules_time.go,
+	// TimeWrites), nil when the step has none.
+	Time *SprintTime
+}
+
+// SprintTime is the time rules' writes to the sprint's own keys that no table
+// entry carries (2.3; rules_time.go, TimeWrites; the machine's cut() attaches
+// them to the first request of the rule's step). The loop's tick end
+// (TickEnd) is behind_n's one writer: R18's re-arm clears it (UnarmBehind),
+// and the next tick end arms the entry and behind_n with the backlog it finds.
+type SprintTime struct {
+	// Due sets each due entry to its running time, the score replaced (a ZADD
+	// of {p}due@e): R14's remind:<person> (1.2).
+	Due []DueAt
+	// UnarmBehind is R18's re-arm (2.3 R18: "armed again with the new
+	// backlog"): {p}tick@e's behind_n removed when it is set.
+	UnarmBehind bool
+	// Goals are R14's phase 1 claims on the goal records {p}goal:<person>:
+	// claimed_r is R and claimed_gen the step's lease generation (Meta.Gen),
+	// which the plan does not know (2.3 R14).
+	Goals []GoalClaim
+	// Clock is R17's writes to {p}clock (2.3 R17; errata 3 H7, H16).
+	Clock *ClockWrite
+}
+
+// DueAt is one due entry and the running time it is due at.
+type DueAt struct {
+	Key string
+	At  tset.Decimal
+}
+
+// GoalClaim is R14's claim on one person's goal record at R.
+type GoalClaim struct {
+	Person string
+	R      tset.Decimal
+}
+
+// ClockWrite is R17's fields of the clock: nil leaves a field as it is, "" clears
+// it, a whole number sets it.
+type ClockWrite struct {
+	DueSince, StopRaised *tset.Decimal
 }
 
 // ParkedKey is one rule key the machine's step was refused for, with the
