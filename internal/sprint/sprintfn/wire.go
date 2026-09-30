@@ -210,7 +210,7 @@ func checkSprintQuery(q SprintQuery) *Refusal {
 // may not take (E6: a duplicate kind is CONFIG in the store; here it is the
 // caller's fault).
 var lowerKinds = map[string]bool{"range": true, "count": true, "rcount": true, "ids": true,
-	"rows": true, "done": true, "last": true, "lines": true, "cardlines": true}
+	"rows": true, "done": true, "last": true, "lines": true, "cardlines": true, "props": true}
 
 // checkPage holds a page plan to errata E2: Mode "page", exactly one Kind
 // "lines" query.
@@ -349,9 +349,10 @@ type sprintPartWire struct {
 }
 
 type timeWire struct {
-	Due   []dueAtWire     `json:"due,omitempty"`
-	Goals []goalClaimWire `json:"goals,omitempty"`
-	Clock *clockSetWire   `json:"clock,omitempty"`
+	Due         []dueAtWire     `json:"due,omitempty"`
+	UnarmBehind bool            `json:"unarm_behind,omitempty"`
+	Goals       []goalClaimWire `json:"goals,omitempty"`
+	Clock       *clockSetWire   `json:"clock,omitempty"`
 }
 
 type dueAtWire struct {
@@ -461,7 +462,7 @@ func sprintWireOf(req *Request) sprintWire {
 			sw.TickEnd = &tickEndWire{Backlog: s.TickEnd.Backlog}
 		}
 		if t := s.Time; t != nil {
-			tw := &timeWire{}
+			tw := &timeWire{UnarmBehind: t.UnarmBehind}
 			for _, d := range t.Due {
 				tw.Due = append(tw.Due, dueAtWire{Key: d.Key, At: d.At})
 			}

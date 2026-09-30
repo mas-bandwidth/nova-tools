@@ -67,6 +67,7 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		}
 		t := sprint.NewTable(tables[i])
 		t.Epoch, t.Revision = shape.Epoch, shape.Revision
+		t.SetProps(shape.Props)
 		for _, r := range shape.Rows {
 			t.SetRows(append(t.Rows(), r.Key))
 			if len(r.Texts) > 0 {

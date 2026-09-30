@@ -162,6 +162,12 @@ type Note struct {
 	// ReviewSet is when wait set Review: the review time counts running time
 	// from it, as every deadline does.
 	ReviewSet time.Time `json:"review_set,omitempty"`
+	// To is who a happened note is addressed to: the coordinator, for "the
+	// sprint is done" (errata 3 amendment 6). The inbox shows a note
+	// addressed to someone first, above the judgments; empty is no one.
+	To string `json:"to,omitempty"`
+	// Hint is what to do next, in words, for a note addressed to someone.
+	Hint string `json:"hint,omitempty"`
 }
 
 // Due is when the judgment is overdue: its review time when one is set, else

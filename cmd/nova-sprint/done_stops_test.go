@@ -1,0 +1,113 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+)
+
+// playToLanded plays rounds of the machine, the world and the coordinator
+// until every stream has landed, with no failure drawn; it stops before the
+// tick that finds the sprint done.
+func (ta *testApp) playToLanded(from int) int {
+	ta.t.Helper()
+	for round := from; round < from+200; round++ {
+		ta.ok("tick")
+		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0 --broken 0 --stuck 0 --cross 0 --batch 10 --take 20 --reads 20", round))
+		if strings.Contains(out, "every stream has landed") {
+			return round + 1
+		}
+		ta.coordinate()
+	}
+	ta.t.Fatalf("not landed: %s", ta.ok("where"))
+	return 0
+}
+
+// A sprint of 3 x 3 on the twin driven to done (errata 3 amendment 6): the tick
+// that finds nothing open says "the sprint is done" to the coordinator, a
+// HAPPENED line shown first in the inbox and carried on the notes stream, and
+// stops the machine: STOPPED with the cause done, DONE in where and the view,
+// STOPPED  9/9 100.0% done on the sprint line, no judgment open. A card added
+// after leaves it STOPPED; start runs it again, lands the card and stops it
+// again.
+func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	for _, s := range []string{"s1", "s2", "s3"} {
+		ta.ok("add --stream " + s + " --count 3")
+	}
+	ta.ok("start")
+	next := ta.playToLanded(1)
+	if out := ta.ok("start"); !strings.Contains(out, "\n9/9 100.0% done in ") || strings.Contains(out, "-> ETA") {
+		t.Fatalf("the sprint line at 100%% while running:\n%s", out)
+	}
+	out := ta.ok("tick")
+	for _, want := range []string{"HAPPENED the sprint is done: 9 landed, 0 dropped, took ", " from the first start; the machine is STOPPED; " + sprint.DoneHint,
+		"TICK OK state=STOPPED", "\nSTOPPED  9/9 100.0% done\n"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the done tick lacks %q:\n%s", want, out)
+		}
+	}
+	if got := ta.viewLine(); got != "DONE" {
+		t.Fatalf("the view: %q", got)
+	}
+	where := ta.ok("where")
+	if !strings.Contains(where, "SPRINT TABLE\n\nDONE\n") {
+		t.Fatalf("where's header:\n%s", where)
+	}
+	inbox := ta.ok("inbox")
+	lines := strings.Split(inbox, "\n")
+	if !strings.HasPrefix(lines[0], "HAPPENED ") || !strings.Contains(lines[0], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ") ||
+		lines[1] != "  "+sprint.DoneHint || strings.Contains(inbox, "JUDGMENT") || !strings.Contains(inbox, "\nmachine: DONE\n") {
+		t.Fatalf("the inbox:\n%s", inbox)
+	}
+	var in struct{ Groups []sprint.Group }
+	ta.json("inbox", &in)
+	if len(in.Groups) == 0 || in.Groups[0].Type != sprint.NSprintDone || in.Groups[0].Kind != sprint.Happened || in.Groups[0].To != "coordinator" {
+		t.Fatalf("the inbox, for a program: %+v", in.Groups)
+	}
+	notes, _, err := ta.m.NotesSince(context.Background(), "", 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := 0
+	for _, n := range notes {
+		if n.Type == sprint.NSprintDone {
+			said++
+			if n.Kind != sprint.Happened || n.To != "coordinator" || n.Hint != sprint.DoneHint {
+				t.Fatalf("the notes stream: %+v", n)
+			}
+		}
+	}
+	if open, err := ta.m.OpenNotes(context.Background()); err != nil || len(open) != 0 || said != 1 {
+		t.Fatalf("open judgments %+v (%v), the sprint done said %d times", open, err, said)
+	}
+	ta.clean()
+	if out := ta.ok("tick"); !strings.Contains(out, "TICK OK state=STOPPED nothing done") {
+		t.Fatalf("a tick after the done:\n%s", out)
+	}
+
+	// Work added: STOPPED, no longer done.
+	out = ta.ok("add --stream s2 --count 1")
+	if !strings.Contains(out, "\nSTOPPED  9/10 90.0%") || ta.viewLine() != "STOPPED" {
+		t.Fatalf("an add after the done:\n%s\nview %q", out, ta.viewLine())
+	}
+	if out := ta.ok("tick"); !strings.Contains(out, "TICK OK state=STOPPED nothing done") {
+		t.Fatalf("the machine ran after an add:\n%s", out)
+	}
+	// Started: it lands the card and stops again.
+	ta.a.sleep(time.Minute)
+	ta.ok("start")
+	ta.playToLanded(next)
+	out = ta.ok("tick")
+	if !strings.Contains(out, "HAPPENED the sprint is done: 10 landed, 0 dropped, took ") || !strings.Contains(out, "\nSTOPPED  10/10 100.0% done\n") ||
+		ta.viewLine() != "DONE" {
+		t.Fatalf("the second done:\n%s", out)
+	}
+	ta.clean()
+}

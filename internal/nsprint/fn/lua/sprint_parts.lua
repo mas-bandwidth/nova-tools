@@ -902,13 +902,16 @@ do
   -- entries, each named once, a stored name, at an exact time; at most
   -- MEMBERS_MAX claims, a person each once, at an exact R, and a step with a
   -- lease generation; a clock write that sets something, each field "" or an
-  -- exact time. A due entry named behind beside a tick end is REQUEST.
+  -- exact time. A due entry named behind, or R18's unarm, beside a tick end is
+  -- REQUEST.
   local function check_time(tm, tick_end, gen)
     if tm == nil then return nil end
     if type(tm) ~= 'table' or not list_ok(tm.due) or not list_ok(tm.goals) or
-        (tm.clock ~= nil and type(tm.clock) ~= 'table') then return request_refusal() end
+        (tm.clock ~= nil and type(tm.clock) ~= 'table') or
+        (tm.unarm_behind ~= nil and tm.unarm_behind ~= true) then return request_refusal() end
     local due, goals = tm.due or {}, tm.goals or {}
-    if #due > SPRINT_KEYS_MAX or #goals > MEMBERS_MAX or (#due + #goals == 0 and tm.clock == nil) then
+    if #due > SPRINT_KEYS_MAX or #goals > MEMBERS_MAX or (#due + #goals == 0 and tm.clock == nil and not tm.unarm_behind) or
+        (tm.unarm_behind and tick_end) then
       return request_refusal()
     end
     local seen = {}
@@ -1012,6 +1015,7 @@ do
       end
       if tm ~= nil then
         if #tm_due ~= 0 then guards[#guards + 1] = {due, 'zset'} end
+        if tm.unarm_behind then guards[#guards + 1] = {tick, 'hash'} end
         for _, g in ipairs(tm_goals) do guards[#guards + 1] = {skey(ctx, 'goal:' .. g.person), 'hash'} end
         if tm.clock ~= nil then guards[#guards + 1] = {skey(ctx, 'clock'), 'hash'} end
       end
@@ -1180,6 +1184,18 @@ do
           if #moved ~= 0 then plan.due = moved end
           err = zadd(ctx, out, due, put)
           if err then return nil, err end
+        end
+        if tm.unarm_behind then
+          -- R18's re-arm: behind_n removed, so the next tick end arms the entry
+          -- and behind_n with the backlog it finds (2.3 R18)
+          local v
+          v, err = hget(ctx, tick, 'behind_n')
+          if err then return nil, err end
+          if v ~= nil and v ~= '' then
+            err = hdel(ctx, out, tick, {'behind_n'})
+            if err then return nil, err end
+            plan.unarmed = true
+          end
         end
         local claimed = {}
         for _, g in ipairs(tm_goals) do

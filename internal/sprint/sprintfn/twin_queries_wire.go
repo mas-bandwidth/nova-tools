@@ -23,7 +23,7 @@ import (
 //	front     {"kind","stream","heads":[{"index","limit","follow"}],"fields","keys"?}
 //	waiters   {"kind","src","limit","fields","after"?,"missing"?,"keys"?}
 //	streams   {"kind","limit","units","fields","counts"?,"keys"?}
-//	fleet     {"kind","units","fields"}          readers the same
+//	fleet     {"kind","units","fields","props"?} readers the same
 //	needchain {"kind","src","limit","fields"}
 //	jnote     {"kind","src","subjects","fields"}
 //
@@ -34,7 +34,9 @@ import (
 // the cursor of a waiters query of one id (sprint.SprintQ.WaiterAfter),
 // "missing" reads the head of wait:n only for the ids in {p}missing@e,
 // "counts" are the work table's columns a streams query counts for every
-// stream, and "keys" the sprint keys a query also reads (queryKeys). Lua's validate(q,
+// stream, "keys" the sprint keys a query also reads (queryKeys), and "props"
+// the table properties a fleet or readers query also reads (the rolling
+// indexes, L1 contract amendment, table properties). Lua's validate(q,
 // index) checks the same shapes, and a test holds the two equal once a store
 // runs the Lua (TestTwinEqualsLuaQueries).
 
@@ -241,6 +243,9 @@ func validExtensions(q sprint.SprintQ) bool {
 	if q.Missing && q.Kind != sprint.QueryWaiters {
 		return false
 	}
+	if len(q.Props) > 0 && ((q.Kind != sprint.QueryFleet && q.Kind != sprint.QueryReaders) || len(q.Props) > maxQueryProps || !distinctNames(q.Props, validName)) {
+		return false
+	}
 	if q.WaiterAfter != "" && (q.Kind != sprint.QueryWaiters || q.Source.Kind != sprint.SourceIDs || len(q.Source.IDs) != 1 || !validName(q.WaiterAfter)) {
 		return false
 	}
@@ -441,6 +446,9 @@ func EncodeSprintQ(q sprint.SprintQ) (SprintQuery, *Refusal) {
 		if q.Units > 0 {
 			m["units"] = q.Units
 		}
+		if len(q.Props) > 0 {
+			m["props"] = q.Props
+		}
 	case sprint.QueryNeedchain:
 		m["src"], m["limit"] = sourceObject(q.Source), q.Limit
 	case sprint.QueryJnote:
@@ -615,7 +623,7 @@ func DecodeSprintQ(q SprintQuery) (sprint.SprintQ, *Refusal) {
 	case sprint.QueryStreams:
 		m, ref = wireObject(q.Query, "limit", "units", "counts", "keys")
 	case sprint.QueryFleet, sprint.QueryReaders:
-		m, ref = wireObject(q.Query, "units")
+		m, ref = wireObject(q.Query, "units", "props")
 	case sprint.QueryJnote:
 		m, ref = wireObject(q.Query, "src", "subjects")
 	default:
@@ -698,6 +706,11 @@ func DecodeSprintQ(q SprintQuery) (sprint.SprintQ, *Refusal) {
 	case sprint.QueryFleet, sprint.QueryReaders:
 		if out.Units, ok = wireInt(m, "units"); !ok {
 			return bad()
+		}
+		if _, present := m["props"]; present {
+			if out.Props, ok = wireList(m, "props"); !ok {
+				return bad()
+			}
 		}
 	case sprint.QueryJnote:
 		var ok1 bool

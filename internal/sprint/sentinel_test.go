@@ -199,10 +199,11 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 		t.Fatalf("ack: %v", stop.Fields)
 	}
 	w.clean("waived")
-	if len(w.notesOf(NSprintDone)) != 0 {
-		t.Fatalf("the sprint is done with a sentinel waiting")
+	if p, _ := TickDone(w.s, TickReq{}); !p.Empty() {
+		t.Fatalf("the sprint is done with a sentinel waiting: %+v", p)
 	}
 	w.must(release(w, "done", "stop"))
+	w.must(tickDone(w.s, TickReq{}))
 	if done := w.notesOf(NSprintDone); len(done) != 1 || done[0].What != "2 landed, 2 dropped" {
 		t.Fatalf("the sprint is done: %+v", done)
 	}

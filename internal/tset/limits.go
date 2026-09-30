@@ -29,4 +29,7 @@ const (
 	MaxFetchedBytes      = 8 << 20
 	MaxReadReplyBytes    = 8 << 20
 	MaxCardItemBytes     = 512 << 10 // A9: enough for a 64 KiB field after JSON escaping.
+	// L1 contract amendment 2026-09-30 (property), sections 1 and 2.
+	MaxPropsPerTable = 64 // properties one table holds at one epoch
+	MaxPropEntries   = 64 // prop and propguard entries in one step
 )

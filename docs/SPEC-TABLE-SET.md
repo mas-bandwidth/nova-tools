@@ -130,7 +130,7 @@ combined before submission; a member cannot occur twice in entries for the
 same table.
 
 Entries include `create`, `move`, `remove`, `guard`, `count`, `rcount`, `rows`,
-`rowset`, and `advance`. `create` requires an absent record. `move` checks the
+`rowset`, `advance`, `prop`, and `propguard`. `create` requires an absent record. `move` checks the
 expected source and optional revision; an omitted or identical destination
 means stay.
 `remove` removes placement but retains the record and fields. Guards and counts
@@ -150,6 +150,20 @@ named step may still write a receipt. Scores are decimal strings accepted by
 the target Redis `ZADD` score parser; invalid,
 non-finite, whitespace-padded, or nonzero-underflowing values refuse
 `REQUEST` before writes.
+
+A table property is a named string value held by one table at one epoch, in
+one hash beside the table's rows key; it is not a member and has no place.
+`{"kind":"prop","t":...,"name":...,"value":...}` sets it at the write epoch: an
+equal value is a no-op, otherwise it counts in `changed`, and a table holds at
+most 64 properties (a 65th refuses `LIMIT`, budget `properties`).
+`{"kind":"propguard","t":...,"name":...}` requires the property absent, and
+with `value` requires it present and equal; otherwise `PROPGUARD` with detail
+`entry_index`, `table` and `name`, never the value. Both read the pre-state, so
+a guard and a write on one pair in one step are legal; a second `prop` on one
+`(t,name)` is `TWICE`. Names are identifiers of at most 256 bytes, values at
+most 64 KiB, and a step holds at most 64 of these entries. An `advance` starts
+the next epoch with no property; an old epoch's properties stay readable. A
+property change writes no log line.
 
 For example, these entries require the old epoch's `work` rows to be exactly
 `ready` at rank `0`, then create epoch `8` and restore `ready` there:
@@ -249,7 +263,7 @@ composed atomicity validation remains pending.
 ## Reads and pagination
 
 `Read` sends one bounded read plan of up to 1,024 queries. Layer 1 query kinds
-include `range`, `count`, `rcount`, `ids`, `rows`, and `done`; Layer 2 handles
+include `range`, `count`, `rcount`, `ids`, `rows`, `props`, and `done`; Layer 2 handles
 `last`, `lines`, and `cardlines`. Atomic mode returns all answers or one
 refusal with no partial answers. Every successful read includes the active
 epoch observed in that call, even when reading retained historical data. A
@@ -258,6 +272,11 @@ epoch observed in that call, even when reading retained historical data. A
 ```json
 {"kind":"rows","rows":[{"row":"ready","rank":"0"}]}
 ```
+
+A `props` query names a table and optionally up to 64 distinct `names`; its
+answer is `{"kind":"props","props":{"deal_index":"3"}}` with absent properties
+omitted, or every property of the table at the read epoch when `names` is
+omitted. It is charged as field reads.
 
 Revision 4 also defines one checked read extension for an enclosing Sprint
 reader: `S.read(version, raw, L.read, {kinds, validate, read})`. The registry

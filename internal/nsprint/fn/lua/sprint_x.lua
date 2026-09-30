@@ -28,6 +28,9 @@ do
   local KEY_LEASE, KEY_CLOCK, KEY_COORD, KEY_STRANGERS = 'lease', 'clock', 'coordinator', 'strangers'
   local KEY_NEXT, KEY_DROPPING, KEY_QUARANTINE = 'next', 'dropping', 'quarantine'
   local KEY_DUE, KEY_CUT, KEY_AGENDA, KEY_HELDQ, KEY_ASKWAIT, KEY_JOPEN = 'due', 'cut', 'agenda', 'heldq', 'askwait', 'jopen:'
+  -- {p}tver@e, HASH table -> version: X's count of the steps that changed a card
+  -- of the table (errata 3 H17; sprintfn xKeyVersion), exact below 2^53.
+  local KEY_VERSION, VERSION_MAX = 'tver', 9007199254740990
   local NOTICED = 'noticed'
   -- No running or wall time is negative, so -1 is a due or clock guard over an
   -- entry or field that was absent (sprintfn.XGuardAbsent).
@@ -489,11 +492,13 @@ do
         if not known or (score < 0 and score ~= ABSENT) then return bad('a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent', key) end
       elseif k == 'sent' then
         if sent_key(key) == nil then return bad('a sent guard\'s key %q is not sent:<stream> <max>', key) end
-      elseif k == 'dueatmost' then
-        if key == '' or score < 0 then return bad('a dueatmost guard names no entry, or a time below zero') end
       elseif k == 'counter' then
         if (key ~= 'score' and key ~= 'streams') or score < 0 then
           return bad('a counter guard names %q, which is not score or streams, or a value below zero', key)
+        end
+      elseif k == 'version' then
+        if key == '' or string.find(key, '[%s@]') or score < 0 or score > VERSION_MAX then
+          return bad('a version guard names %q, which is not a table, or a version that is not a whole number', key)
         end
       elseif k ~= 'coordinator' then
         return bad('%q is not a kind of guard', tostring(k))
@@ -607,6 +612,16 @@ do
     return tonumber(v)
   end
 
+  -- A stored version (sprintfn xVersionValue): 0 for none, CONFIG for one that is
+  -- not a canonical whole number at most VERSION_MAX.
+  local function version_value(t, v)
+    if v == nil or v == '' then return 0, nil end
+    if not S().uint(v) or #v > 16 or tonumber(v) > VERSION_MAX then
+      return nil, refuse('CONFIG', {}, 'the version of table %s holds %q, not a whole number', t, v)
+    end
+    return tonumber(v), nil
+  end
+
   local function guard(ctx, recs, g, clock)
     local function fail(fmt, ...) return refuse('XGUARD', {}, 'XGUARD: ' .. fmt, ...) end
     local e = ctx.request_epoch
@@ -659,13 +674,6 @@ do
         if err.code == 'RANGECOUNT' then return fail('a sentinel of %s is placed at or below %s since the read', stream, max) end
         return err
       end
-    elseif k == 'dueatmost' then
-      local set = KEY_DUE
-      if string.sub(g.key, 1, 4) == 'cut:' then set = KEY_CUT end
-      local scores, err = zmscore(ctx, ekey(ctx, set, e), {g.key})
-      if err then return err end
-      local score, most = scores[g.key], tonumber(g.score)
-      if score ~= nil and score > most then return fail('the entry %s is at %d, above %d', g.key, score, most) end
     elseif k == 'counter' then
       local vals, err = hmget(ctx, ekey(ctx, KEY_NEXT, e), {g.key})
       if err then return err end
@@ -674,6 +682,14 @@ do
       elseif not S().uint(got) then return refuse('CONFIG', {}, "the counter's %s holds %q, not a whole number", g.key, got) end
       local want = string.format('%d', tonumber(g.score or 0) or 0)
       if got ~= want then return fail("the counter's %s is %s now, read as %s", g.key, got, want) end
+    elseif k == 'version' then
+      local vals, err = hmget(ctx, ekey(ctx, KEY_VERSION, e), {g.key})
+      if err then return err end
+      local n
+      n, err = version_value(g.key, vals[g.key])
+      if err then return err end
+      local want = tonumber(g.score or 0) or 0
+      if n ~= want then return fail('the version of table %s is %d now, read as %d', g.key, n, want) end
     end
     return nil
   end
@@ -914,6 +930,27 @@ do
         end
       end
     end
+    -- The versions (sprintfn xVersions): each table whose cards the step may
+    -- change, a caller entry's or the work table for an intent, read in one
+    -- probe and moved on by one in x_cmds (errata 3 H17).
+    local tables, tseen = {}, {}
+    for _, en in ipairs(ctx.request.entries) do
+      if changed(en) and not tseen[en.t] then tseen[en.t] = true; tables[#tables + 1] = en.t end
+    end
+    if #tbl(sp.intents) > 0 and not tseen.work then tseen.work = true; tables[#tables + 1] = 'work' end
+    x.versions = {}
+    if #tables > 0 then
+      table.sort(tables)
+      local stored
+      stored, err = hmget(ctx, ekey(ctx, KEY_VERSION, e), tables)
+      if err then return nil, err end
+      for _, t in ipairs(tables) do
+        local n
+        n, err = version_value(t, stored[t])
+        if err then return nil, err end
+        x.versions[#x.versions + 1] = {t, string.format('%d', n + 1)}
+      end
+    end
     x.sp = sp
     return true, nil
   end
@@ -1059,6 +1096,24 @@ do
     for _, queue in ipairs({KEY_AGENDA, KEY_HELDQ}) do
       if not zrem_pieces(ekey(ctx, queue, e), by_queue[queue]) then return poison end
     end
+    -- each table a card of which the plan changes, one version on (errata 3 H17):
+    -- x_pre read the version of every table the step could change
+    local tchanged, nchanged = {}, 0
+    for _, pe in ipairs(tp.entries) do
+      if (pe.kind == 'create' or pe.kind == 'move' or pe.kind == 'remove') and #pe.changed_ids > 0 and not tchanged[pe.table] then
+        tchanged[pe.table] = true
+        nchanged = nchanged + 1
+      end
+    end
+    local args = {}
+    for _, v in ipairs(tbl(x.versions)) do
+      if tchanged[v[1]] then
+        args[#args + 1] = v[1]; args[#args + 1] = v[2]
+        nchanged = nchanged - 1
+      end
+    end
+    if nchanged ~= 0 then return poison end
+    if #args > 0 and not stage('HSET', ekey(ctx, KEY_VERSION, e), 'hash', args) then return poison end
     return plan
   end
 

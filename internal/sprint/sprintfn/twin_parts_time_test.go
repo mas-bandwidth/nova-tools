@@ -77,6 +77,11 @@ func TestSprintPartTimeWrites(t *testing.T) {
 			r.Sprint.TickEnd = &TickEnd{Backlog: "3"}
 			return r
 		}(),
+		"the unarm beside a tick end": func() *Request {
+			r := timeReq(&SprintTime{UnarmBehind: true})
+			r.Sprint.TickEnd = &TickEnd{Backlog: "3"}
+			return r
+		}(),
 	} {
 		out, _ := diffParts(t, h, tw, clk, bad, nil)
 		if ref := out[PartSprint].refusal; ref == nil || ref.Code != CodeRequest {
@@ -87,5 +92,43 @@ func TestSprintPartTimeWrites(t *testing.T) {
 	out, _ = diffParts(t, h, tw, clk, timeReq(&SprintTime{Goals: []GoalClaim{{Person: "cy", R: "1"}}}), nil)
 	if ref := out[PartSprint].refusal; ref == nil || ref.Code != CodeWrongType {
 		t.Fatalf("a goal record of another type: %v", ref)
+	}
+}
+
+// TestSprintPartUnarmsBehind (2.3 R18, "armed again with the new backlog"):
+// R18's re-arm removes behind_n, and the next tick end arms both, the entry at
+// R + 5 min and behind_n at the backlog it finds, so an armed 1000 that fires
+// on 999 is 999 after the next tick end. The Lua half gives the same reply and
+// commands; an unarm with behind_n unset writes nothing.
+func TestSprintPartUnarmsBehind(t *testing.T) {
+	t.Parallel()
+	tw, _, _, clk := partsTwin(t)
+	fleetSeed(t, tw)
+	h := newLuaParts(t)
+	mustStep(t, tw, sprintReq(&SprintPart{TickEnd: &TickEnd{Backlog: "1000"}}))
+	if n := tw.SprintKeys()[ek("tick")].Hash["behind_n"]; n != "1000" {
+		t.Fatalf("armed at %q", n)
+	}
+	seed(tw, Command("ZREM", ek("due"), kindZSet, "behind")) // the pop takes the entry
+	unarm := timeReq(&SprintTime{UnarmBehind: true})
+	out, _ := diffParts(t, h, tw, clk, unarm, nil)
+	if plan, _ := out[PartSprint].plan.(map[string]any); out[PartSprint].refusal != nil || plan["unarmed"] != true {
+		t.Fatalf("the unarm: %+v %v", plan, out[PartSprint].refusal)
+	}
+	mustStep(t, tw, unarm)
+	if _, set := tw.SprintKeys()[ek("tick")].Hash["behind_n"]; set {
+		t.Fatalf("behind_n after the unarm: %v", tw.SprintKeys()[ek("tick")].Hash)
+	}
+	out, _ = diffParts(t, h, tw, clk, unarm, nil)
+	if plan, _ := out[PartSprint].plan.(map[string]any); out[PartSprint].refusal != nil || plan["unarmed"] != nil {
+		t.Fatalf("an unarm of nothing: %+v %v", plan, out[PartSprint].refusal)
+	}
+	mustStep(t, tw, sprintReq(&SprintPart{TickEnd: &TickEnd{Backlog: "999"}}))
+	keys := tw.SprintKeys()
+	if n := keys[ek("tick")].Hash["behind_n"]; n != "999" {
+		t.Fatalf("the tick end armed %q", n)
+	}
+	if _, there := keys[ek("due")].ZSet["behind"]; !there {
+		t.Fatalf("the tick end armed no entry: %v", keys[ek("due")].ZSet)
 	}
 }

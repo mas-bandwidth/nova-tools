@@ -95,6 +95,16 @@ const (
 // recordBytes is the bytes of one record read with the projection: a nil list
 // is the whole record, and a list with no field (not nil) is the summary, which
 // is the envelope alone.
+// propsCost is what the table properties a listing reads cost: the bytes of
+// one record of that many fields, beside the listing's records (a property is
+// not a card).
+func propsCost(props []string) Cost {
+	if len(props) == 0 {
+		return Cost{}
+	}
+	return Cost{Bytes: recordBytes(props)}
+}
+
 func recordBytes(fields []string) int {
 	if fields == nil {
 		return WholeRecordBytes
@@ -382,6 +392,11 @@ type SprintQ struct {
 	// the ids that have a score in {p}missing@e (a made need, 2.3 R4).
 	WaiterAfter string
 	Missing     bool
+	// Props are the properties of the table a `fleet` or `readers` query is
+	// over that it also reads (the deal's and the ask's rolling index, round.go;
+	// L1 contract amendment, table properties): a plan that reads a property
+	// its query did not name is refused as for a cell it did not load.
+	Props []string
 }
 
 // ReadPlan is what one read asks the store (1.5.1): the records of ids by
@@ -455,10 +470,10 @@ var queryCosts = map[string]func(q SprintQ) Cost{
 	},
 	// 1 a member, and 1 a reader.
 	QueryFleet: func(q SprintQ) Cost {
-		return recordsCost(q.units(), 0, q.Fields)
+		return recordsCost(q.units(), 0, q.Fields).Add(propsCost(q.Props))
 	},
 	QueryReaders: func(q SprintQ) Cost {
-		return recordsCost(q.units(), 0, q.Fields)
+		return recordsCost(q.units(), 0, q.Fields).Add(propsCost(q.Props))
 	},
 	// up to max records.
 	QueryNeedchain: func(q SprintQ) Cost {

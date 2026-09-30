@@ -76,6 +76,8 @@ func TestMemRefusalContract(t *testing.T) {
 			Cells: []string{"r:c"}, CountMax: []uint64{0}}), cell: "r:c"},
 		{name: "RANGECOUNT", code: "RANGECOUNT", step: makeCase(Entry{Kind: "rcount", Table: table,
 			Cells: []string{"r:c"}, ScoreMin: "0", ScoreMax: "2", AtLeast: &two}), cell: "r:c"},
+		{name: "PROPGUARD", code: "PROPGUARD", step: makeCase(Entry{Kind: "propguard", Table: table,
+			Name: "deal_index", Value: propValue("3")})},
 		{name: "OVERFLOW", code: "OVERFLOW", step: makeCase(Entry{Kind: "move", Table: table,
 			From: "r:c", IDs: []string{"existing"}, Scores: []string{"2"}, About: []string{"primary"}}), id: "existing",
 			revision: "18446744073709551615"},
