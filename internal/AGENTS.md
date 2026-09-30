@@ -57,7 +57,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `tlc/` | TLC runner: the jar, the run, its results read, the case plan and the run records | `go test ./internal/tlc` | `go test ./internal/tlc` |
 | `tokens/` | token counter and budget tracker | `go test ./internal/tokens` | `go test ./internal/tokens` |
 | `tool/` | the one shape of a command: verbs, banner, help, version, refusals, and the output envelope rendered as lines or JSON | `go test ./internal/tool` | `go test ./internal/tool` |
-| `tset/` | atomic table-set wire, Redis client and in-memory twin | `go test ./internal/tset` | `go test ./internal/tset` |
 | `tty/` | whether a file is a terminal and how large its screen is | `go test ./internal/tty` | `go test ./internal/tty` |
 | `typedrec/` | typed RESULT record contract, its format and the disposition line | `go test ./internal/typedrec` | `go test ./internal/typedrec` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
