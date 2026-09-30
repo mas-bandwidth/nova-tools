@@ -21,12 +21,17 @@
 // a darwin machine, the operator's (tools/sandboxcheck) or the tool's own test.
 //
 // The scratch tree lives under the directory the operator chooses, never in a
-// shared temp directory, and only what the check itself made is removed at the end.
+// shared temp directory. The check works in its OWN os.MkdirTemp child of that
+// directory and removes only that child at the end, so a directory a caller
+// handed in keeps everything the check did not make. A cleanup that cannot
+// remove something says so on standard error and in the exit code.
 package darwincheck
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,10 +45,13 @@ import (
 type Options struct {
 	// Template is profiles.DarwinTemplate.
 	Template string
-	// Scratch puts the scratch tree here, so a Go test can hand it t.TempDir()
-	// and reach outside nothing. Empty: BaseDir/.darwin-check-scratch.<pid>.
+	// Scratch is the directory the check makes its own scratch child in (a
+	// fresh os.MkdirTemp directory), so a Go test can hand it t.TempDir() and
+	// reach outside nothing, and whatever is already there is left alone.
+	// Empty: BaseDir.
 	Scratch string
-	// BaseDir is where the default scratch lives; empty is the working directory.
+	// BaseDir is where the scratch child lives when Scratch is empty; empty is
+	// the working directory.
 	BaseDir string
 	// NoNetwork skips the two DNS checks, the only ones that touch the network.
 	// The operator run keeps them: they are the measurement of rule 7 and a Go
@@ -85,10 +93,16 @@ type checker struct {
 	profile                                      string
 	childEnv                                     []string
 	procs                                        []Process
+
+	// parent is the directory the scratch child was made in, and parentMade says
+	// the check created it, so cleanup removes it only then.
+	parent     string
+	parentMade bool
 }
 
 // Run is the whole check. It returns the exit code: 0 when every check passed or
-// the profile was dumped, 1 on any FAIL.
+// the profile was dumped, 1 on any FAIL, including a cleanup that could not
+// remove what the check made.
 func Run(o Options, sys System) int {
 	out := o.Stdout
 	if out == nil {
@@ -110,12 +124,24 @@ func Run(o Options, sys System) int {
 		return 1
 	}
 
-	created, err := c.makeScratch(o)
-	if err != nil {
+	code := c.run(o, git)
+	if err := c.cleanup(); err != nil {
+		fmt.Fprintf(out, "CHECK FAIL name=cleanup (%v)\n", err)
+		if o.Stderr != nil {
+			fmt.Fprintf(o.Stderr, "darwincheck: the scratch tree was not fully removed: %v\n", err)
+		}
+		return 1
+	}
+	return code
+}
+
+// run makes the scratch tree and runs the checks in it; Run cleans up after it.
+func (c *checker) run(o Options, git string) int {
+	out, sys := c.out, c.sys
+	if err := c.makeScratch(o); err != nil {
 		fmt.Fprintf(out, "CHECK FAIL name=scratch (%v)\n", err)
 		return 1
 	}
-	defer c.cleanup(created)
 
 	if err := c.seedReference(git); err != nil {
 		fmt.Fprintf(out, "CHECK FAIL name=reference_repo (%v)\n", err)
@@ -130,7 +156,10 @@ func Run(o Options, sys System) int {
 			Env: withEnv(sys.Environ(), "HOME="+c.home),
 		})
 		if o.Stderr != nil {
-			io.WriteString(o.Stderr, res.Stderr)
+			if _, err := io.WriteString(o.Stderr, res.Stderr); err != nil {
+				fmt.Fprintf(out, "CHECK FAIL name=tool_generated_profile_stderr (%v)\n", err)
+				return 1
+			}
 		}
 		if res.Err != nil || res.Code != 0 {
 			fmt.Fprintf(out, "CHECK FAIL name=tool_generated_profile (%s policy refused)\n", o.Fill)
@@ -151,7 +180,10 @@ func Run(o Options, sys System) int {
 	})
 
 	if o.DumpProfile {
-		io.WriteString(out, c.profile)
+		if _, err := io.WriteString(out, c.profile); err != nil {
+			fmt.Fprintf(out, "CHECK FAIL name=dump_profile (%v)\n", err)
+			return 1
+		}
 		return 0
 	}
 
@@ -174,35 +206,43 @@ func withEnv(environ []string, kv string) []string {
 	return append(out, kv)
 }
 
-// scratchNames are the entries the check makes directly in its scratch tree. Only
-// these are removed at the end, so a scratch directory a caller handed in is left
-// as it was found, and a check can never remove what it did not make.
-var scratchNames = []string{"w", "ref", "secret", "outside", "p.sb", "p-nodns.sb"}
+// scratchNames are the entries the check makes directly in its scratch child.
+// Only these are removed, and then the child itself if it is empty, so a leftover
+// the check did not expect is reported and never deleted.
+var scratchNames = []string{"w", "ref", "secret", "outside"}
 
-// makeScratch creates the scratch tree and the write set inside it. It reports
-// whether the scratch directory itself was made here, so cleanup removes it only
-// then.
-func (c *checker) makeScratch(o Options) (created bool, err error) {
-	scratch := o.Scratch
-	if scratch == "" {
-		base := o.BaseDir
-		if base == "" {
-			if base, err = os.Getwd(); err != nil {
-				return false, err
+// scratchPrefix names the check's own scratch child: the prefix of its
+// os.MkdirTemp pattern, then the process id, then the random part.
+const scratchPrefix = ".darwin-check-scratch."
+
+// makeScratch makes the check's OWN scratch child with os.MkdirTemp, in the
+// directory the caller handed in or the default one, and the write set inside
+// it. A directory that was already there is never the scratch tree: the check
+// neither writes into it nor removes from it.
+func (c *checker) makeScratch(o Options) (err error) {
+	parent := o.Scratch
+	if parent == "" {
+		if parent = o.BaseDir; parent == "" {
+			if parent, err = os.Getwd(); err != nil {
+				return err
 			}
 		}
-		scratch = filepath.Join(base, ".darwin-check-scratch."+strconv.Itoa(os.Getpid()))
 	}
-	if _, serr := os.Stat(scratch); serr != nil {
-		created = true
+	if _, serr := os.Stat(parent); errors.Is(serr, fs.ErrNotExist) {
+		c.parentMade = true
 	}
-	if err = os.MkdirAll(scratch, 0o755); err != nil {
-		return false, err
+	if err = os.MkdirAll(parent, 0o755); err != nil {
+		return err
 	}
 	// pwd -P: paths are compared and granted by their real spelling (macOS temp
 	// directories sit behind /var -> /private/var).
-	if real, rerr := filepath.EvalSymlinks(scratch); rerr == nil {
-		scratch = real
+	if real, rerr := filepath.EvalSymlinks(parent); rerr == nil {
+		parent = real
+	}
+	c.parent = parent
+	scratch, err := os.MkdirTemp(parent, scratchPrefix+strconv.Itoa(os.Getpid())+".*")
+	if err != nil {
+		return err
 	}
 	c.scratch = scratch
 	c.w = filepath.Join(scratch, "w")                  // the write set
@@ -213,32 +253,64 @@ func (c *checker) makeScratch(o Options) (created bool, err error) {
 	c.ntmp = filepath.Join(c.w, ".nova-sandbox-tmp")   // rule 8
 	for _, d := range []string{c.w, c.ref, c.home, c.ntmp, filepath.Dir(c.secret), c.outside} {
 		if err = os.MkdirAll(d, 0o755); err != nil {
-			return created, err
+			return err
 		}
 	}
-	return created, os.WriteFile(c.secret, []byte("not-a-real-key\n"), 0o644)
+	return os.WriteFile(c.secret, []byte("not-a-real-key\n"), 0o644)
 }
 
-// cleanup stops the listeners and removes what the check made. The write set can
-// hold read-only trees (git's objects), so every directory is made writable first.
-func (c *checker) cleanup(created bool) {
+// cleanup stops the listeners and removes what the check made: its own scratch
+// child, and the directory that held it when the check created that too. The
+// write set can hold read-only trees (git's objects), so every directory is made
+// writable first. Every error is returned, joined; nothing is dropped.
+func (c *checker) cleanup() error {
+	var errs []error
 	for _, p := range c.procs {
-		p.Stop()
+		if err := p.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("stopping a listener: %w", err))
+		}
 	}
+	if c.scratch == "" {
+		return errors.Join(errs...)
+	}
+	removed := true
 	for _, n := range scratchNames {
 		p := filepath.Join(c.scratch, n)
-		_ = filepath.WalkDir(p, func(path string, d os.DirEntry, err error) error {
-			if err == nil && d.IsDir() {
-				_ = os.Chmod(path, 0o755)
+		walkErr := filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
+				return err
+			}
+			if d.IsDir() {
+				return os.Chmod(path, 0o755)
 			}
 			return nil
 		})
-		// Strictly below the scratch root, which safepath checks before it removes.
-		_ = safepath.RemoveUnder(c.scratch, p)
+		if walkErr != nil {
+			removed = false
+			errs = append(errs, fmt.Errorf("making %s writable: %w", p, walkErr))
+		}
+		// Strictly below the scratch child, which safepath checks before it removes.
+		if err := safepath.RemoveUnder(c.scratch, p); err != nil {
+			removed = false
+			errs = append(errs, fmt.Errorf("removing %s: %w", p, err))
+		}
 	}
-	if created {
-		_ = os.Remove(c.scratch)
+	if !removed {
+		return errors.Join(errs...)
 	}
+	// Empty by now; a leftover the check did not expect is an error, never removed.
+	if err := os.Remove(c.scratch); err != nil {
+		return errors.Join(append(errs, fmt.Errorf("removing the scratch directory %s: %w", c.scratch, err))...)
+	}
+	if c.parentMade {
+		if err := os.Remove(c.parent); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("removing the directory the check created, %s: %w", c.parent, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // seedReference makes the local repository the check clones with --shared.
@@ -380,9 +452,12 @@ func (c *checker) suite(o Options) {
 	// /usr/bin/c++ is an Xcode shim. The profile must grant xcode_select_link (and
 	// the developer directory it points at, when that is not already a root) so a
 	// C++ probe compiles inside the wall the way it does outside it.
-	_ = os.WriteFile(filepath.Join(w, "probe.cpp"), []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644)
-	c.expectOK("cxx_compile", "/usr/bin/c++ -o "+q(w+"/probe")+" "+q(w+"/probe.cpp")+" && test -x "+q(w+"/probe")+" && "+q(w+"/probe")+" | grep -qx ok")
-	c.controlOK("cxx_compile_control", "/usr/bin/c++", "-o", filepath.Join(c.outside, "probe-ctl"), filepath.Join(w, "probe.cpp"))
+	if err := os.WriteFile(filepath.Join(w, "probe.cpp"), []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644); err != nil {
+		c.fail("cxx_probe_source", fmt.Sprintf("the C++ probe could not be written to the write set: %v", err))
+	} else {
+		c.expectOK("cxx_compile", "/usr/bin/c++ -o "+q(w+"/probe")+" "+q(w+"/probe.cpp")+" && test -x "+q(w+"/probe")+" && "+q(w+"/probe")+" | grep -qx ok")
+		c.controlOK("cxx_compile_control", "/usr/bin/c++", "-o", filepath.Join(c.outside, "probe-ctl"), filepath.Join(w, "probe.cpp"))
+	}
 
 	// stdout to a pipe the caller drains (rule 12)
 	if piped := c.walled("echo nova-pipe"); piped.exitCode() == 0 && strings.TrimRight(piped.Stdout, "\n") == "nova-pipe" {
@@ -460,7 +535,6 @@ func (c *checker) dnsChecks() {
 		c.ok("dns_resolves")
 	}
 	nodns := strings.ReplaceAll(c.profile, ` (literal "`+mdnsSocket+`")`, "")
-	_ = os.WriteFile(filepath.Join(c.scratch, "p-nodns.sb"), []byte(nodns), 0o644)
 	res := c.sys.Run(Spec{
 		Name: "/usr/bin/sandbox-exec", Args: c.sandboxArgs(nodns, dnsCmd),
 		Dir: c.w, Env: []string{"HOME=" + c.home, "PATH=" + wallPath, "TMPDIR=" + c.ntmp},
