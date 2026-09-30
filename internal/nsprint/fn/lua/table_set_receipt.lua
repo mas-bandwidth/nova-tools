@@ -24,14 +24,16 @@ if NS.tset_profile then
     local ok, r = pcall(cjson.decode, value)
     if not ok or type(r) ~= 'table' or type(r.intent_digest) ~= 'string' or
       #r.intent_digest~=40 or string.find(r.intent_digest,'[^0-9a-f]') or
-      r.status~='ok' or type(r.epoch_before) ~= 'string' or
+      (r.status~='ok' and r.status~='fenced') or type(r.epoch_before) ~= 'string' or
       type(r.epoch_after) ~= 'string' or type(r.first_seq) ~= 'string' or
       type(r.last_seq) ~= 'string' or type(r.changed) ~= 'number' or
       type(r.result) ~= 'string' or #r.result>S.limits.result or
       r.changed < 0 or r.changed>S.limits.member_candidates or
       r.changed ~= math.floor(r.changed) or not S.uint(r.epoch_before) or
       not S.uint(r.epoch_after) or not S.uint(r.first_seq) or
-      not S.uint(r.last_seq) then
+      not S.uint(r.last_seq) or
+      (r.status=='fenced' and (r.epoch_before~=r.epoch_after or
+        r.first_seq~='0' or r.last_seq~='0' or r.changed~=0 or r.result~='')) then
       return nil
     end
     return r
@@ -64,7 +66,22 @@ if NS.tset_profile then
   -- Counters, guarded counts, per-entry counts and line counts cannot be
   -- reconstructed after an advance and are neither stored nor invented.
   function S.receipt_prepare(ctx, reply)
+    -- The caller-supplied fence marker is sealed by S.context. A preplanner
+    -- cannot turn an ordinary named step into a fence or erase a real fence.
+    local expected_fence=ctx.original_fence and true or nil
+    if type(ctx.original_fence)~='boolean' or ctx.request.fence~=expected_fence then
+      return nil,S.refuse('REQUEST')
+    end
     if ctx.op == nil then return nil,nil end
+    if ctx.original_fence then
+      if reply.status~='fenced' or reply.epoch_before~=ctx.request_epoch or
+        reply.epoch_after~=ctx.request_epoch or reply.first_seq~='0' or
+        reply.last_seq~='0' or reply.changed~=0 or reply.result~='' then
+        return nil,S.refuse('REQUEST')
+      end
+    elseif reply.status~='ok' then
+      return nil,S.refuse('REQUEST')
+    end
     local r = {intent_digest=ctx.intent_digest, status=reply.status,
       epoch_before=reply.epoch_before, epoch_after=reply.epoch_after,
       first_seq=reply.first_seq, last_seq=reply.last_seq,
