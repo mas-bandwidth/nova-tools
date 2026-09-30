@@ -396,19 +396,6 @@ func (s State) RL(m string) int {
 	return n
 }
 
-// ShortestIn is SprintTables.tla ShortestIn(m, S).
-func (s State) ShortestIn(m string, set []string) bool {
-	if !has(set, m) {
-		return false
-	}
-	for _, x := range set {
-		if s.RL(x) < s.RL(m) {
-			return false
-		}
-	}
-	return true
-}
-
 // roundFrom is where a rolling index past last starts in order (sorted): the
 // first name above last, 0 when last is "".
 func roundFrom(order []string, last string) int {
@@ -434,6 +421,49 @@ func (s State) NextMember(set []string) string {
 		}
 	}
 	return ""
+}
+
+// PlaceOn is the member a card placed on the fleet goes to (errata 3
+// amendment 5: every placement, first attempts and redeals and levelling
+// alike, goes round the fleet and moves the index; the engine's round.next):
+// the next member round the fleet among set with fewer than MaxReadyPerMember
+// ready cards, avoid only when no other has room; with none having room, the
+// next of set, avoid only when it is the only one. "" when set is empty.
+func (s State) PlaceOn(set []string, avoid string) string {
+	var room []string
+	for _, m := range set {
+		if s.RL(m) < MaxReadyPerMember {
+			room = append(room, m)
+		}
+	}
+	for _, from := range [][]string{room, set} {
+		if m := s.NextMember(without(from, avoid)); m != "" {
+			return m
+		}
+		if has(from, avoid) {
+			return avoid
+		}
+	}
+	return ""
+}
+
+// ReworkChoice is the member a rework of p deals its next attempt to
+// (PlaceOn over the members up, avoiding the member of the attempt's work
+// card); "" when no member is up.
+func (s State) ReworkChoice(p string) string {
+	pr := s.Primaries[p]
+	return s.PlaceOn(s.Up(), s.Work[WC(p, pr.Attempt)].Member)
+}
+
+// without is xs less x.
+func without(xs []string, x string) []string {
+	var out []string
+	for _, y := range xs {
+		if y != x {
+			out = append(out, y)
+		}
+	}
+	return out
 }
 
 // NextReaders is the ask's choice of k readers for p at its attempt (errata 3,

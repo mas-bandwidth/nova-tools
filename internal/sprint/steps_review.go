@@ -522,7 +522,11 @@ type ReworkReq struct {
 var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
-// cut into the up member with the shortest ready queue and the primary moves
+// cut into the next member round the fleet (round.go, errata 3 amendment 5:
+// from the deal's rolling index, the first up with room other than the member
+// of the attempt's work card, that member only when no other has room, the
+// first up when none has; the index moved past it and written with the step)
+// and the primary moves
 // review -> working in the same step; its read cards are retired and the
 // readers' identities kept, so the fixed work is asked of them again when it
 // returns. With no member up, the primary moves review -> ready with the fix
@@ -548,6 +552,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	}, s.primaryCard)
 	up := s.UpMembers()
 	q := readyQueues(s, up)
+	rr := dealRound(s)
+	moves := roundMoves{}
 	orphans := map[string]bool{}
 	for _, c := range chosen {
 		// A primary the rework refuses stays in review: the judgment it needs
@@ -594,12 +600,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		var u Unit
 		if len(up) > 0 {
 			var why string
-			u, why = deal(s, c, fix, shortest(up, q), q, set, "readers")
+			m := rr.next(up, q, MaxReadyPerMember, reworkAvoid(s, c), true)
+			u, why = deal(s, c, fix, m, q, set, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
 				continue
 			}
+			rr.moved(m)
+			moves[c.ID] = m
 			u.Changes = append(retire, u.Changes...)
 			u.Moved = strings.Replace(u.Moved, " review -> working", " review -> working (rework)", 1)
 		} else {
@@ -617,7 +626,23 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	}
 	settle(&p, s, r.Who, orphans, nil)
 	answered(&p, s, r.Answers, r.Who)
-	return Lawful(p)
+	p = Lawful(p)
+	roundWrites(&p, rr, moves)
+	return p
+}
+
+// reworkAvoid is the member a rework's next attempt avoids: the member of the
+// work card of the attempt it sends back (the one that failed it, or held it
+// when a read found it broken), "" when there is none.
+func reworkAvoid(s *Snapshot, c *Card) string {
+	wc := s.Fleet.Card(WorkCardID(c.ID, c.Int("attempt")))
+	if wc == nil {
+		return ""
+	}
+	if m := wc.F("member"); m != "" {
+		return m
+	}
+	return wc.Row
 }
 
 // orphanMerge is the merge card of a primary in review that is still queued
