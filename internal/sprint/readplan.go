@@ -397,6 +397,51 @@ func linesCost(q LinesQ) Cost {
 	return Cost{Bytes: n * MaxLineBytes}
 }
 
+// TsetSlot is one Layer 1 or Layer 2 query of a plan as its answer's place in
+// ReadAnswer.Tset.
+type TsetSlot struct {
+	// Kind is the answer's kind (AnswerIDs, AnswerRange, AnswerCount,
+	// AnswerRCount or AnswerLines).
+	Kind string
+	// Table is the table of an ids query; empty for the others.
+	Table string
+	// Index is the place of the query in the plan's Ranges, Counts, RCounts or
+	// Lines; 0 for an ids query.
+	Index int
+}
+
+// TsetSlots are the plan's Layer 1 and Layer 2 queries in the order their
+// answers are in ReadAnswer.Tset (the errata to version 2.1, E3): one ids query
+// for each table that names an id, by the table's name; then the plan's ranges,
+// counts, rcounts and lines, each in the plan's order. The sprint's own queries
+// are not here: they are answered in ReadAnswer.Sprint, one for one.
+func (rp ReadPlan) TsetSlots() []TsetSlot {
+	tables := make([]string, 0, len(rp.IDs))
+	for t, ids := range rp.IDs {
+		if len(ids) > 0 {
+			tables = append(tables, t)
+		}
+	}
+	sort.Strings(tables)
+	out := make([]TsetSlot, 0, len(tables)+len(rp.Ranges)+len(rp.Counts)+len(rp.RCounts)+len(rp.Lines))
+	for _, t := range tables {
+		out = append(out, TsetSlot{Kind: AnswerIDs, Table: t})
+	}
+	for i := range rp.Ranges {
+		out = append(out, TsetSlot{Kind: AnswerRange, Index: i})
+	}
+	for i := range rp.Counts {
+		out = append(out, TsetSlot{Kind: AnswerCount, Index: i})
+	}
+	for i := range rp.RCounts {
+		out = append(out, TsetSlot{Kind: AnswerRCount, Index: i})
+	}
+	for i := range rp.Lines {
+		out = append(out, TsetSlot{Kind: AnswerLines, Index: i})
+	}
+	return out
+}
+
 // Queries is the queries the plan sends: one ids query for each table that
 // names an id, and one for each of the others.
 func (rp ReadPlan) Queries() int {

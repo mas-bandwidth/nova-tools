@@ -149,6 +149,41 @@ func TestReadPlanCostIsTheSumOfItsQueries(t *testing.T) {
 	}
 }
 
+func TestTsetSlotsAreInTheOrderOfTheErrata(t *testing.T) {
+	t.Parallel()
+	// E3: Tset is aligned with the plan's Layer 1 and Layer 2 queries: the ids
+	// of each table that names one (by table name), then ranges, counts,
+	// rcounts and lines, each in the plan's order. The sprint's queries are
+	// answered apart.
+	rp := ReadPlan{
+		IDs:     map[string][]string{Work: {"a", "b"}, Fleet: {"m"}, Merge: nil, Readers: {"r", "s", "t"}},
+		Ranges:  []RangeQ{{Table: Work, Cell: "s:ready"}, {Key: "agenda"}},
+		Counts:  []CountQ{{Table: Work, Cells: []string{"s:ready"}}},
+		RCounts: []RCountQ{OpenBeforeQ("s", 1), OpenBeforeQ("s", 2)},
+		Lines:   []LinesQ{{After: 4, Through: 5, Limit: 1}},
+		Sprint:  []SprintQ{{Kind: QueryFleet}},
+	}
+	want := []TsetSlot{
+		{Kind: "ids", Table: "fleet"}, {Kind: "ids", Table: "readers"}, {Kind: "ids", Table: "work"},
+		{Kind: "range", Index: 0}, {Kind: "range", Index: 1},
+		{Kind: "count", Index: 0},
+		{Kind: "rcount", Index: 0}, {Kind: "rcount", Index: 1},
+		{Kind: "lines", Index: 0},
+	}
+	if got := rp.TsetSlots(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("slots:\n got %+v\nwant %+v", got, want)
+	}
+	if got := len(rp.TsetSlots()) + len(rp.Sprint); got != rp.Queries() {
+		t.Fatalf("%d slots and composite queries, the plan sends %d queries", got, rp.Queries())
+	}
+	if got := (ReadPlan{}).TsetSlots(); len(got) != 0 {
+		t.Fatalf("an empty plan has slots: %+v", got)
+	}
+	if got := (ReadPlan{IDs: map[string][]string{Work: nil}}).TsetSlots(); len(got) != 0 {
+		t.Fatalf("a table of no ids has a slot: %+v", got)
+	}
+}
+
 // countPlan is a plan of ids by table and one count query for each cell.
 func countPlan(work, readers, fleet, counts int) ReadPlan {
 	rp := ReadPlan{IDs: map[string][]string{}}

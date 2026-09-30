@@ -3,6 +3,7 @@ package sprint
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,96 +19,10 @@ import (
 // anything else is refused (Table.Loaded, Snapshot.Unloaded), so a scan of a
 // table cannot come back unnoticed.
 //
-// The design gives the answer's shape nowhere (8.0 names ReadAnswer and Answer
-// and defines neither); these are the fields LoadPartial reads, layer 1's
-// answer words (L1 7) for the queries of a ReadPlan, and for the sprint's
-// composite queries only what a snapshot needs: the records they returned,
-// the rows of the tables they list, and the first sentinel of a stream with
-// its position. The queries' other results (the heads of an index, the waiters
-// of a need) are for the rules that read them, and a later item adds them to
-// Answer beside these.
-
-// ReadAnswer is the answer of one atomic read, aligned with the ReadPlan that
-// asked it (L1 7): one answer for each query, in the plan's order.
-type ReadAnswer struct {
-	// Epoch is the epoch read, and TimeMS the store's time in milliseconds, read
-	// once for the whole call (1.0).
-	Epoch  uint64
-	TimeMS int64
-	// IDs are, for each table of the plan's IDs, one record for each id it
-	// named, in order: nil where the table has no record. A record's Row and
-	// Col are empty when it is kept but not placed.
-	IDs map[string][]*Card
-	// Ranges, Counts, RCounts, Lines and Sprint answer the plan's queries of
-	// that name, one for one.
-	Ranges  []RangeA
-	Counts  [][]int
-	RCounts []RCountA
-	Lines   []LinesA
-	Sprint  []Answer
-}
-
-// RangeA is the answer of a range: the ids in order, their scores, whether
-// members beyond them match (L1 7: has_more), and their records when the query
-// asked for them.
-type RangeA struct {
-	IDs     []string
-	Scores  []float64
-	HasMore bool
-	Cards   []*Card
-}
-
-// RCountA is the answer of an rcount: each cell's count and their sum.
-type RCountA struct {
-	Counts []int
-	Sum    int
-}
-
-// LinesA is the answer of a lines query: the log's lines as layer 2 returns
-// them, each with its stream id, which is its seq (L2 2).
-type LinesA struct{ Lines []LogLine }
-
-// LogLine is a line of the log: its stream id and its body.
-type LogLine struct {
-	ID   string
-	Body []byte
-}
-
-// TableCard is a record with the table it belongs to.
-type TableCard struct {
-	Table string
-	Card  *Card
-}
-
-// FrontAnswer is what `front(s)` returns of the stream's line (1.0): the first
-// sentinel G and its score sigma, and the count of the stream's open cards
-// before it.
-type FrontAnswer struct {
-	// Stream is the stream, and G the first sentinel of its sent:s index, empty
-	// when it has none (then Sigma and NBefore mean nothing).
-	Stream, G string
-	// Sigma is G's score, and NBefore the count of the stream's five open cells
-	// below it.
-	Sigma   float64
-	NBefore int
-	// GQuarantined says G is quarantined: its record was not returned, and it
-	// stays the first sentinel so that nothing behind it is released (1.0).
-	GQuarantined bool
-}
-
-// Answer is the answer of one composite query (1.0), of the kind of its query.
-// Only what a snapshot is loaded from is here.
-type Answer struct {
-	// Kind is the query's kind; empty is the query's.
-	Kind string
-	// Records are the records the query returned, each with its table.
-	Records []TableCard
-	// Rows are the rows of the tables a `streams`, `fleet` or `readers` query
-	// lists, in the tables' order.
-	Rows []string
-	// Front is the answer of `front`.
-	Front *FrontAnswer
-}
+// The answer's types are in plan_types.go (the errata to version 2.1 give them
+// to IT05's shared types): ReadAnswer, with the answer of each Layer 1 and
+// Layer 2 query in the order ReadPlan.TsetSlots gives, and Answer, the answer
+// of each composite query, which holds only what a snapshot is loaded from.
 
 // rowsOf are the tables whose rows a query lists: the streams are the rows of
 // the work and merge tables, the members of the fleet's, the readers of the
@@ -124,6 +39,8 @@ var rowsOf = map[string][]string{
 type Partial struct {
 	Plan   ReadPlan
 	Answer ReadAnswer
+	// ActiveEpoch is the sprint's active epoch the read gave (0 when it did not).
+	ActiveEpoch uint64
 	// Fronts are the answers of `front`, by stream.
 	Fronts map[string]FrontAnswer
 	// Events are the lines the read returned, parsed, in the plan's order.
@@ -162,13 +79,25 @@ func LoadPartial(rp ReadPlan, ans ReadAnswer) (*Snapshot, error) {
 
 func loadPartial(rp ReadPlan, ans ReadAnswer, strict bool) (*Snapshot, error) {
 	log := &unloadedLog{strict: strict}
-	s := &Snapshot{Epoch: ans.Epoch}
-	if ans.TimeMS != 0 {
-		s.Now = time.UnixMilli(ans.TimeMS).UTC()
+	epoch, err := ans.Epoch.Uint64()
+	if err != nil {
+		return nil, misaligned("the epoch %v", err)
+	}
+	active, err := ans.ActiveEpoch.Uint64()
+	if err != nil {
+		return nil, misaligned("the active epoch %v", err)
+	}
+	ms, err := ans.TimeMS.Uint64()
+	if err != nil || ms > math.MaxInt64 {
+		return nil, misaligned("the time %q is not a number of milliseconds", string(ans.TimeMS))
+	}
+	s := &Snapshot{Epoch: epoch}
+	if ms != 0 {
+		s.Now = time.UnixMilli(int64(ms)).UTC()
 	}
 	for _, name := range ViewOrder {
 		t := NewTable(name)
-		t.Epoch = ans.Epoch
+		t.Epoch = epoch
 		t.part = &loadedCells{whole: map[[2]string]bool{}, counts: map[[2]string]int{}, log: log}
 		switch name {
 		case Work:
@@ -181,25 +110,58 @@ func loadPartial(rp ReadPlan, ans ReadAnswer, strict bool) (*Snapshot, error) {
 			s.Fleet = t
 		}
 	}
-	p := &Partial{Plan: rp, Answer: ans, Fronts: map[string]FrontAnswer{}, before: map[beforeKey]int{}, log: log}
+	p := &Partial{Plan: rp, Answer: ans, ActiveEpoch: active, Fronts: map[string]FrontAnswer{}, before: map[beforeKey]int{}, log: log}
 	s.Partial = p
 
-	if err := p.loadIDs(s, rp, ans); err != nil {
-		return nil, err
+	slots := rp.TsetSlots()
+	if len(ans.Tset) != len(slots) {
+		return nil, misaligned("%d Layer 1 and Layer 2 queries read, %d answered", len(slots), len(ans.Tset))
 	}
-	if err := p.loadRanges(s, rp, ans); err != nil {
-		return nil, err
-	}
-	if err := p.loadCounts(s, rp, ans); err != nil {
-		return nil, err
-	}
-	if err := p.loadLines(rp, ans); err != nil {
-		return nil, err
+	for i, sl := range slots {
+		a := ans.Tset[i]
+		if a.Kind != "" && a.Kind != sl.Kind {
+			return nil, misaligned("query %d is a %s, the answer is a %s", i, sl.Kind, a.Kind)
+		}
+		var err error
+		switch sl.Kind {
+		case AnswerIDs:
+			err = p.loadIDs(s, sl.Table, rp.IDs[sl.Table], a)
+		case AnswerRange:
+			err = p.loadRange(s, sl.Index, rp.Ranges[sl.Index], a)
+		case AnswerCount:
+			q := rp.Counts[sl.Index]
+			err = p.count(s, "count", sl.Index, q.Table, q.Cells, a.Counts)
+		case AnswerRCount:
+			err = p.loadRCount(s, sl.Index, rp.RCounts[sl.Index], a)
+		case AnswerLines:
+			err = p.loadLines(sl.Index, a)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := p.loadSprint(s, rp, ans); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// Uint64 is the number. The empty string is 0, and anything that is not digits
+// alone, or does not fit 64 bits, is an error.
+func (d Decimal) Uint64() (uint64, error) {
+	if d == "" {
+		return 0, nil
+	}
+	for i := 0; i < len(d); i++ {
+		if d[i] < '0' || d[i] > '9' {
+			return 0, fmt.Errorf("%q is not a decimal", string(d))
+		}
+	}
+	n, err := strconv.ParseUint(string(d), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a decimal: %w", string(d), err)
+	}
+	return n, nil
 }
 
 // put places a copy of the card in the table: the snapshot shares nothing
@@ -224,39 +186,23 @@ func put(t *Table, c *Card) {
 	t.Put(&cc)
 }
 
-// loadIDs loads the records of the plan's ids.
-func (p *Partial) loadIDs(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
-	tables := make([]string, 0, len(rp.IDs))
-	for name := range rp.IDs {
-		tables = append(tables, name)
+// loadIDs loads the records of the ids the plan names in one table.
+func (p *Partial) loadIDs(s *Snapshot, name string, ids []string, a TsetAnswer) error {
+	t := s.T(name)
+	if t == nil {
+		return misaligned("the plan reads ids of the unknown table %q", name)
 	}
-	sort.Strings(tables)
-	for _, name := range tables {
-		ids, recs := rp.IDs[name], ans.IDs[name]
-		if len(ids) == 0 && len(recs) == 0 {
+	if len(a.Records) != len(ids) {
+		return misaligned("%s: %d ids read, %d records answered", name, len(ids), len(a.Records))
+	}
+	for i, c := range a.Records {
+		if c == nil {
 			continue
 		}
-		t := s.T(name)
-		if t == nil {
-			return misaligned("the plan reads ids of the unknown table %q", name)
+		if c.ID != ids[i] {
+			return misaligned("%s: record %d is %q, the id read is %q", name, i, c.ID, ids[i])
 		}
-		if len(recs) != len(ids) {
-			return misaligned("%s: %d ids read, %d records answered", name, len(ids), len(recs))
-		}
-		for i, c := range recs {
-			if c == nil {
-				continue
-			}
-			if c.ID != ids[i] {
-				return misaligned("%s: record %d is %q, the id read is %q", name, i, c.ID, ids[i])
-			}
-			put(t, c)
-		}
-	}
-	for name := range ans.IDs {
-		if _, ok := rp.IDs[name]; !ok {
-			return misaligned("the answer holds records of the table %q, which the plan did not read", name)
-		}
+		put(t, c)
 	}
 	return nil
 }
@@ -275,74 +221,50 @@ func cellRef(cell string) (row, col string, ok bool) {
 	return cell[:i], cell[i+1:], true
 }
 
-// loadRanges loads the plan's ranges: the records of a cell's range, and the
-// cell whole when the range took every member and had no more.
-func (p *Partial) loadRanges(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
-	if len(ans.Ranges) != len(rp.Ranges) {
-		return misaligned("%d ranges read, %d answered", len(rp.Ranges), len(ans.Ranges))
+// loadRange loads a range: the records of a cell's range, and the cell whole
+// when the range took every member and had no more.
+func (p *Partial) loadRange(s *Snapshot, i int, q RangeQ, a TsetAnswer) error {
+	if len(a.Scores) != 0 && len(a.Scores) != len(a.IDs) {
+		return misaligned("range %d: %d ids, %d scores", i, len(a.IDs), len(a.Scores))
 	}
-	for i, q := range rp.Ranges {
-		a := ans.Ranges[i]
-		if len(a.Scores) != 0 && len(a.Scores) != len(a.IDs) {
-			return misaligned("range %d: %d ids, %d scores", i, len(a.IDs), len(a.Scores))
+	if q.Records && len(a.Records) != len(a.IDs) || !q.Records && len(a.Records) != 0 {
+		return misaligned("range %d: %d ids, %d records, and the query asked for records: %v", i, len(a.IDs), len(a.Records), q.Records)
+	}
+	cellForm, keyForm := q.Table != "" || q.Cell != "", q.Key != ""
+	if cellForm == keyForm || cellForm && (q.Table == "" || q.Cell == "") {
+		return misaligned("range %d names a cell and a key, or neither, or half a cell", i)
+	}
+	if keyForm {
+		return nil // a sorted set of the sprint: the answer is read by its index
+	}
+	t := s.T(q.Table)
+	row, col, ok := cellRef(q.Cell)
+	if t == nil || !ok {
+		return misaligned("range %d reads the cell %q of the table %q", i, q.Cell, q.Table)
+	}
+	for j, c := range a.Records {
+		if c == nil || c.ID != a.IDs[j] || c.Row != row || c.Col != col {
+			return misaligned("range %d: record %d is not the member %q of %s", i, j, a.IDs[j], q.Cell)
 		}
-		if q.Records && len(a.Cards) != len(a.IDs) || !q.Records && len(a.Cards) != 0 {
-			return misaligned("range %d: %d ids, %d records, and the query asked for records: %v", i, len(a.IDs), len(a.Cards), q.Records)
-		}
-		cellForm, keyForm := q.Table != "" || q.Cell != "", q.Key != ""
-		if cellForm == keyForm || cellForm && (q.Table == "" || q.Cell == "") {
-			return misaligned("range %d names a cell and a key, or neither, or half a cell", i)
-		}
-		if keyForm {
-			continue // a sorted set of the sprint: the answer is read by its index
-		}
-		t := s.T(q.Table)
-		row, col, ok := cellRef(q.Cell)
-		if t == nil || !ok {
-			return misaligned("range %d reads the cell %q of the table %q", i, q.Cell, q.Table)
-		}
-		for j, c := range a.Cards {
-			if c == nil || c.ID != a.IDs[j] || c.Row != row || c.Col != col {
-				return misaligned("range %d: record %d is not the member %q of %s", i, j, a.IDs[j], q.Cell)
-			}
-			put(t, c)
-		}
-		if q.Records && !a.HasMore && unbounded(q.Min, q.Max) {
-			t.part.whole[[2]string{row, col}] = true
-		}
+		put(t, c)
+	}
+	if q.Records && !a.HasMore && unbounded(q.Min, q.Max) {
+		t.part.whole[[2]string{row, col}] = true
 	}
 	return nil
 }
 
-// loadCounts loads the plan's counts and rcounts. An rcount over every score
-// is a count; one over the stream's open cells below a bound is a position,
-// which OpenBefore reads.
-func (p *Partial) loadCounts(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
-	if len(ans.Counts) != len(rp.Counts) {
-		return misaligned("%d counts read, %d answered", len(rp.Counts), len(ans.Counts))
+// loadRCount loads an rcount. One over every score is a count; one over the
+// stream's open cells below a bound is a position, which OpenBefore reads.
+func (p *Partial) loadRCount(s *Snapshot, i int, q RCountQ, a TsetAnswer) error {
+	if unbounded(q.Min, q.Max) {
+		return p.count(s, "rcount", i, q.Table, q.Cells, a.Counts)
 	}
-	if len(ans.RCounts) != len(rp.RCounts) {
-		return misaligned("%d rcounts read, %d answered", len(rp.RCounts), len(ans.RCounts))
+	if len(a.Counts) != len(q.Cells) {
+		return misaligned("rcount %d: %d cells read, %d counts answered", i, len(q.Cells), len(a.Counts))
 	}
-	for i, q := range rp.Counts {
-		if err := p.count(s, "count", i, q.Table, q.Cells, ans.Counts[i]); err != nil {
-			return err
-		}
-	}
-	for i, q := range rp.RCounts {
-		a := ans.RCounts[i]
-		if unbounded(q.Min, q.Max) {
-			if err := p.count(s, "rcount", i, q.Table, q.Cells, a.Counts); err != nil {
-				return err
-			}
-			continue
-		}
-		if len(a.Counts) != len(q.Cells) {
-			return misaligned("rcount %d: %d cells read, %d counts answered", i, len(q.Cells), len(a.Counts))
-		}
-		if row, ok := openCellsOf(q); ok && q.Table == Work && unbounded(q.Min, "") {
-			p.before[beforeKey{row, q.Max}] = a.Sum
-		}
+	if row, ok := openCellsOf(q); ok && q.Table == Work && unbounded(q.Min, "") {
+		p.before[beforeKey{row, q.Max}] = a.Sum
 	}
 	return nil
 }
@@ -414,19 +336,14 @@ func OpenBeforeQ(stream string, score float64) RCountQ {
 	return RCountQ{Table: Work, Cells: OpenCells(stream), Min: "-inf", Max: beforeBound(score)}
 }
 
-// loadLines parses the lines the plan read.
-func (p *Partial) loadLines(rp ReadPlan, ans ReadAnswer) error {
-	if len(ans.Lines) != len(rp.Lines) {
-		return misaligned("%d lines queries read, %d answered", len(rp.Lines), len(ans.Lines))
-	}
-	for i, a := range ans.Lines {
-		for _, l := range a.Lines {
-			e, err := ParseEvent(l.ID, l.Body)
-			if err != nil {
-				return fmt.Errorf("lines query %d, line %s: %w", i, l.ID, err)
-			}
-			p.Events = append(p.Events, e)
+// loadLines parses the lines a lines query returned.
+func (p *Partial) loadLines(i int, a TsetAnswer) error {
+	for _, l := range a.Lines {
+		e, err := ParseEvent(l.ID, l.Body)
+		if err != nil {
+			return fmt.Errorf("lines query %d, line %s: %w", i, l.ID, err)
 		}
+		p.Events = append(p.Events, e)
 	}
 	return nil
 }

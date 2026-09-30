@@ -8,6 +8,12 @@ package sprint
 //
 // Not here: AgendaKey lives in events.go (IT01). ReadPlan and SprintQ, which a
 // Rule names, are in readplan.go, and RegisterRule and RuleTable in rule.go.
+//
+// ReadAnswer and Answer are here because the errata to version 2.1 (E2 and E3)
+// give them to IT05's plan_types.go. Their fields are the errata's. Two of the
+// field types are the words of the tset package (tset.Decimal, tset.ReadAnswer),
+// Layer 1's twin, which is not in this tree: Decimal and TsetAnswer below hold
+// those words until it merges, and are the two types that change then.
 
 // Now is the one reading of the clocks a tick plans against (1.2, 1.4.2): the
 // store's TIME is frozen at the start of a call, so R and Wall are read once.
@@ -134,4 +140,119 @@ type Rule struct {
 	Read func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
 	// Plan is what the rule does on the snapshot the read loaded.
 	Plan func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
+}
+
+// Decimal is an exact unsigned integer written as its decimal digits, the
+// words of tset.Decimal: an epoch or a time that a JSON number could not carry
+// exactly. The empty string is not given, and reads as 0 (Uint64, in
+// partial.go).
+type Decimal string
+
+// The kinds of answer of a Layer 1 or Layer 2 query, the words of
+// tset.ReadAnswer.Kind that a ReadPlan asks for. A range or an rcount named a
+// key or cells in the plan; the ids of a table are one query for the table.
+const (
+	AnswerIDs    = "ids"
+	AnswerRange  = "range"
+	AnswerCount  = "count"
+	AnswerRCount = "rcount"
+	AnswerLines  = "lines"
+)
+
+// TsetAnswer is the answer of one Layer 1 or Layer 2 query (L1 7), the words of
+// tset.ReadAnswer with the records and scores already decoded. Which of its
+// fields an answer uses is its kind's:
+//
+//	ids     Records: one for each id the plan named for the table, in order, nil
+//	        where the table has no record.
+//	range   IDs and Scores in order, HasMore when members beyond them match, and
+//	        Records, one for each id, when the query asked for them.
+//	count   Counts: one for each cell.
+//	rcount  Counts: one for each cell, and Sum, their sum.
+//	lines   Lines: the log's lines, each with its stream id, which is its seq
+//	        (L2 2).
+//
+// A record's Row and Col are empty when it is kept but not placed.
+type TsetAnswer struct {
+	// Kind is one of the Answer kinds; empty is the kind of the query it answers.
+	Kind    string
+	IDs     []string
+	Scores  []float64
+	HasMore bool
+	Counts  []int
+	Sum     int
+	Records []*Card
+	Lines   []LogLine
+}
+
+// LogLine is a line of the log: its stream id and its body.
+type LogLine struct {
+	ID   string
+	Body []byte
+}
+
+// TableCard is a record with the table it belongs to.
+type TableCard struct {
+	Table string
+	Card  *Card
+}
+
+// FrontAnswer is what `front(s)` returns of the stream's line (1.0): the first
+// sentinel G and its score sigma, and the count of the stream's open cards
+// before it.
+type FrontAnswer struct {
+	// Stream is the stream, and G the first sentinel of its sent:s index, empty
+	// when it has none (then Sigma and NBefore mean nothing).
+	Stream, G string
+	// Sigma is G's score, and NBefore the count of the stream's five open cells
+	// below it.
+	Sigma   float64
+	NBefore int
+	// GQuarantined says G is quarantined: its record was not returned, and it
+	// stays the first sentinel so that nothing behind it is released (1.0).
+	GQuarantined bool
+}
+
+// CellCount is the count of the cards in one cell of a table.
+type CellCount struct {
+	Row, Col string
+	N        int
+}
+
+// Answer is the answer of one SprintQ (1.0's table of queries), of the kind of
+// its query. It holds what a partial snapshot is loaded from; the other results
+// of the queries (the heads of an index, the waiters of a need, a note's
+// subjects) are for IT30 and the rules that read them, who add them beside
+// these.
+type Answer struct {
+	// Kind is the query's kind; empty is the query's.
+	Kind string
+	// IDs are the ids the query's source named, in order, when the plan does
+	// not (a head or a line: a list of ids names them itself).
+	IDs []string
+	// Records are the records the query returned, each with its table.
+	Records []TableCard
+	// Rows are the rows of the tables a `streams`, `fleet` or `readers` query
+	// lists, in the tables' order.
+	Rows []string
+	// Counts are the counts of the cells of the members (or readers) a `fleet`
+	// (`readers`) query lists, in the table the query is over.
+	Counts []CellCount
+	// Front is the answer of `front`.
+	Front *FrontAnswer
+}
+
+// ReadAnswer is the answer of one atomic read (the errata to version 2.1, E3),
+// aligned with the ReadPlan that asked it: the times it was read at, the answer
+// of each Layer 1 and Layer 2 query in the order ReadPlan.TsetSlots gives, and
+// the answer of each SprintQ, one for one. It is what LoadPartial reads.
+type ReadAnswer struct {
+	// Epoch is the epoch read, ActiveEpoch the sprint's active epoch, and TimeMS
+	// the store's time in milliseconds, read once for the whole call (1.0).
+	Epoch, ActiveEpoch, TimeMS Decimal
+	// Tset answers the plan's Layer 1 and Layer 2 queries, one for each slot of
+	// ReadPlan.TsetSlots.
+	Tset []TsetAnswer
+	// Sprint answers the plan's SprintQ, one for each.
+	Sprint []Answer
 }

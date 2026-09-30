@@ -6,14 +6,19 @@ import (
 	"strings"
 )
 
-// This file stands in for two things that are not in the tree yet, and is
-// deleted when they merge: layer 1's in-memory twin (internal/tset, item S4a),
-// whose atomic read answers the ids, ranges, counts and rcounts of a
-// ReadPlan, and the sprint's composite queries (IT30, Twin.Query), whose
-// `front`, `streams`, `fleet` and `readers` answer the rest. The stub answers a
-// ReadPlan from a snapshot built whole, so that a test can load the plan's
-// answer with LoadPartial and compare what it holds with the whole. It reads
-// nothing else and touches no store.
+// This file stands in for what is not in the tree yet, and is deleted when it
+// merges: the table twin, tset.Mem (the tset package, on Layer 1's branch), whose
+// atomic read answers the ids, ranges, counts and rcounts of a ReadPlan. It has
+// no answer for a line or for a composite query (the errata to version 2.1,
+// E1 and E3), and this stub builds those by hand, as IT05's tests do: a lines
+// query answers no line, and a composite query is answered from the whole
+// snapshot the stub holds (`front` by scanning the stream's cells, what the
+// store's indexes make O(1); the listing queries by their rows; IT30's
+// Twin.Query answers them for real). The stub answers a ReadPlan from a
+// snapshot built whole, so that a test can load the plan's answer with
+// LoadPartial and compare what it holds with the whole. It reads nothing else
+// and touches no store, and it composes no twin: tset.Mem is the table twin
+// only.
 
 // readAnswerer is what the tests read a plan through: the twin's read.
 type readAnswerer interface {
@@ -70,62 +75,67 @@ func (w wholeStore) cellCards(table, cell, min, max string) []*Card {
 	return out
 }
 
-// Answer answers the plan's queries in its order.
+// Answer answers the plan's queries: the Layer 1 answers in the order of
+// ReadPlan.TsetSlots, and the composite queries in the plan's.
 func (w wholeStore) Answer(rp ReadPlan) ReadAnswer {
-	ans := ReadAnswer{Epoch: w.s.Epoch, TimeMS: 1790000000123, IDs: map[string][]*Card{}}
-	for table, ids := range rp.IDs {
-		if len(ids) == 0 {
-			continue
-		}
-		recs := make([]*Card, len(ids))
-		for i, id := range ids {
-			recs[i] = w.s.T(table).Card(id)
-		}
-		ans.IDs[table] = recs
-	}
-	for _, q := range rp.Ranges {
-		var a RangeA
-		cards := w.cellCards(q.Table, q.Cell, q.Min, q.Max)
-		if q.Desc {
-			for i, j := 0, len(cards)-1; i < j; i, j = i+1, j-1 {
-				cards[i], cards[j] = cards[j], cards[i]
+	ans := ReadAnswer{Epoch: Decimal(itoa(int(w.s.Epoch))), ActiveEpoch: Decimal(itoa(int(w.s.Epoch))), TimeMS: "1790000000123"}
+	for _, sl := range rp.TsetSlots() {
+		switch sl.Kind {
+		case AnswerIDs:
+			ids := rp.IDs[sl.Table]
+			recs := make([]*Card, len(ids))
+			for i, id := range ids {
+				recs[i] = w.s.T(sl.Table).Card(id)
 			}
-		}
-		if len(cards) > q.Limit {
-			cards, a.HasMore = cards[:q.Limit], true
-		}
-		for _, c := range cards {
-			a.IDs = append(a.IDs, c.ID)
-			a.Scores = append(a.Scores, c.Score)
-			if q.Records {
-				a.Cards = append(a.Cards, c)
+			ans.Tset = append(ans.Tset, TsetAnswer{Kind: AnswerIDs, Records: recs})
+		case AnswerRange:
+			ans.Tset = append(ans.Tset, w.rangeOf(rp.Ranges[sl.Index]))
+		case AnswerCount:
+			q := rp.Counts[sl.Index]
+			a := TsetAnswer{Kind: AnswerCount}
+			for _, cell := range q.Cells {
+				a.Counts = append(a.Counts, len(w.cellCards(q.Table, cell, "", "")))
 			}
+			ans.Tset = append(ans.Tset, a)
+		case AnswerRCount:
+			q := rp.RCounts[sl.Index]
+			a := TsetAnswer{Kind: AnswerRCount}
+			for _, cell := range q.Cells {
+				n := len(w.cellCards(q.Table, cell, q.Min, q.Max))
+				a.Counts = append(a.Counts, n)
+				a.Sum += n
+			}
+			ans.Tset = append(ans.Tset, a)
+		case AnswerLines:
+			ans.Tset = append(ans.Tset, TsetAnswer{Kind: AnswerLines})
 		}
-		ans.Ranges = append(ans.Ranges, a)
-	}
-	for _, q := range rp.Counts {
-		var counts []int
-		for _, cell := range q.Cells {
-			counts = append(counts, len(w.cellCards(q.Table, cell, "", "")))
-		}
-		ans.Counts = append(ans.Counts, counts)
-	}
-	for _, q := range rp.RCounts {
-		var a RCountA
-		for _, cell := range q.Cells {
-			n := len(w.cellCards(q.Table, cell, q.Min, q.Max))
-			a.Counts = append(a.Counts, n)
-			a.Sum += n
-		}
-		ans.RCounts = append(ans.RCounts, a)
-	}
-	for range rp.Lines {
-		ans.Lines = append(ans.Lines, LinesA{})
 	}
 	for _, q := range rp.Sprint {
 		ans.Sprint = append(ans.Sprint, w.query(q))
 	}
 	return ans
+}
+
+// rangeOf answers a range of a cell.
+func (w wholeStore) rangeOf(q RangeQ) TsetAnswer {
+	a := TsetAnswer{Kind: AnswerRange}
+	cards := w.cellCards(q.Table, q.Cell, q.Min, q.Max)
+	if q.Desc {
+		for i, j := 0, len(cards)-1; i < j; i, j = i+1, j-1 {
+			cards[i], cards[j] = cards[j], cards[i]
+		}
+	}
+	if len(cards) > q.Limit {
+		cards, a.HasMore = cards[:q.Limit], true
+	}
+	for _, c := range cards {
+		a.IDs = append(a.IDs, c.ID)
+		a.Scores = append(a.Scores, c.Score)
+		if q.Records {
+			a.Records = append(a.Records, c)
+		}
+	}
+	return a
 }
 
 // query answers one composite query: `front` by scanning the stream's cells

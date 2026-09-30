@@ -56,6 +56,43 @@ func ids(cs []*Card) []string {
 	return out
 }
 
+// answers puts the answers of a plan's Layer 1 and Layer 2 queries, written by
+// kind as the tests think of them, into the order ReadAnswer.Tset wants: the
+// ids of each table (by table name), then the ranges, counts, rcounts and
+// lines, each in the plan's order. An answer with a Kind that is not the
+// plan's would be written by hand.
+func answers(rp ReadPlan, ids map[string][]*Card, ranges []TsetAnswer, counts [][]int, rcounts, lines []TsetAnswer) []TsetAnswer {
+	var out []TsetAnswer
+	for _, sl := range rp.TsetSlots() {
+		switch sl.Kind {
+		case AnswerIDs:
+			out = append(out, TsetAnswer{Records: ids[sl.Table]})
+		case AnswerRange:
+			out = append(out, ranges[sl.Index])
+		case AnswerCount:
+			out = append(out, TsetAnswer{Counts: counts[sl.Index]})
+		case AnswerRCount:
+			out = append(out, rcounts[sl.Index])
+		case AnswerLines:
+			out = append(out, lines[sl.Index])
+		}
+	}
+	return out
+}
+
+// tsetAt is the answer in ans of the query of that kind: the table's ids
+// query, or the index-th range, count, rcount or lines query of the plan.
+func tsetAt(t *testing.T, rp ReadPlan, ans *ReadAnswer, kind string, index int, table string) *TsetAnswer {
+	t.Helper()
+	for i, sl := range rp.TsetSlots() {
+		if sl.Kind == kind && (kind == AnswerIDs && sl.Table == table || kind != AnswerIDs && sl.Index == index) {
+			return &ans.Tset[i]
+		}
+	}
+	t.Fatalf("the plan has no %s query %d of %q", kind, index, table)
+	return nil
+}
+
 // sampleRead is a plan and its answer: two streams, s1 with ready cards p1 and
 // p2 and a sentinel g1 waiting before p3, s2 with an empty ready cell, and a
 // member; the ready cells are read whole, s1's waiting cell by its first card
@@ -81,23 +118,24 @@ func sampleRead() (ReadPlan, ReadAnswer) {
 		},
 	}
 	ans := ReadAnswer{
-		Epoch: 3, TimeMS: 1790000000123,
-		IDs: map[string][]*Card{
-			Work:  {pcard("p1", "s1", "ready", 1, "attempt", "0"), pcard("p2", "s1", "ready", 2, "attempt", "1"), nil},
-			Fleet: {pcard("ctl-m1", "m1", "ctl", 0, "status", "up")},
-		},
-		Ranges: []RangeA{
-			{IDs: []string{"p1", "p2"}, Scores: []float64{1, 2}, Cards: []*Card{pcard("p1", "s1", "ready", 1), pcard("p2", "s1", "ready", 2)}},
-			{},
-			{IDs: []string{"g1"}, Scores: []float64{5}, HasMore: true, Cards: []*Card{g1}},
-			{IDs: []string{"job:1"}, Scores: []float64{9}},
-		},
-		Counts:  [][]int{{3, 0}},
-		RCounts: []RCountA{{Counts: []int{0, 1, 0, 0, 0}, Sum: 1}},
-		Lines: []LinesA{{Lines: []LogLine{{ID: "7-0", Body: []byte(
-			`{"k":"m","ms":"1790000000123","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1"],"about":["p1"],` +
-				`"score":[["5","5"]],"rev":[["3","4"]],"shared":{"result":"ok","head":"abc"},` +
-				`"meta":{"verb":"finish","actor":"m1","stream":"s1"}}`)}}}},
+		Epoch: "3", ActiveEpoch: "3", TimeMS: "1790000000123",
+		Tset: answers(rp,
+			map[string][]*Card{
+				Work:  {pcard("p1", "s1", "ready", 1, "attempt", "0"), pcard("p2", "s1", "ready", 2, "attempt", "1"), nil},
+				Fleet: {pcard("ctl-m1", "m1", "ctl", 0, "status", "up")},
+			},
+			[]TsetAnswer{
+				{IDs: []string{"p1", "p2"}, Scores: []float64{1, 2}, Records: []*Card{pcard("p1", "s1", "ready", 1), pcard("p2", "s1", "ready", 2)}},
+				{},
+				{IDs: []string{"g1"}, Scores: []float64{5}, HasMore: true, Records: []*Card{g1}},
+				{IDs: []string{"job:1"}, Scores: []float64{9}},
+			},
+			[][]int{{3, 0}},
+			[]TsetAnswer{{Counts: []int{0, 1, 0, 0, 0}, Sum: 1}},
+			[]TsetAnswer{{Lines: []LogLine{{ID: "7-0", Body: []byte(
+				`{"k":"m","ms":"1790000000123","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1"],"about":["p1"],` +
+					`"score":[["5","5"]],"rev":[["3","4"]],"shared":{"result":"ok","head":"abc"},` +
+					`"meta":{"verb":"finish","actor":"m1","stream":"s1"}}`)}}}}),
 		Sprint: []Answer{
 			{Rows: []string{"s1", "s2"}},
 			{Rows: []string{"m1"}},
@@ -194,8 +232,11 @@ func TestLoadPartialFromReadAnswer(t *testing.T) {
 	if len(s.Partial.Events) != 1 || s.Partial.Events[0].Seq != 7 || s.Partial.Events[0].Verb != "finish" {
 		t.Fatalf("events: %+v", s.Partial.Events)
 	}
-	if got := s.Partial.Answer.Ranges[3].IDs; !reflect.DeepEqual(got, []string{"job:1"}) {
+	if got := tsetAt(t, rp, &s.Partial.Answer, AnswerRange, 3, "").IDs; !reflect.DeepEqual(got, []string{"job:1"}) {
 		t.Fatalf("the raw range's answer, by its index: %v", got)
+	}
+	if s.Partial.ActiveEpoch != 3 {
+		t.Fatalf("the active epoch: %d", s.Partial.ActiveEpoch)
 	}
 	if len(s.Partial.Plan.Ranges) != 4 {
 		t.Fatalf("the plan kept: %+v", s.Partial.Plan)
@@ -312,29 +353,29 @@ func TestUnloadedNamedReadsAreBounded(t *testing.T) {
 
 func TestLoadedCellsAreOnlyThoseAnAnswerGaveWhole(t *testing.T) {
 	t.Parallel()
-	cell := func(q RangeQ, a RangeA) *Snapshot {
+	cell := func(q RangeQ, a TsetAnswer) *Snapshot {
 		t.Helper()
 		q.Table, q.Cell = Work, "s1:ready"
-		s, err := LoadPartial(ReadPlan{Ranges: []RangeQ{q}}, ReadAnswer{Ranges: []RangeA{a}})
+		s, err := LoadPartial(ReadPlan{Ranges: []RangeQ{q}}, ReadAnswer{Tset: []TsetAnswer{a}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return s
 	}
-	full := RangeA{IDs: []string{"p1"}, Scores: []float64{1}, Cards: []*Card{pcard("p1", "s1", "ready", 1)}}
+	full := TsetAnswer{IDs: []string{"p1"}, Scores: []float64{1}, Records: []*Card{pcard("p1", "s1", "ready", 1)}}
 	for _, tt := range []struct {
 		name string
 		q    RangeQ
-		a    RangeA
+		a    TsetAnswer
 		want bool
 	}{
 		{"every member, no more", RangeQ{Records: true, Limit: 10}, full, true},
 		{"infinite bounds are every member", RangeQ{Records: true, Limit: 10, Min: "-inf", Max: "+inf"}, full, true},
-		{"empty, and no more", RangeQ{Records: true, Limit: 10}, RangeA{}, true},
-		{"more beyond the limit", RangeQ{Records: true, Limit: 1}, RangeA{IDs: full.IDs, Scores: full.Scores, Cards: full.Cards, HasMore: true}, false},
+		{"empty, and no more", RangeQ{Records: true, Limit: 10}, TsetAnswer{}, true},
+		{"more beyond the limit", RangeQ{Records: true, Limit: 1}, TsetAnswer{IDs: full.IDs, Scores: full.Scores, Records: full.Records, HasMore: true}, false},
 		{"a lower bound", RangeQ{Records: true, Limit: 10, Min: "(0"}, full, false},
 		{"an upper bound", RangeQ{Records: true, Limit: 10, Max: "5"}, full, false},
-		{"ids only", RangeQ{Limit: 10}, RangeA{IDs: full.IDs, Scores: full.Scores}, false},
+		{"ids only", RangeQ{Limit: 10}, TsetAnswer{IDs: full.IDs, Scores: full.Scores}, false},
 	} {
 		s := cell(tt.q, tt.a)
 		if got := s.Work.Loaded("s1", "ready"); got != tt.want {
@@ -352,7 +393,7 @@ func TestCountsFromCountAndRCount(t *testing.T) {
 		Counts:  []CountQ{{Table: Work, Cells: []string{"a:b:ready", "s2:working"}}},
 		RCounts: []RCountQ{{Table: Work, Cells: []string{"s3:ready", "s3:working"}}, {Table: Work, Cells: []string{"s4:ready"}, Min: "2", Max: "9"}},
 	}
-	ans := ReadAnswer{Counts: [][]int{{7, 8}}, RCounts: []RCountA{{Counts: []int{4, 5}, Sum: 9}, {Counts: []int{2}, Sum: 2}}}
+	ans := ReadAnswer{Tset: answers(rp, nil, nil, [][]int{{7, 8}}, []TsetAnswer{{Counts: []int{4, 5}, Sum: 9}, {Counts: []int{2}, Sum: 2}}, nil)}
 	s, err := loadPartial(rp, ans, false)
 	if err != nil {
 		t.Fatal(err)
@@ -375,7 +416,7 @@ func TestOpenBeforeAndFirstSentinelFromTheRead(t *testing.T) {
 	}
 	rp := ReadPlan{RCounts: []RCountQ{q, OpenBeforeQ("s1", 9)}, Sprint: []SprintQ{{Kind: QueryFront, Stream: "s1"}, {Kind: QueryFront, Stream: "s2"}, {Kind: QueryFront, Stream: "s3"}}}
 	ans := ReadAnswer{
-		RCounts: []RCountA{{Counts: []int{1, 1, 0, 0, 0}, Sum: 2}, {Counts: []int{2, 2, 1, 0, 0}, Sum: 5}},
+		Tset: answers(rp, nil, nil, nil, []TsetAnswer{{Counts: []int{1, 1, 0, 0, 0}, Sum: 2}, {Counts: []int{2, 2, 1, 0, 0}, Sum: 5}}, nil),
 		Sprint: []Answer{
 			{Front: &FrontAnswer{Stream: "s1", G: "g1", Sigma: 7, NBefore: 3}}, // its record is not returned: quarantined
 			{Front: &FrontAnswer{Stream: "s2"}},                                // no sentinel
@@ -439,33 +480,63 @@ func TestPositionsOfASnapshotBuiltWhole(t *testing.T) {
 
 func TestLoadPartialRefusesAnAnswerThatDoesNotAnswerThePlan(t *testing.T) {
 	t.Parallel()
+	// at is the answer of a query of the sample plan, by its kind and place.
+	at := func(rp ReadPlan, ans *ReadAnswer, kind string, index int, table string) *TsetAnswer {
+		return tsetAt(t, rp, ans, kind, index, table)
+	}
+	// dropSlot takes one answer out of the aligned list.
+	dropSlot := func(rp ReadPlan, ans *ReadAnswer, kind string, index int, table string) {
+		for i, sl := range rp.TsetSlots() {
+			if sl.Kind == kind && (kind == AnswerIDs && sl.Table == table || kind != AnswerIDs && sl.Index == index) {
+				ans.Tset = append(ans.Tset[:i:i], ans.Tset[i+1:]...)
+				return
+			}
+		}
+		t.Fatalf("no slot %s %d %s", kind, index, table)
+	}
 	for _, tt := range []struct {
 		name string
 		edit func(rp *ReadPlan, ans *ReadAnswer)
 	}{
-		{"fewer records than ids", func(rp *ReadPlan, ans *ReadAnswer) { ans.IDs[Work] = ans.IDs[Work][:2] }},
-		{"a record that is not the id read", func(rp *ReadPlan, ans *ReadAnswer) { ans.IDs[Work][0] = pcard("p9", "s1", "ready", 1) }},
-		{"records of a table the plan did not read", func(rp *ReadPlan, ans *ReadAnswer) { ans.IDs[Merge] = []*Card{nil} }},
+		{"fewer records than ids", func(rp *ReadPlan, ans *ReadAnswer) {
+			a := at(*rp, ans, AnswerIDs, 0, Work)
+			a.Records = a.Records[:2]
+		}},
+		{"a record that is not the id read", func(rp *ReadPlan, ans *ReadAnswer) {
+			at(*rp, ans, AnswerIDs, 0, Work).Records[0] = pcard("p9", "s1", "ready", 1)
+		}},
+		{"an answer more than the plan read (records of a table it did not read)", func(rp *ReadPlan, ans *ReadAnswer) {
+			ans.Tset = append(ans.Tset, TsetAnswer{Kind: AnswerIDs, Records: []*Card{nil}})
+		}},
 		{"ids of a table that is not one", func(rp *ReadPlan, ans *ReadAnswer) {
 			rp.IDs["nowhere"] = []string{"x"}
-			ans.IDs["nowhere"] = []*Card{nil}
+			for i, sl := range rp.TsetSlots() {
+				if sl.Table == "nowhere" {
+					ans.Tset = append(ans.Tset[:i:i], append([]TsetAnswer{{Records: []*Card{nil}}}, ans.Tset[i:]...)...)
+					return
+				}
+			}
+			t.Fatal("no slot for the table")
 		}},
-		{"a range too few", func(rp *ReadPlan, ans *ReadAnswer) { ans.Ranges = ans.Ranges[:3] }},
-		{"scores that are not the ids", func(rp *ReadPlan, ans *ReadAnswer) { ans.Ranges[0].Scores = []float64{1} }},
-		{"records asked for and not returned", func(rp *ReadPlan, ans *ReadAnswer) { ans.Ranges[0].Cards = nil }},
+		{"a range too few", func(rp *ReadPlan, ans *ReadAnswer) { dropSlot(*rp, ans, AnswerRange, 3, "") }},
+		{"scores that are not the ids", func(rp *ReadPlan, ans *ReadAnswer) { at(*rp, ans, AnswerRange, 0, "").Scores = []float64{1} }},
+		{"records asked for and not returned", func(rp *ReadPlan, ans *ReadAnswer) { at(*rp, ans, AnswerRange, 0, "").Records = nil }},
 		{"records returned and not asked for", func(rp *ReadPlan, ans *ReadAnswer) { rp.Ranges[0].Records = false }},
-		{"a range record in another cell", func(rp *ReadPlan, ans *ReadAnswer) { ans.Ranges[0].Cards[0] = pcard("p1", "s1", "working", 1) }},
+		{"a range record in another cell", func(rp *ReadPlan, ans *ReadAnswer) {
+			at(*rp, ans, AnswerRange, 0, "").Records[0] = pcard("p1", "s1", "working", 1)
+		}},
 		{"a range that names no cell and no key", func(rp *ReadPlan, ans *ReadAnswer) { rp.Ranges[3].Key = "" }},
 		{"a range that names both", func(rp *ReadPlan, ans *ReadAnswer) { rp.Ranges[3].Table, rp.Ranges[3].Cell = Work, "s1:ready" }},
 		{"a range of half a cell", func(rp *ReadPlan, ans *ReadAnswer) { rp.Ranges[1].Cell = "" }},
 		{"a range of a cell with no column", func(rp *ReadPlan, ans *ReadAnswer) { rp.Ranges[1].Cell = "s2" }},
-		{"a count too few", func(rp *ReadPlan, ans *ReadAnswer) { ans.Counts = nil }},
-		{"a count for fewer cells", func(rp *ReadPlan, ans *ReadAnswer) { ans.Counts[0] = []int{1} }},
+		{"a count too few", func(rp *ReadPlan, ans *ReadAnswer) { dropSlot(*rp, ans, AnswerCount, 0, "") }},
+		{"a count for fewer cells", func(rp *ReadPlan, ans *ReadAnswer) { at(*rp, ans, AnswerCount, 0, "").Counts = []int{1} }},
 		{"a count of an unknown table", func(rp *ReadPlan, ans *ReadAnswer) { rp.Counts[0].Table = "nowhere" }},
 		{"a count of a cell with no column", func(rp *ReadPlan, ans *ReadAnswer) { rp.Counts[0].Cells[0] = "s1" }},
-		{"an rcount too few", func(rp *ReadPlan, ans *ReadAnswer) { ans.RCounts = nil }},
-		{"an rcount for fewer cells", func(rp *ReadPlan, ans *ReadAnswer) { ans.RCounts[0].Counts = []int{0} }},
-		{"lines too few", func(rp *ReadPlan, ans *ReadAnswer) { ans.Lines = nil }},
+		{"an rcount too few", func(rp *ReadPlan, ans *ReadAnswer) { dropSlot(*rp, ans, AnswerRCount, 0, "") }},
+		{"an rcount for fewer cells", func(rp *ReadPlan, ans *ReadAnswer) { at(*rp, ans, AnswerRCount, 0, "").Counts = []int{0} }},
+		{"lines too few", func(rp *ReadPlan, ans *ReadAnswer) { dropSlot(*rp, ans, AnswerLines, 0, "") }},
+		{"an answer of another kind than its query", func(rp *ReadPlan, ans *ReadAnswer) { at(*rp, ans, AnswerCount, 0, "").Kind = AnswerRCount }},
 		{"a composite query too few", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint = ans.Sprint[:2] }},
 		{"a composite answer of another kind", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[0].Kind = QueryFleet }},
 		{"a composite record of an unknown table", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Records[0].Table = "nowhere" }},
@@ -473,6 +544,10 @@ func TestLoadPartialRefusesAnAnswerThatDoesNotAnswerThePlan(t *testing.T) {
 		{"rows from a query that lists none", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Rows = []string{"s1"} }},
 		{"a front with no answer", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Front = nil }},
 		{"a front of another stream", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Front.Stream = "s2" }},
+		{"an epoch that is not a decimal", func(rp *ReadPlan, ans *ReadAnswer) { ans.Epoch = "3x" }},
+		{"an active epoch that is not a decimal", func(rp *ReadPlan, ans *ReadAnswer) { ans.ActiveEpoch = "-1" }},
+		{"a time that is not a decimal", func(rp *ReadPlan, ans *ReadAnswer) { ans.TimeMS = "1.5" }},
+		{"a time past what a time holds", func(rp *ReadPlan, ans *ReadAnswer) { ans.TimeMS = "18446744073709551615" }},
 	} {
 		rp, ans := sampleRead()
 		tt.edit(&rp, &ans)
@@ -484,7 +559,7 @@ func TestLoadPartialRefusesAnAnswerThatDoesNotAnswerThePlan(t *testing.T) {
 
 	// A line the log's contract does not allow is refused, naming its seq.
 	rp, ans := sampleRead()
-	ans.Lines[0].Lines[0].Body = []byte(`{"k":"m","ms":"1"}`)
+	at(rp, &ans, AnswerLines, 0, "").Lines[0].Body = []byte(`{"k":"m","ms":"1"}`)
 	if s, err := LoadPartial(rp, ans); s != nil || err == nil || !strings.Contains(err.Error(), "line 7") {
 		t.Errorf("a line of no card: %v, %v", s, err)
 	}
@@ -503,8 +578,10 @@ func TestLoadPartialMergesWhatSeveralQueriesReadOfOneRecord(t *testing.T) {
 		Sprint: []SprintQ{{Kind: QueryFront, Stream: "s1", Fields: []string{"kind"}}},
 	}
 	ans := ReadAnswer{
-		IDs:    map[string][]*Card{Work: {pcard("p1", "s1", "ready", 1, "attempt", "2")}},
-		Ranges: []RangeA{{IDs: []string{"p1"}, Scores: []float64{1}, Cards: []*Card{pcard("p1", "s1", "ready", 1, "open", "0")}}},
+		Tset: answers(rp,
+			map[string][]*Card{Work: {pcard("p1", "s1", "ready", 1, "attempt", "2")}},
+			[]TsetAnswer{{IDs: []string{"p1"}, Scores: []float64{1}, Records: []*Card{pcard("p1", "s1", "ready", 1, "open", "0")}}},
+			nil, nil, nil),
 		Sprint: []Answer{{Front: &FrontAnswer{Stream: "s1"}, Records: []TableCard{{Work, pcard("p1", "s1", "ready", 1, "kind", "primary")}}}},
 	}
 	s, err := LoadPartial(rp, ans)
@@ -531,12 +608,12 @@ func TestLoadPartialSharesNothingWithTheAnswer(t *testing.T) {
 	s.Work.Card("p1").Fields["attempt"] = "changed"
 	s.Work.Card("p1").Score = 99
 	s.Work.Card("g1").Fields["kind"] = "changed"
-	if !reflect.DeepEqual(ans.IDs, ansBefore.IDs) || !reflect.DeepEqual(ans.Ranges, ansBefore.Ranges) || !reflect.DeepEqual(ans.Sprint, ansBefore.Sprint) {
+	if !reflect.DeepEqual(ans.Tset, ansBefore.Tset) || !reflect.DeepEqual(ans.Sprint, ansBefore.Sprint) {
 		t.Fatal("a change to the snapshot changed the answer it was loaded from")
 	}
 	// And a card with no fields map gains none in the answer.
 	bare := &Card{ID: "p1", Row: "s1", Col: "ready"}
-	s2, err := LoadPartial(ReadPlan{IDs: map[string][]string{Work: {"p1"}}}, ReadAnswer{IDs: map[string][]*Card{Work: {bare}}})
+	s2, err := LoadPartial(ReadPlan{IDs: map[string][]string{Work: {"p1"}}}, ReadAnswer{Tset: []TsetAnswer{{Records: []*Card{bare}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,27 +729,29 @@ func TestPartialAgreesWithWhole(t *testing.T) {
 // their ids, and half as the records of 250 cells read whole, a stream a cell.
 func bigAnswer(n int) (ReadPlan, ReadAnswer) {
 	rp := ReadPlan{IDs: map[string][]string{}}
-	ans := ReadAnswer{Epoch: 1, TimeMS: 1790000000123, IDs: map[string][]*Card{}}
+	ans := ReadAnswer{Epoch: "1", TimeMS: "1790000000123"}
 	card := func(id, row, col string, i int) *Card {
 		return pcard(id, row, col, float64(i), "attempt", "1", "avoid", "m1", "open", "0", "stream", row, "kind", "primary")
 	}
+	var recs []*Card
 	for i := 0; i < n/2; i++ {
 		id := fmt.Sprintf("p%d", i)
 		rp.IDs[Work] = append(rp.IDs[Work], id)
-		ans.IDs[Work] = append(ans.IDs[Work], card(id, fmt.Sprintf("s%d", i%250), States[i%len(States)], i))
+		recs = append(recs, card(id, fmt.Sprintf("s%d", i%250), States[i%len(States)], i))
 	}
+	ans.Tset = append(ans.Tset, TsetAnswer{Records: recs}) // the one ids query, of the work table
 	perCell := (n - n/2) / 250
 	for s := 0; s < 250; s++ {
 		row := fmt.Sprintf("t%d", s)
 		rp.Ranges = append(rp.Ranges, RangeQ{Table: Work, Cell: row + ":ready", Limit: MaxRangeLimit, Records: true})
-		var a RangeA
+		var a TsetAnswer
 		for j := 0; j < perCell; j++ {
 			id := fmt.Sprintf("q%d.%d", s, j)
 			a.IDs = append(a.IDs, id)
 			a.Scores = append(a.Scores, float64(j))
-			a.Cards = append(a.Cards, card(id, row, "ready", j))
+			a.Records = append(a.Records, card(id, row, "ready", j))
 		}
-		ans.Ranges = append(ans.Ranges, a)
+		ans.Tset = append(ans.Tset, a)
 	}
 	return rp, ans
 }
