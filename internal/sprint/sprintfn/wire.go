@@ -89,6 +89,18 @@ func hasSprintField(req *Request) bool {
 		req.Ingest != nil || req.Beat != nil || req.Clock != nil || req.Sprint != nil
 }
 
+// EncodedSize is the bytes a request is sent as, both halves together: what
+// L1 6 bounds at 4 MiB and what the tick's budget counts at 2 MiB of requests
+// a round trip (1.0, "Bytes"; 1.4.2). A request the static checks refuse is
+// that refusal, and has no size.
+func EncodedSize(prefix string, req *Request) (int, *Refusal) {
+	enc, ref := encodeStep(prefix, req)
+	if ref != nil {
+		return 0, ref
+	}
+	return len(enc.raw) + len(enc.sprint), nil
+}
+
 // encodeStep checks a request statically and encodes both halves. A refusal
 // here means nothing was sent (Redis) or run (Twin).
 func encodeStep(prefix string, req *Request) (encodedStep, *Refusal) {
