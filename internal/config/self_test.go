@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const tailnetRunning = `{"BackendState":"Running","Self":{"HostName":"Studio-1","DNSName":"m1.tail1234.ts.net.","Online":true}}`
+const tailnetRunning = `{"BackendState":"Running","Self":{"HostName":"Box-1","DNSName":"m1.tail1234.ts.net.","Online":true}}`
 
 func selfSrc(env map[string]string, host string, ts func(context.Context) ([]byte, error)) SelfSource {
 	return SelfSource{
@@ -34,6 +34,7 @@ func TestSelfNameIsTheTailnetNameWhenThereIsATailnet(t *testing.T) {
 		want, how string
 	}{
 		{"tailnet", nil, "box.local", tsReturns(tailnetRunning), "m1", SelfTailnet},
+		{"env is lower-cased", map[string]string{EnvMachine: "M9"}, "box.local", tsReturns(tailnetRunning), "m9", SelfEnv},
 		{"env wins", map[string]string{EnvMachine: "m9"}, "box.local", tsReturns(tailnetRunning), "m9", SelfEnv},
 		{"empty env is unset", map[string]string{EnvMachine: ""}, "box.local", tsReturns(tailnetRunning), "m1", SelfTailnet},
 		{"no program", nil, "Box.Local", func(context.Context) ([]byte, error) { return nil, ErrNoTailnet }, "box", SelfHostname},
@@ -46,6 +47,18 @@ func TestSelfNameIsTheTailnetNameWhenThereIsATailnet(t *testing.T) {
 		got, how, err := SelfName(ctx, selfSrc(c.env, c.host, c.ts))
 		if err != nil || got != c.want || how != c.how {
 			t.Errorf("%s: %q %q %v, want %q %q", c.name, got, how, err, c.want, c.how)
+		}
+	}
+}
+
+// TestSelfNameRefusesAnInvalidNovaMachine: NOVA_MACHINE is validated as a
+// machine name, never passed on as typed.
+func TestSelfNameRefusesAnInvalidNovaMachine(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{"m 1", "-m1", "m1/x", "m_1"} {
+		env := map[string]string{EnvMachine: bad}
+		if n, _, err := SelfName(context.Background(), selfSrc(env, "box.local", nil)); err == nil || n != "" {
+			t.Errorf("%q: %q %v", bad, n, err)
 		}
 	}
 }

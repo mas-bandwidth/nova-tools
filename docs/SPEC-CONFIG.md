@@ -143,10 +143,10 @@ is derived on every read, so the inventory is the one place a machine's
 capacity is written. It is a static share, the same on every read of the same rows: the CI legs
 running on the machine and every other child hold slots of the ceiling moment
 by moment, and they are taken off at the take, by a lease from the machine's
-one slot store, never in the width. `nova-config machine width <name>` prints it and
-`machine list --json` carries it for every machine; both read the friends'
-beats from a Redis when a friend row carries slots (`Widths`,
-`internal/config/width.go`).
+one slot store, never in the width. `nova-config machine width <name>` prints it, reading the friends' beats from a
+Redis when a friend row carries slots (`Widths`, `internal/config/width.go`);
+with no friend beats on the store, every friend is charged to the coordinator
+machine.
 
 **A machine's own name.** `nova-config machine self` prints the name this
 machine has in the inventory, so no name is typed on the machine it names:

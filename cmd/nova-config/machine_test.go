@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -74,7 +73,7 @@ func TestMachineSelfCheckIsTwoWhenTheNameIsNoRowAndThreeWhenUnreadable(t *testin
 	if code, _, errs := h.run(t, "machine", "self", "--check", "--pg", "postgres://u@closed/nova"); code != 3 || !strings.Contains(errs, "the config cannot be read") {
 		t.Fatalf("store down: %d %q", code, errs)
 	}
-	if code, _, errs := h.run(t, "machine", "self", "--check"); code != 2 || !strings.Contains(errs, "--pg is required") {
+	if code, _, errs := h.run(t, "machine", "self", "--check"); code != 3 || !strings.Contains(errs, "--pg is required") {
 		t.Fatalf("no dsn: %d %q", code, errs)
 	}
 	h2 := newHarness()
@@ -84,8 +83,7 @@ func TestMachineSelfCheckIsTwoWhenTheNameIsNoRowAndThreeWhenUnreadable(t *testin
 	}
 }
 
-// TestMachineWidthIsSlotsLessTheFriendsCharged: the query and the list's JSON
-// carry the same width; a machine with no room is no member.
+// TestMachineWidthIsSlotsLessTheFriendsCharged: the query; a machine with no room is no member.
 func TestMachineWidthIsSlotsLessTheFriendsCharged(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
@@ -100,17 +98,6 @@ func TestMachineWidthIsSlotsLessTheFriendsCharged(t *testing.T) {
 	code, out, _ = h.run(t, "machine", "width", "m2", "--pg", dsn, "--redis", "r:1", "--json")
 	if code != 0 || out != `{"machine":"m2","slots":2,"charged":2,"width":0,"member":false}`+"\n" {
 		t.Fatalf("m2 json: %d %q", code, out)
-	}
-	code, out, errs = h.run(t, "machine", "list", "--json", "--pg", dsn, "--redis", "r:1")
-	if code != 0 || errs != "" {
-		t.Fatalf("list --json: %d %q", code, errs)
-	}
-	var rows []map[string]any
-	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 2 {
-		t.Fatalf("list --json: %v %q", err, out)
-	}
-	if rows[0]["machine"] != "m1" || rows[0]["width"] != float64(5) || rows[0]["member"] != true || rows[0]["user"] != "u" || rows[1]["width"] != float64(0) {
-		t.Fatalf("list --json rows: %v", rows)
 	}
 	if code, _, errs := h.run(t, "machine", "width", "m9", "--pg", dsn, "--redis", "r:1"); code != 1 || !strings.Contains(errs, "machine m9 not found") {
 		t.Fatalf("unknown: %d %q", code, errs)

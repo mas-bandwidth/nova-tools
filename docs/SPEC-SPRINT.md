@@ -219,11 +219,14 @@ and it is the coordinator's decision, receipted.
   never deleted, and its unfinished work cards are dealt to the members that
   stay up (the same move as `fleet down`). A member that stays has its status
   untouched, and the deal's rolling index moves only with the cards a held
-  member's redeal places. A member the coordinator holds stays held and takes
-  its width; the sync says so and names the `fleet up` that releases it. A sync
-  after a sync writes nothing and says so. `--check` prints the drift and
+  member's redeal places. A hold is marked by who made it (the control card's
+  `held_by`): the sync marks the holds it makes, and releases them when the
+  machine is back in the inventory with room (the member comes up when it
+  beats). A hold the coordinator made with `fleet down` carries no mark and
+  stays: the member takes its width, and the sync says so and names the
+  `fleet up` that releases it. A sync after a sync writes nothing and says so. `--check` prints the drift and
   writes nothing: exit 0 when there is none, 2 when there is, 3 when the config
-  cannot be read or holds no machine row (a store that is not the fleet's would
+  or the sprint store cannot be read, or the config holds no machine row (a store that is not the fleet's would
   hold every member down). It is the coordinator's verb, like every fleet move.
   The sync adds no state: each move is one `fleet up` or `fleet down` already
   makes, for many members in one plan, and the drift it reports is exactly the

@@ -135,9 +135,9 @@ CONFIG LIST kind=machine rows=2
 **Width and its own name.** One ceiling per machine is shared by the friends
 and the sprint, so a machine's room for the sprint's member is its `slots`
 less the slots of the friends charged to it (her beat's machine, else the
-fleet row's coordinator machine). `machine width` prints it, and `machine list
---json` carries it for every machine; a machine with a width of 1 or more is a
-member of the sprint's fleet. The friends' machines come from their beats, so a
+fleet row's coordinator machine; with no friend beats on the store, every
+friend is charged to the coordinator machine). `machine width` prints it; a
+machine with a width of 1 or more is a member of the sprint's fleet. The friends' machines come from their beats, so a
 Redis is named (`--redis`, `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`) whenever a
 friend row carries slots; with none, the width is the ceiling and no Redis is
 opened:

@@ -82,7 +82,6 @@ usage:
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
   nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
-  nova-config machine list --json [--redis <addr>]         one JSON array: every machine's login, seat, slots, runners, the friend slots charged to it and its width
   nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
   nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
@@ -561,10 +560,6 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
 	redisFlag := liveFlag(fs, k)
-	asJSON := new(bool)
-	if live(k) {
-		asJSON = fs.Bool("json", false, "print one JSON array for a program: every machine's name, login, seat, slots, runners, the friend slots charged to it, and its width (slots less charged; a machine is a sprint member when its width is above 0); the friends' beats are read from --redis when a friend row carries slots")
-	}
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -583,9 +578,6 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	rows, err := st.List(ctx, k.Name)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
-	}
-	if *asJSON {
-		return printMachinesJSON(ctx, st, rows, *redisFlag, stdout, stderr, d)
 	}
 	var bs map[string]*config.Beat
 	if live(k) {

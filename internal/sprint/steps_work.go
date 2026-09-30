@@ -968,6 +968,9 @@ type FleetReq struct {
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
 	Sync []SyncMember `json:",omitempty"`
+	// HeldBy, with hold, marks the hold as made by that mechanism (the sync's,
+	// fleet_sync.go) and not the coordinator's: the control card's held_by.
+	HeldBy string `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -1079,7 +1082,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				set[FieldWidth] = itoa(r.Width)
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
-				unset = append(unset, "held")
+				unset = append(unset, "held", FieldHeldBy)
 				if !comeUp {
 					line = r.Member + " released, down until it beats"
 				}
@@ -1132,13 +1135,22 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		set["status"], set["since"] = Down, stamp(s.Now)
 		n = statusNote(s, r, NMemberDown, "down")
 	}
+	var unset []string
 	if r.Op == "hold" && ctl.F("held") == "" {
 		set["held"] = stamp(s.Now)
 		line = r.Member + " held down"
+		// who made the hold: the sync marks its own, so that it alone releases
+		// it (fleet_sync.go); a coordinator's hold carries no mark, and a
+		// mark left by an earlier hold is cleared
+		if r.HeldBy != "" {
+			set[FieldHeldBy] = r.HeldBy
+		} else {
+			unset = append(unset, FieldHeldBy)
+		}
 	}
 	var head []Change
-	if len(set) > 0 {
-		head = append(head, change(Fleet, setEntry(ctl, set)))
+	if len(set) > 0 || len(unset) > 0 {
+		head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
 	}
 	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 	SortCards(cards)

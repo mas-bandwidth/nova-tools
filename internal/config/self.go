@@ -40,14 +40,19 @@ type SelfSource struct {
 var ErrNoTailnet = errors.New("no tailnet on this host")
 
 // SelfName is this machine's name as the config keys it, and how it was
-// learnt: NOVA_MACHINE when set, else the first label of the host's name on
+// learnt: NOVA_MACHINE when set (lower-cased, and refused when it is no valid
+// machine name), else the first label of the host's name on
 // the tailnet when a tailnet is present and running, else the first label of
 // the hostname. Names are lower-case. It refuses when none of the three
 // yields a name. It never reads the inventory: whether the name is a machine
 // row is the caller's check (machine self --check).
 func SelfName(ctx context.Context, src SelfSource) (name, how string, err error) {
 	if v := src.Getenv(EnvMachine); v != "" {
-		return v, SelfEnv, nil
+		n := strings.ToLower(v)
+		if err := ValidateName(n); err != nil {
+			return "", "", fmt.Errorf("%s=%q is no machine name: %v", EnvMachine, v, err)
+		}
+		return n, SelfEnv, nil
 	}
 	if src.Tailscale != nil {
 		raw, terr := src.Tailscale(ctx)

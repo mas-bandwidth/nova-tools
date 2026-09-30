@@ -21,7 +21,10 @@ import (
 // now: the CI legs running on the machine (the beat's ci, nova-tools#4293)
 // and every other child hold slots of the ceiling moment by moment, and they
 // are taken off at the take, by a lease from the machine's one slot store
-// (the member takes min(width - held, free leases)), never here.
+// (nova-swarm slots take, internal/swarm.TakeSlotLeases; the member takes
+// min(width - held, free leases)), never here. The one subtraction below is
+// exempt from the CI-legs class rule for that reason (TestSlotsShrinkByCILegs,
+// internal/ci/cipriority_class_test.go).
 //
 // A machine with slots above 0 is a sprint member when it has room left
 // (width 1 or more). A machine whose friends take the whole ceiling has width
@@ -33,8 +36,8 @@ import (
 // sprint.
 type MachineWidth struct {
 	Machine string
-	// Ceiling is the machine's ceiling, the row's slots field.
-	Ceiling int
+	// Slots is the machine's ceiling, the row's slots field.
+	Slots int
 	// Charged is the sum of the desired slots of the friends charged to the
 	// machine.
 	Charged int
@@ -102,9 +105,9 @@ func Widths(ctx context.Context, st Store, hosts HostReader) ([]MachineWidth, er
 	}
 	out := make([]MachineWidth, 0, len(machines))
 	for _, m := range machines {
-		w := MachineWidth{Machine: m.Name, Ceiling: m.Int("slots"), Charged: charged[m.Name]}
-		if w.Ceiling > w.Charged {
-			w.Width = w.Ceiling - w.Charged
+		w := MachineWidth{Machine: m.Name, Slots: m.Int("slots"), Charged: charged[m.Name]}
+		if w.Slots > w.Charged {
+			w.Width = w.Slots - w.Charged
 		}
 		out = append(out, w)
 	}
@@ -125,5 +128,5 @@ func WidthOf(ws []MachineWidth, name string) (w MachineWidth, found bool) {
 
 // Line is the width's one printed line.
 func (w MachineWidth) Line() string {
-	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + strconv.Itoa(w.Width) + " slots=" + strconv.Itoa(w.Ceiling) + " charged=" + strconv.Itoa(w.Charged) + " member=" + strconv.FormatBool(w.Member())
+	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + strconv.Itoa(w.Width) + " slots=" + strconv.Itoa(w.Slots) + " charged=" + strconv.Itoa(w.Charged) + " member=" + strconv.FormatBool(w.Member())
 }

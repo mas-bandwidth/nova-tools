@@ -45,9 +45,11 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 		return exitCannotRead
 	}
 	if *check {
+		// under --check exit 2 is "no such row" alone: no store to read is 3
 		dsn, err := pgDSN(*pg, d.getenv)
 		if err != nil {
-			return refuse(stderr, verb, err.Error())
+			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneLine(err))
+			return exitCannotRead
 		}
 		st, err := d.openStore(ctx, dsn)
 		if err != nil {
@@ -97,7 +99,7 @@ type widthJSON struct {
 }
 
 func toJSON(w config.MachineWidth) widthJSON {
-	return widthJSON{Machine: w.Machine, Slots: w.Ceiling, Charged: w.Charged, Width: w.Width, Member: w.Member()}
+	return widthJSON{Machine: w.Machine, Slots: w.Slots, Charged: w.Charged, Width: w.Width, Member: w.Member()}
 }
 
 // runMachineWidth is `machine width <name>`: the width of the sprint's member
@@ -152,33 +154,4 @@ func mustMachine() *config.Kind {
 		panic(errors.New("the machine kind is not registered"))
 	}
 	return k
-}
-
-// machineJSON is one machine row of `machine list --json`: its declared
-// fields and its width.
-type machineJSON struct {
-	widthJSON
-	User    string `json:"user"`
-	Seat    string `json:"seat"`
-	Runners int    `json:"runners"`
-}
-
-// printMachinesJSON is `machine list --json`: one array, in name order.
-func printMachinesJSON(ctx context.Context, st config.Store, rows []config.Row, redisFlag string, stdout, stderr io.Writer, d deps) int {
-	const verb = "machine list"
-	ws, err := widths(ctx, st, redisFlag, d)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	out := make([]machineJSON, 0, len(rows))
-	for _, r := range rows {
-		w, _ := config.WidthOf(ws, r.Name)
-		out = append(out, machineJSON{widthJSON: toJSON(w), User: r.Fields["user"], Seat: r.Fields["seat"], Runners: r.Int("runners")})
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	fmt.Fprintln(stdout, string(b))
-	return 0
 }

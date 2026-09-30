@@ -1745,8 +1745,7 @@ nova-config <kind> show <name>                                           # one l
 nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
 nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
-nova-config machine list --json [--redis <addr>]                        # one JSON array: every machine's login, seat, slots, runners, the friend slots charged to it and its width
-nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]  # the room the sprint's member has: slots less the slots of the friends charged to the machine; above 0 it is a member (a Redis when a friend row carries slots)
+nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]  # the room the sprint's member has: slots less the slots of the friends charged to the machine (every friend with no beat on the store is charged to the coordinator machine); above 0 it is a member (a Redis when a friend row carries slots)
 nova-config machine self [--check] [--pg <dsn>]                          # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
 nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over

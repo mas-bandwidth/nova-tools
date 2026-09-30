@@ -90,16 +90,20 @@ func (l lazyHosts) FriendHosts(ctx context.Context, names []string) (map[string]
 	return (&config.RedisApplier{Client: conn.Client()}).FriendHosts(ctx, names)
 }
 
-// syncReport is fleet sync's --json output.
+// syncReport is fleet sync's --json output, one shape whether the verb
+// checked, had nothing to write, or wrote: what differed (Drift), what the
+// write moved and refused, and the error when the step could not finish.
 type syncReport struct {
 	Verb    string      `json:"verb"`
 	Check   bool        `json:"check"`
 	Members int         `json:"members"`
 	Drift   []syncDrift `json:"drift"`
-	// Held are the members the inventory names that the coordinator holds: the
-	// sync leaves their hold.
-	Held    []string `json:"held,omitempty"`
-	Changed bool     `json:"changed"`
+	// Held are the members the inventory names that the coordinator holds:
+	// the sync leaves their hold.
+	Held    []string `json:"held"`
+	Moved   []string `json:"moved"`
+	Refused []string `json:"refused"`
+	Error   string   `json:"error,omitempty"`
 }
 
 type syncDrift struct {
@@ -123,6 +127,12 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	}
 	st, err := a.store(*c)
 	if err != nil {
+		if *check {
+			// under --check exit 2 is drift alone: a store that is missing or
+			// does not answer is the family's 3
+			fmt.Fprintf(stderr, "%s %s: the sprint store cannot be read: %s; nothing was changed\n", prog, name, oneline.Escape(err.Error()))
+			return exitCannotRead
+		}
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
@@ -149,11 +159,17 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	snap, err := st.Load(ctx, []string{sprint.Fleet, sprint.Work}, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
+		if *check {
+			return exitCannotRead
+		}
 		return 2
 	}
 	drift := sprint.FleetDrift(snap, want)
 	held := sprint.HeldInInventory(snap, want)
-	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held}
+	if held == nil {
+		held = []string{}
+	}
+	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Moved: []string{}, Refused: []string{}}
 	for _, d := range drift {
 		rep.Drift = append(rep.Drift, syncDrift{Member: d.Member, Kind: d.Kind, From: d.From, To: d.To})
 	}
@@ -163,7 +179,11 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	if len(drift) == 0 {
 		return a.syncNothing(c.json, rep, stdout)
 	}
-	code := a.runStep(name, *c, st, store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Who: c.actor}), stdout, stderr)
+	step := store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Who: c.actor})
+	if c.json {
+		return a.syncWriteJSON(ctx, c, st, step, rep, stdout)
+	}
+	code := a.runStep(name, *c, st, step, stdout, stderr)
 	if code == 0 {
 		for _, m := range held {
 			fmt.Fprintf(stdout, "NOTE %s is held by the coordinator and stays held; run: nova-sprint fleet up %s\n", oneline.Escape(m), oneline.Escape(m))
@@ -195,6 +215,34 @@ func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdou
 		return code
 	}
 	fmt.Fprintf(stdout, "FLEET-SYNC CHECK DRIFT drift=%d members=%d: run: nova-sprint fleet sync\n", len(drift), rep.Members)
+	return code
+}
+
+// syncWriteJSON writes the sync and prints the one JSON shape: the exit code
+// is the step's, as the lines' is (1 refused, 2 the store did not answer).
+func (a *app) syncWriteJSON(ctx context.Context, c *common, st *store.Store, step store.Step, rep syncReport, stdout io.Writer) int {
+	step.CallerOp = c.op
+	res, err := st.Run(ctx, step)
+	code := 0
+	if res.Moved != nil {
+		rep.Moved = res.Moved
+	}
+	for _, r := range res.Refused {
+		rep.Refused = append(rep.Refused, r.Key+": "+r.Why)
+		code = 1
+	}
+	if err != nil {
+		rep.Error = err.Error()
+		code = 2
+		var pe *store.PendingError
+		var cut *store.CutError
+		var cleared *store.ClearedError
+		if errors.As(err, &pe) || errors.As(err, &cut) || errors.As(err, &cleared) {
+			code = 1
+		}
+	}
+	b, _ := json.Marshal(rep)
+	fmt.Fprintln(stdout, string(b))
 	return code
 }
 

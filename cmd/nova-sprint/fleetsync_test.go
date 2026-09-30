@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // inventory is nova-config's in-memory store, and the fleet sync's reader
@@ -76,6 +79,21 @@ func (ta *testApp) fleetRows() map[string]fleetRow {
 		out[name] = fleetRow(row)
 	}
 	return out
+}
+
+// ctlStatus is the status the member's control card stores, not the view's
+// derived one (the view shows up for any member with a fresh beat).
+func (ta *testApp) ctlStatus(member string) string {
+	ta.t.Helper()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	if err != nil {
+		ta.t.Fatal(err)
+	}
+	snap, err := st.Load(context.Background(), []string{sprint.Fleet, sprint.Work}, nil)
+	if err != nil {
+		ta.t.Fatal(err)
+	}
+	return snap.MemberCtl(member).F("status")
 }
 
 // dealIndex is the fleet table's rolling index, as the store holds it.
@@ -216,7 +234,7 @@ func TestFleetSyncTwiceWritesNothingTheSecondTime(t *testing.T) {
 	}
 	var rep syncReport
 	ta.json("fleet sync", &rep)
-	if rep.Changed || len(rep.Drift) != 0 || rep.Members != 2 {
+	if len(rep.Drift) != 0 || len(rep.Moved) != 0 || rep.Members != 2 {
 		t.Fatalf("--json of a sync with nothing to do: %+v", rep)
 	}
 }
@@ -249,7 +267,7 @@ func TestFleetSyncCheckPrintsTheDriftExitsTwoAndWritesNothing(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("--json check: exit %d", code)
 	}
-	if err := jsonInto(raw, &rep); err != nil || !rep.Check || len(rep.Drift) != 3 || rep.Changed {
+	if err := jsonInto(raw, &rep); err != nil || !rep.Check || len(rep.Drift) != 3 || len(rep.Moved) != 0 {
 		t.Fatalf("--json check: %v %+v", err, rep)
 	}
 	// the sync writes exactly what the check printed, then the check is clean
@@ -381,6 +399,8 @@ func TestSyncAfterSyncIsSync(t *testing.T) {
 			switch {
 			case w.Member() && rows[w.Machine]["width"] != fmt.Sprint(w.Width):
 				t.Fatalf("round %d: %s is at width %q, the inventory says %d", round, w.Machine, rows[w.Machine]["width"], w.Width)
+			case w.Member() && rows[w.Machine]["status"] == sprint.Held:
+				t.Fatalf("round %d: %s is in the inventory with room and is still held", round, w.Machine)
 			case !w.Member() && rows[w.Machine] != nil && rows[w.Machine]["status"] != sprint.Held:
 				t.Fatalf("round %d: %s has no room and is %q, not held", round, w.Machine, rows[w.Machine]["status"])
 			}
@@ -398,3 +418,184 @@ func TestSyncAfterSyncIsSync(t *testing.T) {
 }
 
 func jsonInto(raw string, v any) error { return json.Unmarshal([]byte(raw), v) }
+
+// TestFleetSyncAddsANewMemberDownUntilItBeats: a member the fleet lacks is
+// added down even with a fresh beat, and never up by the sync: presence
+// brings it up at the tick (fleet_sync.go, the add).
+func TestFleetSyncAddsANewMemberDownUntilItBeats(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	ta.ok("fleet sync") // every command beats m1 and m2 first: its beat is fresh
+	if st := ta.ctlStatus("m1"); st != sprint.Down {
+		t.Fatalf("a new member with a fresh beat is stored %q after the sync, want down until the tick", st)
+	}
+	ta.ok("start")
+	ta.ok("tick")
+	if st := ta.ctlStatus("m1"); st != sprint.Up {
+		t.Fatalf("presence did not bring it up: %q", st)
+	}
+}
+
+// TestFleetSyncRedealsToTheWidthsItSets: the cards of a member the sync holds
+// go to the members that stay at the widths the same sync gives them (the
+// receivers' room), not the widths the table held.
+func TestFleetSyncRedealsToTheWidthsItSets(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	ta.live = []string{"m1", "m2", "m3"}
+	inv.set("m1", 1)
+	inv.set("m2", 4)
+	inv.set("m3", 1)
+	ta.ok("fleet sync")
+	ta.ok("add --stream s1 --count 6")
+	ta.ok("start")
+	ta.ok("tick")
+	rows := ta.fleetRows()
+	held := func(m string) int {
+		a, _ := strconv.Atoi(rows[m]["ready"])
+		b, _ := strconv.Atoi(rows[m]["working"])
+		return a + b
+	}
+	if held("m1") != 1 || held("m2") != 4 || held("m3") != 1 {
+		t.Fatalf("the deal: %v", rows)
+	}
+	inv.set("m1", 10)
+	inv.remove("m2")
+	ta.ok("fleet sync")
+	rows = ta.fleetRows()
+	if held("m1") != 5 || held("m3") != 1 || held("m2") != 0 {
+		t.Fatalf("m2's four cards go to m1, which the sync widened to 10, and none to m3, full at 1: m1=%d m2=%d m3=%d", held("m1"), held("m2"), held("m3"))
+	}
+}
+
+// TestFleetSyncIsAllOrNone: one member the fleet refuses refuses the whole
+// step: the other members are not added either.
+func TestFleetSyncIsAllOrNone(t *testing.T) {
+	t.Parallel()
+	ta, _ := syncApp(t)
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := st.Run(context.Background(), store.FleetStep(sprint.FleetReq{Op: "sync", Who: "tester",
+		Sync: []sprint.SyncMember{{Name: "m1", Width: 4}, {Name: "m2", Width: sprint.MaxWidth + 1}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Refused) == 0 || len(res.Moved) != 0 {
+		t.Fatalf("a sync with a refused member: moved %v refused %v", res.Moved, res.Refused)
+	}
+	if rows := ta.fleetRows(); len(rows) != 0 {
+		t.Fatalf("the valid member was written alone: %v", rows)
+	}
+}
+
+// TestFleetSyncReleasesItsOwnHoldAndNotTheCoordinators: a machine the sync
+// held that is back in the inventory with room is released (the check calls
+// it drift), and comes up when it beats; a hold the coordinator made stays,
+// even on a machine the sync once held.
+func TestFleetSyncReleasesItsOwnHoldAndNotTheCoordinators(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	inv.set("m2", 4)
+	ta.ok("fleet sync")
+	ta.ok("start")
+	ta.ok("tick")
+	inv.set("m2", 0)
+	ta.ok("fleet sync")
+	if st := ta.fleetRows()["m2"]["status"]; st != sprint.Held {
+		t.Fatalf("m2 after it left: %q", st)
+	}
+	inv.set("m2", 6)
+	code, out, _ := ta.do("fleet sync --check")
+	if code != 2 || !strings.Contains(out, "DRIFT release m2 was held by the sync and is back in the inventory: release it") || !strings.Contains(out, "DRIFT width m2") {
+		t.Fatalf("check: exit %d\n%s", code, out)
+	}
+	out = ta.ok("fleet sync")
+	if !strings.Contains(out, "MOVED m2 released, down until it beats, width=6 (was 4)") {
+		t.Fatalf("sync:\n%s", out)
+	}
+	ta.ok("tick")
+	if st := ta.fleetRows()["m2"]["status"]; st != sprint.Up {
+		t.Fatalf("m2 did not come up when it beat: %q", st)
+	}
+	if out := ta.ok("fleet sync"); !strings.Contains(out, "nothing to do") {
+		t.Fatalf("after the release:\n%s", out)
+	}
+	// the coordinator's own hold, on the machine the sync once held, stays
+	ta.ok("fleet down m2")
+	inv.set("m2", 7)
+	out = ta.ok("fleet sync")
+	if !strings.Contains(out, "NOTE m2 is held by the coordinator") {
+		t.Fatalf("the coordinator's hold is not said:\n%s", out)
+	}
+	if st := ta.fleetRows()["m2"]["status"]; st != sprint.Held {
+		t.Fatalf("the sync released the coordinator's hold: %q", st)
+	}
+}
+
+// TestFleetSyncCheckIsThreeWhenTheStoreIsMissing: under --check exit 2 is
+// drift alone; a sprint store that cannot be reached is 3, and without
+// --check it is the usage 2.
+func TestFleetSyncCheckIsThreeWhenTheStoreIsMissing(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	code, _, errs := ta.do("fleet sync --check --redis=")
+	if code != 3 || !strings.Contains(errs, "the sprint store cannot be read") {
+		t.Fatalf("--check with no store: exit %d %q", code, errs)
+	}
+	if code, _, _ := ta.do("fleet sync --redis="); code != 2 {
+		t.Fatalf("sync with no store: exit %d, want the usage 2", code)
+	}
+}
+
+// TestFleetSyncJSONIsOneShape: the same fields whether the verb checked, had
+// nothing to write, or wrote.
+func TestFleetSyncJSONIsOneShape(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	keys := func(raw string) string {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatalf("%v\n%s", err, raw)
+		}
+		var ks []string
+		for k := range m {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		return strings.Join(ks, ",")
+	}
+	_, check, _ := ta.do("fleet sync --check --json")
+	_, wrote, _ := ta.do("fleet sync --json")
+	_, nothing, _ := ta.do("fleet sync --json")
+	if keys(check) != keys(wrote) || keys(wrote) != keys(nothing) {
+		t.Fatalf("shapes differ:\n%s\n%s\n%s", check, wrote, nothing)
+	}
+	var rep syncReport
+	if err := json.Unmarshal([]byte(wrote), &rep); err != nil || len(rep.Moved) != 1 || !strings.Contains(rep.Moved[0], "m1 added") {
+		t.Fatalf("the write's report: %v %+v", err, rep)
+	}
+}
+
+// TestAClearKeepsWhoMadeAHold: the sync's mark on its hold crosses a clear, so
+// the sync still releases its own hold afterwards and never the coordinator's.
+func TestAClearKeepsWhoMadeAHold(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	inv.set("m2", 4)
+	ta.ok("fleet sync")
+	inv.set("m2", 0)
+	ta.ok("fleet sync")
+	ta.ok("clear --confirm sprint")
+	inv.set("m2", 4)
+	code, out, _ := ta.do("fleet sync --check")
+	if code != 2 || !strings.Contains(out, "DRIFT release m2") {
+		t.Fatalf("after the clear: exit %d\n%s", code, out)
+	}
+}
