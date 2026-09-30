@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -57,13 +58,14 @@ func TestTheMemsWaitOnTheLogWakesOnALine(t *testing.T) {
 
 // With no LogWait the Mem waits for a commit: a wait with an hour to go
 // returns as soon as another writer's line lands. The wait is bounded by a
-// deadline, so a wait that is never woken fails the test in seconds and not at
-// the package's timeout, and the line lands after the wait began.
+// deadline, so a wait that is never woken fails the test at the deadline and not
+// at the package's timeout, and the line lands after the wait began.
 func TestTheMemsWaitReturnsOnACommit(t *testing.T) {
 	t.Parallel()
 	m := NewMem()
 	st := &Store{B: m, Names: sprint.Names{}, Now: func() time.Time { return time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC) }}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// the bound of a wait that is never woken: never waited out while it is
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	type outcome struct {
 		woke bool
@@ -82,7 +84,7 @@ func TestTheMemsWaitReturnsOnACommit(t *testing.T) {
 		if began {
 			break
 		}
-		time.Sleep(time.Millisecond)
+		runtime.Gosched()
 	}
 	if _, err := st.Run(context.Background(), Step{Verb: "note", Plan: func(s *sprint.Snapshot) sprint.Plan {
 		return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: sprint.NMachineStarted, Who: "tester", At: s.Now, What: "a line"}}}

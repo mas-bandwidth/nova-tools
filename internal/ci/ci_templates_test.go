@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"go/parser"
 	"os"
 	"path/filepath"
 	"strings"
@@ -280,5 +281,32 @@ func TestNoUnquotedPathsInTemplateLiterals(t *testing.T) {
 	list := loadAllowlist(t, allow, FileLineListOptions)
 	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
 		t.Errorf("%s:%d: %q names no offender on the tree; %s", allow, row.Line, row.Text, TemplateRemedyAllow)
+	}
+}
+
+// flattenAdds splits a chain of additions into its operands, and only additions:
+// another operator's operands stay together as one.
+func TestFlattenAddsSplitsOnlyAdditions(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{"a", 1},
+		{"a + b", 2},
+		{"a + b + c", 3},
+		{"a - b", 1},
+		{"a * b", 1},
+		{"a + b*c", 2},
+		{"a - b + c", 2},
+	} {
+		e, err := parser.ParseExpr(c.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(flattenAdds(e)); got != c.want {
+			t.Errorf("flattenAdds(%q) has %d operands, want %d", c.src, got, c.want)
+		}
 	}
 }
