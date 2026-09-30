@@ -178,7 +178,9 @@ do
     -- Commands the derive phase staged for x_cmds to append (SP.intent_commands)
     -- that it left behind are refused, never dropped: open would be lowered with
     -- the card still in wait:<n> (I2). Nothing has been written yet (IT14).
-    if SP.intent_commands_pending and SP.intent_commands_pending(ctx) then return S.json.encode(S.refuse('CONFIG')) end
+    if SP.intent_commands_pending and SP.intent_commands_pending(ctx) then
+      return S.json.encode(S.refuse('CONFIG', {}, 'the derive phase staged commands on wait:<n> or missing that X.plan did not take'))
+    end
     if jp then
       local j_cmds
       j_cmds, err = needed(S, 'j_cmds')

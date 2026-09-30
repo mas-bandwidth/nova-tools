@@ -1114,6 +1114,13 @@ do
     end
     if nchanged ~= 0 then return poison end
     if #args > 0 and not stage('HSET', ekey(ctx, KEY_VERSION, e), 'hash', args) then return poison end
+    -- the derive phase's commands on wait:<n> and missing (SP.intent_commands,
+    -- sprint_intents.lua), last, as the twin's UseIntents ends XCmds with them:
+    -- a step with a need (add --needs, a waitfor) stages them, and the core
+    -- refuses a step that leaves them behind
+    if SP.intent_commands then
+      for _, d in ipairs(SP.intent_commands(ctx)) do plan.commands[#plan.commands + 1] = d end
+    end
     return plan
   end
 
