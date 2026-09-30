@@ -679,7 +679,7 @@ func TestInstallLockIsReleasedWhenTheHolderIsSignalled(t *testing.T) {
 	}
 	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int {
 		assert.True(t, h.lockHeld(), "the install runs with the lock held")
-		raise() // the signal arrives mid-install
+		raise()            // the signal arrives mid-install
 		exited <- <-exited // the signal ended the install; the code stays for the assertion below
 		return 1
 	})

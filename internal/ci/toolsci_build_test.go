@@ -11,6 +11,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// redisInstallCall is the workflow line that installs redis-server: the verb, called
+// on the binary every job builds once.
+const redisInstallCall = `"$RUNNER_TEMP/ci" install-redis-server`
+
 // TestToolsCIIsBuiltOnceAndNeverRun holds every workflow to the one way a job
 // reaches tools/ci: the job builds the verbs ONCE, in an early step after its Go
 // setup, and every later step calls the binary at "$RUNNER_TEMP/ci". `go run

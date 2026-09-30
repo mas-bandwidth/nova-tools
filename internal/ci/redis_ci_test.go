@@ -17,12 +17,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// redisInstallCall is the workflow line that installs redis-server, and
-// redisInstallerSource is the Go that line runs.
-const (
-	redisInstallCall     = `"$RUNNER_TEMP/ci" install-redis-server`
-	redisInstallerSource = "tools/ci/installredis.go"
-)
+// redisInstallerSource is the Go the workflows' redisInstallCall (toolsci_build_test.go) runs.
+const redisInstallerSource = "tools/ci/installredis.go"
 
 // TestRedisBackedTestsDoNotSkipUnderCI is #3113. With NOVA_CI=1 and
 // redis-server on PATH, a redis-backed control runs (in the functional tier,
