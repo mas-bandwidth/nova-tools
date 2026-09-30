@@ -326,7 +326,7 @@ func TestXSecondRunWritesNothing(t *testing.T) {
 	h.xTwice("a quarantine", func() *Request {
 		r := xTick(1)
 		r.Body.Quarantine = []Quarantined{{ID: "p1", Stream: "s1", Code: "DRIFT", Rule: "resolve", Cells: []string{"s1:waiting"}}}
-		r.Sprint = &SprintPart{}
+		r.Sprint = &SprintPart{Quarantine: append([]Quarantined(nil), r.Body.Quarantine...)}
 		return r
 	})
 	h.xTwice("a change that changes nothing", func() *Request {

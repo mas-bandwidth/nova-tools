@@ -34,6 +34,10 @@ do
     end
     local ok, sp = pcall(S.json.decode, raw)
     if not ok or type(sp) ~= 'table' or type(sp.meta) ~= 'table' then return nil, S.refuse('REQUEST') end
+    -- The sprint part owns the quarantine's records (sprint_parts.lua): a body
+    -- that quarantines a card the part does not carry would be lost, since a
+    -- part runs only when its field is set.
+    if SP.quarantine_carried and not SP.quarantine_carried(sp) then return nil, S.refuse('REQUEST') end
     return sp, nil
   end
   -- A phase the step needs and no file registered: CONFIG, before any write.

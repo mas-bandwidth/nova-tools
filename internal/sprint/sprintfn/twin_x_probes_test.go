@@ -31,7 +31,8 @@ func TestXProbesOnEveryPart(t *testing.T) {
 		req.Body.Requeue = []string{"ask@5+10"}
 		req.Body.Quarantine = []Quarantined{{ID: "p2", Stream: "s1", Code: "DRIFT", Rule: "resolve"}}
 		req.Body.Notes = []NoteReq{{Op: "open", Type: "invariant", Cause: "drift", Subjects: []string{"p2"}}}
-		req.Sprint = &SprintPart{Counter: &CounterChange{Read: map[string]string{"score": "1000"}, Set: map[string]string{"score": "1001"}}}
+		req.Sprint = &SprintPart{Counter: &CounterChange{Read: map[string]string{"score": "1000"}, Set: map[string]string{"score": "1001"}},
+			Quarantine: append([]Quarantined(nil), req.Body.Quarantine...)}
 		return req
 	}
 	many := func(table, to, prefix string, from, n int) tset.Entry {

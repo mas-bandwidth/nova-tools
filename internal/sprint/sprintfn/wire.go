@@ -104,6 +104,11 @@ func encodeStep(prefix string, req *Request) (encodedStep, *Refusal) {
 	if req.Pop != nil && (req.Pop.Limit < 1 || req.Pop.Limit > PopMax) {
 		return encodedStep{}, refuse(PhaseOpen, CodeRequest, RefusalDetail{})
 	}
+	// The sprint part owns the quarantine's records: a quarantine that only the
+	// body names would be lost, since a part runs only when its field is set.
+	if !quarantineCarried(req) {
+		return encodedStep{}, refuse(PhaseOpen, CodeRequest, RefusalDetail{})
+	}
 	if req.Clock != nil {
 		switch req.Clock.Verb {
 		case ClockInit, ClockStart, ClockStop, ClockClear:
@@ -320,10 +325,27 @@ type clockWire struct {
 type sprintPartWire struct {
 	Counter     *counterWire      `json:"counter,omitempty"`
 	Dropping    map[string]string `json:"dropping,omitempty"`
+	Undrop      map[string]string `json:"undrop,omitempty"`
 	Goals       map[string]string `json:"goals,omitempty"`
 	Sweep       string            `json:"sweep,omitempty"`
-	Park        map[string]string `json:"park,omitempty"`
+	Park        []parkedWire      `json:"park,omitempty"`
+	Unpark      []string          `json:"unpark,omitempty"`
 	Coordinator string            `json:"coordinator,omitempty"`
+	Quarantine  []quarantineWire  `json:"quarantine,omitempty"`
+	TickEnd     *tickEndWire      `json:"tickend,omitempty"`
+}
+
+type parkedWire struct {
+	Key    string `json:"key"`
+	Rule   string `json:"rule,omitempty"`
+	Code   string `json:"code"`
+	Budget string `json:"budget,omitempty"`
+	Actual string `json:"actual,omitempty"`
+	Limit  string `json:"limit,omitempty"`
+}
+
+type tickEndWire struct {
+	Backlog tset.Decimal `json:"backlog"`
 }
 
 type counterWire struct {
@@ -386,9 +408,23 @@ func sprintWireOf(req *Request) sprintWire {
 		w.Clock = &clockWire{Verb: c.Verb}
 	}
 	if s := req.Sprint; s != nil {
-		sw := &sprintPartWire{Dropping: s.Dropping, Goals: s.Goals, Sweep: s.Sweep, Park: s.Park, Coordinator: s.Coordinator}
+		sw := &sprintPartWire{Dropping: s.Dropping, Undrop: s.Undrop, Goals: s.Goals, Sweep: s.Sweep, Unpark: s.Unpark,
+			Coordinator: s.Coordinator}
 		if s.Counter != nil {
 			sw.Counter = &counterWire{Read: s.Counter.Read, Set: s.Counter.Set}
+		}
+		for _, k := range s.Park {
+			sw.Park = append(sw.Park, parkedWire{Key: k.Key, Rule: k.Rule, Code: k.Code, Budget: k.Budget, Actual: k.Actual, Limit: k.Limit})
+		}
+		for _, q := range s.Quarantine {
+			cells := q.Cells
+			if cells == nil {
+				cells = []string{}
+			}
+			sw.Quarantine = append(sw.Quarantine, quarantineWire{ID: q.ID, Stream: q.Stream, Code: q.Code, Rule: q.Rule, Cells: cells})
+		}
+		if s.TickEnd != nil {
+			sw.TickEnd = &tickEndWire{Backlog: s.TickEnd.Backlog}
 		}
 		w.Sprint = sw
 	}
