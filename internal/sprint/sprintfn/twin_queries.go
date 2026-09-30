@@ -124,8 +124,12 @@ func (e *qeval) over(budget string, actual, limit int) *Refusal {
 }
 
 // probe charges one cell or key probe.
-func (e *qeval) probe() *Refusal {
-	e.c.Probes++
+func (e *qeval) probe() *Refusal { return e.probes(1) }
+
+// probes charges n cell or key probes: Layer 1's checked probe charges every
+// name an HMGET or a ZMSCORE asks for, a cell each, and any other probe one.
+func (e *qeval) probes(n int) *Refusal {
+	e.c.Probes += n
 	if e.c.Probes > queryMaxProbes {
 		return e.over("cell", e.c.Probes, queryMaxProbes)
 	}
@@ -284,10 +288,10 @@ func (e *qeval) typed(key, kind string) *Refusal {
 // and a slack, is DRIFT (budget read_reservation), as Layer 1's checked probe
 // refuses it.
 func (e *qeval) hmget(key string, fields []string, per int) ([]*string, *Refusal) {
-	if ref := e.typed(key, kindHash); ref != nil {
+	if ref := e.probes(len(fields)); ref != nil {
 		return nil, ref
 	}
-	if ref := e.probe(); ref != nil {
+	if ref := e.typed(key, kindHash); ref != nil {
 		return nil, ref
 	}
 	out := make([]*string, len(fields))
@@ -308,10 +312,10 @@ func (e *qeval) hmget(key string, fields []string, per int) ([]*string, *Refusal
 
 // hlen is one HLEN probe.
 func (e *qeval) hlen(key string) (int, *Refusal) {
-	if ref := e.typed(key, kindHash); ref != nil {
+	if ref := e.probe(); ref != nil {
 		return 0, ref
 	}
-	if ref := e.probe(); ref != nil {
+	if ref := e.typed(key, kindHash); ref != nil {
 		return 0, ref
 	}
 	if v := e.t.keys.vals[key]; v != nil {
@@ -322,10 +326,10 @@ func (e *qeval) hlen(key string) (int, *Refusal) {
 
 // zscores is one ZMSCORE probe: each member's score, nil for one the set lacks.
 func (e *qeval) zscores(key string, members []string) ([]*string, *Refusal) {
-	if ref := e.typed(key, kindZSet); ref != nil {
+	if ref := e.probes(len(members)); ref != nil {
 		return nil, ref
 	}
-	if ref := e.probe(); ref != nil {
+	if ref := e.typed(key, kindZSet); ref != nil {
 		return nil, ref
 	}
 	out := make([]*string, len(members))
@@ -349,10 +353,10 @@ func (e *qeval) zscore(key, member string) (*string, *Refusal) {
 
 // zcount is one ZCOUNT probe over [min, max] in Redis's bound grammar.
 func (e *qeval) zcount(key, min, max string) (int, *Refusal) {
-	if ref := e.typed(key, kindZSet); ref != nil {
+	if ref := e.probe(); ref != nil {
 		return 0, ref
 	}
-	if ref := e.probe(); ref != nil {
+	if ref := e.typed(key, kindZSet); ref != nil {
 		return 0, ref
 	}
 	n := 0
@@ -368,10 +372,10 @@ func (e *qeval) zcount(key, min, max string) (int, *Refusal) {
 // [min, max] by score (then by member), with the lookahead that says whether
 // there were more. One probe; the ids returned are charged as range ids.
 func (e *qeval) rangeHead(key, min, max string, limit int) (ids, scores []string, more bool, ref *Refusal) {
-	if ref = e.typed(key, kindZSet); ref != nil {
+	if ref = e.probe(); ref != nil {
 		return nil, nil, false, ref
 	}
-	if ref = e.probe(); ref != nil {
+	if ref = e.typed(key, kindZSet); ref != nil {
 		return nil, nil, false, ref
 	}
 	for _, p := range e.t.keys.zpairs(key) {
@@ -1125,11 +1129,14 @@ func (t *Twin) queryPhase(st *State, q SprintQuery) (json.RawMessage, *Refusal) 
 
 // ---- the probes a query declares
 
+// Layer 1's checked probe charges a cell for every name an HMGET or a ZMSCORE
+// asks for (S.read_probe: count - 3 more than the command's own cell) and one
+// for any other probe, so the probes a query declares are names and commands,
+// not commands: an id left out or looked up is a probe.
+
 // maxTableColumns is the columns of a table (L1 1.2: at most 32), which bounds
 // the cells a listing counts for each row.
 const maxTableColumns = 32
-
-func ceilDiv(a, b int) int { return (a + b - 1) / b }
 
 // sourceSize is how many ids a source names at most, and the probes that find
 // them: a list costs none, a head one range read, a line one line.
@@ -1158,10 +1165,11 @@ func sourceSize(src sprint.IDSource) (n, probes int) {
 }
 
 // followProbes are the most probes the follows make for one record, and the
-// most records they name besides it (whose quarantine is probed, a chunk at a
-// time): a need costs a probe for its wait:n, jopen one, due one (a card's kinds
-// share a ZMSCORE) and index at most two (a card's place is in at most two
-// definitions, and askwait is read for a card in review).
+// most records they name besides it (whose quarantine is probed, a name each):
+// a need costs a probe for its wait:n, jopen one (its HLEN), due one (a card's
+// kinds share a ZMSCORE, and a card is in one state, so one name) and index at
+// most two (a card's place is in at most two definitions, and askwait is read
+// for a card in review).
 func followProbes(follow []string) (perRecord, targets int) {
 	for _, f := range follow {
 		switch f {
@@ -1190,56 +1198,68 @@ func QueryProbes(q sprint.SprintQ) int {
 	n, found := sourceSize(q.Source)
 	switch q.Kind {
 	case sprint.QueryRelated:
+		// the source's own probes, the quarantine of its ids and of the ids the
+		// follows name, and what each follow probes of each record
 		per, targets := followProbes(q.Follow)
-		return found + ceilDiv(n, probeChunk) + ceilDiv(n*targets, probeChunk) + n*per
+		return found + n + n*targets + n*per
 	case sprint.QueryFront:
 		total := 1 + 1 + 1 + len(openCells) // sigma's head, its quarantine, its row, its five counts
 		for _, h := range q.Heads {
 			per, targets := followProbes(h.Follow)
-			total += 1 + ceilDiv(h.Limit, probeChunk) + ceilDiv(h.Limit*targets, probeChunk) + h.Limit*per
+			total += 1 + h.Limit + h.Limit*targets + h.Limit*per
 		}
 		return total
 	case sprint.QueryWaiters:
-		return found + 2*ceilDiv(n, probeChunk) + n*(1+ceilDiv(q.Limit, probeChunk))
+		// the quarantine and the missing score of each id, and for each the head of
+		// its wait:n and the quarantine of the ids in it
+		return found + 2*n + n*(1+q.Limit)
 	case sprint.QueryStreams:
-		// the rows' head; the quarantine of the control cards and of the need cards
-		// (one probe a chunk of each); a stuck cell's row and range and the
-		// quarantine of its ids, for each stream
-		return 1 + 2*ceilDiv(unitsOf(q), probeChunk) + unitsOf(q)*(2+ceilDiv(q.Limit, probeChunk))
+		// the rows' head; the quarantine of the control cards and of the need cards;
+		// a stuck cell's row and range and the quarantine of its ids, for each stream
+		return 1 + 2*unitsOf(q) + unitsOf(q)*(2+q.Limit)
 	case sprint.QueryFleet, sprint.QueryReaders:
 		// the rows' head, the quarantine of the control cards, and a cell's count
 		// for each column of each row
-		return 1 + ceilDiv(unitsOf(q), probeChunk) + unitsOf(q)*maxTableColumns
+		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns
 	case sprint.QueryNeedchain:
-		return found + 1 + ceilDiv(n, probeChunk) + q.Limit + ceilDiv(q.Limit*followMaxNeeds, probeChunk)
+		// the quarantine of the source's ids, and of every need of every card read
+		return found + n + q.Limit*followMaxNeeds
 	case sprint.QueryJnote:
+		// for each note the quarantine of its subjects, and for each an HLEN and an
+		// HMGET of its own field
 		s := q.Subjects
 		if s <= 0 {
 			s = sprint.MaxAboutIDs
 		}
-		return found + n*(ceilDiv(s, probeChunk)+2*s)
+		return found + n*3*s
 	}
 	return queryMaxProbes
 }
 
-// KeyProbes is the most probes a sprint-key read makes: one HMGET for a hash
-// of fixed fields, an HLEN with it for the hashes whose names the query gives,
-// a ZMSCORE for each 2,000 ids, and the clock's HMGET with a ZCOUNT for the
-// due count.
+// KeyProbes is the most probes a sprint-key read makes: an HMGET of a hash's
+// fixed fields is a probe for each field, an HLEN with it for the hashes whose
+// names the query gives, a ZMSCORE a probe for each id, and the due count the
+// clock's HMGET with a ZCOUNT.
 func KeyProbes(q KeyQ) int {
 	switch q.Kind {
-	case KeyClock, KeyLease, KeyTick, KeyHeartbeat:
-		return 1
+	case KeyClock:
+		return len(ClockFieldNames)
+	case KeyLease:
+		return len(LeaseFieldNames)
+	case KeyTick:
+		return len(TickFieldNames)
+	case KeyHeartbeat:
+		return len(HeartbeatFields)
 	case KeyDueCount:
-		return 2
+		return len(ClockFieldNames) + 1
 	case KeyDropping:
-		return 1 + min(len(q.Streams), 1)
+		return 1 + len(q.Streams)
 	case KeyParked:
-		return 1 + min(len(q.Keys), 1)
+		return 1 + len(q.Keys)
 	case KeyMissing:
-		return ceilDiv(len(q.IDs), probeChunk)
+		return len(q.IDs)
 	case KeyJOpen:
-		return len(q.Subjects) * (1 + min(len(q.Names), 1))
+		return len(q.Subjects) * (1 + len(q.Names))
 	}
 	return queryMaxProbes
 }

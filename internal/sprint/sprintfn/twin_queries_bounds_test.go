@@ -144,10 +144,10 @@ func TestEachFollowIsHeldToTheCostItDeclares(t *testing.T) {
 	}{
 		{"work", one(sprint.Work, "a1", sprint.FollowWork), 2, 2, true},
 		{"withdrawn", one(sprint.Work, "x1", sprint.FollowWithdrawn), 2, 2, true},
-		{"rcards", one(sprint.Work, "c15", sprint.FollowRCards), 1 + 15, 2, true},
+		{"rcards", one(sprint.Work, "c15", sprint.FollowRCards), 1 + 15, 1 + 15, true},
 		{"merge", one(sprint.Work, "q1", sprint.FollowMerge), 2, 2, true},
 		{"control", one(sprint.Work, "p1", sprint.FollowControl), 2, 2, true},
-		{"needs", one(sprint.Work, "b64", sprint.FollowNeeds), 1 + 64, 1 + 1 + 64, true},
+		{"needs", one(sprint.Work, "b64", sprint.FollowNeeds), 1 + 64, 1 + 64 + 64, true},
 		{"member", one(sprint.Fleet, "k1.w1", sprint.FollowMember), 2, 2, true},
 		// jopen, due and index read no record: they are probes, and the design's cost
 		// table counts each as one record beside them, which a query is not held to
@@ -156,8 +156,8 @@ func TestEachFollowIsHeldToTheCostItDeclares(t *testing.T) {
 		{"index", one(sprint.Work, "p1", sprint.FollowIndex), 1, 1 + 2, false},
 		{"index of a ready card", one(sprint.Work, "f1", sprint.FollowIndex), 1, 1 + 2, false},
 		{"front, heads with the index and jopen follows", sprint.SprintQ{Kind: sprint.QueryFront, Stream: "s1", Fields: []string{}, Heads: []sprint.HeadQ{
-			{Index: sprint.HeadEligBelow, Limit: 2, Follow: []string{sprint.FollowIndex, sprint.FollowJOpen}}}}, 3, 8 + 1 + 1 + 2*3, false},
-		{"waiters", sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost"), Limit: 2, Fields: []string{}}, 1 + 2, 4, true},
+			{Index: sprint.HeadEligBelow, Limit: 2, Follow: []string{sprint.FollowIndex, sprint.FollowJOpen}}}}, 3, 8 + 1 + 2 + 2*3, false},
+		{"waiters", sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost"), Limit: 2, Fields: []string{}}, 1 + 2, 1 + 1 + 1 + 2, true},
 	} {
 		_, charge, err := w.tw.QueryFull(c.q)
 		if err != nil {

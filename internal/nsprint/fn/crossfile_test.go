@@ -95,11 +95,20 @@ func nsFieldAvailable(name, field string, exported map[string]string) bool {
 				return true
 			}
 		}
+		// The sprint's composite queries (profile_sprint_queries.go, item IT30) are
+		// sprint fragments too, and open with the same guard.
+		for _, fragment := range sprintQueryFragments {
+			if name == fragment {
+				return true
+			}
+		}
 	}
 	// ns_sprint_step and ns_sprint_read resolve Layer 1's NS.tset and Layer 2's
 	// NS.tlog when a call runs, inside the registered functions (errata 2,
-	// item 8): the sprint profile loads them after the composed fragments.
-	if name == "lua/sprint_zz_fn.lua" && (field == "tset" || field == "tlog") {
+	// item 8): the sprint profile loads them after the composed fragments. The
+	// sprint's queries resolve them the same way, when a query is validated or
+	// read (sprint_queries.lua: Q.S and layers).
+	if (name == "lua/sprint_zz_fn.lua" || name == "lua/sprint_queries.lua") && (field == "tset" || field == "tlog") {
 		return true
 	}
 	// The core resolves this dependency inside registered callbacks, after

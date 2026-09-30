@@ -258,7 +258,9 @@ do
     end
     return Q.MAX_RECORDS, Q.MAX_RANGE_IDS
   end
-  function Q.ceil_div(a, b) return math.floor((a + b - 1) / b) end
+  -- Layer 1's checked probe charges a cell for every name an HMGET or a ZMSCORE
+  -- asks for and one for any other probe, so the probes a query declares are
+  -- names and commands, not commands: an id left out or looked up is a probe.
   -- The probes that find a source's ids: a list costs none, an index head one,
   -- a cell head two (its row, then its range) and a line none (it is a line).
   function Q.source_probes(src)
@@ -269,7 +271,7 @@ do
     return 0
   end
   -- The probes the follows make for one record (per), and the most records
-  -- they name besides it, whose quarantine is probed a chunk at a time.
+  -- they name besides it, whose quarantine is probed a name each.
   function Q.follow_probes(follow)
     local per, targets = 0, 0
     for i = 1, #follow do
@@ -292,54 +294,58 @@ do
   -- sprintfn.QueryProbes: the most cell and key probes a composite query may
   -- make, from its arguments alone.
   function Q.declared_probes(q)
-    local kind, chunk = q.kind, Q.PROBE_CHUNK
+    local kind = q.kind
     if kind == 'front' then
       local total = 3 + #Q.OPEN_CELLS
       for i = 1, #q.heads do
         local h = q.heads[i]
         local per, targets = Q.follow_probes(h.follow)
-        total = total + 1 + Q.ceil_div(h.limit, chunk) + Q.ceil_div(h.limit * targets, chunk) + h.limit * per
+        total = total + 1 + h.limit + h.limit * targets + h.limit * per
       end
       return total
     elseif kind == 'streams' then
       -- the rows' head; the quarantine of the control cards and of the need
-      -- cards (one probe a chunk of each); a stuck cell's row and range and the
-      -- quarantine of its ids, for each stream
+      -- cards; a stuck cell's row and range and the quarantine of its ids, for
+      -- each stream
       local units = q.units or 0
       if units == 0 then units = Q.MAX_STREAMS end
-      return 1 + 2 * Q.ceil_div(units, chunk) + units * (2 + Q.ceil_div(q.limit, chunk))
+      return 1 + 2 * units + units * (2 + q.limit)
     elseif kind == 'fleet' or kind == 'readers' then
       -- the rows' head, the quarantine of the control cards, and a cell's count
       -- for each column of each row
       local units = q.units or 0
       if units == 0 then units = kind == 'fleet' and Q.MAX_MEMBERS or Q.MAX_READERS end
-      return 1 + Q.ceil_div(units, chunk) + units * Q.MAX_COLUMNS
+      return 1 + units + units * Q.MAX_COLUMNS
     end
     local n = Q.source_size(q.src)
     local found = Q.source_probes(q.src)
     if kind == 'related' then
       local per, targets = Q.follow_probes(q.follow)
-      return found + Q.ceil_div(n, chunk) + Q.ceil_div(n * targets, chunk) + n * per
+      return found + n + n * targets + n * per
     elseif kind == 'waiters' then
-      return found + 2 * Q.ceil_div(n, chunk) + n * (1 + Q.ceil_div(q.limit, chunk))
+      return found + 2 * n + n * (1 + q.limit)
     elseif kind == 'needchain' then
-      return found + 1 + Q.ceil_div(n, chunk) + q.limit + Q.ceil_div(q.limit * Q.MAX_NEEDS, chunk)
+      return found + n + q.limit * Q.MAX_NEEDS
     elseif kind == 'jnote' then
       local subjects = q.subjects or 0
       if subjects == 0 then subjects = Q.MAX_ABOUT end
-      return found + n * (Q.ceil_div(subjects, chunk) + 2 * subjects)
+      return found + n * 3 * subjects
     end
     return Q.MAX_PROBES
   end
-  -- The probes a sprint-key read makes at most (sprintfn.KeyProbes).
+  -- The probes a sprint-key read makes at most (sprintfn.KeyProbes): an HMGET
+  -- of a hash's fixed fields is a probe for each field.
   function Q.declared_key_probes(q)
     local kind = q.kind
-    if kind == 'clock' or kind == 'lease' or kind == 'tick' or kind == 'heartbeat' then return 1 end
-    if kind == 'duecount' then return 2 end
-    if kind == 'dropping' then return #q.streams > 0 and 2 or 1 end
-    if kind == 'parked' then return #q.keys > 0 and 2 or 1 end
-    if kind == 'missing' then return Q.ceil_div(#q.ids, Q.PROBE_CHUNK) end
-    if kind == 'jopen' then return #q.subjects * (#q.names > 0 and 2 or 1) end
+    if kind == 'clock' then return #Q.CLOCK_FIELDS end
+    if kind == 'lease' then return #Q.LEASE_FIELDS end
+    if kind == 'tick' then return #Q.TICK_FIELDS end
+    if kind == 'heartbeat' then return #Q.HEARTBEAT_FIELDS end
+    if kind == 'duecount' then return #Q.CLOCK_FIELDS + 1 end
+    if kind == 'dropping' then return 1 + #q.streams end
+    if kind == 'parked' then return 1 + #q.keys end
+    if kind == 'missing' then return #q.ids end
+    if kind == 'jopen' then return #q.subjects * (1 + #q.names) end
     return Q.MAX_PROBES
   end
   -- The cost a query declares, from its arguments alone: the records and range

@@ -392,7 +392,13 @@ func (h *luaHarness) readProbe(L *lua.LState) int {
 	argv := h.strings(L.CheckTable(2))
 	key := L.CheckString(3)
 	reserve := int(L.CheckNumber(5))
+	// Layer 1's checked probe charges a cell for every name an HMGET or a ZMSCORE
+	// asks for (S.read_probe: count - 3 more than the command's own cell), and one
+	// for any other probe.
 	h.charge.Probes++
+	if argv[0] == "HMGET" || argv[0] == "ZMSCORE" {
+		h.charge.Probes += len(argv) - 3
+	}
 	if h.charge.Probes > stubMaxProbes {
 		return h.over(L, "cell", h.charge.Probes, stubMaxProbes)
 	}

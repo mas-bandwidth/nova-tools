@@ -581,9 +581,9 @@ func TestJnoteSubjects(t *testing.T) {
 	if n2.Type != "stalled" || len(n2.Subjects) != 1 || n2.Subjects[0].Count != 2 || own(n2.Subjects[0]) != second {
 		t.Fatalf("the second note: %+v", n2)
 	}
-	// Two notes of three subjects: a line each, a quarantine probe a note, and an
-	// HLEN and an HMGET a subject.
-	if c.Lines != 2 || c.Probes != 2+3*2 {
+	// Two notes of three subjects between them: a line each, a quarantine probe
+	// for each subject, and an HLEN and an HMGET for each.
+	if c.Lines != 2 || c.Probes != 3+3*2 {
 		t.Fatalf("charged %+v", c)
 	}
 	// The open notes as the source: the head of jnotes.
@@ -786,8 +786,8 @@ func TestListings(t *testing.T) {
 		}
 	}
 	// Two members, their control cards, and five cells each; the probes are the
-	// rows' head, one for the quarantine of the control cards and one a cell.
-	if c.Records != 2 || c.Probes != 1+1+10 || c.RowIDs != 2 {
+	// rows' head, one for the quarantine of each control card and one a cell.
+	if c.Records != 2 || c.Probes != 1+2+10 || c.RowIDs != 2 {
 		t.Fatalf("charged %+v", c)
 	}
 	a := l.Project(sprint.SprintQ{Kind: sprint.QueryFleet})

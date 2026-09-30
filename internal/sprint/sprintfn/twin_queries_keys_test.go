@@ -38,7 +38,8 @@ func TestSprintKeyReads(t *testing.T) {
 			r.Clock.StoppedMS == nil || *r.Clock.StoppedMS != "1000" || r.Clock.StoppedSinceMS == nil || *r.Clock.StoppedSinceMS != "" {
 			t.Fatalf("%+v", r)
 		}
-		if c.Probes != 1 || c.Records != 0 {
+		// One HMGET of the clock's five fields: a probe for each.
+		if c.Probes != 5 || c.Records != 0 {
 			t.Fatalf("charged %+v", c)
 		}
 	})
@@ -75,14 +76,14 @@ func TestSprintKeyReads(t *testing.T) {
 	})
 	t.Run("the heartbeat, its set fields", func(t *testing.T) {
 		res, c := w.key(KeyQ{Kind: KeyHeartbeat})
-		if r := res.(HeartbeatResult); !reflect.DeepEqual(r.Fields, map[string]string{"tick_at": "5", "ticks": "9"}) || c.Probes != 1 {
+		if r := res.(HeartbeatResult); !reflect.DeepEqual(r.Fields, map[string]string{"tick_at": "5", "ticks": "9"}) || c.Probes != len(HeartbeatFields) {
 			t.Fatalf("%+v %+v", r, c)
 		}
 	})
 	t.Run("dropping marks by stream", func(t *testing.T) {
 		res, c := w.key(KeyQ{Kind: KeyDropping, Streams: []string{"s1", "s2"}})
 		r := res.(DroppingResult)
-		if r.Count != 1 || !reflect.DeepEqual(r.Marks, map[string]string{"s2": "op-drop"}) || c.Probes != 2 {
+		if r.Count != 1 || !reflect.DeepEqual(r.Marks, map[string]string{"s2": "op-drop"}) || c.Probes != 1+2 { // the count, and a probe for each stream named
 			t.Fatalf("%+v %+v", r, c)
 		}
 		// No stream named: the count alone.
@@ -100,7 +101,7 @@ func TestSprintKeyReads(t *testing.T) {
 	t.Run("scores in missing", func(t *testing.T) {
 		res, c := w.key(KeyQ{Kind: KeyMissing, IDs: []string{"ghost", "p1"}})
 		r := res.(MissingResult)
-		if len(r.Scores) != 2 || r.Scores[0] == nil || *r.Scores[0] != "100" || r.Scores[1] != nil || c.Probes != 1 {
+		if len(r.Scores) != 2 || r.Scores[0] == nil || *r.Scores[0] != "100" || r.Scores[1] != nil || c.Probes != 2 { // a probe for each id
 			t.Fatalf("%+v %+v", r, c)
 		}
 	})

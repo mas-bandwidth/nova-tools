@@ -273,8 +273,8 @@ func TestAMarkOverItsReserveIsDrift(t *testing.T) {
 // own logic and never n times n (a query can leave out every one of the 10,000
 // ids it names). QueryCharge.Work counts the steps, and the test holds them to
 // a multiple of the input for a source of 10,000 ids all quarantined, and for a
-// chain that leaves one out at each step; the store's cost, one HMGET for each
-// 2,000 ids, is held with them. The Lua kind answers alike on a smaller list.
+// chain that leaves one out at each step; the store's cost, a probe for each
+// name an HMGET asks, is held with them. The Lua kind answers alike on a smaller list.
 func TestLeavingIdsOutCostsAStepAnId(t *testing.T) {
 	t.Parallel()
 	const n = 10000
@@ -298,8 +298,8 @@ func TestLeavingIdsOutCostsAStepAnId(t *testing.T) {
 	if len(r.IDs) != 0 || len(r.LeftOut) != n || len(r.Items) != 0 {
 		t.Fatalf("ids %d, left out %d, items %d", len(r.IDs), len(r.LeftOut), len(r.Items))
 	}
-	if c.Probes != ceilDiv(n, probeChunk) || c.Records != 0 {
-		t.Fatalf("charged %+v", c)
+	if c.Probes != n || c.Records != 0 {
+		t.Fatalf("charged %+v: the quarantine costs a probe a name", c)
 	}
 	if c.Work > 3*n {
 		t.Fatalf("leaving out %d ids took %d steps, at most %d are a step or two an id", n, c.Work, 3*n)

@@ -48,7 +48,7 @@ func newQWorld(t *testing.T) *qworld {
 	phases := Phases{
 		XPre: func(*State, *Request, *Before) *Refusal { return nil },
 		XCmds: func(st *State, tp TablePlan, lp LogPlan) []Cmd {
-			return w.syncIndexes(st)
+			return w.syncIndexes(st, tp)
 		},
 		JDecide: func(st *State, in []NoteReq, obs *Before) ([]tset.Note, JPlan, *Refusal) {
 			var notes []tset.Note
@@ -156,22 +156,68 @@ func (w *qworld) hsetBare(name string, kv ...string) Cmd {
 }
 
 // syncIndexes is the stand-in for X: the derived indexes and the due set, from
-// the tables as they are after the step, by IT02's definition from scratch,
-// as commands that move the keyspace to them.
-func (w *qworld) syncIndexes(st *State) []Cmd {
+// the tables as they will be after the step, by IT02's definition from scratch,
+// as commands that move the keyspace to them. The twin plans the tables without
+// writing them (Mem.Plan, S15) and asks X for its commands before it commits,
+// so the tables after the step are the snapshot with the plan's entries laid
+// over it: each id the plan creates or moves has the place, score and fields
+// the plan gives it, and each it removes is gone.
+func (w *qworld) syncIndexes(st *State, tp TablePlan) []Cmd {
 	snap, err := w.m.Snapshot(testPrefix)
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	var cards []*sprint.IndexCard
+	type key struct{ table, id string }
+	by := map[key]*sprint.IndexCard{}
 	for table, tbl := range snap.Epochs[tset.Decimal(w.epoch)].Tables {
 		for id, r := range tbl.Records {
 			if r.Column == "" {
 				continue
 			}
 			score, _ := strconv.ParseFloat(r.Score, 64)
-			cards = append(cards, &sprint.IndexCard{Table: table, ID: id, Row: r.Row, Col: r.Column, Score: score, Fields: r.Fields})
+			fields := make(map[string]string, len(r.Fields))
+			for f, v := range r.Fields {
+				fields[f] = v
+			}
+			by[key{table, id}] = &sprint.IndexCard{Table: table, ID: id, Row: r.Row, Col: r.Column, Score: score, Fields: fields}
 		}
+	}
+	for _, pe := range tp.Entries {
+		switch pe.Entry.Kind {
+		case "create", "move", "remove":
+		default:
+			continue
+		}
+		for i, id := range pe.Entry.IDs {
+			k := key{pe.Entry.Table, id}
+			if pe.Entry.Kind == "remove" {
+				delete(by, k)
+				continue
+			}
+			c := by[k]
+			if c == nil {
+				c = &sprint.IndexCard{Table: pe.Entry.Table, ID: id, Fields: map[string]string{}}
+				by[k] = c
+			}
+			a := pe.After[i]
+			if a.Place != nil {
+				c.Row, c.Col = a.Place.Row, a.Place.Col
+			}
+			if a.Score != "" {
+				c.Score, _ = strconv.ParseFloat(a.Score, 64)
+			}
+			for f, v := range a.Fields {
+				if v.Present {
+					c.Fields[f] = v.Value
+				} else {
+					delete(c.Fields, f)
+				}
+			}
+		}
+	}
+	var cards []*sprint.IndexCard
+	for _, c := range by {
+		cards = append(cards, c)
 	}
 	want, err := sprint.IndexDefinition(cards)
 	if err != nil {
