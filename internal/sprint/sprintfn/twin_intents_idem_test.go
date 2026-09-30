@@ -51,10 +51,36 @@ func applyPlan(sc *diffScenario, plan derivePlan) {
 	sc.recs = recs
 }
 
-// TestIntentsSecondRunWritesNothing: on 4,000 random worlds and steps, each
-// intent that decides something decides nothing the second time: no entry, no
-// command, and no refusal. The draw reaches needmet, needgone, waive and
-// waitfor (with a need that has no record, which enters wait:<n> and missing).
+// secondRunWritesNothing runs the scenario, puts what it decided in the world,
+// runs it again, and fails unless the second run decides no entry, no command
+// and no refusal. It says whether the first run decided anything; a first run
+// that was refused decided nothing and has no second run to check.
+func secondRunWritesNothing(t *testing.T, sc diffScenario, label string) bool {
+	t.Helper()
+	first, ref, _ := runDerive(sc)
+	if ref != nil {
+		return false
+	}
+	applyPlan(&sc, first)
+	second, ref, _ := runDerive(sc)
+	if ref != nil {
+		t.Fatalf("%s: the second run was refused: %v\nintents %+v", label, ref, sc.intents)
+	}
+	if len(second.Entries) != 0 || len(second.Cmds) != 0 {
+		t.Fatalf("%s: the second run decided %d entries and %d commands; want none\nfirst: %+v %+v\nsecond: %+v %+v\nintents %+v",
+			label, len(second.Entries), len(second.Cmds), first.Entries, first.Cmds, second.Entries, second.Cmds, sc.intents)
+	}
+	return len(first.Entries)+len(first.Cmds) > 0
+}
+
+// TestIntentsSecondRunWritesNothing: on 4,000 random worlds and steps, the
+// second run of a step decides no entry, no command, and no refusal; and so does
+// the second run of each of its intents alone, which is what says which kind
+// did the deciding. The draw reaches needmet, needgone, waive and waitfor (with
+// a need that has no record, which enters wait:<n> and missing), and a kind is
+// counted only for the intents that decided something when run alone, so that a
+// kind whose rule decided nothing would fail the minimum below while another
+// intent in its step decided.
 func TestIntentsSecondRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	const chunks, per = 4, 1000
@@ -66,37 +92,24 @@ func TestIntentsSecondRunWritesNothing(t *testing.T) {
 			rng := rand.New(rand.NewPCG(uint64(chunk)+1, 0x1de4))
 			for i := 0; i < per; i++ {
 				sc := randomScenario(rng)
-				first, ref, _ := runDerive(sc)
-				if ref != nil {
-					continue
-				}
-				kinds := map[string]bool{}
-				for _, it := range sc.intents {
-					kinds[it.Kind] = true
-				}
-				mu.Lock()
-				for k := range kinds {
-					if len(first.Entries)+len(first.Cmds) > 0 {
-						decided[k]++
+				secondRunWritesNothing(t, sc, "run "+strconv.Itoa(i))
+				for j, it := range sc.intents {
+					solo := sc
+					solo.intents = []Intent{it}
+					if secondRunWritesNothing(t, solo, "run "+strconv.Itoa(i)+" intent "+strconv.Itoa(j)+" ("+it.Kind+") alone") {
+						mu.Lock()
+						decided[it.Kind]++
+						mu.Unlock()
 					}
-				}
-				mu.Unlock()
-				applyPlan(&sc, first)
-				second, ref, _ := runDerive(sc)
-				if ref != nil {
-					t.Fatalf("run %d: the second run was refused: %v\nintents %+v", i, ref, sc.intents)
-				}
-				if len(second.Entries) != 0 || len(second.Cmds) != 0 {
-					t.Fatalf("run %d: the second run decided %d entries and %d commands; want none\nfirst: %+v %+v\nsecond: %+v %+v\nintents %+v",
-						i, len(second.Entries), len(second.Cmds), first.Entries, first.Cmds, second.Entries, second.Cmds, sc.intents)
 				}
 			}
 		})
 	}
 	t.Cleanup(func() {
+		t.Logf("intents that decided something alone, by kind: %v", decided)
 		for _, kind := range []string{IntentWaitFor, IntentNeedMet, IntentNeedGone, IntentWaive} {
 			if decided[kind] < 150 {
-				t.Errorf("the draw ran %d steps with a %s that decided something; want at least 150 (%v)", decided[kind], kind, decided)
+				t.Errorf("the draw ran %d intents of %s that decided something alone; want at least 150 (%v)", decided[kind], kind, decided)
 			}
 		}
 	})

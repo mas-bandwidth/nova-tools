@@ -488,32 +488,32 @@ func diffScenarios() []diffScenario {
 		{name: "needmet two needs one tick", now: now,
 			recs: map[string]fixRec{"n1": landed, "n2": landed, "w": w("3", "n1,n2", "2")},
 			keys: []Cmd{wait("n1", "w"), wait("n2", "w")},
-			intents: []Intent{{Kind: IntentNeedMet, Card: "n1", Need: "n1", Waiters: []string{"w"}},
-				{Kind: IntentNeedMet, Card: "n2", Need: "n2", Waiters: []string{"w"}}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n1", Waiters: []string{"w"}},
+				{Kind: IntentNeedMet, Need: "n2", Waiters: []string{"w"}}}},
 		{name: "needmet of a card in no set and a card twice", now: now,
 			recs: map[string]fixRec{"n": landed, "a": w("3", "n", "1"), "b": w("5", "n", "1")},
 			keys: []Cmd{wait("n", "a")},
 			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"a", "b", "a"}},
 				{Kind: IntentNeedMet, Need: "n", Waiters: []string{"a"}}}},
 		{name: "needmet in pieces", now: now, recs: manyRecs, keys: []Cmd{zadd("wait:n@0", manyPairs[:1000]...), zadd("wait:n@0", manyPairs[1000:]...)},
-			intents: []Intent{{Kind: IntentNeedMet, Card: "w0", Need: "n", Waiters: manyWaiters}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: manyWaiters}}},
 		{name: "needgone head moves", now: now,
 			recs:    map[string]fixRec{"d": dropped, "w1": w("1", "d", "1"), "w2": w("2", "d", "1"), "w3": w("3", "d", "1")},
 			keys:    []Cmd{wait("d", "w1", "w2", "w3")},
-			intents: []Intent{{Kind: IntentNeedGone, Card: "d", Need: "d", Waiters: []string{"w1", "w2"}}}},
+			intents: []Intent{{Kind: IntentNeedGone, Need: "d", Waiters: []string{"w1", "w2"}}}},
 		{name: "quarantined waiters are left out", now: now,
 			recs: map[string]fixRec{"n": landed, "g": dropped, "w1": w("1", "n", "1"), "w2": w("2", "n", "1"), "g1": w("1", "g", "1"), "g2": w("1", "g", "1")},
 			keys: []Cmd{wait("n", "w1", "w2"), wait("g", "g1", "g2"), hset("quarantine@0", "w1", "DRIFT", "g1", "DRIFT")},
-			intents: []Intent{{Kind: IntentNeedMet, Card: "n", Need: "n", Waiters: []string{"w1", "w2"}},
-				{Kind: IntentNeedGone, Card: "g", Need: "g", Waiters: []string{"g1", "g2"}}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w1", "w2"}},
+				{Kind: IntentNeedGone, Need: "g", Waiters: []string{"g1", "g2"}}}},
 		{name: "needmet on a card that is not waiting", now: now,
 			recs:    map[string]fixRec{"n": landed, "w": fix("s1", "ready", "1", "needs", "n", "open", "1")},
 			keys:    []Cmd{wait("n", "w")},
-			intents: []Intent{{Kind: IntentNeedMet, Card: "n", Need: "n", Waiters: []string{"w"}}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}}},
 		{name: "needmet on a card whose open is 0", now: now,
 			recs:    map[string]fixRec{"n": landed, "w": w("1", "n", "0")},
 			keys:    []Cmd{wait("n", "w")},
-			intents: []Intent{{Kind: IntentNeedMet, Card: "n", Need: "n", Waiters: []string{"w"}}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}}},
 
 		{name: "waitfor missing", now: now, keys: []Cmd{hset("clock", "stopped_ms", "1000", "stopped_since_ms", "")},
 			entries: createW("w1", "ghost", "1"), intents: []Intent{waitfor("w1", "ghost")}},
@@ -611,13 +611,22 @@ func diffScenarios() []diffScenario {
 			recs:    map[string]fixRec{"w": w("1", "n", "1")},
 			keys:    []Cmd{hset("jopen:w@0", "a primary is blocked on something missing|n", "n1")},
 			intents: []Intent{{Kind: IntentWaive, Card: "w", Needs: []string{"n"}}}},
+		{name: "two waives of one card, each naming its own needs", now: now,
+			recs: map[string]fixRec{"d": dropped, "w": w("1", "ghost,d,run", "3")},
+			keys: []Cmd{wait("ghost", "w"), zadd("missing@0", "5", "ghost"),
+				hset("jopen:w@0", "a primary is blocked on something missing|ghost", "n1", "a primary is blocked on something dropped|d", "n2")},
+			intents: []Intent{{Kind: IntentWaive, Card: "w", Needs: []string{"ghost"}}, {Kind: IntentWaive, Card: "w", Needs: []string{"d", "run"}}}},
+		{name: "waive of a need with both judgments open", now: now,
+			recs:    map[string]fixRec{"d": dropped, "w": w("1", "d", "1")},
+			keys:    []Cmd{wait("d", "w"), hset("jopen:w@0", "a primary is blocked on something missing|d", "n1", "a primary is blocked on something dropped|d", "n2")},
+			intents: []Intent{{Kind: IntentWaive, Card: "w", Needs: []string{"d"}}}},
 
 		{name: "fold across cells", now: now,
 			recs: map[string]fixRec{"a": landed, "b": landed, "c": dropped, "w": w("1", "a,b,c", "3"), "x": w("2", "a", "1"),
 				"y": fix("s2", "waiting", "3", "needs", "a", "open", "1")},
 			keys: []Cmd{wait("a", "w", "x", "y"), wait("b", "w"), hset("jopen:w@0", "a primary is blocked on something dropped|c", "n1")},
-			intents: []Intent{{Kind: IntentNeedMet, Card: "a", Need: "a", Waiters: []string{"w", "x", "y"}},
-				{Kind: IntentNeedMet, Card: "b", Need: "b", Waiters: []string{"w"}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "a", Waiters: []string{"w", "x", "y"}},
+				{Kind: IntentNeedMet, Need: "b", Waiters: []string{"w"}},
 				{Kind: IntentWaive, Card: "w", Needs: []string{"c"}}}},
 
 		{name: "cycle found through a card an earlier admission expanded", now: now,
@@ -774,6 +783,29 @@ func TestDeriveScenariosAreNotVacuous(t *testing.T) {
 	}
 	if entries == 0 || notes == 0 || cmds == 0 || empty != len(noop) {
 		t.Errorf("scenarios with entries %d, notes %d, commands %d, no decision %d; want some of each and the %d no-ops", entries, notes, cmds, empty, len(noop))
+	}
+}
+
+// TestDeriveScenariosSetNoCardOnNeedmetOrNeedgone: the wire sends an 8.0-shaped
+// needmet or needgone with an empty Card, and the phase reads the need and the
+// waiters, never the card; no scenario gives either kind a Card, so that the
+// empty one is the one the two halves are held equal on.
+func TestDeriveScenariosSetNoCardOnNeedmetOrNeedgone(t *testing.T) {
+	t.Parallel()
+	seen := 0
+	for _, sc := range diffScenarios() {
+		for _, it := range sc.intents {
+			if it.Kind != IntentNeedMet && it.Kind != IntentNeedGone {
+				continue
+			}
+			seen++
+			if it.Card != "" {
+				t.Errorf("scenario %q: a %s sets Card %q", sc.name, it.Kind, it.Card)
+			}
+		}
+	}
+	if seen < 10 {
+		t.Errorf("the scenarios hold %d needmet and needgone intents; want at least 10", seen)
 	}
 }
 

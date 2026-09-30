@@ -24,7 +24,8 @@
 -- depth-first search with a step-wide memo of the strongly connected
 -- components it has found, shared by every admission and need); the request's
 -- entries are read into one index once; and the probes of the sprint's own keys
--- are batched by key (wait:<n>, missing, quarantine). ctx.intent_work counts
+-- are batched by key (wait:<n>, missing, quarantine) and, for the judgments a
+-- waive reads, by card (one HMGET of {p}jopen:<card>@e). ctx.intent_work counts
 -- the first two, and a test holds the counts equal to the Go twin's.
 --
 -- Where the phase interface cannot carry the item (listed in twin_intents.go
@@ -56,6 +57,9 @@ do
   -- The bytes one member of a batched read of {p}quarantine@e reserves: the
   -- value is the code, the rule, the stream and the refusal's cells.
   local RESERVE_QUARANTINE = 512
+  -- The bytes one field of a batched read of {p}jopen:<card>@e reserves: the
+  -- value is the id of the note that opened the judgment, or a hold's mark.
+  local RESERVE_JUDGMENT = 512
   -- The judgment types, the words of sprint.NMissingNeed and sprint.NBlocked.
   local TYPE_MISSING = 'a primary is blocked on something missing'
   local TYPE_DROPPED = 'a primary is blocked on something dropped'
@@ -135,7 +139,7 @@ do
       visit = {}, low = {}, onstack = {}, comp = {}, tstack = {}, nvisit = 0, ncomp = 0,
       work = {expanded = 0, edges = 0, indexed = 0},
       wait = {}, removed = {}, added = {}, nadded = {}, nremoved = {},
-      pend_wait = {}, pend_missing = {}, missing_pending = {}, quar = {},
+      pend_wait = {}, pend_missing = {}, missing_pending = {}, quar = {}, jopen = {},
       folds = {}, fold_order = {}, ops = {}, op_index = {}, notes = {}, note_index = {},
       missing_added = {}, waived_missing = {}, r_known = false, r = 0}
     return r
@@ -233,13 +237,39 @@ do
     end
     return r.quar[card], nil
   end
-  -- judgment_open: the card has an open judgment of the type for the cause, the
-  -- field <type>|<cause> of {p}jopen:<card>@e (1.3.1).
-  local function judgment_open(r, card, typ, cause)
+  -- jopen_load: which of the fields (<type>|<cause>) of {p}jopen:<card>@e the
+  -- store has, in one HMGET in pieces of at most 1,000 fields (a batch, never a
+  -- probe a field; the key is the card's, so a command reads one card).
+  local function jopen_load(r, card, fields)
     local k = key(r.ctx, 'jopen:' .. card)
-    local n, err = rd(r, {'HEXISTS', k, typ .. '|' .. cause}, 'hash', k, RESERVE_COUNT)
-    if err then return nil, err end
-    return n == 1, nil
+    local seen = r.jopen[card]
+    if not seen then seen = {}; r.jopen[card] = seen end
+    local ask = {}
+    for _, f in ipairs(fields) do
+      if seen[f] == nil then seen[f] = false; ask[#ask + 1] = f end
+    end
+    for first = 1, #ask, PIECE do
+      local argv = {'HMGET', k}
+      local last = math.min(first + PIECE - 1, #ask)
+      for i = first, last do argv[#argv + 1] = ask[i] end
+      local vals, err = rd(r, argv, 'hash', k, RESERVE_JUDGMENT * (last - first + 1) + RESERVE_SHELL)
+      if err then return err end
+      for i = first, last do seen[ask[i]] = vals[i - first + 1] ~= false and vals[i - first + 1] ~= nil end
+    end
+    return nil
+  end
+  -- judgment_open: the card has an open judgment of the type for the cause, the
+  -- field <type>|<cause> of {p}jopen:<card>@e (1.3.1). The judgments of the
+  -- cards the waives name were loaded together (prefetch); one the batch did
+  -- not name is loaded alone.
+  local function judgment_open(r, card, typ, cause)
+    local f = typ .. '|' .. cause
+    local seen = r.jopen[card]
+    if seen == nil or seen[f] == nil then
+      local err = jopen_load(r, card, {f})
+      if err then return nil, err end
+    end
+    return r.jopen[card][f], nil
   end
 
   -- field_of: a record's field as text, empty when absent or not read.
@@ -888,12 +918,58 @@ do
     return entries, notes, cmds, nil
   end
 
+  -- prefetch_waives: the probes of the waives, read together once the quarantine
+  -- is known. A card that is not quarantined is asked for its judgments open, one
+  -- HMGET of its jopen key for both types of every need any waive of it names
+  -- (jopen_load). Then wait:<n> is read, once a key across the step, for every
+  -- card that has "missing" open on the need and not "dropped" (the judgment the
+  -- waive takes first): those are the cards a waive of a need with no record
+  -- looks up in its set. A card that turns out to be refused before it asks is
+  -- read for nothing, in a step that is refused anyway.
+  local function prefetch_waives(r, intents)
+    local fields, order = {}, {}
+    for _, it in ipairs(intents) do
+      if it.kind == 'waive' and not r.quar[it.card] then
+        local list = fields[it.card]
+        if not list then list = {}; fields[it.card] = list; order[#order + 1] = it.card end
+        for _, n in ipairs(dedup(it.needs or {})) do
+          list[#list + 1] = TYPE_DROPPED .. '|' .. n
+          list[#list + 1] = TYPE_MISSING .. '|' .. n
+        end
+      end
+    end
+    for _, card in ipairs(order) do
+      local err = jopen_load(r, card, fields[card])
+      if err then return err end
+    end
+    local asks, korder = {}, {}
+    for _, it in ipairs(intents) do
+      if it.kind == 'waive' and not r.quar[it.card] then
+        local judged = r.jopen[it.card]
+        for _, n in ipairs(dedup(it.needs or {})) do
+          if judged[TYPE_MISSING .. '|' .. n] and not judged[TYPE_DROPPED .. '|' .. n] then
+            local k = key(r.ctx, 'wait:' .. n)
+            if not asks[k] then asks[k] = {}; korder[#korder + 1] = k end
+            local list = asks[k]
+            list[#list + 1] = it.card
+          end
+        end
+      end
+    end
+    for _, k in ipairs(korder) do
+      local err = wait_load(r, k, asks[k])
+      if err then return err end
+    end
+    return nil
+  end
+
   -- prefetch: the probes of the sprint's own keys the intents will need that
   -- the intents themselves name, read together before any is decided: wait:<n>
   -- of the waiters of every needmet and needgone, one key at a time across
   -- the step's intents, and {p}quarantine@e of those that are in it and of the
-  -- card of every waive, in one batch (quarantine_load). The decisions are made
-  -- afterwards, in the order the intents name things, from what was read.
+  -- card of every waive, in one batch (quarantine_load); then the waives'
+  -- (prefetch_waives). The decisions are made afterwards, in the order the
+  -- intents name things, from what was read.
   local function prefetch(r, intents)
     local asks, order = {}, {}
     for _, it in ipairs(intents) do
@@ -919,7 +995,9 @@ do
         ids[#ids + 1] = it.card
       end
     end
-    return quarantine_load(r, ids)
+    local err = quarantine_load(r, ids)
+    if err then return err end
+    return prefetch_waives(r, intents)
   end
 
   -- derive(ctx, intents, obs) -> entries, notes, refusal (sprint_00_core.lua's

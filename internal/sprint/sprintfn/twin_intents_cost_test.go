@@ -479,13 +479,91 @@ func manyWaiters(count int, quarantine bool) diffScenario {
 	return sc
 }
 
+// waiveWorld is a waive scenario: cards v0, v1, ... each wait for every need of
+// needs and have each of the judgments of judgments open on each need (J's note
+// for it). The waive intents name the needs perIntent at a time, one intent for
+// each such slice of each card (0 means all the needs in one), and each slice is
+// named by repeat intents (0 is one). A need that has the judgment "missing"
+// open has no record and is in missing, and every card is in its wait set; the
+// judgment "dropped" has neither (needgone took the cards out of the set), and
+// with both open on a need the dropped one is the one the waive takes.
+type waiveWorld struct {
+	cards      int
+	needs      []string
+	judgments  []string
+	perIntent  int
+	repeat     int
+	quarantine bool // every card is in the quarantine
+}
+
+func (w waiveWorld) scenario() diffScenario {
+	sc := diffScenario{now: nowMS(), recs: map[string]fixRec{}, keys: []Cmd{hset("clock", "stopped_ms", "0")}}
+	needsField, open := strings.Join(w.needs, ","), strconv.Itoa(len(w.needs))
+	missingOnly := len(w.judgments) == 1 && w.judgments[0] == sprint.NMissingNeed
+	var ids, held []string
+	for i := 0; i < w.cards; i++ {
+		id := "v" + strconv.Itoa(i)
+		ids = append(ids, id)
+		held = append(held, id, "DRIFT")
+		sc.recs[id] = fix("s1", "waiting", "1", "needs", needsField, "open", open)
+		var judged []string
+		for _, n := range w.needs {
+			for _, typ := range w.judgments {
+				judged = append(judged, typ+"|"+n, "n"+strconv.Itoa(i))
+			}
+		}
+		sc.keys = append(sc.keys, hset("jopen:"+id+"@0", judged...))
+	}
+	if w.quarantine {
+		sc.keys = append(sc.keys, hset("quarantine@0", held...))
+	}
+	if missingOnly {
+		var pairs []string
+		for _, id := range ids {
+			pairs = append(pairs, "0", id)
+		}
+		for _, n := range w.needs {
+			for first := 0; first < len(pairs); first += 2 * maxPieces {
+				sc.keys = append(sc.keys, zadd("wait:"+n+"@0", pairs[first:min(first+2*maxPieces, len(pairs))]...))
+			}
+			sc.keys = append(sc.keys, zadd("missing@0", "5", n))
+		}
+	}
+	per := w.perIntent
+	if per == 0 {
+		per = len(w.needs)
+	}
+	for _, id := range ids {
+		for first := 0; first < len(w.needs); first += per {
+			for range max(w.repeat, 1) {
+				sc.intents = append(sc.intents, Intent{Kind: IntentWaive, Card: id, Needs: w.needs[first:min(first+per, len(w.needs))]})
+			}
+		}
+	}
+	return sc
+}
+
+// needNames is n ids g0, g1, ...
+func needNames(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = "g" + strconv.Itoa(i)
+	}
+	return out
+}
+
 // TestDeriveStoreProbesAreBatchedByKey: the Lua reads the sprint's own keys a
 // key at a time, in pieces of at most 1,000, and never a card at a time: the
 // store commands it sends are pinned by count, on scenarios the Go phase holds
 // equal (work counts and all). 2,000 admissions that wait for one card ask
 // wait:<n> twice; for one ghost, wait:<n> twice and missing once; a needmet of
 // 2,000 waiters asks wait:<n> twice and the quarantine twice, or once at all
-// (HLEN) when nothing is quarantined; 30 waives ask the quarantine once.
+// (HLEN) when nothing is quarantined. The waive asks the quarantine once for
+// every card, wait:<n> once a key for every card that waives a need with no
+// record (2,000 cards of one ghost: twice), and the judgments open once a card
+// (one HMGET of its jopen key for both types of every need it names, in pieces
+// of 1,000 fields), never a probe a need: 2,000 waives of one ghost are 2,005
+// store commands, where a probe a need was 6,003.
 func TestDeriveStoreProbesAreBatchedByKey(t *testing.T) {
 	t.Parallel()
 	waives := diffScenario{now: nowMS(), recs: map[string]fixRec{}, keys: []Cmd{hset("quarantine@0", "someone", "DRIFT")}}
@@ -496,21 +574,35 @@ func TestDeriveStoreProbesAreBatchedByKey(t *testing.T) {
 	}
 	bulkCard, bulkCardIntents := bulkAdmit(2000, "c0", "1")
 	bulkGhost, bulkGhostIntents := bulkAdmit(2000, "ghost", "1")
+	missing, dropped := sprint.NMissingNeed, sprint.NBlocked
 	cases := []struct {
-		name   string
-		sc     diffScenario
-		reads  map[string]int
-		before int // ids asked of S.before
+		name    string
+		sc      diffScenario
+		reads   map[string]int
+		before  int  // ids asked of S.before
+		decides bool // the step writes something; false is a step of no-ops
 	}{
 		{"2,000 admissions that wait for one card", diffScenario{now: nowMS(), recs: chainRecs(50), entries: bulkCard, intents: bulkCardIntents},
-			map[string]int{"ZMSCORE": 2}, 50},
+			map[string]int{"ZMSCORE": 2}, 50, true},
 		{"2,000 admissions that wait for one ghost", diffScenario{now: nowMS(), keys: []Cmd{hset("clock", "stopped_ms", "0")}, entries: bulkGhost, intents: bulkGhostIntents},
-			map[string]int{"ZMSCORE": 3, "HMGET": 1}, 1},
+			map[string]int{"ZMSCORE": 3, "HMGET": 1}, 1, true},
 		{"a needmet of 2,000 waiters, something quarantined", manyWaiters(2000, true),
-			map[string]int{"ZMSCORE": 2, "HLEN": 1, "HMGET": 2}, 2000},
+			map[string]int{"ZMSCORE": 2, "HLEN": 1, "HMGET": 2}, 2000, true},
 		{"a needmet of 2,000 waiters, nothing quarantined", manyWaiters(2000, false),
-			map[string]int{"ZMSCORE": 2, "HLEN": 1}, 2000},
-		{"30 waives", waives, map[string]int{"HLEN": 1, "HMGET": 1, "HEXISTS": 60}, 30},
+			map[string]int{"ZMSCORE": 2, "HLEN": 1}, 2000, true},
+		{"30 waives with no judgment open", waives, map[string]int{"HLEN": 1, "HMGET": 31}, 30, false},
+		{"2,000 waives of one ghost", waiveWorld{cards: 2000, needs: []string{"ghost"}, judgments: []string{missing}}.scenario(),
+			map[string]int{"HLEN": 1, "HMGET": 2000, "ZMSCORE": 2, "ZCARD": 1, "ZSCORE": 1}, 2001, true},
+		{"100 waives of 8 ghosts each", waiveWorld{cards: 100, needs: needNames(8), judgments: []string{missing}}.scenario(),
+			map[string]int{"HLEN": 1, "HMGET": 100, "ZMSCORE": 8, "ZCARD": 8, "ZSCORE": 8}, 108, true},
+		{"50 waives of a dropped need that also has the missing judgment open", waiveWorld{cards: 50, needs: []string{"d"}, judgments: []string{dropped, missing}}.scenario(),
+			map[string]int{"HLEN": 1, "HMGET": 50}, 50, true},
+		{"one card waived by 20 intents of 64 needs", waiveWorld{cards: 1, needs: needNames(1280), judgments: []string{dropped}, perIntent: 64}.scenario(),
+			map[string]int{"HLEN": 1, "HMGET": 3}, 1, true},
+		{"one card waived 20 times, by intents that name the same 64 needs", waiveWorld{cards: 1, needs: needNames(64), judgments: []string{dropped}, repeat: 20}.scenario(),
+			map[string]int{"HLEN": 1, "HMGET": 1}, 1, true},
+		{"2,000 waives of quarantined cards", waiveWorld{cards: 2000, needs: []string{"ghost"}, judgments: []string{missing}, quarantine: true}.scenario(),
+			map[string]int{"HLEN": 1, "HMGET": 2}, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -520,6 +612,9 @@ func TestDeriveStoreProbesAreBatchedByKey(t *testing.T) {
 			l := rig.run(c.sc)
 			if !reflect.DeepEqual(nilIfEmpty(g), nilIfEmpty(l)) {
 				t.Fatalf("Go and Lua decided differently (Go refusal %v, Lua refusal %v)", g.Refusal, l.Refusal)
+			}
+			if decided := nonEmpty(g.Entries) || nonEmpty(g.Cmds); decided != c.decides {
+				t.Fatalf("the step writes something: %v, want %v (refusal %v)", decided, c.decides, g.Refusal)
 			}
 			if !reflect.DeepEqual(rig.reads, c.reads) {
 				t.Errorf("the Lua sent the commands %v, want %v", rig.reads, c.reads)
