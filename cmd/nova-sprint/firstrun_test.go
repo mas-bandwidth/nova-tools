@@ -13,15 +13,15 @@ import (
 // docs/TESTS.md `### First run` transcript is RUN, line for line and in order,
 // through the one comparator (onboarding.CompareTranscript, SPEC-TOOLWORK.md
 // documents rule 2). It is the twin's card flow (twinSteps, the flow
-// nova-sprint help shows, up to accept): each step is its own process over one
+// nova-sprint help shows, up to the merge): each step is its own process over one
 // twin file, with the environment the help says to export, so the unit tier
 // runs it with no Redis.
 //
 // NOTHING IS NORMALISED: every value on every line reproduces (a twin counts
 // its operation ids), so the comparator is handed no field of the
-// onboarding.Volatile table. The last two steps of the help's flow, merge and
-// where, print the time a finished sprint took and the instant, which are the
-// clock's; twin_test.go runs them.
+// onboarding.Volatile table. The last two steps of the help's flow, the tick
+// after the merge and where, print the time a finished sprint took and the
+// instant, which are the clock's; twin_test.go runs them.
 
 func TestTheFirstRunTranscriptRunsOverATwin(t *testing.T) {
 	t.Parallel()
@@ -38,9 +38,9 @@ func TestTheFirstRunTranscriptRunsOverATwin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the transcript is the help's flow, verb for verb, to the card accepted
+	// the transcript is the help's flow, verb for verb, to the card merged
 	if want := len(twinSteps) - 2; len(steps) != want {
-		t.Fatalf("the transcript holds %d commands; the help's flow to accept is %d", len(steps), want)
+		t.Fatalf("the transcript holds %d commands; the help's flow to the merge is %d", len(steps), want)
 	}
 	for i, s := range steps {
 		if want := "$ " + twinSteps[i]; s.Line != want {

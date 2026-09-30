@@ -5,8 +5,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
