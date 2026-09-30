@@ -177,11 +177,8 @@ type Result struct {
 	// Tables is the entries the step wrote to each table (logical name), the
 	// work table's queued changes counted as the work table's: a table
 	// another step of a tick wrote is that table's queue in the tick
-	// (store.tick). Judgments is the judgments the step opened, and Told the
-	// notes it addressed to the coordinator: the tick-end note counts them.
-	Tables    map[string]int `json:"tables,omitempty"`
-	Judgments int            `json:"judgments,omitempty"`
-	Told      int            `json:"told,omitempty"`
+	// (store.tick).
+	Tables map[string]int `json:"tables,omitempty"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -440,7 +437,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
-		res.Tables, res.Judgments, res.Told = opCounts(op)
+		res.Tables = opCounts(op)
 		// Every operation's result is recorded at its commit, under the
 		// caller's operation id or its own: a writer whose operation another
 		// writer finished reads it there.
@@ -563,10 +560,9 @@ func queuedLines(q []sprint.QueuedChange, snap *sprint.Snapshot, op string) []sp
 	return out
 }
 
-// opCounts is the entries an operation writes to each table (its queued
-// changes the work table's), the judgments it opens, and the notes it
-// addresses to the coordinator.
-func opCounts(op OpRecord) (map[string]int, int, int) {
+// opCounts is the entries an operation writes to each table, its queued
+// changes the work table's.
+func opCounts(op OpRecord) map[string]int {
 	tables := map[string]int{}
 	for _, m := range op.Manifests {
 		for _, t := range All {
@@ -578,16 +574,7 @@ func opCounts(op OpRecord) (map[string]int, int, int) {
 	if len(op.Queue) > 0 {
 		tables[sprint.Work] += len(op.Queue)
 	}
-	judgments, told := 0, 0
-	for _, n := range op.Notes {
-		if n.Kind == sprint.Judgment {
-			judgments++
-		}
-		if n.To != "" {
-			told++
-		}
-	}
-	return tables, judgments, told
+	return tables
 }
 
 // callerOp is the recorded result of the step's caller operation id, when

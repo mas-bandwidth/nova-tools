@@ -153,7 +153,7 @@ func (c *common) register(fs flagSet, getenv func(string) string) {
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
-	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear")
+	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none")
 }
 
 func firstEnv(getenv func(string) string, names ...string) string {
