@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // #1451 measured nova-cairn's refusals and found 0 of its four bare verbs named
@@ -20,45 +22,28 @@ import (
 func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
-	exit, stdout, stderr := runCLI(t, "", "help")
-	if exit != 0 {
-		t.Fatalf("`nova-cairn help` must be exit 0, got %d; stderr: %s", exit, stderr)
-	}
-	examples, err := onboarding.ExampleLines(stdout, "nova-cairn")
-	if err != nil {
-		t.Fatalf("cannot enumerate the bare verbs from the help banner: %v", err)
-	}
+	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-cairn")
+	require.NoError(t, err, "cannot enumerate the bare verbs from the help banner")
 	seen := map[string]bool{}
 	for _, ex := range examples {
 		fields := strings.Fields(ex)
-		if len(fields) < 2 {
-			t.Fatalf("the help example %q names no verb", ex)
-		}
+		require.GreaterOrEqual(t, len(fields), 2, "the help example %q names no verb", ex)
 		verb := fields[1]
 		if seen[verb] {
 			continue
 		}
 		seen[verb] = true
 		t.Run(verb, func(t *testing.T) {
-			code, out, errOut := runCLI(t, "", verb)
-			if code != 2 {
-				t.Errorf("`nova-cairn %s` with no flags exited %d, want 2", verb, code)
-			}
-			if out != "" {
-				t.Errorf("`nova-cairn %s` with no flags wrote to stdout: %q; a refusal belongs on stderr", verb, out)
-			}
-			lines := strings.Split(strings.TrimSuffix(errOut, "\n"), "\n")
-			if len(lines) == 0 || lines[0] == "" {
-				t.Fatalf("`nova-cairn %s` with no flags printed no refusal", verb)
-			}
+			r := cli.Run(verb)
+			assert.Equal(t, 2, r.Code, "`nova-cairn %s` with no flags", verb)
+			assert.Empty(t, r.Stdout, "`nova-cairn %s` with no flags wrote to stdout; a refusal belongs on stderr", verb)
+			lines := strings.Split(strings.TrimSuffix(r.Stderr, "\n"), "\n")
+			require.NotEmpty(t, lines, "`nova-cairn %s` with no flags printed no refusal", verb)
+			require.NotEmpty(t, lines[0], "`nova-cairn %s` with no flags printed no refusal", verb)
 			for _, line := range lines {
-				if !strings.HasSuffix(line, "; run: nova-cairn help") {
-					t.Errorf("`nova-cairn %s` refusal does not end at the door: %q", verb, line)
-				}
+				assert.True(t, strings.HasSuffix(line, "; run: nova-cairn help"), "`nova-cairn %s` refusal does not end at the door: %q", verb, line)
 			}
 		})
 	}
-	if len(seen) == 0 {
-		t.Fatal("no verbs enumerated from the help banner; the test would pass by checking nothing")
-	}
+	require.NotEmpty(t, seen, "no verbs enumerated from the help banner; the test would pass by checking nothing")
 }
