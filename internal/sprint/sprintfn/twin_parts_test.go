@@ -17,7 +17,7 @@ import (
 )
 
 // The tests of IT16's parts run on the composed twin (sprintfn.Twin over
-// tset.Mem and the log stub), with the six real parts on the twin's own
+// tset.Mem and the log twin), with the six real parts on the twin's own
 // registry, X that guards nothing, and PartsBefore as the before hook, at a
 // clock the test moves. No store is involved: the Lua half of each part is
 // checked by sprint_parts.lua's own tests, and waits on G0 to be loaded.
@@ -44,14 +44,14 @@ func (c *stepClock) ms() int64 { return c.now().UnixMilli() }
 
 // partsTwin is a twin with the six parts registered on its own registry, at
 // epoch 0.
-func partsTwin(t *testing.T) (*Twin, *tset.Mem, *LogStub, *stepClock) {
+func partsTwin(t *testing.T) (*Twin, *tset.Mem, *MemLog, *stepClock) {
 	t.Helper()
 	return partsTwinAt(t, "0")
 }
 
 // partsTwinAt is the same at an epoch: the four tables defined, the epoch
 // active before the twin reads it.
-func partsTwinAt(t *testing.T, epoch tset.Decimal) (*Twin, *tset.Mem, *LogStub, *stepClock) {
+func partsTwinAt(t *testing.T, epoch tset.Decimal) (*Twin, *tset.Mem, *MemLog, *stepClock) {
 	t.Helper()
 	m := newTestMem(t)
 	if epoch != "0" {
@@ -59,7 +59,7 @@ func partsTwinAt(t *testing.T, epoch tset.Decimal) (*Twin, *tset.Mem, *LogStub, 
 			t.Fatal(err)
 		}
 	}
-	log := NewLogStub()
+	log := NewMemLog()
 	tw := NewTwin(m, log, testNames)
 	if tw.broken != nil {
 		t.Fatal(tw.broken)

@@ -1438,7 +1438,7 @@ func (l *Loop) readPage(p *tset.ReadReply, realCur tset.Decimal) ([]sprint.Event
 		if seq <= seqOf(realCur) {
 			continue // at or before the real cursor: another loop ingested it
 		}
-		e, err := sprint.ParseEvent(strconv.FormatUint(seq, 10)+"-0", raw)
+		e, err := sprint.ParseEvent(strconv.FormatUint(seq, 10)+"-0", lineBody(raw))
 		if err != nil {
 			return nil, realCur, fmt.Errorf("machine: the page: %w", err)
 		}

@@ -720,6 +720,20 @@ func (m *Mem) Plan(step Step) (*MemPlan, *Refusal) {
 	plan := cloneMemPlan(prepared.reply.MemPlan)
 	if plan == nil {
 		plan = &MemPlan{}
+		// Fence replies have no normalized member plan, but their receipt
+		// HSET still participates in the enclosing prepare bound. Replays
+		// carry no counters and leave both planned counts at zero.
+		if len(prepared.reply.Counters) != 0 {
+			var counts struct {
+				Commands  int64 `json:"planned_commands"`
+				ArgvBytes int64 `json:"planned_argv_bytes"`
+			}
+			if err := json.Unmarshal(prepared.reply.Counters, &counts); err != nil {
+				return nil, NewRefusal("DRIFT", RefusalDetail{})
+			}
+			plan.PlannedCommands = counts.Commands
+			plan.PlannedArgvBytes = counts.ArgvBytes
+		}
 	}
 	plan.Replay = prepared.reply.Replay
 	plan.prepared = prepared

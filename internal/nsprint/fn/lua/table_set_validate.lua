@@ -843,12 +843,17 @@ local function query(q, i, kinds, extension)
             for j = 1, #cur.positions do
                 local p = cur.positions[j]
                 if S.is_object(p) and ((type(p.next_index) == 'number' and p.next_index > 9007199254740991)
-                    or (type(p.through_index) == 'number' and p.through_index > 9007199254740991)) then
+                    or (type(p.through_index) == 'number' and p.through_index > 9007199254740991)
+                    or (type(p.next_item) == 'number' and p.next_item > 9007199254740991)) then
                     return failure('OVERFLOW', detail)
                 end
-                if not only(p,{about=true,next_index=true,through_index=true})
+                -- A position is the pair (list index, item index within the
+                -- line); next_item is present only when a page ended inside
+                -- a line (L1 10, item 4; its name is Layer 2's revision 2).
+                if not only(p,{about=true,next_index=true,through_index=true,next_item=true})
                     or not name(p.about)
                     or not uint_count(p.next_index,9007199254740991)
+                    or (p.next_item ~= nil and not uint_count(p.next_item,9007199254740991))
                     or type(p.through_index) ~= 'number'
                     or p.through_index ~= math.floor(p.through_index)
                     or p.through_index < -1 or p.through_index > 9007199254740991 then return failure('REQUEST', detail) end

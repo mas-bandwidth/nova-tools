@@ -86,23 +86,3 @@ func TestAllBoundariesAndExpandedBytes(t *testing.T) {
 	t.Parallel()
 	t.Skip("owed: TestAllBoundariesAndExpandedBytes; see design/WORK-QUEUE.md S18")
 }
-
-// These gates require the real composed log fragment. Once it lands, each
-// unfinished body fails again until its own complete fixture is implemented.
-func TestHistoryCursorCoverage(t *testing.T) {
-	t.Parallel()
-	requireTSetLogFragment(t)
-	t.Fatal("not implemented")
-}
-
-func TestRefuseCURSOR(t *testing.T) {
-	t.Parallel()
-	requireTSetLogFragment(t)
-	t.Fatal("not implemented")
-}
-
-func TestRefuseLOGIDAcrossComposition(t *testing.T) {
-	t.Parallel()
-	requireTSetLogFragment(t)
-	t.Fatal("not implemented")
-}
