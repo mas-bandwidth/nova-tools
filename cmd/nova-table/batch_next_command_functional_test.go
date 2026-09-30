@@ -3,13 +3,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // shellSplit splits a command line the way a shell does for the single-quote
@@ -285,4 +290,67 @@ func TestBatchNoRowNextCommandDoesNotWrite(t *testing.T) {
 	if n := c.ZCard(ctx, ntable.DefKey("demo")+":rows").Val(); n != 0 {
 		t.Errorf("running the next command left %d rows", n)
 	}
+}
+
+// An unknown-outcome refusal ends in the exact batch retry command for inline JSON, file, and stdin,
+// which runs when pasted and returns exit 0 on the working store.
+func TestBatchUnknownOutcomeNextCommands(t *testing.T) {
+	t.Parallel()
+	addr, _ := batchFixture(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx := context.Background()
+	rev := func() string { return c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val() }
+
+	// 1. Inline JSON
+	app := &application{}
+	app.applyBatch = func(ctx context.Context, c redis.Cmdable, manifest ntable.BatchManifest) (ntable.Receipt, error) {
+		return ntable.Receipt{}, makeUnknownOutcome("demo", manifest.OperationID)
+	}
+	rawJSON := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev() + `","operation_id":"uo-1","members":[{"id":"m1","expect":{},"set":{"k":"v1"}}]}`
+	var out, errs bytes.Buffer
+	code := app.run([]string{"batch", "--redis", addr, rawJSON}, &out, &errs)
+	require.Equal(t, 2, code, "inline exit")
+	assert.Contains(t, errs.String(), "resend the same manifest with the same operation id")
+	words := nextCommand(t, errs.String())
+	require.Equal(t, "batch", words[0])
+	// Run the pasted command on the real store (without stub)
+	code, stdout, stderr := runTable(words...)
+	require.Equal(t, 0, code, "pasted inline batch exit")
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, "TABLE BATCH")
+
+	// 2. File
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "manifest.json")
+	fileJSON := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev() + `","operation_id":"uo-file","members":[{"id":"m1","expect":{},"set":{"k":"v2"}}]}`
+	err := os.WriteFile(filePath, []byte(fileJSON), 0644)
+	require.NoError(t, err)
+	errs.Reset()
+	out.Reset()
+	code = app.run([]string{"batch", "--redis", addr, filePath}, &out, &errs)
+	require.Equal(t, 2, code, "file exit")
+	assert.Contains(t, errs.String(), "resend the same manifest with the same operation id")
+	words = nextCommand(t, errs.String())
+	code, stdout, stderr = runTable(words...)
+	require.Equal(t, 0, code, "pasted file batch exit")
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, "TABLE BATCH")
+
+	// 3. Stdin
+	stdinJSON := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev() + `","operation_id":"uo-stdin","members":[{"id":"m1","expect":{},"set":{"k":"v3"}}]}`
+	app.in = strings.NewReader(stdinJSON)
+	errs.Reset()
+	out.Reset()
+	code = app.run([]string{"batch", "--redis", addr, "-"}, &out, &errs)
+	require.Equal(t, 2, code, "stdin exit")
+	assert.Contains(t, errs.String(), "resend the same manifest with the same operation id")
+	words = nextCommand(t, errs.String())
+	stdinApp := &application{in: strings.NewReader(stdinJSON)}
+	out.Reset()
+	errs.Reset()
+	code = stdinApp.run(words, &out, &errs)
+	require.Equal(t, 0, code, "pasted stdin batch exit")
+	assert.Empty(t, errs.String())
+	assert.Contains(t, out.String(), "TABLE BATCH")
 }

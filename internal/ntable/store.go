@@ -63,8 +63,8 @@ var (
 	ErrWrongType         = errors.New("WRONGTYPE")
 	ErrMalformedManifest = errors.New("malformed manifest")
 	// ErrUnknownOutcome is a transport failure: the store did not answer, so the
-	// batch may or may not have been applied (changed=unknown). Send the same
-	// manifest again with the same operation id.
+	// batch may or may not have been applied (changed=unknown). Resend the same
+	// manifest with the same operation id.
 	ErrUnknownOutcome = errors.New("the store did not confirm the batch")
 )
 
@@ -1533,7 +1533,7 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 //     *ManifestError): not JSON, an unknown key, a value of the wrong type. It
 //     names the place in the manifest.
 //   - a transport failure (ErrUnknownOutcome): the store did not answer, so the
-//     batch may or may not have been applied. Send the same manifest again with
+//     batch may or may not have been applied. Resend the same manifest with
 //     the same operation id: it returns the original receipt if the batch was
 //     applied and applies it if it was not.
 //
@@ -1563,7 +1563,7 @@ func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (R
 	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)
 	reply, err := cmd.Slice()
 	if err != nil {
-		return Receipt{}, fmt.Errorf("%s: %w: %w (changed=unknown); send the same manifest again with the same operation id %q: it returns the original receipt if the batch was applied and applies it if it was not; run: %s",
+		return Receipt{}, fmt.Errorf("%s: %w: %w (changed=unknown); resend the same manifest with the same operation id %q: it returns the original receipt if the batch was applied and applies it if it was not; run: %s",
 			o.location(), ErrUnknownOutcome, err, manifest.OperationID, o.remedy())
 	}
 	if err := o.refused(reply); err != nil {

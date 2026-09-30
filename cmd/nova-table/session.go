@@ -29,6 +29,11 @@ type application struct {
 	// getenv is the environment the login is read from (login); nil is the
 	// process's. A test hands its own, so it runs in parallel.
 	getenv func(string) string
+	// openClient overrides client opening; used by tests.
+	openClient func(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, *redis.Client, int)
+	// applyBatch overrides ntable.ApplyBatch; nil calls ntable.ApplyBatch.
+	// Used by unit/functional tests to simulate transport failures (ErrUnknownOutcome).
+	applyBatch func(ctx context.Context, c redis.Cmdable, manifest ntable.BatchManifest) (ntable.Receipt, error)
 }
 
 // env is the environment the login is read from.

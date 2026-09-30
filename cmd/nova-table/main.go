@@ -230,11 +230,19 @@ func redisDefault(getenv func(string) string) string {
 // order, so `create demo --columns ...` and `create --columns ... demo`
 // read the same.
 func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
+	pos, _, err := parseInterleavedFlags(fs, args)
+	return pos, err
+}
+
+// parseInterleavedFlags parses fs over args, returning both positional
+// arguments and the raw flag arguments in the order they were supplied.
+func parseInterleavedFlags(fs *flag.FlagSet, args []string) ([]string, []string, error) {
 	var pos []string
+	var flags []string
 	rest := args
 	for len(rest) > 0 {
 		if rest[0] == "--" {
-			return append(pos, rest[1:]...), nil
+			return append(pos, rest[1:]...), flags, nil
 		}
 		if !strings.HasPrefix(rest[0], "-") || rest[0] == "-" {
 			pos = append(pos, rest[0])
@@ -256,13 +264,14 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 			if bad, found := strings.CutPrefix(err.Error(), prefix); found {
 				var names []string
 				fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
-				return nil, fmt.Errorf("unknown flag --%s; %s flags: %s; run: nova-table help %s", strings.TrimLeft(bad, "-"), fs.Name(), strings.Join(names, ", "), fs.Name())
+				return nil, nil, fmt.Errorf("unknown flag --%s; %s flags: %s; run: nova-table help %s", strings.TrimLeft(bad, "-"), fs.Name(), strings.Join(names, ", "), fs.Name())
 			}
-			return nil, err
+			return nil, nil, err
 		}
+		flags = append(flags, rest[:n]...)
 		rest = rest[n:]
 	}
-	return pos, nil
+	return pos, flags, nil
 }
 
 // open dials the store for a verb through redisconn, the one way a nova
@@ -331,6 +340,9 @@ func login(addr string, sel *seatcred.Selection, getenv func(string) string) (re
 
 // client is open's connection for a verb, or its refusal.
 func (app *application) client(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, *redis.Client, int) {
+	if app.openClient != nil {
+		return app.openClient(ctx, verb, addr, stderr)
+	}
 	if app.shared != nil {
 		if addr != app.addr {
 			return nil, nil, refuse(stderr, verb, "the shell connection is fixed; choose --redis when entering nova-table shell")

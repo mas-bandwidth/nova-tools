@@ -645,8 +645,8 @@ ahead of it refuses `EPOCHAHEAD`, naming the requested and the active epoch and
 suggesting `nova-table show <table>`, which prints the active epoch. Existence
 comes first: a table that does not exist refuses as missing whatever epoch is
 asked for. A transport failure reports changed=unknown and operation reconciliation,
-never changed=no without evidence: the message says to send the same manifest
-again with the same operation id, which returns the original receipt if the batch
+never changed=no without evidence: the message says to resend the same manifest
+with the same operation id, which returns the original receipt if the batch
 was applied and applies it if it was not. The caller's epoch is always the
 "requested" epoch and the store's the "active" one.
 

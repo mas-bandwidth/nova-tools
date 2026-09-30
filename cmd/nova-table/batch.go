@@ -30,7 +30,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 		_ = fs.Set("receipt", "false")
 	}
 
-	pos, err := parseInterleaved(fs, args)
+	pos, flags, err := parseInterleavedFlags(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -39,7 +39,6 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var raw []byte
-	fromFile := false
 	switch {
 	case pos[0] == "-":
 		in := app.in
@@ -59,7 +58,6 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v (a manifest is a file path, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0], readErr))
 		}
 		raw = content
-		fromFile = true
 	}
 
 	manifest, err := ntable.ValidateBatchManifestRaw(raw)
@@ -112,17 +110,19 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 
-	rcpt, err := ntable.ApplyBatch(ctx, c, *manifest)
+	apply := ntable.ApplyBatch
+	if app.applyBatch != nil {
+		apply = app.applyBatch
+	}
+	rcpt, err := apply(ctx, c, *manifest)
 	if errors.Is(err, ntable.ErrUnknownOutcome) {
-		// the store did not confirm: the batch may or may not be applied. Send the same manifest again.
+		// the store did not confirm: the batch may or may not be applied. Resend the same manifest with the same operation id.
 		text := err.Error()
 		if i := strings.LastIndex(text, "; run: "); i >= 0 {
 			text = text[:i]
 		}
-		next := "nova-table batch -h"
-		if fromFile {
-			next = "nova-table batch '" + strings.ReplaceAll(pos[0], "'", `'\''`) + "'"
-		}
+		text = strings.Replace(text, "send the same manifest again with the same operation id", "resend the same manifest with the same operation id", 1)
+		next := batchNextCommand(flags, pos[0])
 		return refuse(stderr, verb, text+"; run: "+next)
 	}
 	if err != nil {
@@ -235,4 +235,28 @@ func fieldChanges(m ntable.BatchMemberDelta) string {
 		return "{}"
 	}
 	return string(b)
+}
+
+// batchNextCommand constructs the exact retry command for an unknown-outcome
+// batch refusal, preserving any flags passed by the caller and printing the
+// appropriate target form: '-' for stdin, single-quoted for inline JSON or file.
+func batchNextCommand(flags []string, target string) string {
+	words := []string{"nova-table", "batch"}
+	for _, f := range flags {
+		words = append(words, quoteArg(f))
+	}
+	if target == "-" {
+		words = append(words, "-")
+	} else {
+		words = append(words, "'"+strings.ReplaceAll(target, "'", `'\''`)+"'")
+	}
+	return strings.Join(words, " ")
+}
+
+// quoteArg quotes a shell word if it contains spaces, quotes, or shell special characters.
+func quoteArg(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t\n\r'\"\\|&;<>()$`*?[]#~!") {
+		return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	}
+	return s
 }

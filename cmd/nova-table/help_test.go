@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestEveryCommandHasEquivalentDiscoverableHelp(t *testing.T) {
@@ -43,5 +46,21 @@ func TestEveryCommandHasEquivalentDiscoverableHelp(t *testing.T) {
 	_, show, _ := runTable("help", "view", "show")
 	if strings.Contains(show, "--summary") || strings.Contains(show, "--title") {
 		t.Fatal("view show advertises view set flags")
+	}
+}
+
+// TestEveryVerbAnswersHelpAndTouchesNothing verifies that every verb answers
+// -h and --help with its own help on stdout at exit 0 and touches nothing.
+func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
+	t.Parallel()
+	for _, c := range commands {
+		words := strings.Fields(c.name)
+		for _, flag := range []string{"-h", "--help"} {
+			var stdout, stderr bytes.Buffer
+			code := run(append(append([]string{}, words...), flag), &stdout, &stderr)
+			assert.Equal(t, 0, code, "%s %s exit code", c.name, flag)
+			assert.Empty(t, stderr.String(), "%s %s stderr", c.name, flag)
+			assert.Contains(t, stdout.String(), "usage: nova-table "+strings.TrimSpace(c.name+" "+c.syntax))
+		}
 	}
 }
