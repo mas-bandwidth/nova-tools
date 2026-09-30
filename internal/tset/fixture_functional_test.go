@@ -616,6 +616,17 @@ func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
 					ts.Cells[row][column] = cell
 				}
 			}
+			// Amendment 2026-09-30 (property), section 1: the table's
+			// property hash at this epoch, beside its rows key.
+			propsKey := fixtureTablePrefix(fx.Space, table, string(epoch)) + ":props"
+			known[propsKey] = true
+			props, err := fx.Client.HGetAll(ctx, propsKey).Result()
+			if err != nil {
+				t.Fatalf("properties %q: %v", propsKey, err)
+			}
+			if len(props) != 0 {
+				ts.Props = props
+			}
 			es.Tables[table] = ts
 		}
 		out.Epochs[epoch] = es

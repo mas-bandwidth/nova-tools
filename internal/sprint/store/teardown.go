@@ -64,7 +64,7 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	sort.Slice(old, func(i, j int) bool { return old[i] < old[j] })
 	for _, e := range old {
 		for _, shape := range epochs.Old[e] {
-			keys = append(keys, ntable.RowsKeyAt(shape.Name, e))
+			keys = append(keys, ntable.RowsKeyAt(shape.Name, e), ntable.PropsKeyAt(shape.Name, e))
 			for _, row := range shape.Rows {
 				keys = append(keys, ntable.RowKeyAt(shape.Name, row.Key, e))
 				for _, c := range shape.Columns {
@@ -314,6 +314,10 @@ func (m *Mem) DeleteKeys(_ context.Context, keys []string) (int, error) {
 func (m *Mem) tableKeys(name string, t *memTable) map[string]func() {
 	out := map[string]func(){}
 	for e, ep := range t.epochs {
+		if len(ep.props) > 0 {
+			ep := ep
+			out[ntable.PropsKeyAt(name, e)] = func() { ep.props = nil }
+		}
 		if len(ep.rows) == 0 {
 			continue
 		}

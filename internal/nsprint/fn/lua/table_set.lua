@@ -18,7 +18,8 @@ do
     ids_per_entry=2000,member_candidates=2000,guard_members=4000,rows=100,advance_rows=1024,
     field_names=128,field_value=65536,result=4096,intent=65536,notes=100,about=4000,
     commands=65536,argv_bytes=8388608,fetched_bytes=8388608,cell=20000,
-    read_fields=1280000,write_fields=768000,record=10000,range_id=20000,log_id=200000}
+    read_fields=1280000,write_fields=768000,record=10000,range_id=20000,log_id=200000,
+    props=64,prop_entries=64}
   local fetched_cap=S.limits.fetched_bytes
 
   function S.refuse(code, detail, message)
@@ -208,6 +209,9 @@ do
     ctx.table_key = function(t) return space .. 'table:' .. t end
     ctx.table_prefix = function(t,e) return space .. 'table:' .. t .. (e == '0' and '' or ':' .. e) end
     ctx.rows_key = function(t,e) return ctx.table_prefix(t,e) .. ':rows' end
+    -- Amendment 2026-09-30 (property), section 1: one hash per table per
+    -- epoch beside its rows key, inside the reserved table: namespace.
+    ctx.props_key = function(t,e) return ctx.table_prefix(t,e) .. ':props' end
     ctx.cell_key = function(t,e,row,col) return ctx.table_prefix(t,e) .. ':cell:' .. row .. ':' .. col end
     ctx.definition_key = function(t,e) return ctx.table_prefix(t,e) .. ':definition' end
     ctx.log_key = function(e) return space .. 'sprint:log@' .. e end
@@ -661,6 +665,48 @@ do
       elseif e.kind=='create' or e.kind=='move' or e.kind=='remove' then b.member_candidates=b.member_candidates+#e.ids end
     end
   end
+  -- Table properties: L1 contract amendment 2026-09-30 (property), section 2.
+  -- A prop and a propguard both compare with the write epoch's pre-state (one
+  -- HGET per distinct name, charged as a field observation), so a guard beside
+  -- a write on the same pair reads the value from before the step. A changed
+  -- prop is one HSET; no log line is planned for it.
+  local function prop_pre(ctx,t,name)
+    local key=ctx.props_key(t,ctx.write_epoch)
+    ctx.prop_pre=ctx.prop_pre or {}
+    local cache=ctx.prop_pre[key]
+    if not cache then cache={};ctx.prop_pre[key]=cache end
+    if cache[name]==nil then
+      local ok,err=S.charge(ctx,'field',1);if err then return nil,nil,err end
+      local value;value,err=rd(ctx,{'HGET',key,name},'hash',S.limits.field_value,'field');if err then return nil,nil,err end
+      if value and #value>S.limits.field_value then return nil,nil,S.refuse('DRIFT',{table=t}) end
+      cache[name]=value or false
+    end
+    return key,cache[name],nil
+  end
+  local function prop_entry(ctx,plan,e,ix,result,counts)
+    local key,before,err=prop_pre(ctx,e.t,e.name);if err then return nil,err end
+    result.name=e.name;result.before=before or cjson.null
+    if e.kind=='propguard' then
+      if (e.value==nil and before) or (e.value~=nil and before~=e.value) then
+        return nil,S.refuse('PROPGUARD',{entry_index=ix-1,table=e.t,name=e.name})
+      end
+      return true,nil
+    end
+    result.value=e.value
+    if before==e.value then return true,nil end
+    if not before then
+      -- A new name counts toward the table's 64 properties at this epoch.
+      local n=counts[e.t]
+      if n==nil then n,err=rd(ctx,{'HLEN',key},'hash',32,'cell');if err then return nil,err end end
+      n=n+1;counts[e.t]=n
+      if n>S.limits.props then
+        return nil,S.refuse('LIMIT',{entry_index=ix-1,table=e.t,budget='properties',actual=n,limit=S.limits.props})
+      end
+    end
+    local ok;ok,err=stage(ctx,plan,'HSET',key,'hash',{e.name,e.value});if err then return nil,err end
+    plan.changed=plan.changed+1;plan.changed_per_entry[ix]=plan.changed_per_entry[ix]+1
+    return true,nil
+  end
   local function fence_unchanged(ctx)
     return ctx.request.fence==(ctx.original_fence and true or nil)
   end
@@ -709,7 +755,7 @@ do
     local plan={commands={},entries=S.array(),before=ctx.before,rows=S.array(),advance=cjson.null,
       changed=0,guarded=0,changed_per_entry=S.array(),budget=ctx.budget}
     local topo;topo,err=S.rows_collect(ctx);if err then return nil,err end
-    local seen={}
+    local seen,prop_counts={},{}
     for ix,e in ipairs(ctx.request.entries) do
       local detail={entry_index=ix-1,table=e.t}
       local result={kind=e.kind,table=e.t,entry_index=ix-1,changed_ids=S.array(),before_scores=S.array(),after_scores=S.array(),
@@ -743,6 +789,8 @@ do
           if e.kind=='count' and n>e.max[ci] then detail.cells={cell};return nil,S.refuse('CELLFULL',detail) end
         end
         if e.kind=='rcount' and ((e.atleast and total<e.atleast) or (e.atmost and total>e.atmost)) then detail.cells=e.cells;return nil,S.refuse('RANGECOUNT',detail) end
+      elseif e.kind=='prop' or e.kind=='propguard' then
+        local ok;ok,err=prop_entry(ctx,plan,e,ix,result,prop_counts);if err then return nil,err end
       elseif e.kind~='rows' then
         local def=ctx.defs[e.t]
         if not def then return nil,S.refuse('NOTABLE',detail) end

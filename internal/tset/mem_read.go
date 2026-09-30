@@ -261,7 +261,7 @@ func (b *readBudget) emitReadItem(value any) error {
 
 func (b *readBudget) accountEncodedAnswer(answer ReadAnswer) error {
 	switch answer.Kind {
-	case "count", "rcount":
+	case "count", "rcount", "props":
 		return b.emitReadItem(answer)
 	case "done":
 		for _, slot := range answer.Done {
@@ -373,7 +373,7 @@ func validateReadQuery(q ReadQuery) error {
 		if q.Table == "" || q.IDs == nil {
 			return memRefusal("REQUEST", RefusalDetail{})
 		}
-	case "rows":
+	case "rows", "props":
 		if q.Table == "" {
 			return memRefusal("REQUEST", RefusalDetail{})
 		}
@@ -397,6 +397,8 @@ func (m *Mem) readOne(namespaceName string, space *memNamespace, epoch *memEpoch
 		return readIDs(space, epoch, q, b)
 	case "rows":
 		return readRows(space, epoch, q, b)
+	case "props":
+		return readProps(space, epoch, q, b)
 	case "done":
 		return m.readDoneQuery(space, q, b)
 	default:
@@ -1007,6 +1009,67 @@ func readRows(space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) 
 			}
 		}
 		offset = end
+	}
+	return answer, nil
+}
+
+// readProps answers a props query at the read epoch (L1 contract amendment
+// 2026-09-30, property, section 3), charged as field reads. Without names the
+// store probes the hash length then fetches it whole; with names it fetches
+// only those, and an absent property is omitted from the answer.
+func readProps(space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
+	_, table, err := readTable(space, epoch, q.Table)
+	if err != nil {
+		return ReadAnswer{}, err
+	}
+	answer := ReadAnswer{Kind: "props", Props: make(map[string]string)}
+	if q.Names == nil {
+		if err := b.reserveRaw(32); err != nil {
+			return ReadAnswer{}, err
+		}
+		if err := b.chargeProbe(1); err != nil {
+			return ReadAnswer{}, err
+		}
+		n := len(table.props)
+		if err := b.chargeRaw(int64(len(strconv.Itoa(n)))); err != nil {
+			return ReadAnswer{}, err
+		}
+		if n > MaxPropsPerTable {
+			return ReadAnswer{}, memRefusal("DRIFT", RefusalDetail{Table: q.Table})
+		}
+		if err := b.chargeField(int64(n)); err != nil {
+			return ReadAnswer{}, err
+		}
+		if n == 0 {
+			return answer, nil
+		}
+		if err := b.reserveRaw(int64(n) * (256 + MaxFieldValueBytes)); err != nil {
+			return ReadAnswer{}, err
+		}
+		for name, value := range table.props {
+			if err := b.chargeRaw(int64(len(name) + len(value))); err != nil {
+				return ReadAnswer{}, err
+			}
+			answer.Props[name] = value
+		}
+		return answer, nil
+	}
+	if err := b.chargeField(int64(len(q.Names))); err != nil {
+		return ReadAnswer{}, err
+	}
+	if len(q.Names) == 0 {
+		return answer, nil
+	}
+	if err := b.reserveRaw(int64(len(q.Names)) * MaxFieldValueBytes); err != nil {
+		return ReadAnswer{}, err
+	}
+	for _, name := range q.Names {
+		if value, present := table.props[name]; present {
+			if err := b.chargeRaw(int64(len(value))); err != nil {
+				return ReadAnswer{}, err
+			}
+			answer.Props[name] = value
+		}
 	}
 	return answer, nil
 }

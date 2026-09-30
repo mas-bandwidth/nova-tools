@@ -1974,7 +1974,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `batch (<manifest-file> \| - \| '<json>')` | Applies an atomic batch manifest (file, stdin or inline JSON) of member mutations and preconditions |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
-| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
+| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages, then one `TABLE PROP table= <name>=<value>` line for each of the table's properties (values a batch manifest writes with its members, such as a rolling index), in name order; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
 | `render <table>` | Prints a text table; an empty table prints nothing |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |

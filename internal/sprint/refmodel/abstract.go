@@ -42,6 +42,8 @@ func Abstract(o Observed) State {
 			a.Members[m] = Up
 		}
 	}
+	a.DealLast, _ = s.Fleet.Prop(sprint.PropDealIndex)
+	a.AskLast, _ = s.Readers.Prop(sprint.PropAskIndex)
 	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
 		if ctl := s.StreamCtl(st); ctl != nil {

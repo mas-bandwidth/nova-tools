@@ -594,20 +594,23 @@ func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	}
 }
 
-// DEFECT J. The tick marks "the sprint is done" overdue, which the inbox and
-// Note.Due say is never overdue.
+// DEFECT J. The tick marked "the sprint is done" overdue, which the inbox and
+// Note.Due say is never overdue. Since errata 3 amendment 6 it is no judgment:
+// the tick says it once, addressed to the coordinator, and stops the machine,
+// so nothing is left to mark overdue or to say again.
 func TestAudit2ClosedSprintDoneIsMarkedOverdue(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.startMachine()
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "done"}))
-	if len(h.a2Open(sprint.NSprintDone)) != 1 {
-		t.Fatalf("not done")
+	h.machine()
+	if len(h.a2Open(sprint.NSprintDone)) != 0 || h.written(sprint.NSprintDone) != 1 {
+		t.Fatalf("not done once, or done as a judgment: open %d, written %d", len(h.a2Open(sprint.NSprintDone)), h.written(sprint.NSprintDone))
 	}
 	h.a2Run(15*time.Minute, 5*time.Minute)
-	if h.written(sprint.NOverdue) != 0 {
-		t.Fatalf("the sprint is done marked overdue: %d lines", h.written(sprint.NOverdue))
+	if h.written(sprint.NOverdue) != 0 || h.written(sprint.NSprintDone) != 1 {
+		t.Fatalf("the sprint is done marked overdue (%d lines) or said again (%d)", h.written(sprint.NOverdue), h.written(sprint.NSprintDone))
 	}
 }
 

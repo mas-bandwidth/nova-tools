@@ -53,16 +53,18 @@ func TestReleasingTheOnlyCardLandsItsStream(t *testing.T) {
 	h.clean("released")
 }
 
-// 3. A sprint whose every card was dropped is done, 0 landed; a stream with
-// every primary dropped is empty (waiting, no since), never landed.
+// 3. A sprint whose every card was dropped is done, 0 landed (said by the
+// tick, which stops the machine: errata 3 amendment 6); a stream with every
+// primary dropped is empty (waiting, no since), never landed.
 func TestAnAllDroppedSprintIsDoneAndItsStreamEmpty(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
+	h.startMachine()
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p1"}}))
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p1"}}, Reason: "gone"}))
-	open := h.openOf(sprint.NSprintDone)
-	if len(open) != 1 || open[0].Note.What != "0 landed, 1 dropped" {
-		t.Fatalf("the sprint is done: %+v", open)
+	res := h.machine()
+	if res.Done != "0 landed, 1 dropped, took 0s from the first start" || len(h.openOf(sprint.NSprintDone)) != 0 || h.written(sprint.NSprintDone) != 1 {
+		t.Fatalf("the sprint is done: %+v", res)
 	}
 	if c := h.snap().StreamCtl("s3"); c.F("state") != sprint.StreamWaiting || c.F("since") != "" {
 		t.Fatalf("the empty stream: %v", c.Fields)
@@ -265,5 +267,59 @@ func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 	slices.Sort(dealt)
 	if want := []string{"a1", "a2", "b1", "b2"}; !slices.Equal(dealt, want) {
 		t.Fatalf("the tick dealt %v, want %v: two from each stream's front", dealt, want)
+	}
+}
+
+// The deal goes round the fleet and the ask goes round the readers (errata 3,
+// amendment 5; the model's NextMember and NextReaders, tla/SprintEvents.tla's
+// RoundAssign and RoundTwo): with three idle members the second card goes to
+// m2, past m1, where the shortest queue with its ties by name gives m1 again;
+// with the first two readers reading, the second primary is asked of r3 and
+// r1, past r2, where the shortest asked queues give r1 and r2. Red when either
+// the engine's choice or the model's is put back to the shortest queue.
+func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
+	t.Parallel()
+	h := newDHarness(t)
+	for _, a := range []dAction{
+		{Kind: "fleet", Op: "up", Member: "m1"},
+		{Kind: "fleet", Op: "up", Member: "m2"},
+		{Kind: "fleet", Op: "up", Member: "m3"},
+		{Kind: "start"},
+		{Kind: "add", Stream: "s1", IDs: []string{"a1"}},
+		{Kind: "tick"},
+		{Kind: "take", Member: "m1", Card: "a1.w1", Gen: 1},
+		{Kind: "add", Stream: "s1", IDs: []string{"a2"}},
+		{Kind: "tick"},
+		{Kind: "finish", Member: "m1", Card: "a1.w1", Gen: 1, OK: true},
+		{Kind: "tick"},
+		{Kind: "begin", Reader: "r1", Card: "a1.r1.r1"},
+		{Kind: "begin", Reader: "r2", Card: "a1.r1.r2"},
+		{Kind: "take", Member: "m2", Card: "a2.w1", Gen: 1},
+		{Kind: "finish", Member: "m2", Card: "a2.w1", Gen: 1, OK: true},
+		{Kind: "tick"},
+	} {
+		h.do(a)
+	}
+	for _, f := range h.findings {
+		if _, known := dClassify(f); !known {
+			t.Fatalf("a difference between the engine and the model on the deal or the ask:\n%s", f)
+		}
+	}
+	s := h.observe()
+	if w := s.Work["a2.w1"]; w.Member != "m2" {
+		t.Fatalf("a2 was dealt to %q, want m2: past m1, round the fleet", w.Member)
+	}
+	var readers []string
+	for _, rc := range s.Reads {
+		if rc.Primary == "a2" {
+			readers = append(readers, rc.Reader)
+		}
+	}
+	slices.Sort(readers)
+	if want := []string{"r1", "r3"}; !slices.Equal(readers, want) {
+		t.Fatalf("a2 was asked of %v, want %v: past r2, round the readers", readers, want)
+	}
+	if s.DealLast != "m2" || s.AskLast != "r1" {
+		t.Fatalf("the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
 	}
 }

@@ -32,8 +32,9 @@ type AddArgs struct {
 // the choice of each new id's score (the model's Score0, a constant there).
 //
 // Sentinels by position, add --before/--after, a sentinel pulling ready
-// cards back to waiting, and add closing the sprint-done judgment are from
-// the spec (sections 8 and 16), not yet in the model.
+// cards back to waiting are from the spec (section 16), not yet in the
+// model. An add opens no sprint-done judgment to close: the sprint done is
+// the tick's (tickDone, errata 3 amendment 6).
 func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -117,7 +118,6 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 			n.open(JBlocked, id)
 		}
 	}
-	n.closeOn(SprintSubject, JDone)
 	return n, nil
 }
 
@@ -288,8 +288,8 @@ func Waive(s State, p string, qs []string) (State, error) {
 // ------------------------------------------------------------------ fleet
 
 // Start is SprintTables.tla Start(p) (line 310): ready -> working; the work
-// card of the attempt is dealt to m, which must be an up member with the
-// shortest ready queue: cut at generation 1, or, when it was withdrawn, the
+// card of the attempt is dealt to m, which must be the next member round the
+// fleet (NextMember, errata 3 amendment 5; the rolling index moved past it): cut at generation 1, or, when it was withdrawn, the
 // same card dealt again at a new generation (G1, D3). limit, when above zero,
 // is the tick's MaxReadyPerMember (spec section 5): only members whose ready
 // queue is shorter are dealt to.
@@ -313,10 +313,11 @@ func Start(s State, p, m string, limit int) (State, error) {
 	if len(up) == 0 {
 		return s, refuse("no up member to deal %s to", p)
 	}
-	if !s.ShortestIn(m, up) {
-		return s, badChoice("%s dealt to %s, whose ready queue (%d) is not the shortest of %v", p, m, s.RL(m), up)
+	if next := s.NextMember(up); m != next {
+		return s, badChoice("%s dealt to %s, not the next member round the fleet, %s (past %q) of %v", p, m, next, s.DealLast, up)
 	}
 	n := s.Clone()
+	n.DealLast = m
 	pr := n.Primaries[p]
 	id := WC(p, pr.Attempt)
 	if w, ok := n.Work[id]; ok {
@@ -404,8 +405,8 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
 // did not fail, with no read card on the table, is dealt to two different
-// readers: the two kept on it (D2), or the shortest asked queues (the
-// choice). It closes stranded in review (spec section 6).
+// readers: the two kept on it (D2), or the next two round the readers
+// (NextReaders, errata 3 amendment 5), the rolling index moved past them. It closes stranded in review (spec section 6).
 func Ask(s State, p string, two []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -425,10 +426,17 @@ func Ask(s State, p string, two []string) (State, error) {
 		if Join(sorted) != Join(pr.Pair) {
 			return s, badChoice("%s asked of %v, not the readers kept on it %v", p, sorted, pr.Pair)
 		}
-	} else if !s.shortestPair(two) {
-		return s, badChoice("%s asked of %v, not the two shortest asked queues", p, two)
+	}
+	var next []string
+	if len(pr.Pair) == 0 {
+		if next = s.NextReaders(p, 2); Join(sorted) != Join(addSorted(nil, next...)) {
+			return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
+		}
 	}
 	n := s.Clone()
+	if len(next) == 2 {
+		n.AskLast = next[1]
+	}
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
@@ -439,30 +447,6 @@ func Ask(s State, p string, two []string) (State, error) {
 	n.setPrimary(p, func(x *Primary) { x.Pair = sorted })
 	delete(n.Open, Judgment{JStranded, p})
 	return n, nil
-}
-
-// shortestPair is Ask's choice rule: one reader with the shortest asked
-// queue, the other with the shortest among the rest.
-func (s State) shortestPair(two []string) bool {
-	for _, order := range [][2]string{{two[0], two[1]}, {two[1], two[0]}} {
-		r1, r2 := order[0], order[1]
-		if !has(s.Readers, r1) || !has(s.Readers, r2) {
-			return false
-		}
-		ok := true
-		for _, x := range s.Readers {
-			if s.AskedLen(x) < s.AskedLen(r1) {
-				ok = false
-			}
-			if x != r1 && s.AskedLen(x) < s.AskedLen(r2) {
-				ok = false
-			}
-		}
-		if ok {
-			return true
-		}
-	}
-	return false
 }
 
 // AskAnother is SprintTables.tla AskAnother(p, r) (line 397): one more reader
@@ -496,6 +480,7 @@ func AskAnother(s State, p, r string) (State, error) {
 		return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 	}
 	n := s.Clone()
+	n.AskLast = r
 	n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked}
 	delete(n.Open, Judgment{JBroken, p})
 	delete(n.Open, Judgment{JReads, p})
@@ -657,8 +642,9 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. The
-// sprint-done judgment is the spec's (section 8).
+// waiting primary that needs it is blocked. Every judgment on it closes. A
+// sprint it finishes is found done by the tick (tickDone, errata 3 amendment
+// 6).
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -666,7 +652,6 @@ func Drop(s State, p string) (State, error) {
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
 	}
-	doneBefore := s.sprintDone()
 	n := s.Clone()
 	st := n.Primaries[p].Stream
 	for _, id := range Keys(n.Work) {
@@ -696,9 +681,6 @@ func Drop(s State, p string) (State, error) {
 	}
 	n.closeOn(p)
 	n.setPrimary(p, func(x *Primary) { x.State = Off })
-	if !doneBefore && n.sprintDone() {
-		n.open(JDone, SprintSubject)
-	}
 	return n, nil
 }
 
@@ -797,8 +779,8 @@ func Return(s State, p string) (State, error) {
 // green: the batch is the first n of the stream's queued cards in score order
 // (a prefix: section 7, 1), and lands. The same step moves every waiting
 // primary whose needs have all landed to ready and marks reached every
-// sentinel whose needs have all landed (spec section 7), and writes the
-// sprint-done judgment (section 8): the spec's, not the model's.
+// sentinel whose needs have all landed (spec section 7). A sprint it finishes
+// is found done by the tick (tickDone, errata 3 amendment 6).
 func MergeGreen(s State, stream string, batch int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -819,7 +801,6 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 			return s, refuse("stuck %s is a barrier", x)
 		}
 	}
-	doneBefore := s.sprintDone()
 	n := s.Clone()
 	x := n.Streams[stream]
 	x.State = n.streamAfter(stream, SMerging, b, nil)
@@ -831,9 +812,6 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 		n.setPrimary(p, func(x *Primary) { x.State = Landed })
 	}
 	n.resolveAll()
-	if !doneBefore && n.sprintDone() {
-		n.open(JDone, SprintSubject)
-	}
 	return n, nil
 }
 

@@ -1083,6 +1083,11 @@ func readDone(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 //
 // O(s) cells in one entry and one read. Without it, nothing: the counts are
 // cells.
+//
+// Errata 3 amendment 6 amends R15: the sprint done is a KNOW note addressed to
+// the coordinator and a stop of the machine, not a judgment. The present tick
+// carries it (TickDone, and the store's stop); this rule takes it, with a
+// STOPPED write of the clock in RT3, when the event-driven path is wired.
 func planDone(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	var rp RulePlan
 	mine, _ := posOwnKeys(keys, ruleDone)

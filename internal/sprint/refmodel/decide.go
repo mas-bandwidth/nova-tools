@@ -22,12 +22,13 @@ const (
 	DutyCheck     = "check"     // a broken rule and a stall are judgments
 	DutyDeadlines = "deadlines" // a late card or stream is a judgment
 	DutyOverdue   = "overdue"   // a judgment past its due time is marked
+	DutyDone      = "done"      // the sprint done is said to the coordinator, and the machine stops
 	DutyRemind    = "remind"    // each person due is pushed their goal
 )
 
 // dutyNames is the duties' names in the tick's order, which the canonical order
 // of moves follows. Duties lists the same names, and a test holds them equal.
-var dutyNames = []string{DutyStrangers, DutyPresence, DutyResolve, DutyResume, DutyDeal, DutyLevel, DutyAsk, DutyCheck, DutyDeadlines, DutyOverdue, DutyRemind}
+var dutyNames = []string{DutyStrangers, DutyPresence, DutyResolve, DutyResume, DutyDeal, DutyLevel, DutyAsk, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
 
 // Duty is one duty of the tick: its name and the function that decides it.
 type Duty struct {
@@ -50,6 +51,7 @@ var Duties = []Duty{
 	{DutyCheck, CheckMoves},
 	{DutyDeadlines, DeadlineMoves},
 	{DutyOverdue, OverdueMoves},
+	{DutyDone, DoneMoves},
 	{DutyRemind, RemindMoves},
 }
 
@@ -125,6 +127,13 @@ func DeadlineMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, Du
 // time, and the close of a hold whose judgment closed.
 func OverdueMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyOverdue) }
 
+// DoneMoves is the note "the sprint is done", addressed to the coordinator, on
+// a sprint with nothing open and a card landed or dropped (R15 as errata 3
+// amendment 6 amends it). The machine's stop that goes with it is no move of
+// the tables: the model's Tick has it (State.Machine), and the binding writes
+// it on the machine's record.
+func DoneMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyDone) }
+
 // RemindMoves is a push for each person whose reminder is due, and the
 // judgments the failing routes call for or no longer call for. Whether a push
 // arrives is the delivery's, not the decision's, so the judgments are those of
@@ -157,6 +166,7 @@ func decisions() []dutyOn {
 		{DutyCheck, partOn(DutyCheck)},
 		{DutyDeadlines, partOn(DutyDeadlines)},
 		{DutyOverdue, partOn(DutyOverdue)},
+		{DutyDone, partOn(DutyDone)},
 		{DutyRemind, remindOn},
 	}
 }

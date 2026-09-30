@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
@@ -196,6 +197,12 @@ type KeyResult struct {
 	Key     string   `json:"key"`
 	Streams []string `json:"streams"`
 	N       string   `json:"n"`
+	// Subject and State are a jopen key's: the subject whose jopen hash was
+	// read, and whether the rule's field holds an open judgment ("open"), a
+	// held one ("held"), or none (""). Both are empty when there was no
+	// subject to read (a `front` with no sentinel).
+	Subject string `json:"subject,omitempty"`
+	State   string `json:"state,omitempty"`
 }
 
 // StuckIDs are the first ids of a stopped stream's stuck cell.
@@ -252,6 +259,9 @@ type ListingResult struct {
 	HasMore bool          `json:"has_more"`
 	LeftOut []string      `json:"left_out"`
 	Items   []ListingItem `json:"items"`
+	// Props are the table properties the query named that the table holds
+	// (L1 contract amendment, table properties).
+	Props map[string]string `json:"props,omitempty"`
 }
 
 // ChainItem is one card `needchain` read: its record, the needs it names, and
@@ -429,6 +439,15 @@ func projectKeys(keys []KeyResult) []sprint.KeyAnswer {
 		if k.N != "" {
 			ka.N, _ = strconv.ParseUint(k.N, 10, 64)
 		}
+		if typ, _, ok := strings.Cut(jopenFields[k.Key], "|"); ok {
+			ka.Subject = k.Subject
+			switch k.State {
+			case jopenOpen:
+				ka.Open = []string{typ}
+			case jopenHeld:
+				ka.Held = []string{typ}
+			}
+		}
 		out = append(out, ka)
 	}
 	return out
@@ -505,7 +524,7 @@ func (r ListingResult) Project(q sprint.SprintQ) sprint.Answer {
 	if r.Kind == sprint.QueryReaders {
 		table = sprint.Readers
 	}
-	a := sprint.Answer{Kind: r.Kind, Rows: append([]string(nil), r.Rows...), HasMore: r.HasMore}
+	a := sprint.Answer{Kind: r.Kind, Rows: append([]string(nil), r.Rows...), HasMore: r.HasMore, Props: r.Props}
 	for _, it := range r.Items {
 		for _, c := range it.Counts {
 			a.Counts = append(a.Counts, sprint.CellCount{Row: it.Row, Col: c.Col, N: c.N})

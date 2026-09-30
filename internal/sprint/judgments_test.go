@@ -115,49 +115,59 @@ func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
 	w.clean("read")
 }
 
-// H6: the step that lands or drops the last open primary of the whole sprint
-// writes one judgment, the sprint is done, with the counts; add closes it.
+// H6, as errata 3 amendment 6 amends it: no step that lands or drops the
+// last open primary writes "the sprint is done"; the tick's done part does,
+// once the sprint has nothing open: one happened note, addressed to the
+// coordinator, with the counts, the time from the first start and the hint,
+// and no judgment. The inbox shows it first.
 func TestTheSprintIsDoneOnce(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
+	started := w.s.Now
+	req := TickReq{Started: started}
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
 	accepted(w, "s1-1", "s1-2")
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s2-1"}}, Reason: "obsolete"}))
-	if len(w.notesOf(NSprintDone)) != 0 || w.s.StreamCtl("s2").F("dropped") != "1" {
-		t.Fatalf("done too early, or the drop not counted: %v %q", w.notesOf(NSprintDone), w.s.StreamCtl("s2").F("dropped"))
+	if p, _ := TickDone(w.s, req); !p.Empty() || w.s.StreamCtl("s2").F("dropped") != "1" {
+		t.Fatalf("done too early, or the drop not counted: %+v %q", p, w.s.StreamCtl("s2").F("dropped"))
+	}
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	if p, _ := TickDone(w.s, req); !p.Empty() {
+		t.Fatalf("done with s1-2 merging: %+v", p)
 	}
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
 	if len(w.notesOf(NSprintDone)) != 0 {
-		t.Fatalf("done with s1-2 merging")
+		t.Fatalf("the merge step wrote the sprint done: %+v", w.notesOf(NSprintDone))
 	}
-	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
+	w.tick(90 * time.Minute)
+	w.must(tickDone(w.s, req))
 	done := w.notesOf(NSprintDone)
-	if len(done) != 1 || done[0].Kind != Judgment || done[0].What != "2 landed, 1 dropped" || len(w.openOn(SprintSubject)) != 1 {
+	if len(done) != 1 || done[0].Kind != Happened || done[0].What != "2 landed, 1 dropped, took 1h30m0s from the first start" ||
+		done[0].To != "coordinator" || done[0].Hint != DoneHint || len(w.openOn(SprintSubject)) != 0 {
 		t.Fatalf("the sprint is done: %+v", done)
 	}
-	if p := MergeStep(w.s, MergeReq{Stream: "s1"}); len(p.Units) != 0 || len(w.notesOf(NSprintDone)) != 1 {
-		t.Fatalf("written twice: %+v", p)
+	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open, Recent: w.notes})
+	if len(g) == 0 || g[0].Type != NSprintDone || g[0].Kind != Happened || g[0].To != "coordinator" || g[0].Hint != DoneHint ||
+		g[0].What != done[0].What || len(g[0].Commands) != 0 {
+		t.Fatalf("the inbox does not show the sprint done first: %+v", g)
 	}
-	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open, Prefix: "dev-"})
-	if len(g) != 1 || g[0].Type != NSprintDone || g[0].Commands[0].Lines[0] != "nova-sprint clear --confirm dev-sprint" ||
-		g[0].Commands[1].Decision != "add" || g[0].Size != 0 {
-		t.Fatalf("the inbox: %+v", g)
-	}
-	if g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open}); len(g) != 1 || g[0].Commands[0].Lines[0] != "nova-sprint clear --confirm sprint" {
-		t.Fatalf("the inbox with no prefix: %+v", g)
+	// Not known when the machine first started: the counts alone.
+	if p, _ := TickDone(w.s, TickReq{}); len(p.Notes) != 1 || p.Notes[0].What != "2 landed, 1 dropped" {
+		t.Fatalf("with no first start: %+v", p.Notes)
 	}
 	w.must(Add(w.s, AddReq{Stream: "s3", Count: 1}))
-	if len(w.openOn(SprintSubject)) != 0 {
-		t.Fatalf("add left the sprint done")
+	if p, _ := TickDone(w.s, req); !p.Empty() {
+		t.Fatalf("more work, and still done: %+v", p)
 	}
 	w.clean("more work")
 
-	// The last open primary dropped: done, by the drop.
+	// The last open primary dropped: done, once the tick looks.
 	w2 := setup(t, 2)
 	accepted(w2, "s1-1")
 	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1"}))
 	w2.must(Drop(w2.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
-	if done := w2.notesOf(NSprintDone); len(done) != 1 || done[0].What != "1 landed, 1 dropped" {
+	w2.must(tickDone(w2.s, TickReq{}))
+	if done := w2.notesOf(NSprintDone); len(done) != 1 || done[0].What != "1 landed, 1 dropped" || done[0].Kind != Happened {
 		t.Fatalf("done by a drop: %+v", done)
 	}
 	w2.clean("done")

@@ -2,6 +2,7 @@ package sprintfn
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -121,7 +122,14 @@ type sprintPlan struct {
 	Quarantined []string `json:"quarantined"`
 	Coordinator string   `json:"coordinator,omitempty"`
 	TickEnd     string   `json:"tickend,omitempty"`
-	cmds        []Cmd
+	// Due are the due entries the time writes moved, Unarmed that they removed
+	// behind_n, Claimed the people whose goal records they claimed, and Clock
+	// that they wrote the clock.
+	Due     []string `json:"due,omitempty"`
+	Unarmed bool     `json:"unarmed,omitempty"`
+	Claimed []string `json:"claimed,omitempty"`
+	Clock   bool     `json:"clock,omitempty"`
+	cmds    []Cmd
 }
 
 func (p *sprintPlan) commands() []Cmd { return p.cmds }
@@ -135,7 +143,7 @@ const (
 )
 
 // sprintPart is the sprint part: the counter, the dropping marks, parked keys,
-// the quarantine, the coordinator and the tick end. Goals and the sweep's
+// the quarantine, the coordinator, the time rules' writes and the tick end. Goals and the sweep's
 // position, which IT12's SprintPart also carries, are not written by this part
 // (errata 2, item 3 and 8.1 do not list them): a request that names either is
 // refused REQUEST, never ignored.
@@ -357,6 +365,10 @@ func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	if te != nil && !tset.ValidDecimal(te.Backlog) {
 		return nil, requestRefusal()
 	}
+	tm := sp.Time
+	if ref := checkTime(tm, te != nil, req.Meta.Gen); ref != nil {
+		return nil, ref
+	}
 
 	epoch := partEpoch(req)
 	next, dropping, parked, agenda := epochKey(st, keyNext, epoch), epochKey(st, keyDropping, epoch), epochKey(st, keyParked, epoch), epochKey(st, keyAgenda, epoch)
@@ -382,6 +394,20 @@ func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	}
 	if te != nil {
 		guards = append(guards, typedKey{tick, kindHash}, typedKey{due, kindZSet})
+	}
+	if tm != nil {
+		if len(tm.Due) != 0 {
+			guards = append(guards, typedKey{due, kindZSet})
+		}
+		if tm.UnarmBehind {
+			guards = append(guards, typedKey{tick, kindHash})
+		}
+		for _, g := range sortedClaims(tm.Goals) {
+			guards = append(guards, typedKey{sprintKey(st, keyGoalPrefix+g.Person), kindHash})
+		}
+		if tm.Clock != nil {
+			guards = append(guards, typedKey{sprintKey(st, keyClock), kindHash})
+		}
 	}
 	if ref := guardTypes(st, guards...); ref != nil {
 		return nil, ref
@@ -498,6 +524,52 @@ func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		}
 	}
 
+	if tm != nil {
+		// The time rules' writes (2.3 R14, R17, R18): each due entry moved to
+		// its time unless it is there already, each claim written, and the
+		// clock's fields that differ; the owed work (the due entries) first.
+		var put flatPairs
+		for _, d := range sortedDue(tm.Due) {
+			at, _ := canonicalInt(string(d.At))
+			if cur, there := st.Keys.ZScore(due, d.Key); !there || cur != float64(at) {
+				put = append(put, string(d.At), d.Key)
+				plan.Due = append(plan.Due, d.Key)
+			}
+		}
+		plan.cmds = append(plan.cmds, zaddCommands(due, put)...)
+		if tm.UnarmBehind {
+			// R18's re-arm: behind_n removed, so the next tick end arms the
+			// entry and behind_n with the backlog it finds (2.3 R18).
+			if v, set := st.Keys.HGet(tick, tickFieldBehind); set && v != "" {
+				plan.cmds = append(plan.cmds, hdelCommands(tick, []string{tickFieldBehind})...)
+				plan.Unarmed = true
+			}
+		}
+		for _, g := range sortedClaims(tm.Goals) {
+			plan.cmds = append(plan.cmds, hsetCommands(sprintKey(st, keyGoalPrefix+g.Person),
+				flatPairs{goalFieldClaimedGen, strconv.FormatUint(req.Meta.Gen, 10), goalFieldClaimedR, string(g.R)})...)
+			plan.Claimed = append(plan.Claimed, g.Person)
+		}
+		if c := tm.Clock; c != nil {
+			rec, ref := readClock(st)
+			if ref != nil {
+				return nil, ref
+			}
+			var set flatPairs
+			for _, f := range []struct {
+				field string
+				to    *tset.Decimal
+				cur   int64
+			}{{clockFieldDueSince, c.DueSince, rec.DueSinceMs}, {clockFieldStopRaised, c.StopRaised, rec.StopRaisedMs}} {
+				if f.to != nil && string(*f.to) != blankOf(f.cur) {
+					set = append(set, f.field, string(*f.to))
+				}
+			}
+			plan.Clock = len(set) != 0
+			plan.cmds = append(plan.cmds, hsetCommands(sprintKey(st, keyClock), set)...)
+		}
+	}
+
 	if te != nil {
 		r, _, ref := runningTime(st)
 		if ref != nil {
@@ -539,3 +611,77 @@ func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 
 // Cmds hands back the commands Pre built.
 func (sprintPart) Cmds(st *State, plan any, lp LogPlan) ([]Cmd, *Refusal) { return cmdsOf(plan) }
+
+// The goal records (1.0: {p}goal:<person>, a sprint key) and the fields R14's
+// phase 1 claims on one (2.3 R14).
+const (
+	keyGoalPrefix       = "goal:"
+	goalFieldClaimedGen = "claimed_gen"
+	goalFieldClaimedR   = "claimed_r"
+)
+
+// checkTime holds the time writes to their shape: at most SprintKeysMax due
+// entries, each named once, a key a part may store, due at an exact time; at
+// most SprintMembersMax claims, a person each once, at an exact R, and a step
+// with a lease generation to claim with; a clock write that sets something,
+// each field "" or an exact time. A due entry named behind, or R18's unarm,
+// beside a tick end is REQUEST: the tick end is behind's one writer in a step.
+func checkTime(tm *SprintTime, tickEnd bool, gen uint64) *Refusal {
+	if tm == nil {
+		return nil
+	}
+	if len(tm.Due) > SprintKeysMax || len(tm.Goals) > SprintMembersMax ||
+		len(tm.Due)+len(tm.Goals) == 0 && tm.Clock == nil && !tm.UnarmBehind || tm.UnarmBehind && tickEnd {
+		return requestRefusal()
+	}
+	exact := func(d tset.Decimal) bool {
+		n, ok := canonicalInt(string(d))
+		return ok && n <= maxExactMS
+	}
+	seen := map[string]bool{}
+	for _, d := range tm.Due {
+		if !partText(d.Key) || seen[d.Key] || !exact(d.At) || tickEnd && d.Key == "behind" {
+			return requestRefusal()
+		}
+		seen[d.Key] = true
+	}
+	people := map[string]bool{}
+	for _, g := range tm.Goals {
+		if !sprint.ValidID(g.Person) || people[g.Person] || !exact(g.R) || gen == 0 {
+			return requestRefusal()
+		}
+		people[g.Person] = true
+	}
+	if c := tm.Clock; c != nil {
+		if c.DueSince == nil && c.StopRaised == nil {
+			return requestRefusal()
+		}
+		for _, v := range []*tset.Decimal{c.DueSince, c.StopRaised} {
+			if v != nil && *v != "" && !exact(*v) {
+				return requestRefusal()
+			}
+		}
+	}
+	return nil
+}
+
+// sortedDue is the due writes by key; sortedClaims the claims by person.
+func sortedDue(ds []DueAt) []DueAt {
+	out := append([]DueAt(nil), ds...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+func sortedClaims(gs []GoalClaim) []GoalClaim {
+	out := append([]GoalClaim(nil), gs...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Person < out[j].Person })
+	return out
+}
+
+// blankOf is a clock field as clockFields writes it: "" for zero.
+func blankOf(n int64) string {
+	if n == 0 {
+		return ""
+	}
+	return decimalOf(n)
+}

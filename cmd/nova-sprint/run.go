@@ -147,7 +147,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 // halt by a stop, the moves left due past its bounds, and a summary line; a
 // tick of a STOPPED machine says the machine is STOPPED.
 func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr io.Writer) {
-	if res.State == store.Stopped && err == nil && res.Halted == "" {
+	if res.State == store.Stopped && err == nil && res.Halted == "" && res.Done == "" {
 		fmt.Fprintf(stdout, "TICK OK state=STOPPED nothing done; run: nova-sprint start\n")
 		return
 	}
@@ -173,6 +173,10 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 	}
 	if res.Due > 0 {
 		fmt.Fprintf(stdout, "DUE %d moves past the tick's bounds: the next ticks catch up\n", res.Due)
+	}
+	if res.Done != "" {
+		// the sprint is done: the machine stopped itself (errata 3 amendment 6)
+		fmt.Fprintf(stdout, "HAPPENED %s: %s; the machine is STOPPED; %s\n", sprint.NSprintDone, oneline.Escape(res.Done), oneline.Escape(res.Hint))
 	}
 	status := "OK"
 	if err != nil {
@@ -237,6 +241,9 @@ STOPPED; nova-sprint run ticks once a second while it is RUNNING, and
 nova-sprint tick is one tick by hand. Each tick deals ready primaries, asks
 readers, resolves waiting primaries whose needs landed, and writes the
 judgments that need the coordinator; a judgment open past its due time is
-marked overdue, once. A stop halts the tick before its next part. Every verb
-works in both states.`) + "\n"
+marked overdue, once. A stop halts the tick before its next part. When nothing
+is left open (every card landed or dropped) the tick says "the sprint is done"
+to the coordinator and stops the machine itself: DONE, in where and the view;
+work added after leaves it STOPPED until nova-sprint start. Every verb works
+in both states.`) + "\n"
 }
