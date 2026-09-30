@@ -150,6 +150,8 @@ func help(name string, w io.Writer) {
 	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target"+applyDry+", a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", name, name)
 	if name == "nova-update" {
 		fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
+	} else {
+		fmt.Fprintf(w, "  %s snapshot --file cmd/%s/testdata/example.tsv\n", name, name)
 	}
 	fmt.Fprintf(w, "  %s version\n", name)
 }

@@ -6,6 +6,7 @@
 //
 //	example:
 //	  nova-version report --file cmd/nova-version/testdata/example.tsv
+//	  nova-version snapshot --file cmd/nova-version/testdata/example.tsv
 //	  nova-version version
 package main
 
