@@ -530,10 +530,15 @@ type TsetSlot struct {
 }
 
 // TsetSlots are the plan's Layer 1 and Layer 2 queries in the order their
-// answers are in ReadAnswer.Tset (the errata to version 2.1, E3): one ids query
-// for each table that names an id, by the table's name; then the plan's ranges,
-// counts, rcounts and lines, each in the plan's order. The sprint's own queries
-// are not here: they are answered in ReadAnswer.Sprint, one for one.
+// answers are in ReadAnswer.Tset: one ids query for each table that names an
+// id, by the table's name; then the plan's ranges, counts, rcounts and lines,
+// each in the plan's order. The sprint's own queries are not here: they are
+// answered in ReadAnswer.Sprint, one for one.
+//
+// This order is IT05's own choice. The errata to version 2.1 (E3) say only that
+// Tset is "aligned with the plan's Layer 1 and Layer 2 queries", and give no
+// order, so the item that answers a plan (IT12, the twin's read) and the one that
+// answers the composite queries (IT30) build this one, and read it here.
 func (rp ReadPlan) TsetSlots() []TsetSlot {
 	tables := make([]string, 0, len(rp.IDs))
 	for t, ids := range rp.IDs {

@@ -256,7 +256,8 @@ type ReadAnswer struct {
 	// the store's time in milliseconds, read once for the whole call (1.0).
 	Epoch, ActiveEpoch, TimeMS Decimal
 	// Tset answers the plan's Layer 1 and Layer 2 queries, one for each slot of
-	// ReadPlan.TsetSlots.
+	// ReadPlan.TsetSlots, in that order (IT05's own choice: the errata say only
+	// that Tset is aligned with the plan's queries, and give no order).
 	Tset []TsetAnswer
 	// Sprint answers the plan's SprintQ, one for each.
 	Sprint []Answer

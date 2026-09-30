@@ -464,12 +464,13 @@ func TestReadPlanCostIsTheSumOfItsQueries(t *testing.T) {
 	}
 }
 
-func TestTsetSlotsAreInTheOrderOfTheErrata(t *testing.T) {
+func TestTsetSlotsAreInIT05sOwnOrderThatTheErrataDoNotGive(t *testing.T) {
 	t.Parallel()
-	// E3: Tset is aligned with the plan's Layer 1 and Layer 2 queries: the ids
-	// of each table that names one (by table name), then ranges, counts,
-	// rcounts and lines, each in the plan's order. The sprint's queries are
-	// answered apart.
+	// E3 says only that Tset is aligned with the plan's Layer 1 and Layer 2
+	// queries; the order is IT05's own choice, and IT12 and IT30 build the same
+	// one: the ids of each table that names one (by table name), then ranges,
+	// counts, rcounts and lines, each in the plan's order. The sprint's queries
+	// are answered apart.
 	rp := ReadPlan{
 		IDs:     map[string][]string{Work: {"a", "b"}, Fleet: {"m"}, Merge: nil, Readers: {"r", "s", "t"}},
 		Ranges:  []RangeQ{{Table: Work, Cell: "s:ready"}, {Key: "agenda"}},
