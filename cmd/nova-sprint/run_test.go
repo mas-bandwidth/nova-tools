@@ -115,7 +115,7 @@ func TestWhereHeaderStoppedIsExactlyTheView(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	out := ta.ok("where")
-	i := strings.Index(out, "readers")
+	i := strings.Index(out, "work")
 	if i < 0 || out[:i] != "2030-01-02 03:04:05 UTC\n\nSPRINT TABLE\n\nSTOPPED\n\n" {
 		t.Fatalf("stopped view:\n%q", out)
 	}

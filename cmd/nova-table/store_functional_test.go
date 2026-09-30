@@ -117,19 +117,21 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 			"tests |     0 |       0 | bo\n" +
 			"------+-------+---------+-------\n" +
 			"all   |     1 |       0 | ann,bo\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows", "--label-width", "8"}, "jobs     | ready | working | who\n" +
+		{[]string{"render", "jobs", "--label-width", "8"}, "jobs     | ready | working | who\n" +
 			"---------+-------+---------+-------\n" +
 			"build    |     1 |       0 | ann\n" +
+			"tests    |     0 |       0 | bo\n" +
 			"---------+-------+---------+-------\n" +
-			"all      |     1 |       0 | ann,bo\n"}, // the fold is the column's, hidden rows included
+			"all      |     1 |       0 | ann,bo\n"}, // an all-zero row shows
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=3 rows=2\n"},
 		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
 		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
 		{[]string{"set", "jobs", "--columns", "ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=5 trips=1\n"},
 		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
+		{[]string{"render", "jobs"}, "jobs  | ready | working | who    | ready% | note\n" +
 			"------+-------+---------+--------+--------+------\n" +
 			"build |     1 |       0 | ann    | 100.0% | green\n" +
+			"tests |     0 |       0 | bo     | 0.0%   |\n" +
 			"------+-------+---------+--------+--------+------\n" +
 			"sum   |     1 |       0 | ann,bo | 100.0% |\n"},
 		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=11 trips=1\n"},

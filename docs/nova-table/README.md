@@ -276,14 +276,14 @@ nova-table member read <table> <id>... | <table> --cell <row:col>
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
-nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
-nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
-nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>] [--hide-zero <tables>]
+nova-table render <table> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--width <col=n,...>] [--label-width <n>]
+nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
 nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del <name>
-nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--once]
 ```
 
 | verb | prints |
@@ -332,11 +332,8 @@ and their receipts remain. Dropping or renaming a table does not rewrite a view;
 edit or delete the reference explicitly. A view summary names a **count** column
 in its first table, such as `done`, not a `pct(done)` formula.
 
-`--hide-zero <tables>` names tables of the view, each one of its `--tables`,
-that hide a row whose count cells are all zero whenever the view is drawn
-(`render --view`, `watch --view`), as `--hide-zero-rows` does for one render.
-`view set` replaces title, summary and hide-zero together, so one left out is
-cleared; `view show` prints hide-zero as `hide_zero=<tables>` when there is one.
+`view set` replaces title and summary together, so one left out is cleared.
+Every table of a view is drawn, and every row of it, empty or not.
 
 `view state <name> <text>` gives a view a state: while it has one, the summary
 line is that text alone, in place of the counts, the percent and the ETA, and
@@ -524,17 +521,17 @@ characters as literal escapes (for example, newline as `\x0a` and ESC as `\x1b`)
 Widths are measured after escaping. Stored values remain unchanged; text cannot
 add a row or execute a terminal control sequence.
 Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
-never a false 0, and so does the fold over it. `--hide-zero-rows` hides a
-row whose count cells are all zero and all read; the fold is still the
-column's, hidden rows included.
+never a false 0, and so does the fold over it. A row hidden with `set --hide`
+stays in the fold.
 
-**The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string, including its title: no placeholder and no gap.
+**The empty rule.** A table always renders: an empty table prints its title
+header and its footer, with no body line and no placeholder. A row with all
+zero counts prints like any other.
 
 ## Watching
 
 `watch` renders the named tables once per `--every` (1s), one blank line
-between two that print, `--title` first. With no `--out` it draws in place
+between two, `--title` first. With no `--out` it draws in place
 on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,

@@ -786,16 +786,9 @@ func ReleaseLock(ctx context.Context, client redis.UniversalClient, key, token s
 // left out, every card in exactly one set. No LAND line (#4088), no REVIEW
 // line (Glenn 2026-09-26 8:03 AM ET), no <read>/<unread> split (Glenn
 // 2026-09-26 8:22 AM ET, "Let's remove it, and use review as that state").
-// An empty stream table is hidden (Glenn 2026-09-26 10:00 AM ET: "when the
-// work sprint table has no sprints in it, you can hide it. make sure there
-// is not an extra newline when it's hidden"): the headline's blank line is
-// the only gap before the worker table. The total row is the one count's
+// The block always shows, with no row when there is no stream. The total row is the one count's
 // total, the headline's numbers: the footer's sum over every row.
 func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
-	block := ntable.Render(StreamsOf(s.Counts), StreamsRenderOpts)
-	if block == "" {
-		return
-	}
-	b.WriteString(block)
+	b.WriteString(ntable.Render(StreamsOf(s.Counts), StreamsRenderOpts))
 	b.WriteByte('\n')
 }
