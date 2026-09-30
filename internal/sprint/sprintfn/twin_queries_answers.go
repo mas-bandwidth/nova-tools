@@ -173,6 +173,9 @@ type WaitersResult struct {
 	IDs     []string     `json:"ids"`
 	LeftOut []string     `json:"left_out"`
 	Items   []WaiterItem `json:"items"`
+	// MoreIDs says a source that is a line has ids beyond the window read
+	// (sprint.Answer.MoreIDs). The twin reports it and the wire does not carry it.
+	MoreIDs bool `json:"-"`
 }
 
 // StuckIDs are the first ids of a stopped stream's stuck cell.
@@ -372,8 +375,10 @@ func (r RelatedResult) Project(q sprint.SprintQ) sprint.Answer {
 	return a
 }
 
-// Project is `front` as IT05's Answer: the sentinel's line and G's record and
-// every head record with its follows.
+// Project is `front` as IT05's Answer: the sentinel's line and G's record, every
+// head (its index, its ids read and whether the index had more; the records are
+// in Records) and every head record with its follows. Heads are one for each
+// head asked, in order (IT08's alignment, loadPosition).
 func (r FrontResult) Project(q sprint.SprintQ) sprint.Answer {
 	f := sprint.FrontAnswer{Stream: r.Stream, G: r.G, NBefore: r.NBefore, GQuarantined: r.GQuarantined}
 	f.Sigma, _ = strconv.ParseFloat(r.Sigma, 64)
@@ -382,6 +387,7 @@ func (r FrontResult) Project(q sprint.SprintQ) sprint.Answer {
 		a.Records = append(a.Records, tableCards(sprint.Work, *r.GRecord)...)
 	}
 	for _, h := range r.Heads {
+		a.Heads = append(a.Heads, sprint.HeadAnswer{Index: h.Index, IDs: append([]string(nil), h.IDs...), More: h.HasMore})
 		for _, it := range h.Items {
 			a.Records = append(a.Records, itemCards(sprint.Work, it)...)
 		}
@@ -389,20 +395,47 @@ func (r FrontResult) Project(q sprint.SprintQ) sprint.Answer {
 	return a
 }
 
-// Project is `waiters` as IT05's Answer: each id's record and its waiters'.
+// Project is `waiters` as IT05's Answer: each id's record and its waiters', and
+// one NeedAnswer for each id of the source, in order (IT08's alignment,
+// loadPosition): the id's place (its column, "" when it has no record), whether
+// it has a score in {p}missing@e, the head of wait:n read (after the query's
+// WaiterAfter, up to its Limit) and whether wait:n has more beyond it. An id of
+// a list that the query left out (quarantined) is answered with no place and no
+// waiters, since the list names it and the answer must answer every id it
+// names. MoreIDs is the twin's: a line has ids beyond the window.
 func (r WaitersResult) Project(q sprint.SprintQ) sprint.Answer {
-	a := sprint.Answer{Kind: r.Kind, IDs: sourceNamed(q.Source, r.IDs)}
+	a := sprint.Answer{Kind: r.Kind, IDs: sourceNamed(q.Source, r.IDs), MoreIDs: r.MoreIDs}
+	byID := make(map[string]WaiterItem, len(r.Items))
 	for _, it := range r.Items {
+		byID[it.ID] = it
 		a.Records = append(a.Records, tableCards(sprint.Work, it.Record)...)
 		for _, w := range it.Wait.Items {
 			a.Records = append(a.Records, tableCards(sprint.Work, w.Record)...)
 		}
 	}
+	ids := r.IDs
+	if q.Source.Kind == sprint.SourceIDs {
+		ids = q.Source.IDs
+	}
+	for _, id := range ids {
+		n := sprint.NeedAnswer{ID: id}
+		if it, ok := byID[id]; ok {
+			if it.Record.Exists && it.Record.Place != nil {
+				n.Place = it.Record.Place.Col
+			}
+			n.Missing = it.Missing != nil
+			n.Waiters = append([]string(nil), it.Wait.IDs...)
+			n.More = it.Wait.HasMore
+		}
+		a.Needs = append(a.Needs, n)
+	}
 	return a
 }
 
-// Project is `streams` as IT05's Answer: the rows, whether there were more,
-// and the control cards and need cards read.
+// Project is `streams` as IT05's Answer: the rows, whether there were more, the
+// control cards and need cards read, and the stuck ids of each stream stopped on
+// a cross need (IT08 reads them, loadPosition). The counts and the sprint keys a
+// query may ask beside are not read by the twin.
 func (r StreamsResult) Project(q sprint.SprintQ) sprint.Answer {
 	a := sprint.Answer{Kind: r.Kind, Rows: append([]string(nil), r.Rows...), HasMore: r.HasMore}
 	for _, it := range r.Items {
@@ -411,6 +444,9 @@ func (r StreamsResult) Project(q sprint.SprintQ) sprint.Answer {
 		}
 		if it.Need != nil {
 			a.Records = append(a.Records, tableCards(sprint.Work, *it.Need)...)
+		}
+		if it.Stuck != nil {
+			a.Stuck = append(a.Stuck, sprint.StuckAnswer{Stream: it.Stream, IDs: append([]string(nil), it.Stuck.IDs...), More: it.Stuck.HasMore})
 		}
 	}
 	return a

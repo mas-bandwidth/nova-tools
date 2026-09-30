@@ -485,9 +485,16 @@ func (e *qeval) lineAt(seq uint64) (lineBody, *Refusal) {
 // Named says the ids were taken from an index or a line, which must have
 // records (an id a list names may have none).
 func (e *qeval) sourceIDs(src sprint.IDSource, table string) (ids []string, named bool, ref *Refusal) {
+	ids, named, _, ref = e.sourceIDsMore(src, table)
+	return ids, named, ref
+}
+
+// sourceIDsMore is sourceIDs and whether a line has ids beyond the window read
+// (sprint.Answer.MoreIDs); a list and an index head say none.
+func (e *qeval) sourceIDsMore(src sprint.IDSource, table string) (ids []string, named, more bool, ref *Refusal) {
 	switch src.Kind {
 	case sprint.SourceIDs:
-		return append([]string{}, src.IDs...), false, nil
+		return append([]string{}, src.IDs...), false, false, nil
 	case sprint.SourceHead:
 		if index, arg, ok := headKind(src.Key); ok {
 			name := index
@@ -495,15 +502,15 @@ func (e *qeval) sourceIDs(src sprint.IDSource, table string) (ids []string, name
 				name = index + ":" + arg
 			}
 			ids, _, _, ref = e.rangeHead(e.key(name), "-inf", "+inf", src.Limit)
-			return ids, index != indexMissing, ref
+			return ids, index != indexMissing, false, ref
 		}
 		row, col, _ := cellOf(src.Key)
 		ids, _, _, ref = e.cellIDs(table, row, col, src.Limit)
-		return ids, true, ref
+		return ids, true, false, ref
 	case sprint.SourceLine:
 		l, ref := e.lineAt(src.Seq)
 		if ref != nil {
-			return nil, false, ref
+			return nil, false, false, ref
 		}
 		list, most := l.IDs, sprint.MaxLineIDs
 		if src.About {
@@ -517,9 +524,10 @@ func (e *qeval) sourceIDs(src sprint.IDSource, table string) (ids []string, name
 		if offset > len(list) {
 			offset = len(list)
 		}
-		return append([]string{}, list[offset:min(len(list), offset+n)]...), true, nil
+		end := min(len(list), offset+n)
+		return append([]string{}, list[offset:end]...), true, end < len(list), nil
 	}
-	return nil, false, e.fail(codeDrift, tset.RefusalDetail{})
+	return nil, false, false, e.fail(codeDrift, tset.RefusalDetail{})
 }
 
 // quarantined says which of the ids are in {p}quarantine@e: one HMGET for each

@@ -240,7 +240,7 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 	if ref := e.ensureTable(sprint.Work); ref != nil {
 		return res, ref
 	}
-	ids, _, ref := e.sourceIDs(q.Source, sprint.Work)
+	ids, _, moreIDs, ref := e.sourceIDsMore(q.Source, sprint.Work)
 	if ref != nil {
 		return res, ref
 	}
@@ -248,7 +248,7 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 	if ref != nil {
 		return res, ref
 	}
-	res.IDs, res.LeftOut = kept, left.ids()
+	res.IDs, res.LeftOut, res.MoreIDs = kept, left.ids(), moreIDs
 	recs, ref := e.records(sprint.Work, kept, q.Fields)
 	if ref != nil {
 		return res, ref
@@ -264,7 +264,13 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 	for i, n := range kept {
 		it := WaiterItem{ID: n, Record: recs[i], Missing: missing[i],
 			Wait: WaitHead{IDs: []string{}, LeftOut: []string{}, Items: []WaiterRef{}}}
-		ws, _, more, ref := e.rangeHead(e.key(sprint.IndexWait+":"+n), "-inf", "+inf", q.Limit)
+		if q.Missing && missing[i] == nil {
+			// a query of the made needs reads the head of wait:n only for the ids
+			// with a score in {p}missing@e (sprint.SprintQ.Missing)
+			res.Items = append(res.Items, it)
+			continue
+		}
+		ws, more, ref := e.waitHead(n, q.WaiterAfter, q.Limit)
 		if ref != nil {
 			return res, ref
 		}
@@ -288,6 +294,36 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 		res.Items = append(res.Items, it)
 	}
 	return res, nil
+}
+
+// waitHead is the head of wait:n after the waiter (sprint.SprintQ.WaiterAfter,
+// "" from the first), up to the limit, in the order of wait:n's members: a
+// place in that order, so a waiter that has left the set moves nothing. It is
+// one probe, as rangeHead is, and says whether the set has members beyond the
+// head.
+func (e *qeval) waitHead(n, after string, limit int) (ids []string, more bool, ref *Refusal) {
+	key := e.key(sprint.IndexWait + ":" + n)
+	if after == "" {
+		ids, _, more, ref = e.rangeHead(key, "-inf", "+inf", limit)
+		return ids, more, ref
+	}
+	if ref = e.probe(); ref != nil {
+		return nil, false, ref
+	}
+	if ref = e.typed(key, kindZSet); ref != nil {
+		return nil, false, ref
+	}
+	for _, p := range e.t.keys.zpairs(key) {
+		if p.member <= after {
+			continue
+		}
+		if len(ids) == limit {
+			more = true
+			break
+		}
+		ids = append(ids, p.member)
+	}
+	return nonNilStrings(ids), more, e.rangeIDs(len(ids))
 }
 
 // streams reads every stream of the work table (up to the units), its control
