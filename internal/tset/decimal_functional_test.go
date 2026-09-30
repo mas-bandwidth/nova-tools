@@ -198,23 +198,26 @@ func TestNotesRequireNamedOp(t *testing.T) {
 	}
 	decimalRawStepOK(t, unnamed, emptyNotes)
 
-	fx := newComposedTSetFixture(t)
-	fx.Define(t, "work", "c")
-	fx.Activate(t)
-	op, intent := "note-op", "semantic note intent"
-	step := Step{Epoch: "0", Space: fx.Space, Op: &op, Intent: &intent,
-		Entries: []Entry{}, Notes: []Note{note}}
-	raw, err := EncodeStep(step)
-	if err != nil {
-		t.Fatalf("named note rejected by Go: %v", err)
-	}
-	var reply Reply
-	if err := json.Unmarshal(decimalRawStep(t, fx, string(raw)), &reply); err != nil {
-		t.Fatal(err)
-	}
-	if reply.Status != "ok" || reply.Lines != 1 || reply.FirstSeq != "1" || reply.LastSeq != "1" {
-		t.Fatalf("named note reply: %+v", reply)
-	}
+	t.Run("composed named note", func(t *testing.T) {
+		t.Parallel()
+		fx := newComposedTSetFixture(t)
+		fx.Define(t, "work", "c")
+		fx.Activate(t)
+		op, intent := "note-op", "semantic note intent"
+		step := Step{Epoch: "0", Space: fx.Space, Op: &op, Intent: &intent,
+			Entries: []Entry{}, Notes: []Note{note}}
+		raw, err := EncodeStep(step)
+		if err != nil {
+			t.Fatalf("named note rejected by Go: %v", err)
+		}
+		var reply Reply
+		if err := json.Unmarshal(decimalRawStep(t, fx, string(raw)), &reply); err != nil {
+			t.Fatal(err)
+		}
+		if reply.Status != "ok" || reply.Lines != 1 || reply.FirstSeq != "1" || reply.LastSeq != "1" {
+			t.Fatalf("named note reply: %+v", reply)
+		}
+	})
 }
 
 func TestIdentifierByteLimits(t *testing.T) {

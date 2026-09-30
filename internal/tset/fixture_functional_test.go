@@ -47,6 +47,9 @@ func newTSetFixture(t *testing.T) *tsetFixture {
 
 func newComposedTSetFixture(t *testing.T) *tsetFixture {
 	t.Helper()
+	// Resolve the real embedded source before starting a Redis process. Only
+	// the exact missing Layer 2 fragment may defer composed-only witnesses.
+	requireTSetLogFragment(t)
 	return newTSetFixtureProfile(t, fn.TSetComposed)
 }
 
