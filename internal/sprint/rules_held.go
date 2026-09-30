@@ -27,7 +27,8 @@ import (
 //
 // What the read carries, against what the design lists (2.3 R16): each card's
 // record and its primary (a work or read card's id is read as its primary's,
-// by its shape), the follows the holder uses (`work`, `rcards`, `merge`,
+// by its shape), a line's `about` (its subjects, never its `ids`: see
+// heldRelatedLine), the follows the holder uses (`work`, `rcards`, `merge`,
 // `control`, `needs`, `jopen`), and `fleet`. Not the follows `index` and `due`:
 // the holder reads a card's place, score and deadlines off the card, and the
 // index memberships and due entries are derived from those, so a plan that
@@ -87,11 +88,16 @@ func heldRelatedIDs(ids []string) SprintQ {
 		Fields: heldFields, Follow: heldFollows}
 }
 
-// heldRelatedLine is related over the ids of a line by seq, from the key's
-// offset, at most limit of them.
+// heldRelatedLine is related over the `about` of a line by seq, from the key's
+// offset, at most limit of them. A line names its subjects by `about` (L2 1.1):
+// on a member line it is the primaries its cards belong to, aligned with its
+// `ids`, which are the cards' own (a work card's `<primary>.w<n>`), and on a
+// note line it is the cards the note is about, which has no `ids` at all. R16
+// judges primaries, and a key held@<seq> made by closing a note names its
+// subjects and nothing else, so the read is of `about` and never of `ids`.
 func heldRelatedLine(h heldKey, limit int) SprintQ {
 	return SprintQ{Kind: QueryRelated, Table: Work,
-		Source: IDSource{Kind: SourceLine, Seq: h.Line, Offset: h.Offset, Limit: limit},
+		Source: IDSource{Kind: SourceLine, Seq: h.Line, About: true, Offset: h.Offset, Limit: limit},
 		Fields: heldFields, Follow: heldFollows}
 }
 
@@ -123,7 +129,7 @@ func heldReadCards(b ReadBounds, halvings int) int {
 // (a card by its id, or its primary's when it is a work or read card; a line by
 // its seq, from the key's offset, for a share of the room) and the fleet. The
 // keys are taken in the order they came, each costing a place of the room, and
-// the ones that do not fit stay queued in that order; a line's ids are read to
+// the ones that do not fit stay queued in that order; a line's `about` is read to
 // the share of the room its key has, and planHeld requeues the key at the
 // offset where the read stopped. The room a tick has is shared by the keys it
 // takes, so many line keys at the head are each served a part of their line
@@ -171,13 +177,15 @@ func readHeld(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 		rp.Sprint = append(rp.Sprint, heldRelatedIDs(ids))
 	}
 	if len(lines) > 0 {
+		// each share is at most the room, which is at most the chunk: inside
+		// the window of a note's about (MaxAboutIDs) and of a line's ids
 		share, extra := (room-len(ids))/len(lines), (room-len(ids))%len(lines)
 		for i, hk := range lines {
 			limit := share
 			if i < extra {
 				limit++
 			}
-			rp.Sprint = append(rp.Sprint, heldRelatedLine(hk, min(limit, MaxLineIDs)))
+			rp.Sprint = append(rp.Sprint, heldRelatedLine(hk, limit))
 		}
 	}
 	rp.Sprint = append(rp.Sprint, heldFleet())
@@ -185,10 +193,13 @@ func readHeld(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 }
 
 // heldFactsOf is what the snapshot carries of the sprint's own keys beside its
-// tables. A snapshot loaded from a plan carries the ids of each line the plan
-// read by its seq (the answer of the `related` query over it), and whether the
-// read stopped at its limit; every snapshot carries the conditions the
-// coordinator acknowledged, which hold a card the way a wait holds a judgment.
+// tables. A snapshot loaded from a plan carries the subjects of each line the
+// plan read by its seq (the answer of the `related` query over its `about`), and
+// whether the read stopped at its limit; every snapshot carries the conditions the
+// coordinator acknowledged, which hold a card the way a wait holds a judgment. A
+// line read for its `ids` is not its subjects (a work card's id is no primary's),
+// so a query of the plan over a line that does not read `about` carries nothing,
+// and the key of that line is held back.
 // The partial snapshot carries nothing else the rule reads: not the backlog
 // (L2 last less the tick's cur), the dropping marks and the judgments open on
 // their ops, the cut entries, nor the quarantine marks. Until it does the
@@ -201,16 +212,16 @@ func heldFactsOf(s *Snapshot) HeldFacts {
 		return f
 	}
 	for i, q := range s.Partial.Plan.Sprint {
-		if q.Kind != QueryRelated || q.Source.Kind != SourceLine || i >= len(s.Partial.Answer.Sprint) {
+		if q.Kind != QueryRelated || q.Source.Kind != SourceLine || !q.Source.About || i >= len(s.Partial.Answer.Sprint) {
 			continue
 		}
-		ids := s.Partial.Answer.Sprint[i].IDs
+		about := s.Partial.Answer.Sprint[i].IDs
 		if f.Lines == nil {
 			f.Lines = map[HeldLineAt]HeldLine{}
 		}
 		f.Lines[HeldLineAt{Line: q.Source.Seq, Offset: q.Source.Offset}] = HeldLine{
-			IDs:  ids,
-			More: q.Source.Limit > 0 && len(ids) >= q.Source.Limit && q.Source.Offset+len(ids) < MaxLineIDs,
+			About: about,
+			More:  q.Source.Limit > 0 && len(about) >= q.Source.Limit && q.Source.Offset+len(about) < MaxAboutIDs,
 		}
 	}
 	return f
@@ -277,10 +288,10 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 		if hk.ByLine {
 			line, ok := f.Lines[HeldLineAt{Line: hk.Line, Offset: hk.Offset}]
 			if !ok {
-				rp.HeldBack = append(rp.HeldBack, k) // its ids were not read
+				rp.HeldBack = append(rp.HeldBack, k) // its subjects were not read
 				continue
 			}
-			ids = line.IDs
+			ids = line.About
 			if line.More && len(ids) > 0 {
 				rp.Requeue = append(rp.Requeue, hk.resumedAt(k, hk.Offset+len(ids)))
 			}
@@ -358,11 +369,7 @@ func stallOf(v *holdView, vd verdict) (*stallGroup, string) {
 	if vd.row.Name == "review" { // a card refused, at its bound or quarantined in review is named by that row
 		if typ, ok := v.reviewStallType(p); ok {
 			if rs, ok := reviewStalls[typ]; ok {
-				decisions := slices.Clone(rs.Decisions)
-				if p.F("result") == "failed" {
-					decisions = slices.DeleteFunc(decisions, func(d string) bool { return d == "ask" })
-				}
-				return &stallGroup{typ: typ, cause: rs.Cause, text: rs.Text, decisions: decisions}, ""
+				return &stallGroup{typ: typ, cause: rs.Cause, text: rs.Text, decisions: slices.Clone(rs.Decisions)}, ""
 			}
 		}
 	}
@@ -390,7 +397,7 @@ func stallOf(v *holdView, vd verdict) (*stallGroup, string) {
 type heldKey struct {
 	Card   string // the card, for held:<card>
 	Line   uint64 // the line's seq, for held@<seq>
-	Offset int    // where in the line's ids the key resumes
+	Offset int    // where in the line's `about` the key resumes
 	ByLine bool
 }
 

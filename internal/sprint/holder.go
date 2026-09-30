@@ -44,8 +44,8 @@ import (
 // HeldFacts are the sprint's own keys that R16's read carries beside the
 // tables (2.3 R16: jopen of the card, its stream and the sprint, the
 // backlog): what is not a card of a table and not derivable from one. A
-// snapshot loaded from a read plan carries the ids of the lines a key names
-// (heldFactsOf reads them off its answers) and the conditions the coordinator
+// snapshot loaded from a read plan carries the subjects of the lines a key names
+// (heldFactsOf reads their `about` off its answers) and the conditions the coordinator
 // acknowledged; the rest has no carrier in the partial snapshot yet (the
 // pull request names what is owed), and planHeld is tested with every fact.
 type HeldFacts struct {
@@ -62,24 +62,24 @@ type HeldFacts struct {
 	// Held is the judgments a wait holds (jopen's h<note>, 1.3.4): a hold
 	// closes the judgment and keeps the condition, so the card stays held.
 	Held []Open
-	// Lines is the ids of each line a key of the read names by seq, as the
-	// read's line source returned them from the key's offset.
+	// Lines is the subjects of each line a key of the read names by seq, as
+	// the read's line source returned its `about` from the key's offset.
 	Lines map[HeldLineAt]HeldLine
 }
 
-// HeldLineAt names a read of a line: its seq and the offset in its ids the
+// HeldLineAt names a read of a line: its seq and the offset in its `about` the
 // read began at (the key's `+offset`).
 type HeldLineAt struct {
 	Line   uint64
 	Offset int
 }
 
-// HeldLine is what a read of a line by seq returned: the ids from the key's
-// offset on, at most the read's limit, and whether the read stopped at its
-// limit, so that the line may name more.
+// HeldLine is what a read of a line by seq returned: the line's `about`, its
+// subjects, from the key's offset on, at most the read's limit, and whether the
+// read stopped at its limit, so that the line may name more.
 type HeldLine struct {
-	IDs  []string
-	More bool
+	About []string
+	More  bool
 }
 
 // The numbers the holder takes from the design for the rules whose conditions
@@ -788,11 +788,9 @@ func frontUnread(v *holdView, c *Card) string {
 }
 
 // reachRaises is R3's reach: a reached sentinel with no judgment open on it is
-// one R3 raises (2.3 R3, effect 2), unless it is quarantined.
+// one R3 raises (2.3 R3, effect 2). A quarantined sentinel is not: the row of the
+// quarantined takes it before this one.
 func reachRaises(v *holdView, c *Card) string {
-	if v.f.Quarantined[c.ID] {
-		return ""
-	}
 	return "n_before 0, open 0"
 }
 

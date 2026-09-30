@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"math/rand"
 	"reflect"
 	"slices"
@@ -30,9 +31,12 @@ type hworld struct {
 	s     *Snapshot
 	f     HeldFacts
 	now   Now
-	lines map[uint64][]string // the ids of the lines the twin can read by seq
-	blind bool                // a verdict is judged on a partial snapshot, whose plan asked no front
-	tb    testing.TB          // the test a blind verdict is loaded for
+	lines map[uint64][]string // the `about` of the lines the twin can read by seq: the primaries of a member line, the subjects of a note line
+	// lineIDs are the `ids` of the member lines among them, the cards' own (a
+	// work card's `p1.w1`, where its `about` is `p1`); a note line has none
+	lineIDs map[uint64][]string
+	blind   bool       // a verdict is judged on a partial snapshot, whose plan asked no front
+	tb      testing.TB // the test a blind verdict is loaded for
 }
 
 const hR = int64(1_000_000)
@@ -40,7 +44,7 @@ const hR = int64(1_000_000)
 func newHWorld() *hworld {
 	s := &Snapshot{Now: time.Unix(1_800_000_000, 0), Work: NewTable(Work), Readers: NewTable(Readers),
 		Merge: NewTable(Merge), Fleet: NewTable(Fleet)}
-	w := &hworld{s: s, now: Now{R: hR, Wall: hR, Running: true}, lines: map[uint64][]string{},
+	w := &hworld{s: s, now: Now{R: hR, Wall: hR, Running: true}, lines: map[uint64][]string{}, lineIDs: map[uint64][]string{},
 		f: HeldFacts{Dropping: map[string]string{}, Cut: map[string]int64{}, Quarantined: map[string]bool{},
 			Lines: map[HeldLineAt]HeldLine{}}}
 	w.stream("s1", StreamWaiting)
@@ -181,7 +185,9 @@ func writesNothing(rp RulePlan) bool {
 // on the snapshot as the caller of a plan does (Snapshot.Open, Snapshot.Acked).
 
 // sourceIDs is the ids a related query's source names in the world: the ids it
-// lists, or the window of the line it reads.
+// lists, or the window of the line it reads, of its `about` when the source asks
+// for that and of its `ids` when it does not, as Layer 2 stores a line: a note
+// line has no ids, so a read of its ids names nothing.
 func (w *hworld) sourceIDs(src IDSource) []string {
 	if src.Kind == SourceIDs {
 		return src.IDs
@@ -189,7 +195,10 @@ func (w *hworld) sourceIDs(src IDSource) []string {
 	if src.Kind != SourceLine {
 		panic("twin: a source of kind " + src.Kind)
 	}
-	line := w.lines[src.Seq]
+	line := w.lineIDs[src.Seq]
+	if src.About {
+		line = w.lines[src.Seq]
+	}
 	from, n := src.lineWindow()
 	from = min(from, len(line))
 	return slices.Clone(line[from:min(len(line), from+n)])
@@ -936,7 +945,7 @@ func TestHeldOverBacklogRequeues(t *testing.T) {
 	w := newHWorld()
 	a := stallFixtures["working"](w)
 	keys := []AgendaKey{{Key: "held:" + a, Seq: 7}, {Key: "held@9", Seq: 8}}
-	w.f.Lines[HeldLineAt{Line: 9}] = HeldLine{IDs: []string{a}}
+	w.f.Lines[HeldLineAt{Line: 9}] = HeldLine{About: []string{a}}
 
 	// above the bound the machine is catching up: every key is put back with
 	// its order, and nothing is judged
@@ -1025,20 +1034,20 @@ func TestHeldLineCutRequeuesAtItsOffset(t *testing.T) {
 	}
 	key := AgendaKey{Key: "held@9", Seq: 40}
 	// the read named the first two ids of a line of five, and stopped at its limit
-	w.f.Lines[HeldLineAt{Line: 9}] = HeldLine{IDs: []string{"a", "b"}, More: true}
+	w.f.Lines[HeldLineAt{Line: 9}] = HeldLine{About: []string{"a", "b"}, More: true}
 	rp := w.plan(key)
 	want := AgendaKey{Key: "held@9+2", Seq: 40}
 	if !slices.Equal(rp.Done, []AgendaKey{key}) || !slices.Equal(rp.Requeue, []AgendaKey{want}) {
 		t.Fatalf("a line cut at two of five: done %+v requeue %+v", rp.Done, rp.Requeue)
 	}
 	// resumed at the offset, and cut again at four
-	w.f.Lines[HeldLineAt{Line: 9, Offset: 2}] = HeldLine{IDs: []string{"c", "d"}, More: true}
+	w.f.Lines[HeldLineAt{Line: 9, Offset: 2}] = HeldLine{About: []string{"c", "d"}, More: true}
 	rp = w.plan(want)
 	if !slices.Equal(rp.Requeue, []AgendaKey{{Key: "held@9+4", Seq: 40}}) {
 		t.Fatalf("resumed at 2: %+v", rp.Requeue)
 	}
 	// the last id: nothing is left, and the key goes
-	w.f.Lines[HeldLineAt{Line: 9, Offset: 4}] = HeldLine{IDs: []string{"e"}}
+	w.f.Lines[HeldLineAt{Line: 9, Offset: 4}] = HeldLine{About: []string{"e"}}
 	rp = w.plan(AgendaKey{Key: "held@9+4", Seq: 40})
 	if len(rp.Requeue) != 0 || len(rp.Done) != 1 {
 		t.Fatalf("the end of the line: %+v", rp)
@@ -1102,7 +1111,7 @@ func TestHeldEveryKeyTheRuleNamesIsServedByHeld(t *testing.T) {
 	for _, id := range []string{"a", "b", "c", "d"} {
 		w.primary(id, "s1", Landed, 1)
 	}
-	w.f.Lines[HeldLineAt{Line: 9}] = HeldLine{IDs: []string{"a", "b"}, More: true}
+	w.f.Lines[HeldLineAt{Line: 9}] = HeldLine{About: []string{"a", "b"}, More: true}
 	keys := []AgendaKey{{Key: "held:a", Seq: 1}, {Key: "held@9", Seq: 2}, {Key: "held@77", Seq: 3}}
 	rp := w.plan(keys...)
 	var named []AgendaKey
@@ -1436,6 +1445,9 @@ func TestHeldReadOfLines(t *testing.T) {
 	if line == nil || line.Source.Seq != 7 || line.Source.Offset != 100 || line.Source.Limit != n-2 || len(left) != 0 {
 		t.Fatalf("the line is read from its offset for the room left: %+v, left %+v", line, left)
 	}
+	if !line.Source.About {
+		t.Fatalf("a line names its subjects by its about, and R16 reads those, not its ids: %+v", line.Source)
+	}
 	// a foreign key stays out of the read and keeps its place among the rest
 	rp, left = readHeld([]AgendaKey{{Key: "deal", Seq: 1}, {Key: "held:a", Seq: 2}}, b, 0)
 	if !slices.Equal(left, []AgendaKey{{Key: "deal", Seq: 1}}) || len(rp.Sprint[0].Source.IDs) != 1 {
@@ -1603,20 +1615,213 @@ func TestHeldFactsOfALineRead(t *testing.T) {
 		s := w.load(t, ReadPlan{Sprint: []SprintQ{q}})
 		return heldFactsOf(s).Lines[HeldLineAt{Line: seq, Offset: offset}]
 	}
-	if l := lim(9, 0, 4); !slices.Equal(l.IDs, []string{"c0", "c1", "c2", "c3"}) || !l.More {
+	if l := lim(9, 0, 4); !slices.Equal(l.About, []string{"c0", "c1", "c2", "c3"}) || !l.More {
 		t.Errorf("a read cut at its limit: %+v", l)
 	}
-	if l := lim(9, 4, 4); !slices.Equal(l.IDs, []string{"c4", "c5"}) || l.More {
+	if l := lim(9, 4, 4); !slices.Equal(l.About, []string{"c4", "c5"}) || l.More {
 		t.Errorf("a read that reached the end of its line: %+v", l)
 	}
-	if l := lim(9, 0, 6); !slices.Equal(l.IDs, []string{"c0", "c1", "c2", "c3", "c4", "c5"}) || !l.More {
+	if l := lim(9, 0, 6); !slices.Equal(l.About, []string{"c0", "c1", "c2", "c3", "c4", "c5"}) || !l.More {
 		t.Errorf("a read that ended where its limit did may have more: %+v", l)
 	}
-	if l := lim(9, 6, 4); len(l.IDs) != 0 || l.More {
+	if l := lim(9, 6, 4); len(l.About) != 0 || l.More {
 		t.Errorf("a read past the end: %+v", l)
 	}
-	if l := lim(9, MaxLineIDs-2, 2); l.More {
-		t.Errorf("a read to the last id a line may hold has no more: %+v", l)
+	// a note may be about more ids than a line has ids (4,000 and 2,000, before
+	// dedup), and its read stops at the window of its about: a line of 4,000
+	// subjects is cut at 1,998 of them and goes on, and at the last two it ends
+	for i := range MaxAboutIDs {
+		w.lines[10] = append(w.lines[10], "x"+strconv.Itoa(i))
+	}
+	if l := lim(10, MaxLineIDs-2, 2); len(l.About) != 2 || !l.More {
+		t.Errorf("a read at the last id a line may hold, of a line of subjects that goes on: %+v", l)
+	}
+	if l := lim(10, MaxAboutIDs-3, 2); len(l.About) != 2 || !l.More {
+		t.Errorf("a read one short of the last id a note's about may hold: %+v", l)
+	}
+	if l := lim(10, MaxAboutIDs-2, 2); len(l.About) != 2 || l.More {
+		t.Errorf("a read to the last id a note's about may hold has no more: %+v", l)
+	}
+	if l := lim(10, 0, MaxAboutIDs); len(l.About) != MaxAboutIDs || l.More {
+		t.Errorf("a read of the most a note's about may hold has no more: %d ids, %+v", len(l.About), l.More)
+	}
+	// a read of a line's ids is not its subjects: the plan that asked for them
+	// carries no line of the rule's, and the key of that line is held back
+	ids := heldRelatedLine(heldKey{Line: 9, ByLine: true}, 4)
+	ids.Source.About = false
+	w.lineIDs[9] = []string{"c0.w1", "c1.w1"}
+	if f := heldFactsOf(w.load(t, ReadPlan{Sprint: []SprintQ{ids}})); len(f.Lines) != 0 {
+		t.Errorf("a read of a line's ids is carried as its subjects: %+v", f.Lines)
+	}
+}
+
+// heldKeysOf is the keys of the held rule the lines make at ingest, in the
+// order ingest gives them.
+func heldKeysOf(t *testing.T, seq uint64, line string) []AgendaKey {
+	t.Helper()
+	e, err := ParseEvent(streamID(seq), []byte(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []AgendaKey
+	for _, k := range Ingest([]Event{e}).Keys {
+		if RuleOf(k.Key) == ruleHeld {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+func TestHeldALineIsReadByItsAboutAndNotByItsIDs(t *testing.T) {
+	t.Parallel()
+	// R16 judges primaries, and a line names them by its `about`. The lines that
+	// queue held@<seq> are work lines, whose ids are their about, and the notes
+	// that close a judgment, which have no ids; the rule does not lean on that. A
+	// line whose ids are not its about, as a line of the fleet's work cards is
+	// (ids p1.w1, about p1), is read by its about: a read of its ids would name
+	// cards of no table R16 reads, and judge none.
+	const seq = 900
+	keys := heldKeysOf(t, seq, `{"k":"m","tbl":"work","from":"s1:waiting","to":"s1:ready","ids":["p1","p2"],"about":["p1","p2"],"meta":{"stream":"s1"}}`)
+	if want := []AgendaKey{{Key: "held@900", Seq: seq}}; !slices.Equal(keys, want) {
+		t.Fatalf("the keys ingest makes of a bulk move of work cards: %+v, want %+v", keys, want)
+	}
+	w := newHWorld()
+	for i, id := range []string{"p1", "p2"} {
+		p := w.primary(id, "s1", Working, float64(i+1), "attempt", "1")
+		w.work(p, "m1", Working) // no due, and nothing else names it: a stall
+	}
+	w.lines[seq] = []string{"p1", "p2"}
+	w.lineIDs[seq] = []string{WorkCardID("p1", 1), WorkCardID("p2", 1)}
+	if slices.Equal(w.lines[seq], w.lineIDs[seq]) {
+		t.Fatal("the line's about is its ids")
+	}
+	rp, taken := readOf(t, keys, 0)
+	if len(taken) != 1 || len(rp.Sprint) != 2 || rp.Sprint[0].Source.Kind != SourceLine || !rp.Sprint[0].Source.About {
+		t.Fatalf("the read of a line is of its about: %+v", rp.Sprint)
+	}
+	first := w.viaRule(t, keys...)
+	if len(first.Notes) != 1 || first.Notes[0].Type != NStalled || first.Notes[0].Cause != "working" ||
+		!slices.Equal(first.Notes[0].Subjects, []string{"p1", "p2"}) || len(first.Plan.Units) != 2 ||
+		!slices.Equal(first.Done, keys) || len(first.Requeue) != 0 || len(first.HeldBack) != 0 {
+		t.Fatalf("a line of two stalled cards whose ids are not its about: %+v", first)
+	}
+	// the cards named by the line are the cards named by their keys
+	if byCard := w.viaRule(t, hkeys("p1", "p2")...); !reflect.DeepEqual(byCard.Notes, first.Notes) {
+		t.Fatalf("the same cards by their own keys: %+v, by the line: %+v", byCard.Notes, first.Notes)
+	}
+	w.apply(first)
+	if second := w.viaRule(t, keys...); !writesNothing(second) || len(second.Done) != 1 {
+		t.Fatalf("the second run on the line writes: %+v", second)
+	}
+}
+
+func TestHeldAClosedNoteIsReadByItsSubjects(t *testing.T) {
+	t.Parallel()
+	// closing a judgment that names more than one card queues held@<seq> for the
+	// note's line. A note line has no ids (L2 1.1: ids are on member lines only),
+	// its subjects are its about, and the rule raises the judgment again on each
+	// of them that is still stalled: the coordinator closing a judgment does not
+	// make its condition go away.
+	const seq = 900
+	keys := heldKeysOf(t, seq, `{"k":"n","about":["p1","p2","p3"],"meta":{"kind":"decided","type":"`+NStalled+`"}}`)
+	if want := []AgendaKey{{Key: "held@900", Seq: seq}}; !slices.Equal(keys, want) {
+		t.Fatalf("the keys ingest makes of the closing note: %+v, want %+v", keys, want)
+	}
+	w := newHWorld()
+	for i, id := range []string{"p1", "p2"} {
+		p := w.primary(id, "s1", Working, float64(i+1), "attempt", "1")
+		w.work(p, "m1", Working)
+	}
+	w.primary("p3", "s1", Landed, 3) // the note was about it too; it has landed since
+	w.lines[seq] = []string{"p1", "p2", "p3"}
+	if len(w.lineIDs[seq]) != 0 {
+		t.Fatal("a note line has ids")
+	}
+	first := w.viaRule(t, keys...)
+	if len(first.Notes) != 1 || first.Notes[0].Type != NStalled || first.Notes[0].Cause != "working" ||
+		!slices.Equal(first.Notes[0].Subjects, []string{"p1", "p2"}) || len(first.Plan.Units) != 2 ||
+		!slices.Equal(first.Done, keys) || len(first.HeldBack) != 0 {
+		t.Fatalf("a closed note about two stalled cards and a landed one: %+v", first)
+	}
+	if byCard := w.viaRule(t, hkeys("p1", "p2")...); !reflect.DeepEqual(byCard.Notes, first.Notes) {
+		t.Fatalf("the same cards keyed by card: %+v, by the note's line: %+v", byCard.Notes, first.Notes)
+	}
+	w.apply(first)
+	if second := w.viaRule(t, keys...); !writesNothing(second) {
+		t.Fatalf("the second run on the note's line writes: %+v", second)
+	}
+	// a subject that is a stream or the sprint is no card: it is read, found on no
+	// table, and passed over, and the key still ends
+	keys = heldKeysOf(t, seq+1, `{"k":"n","about":["stream:s1","sprint:done"],"meta":{"kind":"decided","type":"`+NStalled+`"}}`)
+	w.lines[seq+1] = []string{"stream:s1", "sprint:done"}
+	if len(keys) != 1 {
+		t.Fatalf("the keys of a note about a stream and the sprint: %+v", keys)
+	}
+	if rp := w.viaRule(t, keys...); !writesNothing(rp) || !slices.Equal(rp.Done, keys) {
+		t.Fatalf("a note about no card: %+v", rp)
+	}
+}
+
+func TestHeldACutNoteLineIsResumedAtItsOffsetInItsAbout(t *testing.T) {
+	t.Parallel()
+	// a note about more stalled cards than one read holds is read a share at a
+	// time, each read resuming at the offset of the last in the note's about, and
+	// every subject is judged once: the note's 3,000 subjects are past the
+	// 2,000 ids a member line holds, so a read bounded as one would stop short
+	const (
+		seq = 900
+		n   = 3000
+	)
+	var about []string
+	for i := range n {
+		about = append(about, strconv.Quote("p"+strconv.Itoa(i)))
+	}
+	keys := heldKeysOf(t, seq, `{"k":"n","about":[`+strings.Join(about, ",")+`],"meta":{"kind":"decided","type":"`+NStalled+`"}}`)
+	if len(keys) != 1 || keys[0].Key != "held@900" {
+		t.Fatalf("a note about many cards queues its line: %+v", keys)
+	}
+	w := newHWorld()
+	for i := range n {
+		id := "p" + strconv.Itoa(i)
+		p := w.primary(id, "s1", Working, float64(i), "attempt", "1")
+		w.work(p, "m1", Working)
+		w.lines[seq] = append(w.lines[seq], id)
+	}
+	room := heldReadCards(L1ReadBounds(), 0)
+	judged := map[string]int{}
+	reads := 0
+	for ; len(keys) > 0 && reads < 100; reads++ {
+		rp, _ := readOf(t, keys, 0)
+		for _, q := range rp.Sprint {
+			if q.Source.Kind == SourceLine && !q.Source.About {
+				t.Fatalf("a line read for its ids: %+v", q.Source)
+			}
+		}
+		plan := w.viaRule(t, keys...)
+		if len(plan.HeldBack) != 0 {
+			t.Fatalf("read %d: held back %+v", reads, plan.HeldBack)
+		}
+		for _, note := range plan.Notes {
+			for _, id := range note.Subjects {
+				judged[id]++
+			}
+			if len(note.Subjects) > room {
+				t.Fatalf("read %d names %d cards of a room of %d", reads, len(note.Subjects), room)
+			}
+		}
+		w.apply(plan)
+		keys = plan.Requeue
+	}
+	if len(keys) != 0 {
+		t.Fatalf("the note's line was not finished in %d reads", reads)
+	}
+	if len(judged) != n || reads != (n+room-1)/room {
+		t.Fatalf("%d of %d subjects judged in %d reads of %d cards", len(judged), n, reads, room)
+	}
+	for id, c := range judged {
+		if c != 1 {
+			t.Fatalf("%s judged %d times", id, c)
+		}
 	}
 }
 
@@ -1756,18 +1961,29 @@ func TestHeldCrossNeedThatHasNotLandedHoldsNothing(t *testing.T) {
 func TestHeldWorkAtAMemberThatIsHeldIsR2s(t *testing.T) {
 	t.Parallel()
 	// R2's condition is a member down or held: a held member keeps its cards
-	// held, and only `fleet up` releases it, so its cards are named by R2
-	for _, status := range []string{Down, Held} {
+	// held, and only `fleet up` releases it, so its cards are named by R2. A hold
+	// writes the status down and a `held` field beside it (steps_work.go), so a
+	// member held is down to the holder; the status Held is what a display
+	// derives (MemberStatus), and the holder treats it the same.
+	for _, c := range []struct {
+		name   string
+		fields map[string]string
+		status string
+	}{
+		{"down", map[string]string{"status": Down}, Down},
+		{"held down, as a hold writes it", map[string]string{"status": Down, "held": "since"}, Down},
+		{"held, as a display derives it", map[string]string{"status": Held}, Held},
+	} {
 		w := newHWorld()
 		p := w.primary("p1", "s1", Working, 1, "attempt", "1")
 		w.work(p, "m2", Working, heldDueUnfinished, strconv.FormatInt(hR+1000, 10))
-		w.s.Fleet.Card(CtlID("m2")).Fields["status"] = status
+		maps.Copy(w.s.Fleet.Card(CtlID("m2")).Fields, c.fields)
 		hd := w.holder("p1")
-		if hd.By != HeldByTick || !strings.HasPrefix(hd.Why, "R2, ") || !strings.Contains(hd.Why, "member m2 is "+status) {
-			t.Errorf("work at a member that is %s: (%s) %s", status, hd.By, hd.Why)
+		if hd.By != HeldByTick || !strings.HasPrefix(hd.Why, "R2, ") || !strings.Contains(hd.Why, "member m2 is "+c.status) {
+			t.Errorf("work at a member that is %s: (%s) %s", c.name, hd.By, hd.Why)
 		}
 		if rp := w.viaRule(t, hkeys("p1")...); !writesNothing(rp) {
-			t.Errorf("the rule judges a card at a member that is %s: %+v", status, rp)
+			t.Errorf("the rule judges a card at a member that is %s: %+v", c.name, rp)
 		}
 	}
 	// at an up member, before its due, it is (a) and not R2
@@ -1817,6 +2033,47 @@ func TestHeldMergeIdleDeadlineIsR11sOnlyWhileTheStreamMergesOrWaits(t *testing.T
 		if want == "" && !hd.Stalled() {
 			t.Errorf("a stream %s past its merge-idle deadline: (%s) %s", state, hd.By, hd.Why)
 		}
+	}
+}
+
+func TestHeldAStreamsMergeIdleJudgmentAloneHoldsItsMergingCard(t *testing.T) {
+	t.Parallel()
+	// once R11 has judged a stream past its merge-idle deadline, the judgment
+	// holds a merging card of the stream when nothing else does: the stream has no
+	// deadline set any more (a merge step cleared it), and the card's merge card is
+	// stuck and not queued, so neither (a) nor R11's condition holds it. Without
+	// the judgment the card is a stall; with it, open or held by a wait, it is not.
+	build := func() *hworld {
+		w := newHWorld()
+		w.primary("p1", "s1", Merging, 1)
+		w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Stuck, Rev: 1, Fields: hkv()})
+		w.ctl("s1").Fields["state"] = StreamMerging
+		return w
+	}
+	if vd := build().verdict("p1"); !vd.Stalled() || vd.row.Name != "merging" {
+		t.Fatalf("a stuck merge card in a stream that merges, with no deadline set: %+v", vd.Hold)
+	}
+	for _, how := range []string{"open", "held"} {
+		w := build()
+		if how == "open" {
+			w.judge(StreamSubject("s1"), NMergeLate)
+		} else {
+			w.hold(StreamSubject("s1"), NMergeLate)
+		}
+		hd := w.holder("p1")
+		if hd.By != HeldByJudgment || !strings.HasPrefix(hd.Why, "its stream's stop or merge-idle judgment, open or held: ") || !strings.Contains(hd.Why, how+": "+NMergeLate) {
+			t.Errorf("the merge-idle judgment %s on the stream: (%s) %s", how, hd.By, hd.Why)
+		}
+		if rp := w.viaRule(t, hkeys("p1")...); !writesNothing(rp) {
+			t.Errorf("the rule judges a card a %s merge-idle judgment names: %+v", how, rp)
+		}
+	}
+	// and the judgment is of the stream's merge step only: another judgment of it
+	// does not hold a card of a stream that is not stopped
+	w := build()
+	w.judge(StreamSubject("s1"), NConflict)
+	if vd := w.verdict("p1"); !vd.Stalled() {
+		t.Errorf("a stop judgment on a stream that is not stopped: %+v", vd.Hold)
 	}
 }
 
