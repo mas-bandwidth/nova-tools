@@ -485,12 +485,13 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 }
 
 // unchangedNotWritten is the plan of a part with the writes that change no
-// row taken out: a field set to the value the card holds is no write, and a
-// unit that held nothing else is passed over. A table's queue holds an entry
-// only when a write changed a row, so an update that finds nothing to change
-// leaves every queue as it was and the tick ends (tla/DirtyTick.tla, W13: an
-// update that queues an entry each time it runs, changed or not, never ends
-// the tick). What the plan guards stays guarded.
+// row taken out: an entry that only sets fields to the values the card holds
+// is no write (it keeps the guard of the card it names), and a unit that held
+// nothing else is passed over. A table's queue holds an entry only when a
+// write changed a row, so an update that finds nothing to change leaves every
+// queue as it was and the tick ends (tla/DirtyTick.tla, W13: an update that
+// queues an entry each time it runs, changed or not, never ends the tick). An
+// entry that changes a row in any field is written as the part planned it.
 func unchangedNotWritten(s *sprint.Snapshot, p sprint.Plan) sprint.Plan {
 	var units []sprint.Unit
 	for i, u := range p.Units {
@@ -499,21 +500,16 @@ func unchangedNotWritten(s *sprint.Snapshot, p sprint.Plan) sprint.Plan {
 		for _, ch := range u.Changes {
 			e, c := ch.Entry, s.T(ch.Table).Card(ch.Entry.ID)
 			if c != nil && c.Placed() && e.Create == nil && e.Move == nil && !e.Remove && len(e.Unset) == 0 && len(e.Set) > 0 {
-				set := map[string]string{}
+				same := true
 				for k, v := range e.Set {
-					if !c.Has(k) || c.F(k) != v {
-						set[k] = v
-					}
+					same = same && c.Has(k) && c.F(k) == v
 				}
-				if len(set) < len(e.Set) {
+				if same {
 					if units == nil {
 						units = slices.Clone(p.Units)
 					}
 					had = true
-					e.Set = set
-					if len(set) == 0 {
-						e.Set = nil
-					}
+					e.Set = nil
 					ch.Entry = e
 				}
 			}
