@@ -142,7 +142,7 @@ func decodeSnapshot(name string, reply []any) (Table, error) {
 	if err := (operation{table: name}).refused(reply); err != nil {
 		return Table{}, err
 	}
-	if len(reply) != 3 || fmt.Sprint(reply[0]) != "TABLE" {
+	if (len(reply) != 3 && len(reply) != 4) || fmt.Sprint(reply[0]) != "TABLE" {
 		return Table{}, fmt.Errorf("table %q: malformed snapshot", name)
 	}
 	h, err := flatHash(reply[1])
@@ -155,6 +155,17 @@ func decodeSnapshot(name string, reply []any) (Table, error) {
 	}
 	if !ok {
 		return Table{}, ErrNoTable
+	}
+	if len(reply) == 4 {
+		// the table's properties at the read epoch (L1 contract amendment,
+		// table properties, section 4)
+		props, err := flatHash(reply[3])
+		if err != nil {
+			return Table{}, err
+		}
+		if len(props) > 0 {
+			t.Props = props
+		}
 	}
 	rows, ok := reply[2].([]any)
 	if !ok {

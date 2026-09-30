@@ -5,6 +5,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 
@@ -113,7 +114,9 @@ func TestACLEachActorCallsOnlyItsFunctions(t *testing.T) {
 // server of its own that holds the tset library (the legacy library of the
 // test above has the same name, so they cannot share one): the coordinator
 // defines and tears down the new path's namespace, and is refused NOPERM,
-// with nothing written, outside it; every other seat is refused the call.
+// with nothing written, outside it; a legacy prefix the seat holds (cap:) is
+// refused CONFIG by the space grammar and its keys kept; every other seat is
+// refused the call.
 func aclTSetLifecycle(t *testing.T) {
 	t.Helper()
 	var extra []string
@@ -169,12 +172,27 @@ func aclTSetLifecycle(t *testing.T) {
 	}
 	coord := clientFor("ns-coordinator")
 	defer coord.Close()
-	reply, err := coord.FCall(ctx, "ns_tset_define", nil, tset.Version, define("elsewhere:")).Result()
+	reply, err := coord.FCall(ctx, "ns_tset_define", nil, tset.Version, define("{elsewhere}:")).Result()
 	if st, code := status(reply); err != nil || st != "refused" || code != "NOPERM" {
 		t.Fatalf("coordinator define outside {sprint}: = %v %v, want refused NOPERM", reply, err)
 	}
 	if n, err := admin.DBSize(ctx).Result(); err != nil || n != 0 {
 		t.Fatalf("a NOPERM define wrote %d keys (err %v)", n, err)
+	}
+	// A legacy prefix the coordinator's row holds: the grammar refuses it
+	// CONFIG before any key is read, and its data stays.
+	if err := admin.Set(ctx, "cap:legacy-data", "x", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []struct{ fn, arg string }{
+		{"ns_tset_define", `{"space":"cap:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"ready","kind":"set"}]}]}`},
+		{"ns_tset_teardown", `{"space":"cap:","confirm":"sprint"}`},
+		{"ns_tset_teardown", `{"space":"s:","confirm":"sprint"}`},
+	} {
+		reply, err := coord.FCall(ctx, call.fn, nil, tset.Version, call.arg).Result()
+		if st, code := status(reply); err != nil || st != "refused" || code != "CONFIG" {
+			t.Fatalf("coordinator %s %s = %v %v, want refused CONFIG", call.fn, call.arg, reply, err)
+		}
 	}
 	reply, err = coord.FCall(ctx, "ns_tset_define", nil, tset.Version, define("{sprint}:")).Result()
 	if st, _ := status(reply); err != nil || st != "ok" {
@@ -193,7 +211,8 @@ func aclTSetLifecycle(t *testing.T) {
 		}
 	}
 	keys, err := admin.Keys(ctx, "*").Result()
-	if err != nil || len(keys) != 1 || keys[0] != "{sprint}:sprint:lifecycle" {
-		t.Fatalf("after teardown the store holds %v (err %v), want only the receipt stream", keys, err)
+	sort.Strings(keys)
+	if err != nil || len(keys) != 2 || keys[0] != "cap:legacy-data" || keys[1] != "{sprint}:sprint:lifecycle" {
+		t.Fatalf("after teardown the store holds %v (err %v), want the legacy key and the receipt stream", keys, err)
 	}
 }

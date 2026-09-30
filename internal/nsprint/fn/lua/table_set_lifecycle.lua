@@ -21,6 +21,22 @@ if NS.tset_profile then
     return type(s) == 'string' and #s > 0 and #s <= 256 and string.match(s, SYMBOLIC) ~= nil
   end
 
+  -- A space is exactly {<name>}: with <name> [a-z][a-z0-9-]{0,31} (the
+  -- amendment, section 1): the closing brace ends every space, so no space is
+  -- a prefix of another, nor of a key outside the grammar. Anything else is
+  -- CONFIG, in define and teardown alike (tset.ValidNamespace is the same rule).
+  local function namespace_ok(s)
+    return type(s) == 'string' and #s >= 4 and #s <= 35 and
+      string.match(s, '^{[a-z][a-z0-9%-]*}:$') ~= nil
+  end
+
+  -- clock_running reads the upper design's clock field stopped_since_ms
+  -- (v2.1 1.2): "" while RUNNING, the time the STOPPED span began otherwise;
+  -- an absent field is read as "" (tset.ClockRunning is the same rule).
+  local function clock_running(since)
+    return since == nil or since == false or since == ''
+  end
+
   -- The keys the lifecycle names, all under the space (L1 1.2; the amendment,
   -- section 1).
   local function keys_of(space)
@@ -98,9 +114,11 @@ if NS.tset_profile then
     if #keys ~= 0 or #args ~= 2 then return refuse('ARGS') end
     local req, code = decode(args[1], args[2], {space = 'string', build = 'string', view = 'string', tables = 'array'})
     if code then return refuse(code) end
+    if req.space == nil then return refuse('REQUEST') end
+    if not namespace_ok(req.space) then return refuse('CONFIG') end
     if type(req.build) ~= 'string' then return refuse('REQUEST') end
     local space = req.space
-    if not S.name(space) or not symbolic(req.view) or not S.is_array(req.tables) or #req.tables < 1 then
+    if not symbolic(req.view) or not S.is_array(req.tables) or #req.tables < 1 then
       return refuse('REQUEST')
     end
     if #req.tables > MAX_TABLES then
@@ -150,6 +168,23 @@ if NS.tset_profile then
     present, code = read(probe)
     if code then return refuse(code) end
     if present ~= 0 then return refuse('EXISTS') end
+    -- EXISTS over leftovers: any key under the space but its receipt stream,
+    -- found by bounded SCAN passes, the same batches as teardown's; a pass that
+    -- cannot finish within them cannot prove the space clean, and is LIMIT.
+    local cursor, finished = '0', false
+    for _ = 1, TEARDOWN_SCANS do
+      local page
+      page, code = read({'SCAN', cursor, 'MATCH', glob_literal(space) .. '*', 'COUNT', SCAN_COUNT})
+      if code then return refuse(code) end
+      for _, key in ipairs(page[2]) do
+        if key ~= k.receipts then return refuse('EXISTS') end
+      end
+      cursor = page[1]
+      if cursor == '0' then finished = true; break end
+    end
+    if not finished then
+      return refuse('LIMIT', {budget = 'scans', actual = TEARDOWN_SCANS + 1, limit = TEARDOWN_SCANS})
+    end
     local rtype
     rtype, code = key_type(k.receipts)
     if code then return refuse(code) end
@@ -193,8 +228,10 @@ if NS.tset_profile then
     if #keys ~= 0 or #args ~= 2 then return refuse('ARGS') end
     local req, code = decode(args[1], args[2], {space = 'string', confirm = 'string'})
     if code then return refuse(code) end
+    if req.space == nil then return refuse('REQUEST') end
+    if not namespace_ok(req.space) then return refuse('CONFIG') end
     local space = req.space
-    if not S.name(space) or type(req.confirm) ~= 'string' then return refuse('REQUEST') end
+    if type(req.confirm) ~= 'string' then return refuse('REQUEST') end
     local k = keys_of(space)
     local vtype
     vtype, code = key_type(k.view)
@@ -206,7 +243,8 @@ if NS.tset_profile then
     if code then return refuse(code) end
     if view[1] ~= req.confirm then return refuse('CONFIRM') end
     -- RUNNING is the upper design's clock (1.2): the clock exists and has no
-    -- STOPPED span open.
+    -- STOPPED span open. The clock is deleted last, with the view, so every
+    -- call of a teardown can refuse a machine started between calls.
     local ctype
     ctype, code = key_type(k.clock)
     if code then return refuse(code) end
@@ -214,7 +252,7 @@ if NS.tset_profile then
       local since
       since, code = read({'HGET', k.clock, 'stopped_since_ms'})
       if code then return refuse(code) end
-      if not since or since == '' or since == '0' then return refuse('RUNNING') end
+      if clock_running(since) then return refuse('RUNNING') end
     elseif ctype ~= 'none' then
       return refuse('WRONGTYPE')
     end
@@ -232,7 +270,7 @@ if NS.tset_profile then
       if code then return refuse(code) end
       local nextc, fresh = page[1], {}
       for _, key in ipairs(page[2]) do
-        if key ~= k.view and key ~= k.receipts and not inbatch[key] then fresh[#fresh + 1] = key end
+        if key ~= k.view and key ~= k.receipts and key ~= k.clock and not inbatch[key] then fresh[#fresh + 1] = key end
       end
       local room = TEARDOWN_KEYS - (#batch - 1)
       for j = 1, math.min(#fresh, room) do
@@ -248,6 +286,16 @@ if NS.tset_profile then
         cursor, dirty = '0', '0'
       else
         cursor = nextc
+      end
+    end
+    -- The clock goes with the view, in the done call, within the batch's
+    -- bound: a done call whose batch is full leaves both to the next call,
+    -- which finds a whole pass with nothing and finishes.
+    if done and ctype == 'hash' then
+      if #batch - 1 == TEARDOWN_KEYS then
+        done, cursor, dirty = false, '0', '0'
+      else
+        batch[#batch + 1] = k.clock
       end
     end
     local deleted = #batch - 1

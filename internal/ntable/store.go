@@ -52,6 +52,7 @@ var (
 	ErrMemberRevision    = errors.New("member revision mismatch")
 	ErrFieldGuard        = errors.New("failed field guard")
 	ErrPlaceGuard        = errors.New("failed place guard")
+	ErrPropGuard         = errors.New("failed property guard")
 	ErrOpConflict        = errors.New("operation ID conflict")
 	ErrLimit             = errors.New("limit exceeded")
 	ErrReservedField     = errors.New("reserved field write")
@@ -478,6 +479,14 @@ func (o operation) refused(reply []any) error {
 		}
 		if o.member != "" {
 			remedy = memberReadCommand(o.table, o.member)
+		}
+	case typedrec.TableRefusalPropGuard:
+		// a table property's expectation (the manifest's prop_expect or
+		// prop_absent) did not hold: L1 contract amendment, table properties
+		if len(reply) >= 4 {
+			cause = fmt.Errorf("%w: table %q property %q", ErrPropGuard, reply[2], reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrPropGuard, words(reply[2:]))
 		}
 	case typedrec.TableRefusalPlaceGuard:
 		if len(reply) >= 5 {
@@ -1284,6 +1293,13 @@ type BatchManifest struct {
 	OperationID           string             `json:"operation_id"`
 	Actor                 string             `json:"actor,omitempty"`
 	Members               []BatchMemberEntry `json:"members"`
+	// Props are the table's properties the batch sets, PropExpect the ones it
+	// expects present with a value and PropAbsent the ones it expects absent,
+	// checked before any write and applied in the same atomic call as the
+	// members (L1 contract amendment, table properties, section 4).
+	Props      map[string]string `json:"props,omitempty"`
+	PropExpect map[string]string `json:"prop_expect,omitempty"`
+	PropAbsent []string          `json:"prop_absent,omitempty"`
 }
 
 // BatchMemberEntry defines expectations and mutations for one member.
@@ -1341,17 +1357,21 @@ type BatchDelta struct {
 	GuardCount    int                `json:"guard_count"`
 	ChangedCount  int                `json:"changed_count"`
 	Members       []BatchMemberDelta `json:"members"`
+	// Props are the table's properties the batch changed, name -> new value
+	// (L1 contract amendment, table properties).
+	Props map[string]string `json:"props,omitempty"`
 }
 
 func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	type rawBatchDelta struct {
-		OperationID   string          `json:"operation_id"`
-		Digest        string          `json:"digest"`
-		Actor         string          `json:"actor"`
-		SelectedCount int             `json:"selected_count"`
-		GuardCount    int             `json:"guard_count"`
-		ChangedCount  int             `json:"changed_count"`
-		Members       json.RawMessage `json:"members"`
+		OperationID   string            `json:"operation_id"`
+		Digest        string            `json:"digest"`
+		Actor         string            `json:"actor"`
+		SelectedCount int               `json:"selected_count"`
+		GuardCount    int               `json:"guard_count"`
+		ChangedCount  int               `json:"changed_count"`
+		Members       json.RawMessage   `json:"members"`
+		Props         map[string]string `json:"props"`
 	}
 	var raw rawBatchDelta
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1363,6 +1383,7 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	b.SelectedCount = raw.SelectedCount
 	b.GuardCount = raw.GuardCount
 	b.ChangedCount = raw.ChangedCount
+	b.Props = raw.Props
 	if len(raw.Members) > 0 && string(raw.Members) != "{}" && string(raw.Members) != "null" {
 		var m []BatchMemberDelta
 		if err := json.Unmarshal(raw.Members, &m); err != nil {

@@ -29,9 +29,12 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // Ask deals every primary in review that lacks reads to TWO DIFFERENT readers,
-// each to the shortest asked queue, in work order; a primary reworked after a
-// read is asked of the same readers again. With Another, a primary already
-// asked is dealt to one more reader.
+// in work order, the readers it names first and then the next readers round
+// the readers (round.go, errata 3 amendment 5: from the rolling index,
+// wrapping, each the first that has no read card at the attempt, the index
+// moved past it: the readers table's ask_index, written with the ask); a
+// primary reworked after a read is asked of the same readers again. With Another, a primary already asked is dealt to
+// one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Review), rowOf, func(c *Card) string {
@@ -50,10 +53,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	q := map[string]int{}
-	for _, rd := range s.Readers.Rows() {
-		q[rd] = s.Readers.Count(rd, Asked)
-	}
+	rr := askRound(s)
+	moves := roundMoves{}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		have := map[string]bool{}
@@ -81,25 +82,18 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				}
 			}
 		}
-		for len(chosenReaders) < want {
-			var left []string
-			for _, rd := range free {
-				if !contains(chosenReaders, rd) {
-					left = append(left, rd)
-				}
-			}
-			if len(left) == 0 {
-				break
-			}
-			chosenReaders = append(chosenReaders, shortest(left, q))
-		}
+		rotated := rr.picks(want-len(chosenReaders), chosenReaders, func(x string) bool { return contains(free, x) })
+		chosenReaders = append(chosenReaders, rotated...)
 		if len(chosenReaders) < want {
 			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; run: nova-sprint reader add <name>", want, len(chosenReaders), attempt, c.ID))
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}
+		for _, rd := range rotated {
+			rr.moved(rd)
+			moves[c.ID] = rd
+		}
 		for _, rd := range chosenReaders {
-			q[rd]++
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
 				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)})))
 		}
@@ -124,6 +118,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
+	roundWrites(&p, rr, moves)
 	answered(&p, s, r.Answers, r.Who)
 	return p
 }
@@ -599,7 +594,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		var u Unit
 		if len(up) > 0 {
 			var why string
-			u, why = deal(s, c, fix, up, q, set, "readers")
+			u, why = deal(s, c, fix, shortest(up, q), q, set, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -846,9 +841,8 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
 	}
-	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
-		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
-	}
+	// A sprint this drop finishes is found done by the tick's done part
+	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }

@@ -13,7 +13,7 @@ import (
 // 0; every refusal is whole; teardown removes the space and keeps its
 // receipts.
 
-const lifecycleSpace = "life:"
+const lifecycleSpace = "{life}:"
 
 func lifecycleSpec() DefineSpec {
 	return DefineSpec{Space: lifecycleSpace, Build: "b1", View: "sprint", Tables: []TableSpec{
@@ -89,7 +89,10 @@ func TestMemDefineRefusals(t *testing.T) {
 		edit func(*DefineSpec)
 		code string
 	}{
-		{"empty space", func(s *DefineSpec) { s.Space = "" }, "REQUEST"},
+		{"empty space", func(s *DefineSpec) { s.Space = "" }, "CONFIG"},
+		{"legacy prefix", func(s *DefineSpec) { s.Space = "cap:" }, "CONFIG"},
+		{"nested space", func(s *DefineSpec) { s.Space = "{life}:dev:" }, "CONFIG"},
+		{"space before the view", func(s *DefineSpec) { s.Space, s.View = "s:", "a view" }, "CONFIG"},
 		{"bad view", func(s *DefineSpec) { s.View = "a view" }, "REQUEST"},
 		{"no tables", func(s *DefineSpec) { s.Tables = nil }, "REQUEST"},
 		{"twice a table", func(s *DefineSpec) { s.Tables[1].Name = "work" }, "REQUEST"},
@@ -218,11 +221,80 @@ func TestEncodeDefineIsTheWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"space":"life:","build":"b1","view":"sprint","tables":[{"t":"work","columns":[{"name":"ready","kind":"set"},{"name":"done","kind":"set"}]},{"t":"readers","columns":[{"name":"asked","kind":"set"}]}]}`
+	want := `{"space":"{life}:","build":"b1","view":"sprint","tables":[{"t":"work","columns":[{"name":"ready","kind":"set"},{"name":"done","kind":"set"}]},{"t":"readers","columns":[{"name":"asked","kind":"set"}]}]}`
 	if string(raw) != want {
 		t.Fatalf("wire %s", raw)
 	}
-	if _, err := encodeTeardown("", "sprint"); err == nil {
-		t.Fatal("teardown of an empty space encoded")
+	for _, space := range []string{"", "cap:", "s:", "l1:", "{l1}:dev:"} {
+		if _, err := encodeTeardown(space, "sprint"); lifecycleCode(t, err) != "CONFIG" {
+			t.Fatalf("teardown of %q: %v, want CONFIG", space, err)
+		}
+	}
+}
+
+func TestValidNamespace(t *testing.T) {
+	t.Parallel()
+	for _, s := range []string{"{a}:", "{l1}:", "{l1-dev}:", "{sprint}:", "{" + strings.Repeat("a", MaxNamespaceName) + "}:"} {
+		if !ValidNamespace(s) {
+			t.Errorf("ValidNamespace(%q) = false", s)
+		}
+	}
+	for _, s := range []string{"", "cap:", "s:", "l1:", "{}:", "{A}:", "{1a}:", "{-a}:", "{a_b}:", "{a.b}:", "{a}", "{a}:x",
+		"{a}::", "a{b}:", "{{a}}:", "{a}:{b}:", "{" + strings.Repeat("a", MaxNamespaceName+1) + "}:"} {
+		if ValidNamespace(s) {
+			t.Errorf("ValidNamespace(%q) = true", s)
+		}
+	}
+}
+
+// TestClockRunning: stopped_since_ms "" (or absent) is RUNNING; "0" and a
+// time are STOPPED (v2.1 1.2).
+func TestClockRunning(t *testing.T) {
+	t.Parallel()
+	value := func(s string) *string { return &s }
+	for _, tc := range []struct {
+		since *string
+		want  bool
+	}{{nil, true}, {value(""), true}, {value("0"), false}, {value("1759240000000"), false}} {
+		if got := ClockRunning(tc.since); got != tc.want {
+			t.Errorf("ClockRunning(%v) = %v, want %v", tc.since, got, tc.want)
+		}
+	}
+}
+
+// TestMemSpacesSideBySide: two spaces of the grammar stand side by side on the
+// twin; tearing one down leaves the other whole.
+func TestMemSpacesSideBySide(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	other := lifecycleSpec()
+	other.Space = "{life-dev}:"
+	for _, spec := range []DefineSpec{lifecycleSpec(), other} {
+		if _, err := m.Define(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := m.Snapshot(other.Space)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Teardown(ctx, lifecycleSpace, "sprint"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := m.Snapshot(other.Space)
+	if err != nil || !reflect.DeepEqual(before, after) || m.View(other.Space) != "sprint" {
+		t.Fatalf("the other space changed: %v", err)
+	}
+}
+
+func TestMemDefineRefusesLeftovers(t *testing.T) {
+	t.Parallel()
+	m := NewMem()
+	if err := m.SetActiveEpoch(lifecycleSpace, "0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Define(context.Background(), lifecycleSpec()); lifecycleCode(t, err) != "EXISTS" {
+		t.Fatalf("define over a leftover epoch: %v", err)
 	}
 }

@@ -261,6 +261,9 @@ type Answer struct {
 	// Counts are the counts of the cells of the members (or readers) a `fleet`
 	// (`readers`) query lists, in the table the query is over.
 	Counts []CellCount
+	// Props are the table properties a `fleet` (`readers`) query read, of the
+	// ones it named, name -> value; one it named that is absent is not here.
+	Props map[string]string
 	// Front is the answer of `front`.
 	Front *FrontAnswer
 	// Heads are the heads of a `front` query, one for each of the query's

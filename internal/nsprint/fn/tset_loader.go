@@ -37,18 +37,18 @@ var tsetFragments = []string{
 // exactly these names; every other registration in a tset fragment is inert.
 var TSetFunctions = []string{"ns_tset_step", "ns_tset_read", "ns_tset_define", "ns_tset_teardown"}
 
-// TSetLifecycleFunctions are the lifecycle's two functions, which only the
-// coordinator's ACL row may call (the lifecycle amendment, section 4).
-var TSetLifecycleFunctions = []string{"ns_tset_define", "ns_tset_teardown"}
-
 // TSetSource assembles an isolated nova_sprint library with the tset writer,
 // reader and lifecycle. The lexical shim registers only TSetFunctions at
 // library load time, and in the sprint profile SprintFunctions beside them
 // (registrationFilter); the unchanged legacy table.lua belongs to the old-tool
 // profile. The standalone profile leaves Layer 2's log out; the composed and
-// sprint profiles load it. The prelude carries the profile and the build: a digest of the
-// profile and of everything after the prelude, which ns_tset_define compares
-// with the build its caller names (the lifecycle amendment, section 2).
+// sprint profiles load it. The prelude carries the profile and the build: a
+// digest of the profile and of everything after the prelude, which
+// ns_tset_define compares with the build its caller names (the lifecycle
+// amendment, section 2). The build is the library's declaration of its
+// source, made here at assembly from the body loaded beside it: the store
+// compares it and never recomputes it, so a library loaded by another hand
+// declares whatever it says.
 func TSetSource(profile TSetProfile) (string, error) {
 	body, err := tsetBody(profile)
 	if err != nil {

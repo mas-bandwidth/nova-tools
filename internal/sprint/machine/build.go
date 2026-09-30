@@ -311,14 +311,27 @@ func (sb *stepBodies) fit(group []builtUnit) error {
 	return sb.fit(group[len(group)/2:])
 }
 
-// extras puts the plan's notes, guards, intents and requeued keys on its first
-// body, the guards as convertGuards made them: its Layer 1 entries first.
+// extras puts the plan's notes, guards, intents, table properties and
+// requeued keys on its first body, the guards as convertGuards made them: its
+// Layer 1 entries first.
 func (sb *stepBodies) extras(body sprintfn.Body, first bool) sprintfn.Body {
 	if !first {
 		return body
 	}
 	if len(sb.l1) != 0 {
 		body.Entries = append(append([]tset.Entry(nil), sb.l1...), body.Entries...)
+	}
+	// The plan's table properties (the deal's and the ask's rolling index,
+	// round.go): each a propguard on the value the plan read and a prop, on
+	// the first body with its cards (L1 contract amendment, table properties).
+	for _, pw := range sb.rp.Plan.Props {
+		guard := tset.Entry{Kind: "propguard", Table: pw.Table, Name: pw.Name}
+		if !pw.WasAbsent {
+			was := pw.Was
+			guard.Value = &was
+		}
+		value := pw.Value
+		body.Entries = append(body.Entries, guard, tset.Entry{Kind: "prop", Table: pw.Table, Name: pw.Name, Value: &value})
 	}
 	body.Notes, body.Guards, body.Intents = sb.rp.Notes, sb.guards, sb.rp.Intents
 	for _, k := range sb.rp.Requeue {

@@ -71,6 +71,17 @@ func (w *world) apply(p sprint.Plan) error {
 		w.closeAll(u.Closes)
 		w.note(u.Notes...)
 	}
+	for _, pw := range p.Props {
+		tb := w.s.T(pw.Table)
+		props := map[string]string{}
+		for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex} {
+			if v, ok := tb.Prop(n); ok {
+				props[n] = v
+			}
+		}
+		props[pw.Name] = pw.Value
+		tb.SetProps(props)
+	}
 	w.closeAll(p.Closes)
 	w.note(p.Notes...)
 	for _, n := range p.Updates {

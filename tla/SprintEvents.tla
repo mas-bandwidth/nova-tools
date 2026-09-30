@@ -46,6 +46,11 @@
 \*   remind, pushes      the remind entry of one person's goal; pushes (mod 2)
 \*   dropping, cut       stream -> op; op -> its cut entry (wall time)
 \*   receipts, next      part receipts with their continuations; the score counter
+\*   dcur, acur          the deal's and the ask's rolling index (errata 3,
+\*                       amendment 5), the fleet table's and the readers
+\*                       table's property: the place in MemSeq (ReaderSeq) the
+\*                       next scan starts at, past the member (reader) the
+\*                       last card (read) went to
 \*   lease, tk, vk       the lease; tick processes; verb processes
 \*
 \* TIME is relative, in units of one deadline: every timer holds what remains
@@ -183,7 +188,7 @@ VARIABLES
   running, clk, remind, pushes,
   stab,         \* member -> -1 (not up), 1 (up, not yet stable), 0 (stable); only with stablesince
   sw,           \* R6's 30 s entry: -1 unset, 1 armed, 0 due, 2 fired; only with stablesince
-  dropping, cut, receipts, next,
+  dropping, cut, receipts, next, dcur, acur,
   lease, tk, vk,
   acts, crashes, errs, bugs,
   probe,        \* ghost: armed by an apply that removed its key or changed nothing, for RunTwice
@@ -200,7 +205,7 @@ fleetv == <<status, beat, seen, stab>>
 idxv   == <<waitn, missing, J>>
 queue  == <<agenda, parked, log, cur>>
 clock  == <<running, clk, remind, pushes, sw>>
-sprint == <<dropping, cut, receipts, next>>
+sprint == <<dropping, cut, receipts, next, dcur, acur>>
 procs  == <<lease, tk, vk>>
 bounds == <<acts, crashes, errs, bugs>>
 ghosts == <<probe, seenKeys, ahead, early, waivedRec, applied, raises>>
@@ -213,6 +218,19 @@ vars == <<cards, fleetv, idxv, queue, clock, sprint, procs, bounds, ghosts>>
 Cards == Prims \cup Sents
 None == "none"
 OpenCols == {"waiting", "ready", "working", "review", "merging"}
+\* A fixed order of the members and of the readers (the code's name order),
+\* and a rolling index into one (errata 3, amendment 5; RoundAssign, RoundTwo):
+\* Past(sq, x) is the place just past x, FirstFrom(sq, at, X) the first of X
+\* from the place at, wrapping.
+OrderOf(X) == CHOOSE f \in [1..Cardinality(X) -> X] : \A i, j \in DOMAIN f : i # j => f[i] # f[j]
+MemSeq == OrderOf(Members)
+ReaderSeq == OrderOf(Readers)
+Past(sq, x) == ((CHOOSE i \in DOMAIN sq : sq[i] = x) % Cardinality(DOMAIN sq)) + 1
+At(sq, at, i) == sq[((at - 1 + i) % Cardinality(DOMAIN sq)) + 1]
+FirstFrom(sq, at, X) ==
+  IF \A i \in DOMAIN sq : sq[i] \notin X THEN None
+  ELSE At(sq, at, CHOOSE i \in 0..Cardinality(DOMAIN sq) - 1 :
+                    At(sq, at, i) \in X /\ \A i2 \in 0..i - 1 : At(sq, at, i2) \notin X)
 Cols == {"none", "landed", "removed"} \cup OpenCols
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
@@ -360,7 +378,7 @@ OwnerKeys(ty, sb, ca) ==
 
 Cur == [col |-> col, score |-> score, fld |-> fld, wk |-> wk, rd |-> rd, mi |-> mi,
         status |-> status, stab |-> stab, sw |-> sw, waitn |-> waitn, missing |-> missing, J |-> J,
-        remind |-> remind, pushes |-> pushes, next |-> next, ahead |-> ahead,
+        remind |-> remind, pushes |-> pushes, next |-> next, dcur |-> dcur, acur |-> acur, ahead |-> ahead,
         lk |-> {}, early |-> early, waivedRec |-> waivedRec]
 
 \* The keys ingest gives the line of a step (2.1), from what the step changed.
@@ -434,7 +452,7 @@ Commit(T0, verb) ==
   /\ status' = T.status /\ stab' = T.stab /\ sw' = T.sw
   /\ waitn' = NewWaitn(T) /\ missing' = T.missing
   /\ J' = {j \in T.J : ~Ends(j, T)}
-  /\ remind' = T.remind /\ pushes' = T.pushes /\ next' = T.next
+  /\ remind' = T.remind /\ pushes' = T.pushes /\ next' = T.next /\ dcur' = T.dcur /\ acur' = T.acur
   /\ ahead' = T.ahead /\ early' = T.early /\ waivedRec' = T.waivedRec
   /\ log' = IF keys # {} \/ verb THEN Append(log, [keys |-> keys, ing |-> 0]) ELSE log
 
@@ -517,7 +535,7 @@ Eff1(T, u) ==
     [] u.op = "reach"   -> [T EXCEPT !.J = JOpen(@, "reached", CS(c), "-")]
     [] u.op = "unreach" -> [T EXCEPT !.J = JClose(@, "reached", CS(c), "-")]
     [] u.op = "deal" ->
-         Restart([T EXCEPT !.col[c] = "working",
+         Restart([T EXCEPT !.col[c] = "working", !.dcur = Past(MemSeq, u.m),
                            !.fld[c].attempt = IF @ = 0 THEN 1 ELSE @,
                            !.wk[c] = NewCard(@, u.m),
                            !.ahead[c] = IF fld[c].attempt = 0
@@ -525,7 +543,7 @@ Eff1(T, u) ==
                                         ELSE @,
                            !.J = JClose(@, "nostable", SprintS, "-")])
     [] u.op = "redealw" ->
-         Restart([T EXCEPT !.col[c] = "working",
+         Restart([T EXCEPT !.col[c] = "working", !.dcur = Past(MemSeq, u.m),
                            !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod,
                                                !.tu = IF @ < 0 THEN 1 ELSE @, !.m0 = u.m],
                            !.J = JClose(@, "nostable", SprintS, "-")])
@@ -583,7 +601,8 @@ Eff1(T, u) ==
     [] u.op = "made" ->
          [T EXCEPT !.J = {j \in @ : ~(j.ty = "missing" /\ j.cause = c)}, !.missing = @ \ {c}]
     [] u.op = "ask" ->
-         [T EXCEPT !.rd[c] = [r \in Readers |-> IF r \in u.x THEN [T.rd[c][r] EXCEPT !.st = "asked", !.t = 1] ELSE T.rd[c][r]]]
+         [T EXCEPT !.rd[c] = [r \in Readers |-> IF r \in u.x THEN [T.rd[c][r] EXCEPT !.st = "asked", !.t = 1] ELSE T.rd[c][r]],
+                   !.acur = Past(ReaderSeq, u.m)]
     [] u.op = "cannotask" -> [T EXCEPT !.J = JOpen(@, "cannotask", CS(c), "-")]
     [] u.op = "accept" ->
          [T EXCEPT !.col[c] = "merging", !.mi[S(c)].t = 1,
@@ -628,13 +647,31 @@ AssignOne(cnt, ms, av) ==
                                     pref \in {IF room \ {av} # {} THEN room \ {av} ELSE room}} : TRUE :
                 room \in {{m \in ms : cnt[m] < Cap}}} : TRUE
 Counts == [m \in Members |-> RCount(m)]
-RECURSIVE Assign(_, _, _)
-Assign(q0, c0, ms0) ==
+
+\* The deal goes round the fleet and the ask round the readers (errata 3,
+\* amendment 5; internal/sprint/round.go): a fixed order of the members (the
+\* code's name order) and of the readers, and the rolling index into each (dcur,
+\* acur), the place the next scan starts at. A card goes to the first member
+\* from the index, wrapping, with room (the avoid member only when no other
+\* has), and the index moves past it; a card refused moves nothing. It
+\* replaces the shortest ready queue with its ties broken by the order, which
+\* gives every card of an idle fleet to the first members.
+RoundOne(cnt, ms, av, at) ==
+  LET room == {m \in ms : cnt[m] < Cap}
+  IN IF room = {} THEN None
+     ELSE FirstFrom(MemSeq, at, IF room \ {av} # {} THEN room \ {av} ELSE room)
+RECURSIVE RoundAssign(_, _, _, _)
+RoundAssign(q0, c0, ms0, at0) ==
   CHOOSE r \in {IF q = <<>> THEN <<>>
+                ELSE IF Head(q) \in Refuses THEN << <<Head(q), None>> >> \o RoundAssign(Tail(q), cnt, ms, at)
                 ELSE CHOOSE r2 \in {IF m = None THEN <<>>
-                                    ELSE << <<Head(q), m>> >> \o Assign(Tail(q), [cnt EXCEPT ![m] = @ + 1], ms) :
-                                    m \in {AssignOne(cnt, ms, fld[Head(q)].avoid)}} : TRUE :
-                q \in {q0}, cnt \in {c0}, ms \in {ms0}} : TRUE
+                                    ELSE << <<Head(q), m>> >> \o RoundAssign(Tail(q), [cnt EXCEPT ![m] = @ + 1], ms, Past(MemSeq, m)) :
+                                    m \in {RoundOne(cnt, ms, fld[Head(q)].avoid, at)}} : TRUE :
+                q \in {q0}, cnt \in {c0}, ms \in {ms0}, at \in {at0}} : TRUE
+\* The ask's two readers: the first able from acur, then the first able past it
+\* (in place of any two, a free choice).
+RoundTwo(X, at) ==
+  LET a == FirstFrom(ReaderSeq, at, X) IN <<a, FirstFrom(ReaderSeq, Past(ReaderSeq, a), X \ {a})>>
 
 \* R3 resolve:s: release, reach, unreach (W26: release reads waiting, not elig).
 ResolvePlan(k, g, below, rel, ch) ==
@@ -687,7 +724,7 @@ DealPlan(k, D, asg) ==
 \* body words R6, not one card from each stream's front in turn.
 DealOrder(D) == IF Broken = "W28" THEN Sorted(D) ELSE TurnSorted(D)
 PlanDeal(k, ch) ==
-  CHOOSE r \in UNION {{DealPlan(k, D, asg) : asg \in {Assign(Take(DealOrder(D), Min(DealRoom, ch)), Counts, DealUp)}} :
+  CHOOSE r \in UNION {{DealPlan(k, D, asg) : asg \in {RoundAssign(Take(DealOrder(D), Min(DealRoom, ch)), Counts, DealUp, dcur)}} :
                       D \in {Dealable}} : TRUE
 
 \* R2 down:m: m's cards as sets, redealt or withdrawn; a held member stays held.
@@ -733,13 +770,14 @@ PlanMade(k) ==
   THEN PlanU(k, <<U("made", n, None, None)>>, FALSE) ELSE Plan0(k)
 
 \* R8 ask, R9 accept, R10 rework.
-TwoOf(X) == LET a == CHOOSE r \in X : TRUE IN {a, CHOOSE r \in X \ {a} : TRUE}
 PlanAsk(k) ==
   LET p == k[2]
       able == {r \in Readers : rd[p][r].st = "none"}
   IN IF Frozen(p) THEN Held(k)
      ELSE IF col[p] = "review" /\ fld[p].result = "ok" /\ ~fld[p].bound /\ able = Readers
-     THEN PlanU(k, <<IF Cardinality(able) >= 2 THEN U("ask", p, None, TwoOf(able)) ELSE U("cannotask", p, None, None)>>, FALSE)
+     THEN PlanU(k, <<IF Cardinality(able) >= 2
+                     THEN LET two == RoundTwo(able, acur) IN U("ask", p, two[2], {two[1], two[2]})
+                     ELSE U("cannotask", p, None, None)>>, FALSE)
      ELSE Plan0(k)
 PlanAccept(k) ==
   LET p == k[2] IN
@@ -867,8 +905,8 @@ Variant(k) ==
 
 MaxParts == Cardinality(Cards) + 2
 \* The facts the rules' plans read (a probe runs only while they are as the plan read them).
-planv == <<col, score, fld, wk, rd, mi, status, beat, stab, sw, waitn, missing, J, remind, next, dropping, cut, running>>
-commitv == <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, J, remind, pushes, next,
+planv == <<col, score, fld, wk, rd, mi, status, beat, stab, sw, waitn, missing, J, remind, next, dcur, acur, dropping, cut, running>>
+commitv == <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, J, remind, pushes, next, dcur, acur,
              ahead, early, waivedRec, log>>
 TkIdle(h) == [pc |-> "idle", gen |-> 0, from |-> 0, to |-> 0, lk |-> {}, bk |-> FALSE,
               plans |-> [k \in {} |-> Plan0(DealK)], pend |-> <<>>, half |-> h, seen0 |-> <<>>]
@@ -915,6 +953,7 @@ Init ==
   /\ cut = [o \in Ops |-> -1]
   /\ receipts = {}
   /\ next = Scn.next
+  /\ dcur = 1 /\ acur = 1
   /\ lease = [owner |-> None, gen |-> 0]
   /\ tk = [t \in Ticks |-> TkIdle({})]
   /\ vk = [v \in VerbProcs |-> VIdle]
@@ -978,7 +1017,7 @@ PopEntries ==
   /\ sw' = IF sw = 0 THEN 2 ELSE sw                         \* fired: deal handles it
 popv == <<wk, rd, mi, beat, seen, remind, cut, J, sw>>
 rt1Others == <<col, score, fld, status, stab, waitn, missing, parked, running, clk, pushes, dropping,
-               receipts, next, vk, seenKeys, ahead, early, waivedRec, applied, raises>>
+               receipts, next, dcur, acur, vk, seenKeys, ahead, early, waivedRec, applied, raises>>
 
 \* RT1's step: take a free lease (gen + 1) or renew one's own, then pop: the
 \* keys first, then the entries (A1, D3). A lease another loop holds: this
@@ -1137,7 +1176,7 @@ Apply(t) ==
                      /\ agenda' = IF chunk1 THEN agenda \ {k} ELSE agenda
                      /\ tk' = [tk EXCEPT ![t] = [Settle(x, pend2) EXCEPT !.half = @ \cup {k}]]
              /\ probe' = NoProbe
-             /\ UNCHANGED <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, remind, pushes, next,
+             /\ UNCHANGED <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, remind, pushes, next, dcur, acur,
                             ahead, early, waivedRec, log, clk, raises>>
         ELSE IF ~Applies(t)
         THEN /\ tk' = [tk EXCEPT ![t] = Settle(x, pend2)]
@@ -1481,7 +1520,7 @@ PartApply(v) ==
              /\ vk' = [vk EXCEPT ![v] = IF moved /\ x.rr < PartRereads THEN [x EXCEPT !.pc = "cont", !.rr = @ + 1]
                                         ELSE VIdle]
              /\ probe' = NoProbe
-     /\ UNCHANGED <<beat, seen, agenda, parked, cur, running, clk, next, lease, tk, bounds, seenKeys, raises>>
+     /\ UNCHANGED <<beat, seen, agenda, parked, cur, running, clk, next, dcur, acur, lease, tk, bounds, seenKeys, raises>>
 \* drop --abort --op: clears the op's marks and cut entry, with the request line.
 AbortApply(v) ==
   LET x == vk[v]
@@ -1498,7 +1537,7 @@ AbortApply(v) ==
         ELSE /\ UNCHANGED <<commitv, dropping, cut, receipts>>
              /\ probe' = NoProbe
      /\ vk' = [vk EXCEPT ![v] = VIdle]
-     /\ UNCHANGED <<beat, seen, agenda, parked, cur, running, clk, next, lease, tk, bounds, seenKeys, applied, raises>>
+     /\ UNCHANGED <<beat, seen, agenda, parked, cur, running, clk, next, dcur, acur, lease, tk, bounds, seenKeys, applied, raises>>
 
 \* A verb's process dies between its read and its step, or between parts.
 VerbCrash(v) ==
@@ -1546,7 +1585,7 @@ Wall ==
      /\ cut' = ncut /\ remind' = nrem
      /\ probe' = NoProbe
      /\ UNCHANGED <<col, score, fld, status, seen, waitn, missing, queue, running, pushes, dropping, receipts,
-                    next, procs, bounds, seenKeys, ahead, early, waivedRec, applied, raises>>
+                    next, dcur, acur, procs, bounds, seenKeys, ahead, early, waivedRec, applied, raises>>
 
 -----------------------------------------------------------------------------
 TickNext(t) == RT1(t) \/ ReadEvents(t) \/ RT2(t) \/ Apply(t)

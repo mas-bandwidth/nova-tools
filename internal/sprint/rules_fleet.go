@@ -513,30 +513,6 @@ func sentGuard(stream string, most float64) XGuard {
 	return XGuard{Kind: guardRCount, Key: "sent:" + stream + " " + fmtScore(most)}
 }
 
-// pickMember is the up member a new work card goes to: the shortest ready
-// queue among the members with room, the primary's avoid member only when no
-// other member has room. "" when none has room. The queues are counted as the
-// plan fills them (q).
-func pickMember(up []string, q map[string]int, avoid string) string {
-	best, bestAvoid := "", ""
-	for _, m := range up {
-		if q[m] >= RuleReadyCap {
-			continue
-		}
-		if m == avoid {
-			bestAvoid = m
-			continue
-		}
-		if best == "" || q[m] < q[best] {
-			best = m
-		}
-	}
-	if best != "" {
-		return best
-	}
-	return bestAvoid
-}
-
 // R1 seen.
 //
 // Trigger: the pop of seen:<m>, which the beat part enters when m's status is
@@ -932,9 +908,12 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // Plan: the room first of what was read in stream turns (dealTurns: one card
 // from each stream's front in turn, in stream order, each stream's cards in
 // work order), each dealt: a new work
-// card to the shortest ready queue among the up members, the primary's avoid
-// member only when no other up member has room; or the withdrawn card dealt
-// again at generation + 1 (no change to redeals: its take, if any, was counted
+// card to the next member round the fleet (round.go, errata 3 amendment 5:
+// the rolling index, scanned from in name order, wrapping, to the first
+// member up with room, and moved past it; the fleet table's deal_index, read
+// with the fleet and written with the deal), the
+// primary's avoid member only when no other up member has room; or the
+// withdrawn card dealt again at generation + 1 (no change to redeals: its take, if any, was counted
 // when it was withdrawn). untaken_r = R on a first deal since the last take.
 // Guard: each primary at ready with its revision; each withdrawn card at
 // withdrawn with its revision; each new work card absent; a count entry over
@@ -1026,6 +1005,8 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 	used := map[string]bool{}
 	freshMost := map[string]float64{}
 	dealt, refused := 0, 0
+	rr := dealRound(s)
+	moves := roundMoves{}
 	for _, c := range cands {
 		if dealt >= room {
 			break
@@ -1033,12 +1014,14 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 		attempt := c.Int("attempt")
 		var u Unit
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, attempt)); wc != nil && wc.Col == Withdrawn {
-			m := pickMember(up, q, "")
+			m := rr.member(up, q, RuleReadyCap, "")
 			if m == "" {
 				break
 			}
 			q[m]++
 			used[m] = true
+			rr.moved(m)
+			moves[c.ID] = m
 			u = dealAgainUnit(c, wc, m, now, wall)
 		} else {
 			card := WorkCardID(c.ID, attempt+1)
@@ -1052,12 +1035,14 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 				refused++
 				continue
 			}
-			m := pickMember(up, q, c.F("avoid"))
+			m := rr.member(up, q, RuleReadyCap, c.F("avoid"))
 			if m == "" {
 				break
 			}
 			q[m]++
 			used[m] = true
+			rr.moved(m)
+			moves[c.ID] = m
 			u = dealNewUnit(c, card, m, now, wall)
 		}
 		if attempt == 0 {
@@ -1082,6 +1067,7 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 	rp.settle(key, dealFate(dealt+refused, skipped, room-dealt))
 	rp.Plan.on(s)
 	rp.Plan = Lawful(rp.Plan)
+	roundWrites(&rp.Plan, rr, moves)
 	return rp
 }
 
@@ -1237,6 +1223,8 @@ func dealReadFor(sh fleetShape, b ReadBounds, halvings int) ReadPlan {
 	}
 	lim := Halved(dealLimit(0, len(sh.Streams), len(sh.Members), records), halvings)
 	rp := ReadPlan{Sprint: []SprintQ{fleetQuery(upReadFields)}}
+	// the fleet with the deal's rolling index (round.go)
+	rp.Sprint[0].Props = []string{PropDealIndex}
 	rp.Sprint[0].Units = sh.units()
 	for _, st := range sh.Streams {
 		rp.Sprint = append(rp.Sprint, dealQueries(st, lim)...)

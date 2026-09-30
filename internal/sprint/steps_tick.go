@@ -96,6 +96,9 @@ type TickReq struct {
 	// tick: the presence part applies the status it derives. nil is none
 	// read, and the presence part does nothing.
 	Beats map[string]Beat
+	// Started is the machine's first start of the sprint's epoch, the time
+	// the done part's note counts from; zero is not known.
+	Started time.Time
 }
 
 func (r TickReq) who() string {
@@ -147,6 +150,7 @@ var TickParts = []struct {
 	{"check", TickCheck},
 	{"deadlines", TickDeadlines},
 	{"overdue", TickOverdue},
+	{PartDone, TickDone},
 }
 
 // Tick is every part's plan over one observed state. Each part is computed
@@ -239,9 +243,10 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // T3. TickDeal deals ready primaries in stream turns (dealTurns: one from each
-// stream in turn, each stream's oldest first by score), each to the up
-// member with the shortest ready queue, keeping every ready queue no longer
-// than MaxReadyPerMember; a withdrawn card is dealt again at a new
+// stream in turn, each stream's oldest first by score), each to the next up
+// member round the fleet with room (Deal: the rolling index of round.go,
+// errata 3 amendment 5), keeping every ready queue no longer than
+// MaxReadyPerMember; a withdrawn card is dealt again at a new
 // generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
@@ -782,4 +787,69 @@ func WorkDeadline(c *Card) (field string, limit time.Duration, word, own string)
 		return "first_taken", DeadlineUnfinished, "not finished", own
 	}
 	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken", own
+}
+
+// PartDone is the name of the tick's last part, the done part.
+const PartDone = "done"
+
+// DoneCause is the cause the machine's record carries when the done part
+// stopped it, and DoneHint what the coordinator does to go on (errata 3
+// amendment 6).
+const (
+	DoneCause = "done"
+	DoneHint  = "to continue: add work, then nova-sprint start"
+)
+
+// SprintDoneCounts is the sprint's landed primaries and its dropped ones (the
+// streams' control cards' dropped counters), and whether the sprint is done:
+// no primary waiting, ready, working, in review or merging, and at least one
+// landed or dropped. A sprint that never had a card is not done.
+func SprintDoneCounts(s *Snapshot) (landed, dropped int, done bool) {
+	for _, st := range []State{Waiting, Ready, Working, Review, Merging} {
+		if len(s.Work.Column(st)) > 0 {
+			return 0, 0, false
+		}
+	}
+	landed = len(s.Work.Column(Landed))
+	for _, row := range s.Work.Rows() {
+		dropped += s.StreamCtl(row).Int("dropped")
+	}
+	return landed, dropped, landed+dropped > 0
+}
+
+// DoneWhat is the words of "the sprint is done": the counts and, when the
+// first start is known, how long the sprint took from it in wall time.
+func DoneWhat(landed, dropped int, now, started time.Time) string {
+	w := fmt.Sprintf("%d landed, %d dropped", landed, dropped)
+	if !started.IsZero() && !now.Before(started) {
+		w += ", took " + TookText(now.Sub(started)) + " from the first start"
+	}
+	return w
+}
+
+// TookText is a duration as the done note and the sprint line say it: to the
+// second.
+func TookText(d time.Duration) string { return d.Round(time.Second).String() }
+
+// TickDone is R15 of the design as errata 3 amendment 6 amends it
+// (design/EVENT-DRIVEN-TICK-v2.1-ERRATA-3.md, amendment 6): the sprint done
+// (SprintDoneCounts) is no judgment that waits on the coordinator. The part
+// writes one happened note, "the sprint is done", addressed to the
+// coordinator, with the counts, the time from the first start and the hint;
+// the binding stops the machine as the part's step commits, its record
+// STOPPED with the cause DoneCause, so no part and no tick runs after it. It
+// is the tick's last part: a tick of a RUNNING machine that finds the sprint
+// done ends there. It writes nothing on a sprint that is not done, and it runs
+// only while the machine is RUNNING, so it says it once for each run that
+// finishes the sprint. The reference model's tick stops the same way
+// (refmodel.Tick); tla/SprintEvents.tla does not model R15.
+func TickDone(s *Snapshot, r TickReq) (Plan, int) {
+	landed, dropped, done := SprintDoneCounts(s)
+	if !done {
+		return Plan{}, 0
+	}
+	n := happened(NSprintDone, "", s.Now)
+	n.Who, n.To, n.Hint = r.who(), s.Coordinator, DoneHint
+	n.What = DoneWhat(landed, dropped, s.Now, r.Started)
+	return Plan{Notes: []Note{n}}, 0
 }

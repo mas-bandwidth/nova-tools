@@ -281,6 +281,7 @@ func (tw rvTwin) query(q SprintQ) Answer {
 				a.Counts = append(a.Counts, CellCount{Row: rd, Col: col, N: s.Readers.Count(rd, col)})
 			}
 		}
+		a.Props = propsAnswer(s.Readers, q.Props)
 	case QueryFleet:
 		a.Rows = append([]string(nil), s.Fleet.Rows()...)
 		for _, m := range s.Fleet.Rows() {
@@ -465,11 +466,13 @@ func rvPlan(w *world, rule string, keys ...string) RulePlan {
 	return rvPlanAt(w, rule, rvNow(), keys...)
 }
 
-// R8: two different readers, the shortest queues, the ones it names first.
+// R8: two different readers, the next round the readers (errata 3 amendment
+// 5), the ones it names first.
 func TestAskTwoDifferentReaders(t *testing.T) {
 	t.Parallel()
 	w := rvReview(t, 3, 0)
-	// reader-a is already asked of s1-3, so its queue is one and the others' none
+	// reader-a is already asked of s1-3; the ask's rolling index is 0 (no stream
+	// counts an ask), and a queue's length does not choose
 	rvPutRead(w, "s1-3", 1, "reader-a", Asked)
 	w.clean("a read of s1-3")
 
@@ -477,7 +480,7 @@ func TestAskTwoDifferentReaders(t *testing.T) {
 	if len(rp.Plan.Units) != 2 || len(rp.Plan.Refused) != 0 {
 		t.Fatalf("units %d, refused %v: s1-3 has a read standing and is not asked again", len(rp.Plan.Units), rp.Plan.Refused)
 	}
-	want := map[string][2]string{"s1-1": {"reader-b", "reader-c"}, "s1-2": {"reader-a", "reader-b"}}
+	want := map[string][2]string{"s1-1": {"reader-a", "reader-b"}, "s1-2": {"reader-c", "reader-a"}}
 	for _, u := range rp.Plan.Units {
 		var got []string
 		for _, e := range rvCreates(Plan{Units: []Unit{u}}, Readers) {
@@ -487,7 +490,7 @@ func TestAskTwoDifferentReaders(t *testing.T) {
 			}
 		}
 		if len(got) != 2 || got[0] == got[1] || [2]string{got[0], got[1]} != want[u.Key] {
-			t.Errorf("%s is asked of %v, want the two different readers with the shortest queues, %v", u.Key, got, want[u.Key])
+			t.Errorf("%s is asked of %v, want the next two different readers round the readers, %v", u.Key, got, want[u.Key])
 		}
 	}
 	if got := rvDone(rp); len(got) != 1 || got[0] != "ask@7" || len(rp.Requeue) != 0 {

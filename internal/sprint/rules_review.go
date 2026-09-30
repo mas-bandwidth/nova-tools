@@ -3,7 +3,6 @@ package sprint
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -170,7 +169,7 @@ var reviewRules = []reviewRule{
 		name: ruleAsk, section: "2.3 R8",
 		fields: []string{PrimaryField, "attempt", "result", "asked", "refused", "rcards", "head"},
 		follow: []string{FollowRCards, FollowJOpen},
-		fixed:  []SprintQ{{Kind: QueryReaders, Fields: reviewNoFields}},
+		fixed:  []SprintQ{{Kind: QueryReaders, Fields: reviewNoFields, Props: []string{PropAskIndex}}},
 		plan:   planAsk,
 	},
 	{
@@ -738,7 +737,9 @@ func reviewRefused(rp *RulePlan, s *Snapshot, rule string) {
 // readers with their asked counts. Effect: each primary in review that is not
 // refused, whose work did not fail and that has no read card at its attempt
 // is asked of two different readers, the readers it names first and then the
-// readers with the shortest asked queues; a reader that has a card at this
+// next readers round the readers (askChoose: the rolling index of round.go,
+// errata 3 amendment 5, moved past each reader it gives: the readers table's
+// ask_index, read with the readers and written with the ask); a reader that has a card at this
 // attempt, retired too, is not asked again, so a read that replaces another
 // goes to a reader not yet asked. Each new id is appended to rcards. With
 // fewer than two readers able, "cannot ask" is opened on the primary, which J
@@ -755,17 +756,18 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		return RulePlan{Done: reviewKeys(keys)}
 	}
 	x := newReviewCtx(s)
-	var rq *readerQueue // built when a primary is due, so a read of none reads no readers
+	var rr *round // built when a primary is due, so a read of none reads no readers
+	moves := roundMoves{}
 	var asked, cannot, closing []string
 	for _, c := range reviewPrimaries(s) {
 		if !x.askDue(c) {
 			continue
 		}
-		if rq == nil {
-			rq = newReaderQueue(s, x.readerRank())
+		if rr == nil {
+			rr = askRound(s)
 		}
 		attempt := c.Int("attempt")
-		chosen := rq.choose(Split(c.F("asked")), x.readersAt(c))
+		chosen, rotated := askChoose(rr, x.readerRank(), Split(c.F("asked")), x.readersAt(c))
 		if len(chosen) < AskReaders {
 			if !x.isHeld(NCannotAsk, c.ID) {
 				cannot = append(cannot, c.ID)
@@ -782,8 +784,11 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}
+		for _, rd := range rotated {
+			rr.moved(rd)
+			moves[c.ID] = rd
+		}
 		for i, rd := range chosen {
-			rq.asked(rd)
 			u.Changes = append(u.Changes, change(Readers, createEntry(ids[i], rd, Asked, c.Score, map[string]string{
 				"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"),
 				"asked": reviewWall(now), "asked_r": strconv.FormatInt(now.R, 10), "due_unbegun": reviewDue(now, reviewDeadlineUnbegun)})))
@@ -796,6 +801,7 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			closing = append(closing, c.ID)
 		}
 	}
+	roundWrites(&p, rr, moves)
 	rp.Plan = p
 	reviewRefused(&rp, s, ruleAsk)
 	if len(cannot) > 0 {
@@ -826,75 +832,23 @@ func (x *reviewCtx) readersAt(c *Card) map[string]bool {
 	return used
 }
 
-// readerQueue is the readers in the order R8 asks them: by the count of reads
-// asked and not begun, fewest first, the first in row order on a tie. It is
-// kept in that order as reads are given out, so the readers a primary is asked
-// of are found from its front and not by a scan of every reader for every
-// primary.
-type readerQueue struct {
-	order []string
-	count map[string]int
-	rank  map[string]int
-}
-
-// newReaderQueue is the snapshot's readers, ordered by their asked counts (the
-// counts the readers query gave) and rows.
-func newReaderQueue(s *Snapshot, rank map[string]int) *readerQueue {
-	rq := &readerQueue{order: append([]string(nil), s.Readers.Rows()...), count: make(map[string]int, len(rank)), rank: rank}
-	for _, rd := range rq.order {
-		rq.count[rd] = s.Readers.Count(rd, Asked)
-	}
-	sort.Slice(rq.order, func(i, j int) bool {
-		return rq.before(rq.order[i], rq.count[rq.order[i]], rq.order[j], rq.count[rq.order[j]])
-	})
-	return rq
-}
-
-// before says the reader a with count ca is asked before the reader b with cb.
-func (rq *readerQueue) before(a string, ca int, b string, cb int) bool {
-	if ca != cb {
-		return ca < cb
-	}
-	return rq.rank[a] < rq.rank[b]
-}
-
-// at is where the reader with that count is (or would be inserted) in the order.
-func (rq *readerQueue) at(rd string, count int) int {
-	return sort.Search(len(rq.order), func(i int) bool {
-		return !rq.before(rq.order[i], rq.count[rq.order[i]], rd, count)
-	})
-}
-
-// choose is the readers to ask of a primary: up to AskReaders different ones
-// among those that have no card at its attempt (used); the readers the primary
-// names first, in the order it names them, then the ones with the shortest
-// asked queues, the first in row order on a tie. Fewer than AskReaders when
-// fewer are able.
-func (rq *readerQueue) choose(named []string, used map[string]bool) []string {
-	var chosen []string
+// askChoose is the readers to ask of a primary: up to AskReaders different
+// ones among those that have no card at its attempt (used); the readers the
+// primary names first, in the order it names them, then the next ones round
+// the readers from the rolling index (round.go, each scan past the one before),
+// which it returns too: an ask moves the index past each. Fewer than
+// AskReaders when fewer are able. It does not move the index.
+func askChoose(rr *round, rank map[string]int, named []string, used map[string]bool) (chosen, rotated []string) {
 	for _, rd := range named {
-		if _, isReader := rq.rank[rd]; isReader && !used[rd] && !contains(chosen, rd) && len(chosen) < AskReaders {
+		if _, isReader := rank[rd]; isReader && !used[rd] && !contains(chosen, rd) && len(chosen) < AskReaders {
 			chosen = append(chosen, rd)
 		}
 	}
-	for i := 0; len(chosen) < AskReaders && i < len(rq.order); i++ {
-		if rd := rq.order[i]; !used[rd] && !contains(chosen, rd) {
-			chosen = append(chosen, rd)
-		}
-	}
-	return chosen
-}
-
-// asked says a read was given to the reader: its queue is one longer, and it
-// moves back in the order past the readers with as many or fewer.
-func (rq *readerQueue) asked(rd string) {
-	i := rq.at(rd, rq.count[rd])
-	rq.order = append(rq.order[:i], rq.order[i+1:]...)
-	rq.count[rd]++
-	j := rq.at(rd, rq.count[rd])
-	rq.order = append(rq.order, "")
-	copy(rq.order[j+1:], rq.order[j:])
-	rq.order[j] = rd
+	rotated = rr.picks(AskReaders-len(chosen), chosen, func(x string) bool {
+		_, isReader := rank[x]
+		return isReader && !used[x]
+	})
+	return append(chosen, rotated...), rotated
 }
 
 // R9 accept. Trigger: accept:<p> or accept@<seq> (a read card entered ok, a

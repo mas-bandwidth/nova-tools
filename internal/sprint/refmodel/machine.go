@@ -29,7 +29,8 @@ func SetMachine(s State, running bool) (State, error) {
 
 // Tick is one tick of the machine (spec section 14): a STOPPED machine moves
 // nothing; a RUNNING one runs its parts in order, each on the state the one
-// before left: resolve (T1), resume (T7), deal (T3), level (T4), ask (T2).
+// before left: resolve (T1), resume (T7), deal (T3), level (T4), ask (T2), and
+// done (R15, errata 3 amendment 6), which stops the machine on a done sprint.
 // The check, deadline and overdue parts write nothing while the rules hold
 // and no clock deadline passes, which the differential test keeps so. From
 // the spec, not yet in the model (the model's Resolve, Start, FleetUp and Ask
@@ -55,7 +56,18 @@ func Tick(s State, ch TickChoices) (State, error) {
 	if err := n.tickAsk(ch.Ask); err != nil {
 		return s, err
 	}
+	n.tickDone()
 	return n, nil
+}
+
+// tickDone is R15 as errata 3 amendment 6 amends it (sprint.TickDone): the
+// tick's last part; a sprint done (sprintDone) stops the machine, its note
+// addressed to the coordinator, and no judgment opens. A stopped machine does
+// not tick, so it says it once for each run that finishes the sprint.
+func (n *State) tickDone() {
+	if n.Machine == Running && n.sprintDone() {
+		n.Machine = Stopped
+	}
 }
 
 // tickResolve is T1: every stream's waiting cards in score order; a primary
@@ -103,7 +115,7 @@ func (n *State) tickResume() {
 
 // tickDeal is T3: ready primaries in stream turns (one from each stream in
 // turn, streams in name order, each stream's oldest first by score), each to the up
-// member with the shortest ready queue, no ready queue longer than
+// next member round the fleet (NextMember), no ready queue longer than
 // MaxReadyPerMember; with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
 func (n *State) tickDeal(choice map[string]string) error {
@@ -157,12 +169,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 		}
 		m := choice[p]
 		if m == "" {
-			for _, x := range room {
-				if n.ShortestIn(x, room) {
-					m = x
-					break
-				}
-			}
+			m = n.NextMember(room)
 		}
 		next, err := Start(*n, p, m, MaxReadyPerMember)
 		if err != nil {
@@ -201,23 +208,7 @@ func (s State) defaultPair(p string) []string {
 	if pair := s.Primaries[p].Pair; len(pair) > 0 {
 		return append([]string(nil), pair...)
 	}
-	var out []string
-	for len(out) < 2 {
-		best := ""
-		for _, r := range s.Readers {
-			if has(out, r) {
-				continue
-			}
-			if best == "" || s.AskedLen(r) < s.AskedLen(best) {
-				best = r
-			}
-		}
-		if best == "" {
-			return out
-		}
-		out = append(out, best)
-	}
-	return out
+	return s.NextReaders(p, 2)
 }
 
 // Release is the spec's release (section 16): the coordinator alone lands
@@ -242,7 +233,6 @@ func Release(s State, ids []string, who string) (State, error) {
 			return s, refuse("%s is not a reached sentinel", id)
 		}
 	}
-	doneBefore := s.sprintDone()
 	n := s.Clone()
 	for _, id := range ids {
 		st := n.Primaries[id].Stream
@@ -253,9 +243,6 @@ func Release(s State, ids []string, who string) (State, error) {
 		n.closeOn(id)
 	}
 	n.resolveAll()
-	if !doneBefore && n.sprintDone() {
-		n.open(JDone, SprintSubject)
-	}
 	return n, nil
 }
 

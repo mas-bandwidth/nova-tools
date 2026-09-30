@@ -317,9 +317,8 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	}
 	p.Units = append(p.Units, after...)
 	settle(&p, s, r.Who, nil, nil, landing)
-	if d, ok := sprintDone(s, landing, nil, r.Who); ok {
-		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
-	}
+	// A sprint this release finishes is found done by the tick's done part
+	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }

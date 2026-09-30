@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -90,11 +91,32 @@ func TestStepBuilderBuildsARealRule(t *testing.T) {
 	if sent != 1 {
 		t.Fatalf("%d sent guards: %+v", sent, body.Guards)
 	}
+	// the deal's rolling index rides the body: a propguard on the value the
+	// plan read (none) and the fleet table's deal_index (round.go)
+	n := len(body.Entries)
+	if g, p := body.Entries[n-2], body.Entries[n-1]; g.Kind != "propguard" || g.Table != sprint.Fleet || g.Name != sprint.PropDealIndex || g.Value != nil ||
+		p.Kind != "prop" || p.Name != sprint.PropDealIndex || p.Value == nil || *p.Value != "m1" {
+		t.Fatalf("the index's entries: %+v %+v", g, p)
+	}
 	w.step(&sprintfn.Request{Epoch: "0", Meta: meta, Body: body})
 	for _, p := range []string{"p1", "p2"} {
 		if got, card := w.place(p), w.placeIn(sprint.Fleet, p+".w1"); got != "s1:working" || card != "m1:ready" {
 			t.Fatalf("%s is at %q and its work card at %q", p, got, card)
 		}
+	}
+	res, err := sprintfn.Read(context.Background(), w.tw, &sprintfn.ReadRequest{Epoch: "0",
+		Tset: []tset.ReadQuery{{Kind: "props", Table: sprint.Fleet, Names: []string{sprint.PropDealIndex}}}})
+	if err != nil || res.Read == nil || res.Read.Tset[0].Props[sprint.PropDealIndex] != "m1" {
+		t.Fatalf("the fleet table's deal_index after the step: %v %+v", err, res)
+	}
+	// R6's next read gives it with the fleet: the fleet query names it
+	q, ref := sprintfn.EncodeSprintQ(sprint.SprintQ{Kind: sprint.QueryFleet, Fields: []string{"status"}, Props: []string{sprint.PropDealIndex}})
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	res, err = sprintfn.Read(context.Background(), w.tw, &sprintfn.ReadRequest{Epoch: "0", Sprint: []sprintfn.SprintQuery{q}})
+	if err != nil || res.Read == nil || len(res.Read.Sprint) != 1 || !strings.Contains(string(res.Read.Sprint[0]), `"props":{"deal_index":"m1"}`) {
+		t.Fatalf("the fleet query's answer: %v %+v", err, res)
 	}
 }
 

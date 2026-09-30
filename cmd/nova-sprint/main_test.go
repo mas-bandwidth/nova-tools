@@ -195,7 +195,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	}
 	ta.ok("merge --stream s1 --batch 10")
 	out = ta.ok("where")
-	for _, want := range []string{"SPRINT TABLE", "4/4 100.0% -> ETA", "work ", "merge ", "fleet "} {
+	for _, want := range []string{"SPRINT TABLE", "4/4 100.0% done", "work ", "merge ", "fleet "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("where lacks %q:\n%s", want, out)
 		}

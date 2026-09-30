@@ -24,6 +24,41 @@ const (
 	LifecycleReceiptsMax    = 1024     // the receipt stream's length bound
 )
 
+// MaxNamespaceName is the longest <name> of a namespace {<name>}:
+// (ValidNamespace).
+const MaxNamespaceName = 32
+
+// ValidNamespace says s is a namespace the lifecycle admits: exactly
+// {<name>}: with <name> [a-z][a-z0-9-]{0,31} (the amendment, section 1). The
+// closing brace ends every namespace, so none is a prefix of another, nor of a
+// key outside the grammar; define, teardown, the twin and this client refuse
+// any other CONFIG (lua/table_set_lifecycle.lua namespace_ok is the same rule).
+func ValidNamespace(s string) bool {
+	n := len(s) - 3
+	if n < 1 || n > MaxNamespaceName || s[0] != '{' || s[len(s)-2:] != "}:" {
+		return false
+	}
+	for i := 1; i <= n; i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case i > 1 && ((c >= '0' && c <= '9') || c == '-'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ClockRunning reads the upper design's clock field stopped_since_ms (v2.1
+// 1.2): "" while RUNNING, the time the current STOPPED span began otherwise,
+// so "0" is a stop at time 0, not a run. An absent field (nil) reads as "".
+// Teardown's RUNNING (lua/table_set_lifecycle.lua clock_running) and the
+// sprint's verbs read the clock by this one rule.
+func ClockRunning(stoppedSinceMS *string) bool {
+	return stoppedSinceMS == nil || *stoppedSinceMS == ""
+}
+
 // ColumnKindSet is the one column kind define admits: a set column, the kind
 // the trusted fixture initializer writes (L1 1.2).
 const ColumnKindSet = "set"
@@ -105,9 +140,13 @@ var (
 )
 
 // checkDefine is define's shape, the same checks in the same order as
-// ns_tset_define's before BUILD: REQUEST, LIMIT, CONFIG.
+// ns_tset_define's before BUILD: the namespace's CONFIG, then REQUEST,
+// LIMIT, CONFIG.
 func checkDefine(spec DefineSpec) error {
-	if !validMemName(spec.Space) || !validMemColumn(spec.View) || len(spec.Tables) == 0 {
+	if !ValidNamespace(spec.Space) {
+		return NewRefusal("CONFIG", RefusalDetail{})
+	}
+	if !validMemColumn(spec.View) || len(spec.Tables) == 0 {
 		return NewRefusal("REQUEST", RefusalDetail{})
 	}
 	if len(spec.Tables) > MaxTables {
@@ -156,8 +195,8 @@ func EncodeDefine(spec DefineSpec) ([]byte, error) {
 }
 
 func encodeTeardown(space, confirm string) ([]byte, error) {
-	if !validMemName(space) {
-		return nil, NewRefusal("REQUEST", RefusalDetail{})
+	if !ValidNamespace(space) {
+		return nil, NewRefusal("CONFIG", RefusalDetail{})
 	}
 	b, err := json.Marshal(teardownRequest{Space: space, Confirm: confirm})
 	if err != nil {
@@ -330,7 +369,10 @@ func (m *Mem) Define(ctx context.Context, spec DefineSpec) (DefineReply, error) 
 	if spec.Build == "" || (m.build != "" && spec.Build != m.build) {
 		return DefineReply{}, memRefusal("BUILD", RefusalDetail{})
 	}
-	if s := m.spaces[spec.Space]; s != nil && (len(s.defs) > 0 || s.view != "") {
+	// EXISTS over any state of the namespace, as the store refuses any key
+	// under it but the receipt stream: the twin's fixture calls are its only
+	// other writers.
+	if m.spaces[spec.Space] != nil {
 		return DefineReply{}, memRefusal("EXISTS", RefusalDetail{})
 	}
 	s := m.space(spec.Space)

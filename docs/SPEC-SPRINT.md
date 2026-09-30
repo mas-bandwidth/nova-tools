@@ -345,7 +345,6 @@ the tick would make, no other open judgment on it).
 | returned to review | rework, accept (while its reads stand at its head), drop | no |
 | stranded in review | rework, drop (and ask when never asked) | no |
 | sentinel reached | release, add --before (do more before going on), drop | no |
-| the sprint is done | clear, add | no |
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
@@ -367,8 +366,7 @@ until that much running time has passed (STOPPED time does not count); when it
 has and the condition still holds, the tick raises it again, and when the
 condition clears first the hold is closed. `wait` on any other judgment sets
 its review time, which counts running time from when it was set, as every
-deadline does. "The sprint is done" has no due time and is never marked
-overdue.
+deadline does.
 
 The machine's tick writes its own judgments (section 14): cannot ask, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
@@ -376,11 +374,16 @@ merge step past its deadline, an invariant is broken, a stall (rule 12: one
 judgment for each card nothing holds, or for the stall a chain of waiting
 cards ends at; the stall judgment itself holds nothing).
 
-The step that lands or drops the last open primary of the sprint (every
-primary landed or off the table) writes one judgment, the
-sprint is done: n landed, m dropped. It is written when every primary has
-landed or been dropped, even with none landed; it has no due time and is never
-overdue; only an add that admits a card closes it. add with a need on a
+The sprint done is no judgment. The tick's last part, done, finds the sprint
+done when nothing is waiting, ready, working, in review or merging and at least
+one primary landed or was dropped (even with none landed), and writes one
+happened note addressed to the coordinator: the sprint is done: n landed, m
+dropped, took <duration> from the first start, with the hint "to continue: add
+work, then nova-sprint start". In the same step the machine stops itself
+(section 14): its record STOPPED with the cause done, the view's state DONE.
+The inbox shows a note addressed to the coordinator first, above the
+judgments; the note is on the notes stream, and the coordinator's goal route,
+when there is one, is pushed it. add with a need on a
 dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
@@ -505,7 +508,14 @@ exactly, member by member, never by their counts.
 11. A primary anywhere but waiting has every need landed or waived. A need that
     was dropped or missing and acknowledged is recorded on the card as waived,
     by whom and when, and counts as satisfied; nothing else does. add refuses needs that
-    would make a cycle, naming it.
+    would make a cycle, naming it. The walk follows what a waiting card waits
+    for: the needs it names, and its place in line (a card behind a sentinel
+    needs the sentinel; a sentinel needs every card of its stream before it),
+    so a need across streams behind the gates on both sides is refused when it
+    closes a loop through them. Only the add that closes a cycle is refused;
+    a cycle already in a store is reported by `check` as "a cycle through
+    <loop>: <n> cards can never be reached", and the tick raises it as "an
+    invariant is broken".
 12. Nothing stalls. Every primary on the table that has not landed is held by
     one of: (a) an outside actor before its deadline (its live work card in an
     up member's ready or working cell, a read card asked or reading, its merge
@@ -793,6 +803,18 @@ line shows it. A tick that did nothing writes the heartbeat at most once every
 looked. `where` shows the same
 state as the one line under its title (section 1).
 
+The machine stops itself when the sprint is done (section 8): the tick's last
+part, done, says so to the coordinator and, in the same step, sets the record
+STOPPED with the cause done; no part runs after it and the next ticks look.
+`inbox` then says `machine: DONE`, the header of `where` and the view say
+`DONE`, and the sprint line reads `STOPPED  9/9 100.0% done`. While the machine
+runs with every card landed, before that tick, the line has no ETA:
+`9/9 100.0% done in 1h2m0s  machine: running`, the time from the machine's
+first start of the sprint. An add of a card leaves the machine STOPPED and
+takes the cause off (`STOPPED`), and `start` runs it again; a start of a done
+sprint with nothing added stops again at its first tick; a `stop` of a done
+machine takes the cause off and writes nothing.
+
 A tick first finishes an operation pending past its grace (T5). It then reads
 the fence and the tables' shapes. It reads what is due from the state whenever
 it reads the whole sprint, and it reads the whole sprint when any table's
@@ -806,7 +828,8 @@ moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), level
 (T4), ask (T2: two different readers for each primary in review with no read
 card at its attempt and work not failed), check (T6: section 9, and the
-no-stall rule 12), deadlines. Each part is
+no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
+stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
 catch up, and the machine line says so. A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.

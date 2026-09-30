@@ -648,6 +648,14 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 		res.Items = append(res.Items, it)
 	}
 	res.LeftOut = left.ids()
+	if len(q.Props) > 0 {
+		// the table properties the query names, read with the listing
+		ans, ref := e.memRead([]tset.ReadQuery{{Kind: "props", Table: table, Names: q.Props}})
+		if ref != nil {
+			return res, ref
+		}
+		res.Props = ans[0].Props
+	}
 	return res, nil
 }
 

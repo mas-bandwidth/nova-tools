@@ -19,6 +19,7 @@ const (
 	KindMove    = "move"    // a card changes place, and maybe its fields or score
 	KindSet     = "set"     // a card changes fields or score where it is
 	KindBump    = "bump"    // a counter of a card is raised or lowered
+	KindProp    = "prop"    // a table property is set (Card is its name, Set its name=value)
 	KindRow     = "row"     // a row is added to a table
 	KindOpen    = "open"    // a judgment is opened
 	KindNotice  = "notice"  // a notification that needs no decision
@@ -226,6 +227,9 @@ func planMoves(duty string, s *sprint.Snapshot, p sprint.Plan) []Move {
 		out = appendNotes(out, duty, u.Notes...)
 		out = appendCloses(out, duty, u.Closes...)
 	}
+	for _, pw := range p.Props {
+		out = append(out, Move{Duty: duty, Kind: KindProp, Table: pw.Table, Card: pw.Name, Set: []string{pw.Name + "=" + pw.Value}})
+	}
 	out = appendNotes(out, duty, p.Notes...)
 	out = appendCloses(out, duty, p.Closes...)
 	for _, n := range p.Updates {
@@ -359,6 +363,8 @@ func noteAttrs(n sprint.Note) []string {
 	flag("sprint_level", n.SprintLevel)
 	flag("stream_level", n.StreamLevel)
 	add("suspects", strings.Join(slices.Sorted(slices.Values(n.Suspects)), ","))
+	add("to", n.To)
+	add("hint", n.Hint)
 	add("who", n.Who)
 	sort.Strings(out)
 	return out
