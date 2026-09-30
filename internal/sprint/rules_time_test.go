@@ -390,8 +390,10 @@ func (w *timeWorld) apply(p RulePlan) timeEffect {
 				return timeEffect{Refused: "XGUARD: member " + g.Member + " is not up"}
 			}
 		case guardDue:
-			if at, ok := w.due[g.Key]; ok && at > g.Score {
-				return timeEffect{Refused: fmt.Sprintf("XGUARD: %s is at %d, above %d", g.Key, at, g.Score)}
+			// X's due guard: the entry at the score read, or absent (DueAbsent)
+			at, ok := w.entry(g.Key)
+			if ok != (g.Score != DueAbsent) || ok && at != g.Score {
+				return timeEffect{Refused: fmt.Sprintf("XGUARD: %s is at %d (%v), read at %d", g.Key, at, ok, g.Score)}
 			}
 		case guardHold:
 			if strings.HasPrefix(g.Key, "h") {
@@ -507,9 +509,50 @@ func (w *timeWorld) apply(p RulePlan) timeEffect {
 		}
 		e.Writes++
 	}
+	if tw.UnarmBehind {
+		w.f.Tick.BehindN = 0
+		e.Writes++
+	}
 	w.parks += len(tw.Park)
 	e.Writes += len(tw.Park)
 	return e
+}
+
+// entry is the due entry of the key as the world holds it: an entry a test or
+// a step moved (w.due), else the facts' (a cut's, a goal's remind, behind).
+func (w *timeWorld) entry(key string) (int64, bool) {
+	if at, ok := w.due[key]; ok {
+		return at, true
+	}
+	switch {
+	case strings.HasPrefix(key, entryCut):
+		c := w.f.Cuts[strings.TrimPrefix(key, entryCut)]
+		return c.At, c.Entry
+	case strings.HasPrefix(key, entryRemind):
+		g := w.f.Goals[strings.TrimPrefix(key, entryRemind)]
+		return g.At, g.Entry
+	case key == entryBehind:
+		return w.f.Tick.EntryAt, w.f.Tick.Entry
+	}
+	return 0, false
+}
+
+// tickEnd is the loop's tick end on the world (sprintfn.TickEnd, 1.4.2): a
+// backlog of zero disarms; one not zero, behind_n unset, arms the entry at R +
+// 5 min (unless it stands) and behind_n at the backlog; armed, it is held.
+func (w *timeWorld) tickEnd(backlog int) {
+	t := &w.f.Tick
+	t.Backlog = backlog
+	switch {
+	case backlog == 0:
+		t.BehindN, t.Entry = 0, false
+		delete(w.due, entryBehind)
+	case t.BehindN == 0:
+		if !t.Entry {
+			t.Entry, t.EntryAt = true, w.now.R+5*timeMin
+		}
+		t.BehindN = backlog
+	}
 }
 
 // expect is why the entry's expectation does not hold in the world, "" when
@@ -930,7 +973,7 @@ func TestCutJudgedWhileStopped(t *testing.T) {
 	if !strings.Contains(strings.Join(n.Decisions, "|"), "the same command with --op op-1") {
 		t.Fatalf("the decisions: %v", n.Decisions)
 	}
-	if !hasGuard(p, noEntryAbove("cut:op-1", timeWall0)) {
+	if !hasGuard(p, entryAsRead("cut:op-1", true, timeWall0-10*timeSec)) {
 		t.Fatalf("the cut entry is not guarded: %+v", p.Guards)
 	}
 	want(t, "keys removed", timeKeyTexts(p.Done), []string{key})
@@ -1031,7 +1074,7 @@ func TestRemindOnePushPerPeriod(t *testing.T) {
 	p := w.plan("remind", key)
 	want(t, "the entry moved", p.Sprint.Due, []DueSet{{Key: "remind:person-a", At: w.now.R + 5*timeMin}})
 	want(t, "the claim", p.Sprint.Goal, []GoalClaim{{Person: "person-a", R: w.now.R}})
-	if !hasGuard(p, noEntryAbove("remind:person-a", w.now.R)) {
+	if !hasGuard(p, entryAsRead("remind:person-a", false, 0)) {
 		t.Fatalf("the entry is not guarded: %+v", p.Guards)
 	}
 	want(t, "keys removed", timeKeyTexts(p.Done), []string{key})
@@ -1071,15 +1114,17 @@ func TestBehindArmsAndJudges(t *testing.T) {
 		w.f.Tick = tick
 		return w
 	}
-	// A backlog that shrank since it was armed is armed again, its entry alone
-	// (behind_n is the tick end's), and judged nothing.
+	// A backlog that shrank since it was armed is armed again with the new
+	// backlog: behind_n cleared, for the tick end to arm both; judged nothing.
 	w := worldWith(TickFact{Backlog: 400, Agenda: 30, DueNow: 5, BehindN: 500})
 	p := w.plan("behind", "behind")
-	want(t, "re-armed", p.Sprint.Due, []DueSet{{Key: "behind", At: w.now.R + 5*timeMin}})
+	if len(p.Sprint.Due) != 0 || !p.Sprint.UnarmBehind {
+		t.Fatalf("re-armed: %+v", p.Sprint)
+	}
 	if len(p.Notes) != 0 {
 		t.Fatalf("shrinking is only to know: %+v %+v", p.Sprint, p.Notes)
 	}
-	if !hasGuard(p, noEntryAbove("behind", w.now.R)) {
+	if !hasGuard(p, entryAsRead("behind", false, 0)) {
 		t.Fatalf("the entry is not guarded: %+v", p.Guards)
 	}
 	want(t, "keys removed", timeKeyTexts(p.Done), []string{"behind"})
@@ -1538,7 +1583,7 @@ func TestRegisteredPlansCarryTheSprintWrites(t *testing.T) {
 		[]any{[]DueSet{{Key: "remind:person-a", At: w.now.R + 5*timeMin}}, []GoalClaim{{Person: "person-a", R: w.now.R}}})
 	w.f.Tick = TickFact{Backlog: 400, BehindN: 500}
 	p = w.plan("behind", "behind")
-	if len(p.Sprint.Due) != 1 || p.Sprint.Due[0].Key != "behind" {
+	if !p.Sprint.UnarmBehind {
 		t.Fatalf("R18's re-arm is not in the plan: %+v", p.Sprint)
 	}
 	// R17 and the parked key have no registered rule: their functions return
@@ -2613,6 +2658,38 @@ func TestAskAnotherIsOfferedOnlyWhereItIsAccepted(t *testing.T) {
 // R18's judgment and its close are guarded on the `behind` entry like its
 // re-arm: a step planned before another loop's and applied after is refused
 // XGUARD.
+// R18 armed at a backlog of 1000 that fires on 999 arms again "with the new
+// backlog" (2.3): the tick end after its step records 999, so a machine that
+// caught up by one line and then stalled is judged at the next fire. With
+// behind_n left at 1000 it would arm again at every fire and never judge.
+func TestBehindReArmsWithTheNewBacklog(t *testing.T) {
+	t.Parallel()
+	w := newTimeWorld(t)
+	w.tickEnd(1000)
+	fire := func(backlog int) RulePlan {
+		w.now.R += 5 * timeMin
+		w.f.Tick.Entry, w.f.Tick.Backlog = false, backlog // the pop takes the entry
+		p := w.plan("behind", "behind")
+		if eff := w.apply(p); eff.Refused != "" {
+			t.Fatalf("refused: %+v", eff)
+		}
+		return p
+	}
+	if p := fire(999); !p.Sprint.UnarmBehind || len(p.Notes) != 0 {
+		t.Fatalf("the first fire, on 999: %+v %+v", p.Sprint, p.Notes)
+	}
+	if w.f.Tick.BehindN != 0 {
+		t.Fatalf("behind_n after the re-arm: %d", w.f.Tick.BehindN)
+	}
+	w.tickEnd(999)
+	if w.f.Tick.BehindN != 999 || !w.f.Tick.Entry {
+		t.Fatalf("the tick end armed %+v", w.f.Tick)
+	}
+	if p := fire(999); noteReq(p, requestOpen, typeFallingBehind) == nil {
+		t.Fatalf("the second fire, on 999, was not judged: %+v %+v", p.Sprint, p.Notes)
+	}
+}
+
 func TestBehindEveryEffectIsGuarded(t *testing.T) {
 	t.Parallel()
 	for name, tick := range map[string]TickFact{
@@ -2623,7 +2700,7 @@ func TestBehindEveryEffectIsGuarded(t *testing.T) {
 		w := newTimeWorld(t)
 		w.f.Tick = tick
 		p := w.plan("behind", "behind")
-		if !hasGuard(p, noEntryAbove("behind", w.now.R)) {
+		if !hasGuard(p, entryAsRead("behind", false, 0)) {
 			t.Fatalf("%s: the entry is not guarded: %+v", name, p.Guards)
 		}
 		// Another loop armed it again after the read: refused, nothing written.

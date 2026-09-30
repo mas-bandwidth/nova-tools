@@ -23,10 +23,11 @@ import (
 // a store world: a private redis-server of the test's own, the four tables
 // defined on it as newWorld defines them on the twin's Mem, the sprint
 // profile (fn.TSetSprint: Layer 1, Layer 2 and the sprint's functions) loaded,
-// and every step and read sent through sprintfn.Redis. The limit of IT17 (a
-// busy tick at most three round trips, 2 MiB each way, 150 ms of store and Go
-// time beyond them, p99 over ten minutes at 128 ms) is the owner's drive
-// through E9 and at a far bench store, not these tests'.
+// and every step and read sent through sprintfn.Redis. They skip while Layer
+// 2's fragment is absent (storetier_test.go). The limit of IT17 (a busy tick
+// at most three round trips, 2 MiB each way, 150 ms of store and Go time
+// beyond them, p99 over ten minutes at 128 ms) is the owner's drive through E9
+// and at a far bench store, not these tests'.
 
 // storeTables are the four tables in newWorld's order, which is the catalog's.
 var storeTables = []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}
@@ -94,9 +95,8 @@ func requireSprintProfile(t *testing.T) {
 	if _, err := fn.TSetSource(fn.TSetSprint); err != nil {
 		t.Fatalf("the sprint profile does not assemble: %v", err)
 	}
-	t.Fatal("owed: the tick on a store world (newStoreWorld), its round trips counted by testredis.RoundTrips " +
-		"(idle 1, busy at most 3, as tick_test.go pins on the twin); it needs FUNCTION LOAD of the sprint profile " +
-		"to succeed (the real rules' store tests below show whether it does) and a way to put the counting hook " +
+	t.Fatal("owed: the tick on a store world (newStoreWorld), its round trips counted " +
+		"(idle 1, busy at most 3, as tick_test.go pins on the twin); it needs a way to put the counting hook " +
 		"on sprintfn.Redis's own client, which has no exported seam")
 }
 
@@ -143,6 +143,5 @@ func TestRealRuleStoreLate(t *testing.T) {
 
 func TestRealRuleStoreStoppedLook(t *testing.T) {
 	t.Parallel()
-	w := newStoreWorld(t)
-	realRuleStoppedLook(t, w, stoppedOn(t, w))
+	realRuleStoppedLook(t, newStoreWorld(t))
 }

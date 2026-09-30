@@ -383,7 +383,7 @@ func TestReadStopInputsRecordsTheRead(t *testing.T) {
 func TestStoppedApplyOnAReadRefusesEachKindOfGuard(t *testing.T) {
 	t.Parallel()
 	span := StoppedDueSpan.Milliseconds()
-	facts := StopFacts{Next: 40, Absent: []CardRef{{Table: Work, ID: "later"}}}
+	facts := StopFacts{Next: 40, Absent: []CardRef{{Table: Work, ID: "later"}}, Versions: map[string]uint64{Work: 3}}
 	for _, tc := range []struct {
 		name  string
 		kind  string // the kind of guard that names the move
@@ -399,6 +399,7 @@ func TestStoppedApplyOnAReadRefusesEachKindOfGuard(t *testing.T) {
 		{"a member's control card", guardCtl, func(sp *stopReadSpec, _ *StopFacts) { sp.members["m2"]++ }, true},
 		{"a beat", guardBeat, func(sp *stopReadSpec, _ *StopFacts) { sp.beats["m1"] += 15 * timeSec }, true},
 		{"a first beat", guardBeat, func(sp *stopReadSpec, _ *StopFacts) { sp.beats["m2"] = timeWall0 }, true},
+		{"a table's version", guardVersion, func(_ *stopReadSpec, f *StopFacts) { f.Versions = map[string]uint64{Work: 4} }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -411,7 +412,7 @@ func TestStoppedApplyOnAReadRefusesEachKindOfGuard(t *testing.T) {
 			if noteReq(p, requestOpen, NStoppedWithDue) == nil {
 				t.Fatalf("the look does not raise: %+v", p.Notes)
 			}
-			for _, kind := range []string{guardRevs, guardCounter, guardCtl, guardBeat} {
+			for _, kind := range []string{guardRevs, guardVersion, guardCounter, guardCtl, guardBeat} {
 				if !slices.ContainsFunc(p.Guards, func(g XGuard) bool { return g.Kind == kind }) {
 					t.Fatalf("the step carries no %s guard: %+v", kind, p.Guards)
 				}

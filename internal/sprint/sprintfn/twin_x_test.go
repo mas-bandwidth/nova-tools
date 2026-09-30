@@ -582,15 +582,17 @@ func TestXCounterAndSetGuardsAgree(t *testing.T) {
 	h.write(Command("HSET", xp+"next@0", kindHash, "streams", "03"))
 	h.wantRefusal(guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 3}), CodeConfig)
 
-	// dueatmost: the entry absent, or at or below the time (2.3: R11's cut
-	// clock, R14, R18; the time rules' noEntryAbove)
+	// due as the time rules read it (entryAsRead: 2.3 R11's cut clock, R14,
+	// R18): the entry at its score as read, or absent after the pop; one armed
+	// again since, or popped since, refuses
 	h.write(Command("ZADD", xp+"due@0", kindZSet, "5000", "remind:alice"), Command("ZADD", xp+"cut@0", kindZSet, "7000", "cut:op1"))
-	h.applies("at or below, or absent", guard(XGuard{Kind: XGuardDueAtMost, Key: "remind:alice", Score: 5000},
-		XGuard{Kind: XGuardDueAtMost, Key: "remind:bob", Score: 0}, XGuard{Kind: XGuardDueAtMost, Key: "cut:op1", Score: 9000}))
-	for _, moved := range []XGuard{{Kind: XGuardDueAtMost, Key: "remind:alice", Score: 4999}, {Kind: XGuardDueAtMost, Key: "cut:op1", Score: 6999}} {
+	h.applies("as read, or absent", guard(XGuard{Kind: XGuardDue, Key: "remind:alice", Score: 5000},
+		XGuard{Kind: XGuardDue, Key: "remind:bob", Score: XGuardAbsent}, XGuard{Kind: XGuardDue, Key: "cut:op1", Score: 7000}))
+	for _, moved := range []XGuard{{Kind: XGuardDue, Key: "remind:alice", Score: XGuardAbsent}, {Kind: XGuardDue, Key: "remind:alice", Score: 4999},
+		{Kind: XGuardDue, Key: "cut:op1", Score: 9000}, {Kind: XGuardDue, Key: "remind:bob", Score: 1}} {
 		h.wantRefusal(guard(moved), CodeXGuard)
 	}
-	for _, bad := range []XGuard{{Kind: XGuardDueAtMost, Score: 1}, {Kind: XGuardDueAtMost, Key: "a", Score: -1}} {
+	for _, bad := range []XGuard{{Kind: XGuardDue, Score: 1}, {Kind: XGuardDue, Key: "a", Score: -2}, {Kind: "dueatmost", Key: "a", Score: 1}} {
 		h.wantRefusal(guard(bad), CodeRequest)
 	}
 	if h.mirror.pre == 0 {
@@ -1080,4 +1082,58 @@ func TestXRefusalAfterPlanLeavesNothing(t *testing.T) {
 		h.extra = nil
 		h.applies("a step that fits", xVerb("rank", xMoveWaitingReady("p1")))
 	})
+}
+
+// TestXTableVersions (errata 3 H17): X moves the version of a table in
+// {p}tver@e by one on each step whose plan changes a card of it, and on no
+// other; the version guard holds a table to its version as read (0 for none),
+// so a card of it written since the read refuses XGUARD. The Lua half gives the
+// same reads, commands and refusals.
+func TestXTableVersions(t *testing.T) {
+	t.Parallel()
+	h := newXHarness(t)
+	h.fixture() // one step creates the work and fleet cards
+	h.write(xLease("1"), xRunning(300))
+	version := func(table string) string { return h.keys()[xp+"tver@0"].Hash[table] }
+	if version(sprint.Work) != "1" || version(sprint.Fleet) != "1" || version(sprint.Merge) != "" {
+		t.Fatalf("the versions after the fixture: %v", h.keys()[xp+"tver@0"].Hash)
+	}
+	guard := func(g ...XGuard) *Request {
+		r := xTick(1)
+		r.Body.Guards = g
+		return r
+	}
+	h.applies("as read, and 0 for none", guard(XGuard{Kind: XGuardVersion, Key: sprint.Work, Score: 1},
+		XGuard{Kind: XGuardVersion, Key: sprint.Merge, Score: 0}))
+	if len(h.last) != 0 {
+		t.Fatalf("a step that changes no card wrote %v", h.last)
+	}
+	h.applies("a move", xVerb("rank", xMoveWaitingReady("p1")))
+	if version(sprint.Work) != "2" || version(sprint.Fleet) != "1" {
+		t.Fatalf("the versions after a move of a work card: %v", h.keys()[xp+"tver@0"].Hash)
+	}
+	if v := h.last[len(h.last)-1]; strings.Join(v.Argv, " ") != "HSET "+xp+"tver@0 work 2" {
+		t.Fatalf("X's last command: %v", v.Argv)
+	}
+	h.wantRefusal(guard(XGuard{Kind: XGuardVersion, Key: sprint.Work, Score: 1}), CodeXGuard)
+	h.wantRefusal(guard(XGuard{Kind: XGuardVersion, Key: sprint.Merge, Score: 1}), CodeXGuard)
+	h.applies("a change that changes nothing", xVerb("rank", tset.Entry{Kind: "move", Table: sprint.Work, From: "s1:waiting",
+		IDs: []string{"p2"}, Set: map[string]string{"open": "0"}, About: []string{"p2"}}))
+	if version(sprint.Work) != "2" {
+		t.Fatalf("a step that changed no card moved the version to %s", version(sprint.Work))
+	}
+	h.applies("a guard on a card changes none", xVerb("look", tset.Entry{Kind: "guard", Table: sprint.Work, From: "s1:waiting", IDs: []string{"p2"}}))
+	if version(sprint.Work) != "2" {
+		t.Fatalf("a guard entry moved the version to %s", version(sprint.Work))
+	}
+	for _, bad := range []XGuard{{Kind: XGuardVersion}, {Kind: XGuardVersion, Key: "a b"}, {Kind: XGuardVersion, Key: "work@0"},
+		{Kind: XGuardVersion, Key: sprint.Work, Score: -1}} {
+		h.wantRefusal(guard(bad), CodeRequest)
+	}
+	h.write(Command("HSET", xp+"tver@0", kindHash, sprint.Work, "02"))
+	h.wantRefusal(guard(XGuard{Kind: XGuardVersion, Key: sprint.Work, Score: 2}), CodeConfig)
+	h.wantRefusal(xVerb("rank", xMoveWaitingReady("p2")), CodeConfig)
+	if h.mirror.pre == 0 || h.mirror.cmds == 0 {
+		t.Fatal("the Lua half was not compared")
+	}
 }

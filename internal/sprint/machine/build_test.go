@@ -1,6 +1,8 @@
 package machine
 
 import (
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,7 +64,7 @@ func TestStepBuilderBuildsARealRule(t *testing.T) {
 		t.Fatalf("the deal planned %d units", len(rp.Plan.Units))
 	}
 	l := w.loop("a", nil, Budget{})
-	k := &counting{c: w.tw}
+	k := &counting{c: w.c}
 	w.tick(l, k) // the lease, for the step's generation
 	meta := sprintfn.Meta{Rule: "deal", Tick: true, Gen: l.gen}
 	bodies, err := StepBuilder(testNames.Prefix)(rp, meta, stepbuild.Contract())
@@ -137,14 +139,35 @@ func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 		rp   sprint.RulePlan
 		want string
 	}{
-		"a revs fold": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7}}}, "the fold of the revisions of the work cards read"},
+		"a revs fold with no version": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7},
+			{Kind: guardVersion, Key: sprint.Merge, Score: 2}}}, "the fold of the revisions of the work cards read (R17's stopinputs) with no version guard of the table"},
 		"a zguard with no count bound": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
 			"a set guard of kind zguard"},
 		"bumps": {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
+		"a counter that is not next's": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardCounter, Key: "id", Score: 3}}},
+			`a counter guard on "id", which is not next, streams or next.streams`},
 	} {
 		_, err := build(c.rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("%s: refused with %v, want the reason %q", name, err, c.want)
+		var nc *NotCarried
+		if !errors.As(err, &nc) || !strings.Contains(err.Error(), "not carried: "+c.want) {
+			t.Fatalf("%s: refused with %v, want not carried: %q", name, err, c.want)
+		}
+	}
+}
+
+// TestStepBuilderMapsCounterKeys (L2): the counters a rule guards are next's
+// score (next) and its stream-set counter (streams, R15's; next.streams,
+// R17's), each X's counter guard on its field as read.
+func TestStepBuilderMapsCounterKeys(t *testing.T) {
+	t.Parallel()
+	for key, field := range map[string]string{"next": "score", "streams": "streams", sprint.KeyNextStreams: "streams"} {
+		rp := sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardCounter, Key: key, Score: 4}}, Done: []sprint.AgendaKey{{Key: "k", Seq: 1}}}
+		bodies, err := StepBuilder(testNames.Prefix)(rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())
+		if err != nil || len(bodies) != 1 || len(bodies[0].Guards) != 1 {
+			t.Fatalf("%s: %v %+v", key, err, bodies)
+		}
+		if g := bodies[0].Guards[0]; g.Kind != sprintfn.XGuardCounter || g.Key != field || g.Score != 4 {
+			t.Fatalf("%s: %+v", key, g)
 		}
 	}
 }
@@ -161,5 +184,55 @@ func TestNewLoopBuildsWithStepBuilder(t *testing.T) {
 	rp := deal.Plan(s, []sprint.AgendaKey{{Key: "deal", Seq: 1}}, sprint.Now{R: 1000, Wall: s.Now.UnixMilli(), Running: true})
 	if bodies, err := l.cfg.Build(rp, sprintfn.Meta{Rule: "deal", Tick: true, Gen: 1}, stepbuild.Contract()); err != nil || len(bodies) != 1 {
 		t.Fatalf("the default builder: %d bodies, %v", len(bodies), err)
+	}
+}
+
+// TestTimePartCarriesEveryField (L3): each field of sprint.TimeWrites, set
+// alone, reaches the sprint part TimePart makes; a field this test does not
+// name fails it, so a new write is carried or refused by decision, never
+// dropped by TimeWrites.Empty.
+func TestTimePartCarriesEveryField(t *testing.T) {
+	t.Parallel()
+	d, set := int64(7), true
+	fields := map[string]struct {
+		set     func(*sprint.TimeWrites)
+		carried func(*sprintfn.SprintPart) bool
+	}{
+		"Due": {func(w *sprint.TimeWrites) { w.Due = []sprint.DueSet{{Key: "remind:ann", At: 9}} },
+			func(p *sprintfn.SprintPart) bool {
+				return p.Time != nil && len(p.Time.Due) == 1 && p.Time.Due[0].At == "9"
+			}},
+		"Goal": {func(w *sprint.TimeWrites) { w.Goal = []sprint.GoalClaim{{Person: "ann", R: 5}} },
+			func(p *sprintfn.SprintPart) bool {
+				return p.Time != nil && len(p.Time.Goals) == 1 && p.Time.Goals[0].R == "5"
+			}},
+		"UnarmBehind": {func(w *sprint.TimeWrites) { w.UnarmBehind = set },
+			func(p *sprintfn.SprintPart) bool { return p.Time != nil && p.Time.UnarmBehind }},
+		"Clock": {func(w *sprint.TimeWrites) { w.Clock = &sprint.ClockSet{DueSince: &d, ClearStopRaised: true} },
+			func(p *sprintfn.SprintPart) bool {
+				return p.Time != nil && p.Time.Clock != nil && *p.Time.Clock.DueSince == "7" && *p.Time.Clock.StopRaised == ""
+			}},
+		"Park": {func(w *sprint.TimeWrites) { w.Park = []sprint.ParkKey{{Key: "deal", Rule: "deal", Code: "REQUEST"}} },
+			func(p *sprintfn.SprintPart) bool { return len(p.Park) == 1 && p.Park[0].Code == "REQUEST" }},
+	}
+	rt := reflect.TypeOf(sprint.TimeWrites{})
+	for i := range rt.NumField() {
+		name := rt.Field(i).Name
+		f, ok := fields[name]
+		if !ok {
+			t.Errorf("TimeWrites.%s: TimePart's carriage of it is not decided", name)
+			continue
+		}
+		var w sprint.TimeWrites
+		f.set(&w)
+		if w.Empty() {
+			t.Errorf("TimeWrites.%s set alone is Empty", name)
+		}
+		if p := TimePart(w); p == nil || !f.carried(p) {
+			t.Errorf("TimeWrites.%s is not carried: %+v", name, p)
+		}
+	}
+	if len(fields) != rt.NumField() {
+		t.Errorf("the test names %d fields, TimeWrites has %d", len(fields), rt.NumField())
 	}
 }

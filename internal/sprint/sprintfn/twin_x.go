@@ -53,6 +53,7 @@ const (
 	xKeyHeldQ       = "heldq"       // {p}heldq@e, ZSET held key -> order (1.1)
 	xKeyAskwait     = "askwait"     // {p}askwait@e, ZSET id -> R (1.3.1)
 	xKeyJopen       = "jopen:"      // {p}jopen:<subject>@e, HASH <type>|<cause> -> note id or h<note> (1.3.1)
+	xKeyVersion     = "tver"        // {p}tver@e, HASH table -> version: X's count of the steps that changed a card of it (errata 3 H17)
 )
 
 // The fields of those keys X reads.
@@ -92,7 +93,9 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	due         Key: the due-set member <kind>:<id> (a cut:<op> member is read in
 //	            the cut set, which counts wall time). Score: the entry's score as
 //	            the plan read it, or XGuardAbsent for an entry that was absent
-//	            (2.3, R11's cut clock and R14's phase 1).
+//	            (2.3, R11's cut clock, R14's phase 1 and R18: the time rules'
+//	            entryAsRead; the pop takes the entry, so the rule it delivered
+//	            reads it absent).
 //	hold        Member: the subject. Key: "<type>|<cause>=<value>", the field of
 //	            {p}jopen:<subject> and what it holds (2.3, R13: "h<note>").
 //	clock       Key: one of the five clock fields. Score: its value as read, or
@@ -101,16 +104,14 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	            (init --coordinator, 3).
 //	stranger    Member: the machine. {p}strangers[Member] is not yet noticed
 //	            (2.3, R1).
-//	sent        Key: "sent:<stream> <max>", max a score (a decimal, "(" before
-//	            it for an open bound). No sentinel of the stream is placed at
-//	            or below max: S.zguard(sent:<stream>, rcount, -inf, max,
-//	            atmost 0) over {p}sprint:sent:<stream>@e (2.3, R3's release
-//	            and R6's deal).
-//	dueatmost   Key: the due-set member <kind>:<id> (a cut:<op> member in the
-//	            cut set). Score: a time. The entry is absent or scored at or
-//	            below Score: no later part or second run has moved it on (2.3:
-//	            R11's cut clock, R14, R18: "no entry above R", the time rules'
-//	            noEntryAbove; the pop takes the entry, so it is absent at apply).
+//	setguard    Key: a sprint.SetGuard of kind zguard as JSON. The count of
+//	            the index's members within Min and Max is held within AtLeast
+//	            and AtMost, or RANGECOUNT: S.zguard (2.3, R3's release and R6's
+//	            deal as S.zguard(sent:<stream>, rcount, -inf, max, atmost 0)).
+//	version     Key: a table. Score: its version in {p}tver@e as read, 0 for
+//	            none (errata 3 H17: R17's guard on the cards of each table its
+//	            dry plans read; X moves the version on every step that changes
+//	            a card of the table, so it holds when no card of it changed).
 //	counter     Key: a field of {p}next@e, score or streams. Score: its value
 //	            as read, 0 for a field absent (2.3, R15's COUNTER on
 //	            next.streams; R17's stopinputs, errata 3 H14). The sprint
@@ -132,8 +133,8 @@ const (
 	// (1.5.4), and R3's release by the same (2.3). A SetGuard of kind rcount is
 	// Layer 1's own entry, never an XGuard.
 	XGuardSet       = "setguard"
-	XGuardDueAtMost = "dueatmost"
 	XGuardCounter   = "counter"
+	XGuardVersion   = "version"
 )
 
 // XGuardAbsent is the Score of a due or clock guard over an entry or field
@@ -212,7 +213,13 @@ type xCarry struct {
 	writeEpoch  tset.Decimal
 	probes      int             // the store reads X.pre made, for the coster's check
 	readKeys    map[string]bool // the keys X.pre read, typed: prepare does not type-read them again
+	// versions are the tables whose cards the step may change, with the version
+	// each is moved to (xVersions).
+	versions []xVersion
 }
+
+// xVersion is a table's version after the step: {p}tver@e's field of the table.
+type xVersion struct{ table, to string }
 
 // xStashT holds the carries by call, oldest first, at most max of them.
 type xStashT struct {
@@ -890,9 +897,75 @@ func xPre(st *State, req *Request, obs *Before) (*xCarry, *Refusal) {
 	if ref := xPrepareDerivation(r, st, req, obs, carry); ref != nil {
 		return nil, ref
 	}
+	versions, ref := xVersions(r, req)
+	if ref != nil {
+		return nil, ref
+	}
+	carry.versions = versions
 	carry.probes = r.probes
 	carry.readKeys = r.read
 	return carry, nil
+}
+
+// xVersions reads the version of each table whose cards the step may change
+// (a caller entry that creates, moves or removes one of its cards, or an intent,
+// which becomes an entry of the work table), in one probe, and gives each one
+// more: X.plan writes them to {p}tver@<write epoch> (errata 3 H17: the version
+// R17's step is guarded on for the cards of a table it read). A step that
+// changes no card moves no version; an entry Layer 1 finds changes nothing
+// still moves its table's, which only refuses a guard that could have held. A
+// version that is not a whole number below 2^53 is CONFIG.
+func xVersions(r *xRead, req *Request) ([]xVersion, *Refusal) {
+	seen := map[string]bool{}
+	var tables []string
+	add := func(t string) {
+		if !seen[t] {
+			seen[t] = true
+			tables = append(tables, t)
+		}
+	}
+	for _, e := range req.Body.Entries {
+		if xChanged(e) {
+			add(e.Table)
+		}
+	}
+	if len(req.Body.Intents) != 0 {
+		add(sprint.Work)
+	}
+	if len(tables) == 0 {
+		return nil, nil
+	}
+	sort.Strings(tables)
+	stored, ref := r.hmget(r.at(xKeyVersion), tables)
+	if ref != nil {
+		return nil, ref
+	}
+	out := make([]xVersion, 0, len(tables))
+	for _, t := range tables {
+		n, ref := xVersionValue(t, stored[t])
+		if ref != nil {
+			return nil, ref
+		}
+		out = append(out, xVersion{table: t, to: strconv.FormatUint(n+1, 10)})
+	}
+	return out, nil
+}
+
+// xVersionMax is the most a table's version may hold: the Lua half counts in
+// doubles, exact below 2^53.
+const xVersionMax = 1<<53 - 2
+
+// xVersionValue is a stored version: 0 for none, CONFIG for one that is not a
+// canonical whole number at most xVersionMax.
+func xVersionValue(table, v string) (uint64, *Refusal) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || strconv.FormatUint(n, 10) != v || n > xVersionMax {
+		return 0, xRefuse(CodeConfig, RefusalDetail{}, "the version of table %s holds %q, not a whole number", table, v)
+	}
+	return n, nil
 }
 
 // xCheckShape holds the parts of a request X reads to their shapes, REQUEST for
@@ -932,9 +1005,9 @@ func xCheckShape(req *Request) *Refusal {
 			if _, ok := xSetGuardOf(g); !ok {
 				return bad("a set guard is not a zguard over a sprint index with bounds and a count: %q", g.Key)
 			}
-		case XGuardDueAtMost:
-			if g.Key == "" || g.Score < 0 {
-				return bad("a dueatmost guard names no entry, or a time below zero")
+		case XGuardVersion:
+			if g.Key == "" || strings.ContainsAny(g.Key, " \t\n\v\f\r@") || g.Score < 0 || g.Score > xVersionMax {
+				return bad("a version guard names %q, which is not a table, or a version that is not a whole number", g.Key)
 			}
 		case XGuardCounter:
 			if (g.Key != xFieldNextScore && g.Key != xFieldNextStream) || g.Score < 0 {
@@ -1081,17 +1154,17 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 			return xRefuse("RANGECOUNT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Cells: []string{key}}},
 				"RANGECOUNT: %s holds %d members in [%s, %s] since the read", sg.Key, n, sg.Min, sg.Max)
 		}
-	case XGuardDueAtMost:
-		set := xKeyDue
-		if strings.HasPrefix(g.Key, "cut:") {
-			set = xKeyCut
-		}
-		score, ok, ref := r.zscore(r.at(set), g.Key)
+	case XGuardVersion:
+		stored, ref := r.hmget(r.at(xKeyVersion), []string{g.Key})
 		if ref != nil {
 			return ref
 		}
-		if ok && score > float64(g.Score) {
-			return fail("the entry %s is at %s, above %d", g.Key, xScore(score), g.Score)
+		n, ref := xVersionValue(g.Key, stored[g.Key])
+		if ref != nil {
+			return ref
+		}
+		if n != uint64(g.Score) {
+			return fail("the version of table %s is %d now, read as %d", g.Key, n, g.Score)
 		}
 	case XGuardCounter:
 		got, ok, ref := r.hget(r.at(xKeyNext), g.Key)

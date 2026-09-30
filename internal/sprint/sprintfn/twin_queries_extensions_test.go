@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -378,7 +379,21 @@ func TestLuaQueriesJOpenKeys(t *testing.T) {
 		}
 		h := newLuaHarness(t, w)
 		for i, q := range qs {
-			h.agree(fmt.Sprintf("%s #%d %s", name, i, q.Kind), mustEncode(t, q))
+			enc := mustEncode(t, q)
+			// the Lua declares the probes the twin declares: one for each jopen field
+			if _, _, lp := h.declared(enc); lp != QueryProbes(q) {
+				t.Errorf("%s #%d: the Lua declared %d probes, the twin %d", name, i, lp, QueryProbes(q))
+			}
+			h.agree(fmt.Sprintf("%s #%d %s", name, i, q.Kind), enc)
+		}
+		// jopen:G is front's alone (its first sentinel): a waiters query naming it,
+		// sent on the wire as it is, is REQUEST in both halves
+		waiters := mustEncode(t, qs[3])
+		waiters.Query = json.RawMessage(strings.Replace(string(waiters.Query), `"`+sprint.KeyJOpenSprint+`"`, `"`+sprint.KeyJOpenG+`"`, 1))
+		before := h.refused[sprint.QueryWaiters]
+		h.agree(name+" jopen:G of waiters", waiters)
+		if h.refused[sprint.QueryWaiters] != before+1 {
+			t.Fatalf("%s: a waiters query naming jopen:G was not refused: %s", name, waiters.Query)
 		}
 		if name == "drift" && h.refused[sprint.QueryFront] == 0 {
 			t.Fatalf("a jopen field that is no note is not refused")

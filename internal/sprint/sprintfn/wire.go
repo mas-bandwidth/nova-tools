@@ -349,9 +349,10 @@ type sprintPartWire struct {
 }
 
 type timeWire struct {
-	Due   []dueAtWire     `json:"due,omitempty"`
-	Goals []goalClaimWire `json:"goals,omitempty"`
-	Clock *clockSetWire   `json:"clock,omitempty"`
+	Due         []dueAtWire     `json:"due,omitempty"`
+	UnarmBehind bool            `json:"unarm_behind,omitempty"`
+	Goals       []goalClaimWire `json:"goals,omitempty"`
+	Clock       *clockSetWire   `json:"clock,omitempty"`
 }
 
 type dueAtWire struct {
@@ -461,7 +462,7 @@ func sprintWireOf(req *Request) sprintWire {
 			sw.TickEnd = &tickEndWire{Backlog: s.TickEnd.Backlog}
 		}
 		if t := s.Time; t != nil {
-			tw := &timeWire{}
+			tw := &timeWire{UnarmBehind: t.UnarmBehind}
 			for _, d := range t.Due {
 				tw.Due = append(tw.Due, dueAtWire{Key: d.Key, At: d.At})
 			}

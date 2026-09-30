@@ -2,7 +2,6 @@ package machine
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -136,7 +135,8 @@ const (
 	guardCtl      = "ctl"      // rules_time.go guardCtl: a member's control card's revision (R17)
 	guardBeat     = "beat"     // rules_time.go guardBeat: beat:<m>'s score in the due set (R17)
 	guardRevs     = "revs"     // rules_time.go guardRevs: the fold of a table's cards' revisions (R17)
-	guardDue      = "due"      // rules_time.go noEntryAbove: no due (or cut) entry above Score (R11, R14, R18)
+	guardVersion  = "version"  // rules_time.go guardVersion: a table's version in {p}tver@e as read (R17)
+	guardDue      = "due"      // rules_time.go entryAsRead: a due (or cut) entry at Score as read, or absent (R11, R14, R18)
 	guardClock    = "clock"    // rules_time.go guardClock: a clock field as read, 0 for an empty one (R17)
 )
 
@@ -155,26 +155,31 @@ const (
 //     counter guard on the field of {p}next@e (sprintfn.XGuardCounter). A
 //     counter is a sprint key, not a card, so no Layer 1 entry can guard it;
 //     the sprint part's CounterChange guards only the fields it writes;
-//   - due (the time rules' noEntryAbove: R11's cut clock, R14, R18): X's
-//     dueatmost guard, the entry absent or at or below the time; X's own due
-//     kind holds an entry to its score as read, and the pop takes the entry,
-//     so it would refuse every such step (the erratum on 2.3's two readings
-//     is owed);
+//   - due (the time rules' entryAsRead: R11's cut clock, R14, R18): X's due
+//     guard, exact, the entry at the score the rule read or absent
+//     (sprint.DueAbsent is XGuardAbsent); 2.3's R11 and R14, "the entry's
+//     score as read", and tla/SprintEvents.tla's cutj and remind1;
 //   - clock (R17): X's clock guard, a field R17 read as 0 guarded as
 //     XGuardAbsent: sprint.Clock reads an empty field as 0, and the clock part
 //     writes every field but stopped_ms empty for 0 (X reads "" as absent);
 //   - ctl (R17): a Layer 1 guard entry on the member's control card at its
 //     cell and revision; beat (R17): X's due guard on beat:<m>, absent when
 //     read as 0;
+//   - revs (R17's fold of the revisions of the cards of a table it read,
+//     errata 3 H17's one guard a table) and version (that table's version in
+//     {p}tver@e as read): the fold names no card, so neither Layer 1 nor X can
+//     compute it, and Layer 1 has no guard of a table's version; the version
+//     is X's version guard (sprintfn.XGuardVersion), and it carries the fold:
+//     X moves the version on every step that changes a card of the table, so
+//     it holds only where the fold does. A fold with no version guard of its
+//     table is not carried;
 //   - every other kind goes to X as it is.
-//
-// revs (R17's fold of the revisions of a table's cards) is refused: the fold
-// names no card, so neither Layer 1 nor X can check it (errata 3 H17 chose one
-// guard a table; its carrier is owed).
 func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 	var guards []sprint.XGuard
 	var entries []tset.Entry
 	var count *tset.Entry
+	var folds []string
+	versioned := map[string]bool{}
 	sets, err := sprint.SetGuardsOf(rp)
 	if err != nil {
 		return nil, nil, err
@@ -193,7 +198,7 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 		case g.Kind == sprint.GuardZGuard && (g.AtLeast != nil || g.AtMost != nil):
 			guards = append(guards, g.XGuard())
 		default:
-			return nil, nil, fmt.Errorf("a set guard of kind %s on %q that neither Layer 1 nor X checks", g.Kind, g.Key+strings.Join(g.Cells, ","))
+			return nil, nil, notCarried("a set guard of kind %s on %q, which neither Layer 1 nor X checks", g.Kind, g.Key+strings.Join(g.Cells, ","))
 		}
 	}
 	for _, g := range rp.Guards {
@@ -212,16 +217,25 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 			}
 			guards = append(guards, sprint.SetGuard{Kind: sprint.GuardZGuard, Key: sent, Min: "-inf", Max: most, AtMost: ptrInt(0)}.XGuard())
 		case guardCounter:
-			field := "streams"
-			if g.Key == "next" {
+			var field string
+			switch g.Key {
+			case "next":
 				field = "score"
+			case "streams", sprint.KeyNextStreams:
+				field = "streams"
+			default:
+				return nil, nil, notCarried("a counter guard on %q, which is not next, streams or %s", g.Key, sprint.KeyNextStreams)
 			}
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardCounter, Key: field, Score: g.Score})
 		case guardCtl:
 			entries = append(entries, tset.Entry{Kind: "guard", Table: sprint.Fleet, From: g.Member + ":ctl",
 				IDs: []string{sprint.CtlID(g.Member)}, Revs: []tset.Decimal{tset.Decimal(strconv.FormatInt(g.Score, 10))}})
 		case guardDue:
-			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDueAtMost, Key: g.Key, Score: g.Score})
+			score := g.Score
+			if score == sprint.DueAbsent {
+				score = sprintfn.XGuardAbsent
+			}
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDue, Key: g.Key, Score: score})
 		case guardClock:
 			if g.Score == 0 && g.Key != "stopped_ms" {
 				g.Score = sprintfn.XGuardAbsent
@@ -234,9 +248,17 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 			}
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDue, Key: g.Key, Score: score})
 		case guardRevs:
-			return nil, nil, fmt.Errorf("the fold of the revisions of the %s cards read (R17's stopinputs) has no guard in Layer 1 or X", g.Key)
+			folds = append(folds, g.Key)
+		case guardVersion:
+			versioned[g.Key] = true
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardVersion, Key: g.Key, Score: g.Score})
 		default:
 			guards = append(guards, g)
+		}
+	}
+	for _, t := range folds {
+		if !versioned[t] {
+			return nil, nil, notCarried("the fold of the revisions of the %s cards read (R17's stopinputs) with no version guard of the table", t)
 		}
 	}
 	if count != nil {
@@ -317,15 +339,27 @@ func (sb *stepBodies) check(body sprintfn.Body) error {
 	return nil
 }
 
+// NotCarried is the builder's refusal of a plan that names what no wire or
+// store check carries (a guard, a write, a legacy shape), with the thing it
+// names. It is not a size: the loop parks the plan's keys with it, naming it,
+// and never halves them (1.3.5; a halving cannot give a plan a carrier).
+type NotCarried struct{ What string }
+
+func (e *NotCarried) Error() string { return "not carried: " + e.What }
+
+func notCarried(format string, args ...any) error {
+	return &NotCarried{What: fmt.Sprintf(format, args...)}
+}
+
 // carried refuses a plan with what the adapter does not carry.
 func carried(rp sprint.RulePlan) error {
 	p := rp.Plan
 	if len(p.Notes)+len(p.Closes)+len(p.Updates) != 0 {
-		return errors.New("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
+		return notCarried("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
 	}
 	for _, u := range p.Units {
 		if len(u.Bumps)+len(u.Notes)+len(u.Closes) != 0 {
-			return fmt.Errorf("unit %s: bumps, notes or closes of a unit", u.Key)
+			return notCarried("unit %s: bumps, notes or closes of a unit", u.Key)
 		}
 	}
 	return nil
@@ -342,18 +376,18 @@ func stepEntries(u sprint.Unit) ([]stepbuild.Entry, error) {
 		}
 		x := e.Expect
 		if x != nil && len(x.Fields) != 0 {
-			return nil, fmt.Errorf("%s: a field guard", e.ID)
+			return nil, notCarried("%s: a field guard", e.ID)
 		}
 		se := stepbuild.Entry{Table: c.Table, IDs: []string{e.ID}, About: []string{about}, Set: e.Set, Unset: e.Unset}
 		switch {
 		case e.Create != nil:
 			if x == nil || !x.Absent || x.Place != nil || x.Revision != "" {
-				return nil, fmt.Errorf("%s: a create is guarded on absence alone", e.ID)
+				return nil, notCarried("%s: a create guarded on more than absence", e.ID)
 			}
 			se.Kind, se.To = stepbuild.KindCreate, e.Create.Row+":"+e.Create.Col
 			se.Scores = []string{strconv.FormatFloat(e.Create.Score, 'f', -1, 64)}
 		case x == nil || x.Place == nil || x.Absent:
-			return nil, fmt.Errorf("%s: a change of a card with no place to guard it at", e.ID)
+			return nil, notCarried("%s: a change of a card with no place to guard it at", e.ID)
 		default:
 			se.From = x.Place.Row + ":" + x.Place.Col
 			if x.Revision != "" {
@@ -449,8 +483,9 @@ func wireEntries(ps []stepbuild.Placed) []tset.Entry {
 // TimePart is a plan's writes to the sprint's own keys (RulePlan.Sprint,
 // rules_time.go TimeWrites) as the sprint part carries them (IT16's
 // SprintPart.Time and Park), nil when it has none; the loop's cut() puts it on
-// the first request of the rule's step. The due entries and R14's claims go as
-// they are (the claim's generation is the step's, Meta.Gen); R17's clock
+// the first request of the rule's step. The due entries, R18's unarm of
+// behind_n and R14's claims go as they are (the claim's generation is the
+// step's, Meta.Gen); R17's clock
 // fields as set or cleared; a parked key with its rule and code, which the
 // part records in {p}parked@e and moves out of the agenda (1.3.5, A1).
 func TimePart(w sprint.TimeWrites) *sprintfn.SprintPart {
@@ -459,8 +494,8 @@ func TimePart(w sprint.TimeWrites) *sprintfn.SprintPart {
 	}
 	dec := func(n int64) tset.Decimal { return tset.Decimal(strconv.FormatInt(n, 10)) }
 	sp := &sprintfn.SprintPart{}
-	if len(w.Due)+len(w.Goal) != 0 || w.Clock != nil {
-		tm := &sprintfn.SprintTime{}
+	if len(w.Due)+len(w.Goal) != 0 || w.Clock != nil || w.UnarmBehind {
+		tm := &sprintfn.SprintTime{UnarmBehind: w.UnarmBehind}
 		for _, d := range w.Due {
 			tm.Due = append(tm.Due, sprintfn.DueAt{Key: d.Key, At: dec(d.At)})
 		}
