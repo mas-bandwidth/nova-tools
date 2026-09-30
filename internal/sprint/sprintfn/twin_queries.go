@@ -36,11 +36,15 @@ const (
 )
 
 // The fields of a stream's control card that `streams` reads to find a stop
-// on a cross need (1.0's `streams`, 2.3 R5), and the values it tests.
+// on a cross need (1.0's `streams`, 2.3 R5), and the values it tests. The card
+// a cross stop waits for is where the writer puts it, the control card's
+// `other` (steps_merge.go: ctlSet["other"]); `need_card` is read when `other`
+// is empty, as IT11's held rule reads the two.
 const (
 	ctlFieldState    = "state"     // the stream's state (sprint.StreamStopped)
 	ctlFieldCause    = "cause"     // why a stopped stream stopped
-	ctlFieldNeedCard = "need_card" // the card a cross stop waits for
+	ctlFieldOther    = "other"     // the card a cross stop waits for, as the writer records it
+	ctlFieldNeedCard = "need_card" // the same card, when `other` is empty
 	causeCross       = "cross"     // "needs a card of another stream first" (2.2, R5)
 )
 
@@ -60,6 +64,18 @@ const (
 	// plans in one (L1 6: 2,000 candidates); Layer 1 bounds a read at 10,000
 	// records altogether, which the query's own charge checks.
 	recordChunk = 1000
+)
+
+// The bytes a checked HMGET reserves for each field it names, and its slack
+// (the Lua's Q.hmget and Q.quarantined: fields*per + 64). Layer 1's readcmd
+// refuses DRIFT (budget read_reservation) a reply larger than its reserve, so
+// a value over its share makes the query DRIFT in the store; the twin answers
+// the same (finding 7 of the cold read).
+const (
+	hashFieldBytes       = 1024 // a sprint hash field's value
+	heartbeatFieldBytes  = 8192 // the heartbeat's `rules` field holds a count for every rule
+	quarantineEntryBytes = 1024 // a quarantine mark: code, rule, stream, cells and note (1.3.1)
+	reserveSlack         = 64
 )
 
 // The notes' lines (1.3.4): a note's type and cause are in its line's meta,
@@ -263,8 +279,11 @@ func (e *qeval) typed(key, kind string) *Refusal {
 	return nil
 }
 
-// hmget is one HMGET probe: each field's value, nil for one the hash lacks.
-func (e *qeval) hmget(key string, fields []string) ([]*string, *Refusal) {
+// hmget is one HMGET probe: each field's value, nil for one the hash lacks. A
+// reply larger than the reserve the probe asked for, per bytes for each field
+// and a slack, is DRIFT (budget read_reservation), as Layer 1's checked probe
+// refuses it.
+func (e *qeval) hmget(key string, fields []string, per int) ([]*string, *Refusal) {
 	if ref := e.typed(key, kindHash); ref != nil {
 		return nil, ref
 	}
@@ -272,11 +291,17 @@ func (e *qeval) hmget(key string, fields []string) ([]*string, *Refusal) {
 		return nil, ref
 	}
 	out := make([]*string, len(fields))
+	bytes := 0
 	for i, f := range fields {
 		if v, ok := (&Keys{ks: e.t.keys}).HGet(key, f); ok {
 			v := v
 			out[i] = &v
+			bytes += len(v)
 		}
+	}
+	if reserve := len(fields)*per + reserveSlack; bytes > reserve {
+		a, l := int64(bytes), int64(reserve)
+		return nil, e.fail(codeDrift, tset.RefusalDetail{Budget: "read_reservation", Actual: &a, Limit: &l})
 	}
 	return out, nil
 }
@@ -494,15 +519,16 @@ func (e *qeval) sourceIDs(src sprint.IDSource, table string) (ids []string, name
 }
 
 // quarantined says which of the ids are in {p}quarantine@e: one HMGET for each
-// 2,000 ids.
+// 2,000 ids, a set of the ones that are.
 func (e *qeval) quarantined(ids []string) (map[string]bool, *Refusal) {
 	out := map[string]bool{}
 	for from := 0; from < len(ids); from += probeChunk {
 		chunk := ids[from:min(from+probeChunk, len(ids))]
-		vals, ref := e.hmget(e.key("quarantine"), chunk)
+		vals, ref := e.hmget(e.key("quarantine"), chunk, quarantineEntryBytes)
 		if ref != nil {
 			return nil, ref
 		}
+		e.c.Work += len(chunk)
 		for i, v := range vals {
 			if v != nil {
 				out[chunk[i]] = true
@@ -512,9 +538,25 @@ func (e *qeval) quarantined(ids []string) (map[string]bool, *Refusal) {
 	return out, nil
 }
 
+// leftOut collects the ids a query left out, once each, in the order they were
+// left. Membership is a set, so collecting n ids is n steps and never n times
+// n (a query can leave out every one of 20,000 ids); Work counts the steps.
+type leftOut struct {
+	list []string
+	seen map[string]struct{}
+}
+
+// ids are the ids left out, never nil.
+func (l *leftOut) ids() []string {
+	if l.list == nil {
+		return []string{}
+	}
+	return l.list
+}
+
 // leave is the ids without the quarantined ones, in order; the quarantined are
-// appended to left, once each.
-func (e *qeval) leave(ids []string, left *[]string) ([]string, *Refusal) {
+// added to left, once each.
+func (e *qeval) leave(ids []string, left *leftOut) ([]string, *Refusal) {
 	if len(ids) == 0 {
 		return ids, nil
 	}
@@ -524,16 +566,18 @@ func (e *qeval) leave(ids []string, left *[]string) ([]string, *Refusal) {
 	}
 	kept := make([]string, 0, len(ids))
 	for _, id := range ids {
+		e.c.Work++
 		if !bad[id] {
 			kept = append(kept, id)
 			continue
 		}
-		seen := false
-		for _, l := range *left {
-			seen = seen || l == id
+		if left.seen == nil {
+			left.seen = map[string]struct{}{}
 		}
-		if !seen {
-			*left = append(*left, id)
+		e.c.Work++
+		if _, dup := left.seen[id]; !dup {
+			left.seen[id] = struct{}{}
+			left.list = append(left.list, id)
 		}
 	}
 	return kept, nil
@@ -687,7 +731,7 @@ func (e *qeval) followTargets(follow, table string, r Record) ([]followTarget, *
 // every record are found first, quarantined ones left out together, and read a
 // table at a time, so the quarantine costs one probe for each 2,000 targets.
 // left collects the ids left out.
-func (e *qeval) follows(table string, recs []Record, follow, fields []string, left *[]string) ([]*Follows, *Refusal) {
+func (e *qeval) follows(table string, recs []Record, follow, fields []string, left *leftOut) ([]*Follows, *Refusal) {
 	out := make([]*Follows, len(recs))
 	if len(follow) == 0 {
 		return out, nil
@@ -978,23 +1022,96 @@ func (e *qeval) evalWire(q SprintQuery) (QueryResult, *Refusal) {
 // UseQueries installs the sprint's queries as the twin's Query phase, so that a
 // ReadRequest's Sprint queries are answered: each in the read's snapshot and
 // time, from its wire object to its JSON answer, as the store's function
-// answers them. The phase hook of errata E3 carries no twin (Phases.Query gets
-// only State), so the adapter is a method the caller calls once after
-// NewTwin; a twin without it refuses a sprint query REQUEST, as IT12 built it.
+// answers them. It installs three hooks of Phases (IT12's core has no twin to
+// hand a phase, so the adapter is a method the caller calls once after
+// NewTwin; a twin without it refuses a sprint query REQUEST, as IT12 built it):
+//
+//   - QueryCheck, the static phase: every sprint query of a read is validated
+//     before TIME and before any Layer 1 or Layer 2 query runs, as the store's
+//     S.validate runs every validate before it reads anything (errata E6), so a
+//     malformed query is REQUEST at its index whatever an earlier query would
+//     have found (MISSING, NOTABLE) by reading;
+//   - QueryStart, which begins the read's one budget with what its Layer 1
+//     and Layer 2 queries charged (L1 6, 7: records, range ids and probes are
+//     counted for the whole read, not for each query);
+//   - Query, which answers a query that passed the check, reading only.
 func (t *Twin) UseQueries() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.phases.QueryCheck = checkWire
+	t.phases.QueryStart = t.queryStart
 	t.phases.Query = t.queryPhase
 }
 
-// queryPhase is the Query phase of a twin that has UseQueries. It runs inside
-// the twin's read, which holds the lock, so it reads the twin's state and
-// never calls a method that locks.
+// checkWire is the pure validation of one sprint query as ns_sprint_read
+// receives it: its wire object decoded and checked exactly as the Lua kind's
+// validate(q, index) checks it. A kind that is no sprint kind is REQUEST.
+func checkWire(q SprintQuery) *Refusal {
+	for _, k := range CompositeKinds {
+		if k == q.Kind {
+			_, ref := DecodeSprintQ(q)
+			return ref
+		}
+	}
+	for _, k := range SprintKeyKinds {
+		if k == q.Kind {
+			_, ref := DecodeKeyQ(q)
+			return ref
+		}
+	}
+	return requestRefusal()
+}
+
+// sprintRead is the budget of one read's sprint queries: what the read's other
+// queries and its earlier sprint queries have charged, carried from query to
+// query (the store keeps one ctx.budget for a whole read).
+type sprintRead struct {
+	st *State
+	c  QueryCharge
+}
+
+// readCounters is the part of a Layer 1 or Layer 2 reply's counters that a
+// sprint query's own charges are added to.
+type readCounters struct {
+	Record  int `json:"record"`
+	RangeID int `json:"range_id"`
+	Cell    int `json:"cell"`
+}
+
+// addCounters adds the counters of one reply (the Mem's `counters`) to what the
+// read has charged so far: a reply with none (the log twin's) adds nothing.
+func (c *QueryCharge) addCounters(raw json.RawMessage) {
+	var rc readCounters
+	if len(raw) == 0 || json.Unmarshal(raw, &rc) != nil {
+		return
+	}
+	c.Records += rc.Record
+	c.RangeIDs += rc.RangeID
+	c.Probes += rc.Cell
+}
+
+// queryStart begins the sprint queries of one read over what the rest of it
+// charged. The twin calls it inside its read, which holds the lock.
+func (t *Twin) queryStart(st *State, charged QueryCharge) {
+	t.sprintRead = &sprintRead{st: st, c: charged}
+}
+
+// queryPhase is the Query phase of a twin that has UseQueries: it answers a
+// query the static phase accepted, from the state, charging the read's budget.
+// It runs inside the twin's read, which holds the lock, so it reads the twin's
+// state and never calls a method that locks.
 func (t *Twin) queryPhase(st *State, q SprintQuery) (json.RawMessage, *Refusal) {
 	e := t.newEval(st.Epoch, st.NowMS)
+	shared := t.sprintRead != nil && t.sprintRead.st == st
+	if shared {
+		e.c = t.sprintRead.c
+	}
 	res, ref := e.evalWire(q)
 	if ref == nil {
 		ref = e.fits(res)
+	}
+	if shared {
+		t.sprintRead.c = e.c
 	}
 	if ref != nil {
 		return nil, ref
@@ -1085,9 +1202,14 @@ func QueryProbes(q sprint.SprintQ) int {
 	case sprint.QueryWaiters:
 		return found + 2*ceilDiv(n, probeChunk) + n*(1+ceilDiv(q.Limit, probeChunk))
 	case sprint.QueryStreams:
-		return 1 + unitsOf(q)*(2+ceilDiv(q.Limit, probeChunk))
+		// the rows' head; the quarantine of the control cards and of the need cards
+		// (one probe a chunk of each); a stuck cell's row and range and the
+		// quarantine of its ids, for each stream
+		return 1 + 2*ceilDiv(unitsOf(q), probeChunk) + unitsOf(q)*(2+ceilDiv(q.Limit, probeChunk))
 	case sprint.QueryFleet, sprint.QueryReaders:
-		return 1 + unitsOf(q)*maxTableColumns
+		// the rows' head, the quarantine of the control cards, and a cell's count
+		// for each column of each row
+		return 1 + ceilDiv(unitsOf(q), probeChunk) + unitsOf(q)*maxTableColumns
 	case sprint.QueryNeedchain:
 		return found + 1 + ceilDiv(n, probeChunk) + q.Limit + ceilDiv(q.Limit*followMaxNeeds, probeChunk)
 	case sprint.QueryJnote:

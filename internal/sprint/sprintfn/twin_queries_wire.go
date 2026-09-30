@@ -59,8 +59,8 @@ var SprintKeyKinds = []string{KeyClock, KeyLease, KeyTick, KeyHeartbeat, KeyDrop
 const (
 	// queryMaxFields is the fields a projection may name: a record read names
 	// at most 128 (L1 6), and a read also asks the fields its follows derive from
-	// (attempt, rcards, needs, member) and `streams` the three of a control card,
-	// which leaves this many to the query.
+	// (attempt, rcards, needs, member) and `streams` the four of a control card
+	// (state, cause, other, need_card), which leaves this many to the query.
 	queryMaxFields = tset.MaxFieldsPerMember - 4
 	// queryMaxName is the bytes of an id, a row, a column or a field name (L1 6).
 	queryMaxName = tset.MaxIdentifierBytes
@@ -178,7 +178,9 @@ func validFollow(follow []string) bool {
 	return true
 }
 
-// validSource checks an id source against the source kinds a query takes.
+// validSource checks the shape of an id source against the source kinds a query
+// takes. How many ids a list names is a size, not a shape: ValidateSprintQ
+// checks it after every shape (REQUEST before LIMIT).
 func validSource(s sprint.IDSource, kinds ...string) bool {
 	ok := false
 	for _, k := range kinds {
@@ -189,7 +191,7 @@ func validSource(s sprint.IDSource, kinds ...string) bool {
 	}
 	switch s.Kind {
 	case sprint.SourceIDs:
-		return len(s.IDs) <= queryMaxRecords && distinctNames(s.IDs, validName)
+		return distinctNames(s.IDs, validName)
 	case sprint.SourceHead:
 		return validHeadKey(s.Key) && s.Limit >= 1 && s.Limit <= queryMaxHead
 	case sprint.SourceLine:
@@ -206,13 +208,10 @@ func validSource(s sprint.IDSource, kinds ...string) bool {
 // against Layer 1's read bounds, before any store is touched: a REQUEST for a
 // malformed query (E6: no implicit whole-record projection, so a nil Fields
 // is one), a LIMIT for one whose declared cost (sprint.QueryCost) cannot fit
-// a read. It is the Go of the Lua kinds' validate.
+// a read. The shape is checked whole before any size: a malformed query that
+// is also too large is REQUEST, in this function and in the Lua kinds' validate
+// alike. It is the Go of the Lua kinds' validate.
 func ValidateSprintQ(q sprint.SprintQ) *Refusal {
-	// A list longer than a read may return is past a bound, as Layer 1's own
-	// ids query refuses one (LIMIT), and not a malformed source.
-	if len(q.Source.IDs) > queryMaxRecords {
-		return limitRefusal("record")
-	}
 	if q.Fields == nil || len(q.Fields) > queryMaxFields || !distinctNames(q.Fields, validFieldName) {
 		return requestRefusal()
 	}
@@ -274,6 +273,12 @@ func ValidateSprintQ(q sprint.SprintQ) *Refusal {
 		}
 	default:
 		return requestRefusal()
+	}
+	// The sizes, after every shape. A list longer than a read may return is past
+	// a bound, as Layer 1's own ids query refuses one (LIMIT), and not a
+	// malformed source.
+	if q.Source.Kind == sprint.SourceIDs && len(q.Source.IDs) > queryMaxRecords {
+		return limitRefusal("record")
 	}
 	if c := sprint.QueryCost(q); c.Records > queryMaxRecords {
 		return limitRefusal("record")

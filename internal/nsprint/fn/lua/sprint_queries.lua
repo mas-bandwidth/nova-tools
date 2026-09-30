@@ -56,15 +56,18 @@ do
     {kind = 'mergeidle', table = 'merge', col = 'ctl', of_row = true},
   }
   -- The fields a follow derives its ids from, and the fields of a stream's
-  -- control card that `streams` tests (2.3 R5).
+  -- control card that `streams` tests (2.3 R5). The card a cross stop waits
+  -- for is where the writer records it, the control card's `other`; `need_card`
+  -- is read when `other` is empty, as IT11's held rule reads the two.
   Q.F_ATTEMPT, Q.F_RCARDS, Q.F_NEEDS, Q.F_MEMBER = 'attempt', 'rcards', 'needs', 'member'
-  Q.C_STATE, Q.C_CAUSE, Q.C_NEED, Q.STOPPED, Q.CROSS = 'state', 'cause', 'need_card', 'stopped', 'cross'
+  Q.C_STATE, Q.C_CAUSE, Q.C_OTHER, Q.C_NEED = 'state', 'cause', 'other', 'need_card'
+  Q.STOPPED, Q.CROSS = 'stopped', 'cross'
 
   -- The bounds, each the design's or Layer 1's (L1 1.4, 6, 7; 1.0).
   Q.PROBE_CHUNK = 2000          -- ids in one HMGET or ZMSCORE: argv is at most 2,002 values
   Q.MAX_FIELDS = 128            -- fields one record read names (L1 6)
   -- The fields a projection may name: a read also asks the fields its follows
-  -- derive from (attempt, rcards, needs, member), and `streams` the three of
+  -- derive from (attempt, rcards, needs, member), and `streams` the four of
   -- a control card, which together stay within what one record read names.
   Q.MAX_PROJECTION = 124
   Q.MAX_NAME = 256              -- bytes of an id, row, column or field name (L1 6)
@@ -184,27 +187,28 @@ do
     if src.limit and src.limit > 0 and src.limit < n then n = src.limit end
     return offset, n
   end
-  -- valid_source: 'ok', or the code that refuses it. kinds is the set of source
-  -- kinds the query takes.
+  -- valid_source: the shape of an id source is right (true) or it is not
+  -- (false, REQUEST). kinds is the set of source kinds the query takes. How many
+  -- ids a list names is a size and not a shape: Q.check refuses it (LIMIT) after
+  -- every shape, in the order the Go's ValidateSprintQ does.
   function Q.valid_source(src, kinds)
-    if not Q.is_object(src) or type(src.kind) ~= 'string' or not kinds[src.kind] then return 'REQUEST' end
+    if not Q.is_object(src) or type(src.kind) ~= 'string' or not kinds[src.kind] then return false end
     if src.kind == 'ids' then
-      if not Q.only(src, {kind = true, ids = true}) then return 'REQUEST' end
-      if Q.is_array(src.ids) and #src.ids > Q.MAX_RECORDS then return 'LIMIT' end
-      if not Q.distinct(src.ids, Q.valid_name, Q.MAX_RECORDS) then return 'REQUEST' end
+      if not Q.only(src, {kind = true, ids = true}) then return false end
+      if not Q.distinct(src.ids, Q.valid_name) then return false end
     elseif src.kind == 'head' then
       if not Q.only(src, {kind = true, key = true, limit = true}) or not Q.valid_head_key(src.key) or
-          not Q.is_int(src.limit, 1, Q.MAX_HEAD) then return 'REQUEST' end
+          not Q.is_int(src.limit, 1, Q.MAX_HEAD) then return false end
     elseif src.kind == 'line' then
-      if not Q.only(src, {kind = true, seq = true, about = true, offset = true, limit = true}) then return 'REQUEST' end
+      if not Q.only(src, {kind = true, seq = true, about = true, offset = true, limit = true}) then return false end
       local seq = Q.canonical_uint(src.seq, Q.MAX_SEQ)
       local most = src.about == true and Q.MAX_ABOUT or Q.MAX_LINE_IDS
       if not seq or seq < 1 or (src.about ~= nil and type(src.about) ~= 'boolean') or
-          not Q.is_int(src.offset or 0, 0, most - 1) or not Q.is_int(src.limit or 0, 0, math.huge) then return 'REQUEST' end
+          not Q.is_int(src.offset or 0, 0, most - 1) or not Q.is_int(src.limit or 0, 0, math.huge) then return false end
     else
-      return 'REQUEST'
+      return false
     end
-    return 'ok'
+    return true
   end
   -- How many ids a source names at most, and the range ids that find them.
   function Q.source_size(src)
@@ -298,13 +302,18 @@ do
       end
       return total
     elseif kind == 'streams' then
+      -- the rows' head; the quarantine of the control cards and of the need
+      -- cards (one probe a chunk of each); a stuck cell's row and range and the
+      -- quarantine of its ids, for each stream
       local units = q.units or 0
       if units == 0 then units = Q.MAX_STREAMS end
-      return 1 + units * (2 + Q.ceil_div(q.limit, chunk))
+      return 1 + 2 * Q.ceil_div(units, chunk) + units * (2 + Q.ceil_div(q.limit, chunk))
     elseif kind == 'fleet' or kind == 'readers' then
+      -- the rows' head, the quarantine of the control cards, and a cell's count
+      -- for each column of each row
       local units = q.units or 0
       if units == 0 then units = kind == 'fleet' and Q.MAX_MEMBERS or Q.MAX_READERS end
-      return 1 + units * Q.MAX_COLUMNS
+      return 1 + Q.ceil_div(units, chunk) + units * Q.MAX_COLUMNS
     end
     local n = Q.source_size(q.src)
     local found = Q.source_probes(q.src)
@@ -359,9 +368,11 @@ do
     return n, epoch
   end
 
-  -- The code that refuses a query's shape, or nil when it is well formed:
-  -- REQUEST for a malformed query, LIMIT for one whose declared cost cannot fit
-  -- a read (1.4.2: sized before it is sent, never refused BUDGET).
+  -- The code that refuses a query, or nil when it is well formed and fits: the
+  -- shape is checked whole first, REQUEST for a malformed query, and only then
+  -- the sizes, LIMIT for one whose declared cost cannot fit a read (1.4.2: sized
+  -- before it is sent, never refused BUDGET). A query that is malformed and too
+  -- large is REQUEST, as the Go's ValidateSprintQ has it.
   function Q.check(q)
     local S = Q.S()
     if not Q.is_object(q) or type(q.kind) ~= 'string' then return 'REQUEST' end
@@ -378,14 +389,10 @@ do
     }
     local shape = shapes[kind]
     if not shape or not Q.only(q, shape) then return 'REQUEST' end
-    if type(q.src) == 'table' and Q.is_object(q.src) and q.src.kind == 'ids' and Q.is_array(q.src.ids) and
-        #q.src.ids > Q.MAX_RECORDS then return 'LIMIT', 'record' end
     if not Q.distinct(q.fields, Q.valid_field, Q.MAX_PROJECTION) then return 'REQUEST' end
     local any = {ids = true, head = true, line = true}
-    local code
     if kind == 'related' then
-      if not Q.valid_name(q.t) or not Q.valid_follow(q.follow) then return 'REQUEST' end
-      code = Q.valid_source(q.src, any)
+      if not Q.valid_name(q.t) or not Q.valid_follow(q.follow) or not Q.valid_source(q.src, any) then return 'REQUEST' end
     elseif kind == 'front' then
       if not Q.valid_name(q.stream) or not Q.is_array(q.heads) or #q.heads > 4 then return 'REQUEST' end
       local seen = {}
@@ -397,8 +404,7 @@ do
         seen[h.index] = true
       end
     elseif kind == 'waiters' then
-      if not Q.is_int(q.limit, 1, Q.MAX_HEAD) then return 'REQUEST' end
-      code = Q.valid_source(q.src, any)
+      if not Q.is_int(q.limit, 1, Q.MAX_HEAD) or not Q.valid_source(q.src, any) then return 'REQUEST' end
     elseif kind == 'streams' then
       if not Q.is_int(q.limit, 0, Q.MAX_HEAD) or not Q.is_int(q.units or 0, 0, Q.MAX_STREAMS) then return 'REQUEST' end
     elseif kind == 'fleet' then
@@ -406,21 +412,22 @@ do
     elseif kind == 'readers' then
       if not Q.is_int(q.units or 0, 0, Q.MAX_READERS) then return 'REQUEST' end
     elseif kind == 'needchain' then
-      if not Q.is_int(q.limit, 1, Q.MAX_RECORDS) then return 'REQUEST' end
-      code = Q.valid_source(q.src, any)
+      if not Q.is_int(q.limit, 1, Q.MAX_RECORDS) or not Q.valid_source(q.src, any) then return 'REQUEST' end
     elseif kind == 'jnote' then
-      if not Q.is_int(q.subjects or 0, 0, Q.MAX_ABOUT) then return 'REQUEST' end
-      code = Q.valid_source(q.src, {ids = true, head = true})
-      if code == 'ok' then
-        if q.src.kind == 'head' and q.src.key ~= 'jnotes' then return 'REQUEST' end
-        if q.src.kind == 'ids' then
-          for i = 1, #q.src.ids do
-            if not Q.note_seq(q.src.ids[i]) then return 'REQUEST' end
-          end
+      if not Q.is_int(q.subjects or 0, 0, Q.MAX_ABOUT) or not Q.valid_source(q.src, {ids = true, head = true}) then
+        return 'REQUEST'
+      end
+      if q.src.kind == 'head' and q.src.key ~= 'jnotes' then return 'REQUEST' end
+      if q.src.kind == 'ids' then
+        for i = 1, #q.src.ids do
+          if not Q.note_seq(q.src.ids[i]) then return 'REQUEST' end
         end
       end
     end
-    if code and code ~= 'ok' then return code, 'record' end
+    -- The sizes, after every shape. A list longer than a read may return is past
+    -- a bound, as Layer 1's own ids query refuses one (LIMIT), and not a
+    -- malformed source.
+    if q.src and q.src.kind == 'ids' and #q.src.ids > Q.MAX_RECORDS then return 'LIMIT', 'record' end
     local records, ranged = Q.declared(q)
     if records > Q.MAX_RECORDS then return 'LIMIT', 'record' end
     if ranged > Q.MAX_RANGE_IDS then return 'LIMIT', 'range_id' end
@@ -1083,8 +1090,16 @@ do
     return res, nil
   end
 
+  -- streams reads every stream of the work table (up to the units), its control
+  -- card, and for one stopped on a cross need that need card's record and the
+  -- first `limit` ids of its stuck cell. Every card it would read leaves out the
+  -- quarantined ones (1.0, 1.3.5): a stream whose control card is quarantined is
+  -- listed with no control card, one stopped on a quarantined need card has no
+  -- need record, and the ids are named in left_out; a stream stopped on a cross
+  -- need is still told apart by its stuck list, which it has either way.
   function Q.streams(ctx, q, index)
     local S = Q.S()
+    local left = Q.new_left()
     local res = {kind = 'streams'}
     local units = q.units or 0
     if units == 0 then units = Q.MAX_STREAMS end
@@ -1099,29 +1114,46 @@ do
     if err then return nil, err end
     local ctl_ids = {}
     for i = 1, #rows.ids do ctl_ids[i] = 'ctl-' .. rows.ids[i] end
-    local ctls
-    ctls, err = Q.records(ctx, Q.MERGE, ctl_ids, Q.union(q.fields, nil, {Q.C_STATE, Q.C_CAUSE, Q.C_NEED}), index)
+    local kept_ctl
+    kept_ctl, err = Q.leave(ctx, ctl_ids, left, index)
     if err then return nil, err end
+    local ctl_recs
+    ctl_recs, err = Q.records(ctx, Q.MERGE, kept_ctl, Q.union(q.fields, nil, {Q.C_STATE, Q.C_CAUSE, Q.C_OTHER, Q.C_NEED}), index)
+    if err then return nil, err end
+    local ctls, k = {}, 1      -- ctls[i] is nil when the control card was left out
+    for i = 1, #ctl_ids do
+      if kept_ctl[k] == ctl_ids[i] then ctls[i] = ctl_recs[k]; k = k + 1 end
+    end
     local crossed, need_ids = {}, {}
-    for i = 1, #ctls do
+    for i = 1, #ctl_ids do
       local c = ctls[i]
-      if c.exists and Q.field(c, Q.C_STATE) == Q.STOPPED and Q.field(c, Q.C_CAUSE) == Q.CROSS and
-          Q.field(c, Q.C_NEED) ~= '' then
-        crossed[#crossed + 1] = i
-        need_ids[#need_ids + 1] = Q.field(c, Q.C_NEED)
+      if c and c.exists and Q.field(c, Q.C_STATE) == Q.STOPPED and Q.field(c, Q.C_CAUSE) == Q.CROSS then
+        local need = Q.cross_need(c)
+        if need ~= '' then
+          crossed[#crossed + 1] = i
+          need_ids[#need_ids + 1] = need
+        end
       end
     end
-    local needs
-    needs, err = Q.records(ctx, Q.WORK, need_ids, q.fields, index)
+    local kept_needs
+    kept_needs, err = Q.leave(ctx, need_ids, left, index)
     if err then return nil, err end
+    local need_recs
+    need_recs, err = Q.records(ctx, Q.WORK, kept_needs, q.fields, index)
+    if err then return nil, err end
+    local needs = {}           -- needs[j] is nil when the need card was left out
+    k = 1
+    for j = 1, #need_ids do
+      if kept_needs[k] == need_ids[j] then needs[j] = need_recs[k]; k = k + 1 end
+    end
     local items = {}
     for i = 1, #rows.ids do
       items[i] = {stream = rows.ids[i], control = cjson.null, need = cjson.null, stuck = cjson.null}
-      if ctls[i].exists then items[i].control = Q.project(ctls[i], q.fields) end
+      if ctls[i] and ctls[i].exists then items[i].control = Q.project(ctls[i], q.fields) end
     end
     for j = 1, #crossed do
       local i = crossed[j]
-      items[i].need = needs[j]
+      if needs[j] then items[i].need = needs[j] end
       local st = {ids = Q.array({}), has_more = false, left_out = Q.array({})}
       if q.limit > 0 then
         local row = rows.ids[i]
@@ -1141,8 +1173,17 @@ do
       ok, err = S.emit_read_item(ctx, items[i], index)
       if err then return nil, err end
     end
-    res.items = Q.array(items)
+    res.items, res.left_out = Q.array(items), Q.array(left.list)
     return res, nil
+  end
+
+  -- The card a stopped stream's control card says it waits for: `other`, which
+  -- is where the writer records the cross fact, and when that is empty
+  -- `need_card`, which IT11's held rule reads beside it.
+  function Q.cross_need(ctl)
+    local need = Q.field(ctl, Q.C_OTHER)
+    if need ~= '' then return need end
+    return Q.field(ctl, Q.C_NEED)
   end
 
   -- The first ids of a table's cell (a range head), a row the table lacks being NOROW.
@@ -1159,8 +1200,13 @@ do
     return Q.head_of(ctx, ctx.cell_key(t, ctx.request_epoch, row, col), '-inf', '+inf', limit, index)
   end
 
+  -- listing reads every member's (reader's) row: its control card and the
+  -- counts of its cells, one ZCARD a cell. A control card that is quarantined is
+  -- left out (1.0, 1.3.5): the row is listed, its counts with it, and the card is
+  -- named in left_out.
   function Q.listing(ctx, q, index)
     local S = Q.S()
+    local left = Q.new_left()
     local t = q.kind == 'fleet' and Q.FLEET or Q.READERS
     local res = {kind = q.kind}
     local units = q.units or 0
@@ -1177,13 +1223,20 @@ do
     end
     local ctl_ids = {}
     for i = 1, #rows.ids do ctl_ids[i] = 'ctl-' .. rows.ids[i] end
-    local ctls
-    ctls, err = Q.records(ctx, t, ctl_ids, q.fields, index)
+    local kept_ctl
+    kept_ctl, err = Q.leave(ctx, ctl_ids, left, index)
     if err then return nil, err end
+    local ctl_recs
+    ctl_recs, err = Q.records(ctx, t, kept_ctl, q.fields, index)
+    if err then return nil, err end
+    local ctls, k = {}, 1      -- ctls[i] is nil when the control card was left out
+    for i = 1, #ctl_ids do
+      if kept_ctl[k] == ctl_ids[i] then ctls[i] = ctl_recs[k]; k = k + 1 end
+    end
     local items = {}
     for i = 1, #rows.ids do
       local it = {row = rows.ids[i], control = cjson.null}
-      if ctls[i].exists then it.control = ctls[i] end
+      if ctls[i] and ctls[i].exists then it.control = ctls[i] end
       local counts = {}
       for _, col in ipairs(counted) do
         local key = ctx.cell_key(t, ctx.request_epoch, rows.ids[i], col)
@@ -1198,7 +1251,7 @@ do
       if err then return nil, err end
       items[i] = it
     end
-    res.items = Q.array(items)
+    res.items, res.left_out = Q.array(items), Q.array(left.list)
     return res, nil
   end
 

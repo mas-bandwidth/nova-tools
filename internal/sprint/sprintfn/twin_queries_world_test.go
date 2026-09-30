@@ -252,7 +252,16 @@ func sortPairs(flat []string) []string {
 //	stream s2 (work):  waiting  h1 (sentinel, 5), ready x1 (3, attempt 1, withdrawn work card x1.w1)
 //
 // ghost has no record: it is in {p}missing@e, and w1 and w2 are in its wait set.
+//
+// Stream s2 is stopped on a cross need, p2: its control card names it in `other`,
+// where the writer puts it (steps_merge.go), and standardWith puts it elsewhere.
 func standard(t *testing.T) *qworld {
+	t.Helper()
+	return standardWith(t, fields("state", "stopped", "cause", "cross", "other", "p2"))
+}
+
+// standardWith is the standard world with the fields of s2's control card given.
+func standardWith(t *testing.T, ctlS2 map[string]string) *qworld {
 	t.Helper()
 	w := newQWorld(t)
 	w.rows(sprint.Work, "s1", "s2")
@@ -284,7 +293,7 @@ func standard(t *testing.T) *qworld {
 		card{sprint.Fleet, "m1", "ctl", "ctl-m1", "1", fields("status", "up")},
 		card{sprint.Fleet, "m2", "ctl", "ctl-m2", "1", fields("status", "down")},
 		card{sprint.Merge, "s1", "ctl", "ctl-s1", "1", fields("state", "merging", "due_mergeidle", "7000")},
-		card{sprint.Merge, "s2", "ctl", "ctl-s2", "1", fields("state", "stopped", "cause", "cross", "need_card", "p2")},
+		card{sprint.Merge, "s2", "ctl", "ctl-s2", "1", ctlS2},
 		card{sprint.Merge, "s1", "queued", "q1", "9", fields("ci", "green")},
 		card{sprint.Merge, "s2", "stuck", "st1", "1", nil},
 		card{sprint.Merge, "s2", "stuck", "st2", "2", nil},

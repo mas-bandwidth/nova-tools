@@ -48,6 +48,11 @@ type QueryCharge struct {
 	RowIDs int
 	Probes int
 	Lines  int
+	// Work counts the steps of the twin's own logic over ids that are no store
+	// read: one for each id examined in a quarantine set or a left-out set. A
+	// store has no such charge; a test holds it to a multiple of the input, so
+	// that no step of the logic grows with the square of it.
+	Work int
 }
 
 // NeedLink is one need of a card: its record (absent when the need has none,
@@ -188,11 +193,13 @@ type StreamItem struct {
 }
 
 // StreamsResult is the answer of `streams`: the rows of the work table, up to
-// the query's units, and HasMore when there were more.
+// the query's units, and HasMore when there were more. LeftOut are the control
+// cards and need cards that were quarantined and so not read.
 type StreamsResult struct {
 	Kind    string       `json:"kind"`
 	Rows    []string     `json:"rows"`
 	HasMore bool         `json:"has_more"`
+	LeftOut []string     `json:"left_out"`
 	Items   []StreamItem `json:"items"`
 }
 
@@ -210,11 +217,13 @@ type ListingItem struct {
 	Counts  []CellN `json:"counts"`
 }
 
-// ListingResult is the answer of `fleet` and of `readers`.
+// ListingResult is the answer of `fleet` and of `readers`. LeftOut are the
+// control cards that were quarantined and so not read.
 type ListingResult struct {
 	Kind    string        `json:"kind"`
 	Rows    []string      `json:"rows"`
 	HasMore bool          `json:"has_more"`
+	LeftOut []string      `json:"left_out"`
 	Items   []ListingItem `json:"items"`
 }
 

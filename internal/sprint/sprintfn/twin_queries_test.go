@@ -624,7 +624,7 @@ func TestQueriesLeaveOutQuarantined(t *testing.T) {
 	w := standard(t)
 	w.note("blocked", "c1", "p1", "p2")
 	noteID := "n" + strconv.Itoa(len(w.log.Lines(testPrefix, "0")))
-	w.seed(w.hset("quarantine", "p2", "DRIFT", "f2", "DRIFT", "g1", "DRIFT", "w1", "DRIFT", "ctl-m2", "x", "st2", "DRIFT", "c2x", "DRIFT",
+	w.seed(w.hset("quarantine", "p2", "DRIFT", "f2", "DRIFT", "g1", "DRIFT", "w1", "DRIFT", "ctl-m2", "x", "ctl-s1", "x", "st2", "DRIFT", "c2x", "DRIFT",
 		"v1.r1.r2", "DRIFT", "k1.w1", "DRIFT", "q1", "DRIFT"))
 	left := func(l []string) []string { sort.Strings(l); return l }
 
@@ -682,10 +682,31 @@ func TestQueriesLeaveOutQuarantined(t *testing.T) {
 		}
 	})
 	t.Run("streams", func(t *testing.T) {
-		res, _ := w.query(sprint.SprintQ{Kind: sprint.QueryStreams, Fields: []string{}, Limit: 5})
-		st := res.(StreamsResult).Items[1].Stuck
+		res, c := w.query(sprint.SprintQ{Kind: sprint.QueryStreams, Fields: []string{"state"}, Limit: 5})
+		r := res.(StreamsResult)
+		st := r.Items[1].Stuck
 		if !reflect.DeepEqual(st.IDs, []string{"st1", "st3"}) || !reflect.DeepEqual(st.LeftOut, []string{"st2"}) {
 			t.Fatalf("stuck %+v", st)
+		}
+		// s1's control card is quarantined: the stream is listed, and its card is out.
+		if r.Items[0].Stream != "s1" || r.Items[0].Control != nil || r.Items[0].Need != nil || r.Items[0].Stuck != nil {
+			t.Fatalf("s1, whose control card is quarantined: %+v", r.Items[0])
+		}
+		// s2 is stopped on p2, which is quarantined: its control card is read, its need
+		// is not (and stays named), and its stuck list says it is stopped on a cross need.
+		if r.Items[1].Control == nil || r.Items[1].Need != nil || r.Items[1].Stuck == nil {
+			t.Fatalf("s2, stopped on a quarantined need: %+v", r.Items[1])
+		}
+		if got := left(r.LeftOut); !reflect.DeepEqual(got, []string{"ctl-s1", "p2"}) {
+			t.Fatalf("left out %v", got)
+		}
+		// Two control cards asked, one read; one need asked, none read.
+		if c.Records != 1 {
+			t.Fatalf("charged %+v", c)
+		}
+		a := r.Project(sprint.SprintQ{Kind: sprint.QueryStreams})
+		if len(a.Records) != 1 || a.Records[0].Card.ID != "ctl-s2" {
+			t.Fatalf("the projection holds the cards read: %+v", a.Records)
 		}
 	})
 	t.Run("needchain", func(t *testing.T) {
@@ -707,12 +728,19 @@ func TestQueriesLeaveOutQuarantined(t *testing.T) {
 			t.Fatalf("%+v", n)
 		}
 	})
-	t.Run("a listing's control cards are not cards of the work", func(t *testing.T) {
-		// ctl-m2 is in the quarantine hash and the fleet listing still reads it: a
-		// control card is read by the row it belongs to, not taken from an index.
+	t.Run("a listing leaves out a quarantined control card", func(t *testing.T) {
+		// ctl-m2 is in the quarantine hash: the member is listed, with its counts, and
+		// its control card is out and named (1.0: every query leaves the id out).
 		res, _ := w.query(sprint.SprintQ{Kind: sprint.QueryFleet, Fields: []string{"status"}})
-		if l := res.(ListingResult); l.Items[1].Control == nil {
-			t.Fatalf("%+v", l.Items[1])
+		l := res.(ListingResult)
+		if !reflect.DeepEqual(l.Rows, []string{"m1", "m2"}) || l.Items[0].Control == nil || l.Items[1].Control != nil ||
+			len(l.Items[1].Counts) == 0 || !reflect.DeepEqual(l.LeftOut, []string{"ctl-m2"}) {
+			t.Fatalf("%+v", l)
+		}
+		// The readers have no control card of their own: nothing is left out of them.
+		res, _ = w.query(sprint.SprintQ{Kind: sprint.QueryReaders, Fields: []string{}})
+		if l := res.(ListingResult); len(l.LeftOut) != 0 {
+			t.Fatalf("%+v", l)
 		}
 	})
 }
@@ -757,8 +785,9 @@ func TestListings(t *testing.T) {
 			t.Fatalf("%s: counts %v of columns %v", it.Row, got, cols)
 		}
 	}
-	// Two members, their control cards, and five cells each.
-	if c.Records != 2 || c.Probes != 1+10 || c.RowIDs != 2 {
+	// Two members, their control cards, and five cells each; the probes are the
+	// rows' head, one for the quarantine of the control cards and one a cell.
+	if c.Records != 2 || c.Probes != 1+1+10 || c.RowIDs != 2 {
 		t.Fatalf("charged %+v", c)
 	}
 	a := l.Project(sprint.SprintQ{Kind: sprint.QueryFleet})

@@ -78,6 +78,9 @@ type luaHarness struct {
 	answered, refused map[string]int
 	defs              map[string]tset.TableDefinition
 	lines             []json.RawMessage
+	// carry keeps the charge of the queries before, as one read's queries share a
+	// budget (Layer 1's ctx.budget): prepare does not start it over.
+	carry bool
 }
 
 func newLuaHarness(t *testing.T, w *qworld) *luaHarness {
@@ -251,7 +254,43 @@ func (h *luaHarness) prepare() {
 		}
 	}
 	h.lines = h.w.log.Lines(testPrefix, tset.Decimal(h.epoch))
-	h.charge = QueryCharge{}
+	if !h.carry {
+		h.charge = QueryCharge{}
+	}
+}
+
+// The bounds of one read, which the stubs enforce as Layer 1's S.charge does:
+// BUDGET naming the unit, once the read has charged more than the limit.
+const (
+	stubMaxRecords  = 10000
+	stubMaxProbes   = 20000
+	stubMaxRangeIDs = 20000
+)
+
+// over is the refusal of a read past a bound.
+func (h *luaHarness) over(L *lua.LState, unit string, actual, limit int) int {
+	return h.refusal(L, "BUDGET", map[string]any{"budget": unit, "actual": float64(actual), "limit": float64(limit)})
+}
+
+// payloadBytes is Layer 1's payload(): the bytes of a reply, the lengths of its
+// strings, the text of its numbers and the names of its string keys.
+func payloadBytes(v lua.LValue) int {
+	switch x := v.(type) {
+	case lua.LString:
+		return len(x)
+	case lua.LNumber:
+		return len(x.String())
+	case *lua.LTable:
+		n := 0
+		x.ForEach(func(k, e lua.LValue) {
+			if ks, ok := k.(lua.LString); ok {
+				n += len(ks)
+			}
+			n += payloadBytes(e)
+		})
+		return n
+	}
+	return 0
 }
 
 func (h *luaHarness) refusal(L *lua.LState, code string, detail map[string]any) int {
@@ -293,6 +332,9 @@ func (h *luaHarness) readRecord(L *lua.LState) int {
 		fields = []string{}
 	}
 	h.charge.Records++
+	if h.charge.Records > stubMaxRecords {
+		return h.over(L, "record", h.charge.Records, stubMaxRecords)
+	}
 	rep, err := h.w.m.Read(context.Background(), newTSetReadPlan(testPrefix, tset.Decimal(h.epoch), "atomic",
 		[]tset.ReadQuery{{Kind: "ids", Table: table, IDs: []string{id}, Fields: fields}}))
 	if err != nil {
@@ -349,12 +391,17 @@ func scoreText(f float64) lua.LValue { return lua.LString(formatScore(f)) }
 func (h *luaHarness) readProbe(L *lua.LState) int {
 	argv := h.strings(L.CheckTable(2))
 	key := L.CheckString(3)
+	reserve := int(L.CheckNumber(5))
 	h.charge.Probes++
+	if h.charge.Probes > stubMaxProbes {
+		return h.over(L, "cell", h.charge.Probes, stubMaxProbes)
+	}
 	if argv[1] != key {
 		h.t.Fatalf("a probe whose key is not its argv's: %v %s", argv, key)
 	}
 	z, isZ := h.zsets[key]
 	hs, isH := h.hashes[key]
+	var reply lua.LValue
 	switch argv[0] {
 	case "HMGET":
 		out := L.NewTable()
@@ -365,9 +412,9 @@ func (h *luaHarness) readProbe(L *lua.LState) int {
 				out.Append(lua.LFalse)
 			}
 		}
-		L.Push(out)
+		reply = out
 	case "HLEN":
-		L.Push(lua.LNumber(len(hs)))
+		reply = lua.LNumber(len(hs))
 	case "ZSCORE", "ZMSCORE":
 		get := func(m string) lua.LValue {
 			if s, ok := z[m]; isZ && ok {
@@ -376,16 +423,16 @@ func (h *luaHarness) readProbe(L *lua.LState) int {
 			return lua.LFalse
 		}
 		if argv[0] == "ZSCORE" {
-			L.Push(get(argv[2]))
+			reply = get(argv[2])
 		} else {
 			out := L.NewTable()
 			for _, m := range argv[2:] {
 				out.Append(get(m))
 			}
-			L.Push(out)
+			reply = out
 		}
 	case "ZCARD":
-		L.Push(lua.LNumber(len(z)))
+		reply = lua.LNumber(len(z))
 	case "ZCOUNT":
 		n := 0
 		for _, s := range z {
@@ -393,10 +440,16 @@ func (h *luaHarness) readProbe(L *lua.LState) int {
 				n++
 			}
 		}
-		L.Push(lua.LNumber(n))
+		reply = lua.LNumber(n)
 	default:
 		h.t.Fatalf("a probe the helper does not admit: %v", argv)
 	}
+	// Layer 1's readcmd refuses DRIFT (read_reservation) a reply larger than the
+	// reserve the probe asked for.
+	if bytes := payloadBytes(reply); bytes > reserve {
+		return h.refusal(L, "DRIFT", map[string]any{"budget": "read_reservation", "actual": float64(bytes), "limit": float64(reserve)})
+	}
+	L.Push(reply)
 	L.Push(lua.LNil)
 	return 2
 }
@@ -407,6 +460,9 @@ func (h *luaHarness) readRangeHead(L *lua.LState) int {
 	limit := int(L.CheckNumber(4))
 	min, max := bounds.RawGetString("min").String(), bounds.RawGetString("max").String()
 	h.charge.Probes++
+	if h.charge.Probes > stubMaxProbes {
+		return h.over(L, "cell", h.charge.Probes, stubMaxProbes)
+	}
 	z := h.zsets[key]
 	type pair struct {
 		m string
@@ -434,6 +490,9 @@ func (h *luaHarness) readRangeHead(L *lua.LState) int {
 		scores.Append(lua.LString(formatScore(p.s)))
 	}
 	h.charge.RangeIDs += len(ps)
+	if h.charge.RangeIDs > stubMaxRangeIDs {
+		return h.over(L, "range_id", h.charge.RangeIDs, stubMaxRangeIDs)
+	}
 	out := L.NewTable()
 	out.RawSetString("ids", ids)
 	out.RawSetString("scores", scores)
@@ -487,10 +546,11 @@ func (h *luaHarness) spec(kind string) *lua.LTable {
 
 // refusalOf is a Lua refusal as (code, table, ids).
 type refusalView struct {
-	Code  string
-	Table string
-	IDs   []string
-	Cells []string
+	Code   string
+	Table  string
+	IDs    []string
+	Cells  []string
+	Budget string
 }
 
 func (h *luaHarness) view(v lua.LValue) *refusalView {
@@ -506,6 +566,9 @@ func (h *luaHarness) view(v lua.LValue) *refusalView {
 		}
 		out.IDs = h.strings(d.RawGetString("ids"))
 		out.Cells = h.strings(d.RawGetString("cells"))
+		if bv := d.RawGetString("budget"); bv != lua.LNil {
+			out.Budget = bv.String()
+		}
 	}
 	return out
 }
@@ -514,13 +577,19 @@ func goView(ref *Refusal) *refusalView {
 	if ref == nil {
 		return nil
 	}
-	return &refusalView{Code: ref.Code, Table: ref.Detail.Table, IDs: nonNilStrings(ref.Detail.IDs), Cells: nonNilStrings(ref.Detail.Cells)}
+	return &refusalView{Code: ref.Code, Table: ref.Detail.Table, IDs: nonNilStrings(ref.Detail.IDs), Cells: nonNilStrings(ref.Detail.Cells),
+		Budget: ref.Detail.Budget}
 }
 
 // validate is the Lua's validate of a query's wire object.
 func (h *luaHarness) validate(q SprintQuery) *refusalView {
 	h.t.Helper()
 	h.L.SetTop(0)
+	// A kind the registry does not hold is not a sprint query: Layer 1's validate
+	// reads it as one of its own, and refuses it REQUEST.
+	if sp := h.L.GetGlobal("NS").(*lua.LTable).RawGetString("SP").(*lua.LTable).RawGetString("queries").(*lua.LTable); sp.RawGetString(q.Kind) == lua.LNil {
+		return &refusalView{Code: CodeRequest, IDs: []string{}, Cells: []string{}}
+	}
 	obj := h.call(h.L.GetGlobal("json_decode"), lua.LString(string(q.Query)))
 	if err := h.L.CallByParam(lua.P{Fn: h.spec(q.Kind).RawGetString("validate"), NRet: 2, Protect: true}, obj, lua.LNumber(0)); err != nil {
 		h.t.Fatalf("validate %s: %v", q.Kind, err)
@@ -538,6 +607,40 @@ func (h *luaHarness) read(q SprintQuery) (json.RawMessage, *refusalView) {
 		return nil, ref
 	}
 	h.prepare()
+	return h.run(q)
+}
+
+// readSeq runs the queries of one read as ns_sprint_read does: every validate
+// first, in order, before any store is read (Layer 1's S.validate), and then
+// every read in order against one budget, the charge of each carried to the
+// next. seed is what the read's other queries charged already. It returns the
+// answers of the queries before the refusal, the refusal, and its index (-1
+// when none).
+func (h *luaHarness) readSeq(qs []SprintQuery, seed QueryCharge) ([]json.RawMessage, *refusalView, int) {
+	h.t.Helper()
+	for i, q := range qs {
+		if ref := h.validate(q); ref != nil {
+			return nil, ref, i
+		}
+	}
+	h.carry = true
+	defer func() { h.carry = false }()
+	h.prepare()
+	h.charge = seed
+	var answers []json.RawMessage
+	for i, q := range qs {
+		got, ref := h.run(q)
+		if ref != nil {
+			return answers, ref, i
+		}
+		answers = append(answers, got)
+	}
+	return answers, nil, -1
+}
+
+// run is the Lua's read of one query, over the state prepare read, charging h.charge.
+func (h *luaHarness) run(q SprintQuery) (json.RawMessage, *refusalView) {
+	h.t.Helper()
 	obj := h.call(h.L.GetGlobal("json_decode"), lua.LString(string(q.Query)))
 	ctx := h.call(h.L.GetGlobal("new_ctx"), lua.LString(testPrefix), lua.LString(h.epoch), lua.LString(strconv.FormatInt(testTime.UnixMilli(), 10)))
 	if err := h.L.CallByParam(lua.P{Fn: h.spec(q.Kind).RawGetString("read"), NRet: 2, Protect: true}, ctx, obj, lua.LNumber(0)); err != nil {
@@ -632,8 +735,10 @@ func mustEncodeKey(t *testing.T, q KeyQ) SprintQuery {
 	return enc
 }
 
-// lua worlds: the standard one, one with its notes opened, and one with marks
-// in the quarantine and a corrupt index.
+// lua worlds: the standard one, one with its notes opened, one with marks in
+// the quarantine (control cards and a need card among them) and a corrupt
+// index, and two that put s2's cross need where the writer does not: in
+// need_card alone, and in both fields with different cards.
 func luaWorlds(t *testing.T) map[string]*qworld {
 	t.Helper()
 	plain := standard(t)
@@ -643,10 +748,13 @@ func luaWorlds(t *testing.T) map[string]*qworld {
 	quarantine := standard(t)
 	quarantine.note("blocked", "c1", "p1", "p2")
 	quarantine.seed(quarantine.hset("quarantine", "p2", "DRIFT", "f2", "DRIFT", "g1", "DRIFT", "w1", "DRIFT", "st2", "DRIFT",
-		"v1.r1.r2", "DRIFT", "k1.w1", "DRIFT", "q1", "DRIFT", "d1", "DRIFT"))
+		"v1.r1.r2", "DRIFT", "k1.w1", "DRIFT", "q1", "DRIFT", "d1", "DRIFT", "ctl-s1", "x", "ctl-m2", "x"))
 	corrupt := standard(t)
 	corrupt.seed(corrupt.zadd("elig:s9", "1", "phantom"), corrupt.zadd("sent:s7", "1", "nobody"))
-	return map[string]*qworld{"plain": plain, "notes": notes, "quarantine": quarantine, "corrupt": corrupt}
+	needCard := standardWith(t, fields("state", "stopped", "cause", "cross", "need_card", "p2"))
+	both := standardWith(t, fields("state", "stopped", "cause", "cross", "other", "p2", "need_card", "p3"))
+	return map[string]*qworld{"plain": plain, "notes": notes, "quarantine": quarantine, "corrupt": corrupt,
+		"need_card": needCard, "both": both}
 }
 
 func lastNote(w *qworld) string { return "n" + strconv.Itoa(len(w.log.Lines(testPrefix, "0"))) }

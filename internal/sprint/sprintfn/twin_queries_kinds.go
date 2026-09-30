@@ -42,6 +42,7 @@ func (e *qeval) evalComposite(q sprint.SprintQ) (QueryResult, *Refusal) {
 // related reads each id's record and what the follows reach from it.
 func (e *qeval) related(q sprint.SprintQ) (RelatedResult, *Refusal) {
 	res := RelatedResult{Kind: q.Kind, IDs: []string{}, LeftOut: []string{}, Items: []RelatedItem{}}
+	var left leftOut
 	if ref := e.ensureTable(q.Table); ref != nil {
 		return res, ref
 	}
@@ -49,7 +50,7 @@ func (e *qeval) related(q sprint.SprintQ) (RelatedResult, *Refusal) {
 	if ref != nil {
 		return res, ref
 	}
-	kept, ref := e.leave(ids, &res.LeftOut)
+	kept, ref := e.leave(ids, &left)
 	if ref != nil {
 		return res, ref
 	}
@@ -69,7 +70,7 @@ func (e *qeval) related(q sprint.SprintQ) (RelatedResult, *Refusal) {
 			existing, at = append(existing, r), append(at, i)
 		}
 	}
-	fs, ref := e.follows(q.Table, existing, q.Follow, q.Fields, &res.LeftOut)
+	fs, ref := e.follows(q.Table, existing, q.Follow, q.Fields, &left)
 	if ref != nil {
 		return res, ref
 	}
@@ -77,7 +78,7 @@ func (e *qeval) related(q sprint.SprintQ) (RelatedResult, *Refusal) {
 	for j, i := range at {
 		byRec[i] = fs[j]
 	}
-	res.IDs = kept
+	res.IDs, res.LeftOut = kept, left.ids()
 	for i, r := range recs {
 		it := RelatedItem{ID: r.ID, Record: project(r, q.Fields)}
 		if len(q.Follow) > 0 {
@@ -111,6 +112,7 @@ var openCells = []string{sprint.Waiting, sprint.Ready, sprint.Working, sprint.Re
 // before it, and the heads of its indexes around it, from the one snapshot.
 func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 	res := FrontResult{Kind: q.Kind, Stream: q.Stream, Heads: []HeadResult{}, LeftOut: []string{}}
+	var left leftOut
 	if ref := e.ensureTable(sprint.Work); ref != nil {
 		return res, ref
 	}
@@ -171,7 +173,7 @@ func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 			if ref != nil {
 				return res, ref
 			}
-			kept, ref := e.leave(ids, &res.LeftOut)
+			kept, ref := e.leave(ids, &left)
 			if ref != nil {
 				return res, ref
 			}
@@ -191,7 +193,7 @@ func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 			if ref := e.present(sprint.Work, recs); ref != nil {
 				return res, ref
 			}
-			fs, ref := e.follows(sprint.Work, recs, h.Follow, q.Fields, &res.LeftOut)
+			fs, ref := e.follows(sprint.Work, recs, h.Follow, q.Fields, &left)
 			if ref != nil {
 				return res, ref
 			}
@@ -206,6 +208,7 @@ func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 		}
 		res.Heads = append(res.Heads, hr)
 	}
+	res.LeftOut = left.ids()
 	return res, nil
 }
 
@@ -233,6 +236,7 @@ func (e *qeval) openBefore(stream, sigma string) (int, *Refusal) {
 // absent when it has none), its score in {p}missing@e, and the head of wait:n.
 func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 	res := WaitersResult{Kind: q.Kind, IDs: []string{}, LeftOut: []string{}, Items: []WaiterItem{}}
+	var left leftOut
 	if ref := e.ensureTable(sprint.Work); ref != nil {
 		return res, ref
 	}
@@ -240,11 +244,11 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 	if ref != nil {
 		return res, ref
 	}
-	kept, ref := e.leave(ids, &res.LeftOut)
+	kept, ref := e.leave(ids, &left)
 	if ref != nil {
 		return res, ref
 	}
-	res.IDs = kept
+	res.IDs, res.LeftOut = kept, left.ids()
 	recs, ref := e.records(sprint.Work, kept, q.Fields)
 	if ref != nil {
 		return res, ref
@@ -264,10 +268,12 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 		if ref != nil {
 			return res, ref
 		}
-		wk, ref := e.leave(ws, &it.Wait.LeftOut)
+		var wleft leftOut
+		wk, ref := e.leave(ws, &wleft)
 		if ref != nil {
 			return res, ref
 		}
+		it.Wait.LeftOut = wleft.ids()
 		wrecs, ref := e.records(sprint.Work, wk, q.Fields)
 		if ref != nil {
 			return res, ref
@@ -286,9 +292,15 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 
 // streams reads every stream of the work table (up to the units), its control
 // card, and for one stopped on a cross need that need card's record and the
-// first `limit` ids of its stuck cell.
+// first `limit` ids of its stuck cell. Every card it would read leaves out the
+// quarantined ones, as every sprint query does (1.0, 1.3.5): a stream whose
+// control card is quarantined is listed with no control card, and a stream
+// stopped on a need card that is quarantined has no need record; the ids are
+// named in left_out, and the stream is still told apart as stopped on a cross
+// need by its stuck list, which it has either way.
 func (e *qeval) streams(q sprint.SprintQ) (StreamsResult, *Refusal) {
-	res := StreamsResult{Kind: q.Kind, Rows: []string{}, Items: []StreamItem{}}
+	res := StreamsResult{Kind: q.Kind, Rows: []string{}, LeftOut: []string{}, Items: []StreamItem{}}
+	var left leftOut
 	rows, more, ref := e.rowsOf(sprint.Work, unitsOf(q))
 	if ref != nil {
 		return res, ref
@@ -298,9 +310,20 @@ func (e *qeval) streams(q sprint.SprintQ) (StreamsResult, *Refusal) {
 	for i, s := range rows {
 		ctlIDs[i] = sprint.CtlID(s)
 	}
-	ctls, ref := e.records(sprint.Merge, ctlIDs, fieldUnion(q.Fields, nil, ctlFieldState, ctlFieldCause, ctlFieldNeedCard))
+	keptCtl, ref := e.leave(ctlIDs, &left)
 	if ref != nil {
 		return res, ref
+	}
+	ctlRecs, ref := e.records(sprint.Merge, keptCtl, fieldUnion(q.Fields, nil, ctlFieldState, ctlFieldCause, ctlFieldOther, ctlFieldNeedCard))
+	if ref != nil {
+		return res, ref
+	}
+	ctls := make([]*Record, len(rows)) // nil: the control card was left out
+	for i, k := 0, 0; i < len(rows) && k < len(keptCtl); i++ {
+		if keptCtl[k] == ctlIDs[i] {
+			ctls[i] = &ctlRecs[k]
+			k++
+		}
 	}
 	type cross struct {
 		i    int
@@ -308,46 +331,71 @@ func (e *qeval) streams(q sprint.SprintQ) (StreamsResult, *Refusal) {
 	}
 	var crossed []cross
 	for i, c := range ctls {
-		if c.Exists && fieldOf(c, ctlFieldState) == sprint.StreamStopped && fieldOf(c, ctlFieldCause) == causeCross &&
-			fieldOf(c, ctlFieldNeedCard) != "" {
-			crossed = append(crossed, cross{i, fieldOf(c, ctlFieldNeedCard)})
+		if c == nil || !c.Exists || fieldOf(*c, ctlFieldState) != sprint.StreamStopped || fieldOf(*c, ctlFieldCause) != causeCross {
+			continue
+		}
+		if need := crossNeed(*c); need != "" {
+			crossed = append(crossed, cross{i, need})
 		}
 	}
 	needIDs := make([]string, len(crossed))
 	for j, c := range crossed {
 		needIDs[j] = c.need
 	}
-	needs, ref := e.records(sprint.Work, needIDs, q.Fields)
+	keptNeeds, ref := e.leave(needIDs, &left)
 	if ref != nil {
 		return res, ref
+	}
+	needRecs, ref := e.records(sprint.Work, keptNeeds, q.Fields)
+	if ref != nil {
+		return res, ref
+	}
+	needs := make([]*Record, len(crossed)) // nil: the need card was left out
+	for j, k := 0, 0; j < len(crossed) && k < len(keptNeeds); j++ {
+		if keptNeeds[k] == needIDs[j] {
+			needs[j] = &needRecs[k]
+			k++
+		}
 	}
 	items := make([]StreamItem, len(rows))
 	for i, s := range rows {
 		items[i].Stream = s
-		if ctls[i].Exists {
-			c := project(ctls[i], q.Fields)
+		if ctls[i] != nil && ctls[i].Exists {
+			c := project(*ctls[i], q.Fields)
 			items[i].Control = &c
 		}
 	}
 	for j, c := range crossed {
-		n := needs[j]
-		items[c.i].Need = &n
+		if needs[j] != nil {
+			items[c.i].Need = needs[j]
+		}
 		st := &StuckIDs{IDs: []string{}, LeftOut: []string{}}
 		if q.Limit > 0 {
 			ids, _, more, ref := e.cellIDs(sprint.Merge, rows[c.i], sprint.Stuck, q.Limit)
 			if ref != nil {
 				return res, ref
 			}
-			kept, ref := e.leave(ids, &st.LeftOut)
+			var sleft leftOut
+			kept, ref := e.leave(ids, &sleft)
 			if ref != nil {
 				return res, ref
 			}
-			st.IDs, st.HasMore = kept, more
+			st.IDs, st.HasMore, st.LeftOut = kept, more, sleft.ids()
 		}
 		items[c.i].Stuck = st
 	}
-	res.Items = items
+	res.Items, res.LeftOut = items, left.ids()
 	return res, nil
+}
+
+// crossNeed is the card a stopped stream's control card says it waits for: the
+// `other` field, which is where the writer records the cross fact, and when
+// that is empty `need_card`, which IT11's held rule reads beside it.
+func crossNeed(ctl Record) string {
+	if need := fieldOf(ctl, ctlFieldOther); need != "" {
+		return need
+	}
+	return fieldOf(ctl, ctlFieldNeedCard)
 }
 
 // unitsOf is how many streams, members or readers a listing is over: the
@@ -368,13 +416,16 @@ func unitsOf(q sprint.SprintQ) int {
 
 // listing reads every member's (reader's) row: its control card and the
 // counts of its cells, one ZCARD a cell. The cells are every column of the
-// table but the control's.
+// table but the control's. A control card that is quarantined is left out, as
+// every sprint query leaves the id out (1.0, 1.3.5): the row is listed, its
+// counts with it, and the card is named in left_out.
 func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 	table := sprint.Fleet
 	if q.Kind == sprint.QueryReaders {
 		table = sprint.Readers
 	}
-	res := ListingResult{Kind: q.Kind, Rows: []string{}, Items: []ListingItem{}}
+	res := ListingResult{Kind: q.Kind, Rows: []string{}, LeftOut: []string{}, Items: []ListingItem{}}
+	var left leftOut
 	rows, more, ref := e.rowsOf(table, unitsOf(q))
 	if ref != nil {
 		return res, ref
@@ -398,9 +449,20 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 			cells = append(cells, r+":"+c)
 		}
 	}
-	ctls, ref := e.records(table, ctlIDs, q.Fields)
+	keptCtl, ref := e.leave(ctlIDs, &left)
 	if ref != nil {
 		return res, ref
+	}
+	ctlRecs, ref := e.records(table, keptCtl, q.Fields)
+	if ref != nil {
+		return res, ref
+	}
+	ctls := make([]*Record, len(rows)) // nil: the control card was left out
+	for i, k := 0, 0; i < len(rows) && k < len(keptCtl); i++ {
+		if keptCtl[k] == ctlIDs[i] {
+			ctls[i] = &ctlRecs[k]
+			k++
+		}
 	}
 	var counts []int
 	if len(cells) > 0 {
@@ -410,8 +472,8 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 	}
 	for i, r := range rows {
 		it := ListingItem{Row: r, Counts: make([]CellN, 0, len(counted))}
-		if ctls[i].Exists {
-			c := ctls[i]
+		if ctls[i] != nil && ctls[i].Exists {
+			c := *ctls[i]
 			it.Control = &c
 		}
 		for j, col := range counted {
@@ -419,6 +481,7 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 		}
 		res.Items = append(res.Items, it)
 	}
+	res.LeftOut = left.ids()
 	return res, nil
 }
 
@@ -429,6 +492,7 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 // to read when the limit was reached. Quarantined ids are left out.
 func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 	res := NeedchainResult{Kind: q.Kind, Items: []ChainItem{}, LeftOut: []string{}}
+	var left leftOut
 	if ref := e.ensureTable(sprint.Work); ref != nil {
 		return res, ref
 	}
@@ -436,7 +500,7 @@ func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 	if ref != nil {
 		return res, ref
 	}
-	frontier, ref := e.leave(ids, &res.LeftOut)
+	frontier, ref := e.leave(ids, &left)
 	if ref != nil {
 		return res, ref
 	}
@@ -482,13 +546,13 @@ func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 			}
 			res.Items = append(res.Items, it)
 		}
-		next, ref = e.leave(next, &res.LeftOut)
+		next, ref = e.leave(next, &left)
 		if ref != nil {
 			return res, ref
 		}
 		frontier = append(append([]string{}, rest...), next...)
 	}
-	res.Cut = len(frontier) > 0
+	res.Cut, res.LeftOut = len(frontier) > 0, left.ids()
 	return res, nil
 }
 
@@ -551,12 +615,12 @@ func (e *qeval) jnote(q sprint.SprintQ) (JnoteResult, *Refusal) {
 			return res, e.over("subjects", len(line.About), most)
 		}
 		it := NoteItem{Note: id, Seq: strconv.FormatUint(seq, 10), Type: typ, Cause: cause, Subjects: []SubjectOpen{}}
-		var left []string
+		var left leftOut
 		kept, ref := e.leave(line.About, &left)
 		if ref != nil {
 			return res, ref
 		}
-		it.LeftOut = len(left)
+		it.LeftOut = len(left.list)
 		field := typ + "|" + cause
 		for _, s := range kept {
 			key := e.key("jopen:" + s)
@@ -564,7 +628,7 @@ func (e *qeval) jnote(q sprint.SprintQ) (JnoteResult, *Refusal) {
 			if ref != nil {
 				return res, ref
 			}
-			own, ref := e.hmget(key, []string{field})
+			own, ref := e.hmget(key, []string{field}, hashFieldBytes)
 			if ref != nil {
 				return res, ref
 			}

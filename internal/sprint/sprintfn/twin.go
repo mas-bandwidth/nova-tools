@@ -60,6 +60,16 @@ type Phases struct {
 	JDecide func(st *State, in []NoteReq, obs *Before) ([]tset.Note, JPlan, *Refusal)
 	XCmds   func(st *State, tp TablePlan, lp LogPlan) []Cmd
 	JCmds   func(st *State, jp JPlan, lp LogPlan) []Cmd
+	// QueryCheck is the static phase of one sprint query (IT30; errata E6's
+	// validate): pure, run for every sprint query of a read before TIME and before
+	// any Layer 1 or Layer 2 query, as the store's S.validate runs every validate
+	// before it reads anything. A refusal is the read's, at the query's index.
+	// Nil: no static check of sprint queries.
+	QueryCheck func(q SprintQuery) *Refusal
+	// QueryStart begins the sprint queries of one read over what its Layer 1
+	// and Layer 2 queries charged (one budget a read, L1 6, 7). Nil: each
+	// sprint query is charged alone.
+	QueryStart func(st *State, charged QueryCharge)
 	// Query answers one sprint query in the read's snapshot (IT30). Nil: a
 	// sprint query is a kind the twin does not know, REQUEST.
 	Query func(st *State, q SprintQuery) (json.RawMessage, *Refusal)
@@ -120,6 +130,8 @@ type Twin struct {
 	// having no log, and a replay or a done slot must say the seqs the step
 	// wrote (L1 1.4).
 	seqs map[string][2]tset.Decimal
+	// sprintRead is the budget of the read in flight, set by QueryStart.
+	sprintRead *sprintRead
 }
 
 // NewTwin composes a twin over a Mem whose four tables are defined, a log
@@ -595,6 +607,14 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 	if t.broken != nil {
 		return Result{Err: t.broken}
 	}
+	// The static phase, before TIME and before any query is read (IT30).
+	if t.phases.QueryCheck != nil {
+		for i, q := range rr.Sprint {
+			if ref := t.phases.QueryCheck(q); ref != nil {
+				return Result{Refusal: atQuery(ref, len(rr.Tset)+i)}
+			}
+		}
+	}
 	_, nowMS := t.begin()
 	if compareDecimal(rr.Epoch, t.active) > 0 {
 		return Result{Refusal: refuse(PhaseOpen, CodeEpochAhead, RefusalDetail{RefusalDetail: tset.RefusalDetail{ActiveEpoch: t.active}})}
@@ -609,6 +629,7 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 	// finds before it answers any.
 	var l1 []int
 	var refused *Refusal
+	var charged QueryCharge // what the read's Layer 1 and Layer 2 queries charged, for the sprint queries' budget
 	refusedAt := -1
 	refuseAt := func(ref *Refusal, i int) {
 		if refusedAt < 0 || i < refusedAt {
@@ -631,6 +652,7 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 				continue
 			}
 			out.Tset[i] = rep.Answers[0]
+			charged.addCounters(rep.Counters)
 		default:
 			l1 = append(l1, i)
 		}
@@ -655,12 +677,16 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 			for j, i := range l1 {
 				out.Tset[i] = t.withDoneSeqs(rr.Tset[i], rep.Answers[j])
 			}
+			charged.addCounters(rep.Counters)
 		}
 	}
 	if refused != nil {
 		return Result{Refusal: refused}
 	}
 	st := &State{Prefix: t.prefix, Epoch: rr.Epoch, NowMS: nowMS, Names: t.names, Keys: &Keys{ks: t.keys}}
+	if len(rr.Sprint) != 0 && t.phases.QueryStart != nil {
+		t.phases.QueryStart(st, charged)
+	}
 	for i, q := range rr.Sprint {
 		if t.phases.Query == nil {
 			return Result{Refusal: atQuery(refuse(PhaseOpen, CodeRequest, RefusalDetail{}), len(rr.Tset)+i)}

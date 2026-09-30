@@ -16,9 +16,10 @@ import (
 // its fields, which the loop knows.
 
 // fieldsOf reads named fields of a hash key in one HMGET: each one's value, nil
-// for a field the hash does not hold.
-func (e *qeval) fieldsOf(key string, names []string) (map[string]*string, *Refusal) {
-	vals, ref := e.hmget(key, names)
+// for a field the hash does not hold. per is the bytes the probe reserves for
+// each value.
+func (e *qeval) fieldsOf(key string, names []string, per int) (map[string]*string, *Refusal) {
+	vals, ref := e.hmget(key, names, per)
 	if ref != nil {
 		return nil, ref
 	}
@@ -33,7 +34,7 @@ func (e *qeval) fieldsOf(key string, names []string) (map[string]*string, *Refus
 // == "" ? 0 : t - stopped_since_ms) at the call's time (1.2). A field that is
 // not a whole number of milliseconds, or an R below zero, is DRIFT.
 func (e *qeval) clockAt() (ClockFields, tset.Decimal, *Refusal) {
-	f, ref := e.fieldsOf(e.bare("clock"), ClockFieldNames)
+	f, ref := e.fieldsOf(e.bare("clock"), ClockFieldNames, hashFieldBytes)
 	if ref != nil {
 		return ClockFields{}, "", ref
 	}
@@ -78,20 +79,20 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 		}
 		return ClockResult{Kind: q.Kind, WallMS: string(e.nowMS), R: string(r), Clock: f}, nil
 	case KeyLease:
-		f, ref := e.fieldsOf(e.bare("lease"), LeaseFieldNames)
+		f, ref := e.fieldsOf(e.bare("lease"), LeaseFieldNames, hashFieldBytes)
 		if ref != nil {
 			return nil, ref
 		}
 		return LeaseResult{Kind: q.Kind, NowMS: string(e.nowMS), Owner: f["owner"], Name: f["name"],
 			UntilMS: f["until_ms"], Gen: f["gen"]}, nil
 	case KeyTick:
-		f, ref := e.fieldsOf(e.key("tick"), TickFieldNames)
+		f, ref := e.fieldsOf(e.key("tick"), TickFieldNames, hashFieldBytes)
 		if ref != nil {
 			return nil, ref
 		}
 		return TickResult{Kind: q.Kind, Cur: f["cur"], BehindN: f["behind_n"]}, nil
 	case KeyHeartbeat:
-		f, ref := e.fieldsOf(e.bare("heartbeat"), HeartbeatFields)
+		f, ref := e.fieldsOf(e.bare("heartbeat"), HeartbeatFields, heartbeatFieldBytes)
 		if ref != nil {
 			return nil, ref
 		}
@@ -110,7 +111,7 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 		}
 		out := DroppingResult{Kind: q.Kind, Count: n, Marks: map[string]string{}}
 		if len(q.Streams) > 0 {
-			f, ref := e.fieldsOf(key, q.Streams)
+			f, ref := e.fieldsOf(key, q.Streams, hashFieldBytes)
 			if ref != nil {
 				return nil, ref
 			}
@@ -129,7 +130,7 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 		}
 		out := ParkedResult{Kind: q.Kind, Count: n, Notes: map[string]string{}}
 		if len(q.Keys) > 0 {
-			f, ref := e.fieldsOf(key, q.Keys)
+			f, ref := e.fieldsOf(key, q.Keys, hashFieldBytes)
 			if ref != nil {
 				return nil, ref
 			}
@@ -160,7 +161,7 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 			}
 			it := JOpenItem{ID: s, Count: n, Fields: map[string]*string{}}
 			if len(q.Names) > 0 {
-				f, ref := e.fieldsOf(key, q.Names)
+				f, ref := e.fieldsOf(key, q.Names, hashFieldBytes)
 				if ref != nil {
 					return nil, ref
 				}
