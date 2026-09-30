@@ -393,3 +393,48 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 		assert.Contains(t, out, "?", "fold %s: a cell that is no number leaves the fold known:\n%s", tc.fold, out)
 	}
 }
+
+// A union footer is the members of every row together, "-" for none, and "?"
+// when a row's set did not come back.
+func TestRenderUnionFooterIsUnknownWhenARowIsUnread(t *testing.T) {
+	t.Parallel()
+
+	tb := ntable.Table{Name: "t", Columns: []ntable.Column{{Name: "who", Projection: ntable.Members, Fold: ntable.Union}}}
+	a, b := ntable.NewRow(tb, "a"), ntable.NewRow(tb, "b")
+	a.Cells[0].Members = []ntable.Member{{Member: "ann"}}
+	for _, c := range []struct {
+		name string
+		rows func() []ntable.Row
+		want string
+	}{
+		{"both rows read", func() []ntable.Row { return []ntable.Row{a, b} }, "  | ann\n"},
+		{"no member", func() []ntable.Row { return []ntable.Row{b} }, "  | -\n"},
+		{"a row unread", func() []ntable.Row {
+			u := b
+			u.Cells = []ntable.Cell{{Unread: true}}
+			return []ntable.Row{a, u}
+		}, "  | ?\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tb.Rows = c.rows()
+			if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.HasSuffix(got, c.want) {
+				t.Errorf("%s: footer of\n%s\nwant it to end %q", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// A column declaration with an empty projection takes the default one, the
+// count.
+func TestParseColumnEmptyProjectionIsTheCount(t *testing.T) {
+	t.Parallel()
+
+	for _, spec := range []string{"n", "n:", "n::sum", "n::sum:Label"} {
+		t.Run(spec, func(t *testing.T) {
+			c, err := ntable.ParseColumn(spec)
+			if err != nil || c.Projection != ntable.Count || c.Fold != ntable.Sum {
+				t.Errorf("ParseColumn(%q) = %+v, %v; want the count folded by sum", spec, c, err)
+			}
+		})
+	}
+}

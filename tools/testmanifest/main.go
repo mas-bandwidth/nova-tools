@@ -49,7 +49,9 @@ func main() {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	// ignored: the child's own output passed through; the child's exit is the report
 	_, _ = os.Stdout.Write(stdout.Bytes())
+	// ignored: the child's own output passed through; the child's exit is the report
 	_, _ = os.Stderr.Write(stderr.Bytes())
 	statusOK := err == nil
 	if err := check(bytes.NewReader(stdout.Bytes()), tests, statusOK); err != nil {

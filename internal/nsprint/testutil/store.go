@@ -30,6 +30,7 @@ func StartStore(t *testing.T) *Store {
 	t.Helper()
 	addr := Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
+	// ignored: a test fixture's cleanup; the test's own assertions are the report
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	if err := fn.Load(ctx, c); err != nil {

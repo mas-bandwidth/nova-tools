@@ -82,7 +82,7 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 	require.Contains(t, out, "persisted=true published=false", "receipt printed %q", out)
 	out = c.ok("index")
 	require.Contains(t, out, "INDEX ENTRY session=s1 entry=e1", "index printed %q", out)
-	require.Contains(t, out, "INDEX COVERAGE sessions=1 entries=1", "coverage printed %q", out)
+	require.Contains(t, out, "INDEX OK sessions=1 entries=1", "coverage printed %q", out)
 	require.Equal(t, prose, testkit.ReadJSON[entry](t, c.path("entries", "s1", "e1.json")).Text, "the stored entry is not the exact prose")
 }
 
@@ -155,7 +155,7 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	lines[0] = "# Our team files records under its own headings"
 	testkit.WriteFile(t, sessFile, strings.Join(lines, "\n"))
 	out := c.ok("index")
-	require.Contains(t, out, "INDEX COVERAGE sessions=2 entries=2", "index printed %q", out)
+	require.Contains(t, out, "INDEX OK sessions=2 entries=2", "index printed %q", out)
 	out = c.ok("index", "--session", "alpha")
 	require.Contains(t, out, "INDEX ENTRY session=alpha entry=e", "per-session index printed %q", out)
 }
@@ -297,5 +297,54 @@ func TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing(t *testing.T) {
 			out := c.ok("append", "--session", "s2", "--entry", "e2", "--text", "words of another session", "--publish", "manual")
 			require.Contains(t, out, " source=session:y ", "s2 append printed %q, want its own session's source", out)
 		})
+	}
+}
+
+// Every problem of one invocation is named in one run, one line each: the
+// missing flags, a --now that is not a clock, and a stray argument together.
+func TestEveryProblemIsNamedAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"open", []string{"open", "--store", "./c", "--now", "yesterday", "stray"},
+			[]string{"--session is required", "--publish is required", "--now must parse", `takes no positional arguments, got "stray"`}},
+		{"append", []string{"append", "--text", "a", "--file", "b"},
+			[]string{"--store is required", "--session is required", "--entry is required", "--publish is required", "--text and --file both"}},
+		{"two bad things", []string{"receipt", "--store", "s", "--session", "x", "stray"},
+			[]string{"--entry is required", `takes no positional arguments, got "stray"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			args := append([]string(nil), tc.args...)
+			for i, a := range args {
+				if a == "./c" {
+					args[i] = dir + "/c"
+				}
+			}
+			r := cli.Run(args...)
+			lines := strings.Split(strings.TrimSuffix(r.Stderr, "\n"), "\n")
+			require.Equal(t, 2, r.Code, "%+v", r)
+			require.Empty(t, r.Stdout)
+			require.Len(t, lines, len(tc.want), "stderr:\n%s", r.Stderr)
+			for i, w := range tc.want {
+				assert.Contains(t, lines[i], w, "line %d", i)
+				assert.True(t, strings.HasSuffix(lines[i], "; run: nova-cairn help"), "line %d does not end at the door: %q", i, lines[i])
+			}
+			entries, _ := os.ReadDir(dir)
+			assert.Empty(t, entries, "a refused invocation wrote files")
+		})
+	}
+}
+
+// nova-cairn's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestCairnToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	for _, p := range cairnTool().Problems() {
+		t.Error(p)
 	}
 }

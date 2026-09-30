@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -32,5 +33,29 @@ func TestAGroupIDIsItsOldestNoteAndDoesNotMove(t *testing.T) {
 		Streams: []StreamClock{{Stream: "s4", State: StreamMerging, Progress: t0}}, Stale: time.Minute})
 	if g[0].ID != "n4" || g[0].Size != 3 || g[1].ID != StaleGroupID("s4") {
 		t.Fatalf("a stopped stream and a stale one: %+v", g)
+	}
+}
+
+// TestAGroupsMembersAreCardsAndNeverAStreamOrTheSprint pins Members: the
+// subjects of a judgment's open notes that are cards. The subject of a stream
+// level or sprint level judgment is no card, whatever the note says of itself.
+func TestAGroupsMembersAreCardsAndNeverAStreamOrTheSprint(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name    string
+		subject string
+		want    []string
+	}{
+		{"a card", "p1", []string{"p1"}},
+		{"a stream", StreamSubject("s1"), nil},
+		{"the sprint", SprintSubject, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			n := Note{ID: "n1", Kind: Judgment, Type: NSprintDone, At: t0}
+			g := Inbox(InboxReq{Now: t0.Add(time.Hour), Open: []Open{{Key: OpenKey(n.ID, c.subject), Note: n}}})
+			if len(g) != 1 || !slices.Equal(g[0].Members, c.want) || g[0].Size != len(c.want) || g[0].Count != 1 {
+				t.Errorf("%s: %+v, want members %v", c.name, g, c.want)
+			}
+		})
 	}
 }

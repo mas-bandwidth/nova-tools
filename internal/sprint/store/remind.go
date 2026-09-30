@@ -172,7 +172,9 @@ func (f FileRoute) Deliver(r Reminder) (err error) {
 	}
 	defer func() {
 		if err != nil {
+			// ignored: a close on the failure path; the delivery error is the one returned
 			_ = tmp.Close()
+			// ignored: a best-effort cleanup of the temp file; the delivery error is the one returned
 			_ = os.Remove(tmp.Name())
 		}
 	}()

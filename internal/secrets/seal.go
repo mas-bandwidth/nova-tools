@@ -513,6 +513,7 @@ func readSealFromTTY() (string, error) {
 	defer restore()
 
 	line, err := bufio.NewReader(r).ReadString('\n')
+	// ignored: the newline the disabled echo swallowed, to the terminal; the read error is judged on the next line
 	_, _ = fmt.Fprintln(w)
 	if err != nil && err != io.EOF {
 		return "", err
@@ -528,6 +529,7 @@ func disableEcho(tty *os.File) func() {
 	if err := runStty(tty, "-echo"); err != nil {
 		return func() {}
 	}
+	// ignored: echo is restored best effort; a terminal that refuses stty shows its own state to the person at it
 	return func() { _ = runStty(tty, "echo") }
 }
 

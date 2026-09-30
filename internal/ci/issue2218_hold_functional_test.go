@@ -46,6 +46,7 @@ func TestIssue2218ChangeBaseReadsTheBasesList(t *testing.T) {
 	for name, env := range map[string]map[string]string{
 		"pull_request event": {"GITHUB_EVENT_PATH": event},
 		"local merge base":   {"GITHUB_BASE_REF": "dev"},
+		"the default base":   {},
 	} {
 		got, err := ChangeBase(root, func(k string) string { return env[k] })
 		if err != nil || got != base {

@@ -150,6 +150,7 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 			return "", "", fmt.Errorf("the shell shim %s could not be written: %w", oneline.Field(path), writeErr)
 		}
 		if renameErr := os.Rename(tmp, path); renameErr != nil {
+			// ignored: a best-effort cleanup of the temp shim; the rename error is the one returned
 			_ = os.Remove(tmp)
 			return "", "", fmt.Errorf("the shell shim %s could not be put in place: %w", oneline.Field(path), renameErr)
 		}

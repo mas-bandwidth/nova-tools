@@ -47,6 +47,7 @@ func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 		if err != nil {
 			return "", "", err
 		}
+		// ignored: Use fails only when its function is nil or fails, and this one does neither
 		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
 		return c.User, password, nil
 	}

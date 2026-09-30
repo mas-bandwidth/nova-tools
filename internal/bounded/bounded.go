@@ -123,8 +123,14 @@ func (l *List) More() {
 	if l.total <= l.shown {
 		return
 	}
-	fmt.Fprintf(l.w, "%s MORE kind=%s shown=%d total=%d %s\n",
-		oneline.Field(l.token), oneline.Field(l.kind), l.shown, l.total, oneline.Escape(l.remedy))
+	fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy))
+}
+
+// MoreLine is the MORE line itself, the one spelling every listing prints:
+// internal/tool renders a capped result's MORE through it.
+func MoreLine(token, kind string, shown, total int, remedy string) string {
+	return fmt.Sprintf("%s MORE kind=%s shown=%d total=%d %s",
+		oneline.Field(token), oneline.Field(kind), shown, total, oneline.Escape(remedy))
 }
 
 // Shown is how many item lines reached the stream.
@@ -210,3 +216,37 @@ func (g *Group) List(kind string) *List { return g.lists[kind] }
 
 // Kinds returns the kinds seen, in first-seen order.
 func (g *Group) Kinds() []string { return append([]string(nil), g.order...) }
+
+// Tally counts a capped listing without printing it, for a caller that keeps
+// the listing as a value (internal/tool): Add reports whether an item of a kind
+// is listed under a ceiling of max per kind (0 lists all), in the order added.
+type Tally struct {
+	max          int
+	order        []string
+	shown, total map[string]int
+}
+
+// NewTally is a Tally with a ceiling of max items per kind.
+func NewTally(max int) *Tally {
+	return &Tally{max: max, shown: map[string]int{}, total: map[string]int{}}
+}
+
+// Add counts one item of kind and reports whether it is listed.
+func (t *Tally) Add(kind string) bool {
+	if t.total[kind] == 0 {
+		t.order = append(t.order, kind)
+	}
+	t.total[kind]++
+	if t.max > 0 && t.shown[kind] >= t.max {
+		return false
+	}
+	t.shown[kind]++
+	return true
+}
+
+// Kinds is every kind added, in first-seen order.
+func (t *Tally) Kinds() []string { return append([]string(nil), t.order...) }
+
+// Shown and Total are one kind's listed and counted items.
+func (t *Tally) Shown(kind string) int { return t.shown[kind] }
+func (t *Tally) Total(kind string) int { return t.total[kind] }

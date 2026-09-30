@@ -58,6 +58,7 @@ func Install(dir string) (string, error) {
 		werr = os.Rename(tmp, path)
 	}
 	if werr != nil {
+		// ignored: a best-effort cleanup of the temp shim; the write or rename error is the one returned
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("the gh shim %s: %w", path, werr)
 	}

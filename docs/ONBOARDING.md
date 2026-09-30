@@ -3,7 +3,7 @@
 **A newcomer's first stumble is the spec for this page.** Two newcomers ran two
 of these tools for the first time on one day, and both stumbles were ours: a usage
 banner with no runnable line in it, and a refusal that named what was wrong
-without saying what it wanted. Every binary under `cmd/` meets all five points.
+without saying what it wanted. Every binary under `cmd/` meets all six points.
 
 1. **`<tool> help` prints usage, the usage ends in an `example:` block whose
    lines actually run, and a bare command NAMES that door in one line.** Not
@@ -11,8 +11,10 @@ without saying what it wanted. Every binary under `cmd/` meets all five points.
    exit 2 is "could not run", and an example exiting 2 is a broken example.
 
    The bare command used to BE the banner, and that half is now the other way
-   round: an invocation the tool cannot run prints one line —
-   `<tool>[ <verb>]: <what was wrong>; run: <tool> help` — and exits 2, while
+   round: an invocation the tool cannot run prints one line per problem —
+   `<TOKEN> REFUSED: <what was wrong>; run: <tool> help` on a tool built on
+   `internal/tool`, `<tool>[ <verb>]: <what was wrong>; run: <tool> help` on one
+   not yet built on it — and exits 2, while
    `<tool> help` prints the banner on stdout and exits 0. The reason is the same
    newcomer: a flag typo cost between 1,900 and 6,500 bytes of banner to say
    that a dash was in the wrong place, and a harness reading a tool's stderr
@@ -44,9 +46,22 @@ without saying what it wanted. Every binary under `cmd/` meets all five points.
    actually prints — values are deliberately not compared, so the transcript
    stays a document instead of becoming a fixture.
 
+6. **The banner answers three questions before its usage lines: what does it
+   do, how does it work, and how do I use it.** Line 1 is `<tool>: ` and one
+   sentence saying what the tool does, the same sentence as the tool's row in
+   the README's table. Within the first 15 lines a paragraph opening
+   `how it works:` names the tool's nouns (a bus, a lane, a note; a box, a
+   surface) and where its state lives, in at most five lines, then a
+   `first run:` line says what a first run needs, in one line when it needs a
+   store or a fleet. The `example:` block is that first run: at least three
+   command lines a stranger runs in order, and a setup line (`mkdir`, `cp`) or
+   a `NAME=value` prefix may stand among them.
+
 `internal/ci/onboarding_test.go` asserts (a) and (c) for every directory under
 `cmd/`, so a new binary joins the standard on the day it appears; each
-binary's own `firstrun_test.go` does the rest, and `internal/onboarding` holds
+binary's own `firstrun_test.go` does the rest;
+`TestEveryCommandMeetsTheOnboardingStandard` holds point 6 for every command,
+and the README's sentence to its banner's line 1; and `internal/onboarding` holds
 the shared parsing so that "the examples run" means one thing here rather than
 five similar things. Each tool's fixture lives in `cmd/<tool>/testdata/`, small
 enough to read in a sitting and referenced by nothing outside it.

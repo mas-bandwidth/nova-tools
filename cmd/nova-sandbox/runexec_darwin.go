@@ -64,6 +64,7 @@ func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, s
 	// Setpgid makes the child the LEADER of a new group, so the group's id is its pid.
 	// The negative pid is the group, and it is the only thing this verb ever signals.
 	pgid := cmd.Process.Pid
+	// ignored: the group may already be gone; the wait on the child is the check
 	killGroup := func(sig syscall.Signal) { _ = syscall.Kill(-pgid, sig) }
 
 	done := make(chan int, 1)
