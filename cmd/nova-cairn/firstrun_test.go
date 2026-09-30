@@ -6,7 +6,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,23 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func runCLI(t *testing.T, stdin string, args ...string) (int, string, string) {
-	t.Helper()
-	var stdout, stderr bytes.Buffer
-	code := run(args, strings.NewReader(stdin), &stdout, &stderr)
-	return code, stdout.String(), stderr.String()
-}
-
-// localize points the documented store at the run's directory, so the
-// transcript a stranger types against ./cairns executes here in a fresh one.
-func localize(store, cmd string) ([]string, error) {
-	fields, err := splitShell(strings.ReplaceAll(cmd, "./cairns", store))
-	if err != nil {
-		return nil, err
-	}
-	return fields, nil
-}
 
 // splitShell splits a documented command line the way a POSIX shell would
 // for the quotes this repo's examples use: double quotes group, backslash
@@ -84,9 +66,7 @@ func splitShell(cmd string) ([]string, error) {
 // and this reads what is behind the door the refusal names.
 func usageExamples(t *testing.T) []string {
 	t.Helper()
-	exit, stdout, stderr := runCLI(t, "", "help")
-	require.Equal(t, 0, exit, "`nova-cairn help` must be exit 0, got %d; stderr: %s", exit, stderr)
-	examples, err := onboarding.ExampleLines(stdout, "nova-cairn")
+	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-cairn")
 	require.NoError(t, err)
 	return examples
 }
@@ -108,9 +88,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	for _, ex := range examples {
 		fields, err := splitShell(strings.ReplaceAll(ex, "./cairns", store))
 		require.NoError(t, err, "cannot split the usage example %q: %v", ex, err)
-		exit, stdout, stderr := runCLI(t, "", fields[1:]...)
-		require.Equal(t, 0, exit, "the usage example %q does not run: exit %d, stderr: %s", ex, exit, stderr)
-		assert.NotEmpty(t, stdout, "the usage example %q printed nothing", ex)
+		assert.NotEmpty(t, cli.OK(t, fields[1:]...).Stdout, "the usage example %q printed nothing", ex)
 	}
 }
 
@@ -170,9 +148,7 @@ func runDocumented(s onboarding.Step) (onboarding.Result, error) {
 	if s.Stdin != "" {
 		return onboarding.Result{}, errReadsNothing
 	}
-	var out, errb bytes.Buffer
-	code := run(s.Args, strings.NewReader(""), &out, &errb)
-	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	return onboarding.Result(cli.Run(s.Args...)), nil
 }
 
 type readsNothing struct{}

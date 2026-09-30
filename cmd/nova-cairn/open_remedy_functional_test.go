@@ -22,12 +22,12 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			store := filepath.Join(root, tc.store)
-			code, _, errOut := runCode("", "append", "--store", store, "--session", tc.session, "--entry", "e", "--text", "note", "--publish", "never")
-			require.Equal(t, 2, code, "append=%d %q", code, errOut)
-			require.Equal(t, 1, strings.Count(errOut, "\n"), "append=%d %q", code, errOut)
-			_, remedy, ok := strings.Cut(errOut, "open first: ")
-			require.True(t, ok, "no remedy: %q", errOut)
-			require.True(t, strings.HasSuffix(remedy, "; run: nova-cairn help\n"), "no remedy: %q", errOut)
+			r := cli.Run("append", "--store", store, "--session", tc.session, "--entry", "e", "--text", "note", "--publish", "never")
+			require.Equal(t, 2, r.Code, "append: %+v", r)
+			require.Equal(t, 1, strings.Count(r.Stderr, "\n"), "append: %+v", r)
+			_, remedy, ok := strings.Cut(r.Stderr, "open first: ")
+			require.True(t, ok, "no remedy: %q", r.Stderr)
+			require.True(t, strings.HasSuffix(remedy, "; run: nova-cairn help\n"), "no remedy: %q", r.Stderr)
 			remedy = strings.TrimSuffix(remedy, "; run: nova-cairn help\n")
 			stub := filepath.Join(root, "nova-cairn")
 			require.NoError(t, os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\n"), 0700))
@@ -39,9 +39,8 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 			args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 			want := []string{"open", "--store", store, "--session", tc.session, "--publish", "never"}
 			require.Equal(t, want, args, "argv=%q want=%q", args, want)
-			runOK(t, "", args...)
-			_, err = os.Stat(filepath.Join(store, "sessions", tc.session+".md"))
-			require.NoError(t, err, "session not opened")
+			cli.OK(t, args...)
+			require.FileExists(t, filepath.Join(store, "sessions", tc.session+".md"), "session not opened")
 		})
 	}
 }

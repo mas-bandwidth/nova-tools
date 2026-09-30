@@ -22,9 +22,7 @@ import (
 func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
-	exit, stdout, stderr := runCLI(t, "", "help")
-	require.Equal(t, 0, exit, "`nova-cairn help` must be exit 0, got %d; stderr: %s", exit, stderr)
-	examples, err := onboarding.ExampleLines(stdout, "nova-cairn")
+	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-cairn")
 	require.NoError(t, err, "cannot enumerate the bare verbs from the help banner")
 	seen := map[string]bool{}
 	for _, ex := range examples {
@@ -38,10 +36,10 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 		}
 		seen[verb] = true
 		t.Run(verb, func(t *testing.T) {
-			code, out, errOut := runCLI(t, "", verb)
-			assert.Equal(t, 2, code, "`nova-cairn %s` with no flags exited %d, want 2", verb, code)
-			assert.Empty(t, out, "`nova-cairn %s` with no flags wrote to stdout: %q; a refusal belongs on stderr", verb, out)
-			lines := strings.Split(strings.TrimSuffix(errOut, "\n"), "\n")
+			r := cli.Run(verb)
+			assert.Equal(t, 2, r.Code, "`nova-cairn %s` with no flags", verb)
+			assert.Empty(t, r.Stdout, "`nova-cairn %s` with no flags wrote to stdout; a refusal belongs on stderr", verb)
+			lines := strings.Split(strings.TrimSuffix(r.Stderr, "\n"), "\n")
 			require.NotEmpty(t, lines, "`nova-cairn %s` with no flags printed no refusal", verb)
 			require.NotEmpty(t, lines[0], "`nova-cairn %s` with no flags printed no refusal", verb)
 			for _, line := range lines {
