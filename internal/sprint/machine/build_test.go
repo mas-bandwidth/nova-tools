@@ -120,8 +120,8 @@ func TestStepBuilderKeepsUnitsWhole(t *testing.T) {
 	}
 }
 
-// TestStepBuilderRefusesWhatItDoesNotCarry: a plan with writes the adapter has
-// no wire for is refused naming them, so the loop parks its keys and names the
+// TestStepBuilderRefusesWhatItDoesNotCarry: a plan with writes or guards the
+// adapter has no wire for is refused naming them, so the loop parks its keys and names the
 // gap (1.3.5), and never sends a step that drops them.
 func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 	t.Parallel()
@@ -130,7 +130,9 @@ func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 		rp   sprint.RulePlan
 		want string
 	}{
-		"time writes": {sprint.RulePlan{Sprint: sprint.TimeWrites{Due: []sprint.DueSet{{Key: "remind:ann", At: 1}}}}, "the time rules' writes to the sprint's own keys"},
+		"a revs fold": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7}}}, "the fold of the revisions of the work cards read"},
+		"a zguard X has no kind for": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
+			"a set guard of kind zguard"},
 		"bumps":       {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
 	} {
 		_, err := build(c.rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())

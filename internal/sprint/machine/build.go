@@ -31,18 +31,20 @@ import (
 //     is not is halved, and a unit that is not alone refuses the plan (a
 //     LIMIT, 1.3.5);
 //   - the plan's notes, guards, intents and requeued keys ride the first
-//     body, its count guards as one Layer 1 count entry, and its Done a plan
-//     of one body only (a cut plan leaves its keys queued, 1.3.6); the rows it
-//     adds go first.
+//     body, its guards as convertGuards makes them (Layer 1 entries first),
+//     and its Done a plan of one body only (a cut plan leaves its keys
+//     queued, 1.3.6); the rows it adds go first. Its writes to the sprint's
+//     own keys (TimeWrites) ride the first request as the sprint part
+//     (TimePart, put on it by the loop's cut()).
 //
 // What the adapter does not carry refuses the plan, naming it, so the loop
 // parks the keys and names the gap in "the machine's step was refused": a
 // unit's bumps, a field guard, a guard of absence on anything but a create,
-// the legacy notes and closes of Plan and Unit, and the time rules' writes to
-// the sprint's own keys (TimeWrites), which have no wire in the sprint part
-// yet. The Coster of 8.0 (X's and J's commands and probes) is not modelled
-// here, as stepbuild models no planned command count (its package comment);
-// the store refuses what it does not fit, and the loop halves (1.3.5).
+// the legacy notes and closes of Plan and Unit, and a guard no store check
+// holds (convertGuards). The Coster of 8.0 (X's and J's commands and probes)
+// is not modelled here, as stepbuild models no planned command count (its
+// package comment); the store refuses what it does not fit, and the loop
+// halves (1.3.5).
 func StepBuilder(prefix string) Builder {
 	return func(rp sprint.RulePlan, m sprintfn.Meta, b stepbuild.Bounds) ([]sprintfn.Body, error) {
 		if err := carried(rp); err != nil {
@@ -81,7 +83,7 @@ func StepBuilder(prefix string) Builder {
 				return nil, err
 			}
 		}
-		if len(sb.bodies) == 0 && len(rp.Notes)+len(rp.Guards)+len(rp.Intents)+len(rp.Requeue)+len(rp.Done) != 0 {
+		if len(sb.bodies) == 0 && (len(rp.Notes)+len(rp.Guards)+len(rp.Intents)+len(rp.Requeue)+len(rp.Done) != 0 || !rp.Sprint.Empty()) {
 			body := sb.extras(sprintfn.Body{Entries: []tset.Entry{}}, true)
 			if err := sb.check(body); err != nil {
 				return nil, err
@@ -89,8 +91,14 @@ func StepBuilder(prefix string) Builder {
 			sb.bodies = append(sb.bodies, body)
 		}
 		if len(sb.bodies) == 1 {
+			parked := map[string]bool{}
+			for _, k := range rp.Sprint.Park {
+				parked[k.Key] = true
+			}
 			for _, k := range rp.Done {
-				sb.bodies[0].Done = append(sb.bodies[0].Done, k.Key)
+				if !parked[k.Key] { // the sprint part moves a parked key out of the agenda, the park first (A1)
+					sb.bodies[0].Done = append(sb.bodies[0].Done, k.Key)
+				}
 			}
 		}
 		return sb.bodies, nil
@@ -289,11 +297,8 @@ func (sb *stepBodies) check(body sprintfn.Body) error {
 // carried refuses a plan with what the adapter does not carry.
 func carried(rp sprint.RulePlan) error {
 	p := rp.Plan
-	switch {
-	case len(p.Notes)+len(p.Closes)+len(p.Updates) != 0:
+	if len(p.Notes)+len(p.Closes)+len(p.Updates) != 0 {
 		return errors.New("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
-	case !reflect.DeepEqual(rp.Sprint, sprint.TimeWrites{}):
-		return errors.New("the time rules' writes to the sprint's own keys have no wire in the sprint part yet")
 	}
 	for _, u := range p.Units {
 		if len(u.Bumps)+len(u.Notes)+len(u.Closes) != 0 {
@@ -416,4 +421,47 @@ func wireEntries(ps []stepbuild.Placed) []tset.Entry {
 		out = append(out, e)
 	}
 	return out
+}
+
+// TimePart is a plan's writes to the sprint's own keys (RulePlan.Sprint,
+// rules_time.go TimeWrites) as the sprint part carries them (IT16's
+// SprintPart.Time and Park), nil when it has none; the loop's cut() puts it on
+// the first request of the rule's step. The due entries and R14's claims go as
+// they are (the claim's generation is the step's, Meta.Gen); R17's clock
+// fields as set or cleared; a parked key with its rule and code, which the
+// part records in {p}parked@e and moves out of the agenda (1.3.5, A1).
+func TimePart(w sprint.TimeWrites) *sprintfn.SprintPart {
+	if w.Empty() {
+		return nil
+	}
+	dec := func(n int64) tset.Decimal { return tset.Decimal(strconv.FormatInt(n, 10)) }
+	sp := &sprintfn.SprintPart{}
+	if len(w.Due)+len(w.Goal) != 0 || w.Clock != nil {
+		tm := &sprintfn.SprintTime{}
+		for _, d := range w.Due {
+			tm.Due = append(tm.Due, sprintfn.DueAt{Key: d.Key, At: dec(d.At)})
+		}
+		for _, g := range w.Goal {
+			tm.Goals = append(tm.Goals, sprintfn.GoalClaim{Person: g.Person, R: dec(g.R)})
+		}
+		if c := w.Clock; c != nil {
+			field := func(set *int64, clear bool) *tset.Decimal {
+				switch {
+				case set != nil:
+					d := dec(*set)
+					return &d
+				case clear:
+					d := tset.Decimal("")
+					return &d
+				}
+				return nil
+			}
+			tm.Clock = &sprintfn.ClockWrite{DueSince: field(c.DueSince, c.ClearDueSince), StopRaised: field(c.StopRaised, c.ClearStopRaised)}
+		}
+		sp.Time = tm
+	}
+	for _, k := range w.Park {
+		sp.Park = append(sp.Park, sprintfn.ParkedKey{Key: k.Key, Rule: k.Rule, Code: k.Code})
+	}
+	return sp
 }
