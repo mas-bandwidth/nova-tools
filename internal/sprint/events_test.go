@@ -3,6 +3,7 @@ package sprint
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -305,22 +306,44 @@ func TestParseEventNeverReadsALineThatNamesCardsAsNoCards(t *testing.T) {
 	}
 }
 
+// The seq of an event is the stream id's. A line as the lines read returns it
+// carries a seq of its own (the stream id's, copied), and a time the rules do
+// not read: a line with none, or with the stream id's, is read; a line whose own
+// seq says another is a wrong pairing of id and line, and is refused.
 func TestParseEventTakesTheSeqFromTheStreamID(t *testing.T) {
 	t.Parallel()
-	// A line as the lines read returns it, with a seq and a time of its own:
-	// the stream id says which line it is, whatever the words say.
-	for _, seq := range []string{`5`, `"5"`, `"nine"`} {
-		raw := `{"seq":` + seq + `,"kind":"move","at_ms":"1790000000123","table":"work","from":"s2:waiting","to":"s2:ready",` +
+	line := func(seq string) string {
+		if seq != "" {
+			seq = `"seq":` + seq + `,`
+		}
+		return `{` + seq + `"kind":"move","at_ms":"1790000000123","table":"work","from":"s2:waiting","to":"s2:ready",` +
 			`"ids":["p1","p2"],"about":["p1","p2"],"set":[{"reached":"1"},{"reached":"1"}],"meta":{"verb":"resolve","actor":"machine","stream":"s2"}}`
-		e, err := ParseEvent("9-0", []byte(raw))
+	}
+	for _, seq := range []string{``, `9`, `"9"`} {
+		e, err := ParseEvent("9-0", []byte(line(seq)))
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("seq %s: %v", seq, err)
 		}
 		if e.Seq != 9 || e.Kind != LineMove || e.Table != Work || !reflect.DeepEqual(e.Cards, []string{"p1", "p2"}) || e.Stream != "s2" {
 			t.Fatalf("seq %s: %+v", seq, e)
 		}
 		if e.From != "s2:waiting" || e.To != "s2:ready" || e.Set != nil {
 			t.Fatalf("seq %s: %+v", seq, e)
+		}
+	}
+	for _, seq := range []string{`5`, `"5"`, `10`, `"nine"`, `"09"`, `"9 "`, `""`, `9.0`, `null`, `true`, `[9]`, `{"seq":9}`} {
+		e, err := ParseEvent("9-0", []byte(line(seq)))
+		if err == nil {
+			t.Errorf("a line with its own seq %s at the stream id 9-0 was read as %+v", seq, e)
+			continue
+		}
+		if e.Seq != 9 {
+			t.Errorf("seq %s: the error left the seq at %d, not 9", seq, e.Seq)
+		}
+		for _, want := range []string{"line 9", "its own seq is " + seq, "its stream id says 9"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("seq %s: the error does not say %q: %v", seq, want, err)
+			}
 		}
 	}
 }
@@ -343,7 +366,7 @@ func TestParseEventReadsACellAtItsLastColon(t *testing.T) {
 
 func TestParseEventRefusesWhatItCannotReadAndNamesTheSeq(t *testing.T) {
 	t.Parallel()
-	const good = `{"k":"m","from":"s1:ready","ids":["p1"]}`
+	const good = `{"k":"m","tbl":"work","from":"s1:ready","ids":["p1"]}`
 	for _, id := range []string{"", "7", "7-1", "0-0", "-0", "x-0", "-3-0", "+7-0", "007-0", "7-0 ", " 7-0", "7-0-0", "18446744073709551616-0"} {
 		e, err := ParseEvent(id, []byte(good))
 		if err == nil {
@@ -357,24 +380,28 @@ func TestParseEventRefusesWhatItCannotReadAndNamesTheSeq(t *testing.T) {
 	for _, line := range []string{
 		// not a line at all
 		"", "{", "[]", `"move"`, "null", `{"kind":5}`, good + " x", `{}`, `{"kind":""}`, `{"k":""}`,
-		// a kind the contract does not name, and two kinds that disagree: the
-		// kinds of the present Line are not the contract's
+		// a kind the contract does not name: the kinds of the present Line are not
+		// the contract's. (Two kinds that disagree have a test of their own.) Each
+		// card's line here names its table, so that it is refused for the reason
+		// it is listed for and for no other.
 		`{"k":"z","ids":["p1"]}`, `{"kind":"decided","about":["p1"]}`, `{"kind":"judgment","about":["p1"]}`,
-		`{"kind":"move","k":"c","to":"s1:ready","ids":["p1"]}`,
 		// a card's change that names no cards, empty ones, or a list that does
 		// not line up with them; a present Line has card and cards, not ids
-		`{"k":"m","from":"s1:ready","to":"s1:working"}`, `{"k":"m","from":"s1:ready","ids":[]}`, `{"k":"m","from":"s1:ready","ids":[""]}`,
+		`{"k":"m","tbl":"work","from":"s1:ready","to":"s1:working"}`, `{"k":"m","tbl":"work","from":"s1:ready","ids":[]}`,
+		`{"k":"m","tbl":"work","from":"s1:ready","ids":[""]}`,
 		`{"kind":"move","table":"work","card":"p1","cards":["p1","p2"],"from":"s1:ready","to":"s1:working"}`,
-		`{"k":"m","from":"s1:ready","ids":["p1","p2"],"about":["p1"]}`, `{"k":"m","from":"s1:ready","ids":["p1","p2"],"set":[{}]}`,
-		`{"k":"m","from":"s1:ready","ids":["p1"],"set":{"reached":"1"}}`,
+		`{"k":"m","tbl":"work","from":"s1:ready","ids":["p1","p2"],"about":["p1"]}`,
+		`{"k":"m","tbl":"work","from":"s1:ready","ids":["p1","p2"],"set":[{}]}`,
+		`{"k":"m","tbl":"work","from":"s1:ready","ids":["p1"],"set":{"reached":"1"}}`,
 		// a place a kind needs, or one that is not a string
-		`{"k":"c","ids":["p1"]}`, `{"k":"m","to":"s1:ready","ids":["p1"]}`, `{"k":"x","ids":["p1"]}`, `{"k":"m","from":5,"ids":["p1"]}`,
+		`{"k":"c","tbl":"work","ids":["p1"]}`, `{"k":"m","tbl":"work","to":"s1:ready","ids":["p1"]}`, `{"k":"x","tbl":"work","ids":["p1"]}`,
+		`{"k":"m","tbl":"work","from":5,"ids":["p1"]}`,
 		// a field a rule reads that the ids do not agree on
-		`{"k":"m","from":"s1:working","to":"s1:review","ids":["p1","p2"],"set":[{"result":"ok"},{"result":"failed"}]}`,
-		`{"k":"m","from":"s1:working","to":"s1:review","ids":["p1","p2"],"set":[{"result":"ok"},{}]}`,
-		`{"k":"m","from":"s1:working","to":"s1:review","ids":["p1","p2"],"shared":{"result":"ok"},"set":[{},{"result":"failed"}]}`,
+		`{"k":"m","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1","p2"],"set":[{"result":"ok"},{"result":"failed"}]}`,
+		`{"k":"m","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1","p2"],"set":[{"result":"ok"},{}]}`,
+		`{"k":"m","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1","p2"],"shared":{"result":"ok"},"set":[{},{"result":"failed"}]}`,
 		// a meta word that is not a string, and a note of a kind that is not one
-		`{"k":"m","from":"s1:ready","ids":["p1"],"meta":{"stream":5}}`, `{"k":"n","about":["p1"],"meta":{"kind":"decided","type":5}}`,
+		`{"k":"m","tbl":"work","from":"s1:ready","ids":["p1"],"meta":{"stream":5}}`, `{"k":"n","about":["p1"],"meta":{"kind":"decided","type":5}}`,
 		`{"k":"n","about":["p1"],"meta":{"kind":"move"}}`,
 	} {
 		e, err := ParseEvent("42-0", []byte(line))
@@ -391,6 +418,101 @@ func TestParseEventRefusesWhatItCannotReadAndNamesTheSeq(t *testing.T) {
 	}
 	if e, err := ParseEvent("18446744073709551615-0", []byte(good)); err != nil || e.Seq != 18446744073709551615 {
 		t.Fatalf("the largest seq: %+v %v", e, err)
+	}
+}
+
+// A line that says its kind twice, in the semantic word and in the stored tag,
+// says one: two that disagree are refused, whichever the reader would have
+// taken. Each line here is a good line under either of its two kinds, and read
+// on with either word alone it is accepted, so the disagreement is the only
+// reason to refuse it.
+func TestParseEventRefusesAKindAndATagThatDisagree(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{
+		// a move that stays where it is, and a remove: both name a place from
+		`{"kind":"move","k":"x","tbl":"work","from":"s1:ready","ids":["p1"]}`,
+		`{"kind":"remove","k":"m","tbl":"work","from":"s1:ready","ids":["p1"]}`,
+		// a create and a move: both name a place to, and the move a place from
+		`{"kind":"create","k":"m","tbl":"work","from":"s1:ready","to":"s1:working","ids":["p1"]}`,
+		`{"kind":"move","k":"c","tbl":"work","from":"s1:ready","to":"s1:working","ids":["p1"]}`,
+		// the kinds that name no cards
+		`{"kind":"rows","k":"a"}`, `{"kind":"advance","k":"w"}`, `{"kind":"note","k":"a"}`, `{"kind":"advance","k":"n"}`,
+	} {
+		var words map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &words); err != nil {
+			t.Fatal(err)
+		}
+		for _, drop := range []string{"kind", "k"} {
+			one := maps.Clone(words)
+			delete(one, drop)
+			b, err := json.Marshal(one)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e, err := ParseEvent("42-0", b); err != nil {
+				t.Errorf("%s, with one kind word alone: %v (read as %+v)", b, err, e)
+			}
+		}
+		e, err := ParseEvent("42-0", []byte(line))
+		if err == nil {
+			t.Errorf("%s: read as %+v", line, e)
+			continue
+		}
+		if e.Seq != 42 || !strings.Contains(err.Error(), "line 42") || !strings.Contains(err.Error(), "it says it is a ") {
+			t.Errorf("%s: refused, but not as a kind that disagrees, and naming its seq (%d): %v", line, e.Seq, err)
+		}
+	}
+}
+
+// A card's change on a table the rules do not know is refused, and the error
+// names the table: it would queue no key at all, not even its stream's, and
+// nothing is lost silently. The stored name of a table, with a deployment's
+// prefix, is such a name; so is no name. The four tables of the design are
+// read, on each of the kinds of a card's change and in both vocabularies.
+func TestParseEventRefusesACardsLineOnATableTheRulesDoNotKnow(t *testing.T) {
+	t.Parallel()
+	shapes := []string{
+		`{"k":"c","tbl":%q,"to":"s1:ready","ids":["p1"]}`,
+		`{"k":"m","tbl":%q,"from":"s1:working","to":"s1:review","ids":["p1"],"about":["p1"]}`,
+		`{"k":"x","tbl":%q,"from":"s1:ready","ids":["p1"]}`,
+		`{"kind":"create","table":%q,"to":"s1:ready","ids":["p1"]}`,
+		`{"kind":"move","table":%q,"from":"s1:working","to":"s1:review","ids":["p1"]}`,
+		`{"kind":"remove","table":%q,"from":"s1:ready","ids":["p1"]}`,
+	}
+	for _, table := range []string{Work, Readers, Merge, Fleet} {
+		for _, shape := range shapes {
+			line := fmt.Sprintf(shape, table)
+			if e, err := ParseEvent("42-0", []byte(line)); err != nil || e.Table != table {
+				t.Errorf("%s: %+v %v", line, e, err)
+			}
+		}
+	}
+	for _, table := range []string{"t-work", "t-readers", "Work", "work ", " work", "works", "cards", "sprint:work", ""} {
+		for _, shape := range shapes {
+			line := fmt.Sprintf(shape, table)
+			e, err := ParseEvent("42-0", []byte(line))
+			if err == nil {
+				t.Errorf("%s: read as %+v", line, e)
+				continue
+			}
+			if e.Seq != 42 || !strings.Contains(err.Error(), "line 42") || !strings.Contains(err.Error(), fmt.Sprintf("its table %q is none of", table)) {
+				t.Errorf("%s: the error does not name the line and the table (seq %d): %v", line, e.Seq, err)
+			}
+		}
+	}
+	// A card's line with no table word at all names no table either.
+	if e, err := ParseEvent("42-0", []byte(`{"k":"m","from":"s1:ready","ids":["p1"]}`)); err == nil || !strings.Contains(err.Error(), `its table "" is none of`) {
+		t.Errorf("a card's line with no table: %+v %v", e, err)
+	}
+	// A line that names no cards has no table to know: it is read as it is.
+	for line, kind := range map[string]string{
+		`{"k":"w","tbl":"t-work","add":[{"row":"s4","rank":"4"}]}`: kindRows,
+		`{"k":"a","from":"3","to":"4"}`:                            kindAdvance,
+		`{"k":"n","about":["p1"],"meta":{"kind":"decided"}}`:       Decided,
+	} {
+		if e, err := ParseEvent("42-0", []byte(line)); err != nil || e.Kind != kind {
+			t.Errorf("%s: %+v %v", line, e, err)
+		}
 	}
 }
 

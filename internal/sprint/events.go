@@ -21,7 +21,8 @@ import (
 // EventOf maps the present Line (log.go), which the sprint writes today.
 // Fields of a line that no rule reads (its time, its scores and revisions,
 // the rows a rows line adds) are not decoded: the stream id says which line it
-// is.
+// is. The one such field that is read is a semantic line's own seq, and only to
+// refuse a line whose seq is not the stream id's.
 
 // EventFields are the fields of a line's Set that an event keeps: the ones a
 // rule reads (result on a card entering review, status and held on a member's
@@ -91,6 +92,7 @@ type Event struct {
 // the wrong words leave empty is empty. From and To are held raw, since on an
 // advance they are epochs and on a member line cell references.
 type contractLine struct {
+	Seq    json.RawMessage            `json:"seq"`
 	Kind   string                     `json:"kind"`
 	K      string                     `json:"k"`
 	Table  string                     `json:"table"`
@@ -121,7 +123,10 @@ var contractKinds = map[string]string{
 // cannot read is an error that still names the seq when the id was good, so a
 // caller that must move past it can. A line that names cards never reads as
 // naming none: one that says it is a card's change and gives no ids is
-// refused.
+// refused, and so is one on a table the rules do not know, which would queue
+// no key at all. A line that carries a seq of its own (the semantic line does)
+// must carry the stream id's: the two say which line it is, and a mismatch is
+// a wrong pairing of id and line.
 func ParseEvent(id string, line []byte) (Event, error) {
 	seq, err := parseSeq(id)
 	if err != nil {
@@ -129,6 +134,9 @@ func ParseEvent(id string, line []byte) (Event, error) {
 	}
 	var c contractLine
 	if err := json.Unmarshal(line, &c); err != nil {
+		return Event{Seq: seq}, fmt.Errorf("line %d is not a line of the log: %w", seq, err)
+	}
+	if err := c.agreesWith(seq); err != nil {
 		return Event{Seq: seq}, fmt.Errorf("line %d is not a line of the log: %w", seq, err)
 	}
 	e, err := eventOfContract(seq, c)
@@ -151,6 +159,34 @@ func parseSeq(id string) (uint64, error) {
 	return seq, nil
 }
 
+// agreesWith is nil when the line carries no seq of its own, or carries the
+// seq of its stream id, as a JSON number or a string of the same decimal: the
+// semantic line's seq is copied from the stream id.
+func (c contractLine) agreesWith(seq uint64) error {
+	if c.Seq == nil {
+		return nil
+	}
+	word := string(c.Seq)
+	var s string
+	if json.Unmarshal(c.Seq, &s) == nil {
+		word = s
+	}
+	if want := strconv.FormatUint(seq, 10); word != want {
+		return fmt.Errorf("its own seq is %s and its stream id says %s", c.Seq, want)
+	}
+	return nil
+}
+
+// isTable says a table name is one of the four the rules know, by its logical
+// name (work, readers, merge, fleet): a deployment's prefixed name is not.
+func isTable(name string) bool {
+	switch name {
+	case Work, Readers, Merge, Fleet:
+		return true
+	}
+	return false
+}
+
 // eventOfContract is the event of a decoded contract line.
 func eventOfContract(seq uint64, c contractLine) (Event, error) {
 	kind, err := c.kind()
@@ -171,6 +207,11 @@ func eventOfContract(seq uint64, c contractLine) (Event, error) {
 	}
 	switch kind {
 	case kindCreate, LineMove, kindRemove:
+		// A card's change on a table the rules do not know queues no key, not
+		// even the stream's: it is refused, so that nothing is lost silently.
+		if !isTable(e.Table) {
+			return Event{}, fmt.Errorf("its table %q is none of %s, %s, %s or %s", e.Table, Work, Readers, Merge, Fleet)
+		}
 		e.Kind = LineMove
 		if err := c.member(kind, &e); err != nil {
 			return Event{}, err
@@ -319,7 +360,8 @@ func (c contractLine) member(kind string, e *Event) error {
 // field is what a line sets a field to: a value it shares across its ids, or
 // one on each id's own set. An event holds one value of a field for the whole
 // line, so a line that sets it on some of its ids only, or to different values,
-// is refused rather than read as setting one.
+// is refused rather than read as setting one. The contract's per-id set allows
+// such a line: the refusal is this layer's choice, not the contract's.
 func (c contractLine) field(name string) (string, bool, error) {
 	var val string
 	found := 0

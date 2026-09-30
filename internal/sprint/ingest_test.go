@@ -638,9 +638,10 @@ func bulkShapes() []bulkShape {
 			return l
 		}
 	}
-	// A note line as the Redis store writes it lists at most MaxListed primaries
-	// and keeps the total in Count (whole: the line of a writer that lists them
-	// all, as the in-memory twin does and the design's lines do up to a chunk).
+	// A note line as the stores write it (the Redis store and the in-memory twin
+	// both cut it) lists at most MaxListed primaries and keeps the total in
+	// Count. Whole is the line of a writer that lists every subject, as the
+	// design words a note's line, which no present store writes.
 	note := func(typ string, kind string, whole bool) func(int) Line {
 		return func(n int) Line {
 			nn := Note{ID: "n1", Kind: kind, Type: typ, Stream: "s1", Primaries: cardIDs(n), Count: n}
