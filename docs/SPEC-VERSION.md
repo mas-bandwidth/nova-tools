@@ -1,10 +1,12 @@
 # nova-version — specification
 
 `nova-version moved` writes the TOOLS MOVED note from two revisions' binaries;
-`nova-version snapshot` records what a bin holds, and `nova-version diff` compares two
-records. SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
-no guessed paths — and [SPEC-UPDATE.md](SPEC-UPDATE.md) holds the manifest verbs
-(`snapshot --file`, `report`, `send`) this file does not restate. The lines of
+`snapshot --bin` records what a bin holds, and `diff` compares two such records.
+`snapshot --file` counts the tools named by a caller's manifest; `report` and
+`send` read that manifest. SPEC.md's **Conventions** govern — exit codes, the
+one-line grammar, the field law, no guessed paths — and
+[SPEC-UPDATE.md](SPEC-UPDATE.md) specifies those manifest verbs without
+restating them here. The lines of
 `nova-version help` for the verbs this file specifies:
 
 ```

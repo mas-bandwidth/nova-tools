@@ -1,23 +1,42 @@
-# SPEC-CI — the class tests that read this repository's own CI path
+# SPEC-CI — the CI helpers and class tests that read this repository
 
-This specification holds the class tests that guard the CI path by reading the
-repository's own test files as text. It stands beside [SPEC.md](SPEC.md), whose
+This specification holds `nova-ci`'s checks and the class tests that guard the
+CI path by reading the repository's own files. It stands beside
+[SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line output
 grammar, the cap-and-count rule, `internal/oneline` and `internal/bounded` —
 applies here unchanged and is not restated. Related: the budget law
 `TestNoTestAssertsAWallClockBoundUnderTenSeconds`.
 
+## The `nova-ci` command surface
+
+`cmd/nova-ci/main.go` dispatches these verbs. The banner (`nova-ci help`) gives
+their flags and runnable examples; `nova-ci help <verb>` opens a verb's help.
+
+| Command | Present behavior | Source |
+| --- | --- | --- |
+| `help`, `version` | Print the usage banner or the one-line build identity. | `cmd/nova-ci/main.go`, `version.go` |
+| `slowtests` | Judge newline-delimited `go test -json` on stdin, print `CI-SLOW` and `CI-LOAD`, and enforce a `CI-SLEEPS` finding on every leg. `--enforce` also makes a `CI-SLOW` finding fatal. | `main.go`, `internal/ci/slowtests` |
+| `local` | Select packages from the committed diff against `--base` (default `origin/dev`), then run the Makefile's test target at nice 15 with two cores and an uncached test run; `--functional` adds the functional build tag. It reports uncommitted Go files because selection does not include them. | `local.go`, `.github/scripts/select-packages.sh` |
+| `functional` | From package directories, print only the packages containing functional-tagged tests and a `-run` pattern for those tests; print an explicit zero-package line when none qualify. The Makefile consumes this selection. | `main.go`, `internal/ci/functional`, `Makefile` |
+| `new-rule`, `new-verb` | Scaffold a class-rule or CLI-verb skeleton under a chosen checkout (`--root`, default `.`); `new-verb` prints the dispatch case to add and does not edit the switch. | `newrule.go`, `newverb.go`, `internal/scaffold` |
+| `github receipt` | Write the runner's one `ev:github` receipt and print one `CI RECEIPT` line. `github` has no other subverb. | `receipt.go`, `internal/cireceipt` |
+| `cost` | Read a complete forge jobs listing on stdin, print one `COST` line, and optionally append that entry to `ci:cost`. | `cost.go`, `internal/cicost` |
+
+The detailed budget, cost and receipt rules below remain the contracts for those
+verbs. A helper's presence in this table does not add it to a CI gate: its
+caller in the Makefile or workflow decides when it runs.
+
 ## The CI class test against fixed waits on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `waits`:
+**The check.** `TestNoFixedWaitsOnTheCIPath` runs in `internal/ci`. It is a
+class test, not a `nova-ci` command: it audits fixed waits on the CI path.
+
+**Pinned class-test help line:**
 
 ```
 waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound
 ```
-
-It runs as `go test ./internal/ci -run TestNoFixedWaitsOnTheCIPath`, and it is
-the bench's fixed-wait audit made an official verb: the check a PR runs.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, and refuses three
@@ -73,16 +92,14 @@ queue.
 
 ## The CI class test against copied built binaries
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `testbins`:
+**The check.** `TestNoCopiedTestBinariesOnTheCIPath` runs in `internal/ci`.
+It is the fixture-copy class test; `testbins` is not a `nova-ci` command.
+
+**Pinned class-test help line:**
 
 ```
 testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
 ```
-
-It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
-it is the fixture-copy audit made an official verb: the shared helper a
-fixture places a built program with is the check a PR runs.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
@@ -141,15 +158,14 @@ through `internal/testbin.Place`, and the class test refuses a new copy.
 
 ## The CI class test against unquoted paths in JSON and template literals
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `templates`:
+**The check.** `TestNoUnquotedPathsInTemplateLiterals` runs in `internal/ci`.
+It is the path-quoting class test; `templates` is not a `nova-ci` command.
+
+**Pinned class-test help line:**
 
 ```
 templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal
 ```
-
-It runs as `go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals`,
-and it is the Windows-path audit made an official verb: the check a PR runs.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/`, and refuses two shapes with the file and the line: a
@@ -203,30 +219,30 @@ the parse fails on Windows where Linux and darwin never see it.
 
 ## The per-package test time budget
 
-**The verb.** The budget check is `cmd/nova-ci`'s first verb, `slowtests`:
+**The verb.** The budget check is `nova-ci slowtests`:
 
 ```
-slowtests  read newline-delimited go test -json TestEvents on stdin; refuse any
-           package whose summed elapsed time is over --budget (default 60s)
+slowtests  read newline-delimited go test -json TestEvents on stdin; report
+           package and test times over their budgets; --enforce makes CI-SLOW fatal
 ```
 
-It runs as `go test -json -count=1 <packages> | tee "$RUNNER_TEMP/test.json"; go
-run ./cmd/nova-ci slowtests --budget 60 < "$RUNNER_TEMP/test.json"` in the
-self-hosted `test` step of `.github/workflows/ci.yml`, so the slow package
-surfaces to the coordinator the moment it happens.
+The Makefile's `test` target pipes `go test -json` to the runner's `test.json` and
+then invokes `nova-ci slowtests` over that stream. The workflow's `test` legs
+call this target; its flags select the unit or whole-tree budget.
 
 **The invariant.** A package's total is the sum of its package-level
 `Elapsed` — the `pass`, `fail` or `skip` event whose `Test` is empty — and a
-package whose total is over `--budget` is a refusal. The engine is the
-`internal/ci/slowtests` subpackage's `Parse` and `Sum`: the events come from the
-caller, the budget comes from the caller, and nothing reads a file, the clock or
-the network. The test-level `Elapsed` rows are kept, sorted worst first, only so
-a finding can name where the time went; they never decide the verdict.
+package whose total is over `--budget` or `--package-budget` produces a
+`CI-SLOW` finding. With `--test-budget`, a top-level test's elapsed time can
+also produce its own `CI-SLOW` finding. The engine is the
+`internal/ci/slowtests` subpackage's `Parse` and `Judge`: the events and
+budgets come from the caller, and it does not read the clock or network.
+Test-level rows also identify a package finding's slowest tests.
 
 **Its one-line output.** On a clean stream it prints one line, `CI-SLOW OK
 packages=<n> slowest=<pkg>:<seconds>`, where `packages=` is the packages seen
 and `slowest=` the single slowest package overall (or `slowest=none` when the
-stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
+stream is empty). On a finding it prints one line per offending package, `CI-SLOW
 package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
 slowest tests in that package, comma-separated, worst first and capped at three,
 and exits 2 under `--enforce`, 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
@@ -386,17 +402,16 @@ docs/CLI.md line for line through `onboarding.CompareTranscript`.
 
 ## The CI class test against a real network host on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `net`:
+**The check.** `TestNoRealNetworkHostsOnTheCIPath` runs in `internal/ci`.
+It is the network-host class test, not a `nova-ci` command: unit tests mock
+endpoints, while the separately tagged soak, fuzz and nightly suites may
+exercise real hosts under their own rules.
+
+**Pinned class-test help line:**
 
 ```
 net     read every _test.go on the CI path; refuse a real network host or host:port
 ```
-
-It runs as `go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath`, and
-it is the hard rule — *unit tests test LOGIC, not the network* — made an
-official verb: every endpoint is mocked locally, and only the soak,
-fuzz and nightly suites may reach the real network.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, parses each as Go, and
@@ -451,14 +466,14 @@ secret leak look the same in the log.
 
 ## The CI class test against a child `go` that inherits the environment
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `goenv`:
+**The check.** `TestGoEnvClassRuleHoldsOverTheRepository` runs in `internal/ci`.
+It is the child-environment class test; `goenv` is not a `nova-ci` command.
+
+**Pinned class-test help line:**
 
 ```
 goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment
 ```
-
-It runs as `go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`.
 
 **What it reads and what it writes.** It reads, as text, every `.go` file under
 `internal/` and `cmd/` — tests included, because a test helper that builds a
@@ -528,9 +543,9 @@ here that has one points at it.
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
 next card: a rule lands with its sweep of the tree, or it does not land
-(pit-stop ledger item 20, which lives in the `rowan-new`
-repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
-this one, so the citation is deliberately prose and not a link).
+(pit-stop ledger item 20, in the `rowan-new` repository at
+`reports/pitstop-tests-2026-09-17.md`, a sibling checkout rather than a path
+in this repository; this citation is prose because it has no local link target).
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier
@@ -1405,8 +1420,8 @@ fixture's whole job is to be an invented tree. A token that does not BEGIN a
 word is out, which is what keeps import paths, URLs and paths on a bench out. A
 glob, a template or a printf verb on either side takes the token out, so
 `docs/SPEC-*.md` and `internal/%s/doc.go` are patterns, not names. A
-package-qualified Go symbol (`internal/merge.Enqueuer.Enqueue`) and a bare
-exported name under a package directory (`internal/lockfile/TestLockRule1`) are
+package-qualified Go symbol (`internal/bus.IsProgress`) and a bare
+exported name under a package directory (`internal/bus/IsProgress`) are
 read as symbols, not files, by Go's own upper-case signal. And a `testdata/…`
 name is looked for under EVERY package, because a fixture path is always written
 relative to the package that owns it.
@@ -1415,8 +1430,8 @@ relative to the package that owns it.
 
 **The rule.** Nothing reaches the dev merge queue but a batch. `gh pr merge` in any spelling, and any `--auto` flag to it, is refused in
 every non-test Go file under `cmd/` and `internal/` and in every file under
-`.github/`. Admission to a merge queue is `internal/merge.Enqueuer.Enqueue`, the
-`enqueuePullRequest` mutation, and nothing else.
+`.github/`. Queue admission remains a batch operation; these tests reject
+direct merge and auto-merge spellings in the live tree.
 **The mistake it prevents.** A pull request carrying GitHub's auto-merge,
 switched on by a `gh pr merge` call made while it was red, is enqueued by the
 forge itself as its checks go green, and lands on dev with nobody having
@@ -1431,9 +1446,8 @@ that mentions the spelling is one literal, not an argument list.
 per line, checked in both directions so it only shrinks: the mutation guard
 that names `--auto` to refuse it, the audit's `--disable-auto`, which takes an
 auto-merge OFF, and the secrets store's own pull request.
-**Its remedy line.** `<path>:<line>: gh pr merge (or --auto) is refused; enqueue
-through internal/merge.Enqueuer.Enqueue, or take the auto-merge off with the
-audit's --disable-auto`.
+**Its remedy line.** A direct `gh pr merge` or `--auto` call must be removed;
+the audit's `--disable-auto` can take an existing auto-merge off.
 **Its narrowings.** Test files are not read; a comment may still say auto-merge
 — the rule is about what runs. A spelling assembled at run time from separate
 words is not seen.
@@ -2069,7 +2083,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 24. `TestNoToolIsWrittenTwiceInTheTranscripts` — no two `## ` headings in `docs/TESTS.md` carry the same tool name.
 25. `TestEveryToolPrintsTheOneVersionLine` — every `cmd/nova-*` binary answers `version` with one line in the `internal/buildinfo` grammar.
 26. `TestTheVersionGrammarIsSpelledOutOnceInTheSpec` — `docs/SPEC.md` states that grammar once.
-28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — no `gh pr merge` (or `--auto`) spelling reaches the dev queue but a batch; enqueue is `internal/merge.Enqueuer.Enqueue`.
+28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — direct `gh pr merge` and `--auto` spellings are refused in the live Go and `.github/` trees; queue admission remains a batch operation.
 29. `TestEveryTestBuildTagIsRunBySomeScheduledJob` — every opt-in build tag a `_test.go` carries is named by a scheduled workflow's `go test -tags`.
 30. `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` — the net checker's `nightly`/`soak` exempt tags have a scheduled leg.
 31. `TestSomeScheduledJobRunsTheRaceDetector` — some scheduled job actually passes `-race`.
@@ -2081,11 +2095,11 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists.
 39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (GitHub is a git remote only). **The mistake it prevents:** one PR can cost ~60 REST calls, and a token's hourly budget spent freezes every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** `internal/swarm/templates.go` and every card fixture under `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a source that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: the verbs that read a brief or a post, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (a card is only ever in no set, or in one of these sets; several writers keeping the sets let a table's counts drift from the cards). Fixtures that seed a throwaway store (a `*fixture*.go` file) are the only exceptions. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
-41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (the links between a table and its cards are always valid). **The mistake it prevents:** a table printing counts no card record can account for, because several files each keep their own copy of a set, so a move in one leaves a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding `ns_card_resume`'s pool write in `card_pool.lua` until it folds into the one move; the legacy ledger writers are a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), empty: any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua ...): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
+41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`: the scanner recognizes literal and helper spellings, including retired Go examples `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt`; the live Lua uses `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and `wskey`), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (the links between a table and its cards are always valid). **The mistake it prevents:** a table printing counts no card record can account for, because several files each keep their own copy of a set, so a move in one leaves a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding `ns_card_resume`'s pool write in `card_pool.lua` until it folds into the one move; the legacy ledger writers are a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), empty: any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua ...): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting`, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD. **The mistake it prevents:** a bench or friend keeping two ledgers beside its working set, so the width a table prints, the width a take is refused at and the width the dealer reserves against can each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working ...): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
 43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — the one-thread form leaves most children of a wrapper at nice 0) BEFORE the exec: `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`), and no production caller sets a `Yield` of its own (CI over work is a permanent setting: work creates more CI, so without it the fleet is unstable). **The mistake it prevents:** copies at nice 0 share the cores evenly with the CI legs on the same machines, so with the slots raised the load per core climbs past 4 and a CI shard nears the two-minute cap: more work means slower CI means more work waiting. **The sweep:** the named exec path, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it).
-44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`, measured with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, a machine can host friends and CI both), and every slot subtraction in Go and Lua in the live packages under `cmd/` and `internal/` (the reading CI's selection uses, deprecated/PACKAGES) — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, and `DF.take` and `DF.open` in `deal_friend.lua` (a bench's free slots are its declared slots minus the CI legs running on it). **The mistake it prevents:** a deal that fills every bench to its declared slots whether or not a CI leg is already on it lands a leg beside a full bench, and the copies take its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least six such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench ...`, or `the beat must write the CI leg count as ci (args[21]) every beat`.
-45. `TestEveryTableSetIsNamedByTheEpochRule` / `TestEpochNameRuleCatchesAnInjectedName` — no Lua file of the library and no non-test Go file under `cmd/` or `internal/` (fixtures included) spells a table set's name but through the epoch rule: a literal `ws:<s>:...` (`'ws:' ..`, `"ws:"+`, `"ws:%`, a two-segment ws literal), `<kind>:<name>:cards:` (or a bare `:cards:` piece) or `s:<S>:pool|waiting`, and no epoch-0 helper (`StreamKey`, `FriendKey`, `BenchCardsKey`, `BenchWorkingKey`, `WSKey`, `FriendCardsKey`, `PoolViewKey`, `keyPool`, `keyWaiting`, `ws.Key`, `Consumer.Key`) appears (numbers from an async writer that are not of the current table's sequence display as zero). **The mistake it prevents:** one path that names a set literally rather than through the epoch — a deal pass reading `s:<S>:pool` — reads epoch 0 after the first clear and never sees a card pushed after it, and a guard that matches one name shape is off from epoch 1. **The allowlist:** `epochRuleLines`, the rule's own lines only (`cm_ckey`, `cm_wskey` in `02_card_move.lua`), each a whole line, and a row whose line is gone fails (the list only shrinks). The global ws keys (`ws:order`, `ws:names`, `ws:log`, `ws:checkpoint`, `ws:done0`) are one segment and not table sets. **The remedy line:** `a table set named outside the epoch rule (name it through ws.KeyAt|ConsumerKeyAt|SprintListAt, or NS.card.ckey|wskey|skey, keyed by the epoch ...): <file>:<line>: <code>`. **The control:** `TestEpochNameRuleCatchesAnInjectedName` feeds every known spelling and each epoch-0 helper and wants each caught, and wants the helpers keyed by the epoch, the global ws keys, a comment and `ci:<repo>:<head>:waiting` left alone.
+44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`; a friend is not free of legs, and a machine can host friends and CI both), and every slot subtraction in Go and Lua in the live packages under `cmd/` and `internal/` (the reading CI's selection uses, deprecated/PACKAGES) — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, and `DF.take` and `DF.open` in `deal_friend.lua` (a bench's free slots are its declared slots minus the CI legs running on it). **The mistake it prevents:** a deal that fills every bench to its declared slots whether or not a CI leg is already on it lands a leg beside a full bench, and the copies take its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least six such lines must be found, or one has moved out of reach. **Its exact exception:** `staticShareExempt` permits only `internal/config/width.go`'s `w.Width = w.Slots - w.Charged`: this is a stable declared share, not free slots. `nova-swarm slots take` enforces lease capacity through `internal/swarm.TakeSlotLeasesKind`; the removed Go beat writer is no longer a checked subject. A friend's live beat still writes `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench ...`, or `the beat must write the CI leg count as ci (args[21]) every beat`.
+45. `TestEveryTableSetIsNamedByTheEpochRule` / `TestEpochNameRuleCatchesAnInjectedName` — no Lua file of the library and no non-test Go file under `cmd/` or `internal/` (fixtures included) spells a table set's name but through the epoch rule: a literal `ws:<s>:...` (`'ws:' ..`, `"ws:"+`, `"ws:%`, a two-segment ws literal), `<kind>:<name>:cards:` (or a bare `:cards:` piece) or `s:<S>:pool|waiting`, and no epoch-0 helper (`StreamKey`, `FriendKey`, `BenchCardsKey`, `BenchWorkingKey`, `WSKey`, `FriendCardsKey`, `PoolViewKey`, `keyPool`, `keyWaiting`, `ws.Key`, `Consumer.Key`) appears (numbers from an async writer that are not of the current table's sequence display as zero). **The mistake it prevents:** one path that names a set literally rather than through the epoch — a deal pass reading `s:<S>:pool` — reads epoch 0 after the first clear and never sees a card pushed after it, and a guard that matches one name shape is off from epoch 1. **The allowlist:** `epochRuleLines`, the rule's own lines only (`cm_ckey`, `cm_wskey` in `02_card_move.lua`), each a whole line, and a row whose line is gone fails (the list only shrinks). The global ws keys (`ws:order`, `ws:names`, `ws:log`, `ws:checkpoint`, `ws:done0`) are one segment and not table sets. **The remedy line:** `a table set named outside the epoch rule (name it through ws.KeyAt|ConsumerKeyAt|SprintListAt, or NS.card.ckey|wskey|skey, keyed by the epoch ...): <file>:<line>: <code>`. The quoted diagnostic retains retired Go helper names as scanner grammar; live Lua names sets with the epoch-keyed `NS.card.ckey`, `NS.card.wskey`, and `NS.card.skey` exported by `02_card_move.lua`. **The control:** `TestEpochNameRuleCatchesAnInjectedName` feeds every known spelling and each epoch-0 helper and wants each caught, and wants the helpers keyed by the epoch, the global ws keys, a comment and `ci:<repo>:<head>:waiting` left alone.
 
 ### `cap` — every job two minutes, permanently, on every platform
 
@@ -2112,12 +2126,9 @@ Makefile recipe, expanded, and refuses one at or over the cap (test-short, the
 hosted legs' target, carried a literal `12m` no check read), so a run ends with a
 Go stack before the job cap kills it without one.
 
-**The reach.** These tests police the tree they run in. A scheduled run executes
-the default branch's copy of the workflow: the ci nightly of 2026-09-27 (run
-36292578789) ran `main`'s ci.yml of 2026-09-18, whose test-hosted still carried
-`timeout-minutes: 15` and a windows-latest leg, and its four windows legs ran
-178-195 s to success uncancelled. The cap reaches a schedule when these files
-reach the default branch.
+**The reach.** These tests police the tree they run in. A scheduled run uses
+the default branch's workflow, so a newly tightened cap reaches the schedule
+when that workflow reaches the default branch.
 
 **The remedy line.** Split the job (shards by measured package size, or one job
 per functional program), move a process-in-the-loop test behind the `slow` tag
@@ -2218,24 +2229,16 @@ the rowan-tools bench play), not here.
 
 **The rule.** Every verb returns an error that you see, for breadcrumbs as you
 work; failing silently is not allowed, because without it no system built here
-can be made reliable. In the live packages
-(`internal/nsprint/{reconcile, taskcard,
-table, card, launch, fn, capacity, pipeerr}`, `internal/ntable`,
-`cmd/nova-table`), no non-test `.go` file holds
+can be made reliable. In the live packages (`internal/nsprint/fn`,
+`internal/ntable`, `cmd/nova-table`), no non-test `.go` file holds
 `_ = err` (any error-named identifier assigned to the blank identifier) or a
 `|| true` inside a Go string literal (an embedded script step whose exit is
 thrown away). A failure is returned, printed as one typed line (`REFUSED <verb>:
 <why>` on stderr with exit 1, or the verb's own receipt vocabulary) or, in a
-loop, counted and printed once per pass (the reconciler's `DUTY <name> ...
-err=<text>` line is the model).
-**The mistake it prevents.** A render that reports a Redis outage as `NOTASK`;
-a refused end that leaves only `code=2` on a line written to `/dev/null`; a
-reconciler duty that throws its pass's `REFUSED` lines away and returns clean
-counts; a consumer whose `slots` field will not parse, skipped every pass with
-no line; a lapsed copy the expire sweep cannot end, left in `working` with
-nothing said; a go-redis pipeline whose first absent field (`redis.Nil`) hides a
-later `NOPERM` and reads the rest as zero. Each is a card that sits still while
-the table says nothing.
+loop, counted and printed once per pass.
+**The mistake it prevents.** An error discarded with `_ = err`, or an embedded
+script step masked with `|| true`, can let a command appear successful without
+reporting what failed.
 **The test.** `TestNoSilentFailureOnTheLivePath`
 (`internal/ci/silent_class_test.go`), with the rule proved over source in
 `TestSilentRuleReadsTheTwoShapes` (the two shapes refused; a discarded value
@@ -2255,9 +2258,9 @@ two shapes by their syntax: `_, _ = f()` (a discarded multi-value), `_ =
 f.Close()`, an `err` assigned and never read, and an `if err != nil { return
 nil }` are not read (`go vet`, errcheck and the reviewer's eye are theirs), and
 neither is a Lua function that returns `nil` where a `REFUSED <why>` belongs.
-The go-redis pipeline shape has its own remedy rather than a rule:
-`internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
-may be absent and returns the first error that is not `redis.Nil`.
+The go-redis pipeline shape is outside this literal-shape rule: this test
+checks `_ = err` and `|| true` in its listed live packages, not per-command
+pipeline errors.
 
 ### `classtests` — no merge deletes a test file or a list undeclared
 

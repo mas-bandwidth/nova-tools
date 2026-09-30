@@ -18,7 +18,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(raw)
-	living := strings.Fields("nova-bus nova-table nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
+	living := strings.Fields("nova-bus nova-table nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update nova-sprint nova-work")
 	expected := map[string]bool{}
 	for _, name := range living {
 		expected[name] = true
@@ -55,6 +55,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 
 	// Read directory names only; do not build or test archived code. Including
 	// non-catalogue cmd entries also catches a tool awaiting its physical move.
+	// A retained historical copy does not retire a currently supported tool.
 	forbidden := map[string]bool{"nova-pulse": true}
 	for _, dir := range []string{"cmd", "deprecated/cmd"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
@@ -63,7 +64,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 		}
 		for _, entry := range entries {
 			name := entry.Name()
-			if entry.IsDir() && strings.HasPrefix(name, "nova-") && (dir == "deprecated/cmd" || !expected[name]) {
+			if entry.IsDir() && strings.HasPrefix(name, "nova-") && !expected[name] {
 				forbidden[name] = true
 			}
 		}

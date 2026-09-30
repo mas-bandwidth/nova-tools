@@ -1,9 +1,9 @@
 # The reply transaction — a reply drafted without a hand-built header
 
-This is the contract for two opt-in forms of existing `nova-bus` verbs:
+Two opt-in forms of existing `nova-bus` verbs implement this contract:
 `draft --reply-to`, which drafts a reply whose every header the tool builds,
 and `--bodies` on `inbox` and `wait`, which returns the NEW notes' bodies in the
-same call that reports them. Both extend released verbs: no second binary, no
+same call that reports them. Both use the existing binary: no second binary, no
 second delivery protocol, no change to any verb or flag used without them.
 
 `nova-bus` is a released tool that other lines run against their own buses, so
@@ -98,10 +98,9 @@ which one the writer meant, and that is exit 2.
 
 ## What "fresh" means, and why the fetch is inside the verb
 
-The main specification says `nova-bus` reads the checkout and never the remote,
-and that a `--fetch` for the reading verbs would be an explicit flag rather than
-a hidden fetch. **This form does not weaken that rule; it is the explicit
-form.** The refresh is not a flag that can be forgotten — it is part of what
+Ordinary `inbox` reads its checkout; `wait` fetches its named remote as part of
+polling. The reply form likewise fetches its explicitly named remote before it
+resolves a target. The refresh is not a flag that can be forgotten — it is part of what
 `--reply-to` is, and the verb will not run without `--remote` and `--branch`, on
 the same law that refuses to guess a bus or a branch anywhere else here.
 
@@ -116,7 +115,7 @@ scheme exists to remove, arriving through the reader's own door.
 **The refresh is `wait`'s poll, and is one implementation with it** — the same
 `internal/bus` code path, not a second one that could drift:
 
-1. take the checkout lock, as every verb does;
+1. take the checkout lock for this refresh;
 2. `git fetch <remote> <branch>` under `--git-timeout`;
 3. **fast-forward the checkout**, never merge and never rebase — which is the
    main specification's own account of `wait`'s poll restated here, and is

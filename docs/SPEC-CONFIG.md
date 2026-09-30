@@ -24,6 +24,26 @@ leases and every other thing a tool writes as it runs stay with the tool that
 writes them. `config.history` is the history of the configuration itself,
 nothing else.
 
+## Command surface
+
+| command | inputs and behavior |
+| --- | --- |
+| `help [<verb> ...]`, `<verb> -h` | print help without opening a store |
+| `version`, `--version` | print the shared version line; no arguments |
+| `kinds` | print each descriptor and `CONFIG KINDS`; no store or arguments |
+| `migrate [--pg <dsn>] [--print]` | apply schema migrations; `--print` lists embedded migrations without connecting |
+| `status [--pg <dsn>] [--redis <addr>]` | report schema, row counts, revisions and, when Redis resolves, applied revisions |
+| `apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]` | plan or apply the Postgres-to-Redis differences; `--check` requires no actor |
+| `inventory [--pg <dsn>] [--list \| --host <name>] [--timeout <duration>]` | print Ansible JSON; see Inventory |
+| `machine self [--check] [--pg <dsn>]` | resolve this machine's name; optionally check its row |
+| `machine width <name> [--pg <dsn>] [--redis <addr>] [--json]` | derive the machine's static sprint share |
+
+The row verbs below also take `--pg`; row writes take `--as`. Only machine
+`list` and `show` add `--redis` for live facts. Singleton row verbs take no name.
+`status` prints `redis=-` when no Redis address resolves. It exits 1 for an
+absent schema or any applied-revision mismatch; an address that resolves but
+cannot be read is an error, not a request to omit the Redis check.
+
 ## Kinds
 
 **The placement rule.** Per-machine facts belong to machines, and global
@@ -36,7 +56,7 @@ person coordinating is sprint-global configuration: the
 fleet row holds machines only (the store, the coordinator machine); the
 sprint row holds who coordinates; a friend's roles are what the deal reads.
 
-Where each field of this cut sits:
+The declared fields are:
 
 | side | fields |
 | --- | --- |
@@ -47,7 +67,7 @@ Where each field of this cut sits:
 
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
-grammar is one for every kind:
+row grammar is shared by the non-singleton kinds (`machine` and `friend`):
 
 ```
 nova-config <kind> add <name> --<field> <value> ... --as <friend>
@@ -63,7 +83,8 @@ Every kind's table has the same shape: `name text PRIMARY KEY` (the row key,
 `created_at` and `updated_at`. There is no `note` column on any kind: notes
 are history, and history lives in git. The CLI's flags, help, refusals, SQL,
 typed lines and apply diff are all generated from the descriptor, so every
-kind has identical verbs and a new kind adds no verb code.
+kind shares the same row operations. Machine discovery and width are
+additional read-only queries.
 
 ### Singleton kinds
 
@@ -106,7 +127,7 @@ removed (`machine studio is the --coordinator of the fleet`, `friend rowan
 is the --coordinator of the sprint`): the structure enforces it (a foreign
 key), the tool names it.
 
-### The kinds of this cut
+### Registered kinds
 
 **`machine`** (`config.machines`): a machine of the fleet, named by its
 tailnet host. Every fleet machine is on the tailnet and reachable by ssh
@@ -136,26 +157,34 @@ beat writer's, not this tool's.
 sprint: the machine's `slots` is the ceiling, each friend's `slots` is charged
 to the machine her own beat reports (else the fleet row's coordinator machine,
 the charge apply makes), and what remains is the sprint member's width:
-`width = slots - the friend slots charged to the machine`. A machine with a
+`width = max(0, slots - the friend slots charged to the machine)`. A machine with a
 width of 1 or more is a member of the sprint's fleet; a machine with `slots` 0,
 or whose friends take the whole ceiling, is not. No field holds it: the width
 is derived on every read, so the inventory is the one place a machine's
-capacity is written. It is a static share, the same on every read of the same rows: the CI legs
-running on the machine and every other child hold slots of the ceiling moment
+capacity is written. It is a static share for the same rows and friend-to-machine
+attribution: the CI legs running on the machine and every other child hold slots of the ceiling moment
 by moment, and they are taken off at the take, by a lease from the machine's
 one slot store, never in the width. `nova-config machine width <name>` prints it, reading the friends' beats from a
 Redis when a friend row carries slots (`Widths`, `internal/config/width.go`);
 with no friend beats on the store, every friend is charged to the coordinator
-machine.
+machine. `--json` returns `machine`, `slots`, `charged`, `width` and `member`
+as one JSON object; otherwise the verb prints `CONFIG WIDTH`. `--pg` supplies
+the rows. The Redis address comes from `--redis`, `NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`, without a seat fallback. When no friend has positive slots,
+Redis may be omitted. An explicitly supplied Redis is still opened.
 
 **A machine's own name.** `nova-config machine self` prints the name this
 machine has in the inventory, so no name is typed on the machine it names:
 `NOVA_MACHINE` when set, else the first label of the host's DNS name on the
 tailnet when a tailnet is running (asked of `tailscale status --json`, only
-when the program is installed), else the first label of the hostname, always
-lower-case. It opens no store. `--check` reads the machine rows and exits 2
+when the program is installed, with a five-second timeout), else the first
+label of the hostname, always lower-case. An unavailable, stopped or invalid
+tailnet response falls back to the hostname. An invalid nonempty `NOVA_MACHINE`
+is refused rather than replaced by a fallback. Without `--check`, it opens no store. `--check` reads the machine rows and
+exits 2
 when the name is none of them, 3 when the name or the rows cannot be read
-(`SelfName`, `internal/config/self.go`).
+(`SelfName`, `internal/config/self.go`). Usage errors also exit 2. Success
+prints only the resolved name and a newline; a failed check prints no name.
 
 **`fleet`** (`config.fleet`, singleton): the one row of fleet-wide facts.
 The coordinator machine is one machine; which friend drives it is the sprint
@@ -213,17 +242,15 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           the migration)
 ```
 
-No database has applied `0002_machine.sql` or `0003_friend.sql` in their
-first shape (the fleet Postgres on space is not migrated yet), so this cut
-rewrote both in place rather than adding an alter.
-
 ## History
 
-**Every write is also a history row, in the same transaction.** `add`
+**Every row write is also a history row, in the same transaction.** `add`
 records `before = null, after = the row`; `set` records the row before and
 after; `remove` records `before = the row, after = null`. `actor` is `--as`
-(or `NOVA_FRIEND`), required on every write. There is no path that changes
-a row without a record, and no path that edits history.
+(or `NOVA_FRIEND`), required on each row-verb write. No `add`, `set` or `remove`
+changes a row without a history record, and no path edits history. Schema
+migrations create the initial `fleet` and `sprint` singleton rows without a
+history record.
 
 **A kind's revision** is the greatest `history.id` of its rows, 0 for a
 kind never written. It is what `apply` stamps into Redis. Revisions are
@@ -270,9 +297,7 @@ its coordinator machine), friends, the sprint row:
    `CONFLICT`.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the revision unchanged (steady apply is 6 Redis round trips down from 18;
-first run across the seed kinds takes 30 trips down from the 42 baseline, with
-each machine running its ceiling check before its write transaction).
+zero, the revision unchanged.
 
 ### What apply writes, per kind
 
@@ -300,7 +325,7 @@ roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
 plus `coordinator` for the friend the sprint row names. Nothing else: her
 logins, wake path and harness are her presence's. Remove: refused while
-`friend:<f>:cards:working` has a member, naming the copies; else the
+the friend holds working copies, naming them; else the
 registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
@@ -313,10 +338,38 @@ the friend kind's plan is two `SET ... changed=roles`, stella's first.
 `machine:<m>`, `machines`, `fleet:*` and `sprint:coordinator` are
 nova-config's own keys: no function in the library reads or writes them.
 
+## Inventory
+
+`inventory` reads machine and fleet rows in one read-only, repeatable-read
+transaction. It prints Ansible JSON with `_meta.hostvars` and the groups `all`,
+`benches`, `coordinator`, `store`, `runners`. `all` and `benches` contain every
+machine; the fleet row selects coordinator/store; positive `runners` selects
+the runners group. Host variables are `ansible_host`, `slots`, `runners`,
+`kind=machine`, and nonempty `ansible_user`/`nova_seat` values.
+
+`--list` is the default. `--host <name>` prints one host's variables; an empty
+name or combining it with `--list` is usage error. An unknown host exits 1,
+naming up to 20 known machines and the number remaining. An absent/older
+schema exits 1 with a migrate remedy; a newer schema exits 1 requiring a
+binary with matching migrations.
+
+For the local host, nonempty `NOVA_MACHINE` matches exactly; an unknown
+explicit name exits 1. Otherwise the lower-case first hostname label matches,
+and no match simply leaves every host remote. The matched host gains
+`ansible_connection=local`. This inventory rule does not consult the tailnet
+or lowercase an explicit override, unlike `machine self`.
+
+`--timeout` is a positive Go duration, default `10s`, covering connection,
+schema inspection and row reading. Expiry exits 2 with the stage and a retry
+command. No Redis connection or actor is required. When Ansible invokes an
+inventory wrapper, `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` makes script
+failure fail the Ansible invocation instead of yielding an empty inventory.
+
 ## Lines
 
-One typed line per event; values go through `oneline.Field`, an empty value
-prints as `-`.
+The row, status, apply, migrate and width verbs print typed lines; values go
+through `oneline.Field`, and an empty value prints as `-`. `inventory` prints
+JSON, while successful `machine self` prints only the resolved name.
 
 ```
 CONFIG ADD kind=<k> name=<n> rev=<id>
@@ -339,6 +392,7 @@ CONFIG MIGRATE pg=<user@host:port/db> from=<v> to=<v> applied=<n>
 CONFIG STATUS pg=<...> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
+CONFIG WIDTH machine=<n> width=<n> slots=<n> charged=<n> member=true|false
 ```
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
@@ -346,6 +400,9 @@ missing row, a ref naming no row, a row another names, a ceiling, working
 copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
 one stderr line, `nova-config <verb>: <why>; run: <next step>`.
+`machine self` has the explicit exception above: 0 printed, 2 usage or no
+matching row, 3 name/config unreadable. Inventory and width retain the general
+0/1/2 mapping.
 
 ## Connecting
 
@@ -362,8 +419,8 @@ anywhere connects with none (a throwaway database trusts).
 one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
-open no store. `--as` is the flag, else `NOVA_FRIEND`, required on every
-write.
+open no Redis connection. `--as` is the flag, else `NOVA_FRIEND`, required
+on row writes and non-check apply. Schema migration takes no actor.
 
 ## Deliberately not configuration
 
@@ -371,5 +428,4 @@ write.
 - history other than the configuration's own: scores, receipts, ledgers,
   `cap:log`;
 - secrets: the store holds the name of the variable, never a password;
-- the sprint plan (`ns_sprint_plan`): a sprint is bounded work, not the
-  fleet.
+- the sprint plan: a sprint is bounded work, not the fleet.

@@ -228,9 +228,10 @@ and it is the coordinator's decision, receipted.
   writes nothing: exit 0 when there is none, 2 when there is, 3 when the config
   or the sprint store cannot be read, or the config holds no machine row (a store that is not the fleet's would
   hold every member down). It is the coordinator's verb, like every fleet move.
-  The sync adds no state: each move is one `fleet up` or `fleet down` already
-  makes, for many members in one plan, and the drift it reports is exactly the
-  plan it writes.
+  The sync uses the fleet's existing rows and control cards, including
+  `held_by` to distinguish its holds from the coordinator's. It applies the
+  same member moves as `fleet up` and `fleet down` for many members in one
+  plan; the drift it reports is the plan it writes.
 - The tick's first part (presence) applies one change of derived status a
   tick, ups first: a member going down has its unfinished work cards dealt to
   the members up, or withdrawn when none is; a member coming up levels the
@@ -526,6 +527,18 @@ inbox (and by `where --json`). A stream with nothing on the table (every primary
 or restored empty by a clear) is waiting with no `since` and is never stale.
 This is pull visibility; nothing claims to detect a dead process.
 
+At the end of a running tick, after its parts and reminders, the machine scans
+notes after the last tick-end mark. If any judgment or happened note addressed
+to someone arrived, it writes one tick-end note to the coordinator with their
+count (`judgments=N`) and advances the mark. The tick-end note is a wake signal,
+not an inbox item. `inbox --wait` waits for the next tick-end after the notes
+present when the call starts, then prints the inbox. Its `--timeout` defaults
+to five minutes; if no tick-end arrives, text mode reports the timeout condition
+and still prints the inbox, while `--json` mode returns the unpolluted JSON
+inbox object directly without a text banner, preserving the strict JSON contract
+and parser compatibility. Waiting does not advance the cursor (`--read` does),
+and `--wait` takes a positive timeout in the current epoch, not `--at-epoch`.
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared
@@ -650,13 +663,14 @@ layer retires this section.
 
 ## 11. Verbs
 
-Each takes a set and is one step. A set is ids, a stream, a column, `--limit n`,
+The verbs that select primaries take a set: ids, a stream, a column, `--limit n`,
 or an inbox group (`--group <id>`; a group number is refused, naming the ids).
 Every verb taking `--group` takes `--expect <n>`: when the group's members now
 number otherwise the verb is refused, changes nothing, and names the size now
 and the members added or gone; a verb given `--group` prints how many it acted
 on. Each prints what moved, what did not and why,
-and the summary line. Every judgment verb takes `--answers <notification>`.
+and the summary line. A decision verb that resolves a judgment can name it with
+`--answers <notification>`; `ack` and `wait` name their notifications directly.
 Every store verb takes `--redis`, `--actor`,
 `--op <id>` (the same id again, for the same verb with the same arguments, returns the recorded
 result; recorded for another verb or other arguments it is a conflict and is
@@ -664,7 +678,7 @@ refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
-up, fleet down, fleet level, reader add, wait, ack, clear, teardown, repair,
+up, fleet down, fleet sync, fleet level, reader add, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it, and
@@ -673,7 +687,7 @@ coordinator takes init and teardown only. The workers' verbs (take, finish,
 read, fleet beat) are anyone's who names the member or reader, and their
 actor, when none is given, is that name. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run) are recorded as the machine; the reads
-(queue, inbox, card, check, where, goal show) need no actor, except `inbox
+(queue, inbox, card, log, check, where, goal show) need no actor, except `inbox
 --read`, which moves the coordinator's cursor and is the coordinator's alone:
 anyone reads the inbox, and nothing another actor does hides anything from
 the coordinator. A card's and a
@@ -681,49 +695,52 @@ control card's text fields
 (brief, fix, finding, report, reason, note, return reason, ci note, did) are
 at most 8 KiB, and every manifest is checked against
 the table layer's bounds before anything is written, split by entries and by
-bytes, so no step can wedge the sprint. Every command checks first that the
+bytes, so no step can wedge the sprint. Every verb that opens the sprint store checks that the
 store's table function library is this build's, and refuses (exit 2) with the
 command that loads it.
 
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor) |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChild`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `nova-swarm template --name card` prints a card that passes |
+| add | admits primaries into a stream: waiting if they need something, else ready; names ids or uses `--count <n>` to generate them, and accepts `--needs <a,b>`, `--score <n>`, `--sentinel <id>`, and `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChild`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `nova-swarm template --name card` prints a card that passes |
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
-| resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
+| resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case); optional ids, `--stream`, and `--limit` select what it examines |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet |
 | tick | one tick by hand |
-| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
-| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>` |
-| ask | deals primaries in review to two different readers; `--another` |
-| queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
-| read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
-| accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
+| take | a worker moves work cards fleet ready -> working; `--as <member>` selects from that member's ready queue (`--limit`), while named cards carry `<card>@<gen>` from `queue` |
+| finish | work cards done ok or failed; primaries to review; `--as <member>` and named `<card>@<gen>` are required; `--failed`, `--head`, `--report`, `--branch`, and `--base` describe the result |
+| ask | deals primaries in review to two different readers; `--another` asks one more reader for an already asked attempt |
+| queue | a reader's read cards or a member's work cards, oldest first (`--as`), a stream's merge queue (`--stream`), or that stream's waiting primaries with `--stream` and `--col waiting` |
+| read | a reader moves read cards asked -> reading with `--begin`, or reports `--ok` or `--broken` with `--finding`; takes `--as <reader>` and optional ids or `--limit` |
+| accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible; `--read-ok` selects every primary in review with ok reads from two different readers in one plan |
 | rework | delegates the next attempt at once with a fix; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
-| merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
+| merge | one mechanical merge step for a stream: `--batch <n>`, optionally one fact (`--conflict`, `--cross`, `--red [--suspect <id>...]`, or `--rejected`) and `--note` |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
-| fleet | `up|down <member>`, `level` |
+| fleet beat | a member reports its presence and measured load, or gives `--load <percent>`; it writes the beat outside the tables (section 5) |
+| fleet up, down, level | `up <member> [--width <n>]` releases a hold, `down <member>` holds one, and `level` evens ready queues (section 5) |
+| fleet sync | derives fleet members and widths from nova-config's inventory; `--check` reports drift without writing (exit 0 none, 2 drift, 3 unreadable config or sprint store), and `--pg` selects the config store (section 5) |
 | reader add | declares readers |
-| ci | records a CI observation for primaries in any state |
-| wait | sets a judgment's next review time |
+| ci | records a CI observation for primaries in any state: `--red` or `--green`, with optional `--head`, `--run`, `--source`, and `--note` |
+| wait | sets one judgment's next review time with `--for <duration>` or `--until <time>`; a held condition uses running time |
 | ack | closes a judgment the coordinator looked at, with the reason |
-| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints |
+| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, coordinator-only `--read`, and `--wait [--timeout <duration>]` (the tick-end wake above); `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
 | queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
-| where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
-| play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
-| goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
+| where | the view, once or `--watch` (redrawn in place with `--every`, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
+| play | plays the world outside the table through these verbs, seeded; `--simulation`, chance flags, `--silent`, `--ticks`, `--take`, and `--reads` bound or shape the drive (section 12); refused while no machine is running |
+| goal set, show, drop | sets a person's goal text from `--file` or route with `--to file:<path>` (at least one; a new goal's route defaults to a printed file path), shows one or all, or removes one; the tick pushes each goal down its route (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
 
-The read verbs (queue, where, inbox, card, check) have `--json`, one object for a
-program; `queue --stream <s> --col waiting` lists a stream's waiting cards;
+The read verbs (queue, where, inbox, card, log, check) have `--json`, one object
+for a program; `goal show --json` prints an array of people. `queue --stream
+<s> --col waiting` lists a stream's waiting cards;
 `card` shows each need with its state and what needs the card; where, inbox and card take `--at-epoch <n>` to read an earlier epoch as
 it was. Every store verb takes `--epoch <n>`, the epoch the caller holds. Every
 report of an outside actor on a card it was handed (take by id, finish, read,
@@ -1020,4 +1037,3 @@ card's timeline. At clear, the log stays with its epoch and is read with
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
-

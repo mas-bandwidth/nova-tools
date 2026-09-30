@@ -5,10 +5,12 @@ describe a set of work as **units**. A work set is data the reader reads, never 
 evaluates. This page specifies the reader, the `(work-set ...)` form, the keys a unit carries
 and the shape each key must have, and the accessors a caller reads a unit through.
 
-The living caller is `nova-tokens fold --units <set.lisp>`. It loads the set with
-`worklang.ParseWorkSet(path, raw, worklang.DefaultLimits())` and reads each unit's id, `PR()`,
-`Branch()` and `Lane()` to attribute a transcript's spend to a unit;
-[SPEC-TOKENS.md](SPEC-TOKENS.md) specifies that attribution rule.
+`nova-tokens fold --units <set.lisp>` calls `worklang.ParseWorkSet(path, raw,
+worklang.DefaultLimits())` and reads each unit's id, `PR()`, `Branch()` and
+`Lane()` to attribute a transcript's spend to a unit; [SPEC-TOKENS.md](SPEC-TOKENS.md)
+specifies that attribution rule. `nova-work` also uses this package's restricted
+reader through `workfile.Decode`: it calls `worklang.Read` for the tree file's
+syntax, then applies the stricter record schema in [SPEC-WORK-V1.md](SPEC-WORK-V1.md).
 
 The package also holds a plan form (`ParsePlan`, `Plan.Graph`), a checker
 (`WorkSet.Check`, `Ready`, `Blocked`) and an attempt writer (`Record`, `Take`). No living

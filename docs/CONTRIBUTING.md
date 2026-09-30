@@ -112,13 +112,15 @@ The **CL tier** (`.github/workflows/ci.yml`) is what a change is required to
 pass in two minutes, ideally one. It runs `gofmt` on one runner — formatting is
 a property of the source, not of the platform — then `go build ./...`, `go vet
 ./...`, and the unit tests sharded by package group across parallel jobs, with
-`-count=1` and no race detector. `ci-ok` aggregates exactly the CL tier, so a
-matrix leg that is renamed, added or skipped cannot quietly leave branch
-protection. Its tests come in two tiers ([TESTING.md](TESTING.md)): the **unit** tier runs on every pull request over the
+`-count=1` and no race detector. `ci-ok` checks the jobs required for each
+triggering event, including the functional, queue race, e2e and lisp results
+when those jobs run, so a matrix leg that is renamed, added or skipped cannot
+quietly leave branch protection. Its tests come in two tiers ([TESTING.md](TESTING.md)): the **unit** tier runs on every pull request over the
 packages the change touched, at most two cores a leg, with no redis-server on
 PATH and a 2 s package / 1 s test budget; the **functional** tier (`//go:build
-functional`) runs only in the merge queue, as a whole work stream merges into
-dev, and nightly.
+functional`) runs in the merge queue as a whole work stream merges into dev,
+on the nightly schedule, and on manual workflow dispatch; it does not run on
+ordinary pull requests.
 
 The **certification tier** (`.github/workflows/certification.yml`) holds
 everything that cannot fit that budget, under the same job names it always had:

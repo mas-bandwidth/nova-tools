@@ -26,8 +26,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const usageDetails = `Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
---idem (receipt metadata) and --receipt. create also takes --epoch-key,
+const usageDetails = `Ordinary table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
+--idem (receipt metadata) and --receipt. Batch takes --epoch, --actor,
+--receipt and --json; its operation ID and preconditions are in the manifest. create also takes --epoch-key,
 --epoch-field (default n), and --member-prefix (default table::member:).
 A stale epoch is refused. drop keeps the saved column definition unless
 --definition is given; snapshots from earlier epochs remain available.
@@ -57,7 +58,7 @@ row add binds a column to a set another tool owns (<col>=<key>): a bound
 cell is a view, read freely, and cell add, cell remove, cell move and clear
 refuse it, naming the --owner verb. --exclude names one member the row's
 counts and members leave out. render <table> prints the table and nothing else,
-nothing at all when it is empty. render --view <name> prints one frame with
+including its header and, when a column folds, its footer when it has no rows. render --view <name> prints one frame with
 the view's timestamp, title and summary line; view state sets a text the
 summary line shows alone, in place of the counts, until --clear. watch redraws it in place every --every
 (1s) with no shell loop, or publishes it to --out by atomic rename.

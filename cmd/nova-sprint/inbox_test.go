@@ -91,24 +91,23 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	ta.deal(3)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	g := ta.group(sprint.NWorkFailed, "s1")
-	printed := g.Size
+	shownSize := g.Size
 	ta.failOnce("m1", "s1-2.w1@1", "tests red")
 	now := ta.group(sprint.NWorkFailed, "s1")
 	if now.ID != g.ID || now.Size != 2 {
 		t.Fatalf("the group grew under another id or size: %+v", now)
 	}
-	code, out, errs := ta.do("drop --group " + g.ID + " --expect 1 --reason obsolete --answers " + strings.Join(g.Notes, ","))
+	code, out, errs := ta.do("drop --group " + g.ID + " --expect " + strconv.Itoa(shownSize) + " --reason obsolete --answers " + strings.Join(g.Notes, ","))
 	if code != 1 || !strings.Contains(errs, "REFUSED group "+g.ID+": it has 2 now, not 1 as printed; nothing changed") ||
 		!strings.Contains(errs, "ADDED s1-2") || strings.Contains(errs, "ADDED s1-1") || !strings.Contains(errs, "DROP FAIL moved=0") || strings.Contains(out, "MOVED") {
 		t.Fatalf("a grown group: %d\n%s%s", code, out, errs)
 	}
-	if code, _, errs := ta.do("drop --group " + g.ID + " --expect 1 --reason obsolete"); code != 1 || !strings.Contains(errs, "NOW s1-1") || !strings.Contains(errs, "NOW s1-2") {
+	if code, _, errs := ta.do("drop --group " + g.ID + " --expect " + strconv.Itoa(shownSize) + " --reason obsolete"); code != 1 || !strings.Contains(errs, "NOW s1-1") || !strings.Contains(errs, "NOW s1-2") {
 		t.Fatalf("a grown group, no --answers: %d %s", code, errs)
 	}
 	if ta.group(sprint.NWorkFailed, "s1").Size != 2 {
 		t.Fatalf("a refused verb changed the group")
 	}
-	_ = printed
 	out = ta.ok("rework --group " + g.ID + " --expect 2 --fix 'the fix'")
 	if !strings.Contains(out, "GROUP "+g.ID+" acted on 2, the group had 2 when printed") {
 		t.Fatalf("rework --expect: %s", out)
@@ -403,7 +402,9 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		if _, ok := sprint.Decisions[sprint.NSprintDone]; ok {
 			want--
 		}
-		if n := strings.Count(out[strings.Index(out, "one answer to each judgment"):], "\n  "); n != want {
+		answers := out[strings.Index(out, "one answer to each judgment"):]
+		answers, _, _ = strings.Cut(answers, "\nexample:\n")
+		if n := strings.Count(answers, "\n  "); n != want {
 			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, want-1)
 		}
 		if !strings.Contains(out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator") {

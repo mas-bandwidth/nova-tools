@@ -1,9 +1,10 @@
-# Prepared bus delivery — proposal for the version-report recovery gap
+# Prepared bus delivery and version-report recovery
 
-Status: independently approved specification, not implemented. This is the bounded
-dependency of SPEC-UPDATE rules 24–25. Johnny approved the exact contract at
-5f73dc1 (johnny-2b82f17a9453), review only; the two requested clarifications follow. Existing ordinary send is
-unchanged. No new timer, service, friend identity or update policy is introduced.
+`nova-bus prepare` and `send --prepared` implement the two operations below;
+the version reporter joins them through its saved pending artifact. This is the
+bounded delivery dependency of SPEC-UPDATE. Ordinary send keeps its existing
+behavior. The contract introduces no timer, service, friend identity or update
+policy.
 
 ## Why
 
@@ -45,7 +46,8 @@ Help and the first-run block say: **Do not prepare again while pending; retry th
 saved artifact.** Two preparations at different instants can assign different
 Date values and IDs even when the original draft is identical.
 
-The new send input modes are mutually exclusive with ordinary `--file`/`--stdin`.
+The prepared send input modes are mutually exclusive with ordinary
+`--file`/`--stdin`.
 They validate the artifact schema, full digest, rendered note, current roster,
 speaker, deterministic ID and safe own-lane path before writing anything. A
 changed roster that no longer resolves the prepared identity is a named refusal,
@@ -90,7 +92,7 @@ prepared artifact and the exact observed map it describes. Each later explicit
 `--send` resolves that pending artifact first, even when no installed version
 changed. Remote-confirmed success updates `delivered` and clears pending atomically.
 
-If today's observation differs while an older report is pending, finish the old
+If the current observation differs while an older report is pending, finish the old
 report first. If that cannot be confirmed within budget, retain it, report the
 pending gate and do not send a newer report. If confirmed, a newer observation can
 be prepared, atomically saved and sent using the remaining budget. Never discard
@@ -124,19 +126,19 @@ Use real disposable local bare Git remotes, not only fake SEND text:
   existing bus ID recompute, and ordinary send still passes its existing tests.
 - A fully confirmed unchanged report makes zero bus invocations on the next run.
 
-Public fixtures are synthetic. Friends choose recipients; version statuses do not
-wake Johnny through To. New versions remain a choice, and working alternatives
-remain welcome.
+Public fixtures are synthetic. The caller chooses recipients; a version status
+does not choose a wake recipient through `To:` by itself. New versions remain a
+choice, and working alternatives remain welcome.
 
 ## Tests this spec demands
 
-The tree already carries a full implementation of `prepare`/`send --prepared` in
-`cmd/nova-bus` + `internal/bus` and the "version reporter join" in `internal/update`
-(the fake-bus and slow build-tag suites). Tests use real disposable local bare Git remotes
-(hermetic, no network), injected clocks and temp dirs, and process-death helpers that
-SIGKILL a child at each write boundary before a fresh child recovers; every
-already-published/refusal result is proven able to fail by a mutation. Five behaviours
-remain unproven by any test.
+`cmd/nova-bus` and `internal/bus` own preparation and prepared send;
+`internal/update` owns the version reporter's pending/delivered state. The list
+below states test obligations, not a claim that every named test or failure
+mode has runtime evidence. Existing tests exercise parts of the contract with
+disposable local Git remotes, injected clocks, temporary directories, and
+process-death boundaries. Named obligations without a matching test, including
+`TestPrepareWritesNoBusState`, remain owed until they have direct evidence.
 
 1. `TestPrepareDecidingTests` — `prepare` reads the explicit bus and draft, reusing participant/recipient/draft validation, and computes the existing deterministic note ID.
 2. `TestMakeAndValidatePreparedArtifact` — `prepare` assigns Date once (injected clock) before any mutation.
@@ -171,7 +173,7 @@ remain unproven by any test.
 31. `TestNewObservationCannotReplaceUnresolvedPending` — with `--snapshot`, store `pending` (scope + artifact + observed map) before sending.
 32. `TestPendingBeforeDispatchAndQuietRetry` — each later `--send` resolves the pending artifact first, even when no installed version changed.
 33. `TestNewObservationCannotReplaceUnresolvedPending` — remote-confirmed success updates `delivered` and clears pending atomically.
-34. `TestNewObservationCannotReplaceUnresolvedPending` — if today's observation differs while an older report is pending, finish the old report first.
+34. `TestNewObservationCannotReplaceUnresolvedPending` — if the current observation differs while an older report is pending, finish the old report first.
 35. `TestNewObservationCannotReplaceUnresolvedPending` — if the old report cannot be confirmed within budget, retain it, report the pending gate, and do not send a newer report.
 36. `TestNewObservationCannotReplaceUnresolvedPending` — if confirmed, a newer observation is prepared, atomically saved and sent with the remaining budget; never discard an old report merely because a newer observation exists.
 37. `TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked` — without `--snapshot` a plain report/draft writes nothing and each send is a new intention; the artifact is held in memory for bounded in-process retry only.

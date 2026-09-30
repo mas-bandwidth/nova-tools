@@ -4,9 +4,9 @@
 `cut`, `build`, `install`, `adopt` and `pull` do, where `adopt` runs from, and the list of things `adopt`
 will never do. This file is the part of it a person must be able to read **without reading Go**: the gates.
 
-Each rule here is a gate rather than a step: something the verb **refuses** until a condition holds, and a
-gate whose condition lives only in code is a gate nobody outside the code can check. Each rule is numbered
-so it can be referred to, states the mistake it prevents, and names the tests that hold it.
+Each numbered section states a release guard or evidence boundary. A guard whose condition lives only in
+code is one nobody outside the code can check. The sections name the mistake each boundary prevents and
+the tests that hold it.
 
 ## 1. A range that touched the sensitive paths needs Johnny's read
 

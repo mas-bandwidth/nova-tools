@@ -142,12 +142,13 @@ nova-table cell move     <table> <row> <from-col> <to-col> <member>...
 nova-table cell members  <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
-nova-table member read   <table> <id>... | <table> --cell <row:col>
-nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]
+nova-table member read   <table> (<id>... | --cell <row:col>...) [--at-epoch <n>] [--json]
+nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
-nova-table render <table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render <table> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--width <col=n,...>] [--label-width <n>]
 nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
 nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
 nova-table view state <name> (<text> | --clear)
@@ -159,11 +160,13 @@ nova-table version
 nova-table help   [<verb> [<subverb>]]
 ```
 
-Table write verbs accept `--epoch <observed epoch>` (default 0), `--actor`,
+Ordinary table write verbs accept `--epoch <observed epoch>` (default 0), `--actor`,
 `--fence`, `--idem`, and `--receipt`. `create` also accepts `--epoch-key <key>`,
 `--epoch-field <field>` (default `n`), and `--member-prefix <prefix>` (default
-`table::member:`). Column visibility is managed via `set --hide/--show`; there
-are no separate `col hide/show` subverbs and `create` does not take `--hidden`.
+`table::member:`). Column visibility is managed via `set --hide/--show`;
+`create` defines a visible table.
+`batch` has its own flag set shown above; its manifest carries the operation
+identity and preconditions.
 
 ---
 
@@ -465,7 +468,8 @@ is chosen from cost: rows are written in chunks of 256, and a table of 100,000 r
 took about a second to write and 1.6 seconds to read whole on the bench, the longest a
 single call should hold the store.
 
-A batch holds the store for a time its manifest bounds, not the store's content. It
+A batch bounds its named-field work by its manifest and value limits. Placement
+validation can also depend on the table's size, as the measurements below show. It
 reads the head of each member (epoch, revision, place) and the fields its entries name
 (set, unset and guarded), never a whole record. Before any value is read or hashed it
 counts, from lengths (`HSTRLEN`), the bytes of every before-value and after-value of
@@ -543,9 +547,10 @@ a stale epoch refuses. Original result epoch/revisions remain visible, so retry
 cannot masquerade as a new current-epoch action. No retry loop in transport may
 silently invent a new operation ID.
 
-The library and the command judge a request before they send it, so a request that the
-current rules refuse never reaches the store, and they guarantee a replay only for a
-request the current rules accept. A request that was applied under looser rules and is
+The library and the command check static manifest rules before sending a request.
+A request those rules refuse never reaches the store; epoch, revision and placement
+checks still require the store. The client replay guarantee applies only to a request
+that passes the current static rules. A request applied under looser static rules and
 sent again is refused by the library and the command with a refusal that says it was
 checked before sending, that this call changed nothing and that it says nothing about an
 earlier call with the same operation id; the store, asked directly, returns the recorded
@@ -622,7 +627,8 @@ score in a batch delta is JSON `null`. An ordinary change event's `score` remain
 a string: empty when no score was supplied, or the stored decimal string supplied
 by that verb (including a removal's previous score). A batch's change event has
 the fields an ordinary verb's has for the same change, plus `batch_delta`. One
-batch receipt maps to one model action. Returning the original result on retry
+batch receipt must describe one atomic action; the formal batch model is still
+owed (see **Model** below). Returning the original result on retry
 must return the same receipt identity.
 
 Required refusals include stale epoch, table/member revision mismatch, failed field
@@ -770,7 +776,7 @@ A revision is always labelled for what it counts: `table_revision` is the table'
 
 #### Reading members
 
-`nova-table member read <table> <id>... | <table> --cell <row:col>... [--at-epoch <n>] [--json]` is the read set as a verb: one exchange, one consistent snapshot. It prints a summary line (`TABLE READ` with the table, epoch, `table_revision`, and the counts of members found and missing), one `MEMBER` line per member found with its place, score, `member_revision` and fields, and one `MISSING` line per id that does not exist; `place=-` and `score=-` are an unplaced member. `--cell` reads every member of a cell (repeatable). `--json` prints one object with `table`, `epoch`, `table_revision`, `members` (`id`, `place`, `score`, `member_revision`, `fields`), `missing` and `trips`. The next command a refusal suggests for a member's state is this verb. `nova-table member find <table> <id>` reports only where a member is, with the table's revision as `table_revision`.
+`nova-table member read <table> (<id>... | --cell <row:col>...) [--at-epoch <n>] [--json]` is the read set as a verb: one exchange, one consistent snapshot. It prints a summary line (`TABLE READ` with the table, epoch, `table_revision`, and the counts of members found and missing), one `MEMBER` line per member found with its place, score, `member_revision` and fields, and one `MISSING` line per id that does not exist; `place=-` and `score=-` are an unplaced member. `--cell` reads every member of a cell (repeatable). `--json` prints one object with `table`, `epoch`, `table_revision`, `members` (`id`, `place`, `score`, `member_revision`, `fields`), `missing` and `trips`. The next command a refusal suggests for a member's state is this verb. `nova-table member find <table> <id>` reports only where a member is, with the table's revision as `table_revision`.
 
 `nova-table show` prints a cell that did not come back as `?`, never as a false 0, and says which: a warning line on stderr names the row, the column, the key and the type found, and `show` exits 1 (`render` and `watch` keep drawing the `?` and exit 0).
 

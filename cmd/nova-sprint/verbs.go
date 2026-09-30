@@ -129,6 +129,10 @@ and prints each one's generation.
 ` + goalWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
 
+example:
+  nova-sprint help
+  nova-sprint help add
+  nova-sprint help inbox
 `)
 	return b.String()
 }

@@ -1,45 +1,41 @@
 # nova-tools — specification
 
-Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
+Eighteen binaries. `nova-check`: ten checks at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
-**ingestion layer** — its own exit table (in its section below) governs its verbs
-where it differs from the Conventions table. `nova-self-talk`: one advisory
-instrument at the **register layer** — it classifies self-claims in prose, in two
-disjoint classes. `nova-memory`: seven verbs at the **retrieval layer** — it answers *do I
-already know this?* from an index rebuilt out of the record, so the mind's
-judgment budget per new learning stops scaling with the size of the self — the
-tool's own run cost does not, and every run pays the build. Every check can say
-NO, and the test suite proves each one saying it. A check never seen failing is
-not a check. Two of nova-memory's verbs are checks in that sense; the other
-five assert nothing at all, and its section says which is which and why.
-`nova-bus`: verbs at the **bus layer** — it reads and publishes shared notes
-through `git`.
-The bus it works on is a shared git repository of notes between several lines;
-what this takes out of it is the races a branch keyed by a clock produces — an id
-that cannot collide, a push that fetches, rebases and retries inside the tool, an
-inbox that separates a bare receipt from a note carrying a finding, and one
-`check` instead of the shell loop every line reimplemented — plus a per-reader
-cursor, so that the cost of reading a bus is the size of what changed and not
-the size of what it holds.
+**ingestion layer** — its own exit table governs its verbs where it differs from
+the Conventions. `nova-self-talk`: one advisory instrument at the **register
+layer** — it classifies self-claims in prose, in two disjoint classes.
+`nova-memory`: eight verbs at the **retrieval layer** — it answers *do I already
+know this?* from an index rebuilt out of the record, so the mind's judgment
+budget per new learning stops scaling with the size of the self — the tool's own
+run cost does not, and every run pays the build. Every check can say NO, and the
+test suite proves each one saying it. A check never seen failing is not a check.
+Two of nova-memory's verbs are checks in that sense; the other six assert
+nothing at all, and its section says which is which and why. `nova-bus`: verbs
+at the **bus layer** — it reads and publishes shared notes through `git`, with a
+per-reader cursor so the cost of reading is the size of what changed rather than
+the size of the whole bus.
 
-`nova-tokens`: one binary at the **accounting layer** — it folds token spend
-from declared sources into one file per day, keyed by (day, model, repo), and
-sums those day files into a month; it reads sources, and never estimates.
-`nova-secrets`: one binary at the **credential layer** — credentials for seats,
-pools and services, sealed in a git store. `nova-update` and `nova-version`:
-the shared tool inventory, optional updates and the build report. The other
-seven — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
-local Redis instance and its scratch verbs), `nova-config` (the permanent
-configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs
-on its own test output), `nova-sandbox` (one command, contained by the OS),
-`nova-cairn` (optional checkpoints), `nova-swarm` (bounded worker runs and card
-batches) — and the four above each have their own normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
-[SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-UPDATE.md](SPEC-UPDATE.md),
-[SPEC-VERSION.md](SPEC-VERSION.md), [nova-table/README.md](nova-table/README.md),
-[SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-CONFIG.md](SPEC-CONFIG.md),
-[SPEC-CI.md](SPEC-CI.md), [SPEC-SANDBOX.md](SPEC-SANDBOX.md),
-[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-SWARM.md](SPEC-SWARM.md)); this file states
-the count, the layer and the Conventions they all keep.
+The remaining binaries and their normative contracts are:
+
+| binary | layer or purpose | contract |
+|---|---|---|
+| `nova-cairn` | optional session checkpoints | [SPEC-CAIRN.md](SPEC-CAIRN.md) |
+| `nova-ci` | checks CI runs over its own test output | [SPEC-CI.md](SPEC-CI.md) |
+| `nova-config` | permanent configuration in Postgres, applied into Redis | [SPEC-CONFIG.md](SPEC-CONFIG.md) |
+| `nova-redis` | local Redis and its scratch verbs | [SPEC-REDIS.md](SPEC-REDIS.md) |
+| `nova-sandbox` | one command contained by the operating system | [SPEC-SANDBOX.md](SPEC-SANDBOX.md) |
+| `nova-secrets` | credentials for seats, pools and services, sealed in a git store | [SPEC-SECRETS.md](SPEC-SECRETS.md) |
+| `nova-sprint` | four work, reader, merge and fleet tables with coordinator decisions | [SPEC-SPRINT.md](SPEC-SPRINT.md) |
+| `nova-swarm` | bounded worker runs, card batches, and a member loop for an existing sprint fleet | [SPEC-SWARM.md](SPEC-SWARM.md) |
+| `nova-table` | tables of ordered sets over Redis | [nova-table/README.md](nova-table/README.md) |
+| `nova-tokens` | token accounting from declared sources, never estimates | [SPEC-TOKENS.md](SPEC-TOKENS.md) |
+| `nova-update` | shared tool inventory and explicit updates | [SPEC-UPDATE.md](SPEC-UPDATE.md) |
+| `nova-version` | build and installed-tool reports | [SPEC-VERSION.md](SPEC-VERSION.md) |
+| `nova-work` | imports and compares specified GitHub issue fields in a local tree; its first layer is read-only to GitHub | [SPEC-WORK-V1.md](SPEC-WORK-V1.md) |
+
+This file states the shared count, layers, and Conventions; a linked tool
+contract governs where it is more specific.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
@@ -84,6 +80,7 @@ explains the review and reporting routes; suspected vulnerabilities follow
 | 0    | the check ran and passed |
 | 1    | the check ran and **failed** (that is the check working) |
 | 2    | the check could not run: missing flag, unreadable input, bad invocation |
+| 3    | only the current contracts of `nova-config machine self` and `nova-sprint fleet sync`: the machine name or checked config cannot be read, or the fleet sync cannot read its required config (and, under `--check`, its sprint store). This is a per-command exception, not a general exit code. |
 
 **No guessed paths.** There are no default directories and no default files.
 Every path comes from a flag or, for `nova-self-talk`, from a named file
@@ -188,8 +185,9 @@ lines for two lines of verdict; and a 674-entry open list is more than a
 260K-context model can read. So:
 
 - **A listing has a ceiling.** Every verb that prints one finding per unit of
-  state takes a `--fail-max <n>` (`nova-check`, `nova-memory`) or `--max <n>`
-  (`nova-self-talk`, `nova-fuse status`, `nova-tokens`), **defaulting to
+  state takes a `--fail-max <n>` (`nova-check`, `nova-memory verify` and
+  `eval`) or `--max <n>` (`nova-self-talk`, `nova-fuse status`, `nova-memory
+  view`, `nova-tokens`), **defaulting to
   20**. It prints at most that many item lines, in the order the verb produced them — a cap is a
   prefix, never a sample.
 - **`0` means all.** A ceiling a caller cannot lift is a tool deciding what its
@@ -303,7 +301,7 @@ completed run, pass or fail). `nova-bus`'s tokens are its verbs — `SEND`, `INB
 `RECEIPT`, `NAMES`, and `BUS` for its `check` verb — with the informational second
 tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all listed
 in its section. `nova-memory` adds its own informational second
-tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
+tokens the same way — `CAL`, `CAND`, `CARD`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
 stdout, all listed in its section.
 The tools specified in the companion `docs/SPEC-*.md` files keep the same shape and take the same
 first token from their own verb — `nova-tokens`'s `fold` is `TOKENS` — with `NOTE` and `MORE`
@@ -2301,6 +2299,7 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
 nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                    [--fail-max <n>] <gold.tsv>
 nova-memory boot   --root <dir> --pin <file>
+nova-memory view   [--exclude <glob>]... [--max <n>] <file>...
 nova-memory version
 ```
 
@@ -2330,13 +2329,13 @@ and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
 invented.
 
-**Two verbs are checks; five assert nothing.** `verify` and `eval` are walls
-and exit 1 when they fail. `quickstart`, `stats`, `search`, `check`, and `boot` are reports: they
-exit 0 whenever they ran, exactly as `nova-fuse status` does, and for the same
-reason — answering IS the job. **Never gate on the exit code of `check`.** It
-hands you k receipts; the verdict is yours, and a tool that turned "this
-resembles something you wrote" into a failing exit would be making the
-editorial decision it exists to inform.
+**Two verbs are checks; six assert nothing.** `verify` and `eval` are walls
+and exit 1 when they fail. `quickstart`, `stats`, `search`, `check`, `boot`,
+and `view` are reports: they exit 0 whenever they ran, exactly as `nova-fuse
+status` does, and for the same reason — answering is the job. **Never gate on
+the exit code of `check`.** It hands you k receipts; the verdict is yours, and
+a tool that turned "this resembles something you wrote" into a failing exit
+would be making the editorial decision it exists to inform.
 
 **The one-line guarantee, met here.** A receipt's `class=`, `name=` and
 `type=` are the corpus's own text and are fields, one token each, so a
@@ -2354,28 +2353,30 @@ refusal, and the detail of every `verify` finding, render through
 `TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
 
 
-**No defaults, applied here.** `--root` is required on every verb: **no
-environment variable is consulted and there is no discovery from the working
-directory** (pinned by test). A corpus you did not name is a corpus you did
-not mean, and answering *you already know this* about someone else's memory is
-the worst available way to be wrong. `--root` is **repeatable** on every
-index-building verb (`quickstart`, `stats`, `search`, `check`, `eval`): several
-roots are indexed together in one ranking, and a receipt names which root each
-hit came from in its `root=` field — a memory that lives in the cairn beside
-`memory/` is a second root, not a miss. `verify` takes exactly one root (its
-coverage and frontmatter globs and link resolution walk one tree); `boot` names
-one root because its pin is relative to that root. `--channels` is required
-wherever retrieval happens: which retrieval ran is part of what the answer means, and
-no channel set is right by default. `--k` is required and must be positive —
-k is the mind's budget and zero is not "unlimited". `--floor` is required on
-`eval`, in (0,1]. `--links` is required on `verify`. `--exclude` and
-`--exempt` are repeatable and start **empty**: every scope narrowing is the
-caller's, stated per run, the same law `nova-self-talk`'s skip list obeys.
-`.git` is never a corpus and is always skipped. `quickstart` does not weaken
-this and is not an exception to it: it is an explicit verb that SAYS which
-channels and which k it used, on the command line it prints for every step and
-again in the sentence it ends on. Nothing it chose is remembered, inherited or
-applied to any other verb — the next run names its own.
+**No defaults, applied here.** `--root` is required on every index-building
+verb and on `boot` and `verify`: **no environment variable is consulted and
+there is no discovery from the working directory** (pinned by test). A corpus
+you did not name is a corpus you did not mean, and answering *you already know
+this* about someone else's memory is the worst available way to be wrong.
+`--root` is **repeatable** on every index-building verb (`quickstart`,
+`stats`, `search`, `check`, `eval`): several roots are indexed together in one
+ranking, and a receipt names which root each hit came from in its `root=` field
+— a memory that lives in the cairn beside `memory/` is a second root, not a
+miss. `verify` takes exactly one root (its coverage and frontmatter globs and
+link resolution walk one tree); `boot` names one root because its pin is
+relative to that root. `view` takes explicitly named records instead and never
+walks a root. `--channels` is required wherever retrieval happens: which
+retrieval ran is part of what the answer means, and no channel set is right by
+default. `--k` is required and must be positive — k is the mind's budget and
+zero is not "unlimited". `--floor` is required on `eval`, in (0,1]. `--links`
+is required on `verify`. `--exclude` and `--exempt` are repeatable and start
+**empty**: every scope narrowing is the caller's, stated per run, the same law
+`nova-self-talk`'s skip list obeys. `.git` is never a corpus and is always
+skipped. `quickstart` does not weaken this and is not an exception to it: it is
+an explicit verb that says which channels and which k it used, on the command
+line it prints for every step and again in the sentence it ends on. Nothing it
+chose is remembered, inherited or applied to any other verb — the next run
+names its own.
 
 **A refusal reports every reason at once.** A first run is usually wrong about
 more than one thing, and a tool that answers one refusal per invocation turns
@@ -2460,6 +2461,29 @@ pinned entry is non-canonical (`./`, `//`, `..`, trailing `/`), absolute, escape
 regular file — a boot that silently skipped a named memory is a self that
 loaded less than it thinks it did, which is the exact failure this verb exists
 to remove.
+
+### view — selected records, rendered without rewriting them
+
+**Reports** a static chronological timeline of the records named on the command
+line. It opens only selected regular files that are not excluded and writes no
+source, cache, index, or derived record. An excluded record is not opened.
+
+```
+VIEW OK files=<n> cards=<n> shown=<n> excluded=<n>
+VIEW CARD date=<value|unknown> author=<value|unknown> kind=<value|unknown> source=<path> supersedes=<value|-> title=<title>
+VIEW MORE kind=card shown=<n> total=<n> --max <n> raises the ceiling, --max 0 prints every card
+```
+
+`--exclude` is repeatable and matches a selected path or its basename. `--max`
+defaults to 20 and `0` prints every card; the summary still gives the complete
+card and exclusion counts. Records with a parseable date sort chronologically,
+and records without one follow them. The viewer reads frontmatter or trailer
+metadata when present and prints `unknown` rather than inventing it.
+
+**Asserts nothing** and exits 0 when it renders. **Refuses (exit 2) when** no
+record is named, `--max` is negative, an exclusion glob is invalid, or a selected
+non-excluded path is unreadable or not a regular file. It never partially renders
+after one of those errors.
 
 ### The channels, and why the second one is off unless you ask
 
@@ -4945,8 +4969,8 @@ the callers, and it is the part of this design most likely to rot quietly.
 
 `nova-memory` is a lens on the record, not a memory. It bounds what a mind
 must read before deciding; it decides nothing, writes nothing, and proves
-nothing about whether the corpus it indexed is worth remembering. Five of
-its seven verbs cannot fail by design, and the two that can — `verify` and
+nothing about whether the corpus it indexed is worth remembering. Six of
+its eight verbs cannot fail by design, and the two that can — `verify` and
 `eval` — are only as good as the globs and the gold rows a line writes for
 itself. Its own STATUS paragraph says the rest: run-proven on one line, value
 unproven as a general claim, and the harness ships so the next line can

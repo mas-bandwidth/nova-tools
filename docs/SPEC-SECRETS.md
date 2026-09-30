@@ -7,18 +7,18 @@ is its substrate. The store is [`mas-bandwidth/secrets`](https://github.com/mas-
 carrying the protocol, and `recovery.pub` declaring the recovery key. **That repository is the store. This tool never
 becomes one.**
 
-Five verbs: four at the **credential layer**, measured against one sentence:
+The credential and review verbs are measured against one sentence:
 
 > **An AI runs with its own API keys, and nothing else can read them.**
 
-`exec` makes it *run*; `check` makes *nothing else can read them* a fact somebody proved this
-morning rather than a belief; `keygen` exists because a new bench cannot use either until it
-has a keypair; `names` answers *what is in my file* **with no key at all**; and `gate`, the
-fifth, stands at the **review layer** — the store's `seat-rule-gate.sh` as a verb, so the
+`exec` makes it *run*; `check` tests *nothing else can read them* against the store;
+`keygen` exists because a new bench cannot use either until it
+has a keypair; `names` answers *what is in my file* **with no key at all**; and `gate`
+stands at the **review layer** — the store's `seat-rule-gate.sh` as a verb, so the
 workflow calls this tool rather than a shell script living in the store it is guarding. Everything else a
 person wants to do to a secret is `sops`, `git` or the provider's console, and this tool
-refuses it **by name, with where it lives**. Five more verbs carry a value or a seat, each
-below: `place` and `placed` put one value on a fleet machine and list what was put there, and
+refuses it **by name, with where it lives**. The remaining verbs place a value or change a seat:
+`place` and `placed` put one value on a fleet machine and list what was put there, and
 `seal`, `seat add` and `seat inject` change the store along its own review road. In one
 paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
@@ -31,8 +31,8 @@ against refs already in the working copy). `exec` makes no network call of its o
 becomes the caller's command, which may use the network as it likes. `place` runs `ssh` to
 the machine it names and writes a receipt under `--receipts`. `seal` and `seat inject` run
 `git push`, `gh pr create`, `gh pr view`, `gh pr merge` and `git pull` against the store's
-remote, unless `--no-pr` stops them after the commit. About two hundred lines of Go over two binaries it did not write, and
-the day a better generic store exists it should be two hundred lines of Go over that one.
+remote, unless `--no-pr` stops them after the commit. The tool uses external
+`sops` and `age-keygen` programs rather than implementing their cryptography.
 
 This spec is normative, and a sibling of [SPEC.md](SPEC.md), whose **Conventions** govern
 unchanged except for **two deviations, both `exec`'s**: its exit table, argued in **Exit
@@ -135,7 +135,8 @@ road. Every other store edit is `sops` and `git` in a person's hands. `keygen`
 writes exactly one file, outside it.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
-the store-reading verbs never fetch it. A working copy in the strong sense — invariant 8 reads `.git` as
+read-only store checks do not fetch it; `seal` and `seat inject` pull after their
+reviewed changes merge. A working copy in the strong sense — invariant 8 reads `.git` as
 files — so a `--store` that is not a directory, holds no `.sops.yaml`, or has no `.git`, is a
 refusal naming the fact and the `git clone` line: **exit 2**, or **125** from `exec`, as every
 refusal of `exec`'s is.
