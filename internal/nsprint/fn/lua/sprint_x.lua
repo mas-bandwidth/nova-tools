@@ -493,6 +493,12 @@ do
         if not known or (score < 0 and score ~= ABSENT) then return bad('a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent', key) end
       elseif k == 'setguard' then
         if set_guard_of(key) == nil then return bad('a set guard is not a zguard over a sprint index with bounds and a count: %q', key) end
+      elseif k == 'dueatmost' then
+        if key == '' or score < 0 then return bad('a dueatmost guard names no entry, or a time below zero') end
+      elseif k == 'counter' then
+        if (key ~= 'score' and key ~= 'streams') or score < 0 then
+          return bad('a counter guard names %q, which is not score or streams, or a value below zero', key)
+        end
       elseif k ~= 'coordinator' then
         return bad('%q is not a kind of guard', tostring(k))
       end
@@ -653,6 +659,21 @@ do
       local sg = set_guard_of(g.key)
       local _, err = S().zguard(ctx, ekey(ctx, sg.key, e), {kind = 'rcount', min = sg.min, max = sg.max, atleast = sg.atleast, atmost = sg.atmost})
       if err then return err end
+    elseif k == 'dueatmost' then
+      local set = KEY_DUE
+      if string.sub(g.key, 1, 4) == 'cut:' then set = KEY_CUT end
+      local scores, err = zmscore(ctx, ekey(ctx, set, e), {g.key})
+      if err then return err end
+      local score, most = scores[g.key], tonumber(g.score)
+      if score ~= nil and score > most then return fail('the entry %s is at %d, above %d', g.key, score, most) end
+    elseif k == 'counter' then
+      local vals, err = hmget(ctx, ekey(ctx, KEY_NEXT, e), {g.key})
+      if err then return err end
+      local got = vals[g.key]
+      if got == nil then got = '0'
+      elseif not S().uint(got) then return refuse('CONFIG', {}, "the counter's %s holds %q, not a whole number", g.key, got) end
+      local want = string.format('%d', tonumber(g.score or 0) or 0)
+      if got ~= want then return fail("the counter's %s is %s now, read as %s", g.key, got, want) end
     end
     return nil
   end

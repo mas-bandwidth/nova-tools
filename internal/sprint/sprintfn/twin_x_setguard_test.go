@@ -39,6 +39,11 @@ func withZGuard(h *xh) {
 	s.RawSetString("zguard", L.NewFunction(func(L *lua.LState) int {
 		key, g := L.CheckString(2), L.CheckTable(3)
 		m.probes++
+		if t := m.cur.Keys.ks.typeOf(key); t != kindNone && t != kindZSet {
+			L.Push(lua.LNil)
+			L.Push(m.refusal(CodeWrongType, lua.LNil, lua.LNil))
+			return 2
+		}
 		n := 0
 		for _, p := range m.cur.Keys.ks.zpairs(key) {
 			if inBounds(p.score, g.RawGetString("min").String(), g.RawGetString("max").String()) {

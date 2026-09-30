@@ -1,7 +1,6 @@
 package machine
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -44,12 +43,9 @@ func dealWorld(t *testing.T, primaries ...string) (*world, *sprint.Snapshot, spr
 // stepbuild.Build turns the real deal rule's plan (R6: each primary's work
 // card created in a member's ready queue and the primary moved to working,
 // one unit each, with its guards) into one body that finishes its key: the
-// count guard is Layer 1's count entry over the member's ready cell, and the
-// body applies on the twin (1.3.6).
-//
-// R6's guard on sent:s (rcount, a sorted set of the sprint's own) goes to X
-// as it is, and X has no guard of that kind yet: the body is refused REQUEST
-// naming it, which this test pins, and applies without it.
+// count guard is Layer 1's count entry over the member's ready cell, R6's
+// guard on sent:s (rcount over a sorted set of the sprint's own) is X's sent
+// guard, and the body applies on the twin (1.3.6).
 func TestStepBuilderBuildsARealRule(t *testing.T) {
 	t.Parallel()
 	w, s, deal := dealWorld(t, "p1", "p2")
@@ -70,20 +66,21 @@ func TestStepBuilderBuildsARealRule(t *testing.T) {
 	if c := body.Entries[0]; c.Kind != "count" || c.Table != sprint.Fleet || strings.Join(c.Cells, ",") != "m1:ready" || len(c.CountMax) != 1 {
 		t.Fatalf("the count guard's entry: %+v", c)
 	}
-	var kept []sprint.XGuard
+	sent := 0
 	for _, g := range body.Guards {
-		if g.Kind == guardCount {
-			t.Fatalf("a count guard went to X: %+v", g)
+		if g.Kind == guardCount || g.Kind == guardRCount {
+			t.Fatalf("a guard of kind %s went to X: %+v", g.Kind, g)
 		}
-		if g.Kind != "rcount" {
-			kept = append(kept, g)
+		if g.Kind == sprintfn.XGuardSet {
+			sent++
+			if g.Key != `{"kind":"zguard","key":"sent:s1","min":"-inf","max":"2","atmost":0}` {
+				t.Fatalf("R6's sent guard: %+v", g)
+			}
 		}
 	}
-	res, err := sprintfn.Step(context.Background(), w.tw, &sprintfn.Request{Epoch: "0", Meta: meta, Body: body})
-	if err != nil || res.Refusal == nil || res.Refusal.Code != sprintfn.CodeRequest || !strings.Contains(res.Refusal.Message, "rcount") {
-		t.Fatalf("X and R6's rcount guard: %v %+v", err, res.Refusal)
+	if sent != 1 {
+		t.Fatalf("%d sent guards: %+v", sent, body.Guards)
 	}
-	body.Guards = kept
 	w.step(&sprintfn.Request{Epoch: "0", Meta: meta, Body: body})
 	for _, p := range []string{"p1", "p2"} {
 		if got, card := w.place(p), w.placeIn(sprint.Fleet, p+".w1"); got != "s1:working" || card != "m1:ready" {
@@ -123,8 +120,8 @@ func TestStepBuilderKeepsUnitsWhole(t *testing.T) {
 	}
 }
 
-// TestStepBuilderRefusesWhatItDoesNotCarry: a plan with writes the adapter has
-// no wire for is refused naming them, so the loop parks its keys and names the
+// TestStepBuilderRefusesWhatItDoesNotCarry: a plan with writes or guards the
+// adapter has no wire for is refused naming them, so the loop parks its keys and names the
 // gap (1.3.5), and never sends a step that drops them.
 func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 	t.Parallel()
@@ -133,8 +130,10 @@ func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 		rp   sprint.RulePlan
 		want string
 	}{
-		"time writes": {sprint.RulePlan{Sprint: sprint.TimeWrites{Due: []sprint.DueSet{{Key: "remind:ann", At: 1}}}}, "the time rules' writes to the sprint's own keys"},
-		"bumps":       {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
+		"a revs fold": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7}}}, "the fold of the revisions of the work cards read"},
+		"a zguard with no count bound": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
+			"a set guard of kind zguard"},
+		"bumps": {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
 	} {
 		_, err := build(c.rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())
 		if err == nil || !strings.Contains(err.Error(), c.want) {

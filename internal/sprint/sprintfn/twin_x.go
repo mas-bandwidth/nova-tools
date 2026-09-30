@@ -101,6 +101,21 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	            (init --coordinator, 3).
 //	stranger    Member: the machine. {p}strangers[Member] is not yet noticed
 //	            (2.3, R1).
+//	sent        Key: "sent:<stream> <max>", max a score (a decimal, "(" before
+//	            it for an open bound). No sentinel of the stream is placed at
+//	            or below max: S.zguard(sent:<stream>, rcount, -inf, max,
+//	            atmost 0) over {p}sprint:sent:<stream>@e (2.3, R3's release
+//	            and R6's deal).
+//	dueatmost   Key: the due-set member <kind>:<id> (a cut:<op> member in the
+//	            cut set). Score: a time. The entry is absent or scored at or
+//	            below Score: no later part or second run has moved it on (2.3:
+//	            R11's cut clock, R14, R18: "no entry above R", the time rules'
+//	            noEntryAbove; the pop takes the entry, so it is absent at apply).
+//	counter     Key: a field of {p}next@e, score or streams. Score: its value
+//	            as read, 0 for a field absent (2.3, R15's COUNTER on
+//	            next.streams; R17's stopinputs, errata 3 H14). The sprint
+//	            part's CounterChange guards the fields it writes; this guards
+//	            a field a step reads and does not write.
 const (
 	XGuardMemberUp    = "memberup"
 	XGuardBeatStale   = "beatstale"
@@ -116,7 +131,9 @@ const (
 	// S.zguard(sent:s, rcount, -inf, the highest score admitted, atmost 0)
 	// (1.5.4), and R3's release by the same (2.3). A SetGuard of kind rcount is
 	// Layer 1's own entry, never an XGuard.
-	XGuardSet = "setguard"
+	XGuardSet       = "setguard"
+	XGuardDueAtMost = "dueatmost"
+	XGuardCounter   = "counter"
 )
 
 // XGuardAbsent is the Score of a due or clock guard over an entry or field
@@ -915,6 +932,14 @@ func xCheckShape(req *Request) *Refusal {
 			if _, ok := xSetGuardOf(g); !ok {
 				return bad("a set guard is not a zguard over a sprint index with bounds and a count: %q", g.Key)
 			}
+		case XGuardDueAtMost:
+			if g.Key == "" || g.Score < 0 {
+				return bad("a dueatmost guard names no entry, or a time below zero")
+			}
+		case XGuardCounter:
+			if (g.Key != xFieldNextScore && g.Key != xFieldNextStream) || g.Score < 0 {
+				return bad("a counter guard names %q, which is not score or streams, or a value below zero", g.Key)
+			}
 		default:
 			return bad("%q is not a kind of guard", g.Kind)
 		}
@@ -1055,6 +1080,31 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		if sg.AtLeast != nil && n < *sg.AtLeast || sg.AtMost != nil && n > *sg.AtMost {
 			return xRefuse("RANGECOUNT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Cells: []string{key}}},
 				"RANGECOUNT: %s holds %d members in [%s, %s] since the read", sg.Key, n, sg.Min, sg.Max)
+		}
+	case XGuardDueAtMost:
+		set := xKeyDue
+		if strings.HasPrefix(g.Key, "cut:") {
+			set = xKeyCut
+		}
+		score, ok, ref := r.zscore(r.at(set), g.Key)
+		if ref != nil {
+			return ref
+		}
+		if ok && score > float64(g.Score) {
+			return fail("the entry %s is at %s, above %d", g.Key, xScore(score), g.Score)
+		}
+	case XGuardCounter:
+		got, ok, ref := r.hget(r.at(xKeyNext), g.Key)
+		if ref != nil {
+			return ref
+		}
+		if !ok {
+			got = "0"
+		} else if n, err := strconv.ParseUint(got, 10, 64); err != nil || strconv.FormatUint(n, 10) != got {
+			return xRefuse(CodeConfig, RefusalDetail{}, "the counter's %s holds %q, not a whole number", g.Key, got)
+		}
+		if want := strconv.FormatInt(g.Score, 10); got != want {
+			return fail("the counter's %s is %s now, read as %s", g.Key, got, want)
 		}
 	}
 	return nil

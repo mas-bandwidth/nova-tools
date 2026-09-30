@@ -441,8 +441,6 @@ type TimeWrites struct {
 	Due []DueSet
 	// Goal are R14's claims on goal records.
 	Goal []GoalClaim
-	// Tick is `{p}tick@e.behind_n`, written when R18 arms `behind` again.
-	Tick *TickSet
 	// Clock is the clock fields R17 writes.
 	Clock *ClockSet
 	// Park are the keys the step moves out of the agenda into
@@ -465,9 +463,6 @@ type GoalClaim struct {
 	R      int64
 }
 
-// TickSet is the value of `{p}tick@e.behind_n`.
-type TickSet struct{ BehindN int }
-
 // ClockSet is the clock fields R17 writes (2.3): a nil field is left as it
 // is, DueSince is set to its value, ClearDueSince sets `due_since_ms` to "",
 // StopRaised is set to its value, and ClearStopRaised sets `stopraised_ms` to
@@ -479,12 +474,14 @@ type ClockSet struct {
 	ClearStopRaised bool
 }
 
-// ParkKey is a key to park: its text, the note's id being the step's to add.
-type ParkKey struct{ Key string }
+// ParkKey is a key to park: its text, the rule that planned it and the code
+// its step was refused with (1.3.5: the park names "the rule, the key, the
+// code"), which the sprint part records in {p}parked@e (sprintfn.ParkedKey).
+type ParkKey struct{ Key, Rule, Code string }
 
 // Empty says the plan writes nothing to the sprint's keys.
 func (w TimeWrites) Empty() bool {
-	return len(w.Due) == 0 && len(w.Goal) == 0 && w.Tick == nil && w.Clock == nil && len(w.Park) == 0
+	return len(w.Due) == 0 && len(w.Goal) == 0 && w.Clock == nil && len(w.Park) == 0
 }
 
 // LateDue says a card whose deadline is due (its `due_<kind>` field, in R) is
@@ -1438,7 +1435,8 @@ func readRemind(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agend
 // Trigger: the pop of behind, and its owner key. Guard: no `behind` entry
 // above R. Effect, when it fires: a backlog at least behind_n is judged,
 // "the machine is falling behind", once; a smaller one arms `behind` again at
-// R + 5 min with the new backlog; a backlog of zero is disarmed (the
+// R + 5 min, behind_n left as the tick end armed it (the design's "with the
+// new backlog" is the tick end's: the erratum is owed); a backlog of zero is disarmed (the
 // tick-end part does that when the backlog reaches zero) and closes the
 // judgment when it is open. Key: removed. Cost: O(1). Without it: nothing
 // names a machine that never catches up.
@@ -1474,9 +1472,12 @@ func planBehind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 				Decisions: decisions})
 		}
 	default:
+		// Armed again at R + 5 min: the entry alone. behind_n has one writer,
+		// the loop's tick end (sprintfn.TickEnd), and stays the backlog the
+		// tick end armed until R18 judges it or the backlog reaches zero (the
+		// decision on IT17's recheck: R18's own write of behind_n is dropped).
 		b.guard(noEntryAbove(entryBehind, now.R))
 		b.rp.Sprint.Due = append(b.rp.Sprint.Due, DueSet{Key: entryBehind, At: now.R + spanMs(BehindSpan)})
-		b.rp.Sprint.Tick = &TickSet{BehindN: t.Backlog}
 	}
 	return b.result()
 }
@@ -1920,7 +1921,7 @@ func OnBug(rule string, key AgendaKey, code string, size string, halvings int) (
 		Decisions: []string{"log --since", "ack", "stop", "wait"}})
 	if park {
 		b.rp.Done = []AgendaKey{key}
-		b.rp.Sprint.Park = []ParkKey{{Key: text}}
+		b.rp.Sprint.Park = []ParkKey{{Key: text, Rule: rule, Code: code}}
 		return b.result(), 0
 	}
 	b.rp.Requeue = []AgendaKey{key}
@@ -1981,7 +1982,7 @@ const (
 	NReplacedUntaken  = "replaced a work card not taken"
 	NReplacedLateWork = "replaced a late work card"
 	NReplacedLateRead = "replaced a late read"
-	NIdle             = "stream has landed nothing for IdleSpan"
+	NIdle             = "stream s has landed nothing for IdleSpan"
 	NPastDue          = "a judgment has waited past its due time"
 	NCutStopped       = "a verb in parts stopped before its end"
 	NStepRefused      = "the machine's step was refused"
