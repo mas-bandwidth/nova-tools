@@ -13,6 +13,8 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
+const nonDialingRedisAddress = "127.0.0.1"
+
 type fakeRedisReply struct {
 	value string
 	err   error
@@ -404,7 +406,7 @@ func TestTypedNilRedisClientRefusesBeforeMethodCall(t *testing.T) {
 
 func TestOwnedRedisClientDisablesRetriesAndAppliesSupportedOptions(t *testing.T) {
 	t.Parallel()
-	store, err := NewRedis("127.0.0.1:6379", "fixture-user", "", WithClientName("tset-contract-test"))
+	store, err := NewRedis(nonDialingRedisAddress, "fixture-user", "", WithClientName("tset-contract-test"))
 	if err != nil {
 		t.Fatalf("NewRedis: %v", err)
 	}
@@ -414,7 +416,7 @@ func TestOwnedRedisClientDisablesRetriesAndAppliesSupportedOptions(t *testing.T)
 		t.Fatalf("owned client type is %T, want *redis.Client", store.client)
 	}
 	options := client.Options()
-	if options.Addr != "127.0.0.1:6379" || options.Username != "fixture-user" || options.Password != "" || options.ClientName != "tset-contract-test" {
+	if options.Addr != nonDialingRedisAddress || options.Username != "fixture-user" || options.Password != "" || options.ClientName != "tset-contract-test" {
 		t.Fatalf("owned client options mismatch: addr=%q username=%q password-configured=%t client-name=%q", options.Addr, options.Username, options.Password != "", options.ClientName)
 	}
 	if options.MaxRetries != 0 {
@@ -424,7 +426,7 @@ func TestOwnedRedisClientDisablesRetriesAndAppliesSupportedOptions(t *testing.T)
 
 func TestOwnedRedisStoreCloseClosesOwnedClient(t *testing.T) {
 	t.Parallel()
-	store, err := NewRedis("127.0.0.1:6379", "", "")
+	store, err := NewRedis(nonDialingRedisAddress, "", "")
 	if err != nil {
 		t.Fatalf("NewRedis: %v", err)
 	}
@@ -436,8 +438,44 @@ func TestOwnedRedisStoreCloseClosesOwnedClient(t *testing.T) {
 	if err := client.Ping(context.Background()).Err(); !errors.Is(err, redis.ErrClosed) {
 		t.Fatalf("Ping after Close returned %v, want redis.ErrClosed without dialing", err)
 	}
-	if err := newRedisWithClient(&fakeRedisClient{}).Close(); err != nil {
+	borrowed := newRedisWithClient(&fakeRedisClient{replies: []fakeRedisReply{{value: okWireReply("still-open")}}})
+	if err := borrowed.Close(); err != nil {
 		t.Fatalf("Close of package-local test seam = %v, want no-op", err)
+	}
+	if reply, err := borrowed.Step(context.Background(), emptyStep()); err != nil || reply.Result != "still-open" {
+		t.Fatalf("Close changed borrowed test seam: Step=(%+v, %v), want live client", reply, err)
+	}
+}
+
+func TestOwnedRedisStoreClosedRefusesBeforeDispatch(t *testing.T) {
+	t.Parallel()
+	store, err := NewRedis(nonDialingRedisAddress, "", "")
+	if err != nil {
+		t.Fatalf("NewRedis: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	calls := map[string]func() error{
+		"Step": func() error {
+			_, err := store.Step(context.Background(), emptyStep())
+			return err
+		},
+		"Steps": func() error {
+			_, err := store.Steps(context.Background(), []Step{emptyStep()})
+			return err
+		},
+		"Read": func() error {
+			_, err := store.Read(context.Background(), ReadPlan{Epoch: "0", Space: "s", Queries: []ReadQuery{{Kind: "rows", Table: "cards"}}})
+			return err
+		},
+	}
+	for name, call := range calls {
+		err := call()
+		var clientErr *ClientError
+		if !errors.As(err, &clientErr) || clientErr.Code != "UNSUPPORTEDSTORE" || errors.Is(err, ErrOutcomeUnknown) {
+			t.Errorf("%s after Close returned %v, want known pre-dispatch UNSUPPORTEDSTORE", name, err)
+		}
 	}
 }
 
@@ -465,7 +503,7 @@ func TestRedisPasswordEnvironmentLookupMapping(t *testing.T) {
 func TestOwnedRedisClientRequiresUnsetNamedPasswordEnvironmentVariable(t *testing.T) {
 	t.Parallel()
 	envName := uniqueMissingRedisPasswordEnv(t)
-	if store, err := NewRedis("127.0.0.1:6379", "", envName); err == nil || store != nil {
+	if store, err := NewRedis(nonDialingRedisAddress, "", envName); err == nil || store != nil {
 		if store != nil {
 			_ = store.Close()
 		}

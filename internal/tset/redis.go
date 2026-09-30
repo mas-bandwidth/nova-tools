@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -16,6 +17,7 @@ import (
 type RedisStore struct {
 	client redis.UniversalClient
 	close  func() error
+	closed atomic.Bool
 }
 
 // RedisOption is sealed so callers can select supported connection metadata
@@ -98,6 +100,7 @@ func (r *RedisStore) Close() error {
 	if r == nil || r.close == nil {
 		return nil
 	}
+	r.closed.Store(true)
 	return r.close()
 }
 
@@ -135,6 +138,9 @@ func (e *OutcomeUnknownError) Is(target error) bool { return target == ErrOutcom
 func (r *RedisStore) preflight() error {
 	if r == nil || nilInterface(r.client) {
 		return &ClientError{Code: "UNSUPPORTEDSTORE", Cause: errors.New("no Redis client")}
+	}
+	if r.closed.Load() {
+		return &ClientError{Code: "UNSUPPORTEDSTORE", Cause: errors.New("Redis store is closed")}
 	}
 	// The standalone Function accepts zero KEYS. A cluster router cannot route
 	// this call to the one store that owns the configured namespace.
@@ -315,6 +321,9 @@ func classifyWriteError(err error, raw []byte) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, redis.ErrClosed) {
+		return &ClientError{Code: "UNSUPPORTEDSTORE", Cause: err}
+	}
 	if code := preexecutionServerCode(err); code != "" {
 		return &ClientError{Code: code, Cause: err}
 	}
@@ -324,6 +333,9 @@ func classifyWriteError(err error, raw []byte) error {
 func classifyReadError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, redis.ErrClosed) {
+		return &ClientError{Code: "UNSUPPORTEDSTORE", Cause: err}
 	}
 	if code := preexecutionServerCode(err); code != "" {
 		return &ClientError{Code: code, Cause: err}
