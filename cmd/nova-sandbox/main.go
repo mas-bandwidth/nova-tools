@@ -159,6 +159,14 @@ a path from it and an inherited HOME is denied by the wall.
 ` + readRemedy + `:
 a toolchain in a user directory is exactly a caller-supplied read-only root.
 
+exit codes: a wrapped command (the bare wrap, run) ends with its own status,
+0-124, passed through; 3 run or reap left a volume behind (SANDBOX LEAK); 124 a
+run's --timeout ended it; 125 nova-sandbox said NO before the command ran
+(SANDBOX REFUSED); 126 the command could not be executed; 127 the command is on
+no PATH entry; 128+N the command was killed by signal N. probe, policy, check,
+worktree and egress use 0 done, 1 a check said NO, 2 could not run (a usage
+error).
+
 example:
   nova-sandbox check
 

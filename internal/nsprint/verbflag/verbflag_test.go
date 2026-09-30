@@ -322,6 +322,9 @@ func TestExitCodesAreTheToolsOwn(t *testing.T) {
 		{"nova-demo: a demo\n\nFlags come first. Exit codes: 0 no findings, 1 findings, 2 could not\nrun (bad invocation).\n\nNext.\n", "Exit codes: 0 no findings, 1 findings, 2 could not|run (bad invocation)."},
 		// A label that opens a line wins over one inside a sentence before it.
 		{"nova-demo: a demo\n\nSee the exit codes: below.\n\nexit codes: 0 ok\n", "exit codes: 0 ok"},
+		// The short label opens a line; inside a sentence it is not one.
+		{"nova-demo: a demo\n\nexit: 0 done; 1 said NO,\n2 could not run.\n\nnext\n", "exit: 0 done; 1 said NO,|2 could not run."},
+		{"nova-demo: a demo\n\non exit: nothing is left behind.\n", "exit codes: see `nova-demo help`"},
 		// Prose that only mentions exits states no paragraph.
 		{"nova-demo: a demo\n\nrecall exits 1 on a miss (exit 2 on usage).\n", "exit codes: see `nova-demo help`"},
 	} {

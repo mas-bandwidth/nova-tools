@@ -147,7 +147,13 @@ func Print(out io.Writer, prog, banner string, fs *flag.FlagSet) {
 
 // exitCodesLabel finds the label of a banner's exit-code paragraph, whatever its
 // case: `exit codes:`, `Exit codes:`, `exit code:`.
-var exitCodesLabel = regexp.MustCompile(`(?i)\bexit codes?\s*:`)
+//
+// `exit:` is the same label in its short spelling, and only where it opens a
+// line, since `on exit:` inside a sentence is not one.
+var (
+	exitCodesLabel = regexp.MustCompile(`(?i)\bexit codes?\s*:`)
+	exitShortLabel = regexp.MustCompile(`(?i)^\s*exit\s*:`)
+)
 
 // exitCodes is the tool's own `exit codes` paragraph from its help text, since a
 // tool's codes are its own (a sandbox refuses at 125, a fuse says BLOWN at 1).
@@ -164,6 +170,12 @@ func exitCodes(banner, prog string) []string {
 	start, from := -1, 0
 	for i, l := range lines {
 		loc := exitCodesLabel.FindStringIndex(l)
+		if loc == nil {
+			loc = exitShortLabel.FindStringIndex(l)
+			if loc != nil {
+				loc[0] = len(l) - len(strings.TrimLeft(l, " \t"))
+			}
+		}
 		if loc == nil {
 			continue
 		}
