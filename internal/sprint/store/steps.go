@@ -127,9 +127,11 @@ func ResumeStep(r sprint.ResumeReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Resume(s, r) }}
 }
 
-// FleetStep is a member up or down, or the ready queues levelled.
+// FleetStep is a member up or down, the ready queues levelled, or the fleet
+// synced to the inventory.
 func FleetStep(r sprint.FleetReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "fleet " + r.Op, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+	// a sync names every member it writes: it applies all or none
+	return Step{Named: r.Op == "sync", Args: ArgsOf(r), Verb: "fleet " + r.Op, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FleetStep(s, r) }}
 }
 

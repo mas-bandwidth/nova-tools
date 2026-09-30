@@ -948,9 +948,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 
 // FleetReq is a fleet move: a member up or down, or the ready queues
 // levelled (the tick's moves, as a member's derived status changes), or the
-// coordinator's hold on a member (hold) and its release (release).
+// coordinator's hold on a member (hold) and its release (release), or the
+// whole fleet made to match the inventory (sync).
 type FleetReq struct {
-	Op     string // up, down, level, hold, release
+	Op     string // up, down, level, hold, release, sync
 	Member string
 	Who    string
 	// Fresh says the member's last beat is within BeatDeadline: release
@@ -964,6 +965,9 @@ type FleetReq struct {
 	// Width, above zero, is the member's width set by up or release (the
 	// machine's child cap, width.go); zero leaves the width as it is.
 	Width int `json:",omitempty"`
+	// Sync, with Op sync, is every machine the inventory says is a member
+	// and its width (fleet_sync.go); Member is empty.
+	Sync []SyncMember `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -975,7 +979,11 @@ func FleetStep(s *Snapshot, r FleetReq) Plan {
 	// every card the step places on a member (a down member's cards dealt
 	// again, the levelling) goes round the fleet from the deal's rolling index
 	// and moves it (round.go, errata 3 amendment 5), written with the step
-	rr := dealRoundWith(s, append([]string{r.Member}, r.Live...)...)
+	extra := append([]string{r.Member}, r.Live...)
+	for _, m := range r.Sync {
+		extra = append(extra, m.Name)
+	}
+	rr := dealRoundWith(s, extra...)
 	moves := roundMoves{}
 	p := Lawful(fleetStepPlan(s, r, rr, moves))
 	roundWrites(&p, rr, moves)
@@ -1094,8 +1102,10 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		return downPlan(s, r, up, rr, moves, memberLoads(s, up), memberWidths(s, up))
 	case "level":
 		level(s, &p, s.UpMembers(), rr, moves)
+	case "sync":
+		return fleetSyncPlan(s, r, rr, moves)
 	default:
-		p.refuse(r.Op, "fleet wants up, down, level, hold or release")
+		p.refuse(r.Op, "fleet wants up, down, level, hold, release or sync")
 	}
 	return p
 }

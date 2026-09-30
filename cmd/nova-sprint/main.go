@@ -51,7 +51,10 @@ type app struct {
 	conns   map[string]*redisconn.Conn
 	cached  map[string]store.Backend
 	meter   hostload.Source // how fleet beat measures this machine
-	loc     *time.Location  // the zone times print in: nil is the machine's local zone
+	// inventory reads the machines of nova-config and their widths (fleet
+	// sync): tests give it the config's in-memory store.
+	inventory inventoryFn
+	loc       *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
 	notify func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -67,6 +70,7 @@ type app struct {
 func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
+	a.inventory = a.readInventory
 	return a
 }
 
@@ -86,17 +90,8 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 	}
 	conn, ok := a.conns[addr]
 	if !ok {
-		o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-		if a.getenv(redisauth.UserEnv) != "" {
-			o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-			if a.getenv(redisauth.PasswordEnvEnv) == "" {
-				o.PasswordEnv = redisauth.DefaultPasswordEnv
-			}
-		}
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
 		var err error
-		conn, err = redisconn.Open(ctx, o, a.getenv)
+		conn, err = a.openConn(ctx, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -109,6 +104,22 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
 	a.cached[key] = b
 	return b, nil
+}
+
+// openConn dials the address as nova-table does: the address, then
+// NOVA_SPRINT_REDIS_USER and the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
+// names, bounded to 10 s.
+func (a *app) openConn(ctx context.Context, addr string) (*redisconn.Conn, error) {
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	if a.getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if a.getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return redisconn.Open(ctx, o, a.getenv)
 }
 
 // libraryMatches refuses a store whose loaded table function library is not
