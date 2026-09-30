@@ -142,6 +142,7 @@ type Selection struct {
 	addr     string
 	github   string
 	resolver func(seat string) (Cred, error)
+	getenv   func(string) string
 }
 
 var process Selection
@@ -174,6 +175,22 @@ func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	return process.FromArgs(args, getenv)
 }
 
+// Anonymous returns an independent Selection for tests running in parallel with every other.
+func Anonymous() *Selection { return new(Selection) }
+
+func (s *Selection) withLookup(getenv func(string) string) *Selection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getenv = getenv
+	return s
+}
+
+func (s *Selection) getenvLookup() func(string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getenv
+}
+
 // Select makes seat the selection ("" is none) and forgets any earlier
 // resolution.
 func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
@@ -185,7 +202,7 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve, nil
 }
 
 // SelectProfile is SelectWith for a seats.tsv row: the row's seat, its Redis
@@ -234,7 +251,12 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 	if !s.resolved {
 		resolve := s.resolver
 		if resolve == nil {
-			resolve = defaultResolver
+			if s.getenv != nil {
+				lookup := s.getenv
+				resolve = func(seat string) (Cred, error) { return Resolve(seat, lookup) }
+			} else {
+				resolve = defaultResolver
+			}
 		}
 		s.cred, s.credErr = resolve(s.selected)
 		s.resolved = true
@@ -246,6 +268,9 @@ func (s *Selection) Active() (c Cred, ok bool, err error) {
 // "--", which ends a tool's own flags), selects that seat or else getenv's
 // NOVA_SEAT, and returns the rest. A --seat with no name is an error.
 func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]string, error) {
+	if getenv == nil && s.getenvLookup() != nil {
+		getenv = s.getenvLookup()
+	}
 	seat, flagged := "", false
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -274,6 +299,9 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 		seat = getenv(SeatEnv)
 	}
 	s.Select(seat)
+	if getenv != nil {
+		s.withLookup(getenv)
+	}
 	return rest, nil
 }
 

@@ -16,10 +16,12 @@ const (
 	LimitFieldGuards      = 1000 // guards per member
 	LimitOneOfOptions     = 1000 // options in one guard
 	LimitReadSetMembers   = 1024
-	LimitColumns          = 1000   // columns per table
-	LimitRows             = 100000 // rows per table
-	LimitManifestProps    = 64     // properties a manifest sets, expects or expects absent (each)
-	LimitTableProps       = 64     // properties a table holds at an epoch
+	LimitColumns          = 1000               // columns per table
+	LimitRows             = 100000             // rows per table
+	LimitManifestProps    = 64                 // properties a manifest sets, expects or expects absent (each)
+	LimitTableProps       = 64                 // properties a table holds at an epoch
+	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
+	LimitBatchValueBytes  = 16 << 20           // bytes of the field values a batch's entries name, before and after
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"
@@ -34,11 +36,16 @@ const (
 	limitNameRows         = "rows per table"
 	limitNameManifestProp = "properties per manifest"
 	limitNameTableProps   = "properties per table"
+	limitNameReceipt      = "receipt bytes"
+	limitNameBatchValues  = "value bytes per batch"
 )
 
-// ReceiptValueBytes is the longest field value a receipt records in full; a longer
-// one is recorded as its length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1).
-const ReceiptValueBytes = 256
+// ReceiptValueBytes is the longest field value a receipt, the change event and
+// the operation record's result hold in full; a longer one is recorded as its
+// length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). The record's request is
+// the manifest as sent, in full, because replay compares bytes. table.lua holds
+// the same number (T.receipt_value_bytes); a test compares them.
+const ReceiptValueBytes = 64
 
 // LimitError is a named LIMIT refusal: the bound and the count found, and the
 // member at fault when one is. It wraps ErrLimit.
@@ -46,9 +53,15 @@ type LimitError struct {
 	Name            string
 	Bound, Observed int
 	Member          string
+	// AtLeast says the call stopped counting when it passed the bound: the true
+	// size is at least Observed.
+	AtLeast bool
 }
 
 func (e *LimitError) Error() string {
+	if e.AtLeast {
+		return fmt.Sprintf("%s: %s: bound %d, observed at least %d", ErrLimit, e.Name, e.Bound, e.Observed)
+	}
 	return fmt.Sprintf("%s: %s: bound %d, observed %d", ErrLimit, e.Name, e.Bound, e.Observed)
 }
 
@@ -133,6 +146,10 @@ func (e *LimitError) Advice() string {
 		return fmt.Sprintf("a table holds at most %d columns; remove one first or use another table", e.Bound)
 	case limitNameRows:
 		return fmt.Sprintf("a table holds at most %d rows; delete a row first or use another table", e.Bound)
+	case limitNameBatchValues:
+		return fmt.Sprintf("a batch touches at most %d bytes of field values (every before-value and after-value of the fields its entries name); change fewer members or fields in one manifest, split across manifests with their own operation ids", e.Bound)
+	case limitNameReceipt:
+		return fmt.Sprintf("the receipt of one batch is at most %d bytes and records every changed field; change fewer members or fewer fields in one manifest, split across manifests with their own operation ids", e.Bound)
 	}
 	return "narrow the request"
 }

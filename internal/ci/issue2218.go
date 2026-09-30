@@ -278,6 +278,11 @@ func BannerExampleLines(banner string) ([]string, error) {
 // whose example block holds no command is an error naming its file, so a
 // banner is never silently left out of the count.
 func HelpBannerExamples(root string) (map[string]string, error) {
+	return helpBannerExamplesWith(root, defaultSourceSeams())
+}
+
+// helpBannerExamplesWith is HelpBannerExamples reading the tree through seams.
+func helpBannerExamplesWith(root string, seams SourceSeams) (map[string]string, error) {
 	dirs, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
 		return nil, fmt.Errorf("help banners: %w", err)
@@ -298,11 +303,11 @@ func HelpBannerExamples(root string) (map[string]string, error) {
 				continue
 			}
 			rel := filepath.ToSlash(strings.TrimPrefix(f, root+string(filepath.Separator)))
-			src, err := readSourceFile(f)
+			src, err := seams.readFile(f)
 			if err != nil {
 				return nil, fmt.Errorf("help banners: %w", err)
 			}
-			_, file, err := parseSource(f, src, parser.SkipObjectResolution)
+			_, file, err := seams.parseFile(f, src, parser.SkipObjectResolution)
 			if err != nil {
 				return nil, fmt.Errorf("help banners: %w", err)
 			}
