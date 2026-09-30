@@ -266,6 +266,8 @@ do
   -- T.utf8(n): n is well-formed UTF-8 (no overlong forms, surrogates or
   -- code points past U+10FFFF).
   function T.utf8(n)
+    -- all ASCII is valid UTF-8: one scan in C, not one byte at a time in Lua
+    if not string.find(n, '[\128-\255]') then return true end
     local i = 1
     local function continuation(v) return v and v >= 128 and v <= 191 end
     while i <= #n do
@@ -354,13 +356,16 @@ do
       local start = pos
       pos = pos + 1
       while pos <= len do
-        local ch = string.sub(raw, pos, pos)
-        if ch == '\\' then pos = pos + 2
-        elseif ch == '"' then
-          pos = pos + 1
+        -- the next quote or backslash, found in C: the characters between
+        -- are the string's own
+        local at = string.find(raw, '["\\]', pos)
+        if not at then pos = len + 1; break end
+        if string.byte(raw, at) == 92 then pos = at + 2
+        else
+          pos = at + 1
           local ok, decoded = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           return ok and decoded or nil
-        else pos = pos + 1 end
+        end
       end
     end
     local value
@@ -1935,16 +1940,17 @@ do
       local start = pos
       pos = pos + 1
       while pos <= len do
-        local ch = string.sub(raw, pos, pos)
-        if ch == '\\' then
-          pos = pos + 2
-        elseif ch == '"' then
-          pos = pos + 1
+        -- the next quote or backslash, found in C: the characters between
+        -- are the string's own
+        local at = string.find(raw, '["\\]', pos)
+        if not at then pos = len + 1; break end
+        if string.byte(raw, at) == 92 then
+          pos = at + 2
+        else
+          pos = at + 1
           local ok, s = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           if not ok then return nil, "invalid string escape" end
           return s
-        else
-          pos = pos + 1
         end
       end
       return nil, "unterminated string"
