@@ -82,3 +82,32 @@ func TestLoadConfigRefusesAMissingRoster(t *testing.T) {
 		t.Fatal("an empty bus root loaded")
 	}
 }
+
+// A roster a cold reader got wrong is refused with the shape it should have: a missing
+// file, an array where the object goes, and an empty roster each carry the one-line
+// example and the door to the help, where the Go decoder's own words said only that an
+// array could not be unmarshalled.
+func TestLoadConfigRefusalsCarryTheRosterShape(t *testing.T) {
+	t.Parallel()
+	for name, files := range map[string]map[string]string{
+		"no file":        {},
+		"an array":       {ConfigName: `[{"name":"Ada"}]`},
+		"not json":       {ConfigName: `participants: Ada`},
+		"no participant": {ConfigName: `{"participants":[]}`},
+	} {
+		root := t.TempDir()
+		for n, body := range files {
+			write(t, root, n, body)
+		}
+		_, err := LoadConfig(root)
+		if err == nil {
+			t.Errorf("%s: loaded", name)
+			continue
+		}
+		for _, want := range []string{`"participants":[{"name":"Ada","lane":"from-ada"`, "git_email", "ROSTER AND LANES"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal %q does not carry %q", name, err, want)
+			}
+		}
+	}
+}
