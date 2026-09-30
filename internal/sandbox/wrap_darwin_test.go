@@ -15,9 +15,7 @@ import (
 // platform — on a Mac sandbox-exec is always there, so without the seam this rule has
 // no test at all on the only platform whose body is built.
 func TestNoSandboxRefusesOnDarwin(t *testing.T) {
-	saved := available
-	available = func() (string, bool) { return "", false }
-	defer func() { available = saved }()
+	t.Parallel()
 
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
@@ -28,6 +26,7 @@ func TestNoSandboxRefusesOnDarwin(t *testing.T) {
 	if len(bad) > 0 {
 		t.Fatalf("refused at build: %v", bad)
 	}
+	p.Available = func() (string, bool) { return "", false }
 	var out, errb bytes.Buffer
 	code, err := Run(p, os.Environ(), strings.NewReader(""), &out, &errb, nil)
 	if code != ExitRefused {

@@ -222,7 +222,7 @@ func runUnlessNamed(err error, remedy string) string {
 
 // memberReadCommand names the verb that shows a member's place, score,
 // revision and fields now.
-func memberReadCommand(table, member string) string {
+func memberReadCommand(table, member string, flags ...string) string {
 	args := []string{table, member}
 	endFlags := false
 	for i, arg := range args {
@@ -232,7 +232,7 @@ func memberReadCommand(table, member string) string {
 	if endFlags {
 		args = append([]string{"--"}, args...)
 	}
-	return "nova-table member read " + strings.Join(args, " ")
+	return "nova-table member read " + strings.Join(append(flags, args...), " ")
 }
 
 // words joins the detail elements of a refusal reply.
@@ -276,7 +276,12 @@ func (o operation) refused(reply []any) error {
 		if o.guarded() && len(reply) >= 5 {
 			o.member = fmt.Sprint(reply[2])
 			cause = fmt.Errorf("%w: the member is of epoch %v, the active epoch is %v", ErrMemberEpoch, reply[3], reply[4])
-			remedy = memberReadCommand(o.table, o.member)
+			// A read at the active epoch repeats this refusal; the member is read at its own.
+			if theirs, err1 := strconv.ParseUint(fmt.Sprint(reply[3]), 10, 64); err1 == nil {
+				if active, err2 := strconv.ParseUint(fmt.Sprint(reply[4]), 10, 64); err2 == nil && theirs < active {
+					remedy = memberReadCommand(o.table, o.member, "--at-epoch", fmt.Sprint(reply[3]))
+				}
+			}
 		} else {
 			cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
 		}
@@ -318,7 +323,6 @@ func (o operation) refused(reply []any) error {
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
 	case typedrec.TableRefusalNoRow:
 		cause = errors.New("no such row")
-		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
 	case typedrec.TableRefusalNoCol:
 		cause = errors.New("no such column")
 	case typedrec.TableRefusalText:
@@ -512,10 +516,11 @@ func (o operation) refused(reply []any) error {
 			limit := &LimitError{Name: fmt.Sprint(reply[2])}
 			limit.Bound, _ = strconv.Atoi(fmt.Sprint(reply[3]))
 			limit.Observed, _ = strconv.Atoi(fmt.Sprint(reply[4]))
-			if len(reply) >= 6 {
+			if len(reply) >= 6 && fmt.Sprint(reply[5]) != "" {
 				limit.Member = fmt.Sprint(reply[5])
 				o.member = limit.Member
 			}
+			limit.AtLeast = len(reply) >= 7 && fmt.Sprint(reply[6]) == "at least"
 			cause = say(limit, "%s; %s", limit.Error(), limit.Advice())
 		} else {
 			cause = fmt.Errorf("%w: %s", ErrLimit, words(reply[2:]))
@@ -598,13 +603,22 @@ func (o operation) refused(reply []any) error {
 	}
 	if refusal == typedrec.TableRefusalNoRow && len(reply) >= 3 {
 		o.row = fmt.Sprint(reply[2])
-		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+		if !o.guarded() {
+			// a batch or a read set never prepares a write: it shows the table, whose rows it lists
+			remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+		}
 	}
 	if o.readSet && refusal == typedrec.TableRefusalNoRow {
 		remedy = o.remedy() // a read prepares nothing to write; show the table
 	}
 	return &Refusal{Code: reason, Location: o.location(), Sentence: cause.Error(), Next: remedy, Guarded: o.guarded(), cause: cause}
 }
+
+// CheckedBeforeSending is what a refusal made before anything is sent says of
+// itself; the library and the command both say it. The store looks an operation up before it judges the request, so a
+// manifest that the current rules refuse can still have been applied earlier, under
+// looser rules: this refusal is about this call only.
+const CheckedBeforeSending = "checked before sending, so this call changed nothing; it says nothing about an earlier call with the same operation id"
 
 // beforeSending turns what the validator found into the refusal the store would
 // have made, or the manifest error a reader is told.
@@ -617,12 +631,12 @@ func (o operation) beforeSending(err error) error {
 	switch {
 	case errors.As(err, &re):
 		o.member = re.Member
-		return &Refusal{Code: re.Code, Location: o.location(), Sentence: re.Detail, Next: o.remedy(), Guarded: true, cause: re}
+		return &Refusal{Code: re.Code, Location: o.location(), Sentence: re.Detail + "; " + CheckedBeforeSending, Next: o.remedy(), Guarded: true, cause: re}
 	case errors.As(err, &le):
 		o.member = le.Member
-		return &Refusal{Code: "LIMIT", Location: o.location(), Sentence: le.Error() + "; " + le.Advice(), Next: o.remedy(), Guarded: true, cause: le}
+		return &Refusal{Code: "LIMIT", Location: o.location(), Sentence: le.Error() + "; " + le.Advice() + "; " + CheckedBeforeSending, Next: o.remedy(), Guarded: true, cause: le}
 	case errors.As(err, &me):
-		return fmt.Errorf("%s: invalid batch manifest: %w; changed=no; run: %s", o.location(), me, o.remedy())
+		return fmt.Errorf("%s: invalid batch manifest: %w; %s; changed=no; run: %s", o.location(), me, CheckedBeforeSending, o.remedy())
 	}
 	return err
 }
@@ -1061,6 +1075,10 @@ func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...
 	fields, err := definitionPayload(t, now)
 	if err != nil {
 		return err
+	}
+	// a bind leaves the table with exactly these rows, so the bound is on their number
+	if err := over(limitNameRows, LimitRows, len(t.Rows), ""); err != nil {
+		return fmt.Errorf("table %q: %w; %s; changed=no; run: %s", t.Name, err, err.(*LimitError).Advice(), (operation{table: t.Name}).remedy())
 	}
 	type boundRow struct {
 		Key string `json:"key"`

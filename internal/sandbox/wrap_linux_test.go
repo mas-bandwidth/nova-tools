@@ -36,12 +36,12 @@ import (
 // refusal guarded is real -- the rights the newer ABI added are not handled -- and what
 // replaced the refusal is the saying of it.
 func TestNewerLandlockABIIsClampedToTheTableOnLinux(t *testing.T) {
-	saved := available
-	forced := maxKnownABI + 1
-	available = func() (int, bool) { return forced, true }
-	defer func() { available = saved }()
+	t.Parallel()
 
-	used, clamped := ClampedABI()
+	forced := maxKnownABI + 1
+	abiFn := func() (int, bool) { return forced, true }
+
+	used, clamped := ClampedABIWith(abiFn)
 	if !clamped {
 		t.Fatalf("abi %d is above the table's %d and was not reported as clamped", forced, maxKnownABI)
 	}
@@ -50,12 +50,12 @@ func TestNewerLandlockABIIsClampedToTheTableOnLinux(t *testing.T) {
 	}
 	// abi= stays the KERNEL's number: a line that printed the clamped one would hide the
 	// very fact it exists to publish.
-	if ABI() != strconv.Itoa(forced) {
-		t.Errorf("abi=%s, want the kernel's %d", ABI(), forced)
+	if ABIWith(abiFn) != strconv.Itoa(forced) {
+		t.Errorf("abi=%s, want the kernel's %d", ABIWith(abiFn), forced)
 	}
 	// Both numbers, because the note is what tells the reader which kernel it has and
 	// which table it needs: a note naming neither is a note nobody can act on.
-	note := Note()
+	note := NoteWith(abiFn)
 	for _, n := range []int{forced, maxKnownABI} {
 		if !strings.Contains(note, strconv.Itoa(n)) {
 			t.Errorf("the note does not name %d: %q", n, note)
@@ -98,12 +98,10 @@ func TestWallABIClampsOnlyAboveTheTable(t *testing.T) {
 // guard gone the forced 0 reaches createRuleset and the refusal that arrives is
 // `sandbox_failed`, not this one.
 func TestLandlockABIBelowTheTableRefusesOnLinux(t *testing.T) {
-	saved := available
-	forced := minKnownABI - 1
-	available = func() (int, bool) { return forced, true }
-	defer func() { available = saved }()
+	t.Parallel()
 
-	r, out := runRefused(t)
+	forced := minKnownABI - 1
+	r, out := runRefused(t, func() (int, bool) { return forced, true })
 	if r.Reason != "landlock_abi_unknown" {
 		t.Fatalf("reason = %q, want landlock_abi_unknown: %s", r.Reason, r.Text)
 	}
@@ -120,11 +118,9 @@ func TestLandlockABIBelowTheTableRefusesOnLinux(t *testing.T) {
 // Rule 1 on this platform: no landlock is no run. It had no linux test of its own while
 // the ABI refusal above stood in for it; the clamp took that stand-in away, so it gets one.
 func TestNoLandlockRefusesOnLinux(t *testing.T) {
-	saved := available
-	available = func() (int, bool) { return 0, false }
-	defer func() { available = saved }()
+	t.Parallel()
 
-	r, out := runRefused(t)
+	r, out := runRefused(t, func() (int, bool) { return 0, false })
 	if r.Reason != "no_sandbox" {
 		t.Fatalf("reason = %q, want no_sandbox: %s", r.Reason, r.Text)
 	}
@@ -135,9 +131,9 @@ func TestNoLandlockRefusesOnLinux(t *testing.T) {
 
 // runRefused runs a normal job through Run and insists it was refused at exit 125 before
 // the command ran. It is safe to call in the test binary ONLY because every caller has
-// forced `available` to a value Run refuses on: a Run that reached restrictSelf would wall
+// forced `abiFn` to a value Run refuses on: a Run that reached restrictSelf would wall
 // this process for the rest of the suite, and a Landlock domain cannot be lifted.
-func runRefused(t *testing.T) (Refusal, string) {
+func runRefused(t *testing.T, abiFn func() (int, bool)) (Refusal, string) {
 	t.Helper()
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
@@ -148,6 +144,7 @@ func runRefused(t *testing.T) (Refusal, string) {
 	if len(bad) > 0 {
 		t.Fatalf("refused at build: %v", bad)
 	}
+	p.LandlockABI = abiFn
 	var out, errb bytes.Buffer
 	code, err := Run(p, os.Environ(), strings.NewReader(""), &out, &errb, nil)
 	if code != ExitRefused {

@@ -214,3 +214,75 @@ func TestBatchCLIOverBoundIsARefusal(t *testing.T) {
 	}
 	runsWhenPasted(t, addr, "over bound", stderr)
 }
+
+// A refusal for a member of an older epoch ends in a command that shows the
+// member: read at the active epoch it would repeat the refusal, so the command
+// reads the member at the epoch it belongs to.
+func TestBatchMemberEpochNextCommandReadsTheMemberAtItsOwnEpoch(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx := context.Background()
+	cols, err := ntable.ParseColumns("ready,working")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "demo", Columns: cols, EpochKey: "epochs", EpochField: "n"}
+	if err := ntable.Create(ctx, c, tb, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "old", 1, ntable.WriteOptions{Epoch: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, "epochs", "n", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}, ntable.WriteOptions{Epoch: 1}); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	manifest := `{"schema":1,"table":"demo","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"me1","members":[{"id":"old","expect":{}}]}`
+	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "MEMBEREPOCH") || !strings.Contains(stderr, "changed=no") {
+		t.Fatalf("exit %d stdout %q stderr %q; want a MEMBEREPOCH refusal", code, stdout, stderr)
+	}
+	words := strings.Join(nextCommand(t, stderr), " ")
+	if !strings.Contains(words, "member read") || !strings.Contains(words, "--at-epoch 0") {
+		t.Errorf("the next command %q does not read the member at its own epoch", words)
+	}
+	runsWhenPasted(t, addr, "member epoch", stderr)
+}
+
+// A refusal for a row the table lacks ends in a command that shows the table,
+// not one that writes to it.
+func TestBatchNoRowNextCommandDoesNotWrite(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx := context.Background()
+	cols, err := ntable.ParseColumns("ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	manifest := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev + `","operation_id":"nr1","members":[{"id":"n","expect":{"absent":true},"create":{"row":"nope","col":"ready","score":1}}]}`
+	code, _, stderr := runTable("batch", "--redis", addr, manifest)
+	if code != 1 || !strings.Contains(stderr, "NOROW") {
+		t.Fatalf("exit %d stderr %q; want a NOROW refusal", code, stderr)
+	}
+	if next := strings.Join(nextCommand(t, stderr), " "); strings.Contains(next, "row add") || !strings.HasPrefix(next, "show ") {
+		t.Errorf("the next command %q writes to the table or does not show it", next)
+	}
+	runsWhenPasted(t, addr, "no row", stderr)
+	if n := c.ZCard(ctx, ntable.DefKey("demo")+":rows").Val(); n != 0 {
+		t.Errorf("running the next command left %d rows", n)
+	}
+}
