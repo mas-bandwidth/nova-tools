@@ -962,6 +962,13 @@ func memPlanProp(preEpoch, workEpoch *memEpoch, entry Entry, index int, counts m
 		if !seen {
 			n = len(pre.props)
 			b.cellProbes++ // the store's HLEN of the property hash
+			if b.cellProbes > 20000 {
+				return FieldValue{}, false, memRefusal("LIMIT", RefusalDetail{Budget: "cell_probes"})
+			}
+			b.fetchedBytes += len(strconv.Itoa(n))
+			if b.fetchedBytes > 8<<20 {
+				return FieldValue{}, false, memRefusal("LIMIT", RefusalDetail{Budget: "raw_fetched_bytes"})
+			}
 		}
 		n++
 		counts[entry.Table] = n

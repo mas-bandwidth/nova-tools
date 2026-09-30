@@ -277,6 +277,66 @@ func TestPropAdvanceStartsEmpty(t *testing.T) {
 	}
 }
 
+func TestPropAdvanceRefusesPrepopulatedSuccessorHash(t *testing.T) {
+	t.Parallel()
+	h := newCompareHarness(t)
+	ctx := context.Background()
+
+	propBoth(t, h, cardsStep(h, cardsProp("deal_index", "3")))
+	succKey := h.fx.Space + "table:" + compareTable + ":1:props"
+
+	// Case 1: Prepopulated successor hash with equal value -> advance with prop deal_index=3
+	// Before the fix, this equal-value no-op bypassed advance emptiness preflight and advanced.
+	if err := h.fx.Client.HSet(ctx, succKey, "deal_index", "3").Err(); err != nil {
+		t.Fatal(err)
+	}
+	image := commitProbeImage(t, h.fx.Client)
+	step := cardsStep(h, Entry{Kind: "advance", AdvanceFrom: "0"}, cardsProp("deal_index", "3"))
+	op, intent := "adv-equal", "advance with equal-value prop"
+	step.Op, step.Intent = &op, &intent
+	_, err := h.rdb.Step(ctx, step)
+	requireRefusal(t, err, "DRIFT")
+	if !reflect.DeepEqual(image, commitProbeImage(t, h.fx.Client)) {
+		t.Fatal("prepopulated successor hash refusal changed Redis whole-key image")
+	}
+
+	// Case 2: Prepopulated successor hash with x=v -> advance with absent guard other=nil
+	// Stronger: advance plus absent propguard for another name must also refuse DRIFT.
+	if err := h.fx.Client.Del(ctx, succKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.fx.Client.HSet(ctx, succKey, "x", "v").Err(); err != nil {
+		t.Fatal(err)
+	}
+	image = commitProbeImage(t, h.fx.Client)
+	step = cardsStep(h, Entry{Kind: "advance", AdvanceFrom: "0"}, cardsPropGuard("other", nil))
+	op, intent = "adv-guard", "advance with absent guard"
+	step.Op, step.Intent = &op, &intent
+	_, err = h.rdb.Step(ctx, step)
+	requireRefusal(t, err, "DRIFT")
+	if !reflect.DeepEqual(image, commitProbeImage(t, h.fx.Client)) {
+		t.Fatal("prepopulated successor hash absent-guard refusal changed Redis whole-key image")
+	}
+
+	// Case 3: Prepopulated successor hash with wrong type (string) -> advance with prop or propguard
+	// Successor key of wrong type must refuse DRIFT, not WRONGTYPE.
+	if err := h.fx.Client.Del(ctx, succKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.fx.Client.Set(ctx, succKey, "not-a-hash", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	image = commitProbeImage(t, h.fx.Client)
+	step = cardsStep(h, Entry{Kind: "advance", AdvanceFrom: "0"}, cardsProp("deal_index", "3"))
+	op, intent = "adv-wrongtype", "advance with wrongtype successor props"
+	step.Op, step.Intent = &op, &intent
+	_, err = h.rdb.Step(ctx, step)
+	requireRefusal(t, err, "DRIFT")
+	if !reflect.DeepEqual(image, commitProbeImage(t, h.fx.Client)) {
+		t.Fatal("prepopulated successor wrong-type refusal changed Redis whole-key image")
+	}
+}
+
 func TestPropReplay(t *testing.T) {
 	t.Parallel()
 	h := newCompareHarness(t)

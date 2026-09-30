@@ -254,3 +254,92 @@ func TestMemPropLimitAdvanceAndReplay(t *testing.T) {
 		t.Fatal("replay changed the model")
 	}
 }
+
+func TestMemPropAdvanceRefusesPrepopulatedSuccessor(t *testing.T) {
+	t.Parallel()
+	m, space := propMem(t)
+	ctx := context.Background()
+
+	if _, err := m.Step(ctx, propStep(space, "0", propSet("deal_index", "3"))); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	ns := m.spaces[space]
+	e1 := ns.epochs["1"]
+	if e1 == nil {
+		e1 = &memEpoch{tables: make(map[string]*memTableEpoch)}
+		ns.epochs["1"] = e1
+	}
+	if e1.tables["fleet"] == nil {
+		e1.tables["fleet"] = newMemTableEpoch()
+	}
+	e1.tables["fleet"].props["x"] = "v"
+	m.mu.Unlock()
+
+	before := refusalSnapshot(t, m, space)
+	op, intent := "adv-equal", "advance with prepopulated epoch 1"
+	step := propStep(space, "0", Entry{Kind: "advance", AdvanceFrom: "0"}, propSet("x", "v"))
+	step.Op, step.Intent = &op, &intent
+	_, err := m.Step(ctx, step)
+	refusal := requireRefusal(t, err, "DRIFT")
+	if refusal.Detail.EntryIndex == nil || *refusal.Detail.EntryIndex != 0 {
+		t.Fatalf("DRIFT detail = %+v", refusal.Detail)
+	}
+	if after := refusalSnapshot(t, m, space); !reflect.DeepEqual(before, after) {
+		t.Fatal("advance refusal changed the model")
+	}
+}
+
+func TestMemPropCellProbeLimitBoundary(t *testing.T) {
+	t.Parallel()
+	preEpoch := &memEpoch{tables: map[string]*memTableEpoch{"fleet": newMemTableEpoch()}}
+	workEpoch := &memEpoch{tables: map[string]*memTableEpoch{"fleet": newMemTableEpoch()}}
+	entry := propSet("deal_index", "1")
+
+	for i := 0; i < 5; i++ {
+		preEpoch.tables["fleet"].props[fmt.Sprintf("p%d", i)] = "v"
+	}
+
+	// Boundary 1: cellProbes exactly reaches 20,000 (19,999 + 1 from HLEN).
+	b := &memWorkBudget{cellProbes: 19999, fetchedBytes: 100}
+	counts := make(map[string]int)
+	observed := make(map[string]bool)
+	_, didChange, err := memPlanProp(preEpoch, workEpoch, entry, 0, counts, observed, b)
+	if err != nil {
+		t.Fatalf("at 20000 cell probes: %v", err)
+	}
+	if !didChange || b.cellProbes != 20000 {
+		t.Fatalf("cellProbes = %d, want 20000", b.cellProbes)
+	}
+	if b.fetchedBytes != 101 { // 100 + len("5") = 101
+		t.Fatalf("fetchedBytes = %d, want 101", b.fetchedBytes)
+	}
+
+	// Boundary 2: cellProbes exceeds 20,000 (20,000 + 1 = 20,001).
+	b = &memWorkBudget{cellProbes: 20000, fetchedBytes: 100}
+	counts = make(map[string]int)
+	observed = make(map[string]bool)
+	_, didChange, err = memPlanProp(preEpoch, workEpoch, entry, 0, counts, observed, b)
+	if err == nil {
+		t.Fatal("expected LIMIT refusal at 20001 cell probes, got nil")
+	}
+	refusal := requireRefusal(t, err, "LIMIT")
+	if refusal.Detail.Budget != "cell_probes" {
+		t.Fatalf("refusal budget = %q, want cell_probes", refusal.Detail.Budget)
+	}
+
+	// Boundary 3: raw_fetched_bytes exceeds 8 MiB (8<<20).
+	b = &memWorkBudget{cellProbes: 0, fetchedBytes: 8 << 20}
+	counts = make(map[string]int)
+	observed = make(map[string]bool)
+	_, didChange, err = memPlanProp(preEpoch, workEpoch, entry, 0, counts, observed, b)
+	if err == nil {
+		t.Fatal("expected LIMIT refusal when fetchedBytes exceeds 8<<20, got nil")
+	}
+	refusal = requireRefusal(t, err, "LIMIT")
+	if refusal.Detail.Budget != "raw_fetched_bytes" {
+		t.Fatalf("refusal budget = %q, want raw_fetched_bytes", refusal.Detail.Budget)
+	}
+}
+

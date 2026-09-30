@@ -665,6 +665,29 @@ do
       elseif e.kind=='create' or e.kind=='move' or e.kind=='remove' then b.member_candidates=b.member_candidates+#e.ids end
     end
   end
+  local function key_type(ctx,key)
+    if ctx.types[key] then return ctx.types[key],nil end
+    local value,err=S.readcmd(ctx,{argv={'TYPE',key},access={}},16,'metadata')
+    if err then return nil,err end
+    return type(value)=='table' and value.ok or value,nil
+  end
+  local function empty_advance_key(ctx,key,kind)
+    if ctx.write_epoch==ctx.request_epoch or key==ctx.epoch_key or key==ctx.done_key(ctx.request_epoch) or kind=='none' then return true,nil end
+    local commands={hash='HLEN',zset='ZCARD',stream='XLEN',list='LLEN',string='STRLEN'}
+    local n,err=rd(ctx,{commands[kind],key},kind,32,'metadata');if err then return nil,err end
+    if n~=0 then return nil,S.refuse('DRIFT') end
+    return true,nil
+  end
+  local function check_advance_key(ctx,key,want)
+    if ctx.write_epoch==ctx.request_epoch then return true,nil end
+    ctx.advance_checked=ctx.advance_checked or {}
+    if ctx.advance_checked[key] then return true,nil end
+    local actual,err=key_type(ctx,key);if err then return nil,err end
+    if actual~='none' and actual~=want then return nil,S.refuse(successor_key(ctx,key) and 'DRIFT' or 'WRONGTYPE') end
+    local ok;ok,err=empty_advance_key(ctx,key,actual);if err then return nil,err end
+    ctx.advance_checked[key]=true
+    return true,nil
+  end
   -- Table properties: L1 contract amendment 2026-09-30 (property), section 2.
   -- A prop and a propguard both compare with the write epoch's pre-state (one
   -- HGET per distinct name, charged as a field observation), so a guard beside
@@ -672,6 +695,7 @@ do
   -- prop is one HSET; no log line is planned for it.
   local function prop_pre(ctx,t,name)
     local key=ctx.props_key(t,ctx.write_epoch)
+    local ok,err=check_advance_key(ctx,key,'hash');if err then return nil,nil,err end
     ctx.prop_pre=ctx.prop_pre or {}
     local cache=ctx.prop_pre[key]
     if not cache then cache={};ctx.prop_pre[key]=cache end
@@ -995,12 +1019,6 @@ do
     elseif command=='SET' and n~=3 then return nil,S.refuse('REQUEST') end
     return bytes,nil
   end
-  local function key_type(ctx,key)
-    if ctx.types[key] then return ctx.types[key],nil end
-    local value,err=S.readcmd(ctx,{argv={'TYPE',key},access={}},16,'metadata')
-    if err then return nil,err end
-    return type(value)=='table' and value.ok or value,nil
-  end
   local function stream_head(ctx,key,kind)
     local info=ctx.stream_info[key]
     if not info then
@@ -1019,13 +1037,6 @@ do
         type(h['entries-added'])~='number' or h['entries-added']~=tonumber(seq) or
         h.length~=h['entries-added'] then return nil,S.refuse('LOGID') end
     return seq,nil
-  end
-  local function empty_advance_key(ctx,key,kind)
-    if ctx.write_epoch==ctx.request_epoch or key==ctx.epoch_key or key==ctx.done_key(ctx.request_epoch) or kind=='none' then return true,nil end
-    local commands={hash='HLEN',zset='ZCARD',stream='XLEN',list='LLEN',string='STRLEN'}
-    local n,err=rd(ctx,{commands[kind],key},kind,32,'metadata');if err then return nil,err end
-    if n~=0 then return nil,S.refuse('DRIFT') end
-    return true,nil
   end
   function S.prepare(ctx,table_plan,log_plan,other_plans)
     if callback_depth>0 or ctx.operation~='step' then return nil,S.refuse('CONFIG') end
@@ -1076,7 +1087,8 @@ do
     end
     if #commands>S.limits.commands then return nil,limit(ctx,'commands',#commands,S.limits.commands) end
     local total=0
-    local projected,heads,checked={},{},{}
+    local projected,heads,checked={},{},ctx.advance_checked or {}
+    ctx.advance_checked=checked
     local frozen={}
     for _,d in ipairs(commands) do
       local bytes;bytes,err=validate_write(ctx,d);if err then return nil,err end
