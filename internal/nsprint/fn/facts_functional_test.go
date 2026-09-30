@@ -20,6 +20,7 @@ import (
 // TestFactF1NoRollback verifies that a function that errors keeps its earlier writes.
 // Redis functions do not roll back; writes executed before an error persist.
 func TestFactF1NoRollback(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -53,6 +54,7 @@ end)`
 // TestFactF2KillOnlyBeforeWrite verifies that FUNCTION KILL stops only a function
 // that has not executed write commands once busy-reply-threshold is exceeded.
 func TestFactF2KillOnlyBeforeWrite(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -195,6 +197,7 @@ end)`
 
 // TestFactF3UnpackLimit verifies the exact unpack bound: 7,999 values works and 8,000 fails.
 func TestFactF3UnpackLimit(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -239,6 +242,7 @@ end)`
 // TestFactF4OOMInsideStartedFunction verifies that commands inside a started function
 // do not fail on OOM, but the next write starting over maxmemory is refused.
 func TestFactF4OOMInsideStartedFunction(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -335,6 +339,7 @@ redis.register_function{
 // TestFactF5GlobalNamesAndReplaceWhole verifies that function names are global across
 // libraries and that a library is replaced whole on FUNCTION LOAD REPLACE.
 func TestFactF5GlobalNamesAndReplaceWhole(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -393,6 +398,7 @@ redis.register_function('fct_f5_other', function() return 'second' end)`
 
 // TestFactF6UndeclaredKeys verifies that undeclared keys work on a standalone server.
 func TestFactF6UndeclaredKeys(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -438,6 +444,7 @@ end)`
 // TestFactF7StreamIDsAndReset verifies explicit stream id constraints, trimming,
 // and that sequence resets only upon key deletion.
 func TestFactF7StreamIDsAndReset(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -560,6 +567,7 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 // TestFactF8TimeFrozenInFunction verifies that TIME is frozen for the duration
 // of a function call, in both writing and no-writes functions.
 func TestFactF8TimeFrozenInFunction(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -623,6 +631,7 @@ redis.register_function{
 // TestFactF9ZMSCOREAndXINFO verifies ZMSCORE of 2,000 members in one command
 // and that XINFO STREAM latency is O(1) in stream length.
 func TestFactF9ZMSCOREAndXINFO(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
@@ -732,6 +741,7 @@ end)`
 // TestFactF10Commandstats verifies that commands issued inside functions are counted
 // in INFO commandstats.
 func TestFactF10Commandstats(t *testing.T) {
+	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
