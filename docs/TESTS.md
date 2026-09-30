@@ -823,3 +823,96 @@ build |     1 |       1 |    0
 ------+-------+---------+-----
       |     1 |       1 |    0
 ```
+
+## nova-sprint
+
+The first run needs no Redis: `--redis mem:<file>` runs every verb against an
+in-memory twin of the store kept in a file (for learning and tests, not for a
+fleet), and the sitting below is the card flow `nova-sprint help` shows, one
+process a line, with `NOVA_SPRINT_REDIS=mem:sprint.twin` and
+`NOVA_SPRINT_ACTOR=boss` set; the help's last two lines, merge and where, land
+the card and show the sprint, and are left out here because the time a finished
+sprint took and the instant where prints are the clock's. It is run by
+`cmd/nova-sprint/firstrun_test.go`, in the unit tier, over a twin file in a
+temporary directory (a twin counts its operation ids, `t1`, `t2`, so they read
+the same on every run); the functional tests beside it
+(`cmd/nova-sprint/*_functional_test.go`) run the same verbs against a real
+store. Nothing is normalised: every value on every line reproduces.
+
+### First run
+
+```text
+$ nova-sprint init --readers reader-a,reader-b --members m1
+INIT OK tables=work,readers,merge,fleet view=sprint
+MOVED m1 added, down until it beats
+FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
+STOPPED
+
+$ nova-sprint add --stream s1 --count 1
+MOVED s1-1 -> ready stream=s1 score=1
+ADD OK moved=1 refused=0 notes=0 op=add-t2-1
+STOPPED  0/1 0.0%
+
+$ nova-sprint start
+START OK before=STOPPED after=RUNNING changed
+nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+MOVED presence: m1 up
+MOVED deal: s1-1 ready -> working card=s1-1.w1 member=m1
+TABLES rows changed: work=1 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=2 notes=1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint take --as m1 --epoch 0
+MOVED s1-1.w1 ready -> working member=m1 gen=1
+PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  branch: sprint/s1-1.w1
+  base: the stream's base
+  notes: none
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1 --report '<what you did>' [--failed]
+TAKE OK moved=1 refused=0 notes=0 op=take-t14-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
+MOVED s1-1.w1 working -> done ok; s1-1 working -> review
+FINISH OK moved=1 refused=0 notes=1 op=finish-t15-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+MOVED ask: s1-1 asked of reader-a, reader-b
+TABLES rows changed: work=1 readers=2 merge=0 fleet=0
+TICK OK state=RUNNING idle=no moved=1 notes=0
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-a --begin --epoch 0
+MOVED s1-1.r1.reader-a asked -> reading
+READ OK moved=1 refused=0 notes=0 op=read-t21-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-b --begin --epoch 0
+MOVED s1-1.r1.reader-b asked -> reading
+READ OK moved=1 refused=0 notes=0 op=read-t22-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-a --ok --epoch 0
+MOVED s1-1.r1.reader-a reading -> ok
+READ OK moved=1 refused=0 notes=0 op=read-t23-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-b --ok --epoch 0
+MOVED s1-1.r1.reader-b reading -> ok
+READ OK moved=1 refused=0 notes=1 op=read-t24-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+TABLES rows changed: work=0 readers=0 merge=0 fleet=0
+TICK OK state=RUNNING idle=yes moved=0 notes=0
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint accept --read-ok
+MOVED s1-1 review -> merging queued (ok from reader-a, reader-b)
+ACCEPT OK moved=1 refused=0 notes=2 op=accept-t26-1
+0/1 0.0% -> ETA  machine: running
+```

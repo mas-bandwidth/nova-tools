@@ -206,6 +206,9 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		return nil, err
 	}
 	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
+	if t := a.twins[c.redis]; t != nil {
+		st.NewID = t.newID
+	}
 	if st, err = st.Pinned(ctx); err != nil {
 		return nil, err
 	}

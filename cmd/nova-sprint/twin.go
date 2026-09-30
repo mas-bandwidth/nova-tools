@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -79,6 +81,29 @@ type twin struct {
 	path string
 	mem  *store.Mem
 	last []byte
+	mu   sync.Mutex
+}
+
+// keyIDs is the twin's record of the operation-id families it has handed out.
+const keyIDs = "twin:ids"
+
+// newID is the next operation-id family of the twin: t1, t2, ... counted in
+// the twin itself, so the ids of a card flow read the same on every run and
+// are never handed out twice (the store takes an id it has seen again as the
+// same operation). A store on Redis makes its families from the clock, the
+// process and random bytes (store.NewID); a twin has one writer at a time, and
+// a counter it keeps is the simplest thing that is unique.
+func (t *twin) newID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ctx := context.Background()
+	n := 0
+	if v, ok, _ := t.mem.GetKey(ctx, keyIDs); ok {
+		n, _ = strconv.Atoi(v)
+	}
+	n++
+	_ = t.mem.SetKey(ctx, keyIDs, strconv.Itoa(n))
+	return "t" + strconv.Itoa(n)
 }
 
 // twinBackend opens the twin file once per process, loading it when it is
