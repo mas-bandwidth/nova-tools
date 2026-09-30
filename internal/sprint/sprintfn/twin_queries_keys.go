@@ -151,6 +151,21 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 			out.Scores = append(out.Scores, got...)
 		}
 		return out, nil
+	case KeyBeat:
+		out := BeatResult{Kind: q.Kind, Scores: []*string{}}
+		for from := 0; from < len(q.IDs); from += probeChunk {
+			chunk := q.IDs[from:min(from+probeChunk, len(q.IDs))]
+			members := make([]string, len(chunk))
+			for i, m := range chunk {
+				members[i] = beatDuePrefix + m
+			}
+			got, ref := e.zscores(e.key("due"), members)
+			if ref != nil {
+				return nil, ref
+			}
+			out.Scores = append(out.Scores, got...)
+		}
+		return out, nil
 	case KeyJOpen:
 		out := JOpenResult{Kind: q.Kind, Items: []JOpenItem{}}
 		for _, s := range q.Subjects {
@@ -180,6 +195,20 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 			return nil, ref
 		}
 		return DueCountResult{Kind: q.Kind, R: string(r), Due: n}, nil
+	case KeyNext:
+		out := NextResult{Kind: q.Kind, Fields: map[string]string{}}
+		if len(q.Names) > 0 {
+			f, ref := e.fieldsOf(e.key("next"), q.Names, hashFieldBytes)
+			if ref != nil {
+				return nil, ref
+			}
+			for name, v := range f {
+				if v != nil {
+					out.Fields[name] = *v
+				}
+			}
+		}
+		return out, nil
 	}
 	return nil, queryRequestRefusal()
 }

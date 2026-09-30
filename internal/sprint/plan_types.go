@@ -147,7 +147,18 @@ type Rule struct {
 	Read func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
 	// Plan is what the rule does on the snapshot the read loaded.
 	Plan func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
+	// ReadFor is Read given the names the tick's own read found (TickShape), for a
+	// rule whose read names a stream or a member that its keys do not (R6's
+	// front(s) of every stream, 2.3 R6 "Read:"). A tick that has the shape
+	// reads with ReadFor when it is set, and with Read otherwise.
+	ReadFor func(keys []AgendaKey, sh TickShape, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
 }
+
+// TickShape is the names a tick's first read found, which a rule's read may name
+// (open question 4): the streams, the work table's rows (1.3.1: a stream is a
+// row of each table), in name order. Members is not read yet, and a read that
+// is given none reads the whole fleet.
+type TickShape struct{ Streams, Members []string }
 
 // Decimal is an exact unsigned integer written as its decimal digits, the
 // words of tset.Decimal: an epoch or a time that a JSON number could not carry

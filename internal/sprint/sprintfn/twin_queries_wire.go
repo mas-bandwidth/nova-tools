@@ -53,6 +53,16 @@ const (
 	KeyMissing   = "missing"   // scores in {p}missing@e of the ids named
 	KeyJOpen     = "jopen"     // {p}jopen:<subject>@e of the subjects named
 	KeyDueCount  = "duecount"  // the due entries at or below R
+	// KeyNext is the fields of {p}next@e named (1.0's one read function lists
+	// it; 1.3.1): score, streams, id:<s>, gate:<s>. Added by IT19, whose add and
+	// rank read the counter they guard (U2); the addendum's list has no kind for
+	// it.
+	KeyNext = "next"
+	// KeyBeat is the score of beat:<m> in {p}due@e for each member named: a
+	// member's beat is fresh while it lies above R (1.4.4), which fleet up
+	// reads (section 3) and R1 and R2 read as a fact (IT07's question 3). Added
+	// by IT20 beside IT30's kinds, in the shape of missing.
+	KeyBeat = "beat"
 )
 
 // CompositeKinds are the eight composite queries of 1.0, in its order.
@@ -61,7 +71,7 @@ var CompositeKinds = []string{sprint.QueryRelated, sprint.QueryFront, sprint.Que
 
 // SprintKeyKinds are the bounded sprint-key read kinds, in the order above.
 var SprintKeyKinds = []string{KeyClock, KeyLease, KeyTick, KeyHeartbeat, KeyDropping, KeyParked, KeyMissing,
-	KeyJOpen, KeyDueCount}
+	KeyJOpen, KeyDueCount, KeyNext, KeyBeat}
 
 // Bounds of a query, each the design's own.
 const (
@@ -349,7 +359,7 @@ type KeyQ struct {
 	Keys     []string // parked: the agenda keys whose parked notes are read
 	IDs      []string // missing: the needs whose scores in {p}missing@e are read
 	Subjects []string // jopen: the subjects whose open judgments are read
-	Names    []string // jopen: the "<type>|<cause>" fields read of each subject, beside its count
+	Names    []string // jopen: the "<type>|<cause>" fields read of each subject, beside its count; next: the counter's fields
 }
 
 // ValidateKeyQ checks a sprint-key read's shape before any store is touched:
@@ -377,11 +387,13 @@ func ValidateKeyQ(q KeyQ) *Refusal {
 		ok = q.Streams != nil && distinct(q.Streams, validName) && none(q.Keys, q.IDs, q.Subjects, q.Names)
 	case KeyParked:
 		ok = q.Keys != nil && distinct(q.Keys, text) && none(q.Streams, q.IDs, q.Subjects, q.Names)
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		ok = q.IDs != nil && distinct(q.IDs, validName) && none(q.Streams, q.Keys, q.Subjects, q.Names)
 	case KeyJOpen:
 		ok = q.Subjects != nil && q.Names != nil && distinct(q.Subjects, validName) && distinct(q.Names, text) &&
 			none(q.Streams, q.Keys, q.IDs)
+	case KeyNext:
+		ok = q.Names != nil && distinct(q.Names, NextField) && none(q.Streams, q.Keys, q.IDs, q.Subjects)
 	}
 	if !ok {
 		return queryRequestRefusal()
@@ -479,10 +491,12 @@ func EncodeKeyQ(q KeyQ) (SprintQuery, *Refusal) {
 		m["streams"] = q.Streams
 	case KeyParked:
 		m["keys"] = q.Keys
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		m["ids"] = q.IDs
 	case KeyJOpen:
 		m["subjects"], m["names"] = q.Subjects, q.Names
+	case KeyNext:
+		m["names"] = q.Names
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -744,10 +758,12 @@ func DecodeKeyQ(q SprintQuery) (KeyQ, *Refusal) {
 		allowed = []string{"streams"}
 	case KeyParked:
 		allowed = []string{"keys"}
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		allowed = []string{"ids"}
 	case KeyJOpen:
 		allowed = []string{"subjects", "names"}
+	case KeyNext:
+		allowed = []string{"names"}
 	default:
 		return bad()
 	}
@@ -769,12 +785,15 @@ func DecodeKeyQ(q SprintQuery) (KeyQ, *Refusal) {
 	case KeyParked:
 		out.Keys, ok1 = wireList(m, "keys")
 		ok2 = true
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		out.IDs, ok1 = wireList(m, "ids")
 		ok2 = true
 	case KeyJOpen:
 		out.Subjects, ok1 = wireList(m, "subjects")
 		out.Names, ok2 = wireList(m, "names")
+	case KeyNext:
+		out.Names, ok1 = wireList(m, "names")
+		ok2 = true
 	default:
 		ok1, ok2 = true, true
 	}
