@@ -94,8 +94,8 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 		{
 			"unknown destination row",
 			refusalFixtureBatch(rev, "r-row", ntable.BatchMemberEntry{ID: "n", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "nope", Col: "ready", Score: 1}}),
-			[]string{`batch "r-row"`, `member "n"`, `row "nope"`, "changed=no", "; run: nova-table row add 'demo' 'nope'"},
-			nil,
+			[]string{`batch "r-row"`, `member "n"`, `row "nope"`, "changed=no", "; run: nova-table show 'demo'"},
+			[]string{"row add"},
 		},
 		{
 			"unknown destination column",
