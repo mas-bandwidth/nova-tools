@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,29 @@ import (
 // that arrives as "-h" must never be answered with exit 0.
 var helpRefusedByDesign = map[string]string{
 	"nova-fuse": "exit 0 is the fuse's CLEAR and DONE; a surface named -h must not read as permission",
+}
+
+// statedExitCodes is the first line of the exit-codes paragraph a banner
+// states, whatever the label's case and wherever in the line it sits (`exit
+// codes: ...` opening a line, or `Exit codes: ...` inside a sentence), from
+// the label on; "" when the banner states none. A label that opens a line wins.
+// It is the witness for verbflag's own matcher, written apart from it.
+func statedExitCodes(banner string) string {
+	label := regexp.MustCompile(`(?i)\bexit codes?\s*:`)
+	inSentence := ""
+	for _, l := range strings.Split(banner, "\n") {
+		loc := label.FindStringIndex(l)
+		if loc == nil {
+			continue
+		}
+		if strings.TrimSpace(l[:loc[0]]) == "" {
+			return strings.TrimSpace(l[loc[0]:])
+		}
+		if inSentence == "" {
+			inSentence = strings.TrimSpace(l[loc[0]:])
+		}
+	}
+	return inSentence
 }
 
 // usageVerbs are the verbs a banner's own usage block names: the lines above
@@ -90,6 +114,15 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) {
 		}
 		if code != 0 || strings.TrimSpace(out.String()) == "" || errb.Len() != 0 {
 			t.Errorf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String())
+		}
+		// The tool's own exit codes reach the verb's help: a banner that states
+		// them, in any case or spot in the line, is quoted, never answered with
+		// the `see help` pointer, which is for a banner that states none. One
+		// verb per tool is enough: every verb's help is assembled by one seam.
+		if want := statedExitCodes(banner); want != "" && verb == verbs[0] {
+			if !strings.Contains("\n"+out.String(), "\n"+want+"\n") {
+				t.Errorf("`%s` does not print the exit-codes line its banner states (%q); got:\n%s", line, want, out.String())
+			}
 		}
 		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 			var names []string

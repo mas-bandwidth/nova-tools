@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -144,26 +145,44 @@ func Print(out io.Writer, prog, banner string, fs *flag.FlagSet) {
 	_, _ = io.WriteString(out, b.String())
 }
 
+// exitCodesLabel finds the label of a banner's exit-code paragraph, whatever its
+// case: `exit codes:`, `Exit codes:`, `exit code:`.
+var exitCodesLabel = regexp.MustCompile(`(?i)\bexit codes?\s*:`)
+
 // exitCodes is the tool's own `exit codes` paragraph from its help text, since a
 // tool's codes are its own (a sandbox refuses at 125, a fuse says BLOWN at 1).
-// With no help text the family's common line stands; with help text that states
-// none, the line points there rather than guess.
+// The label is matched without regard to case, and a label that opens a line
+// wins over one inside a sentence (`Flags come before files. Exit codes: ...`),
+// where the paragraph is quoted from the label on. With no help text the
+// family's common line stands; with help text that states none, the line points
+// there rather than guess.
 func exitCodes(banner, prog string) []string {
 	if banner == "" {
 		return []string{"exit codes: 0 done, 1 refused, 2 usage"}
 	}
 	lines := strings.Split(banner, "\n")
+	start, from := -1, 0
 	for i, l := range lines {
-		if !strings.HasPrefix(strings.TrimSpace(l), "exit codes") {
+		loc := exitCodesLabel.FindStringIndex(l)
+		if loc == nil {
 			continue
 		}
-		var out []string
-		for j := i; j < len(lines) && j < i+excerptFollow && strings.TrimSpace(lines[j]) != ""; j++ {
-			out = append(out, strings.TrimSpace(lines[j]))
+		if strings.TrimSpace(l[:loc[0]]) == "" {
+			start, from = i, loc[0]
+			break
 		}
-		return out
+		if start < 0 {
+			start, from = i, loc[0]
+		}
 	}
-	return []string{"exit codes: see `" + prog + " help`"}
+	if start < 0 {
+		return []string{"exit codes: see `" + prog + " help`"}
+	}
+	out := []string{strings.TrimSpace(lines[start][from:])}
+	for j := start + 1; j < len(lines) && j < start+excerptFollow && strings.TrimSpace(lines[j]) != ""; j++ {
+		out = append(out, strings.TrimSpace(lines[j]))
+	}
+	return out
 }
 
 // excerptFollow caps the indented lines quoted after one matching line.
