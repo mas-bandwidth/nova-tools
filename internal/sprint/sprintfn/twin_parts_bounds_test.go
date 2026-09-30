@@ -898,6 +898,9 @@ func TestQuarantineCarriedLuaMatchesGo(t *testing.T) {
 			&SprintPart{Quarantine: card("p1")}),
 		"two in the body, both in the part": with([]Quarantined{{ID: "p1", Code: "D"}, {ID: "p2", Code: "D"}},
 			&SprintPart{Quarantine: []Quarantined{{ID: "p2", Code: "D"}, {ID: "p1", Code: "D"}, {ID: "p3", Code: "D"}}}),
+		"the same two, in another order": with([]Quarantined{{ID: "p1", Code: "D"}, {ID: "p2", Code: "D"}},
+			&SprintPart{Quarantine: []Quarantined{{ID: "p2", Code: "D"}, {ID: "p1", Code: "D"}}}),
+		"a card named twice in the part": with(card("p1"), &SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D"}, {ID: "p1", Code: "D"}}}),
 	} {
 		raw, err := json.Marshal(sprintWireOf(req))
 		if err != nil {
@@ -919,6 +922,43 @@ func TestQuarantineCarriedLuaMatchesGo(t *testing.T) {
 	}
 }
 
+// TestQuarantineCarriedBothDirections (the cold read of PR 4788, L1): the body
+// and the sprint part quarantine the same cards. A part that quarantines a card
+// the body does not name is refused as a body that names one no part carries:
+// X acts on the body's quarantine alone, so the card would stay in the indexes
+// while its mark is written.
+func TestQuarantineCarriedBothDirections(t *testing.T) {
+	t.Parallel()
+	card := func(ids ...string) []Quarantined {
+		var out []Quarantined
+		for _, id := range ids {
+			out = append(out, Quarantined{ID: id, Code: "DRIFT"})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name       string
+		body, part []Quarantined
+		want       bool
+	}{
+		{"neither", nil, nil, true},
+		{"the same", card("p1", "p2"), card("p2", "p1"), true},
+		{"the body alone", card("p1"), nil, false},
+		{"the part alone", nil, card("p1"), false},
+		{"the part has one more", card("p1"), card("p1", "p2"), false},
+		{"the body has one more", card("p1", "p2"), card("p1"), false},
+	} {
+		req := &Request{Epoch: "0", Meta: Meta{Verb: "tick"}}
+		req.Body.Quarantine = c.body
+		if c.part != nil {
+			req.Sprint = &SprintPart{Quarantine: c.part}
+		}
+		if got := quarantineCarried(req); got != c.want {
+			t.Errorf("%s: carried %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // TestQuarantineCarriedLuaTakesAnyShape (the recheck of IT16, probe N1): the
 // Lua core's static check runs in decode_sprint before any validation, on
 // whatever JSON a caller sent, so it answers REQUEST (false) to a shape the Go
@@ -936,6 +976,10 @@ func TestQuarantineCarriedLuaTakesAnyShape(t *testing.T) {
 		{"no quarantine", `{"meta":{}}`, true},
 		{"an empty body list", `{"meta":{},"quarantine":[]}`, true},
 		{"the same card", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":"p1"}]}}`, true},
+		{"the part's card alone", `{"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"the part's card beside an empty body", `{"quarantine":[],"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"the part's list is a string and the body empty", `{"quarantine":[],"sprint":{"quarantine":"p1"}}`, true},
+		{"the part has a card more", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":"p1"},{"id":"p2"}]}}`, false},
 
 		{"a card of the part with no id", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"code":"DRIFT"}]}}`, false},
 		{"a card of the part with no id beside the body's card", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":"p1"},{"code":"DRIFT"}]}}`, false},

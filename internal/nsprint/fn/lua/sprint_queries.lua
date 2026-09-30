@@ -92,6 +92,13 @@ do
   Q.FOLLOWS = {work = 1, withdrawn = 1, rcards = 15, merge = 1, control = 1, needs = 64, member = 1, jopen = 1, due = 1, index = 1}
   Q.HEAD_INDEXES = {elig = true, ['fresh-below'] = true, ['fresh-above'] = true, again = true}
   Q.INDEX_PREFIXES = {sent = true, elig = true, fresh = true, again = true, wait = true}
+  -- The sprint keys a composite query may also read (IT08's `keys`), and the
+  -- kinds whose answer reaches streams, which alone may name them. The jopen
+  -- keys give the types of the judgments open on a subject, which only an
+  -- enumeration of its jopen hash finds, and S.read_probe admits none (no HKEYS
+  -- or HGETALL): a query naming one is REQUEST (sprintfn.queryKeys).
+  Q.QUERY_KEYS = {dropping = true, ['next.streams'] = true}
+  Q.KEYS_KINDS = {front = true, waiters = true, streams = true}
 
   -- The sprint-key kinds (the addendum): the names are this item's choice.
   Q.CLOCK_FIELDS = {'stopped_ms', 'stopped_since_ms', 'stophold_ms', 'due_since_ms', 'stopraised_ms'}
@@ -294,6 +301,32 @@ do
   -- sprintfn.QueryProbes: the most cell and key probes a composite query may
   -- make, from its arguments alone.
   function Q.declared_probes(q)
+    return Q.query_probes(q) + Q.extension_probes(q)
+  end
+  -- sprintfn.extensionProbes: a name for each stream the dropping marks are read
+  -- of (the most a query reaches), one for next.streams, and a ZCARD for each
+  -- cell a streams query counts.
+  function Q.extension_probes(q)
+    local total = 0
+    local units = q.units or 0
+    if units == 0 then units = Q.MAX_STREAMS end
+    for _, k in ipairs(q.keys or {}) do
+      if k == 'dropping' then
+        if q.kind == 'front' then
+          total = total + 1
+        elseif q.kind == 'waiters' then
+          total = total + Q.source_size(q.src) * q.limit
+        elseif q.kind == 'streams' then
+          total = total + units
+        end
+      elseif k == 'next.streams' then
+        total = total + 1
+      end
+    end
+    if q.kind == 'streams' then total = total + units * #(q.counts or {}) end
+    return total
+  end
+  function Q.query_probes(q)
     local kind = q.kind
     if kind == 'front' then
       local total = 3 + #Q.OPEN_CELLS
@@ -385,9 +418,9 @@ do
     local kind = q.kind
     local shapes = {
       related = {kind = true, t = true, src = true, follow = true, fields = true},
-      front = {kind = true, stream = true, heads = true, fields = true},
-      waiters = {kind = true, src = true, limit = true, fields = true},
-      streams = {kind = true, limit = true, units = true, fields = true},
+      front = {kind = true, stream = true, heads = true, fields = true, keys = true},
+      waiters = {kind = true, src = true, limit = true, fields = true, after = true, missing = true, keys = true},
+      streams = {kind = true, limit = true, units = true, fields = true, counts = true, keys = true},
       fleet = {kind = true, units = true, fields = true},
       readers = {kind = true, units = true, fields = true},
       needchain = {kind = true, src = true, limit = true, fields = true},
@@ -430,6 +463,7 @@ do
         end
       end
     end
+    if not Q.valid_extensions(q) then return 'REQUEST' end
     -- The sizes, after every shape. A list longer than a read may return is past
     -- a bound, as Layer 1's own ids query refuses one (LIMIT), and not a
     -- malformed source.
@@ -438,6 +472,22 @@ do
     if records > Q.MAX_RECORDS then return 'LIMIT', 'record' end
     if ranged > Q.MAX_RANGE_IDS then return 'LIMIT', 'range_id' end
     return nil
+  end
+
+  -- IT08's extensions of a query (sprintfn.validExtensions): keys, each a key
+  -- of Q.QUERY_KEYS named once; counts, distinct column names, at most a
+  -- table's columns; missing a boolean; after a string, and when not empty the
+  -- cursor of a list of one id, itself an id. Which kinds may carry them is the
+  -- shape's (Q.check).
+  function Q.valid_extensions(q)
+    if q.keys ~= nil and not Q.distinct(q.keys, function(k) return Q.QUERY_KEYS[k] == true end) then return false end
+    if q.counts ~= nil and not Q.distinct(q.counts, Q.valid_name, Q.MAX_COLUMNS) then return false end
+    if q.missing ~= nil and type(q.missing) ~= 'boolean' then return false end
+    if q.after ~= nil then
+      if type(q.after) ~= 'string' then return false end
+      if q.after ~= '' and (q.src.kind ~= 'ids' or #q.src.ids ~= 1 or not Q.valid_name(q.after)) then return false end
+    end
+    return true
   end
 
   -- The sprint-key kinds' shapes: a fields that is the empty array, and only
@@ -707,8 +757,10 @@ do
     local offset, n = Q.line_window(src)
     if offset > #list then offset = #list end
     local out = {}
-    for i = offset + 1, math.min(#list, offset + n) do out[#out + 1] = list[i] end
-    return out, true, nil
+    local last = math.min(#list, offset + n)
+    for i = offset + 1, last do out[#out + 1] = list[i] end
+    -- the fourth value says a line has ids beyond the window read (more_ids)
+    return out, true, nil, last < #list
   end
 
   ---------------------------------------------------------------- the follows
@@ -1041,16 +1093,75 @@ do
       heads[#heads + 1] = hr
     end
     res.heads, res.left_out = Q.array(heads), Q.array(left.list)
+    local keys
+    keys, err = Q.sprint_keys(ctx, q, {q.stream}, index)
+    if err then return nil, err end
+    res.keys = keys
     return res, nil
   end
 
+  -- sprint_keys reads the sprint keys a query names (IT08's `keys`), after
+  -- everything else it read, in the order named: the dropping marks of the
+  -- streams the query reached (reach, in order, each once), one HMGET and none
+  -- when it reached none, and {p}next@e.streams, one HMGET of one field. nil
+  -- when the query names none, so the answer has no `keys`.
+  function Q.sprint_keys(ctx, q, reach, index)
+    if q.keys == nil or #q.keys == 0 then return nil, nil end
+    local out = {}
+    for _, k in ipairs(q.keys) do
+      local kr = {key = k, streams = Q.array({}), n = ''}
+      if k == 'dropping' then
+        local names, seen = {}, {}
+        for _, st in ipairs(reach) do
+          if st ~= '' and not seen[st] then seen[st] = true; names[#names + 1] = st end
+        end
+        if #names > 0 then
+          local marks, err = Q.hmget(ctx, Q.key(ctx, 'dropping'), names, index)
+          if err then return nil, err end
+          local marked = {}
+          for i = 1, #names do
+            if marks[i] then marked[#marked + 1] = names[i] end
+          end
+          kr.streams = Q.array(marked)
+        end
+      elseif k == 'next.streams' then
+        local v, err = Q.hmget(ctx, Q.key(ctx, 'next'), {'streams'}, index)
+        if err then return nil, err end
+        kr.n = '0'
+        if v[1] then
+          -- an exact decimal of at most 2^64 - 1, as the Go's ParseUint reads it
+          local d = v[1]
+          if (d ~= '0' and not d:match('^[1-9][0-9]*$')) or #d > 20 or (#d == 20 and d > '18446744073709551615') then
+            return nil, Q.fail(ctx, 'DRIFT', index)
+          end
+          kr.n = d
+        end
+      else
+        return nil, Q.fail(ctx, 'REQUEST', index)
+      end
+      out[#out + 1] = kr
+    end
+    return Q.array(out), nil
+  end
+
+  -- waiters reads, for each id n of the source, its record, its score in
+  -- {p}missing@e and the head of wait:n with the waiters' records; `missing`
+  -- reads the head only for the ids with a score. The head's `last` is the last
+  -- member it read, left out or not: the cursor of the next head (IT08's R4),
+  -- which moves past a head whose members were all left out. A cursor
+  -- (`after`) starts the head after a member in the order of wait:n's members,
+  -- which are all scored 0: Layer 1's checked reads give a sorted set's head by
+  -- score only (S.read_range_head, no lexicographic bound), so a query with a
+  -- cursor is refused CONFIG, before it reads anything, until Layer 1 has one.
+  -- The twin answers it (sprintfn waitHead).
   function Q.waiters(ctx, q, index)
+    if q.after ~= nil and q.after ~= '' then return nil, Q.fail(ctx, 'CONFIG', index) end
     local left = Q.new_left()
     local res = {kind = 'waiters'}
     local _, err = Q.table(ctx, Q.WORK, index)
     if err then return nil, err end
-    local ids
-    ids, _, err = Q.source_ids(ctx, q.src, Q.WORK, index)
+    local ids, more_ids
+    ids, _, err, more_ids = Q.source_ids(ctx, q.src, Q.WORK, index)
     if err then return nil, err end
     local kept
     kept, err = Q.leave(ctx, ids, left, index)
@@ -1069,30 +1180,42 @@ do
       for k = 1, #chunk do missing[#missing + 1] = got[k] end
       i = i + Q.PROBE_CHUNK
     end
-    local items = {}
+    local items, reach = {}, {}
     for n = 1, #kept do
-      local wleft = Q.new_left()
-      local head
-      head, err = Q.head_of(ctx, Q.key(ctx, 'wait:' .. kept[n]), '-inf', '+inf', q.limit, index)
-      if err then return nil, err end
-      local wk
-      wk, err = Q.leave(ctx, head.ids, wleft, index)
-      if err then return nil, err end
-      local wrecs
-      wrecs, err = Q.records(ctx, Q.WORK, wk, q.fields, index)
-      if err then return nil, err end
-      err = Q.present(ctx, Q.WORK, wrecs, index)
-      if err then return nil, err end
-      local refs = {}
-      for w = 1, #wrecs do refs[w] = {id = wrecs[w].id, record = wrecs[w]} end
       local it = {id = kept[n], record = recs[n], missing = missing[n] or cjson.null,
-        wait = {ids = Q.array(wk), has_more = head.has_more, left_out = Q.array(wleft.list), items = Q.array(refs)}}
+        wait = {ids = Q.array({}), has_more = false, last = '', left_out = Q.array({}), items = Q.array({})}}
+      if not q.missing or missing[n] then
+        local wleft = Q.new_left()
+        local head
+        head, err = Q.head_of(ctx, Q.key(ctx, 'wait:' .. kept[n]), '-inf', '+inf', q.limit, index)
+        if err then return nil, err end
+        local wk
+        wk, err = Q.leave(ctx, head.ids, wleft, index)
+        if err then return nil, err end
+        local wrecs
+        wrecs, err = Q.records(ctx, Q.WORK, wk, q.fields, index)
+        if err then return nil, err end
+        err = Q.present(ctx, Q.WORK, wrecs, index)
+        if err then return nil, err end
+        local refs = {}
+        for w = 1, #wrecs do
+          refs[w] = {id = wrecs[w].id, record = wrecs[w]}
+          local place = wrecs[w].place
+          if type(place) == 'table' and type(place.row) == 'string' then reach[#reach + 1] = place.row end
+        end
+        it.wait = {ids = Q.array(wk), has_more = head.has_more, last = head.ids[#head.ids] or '',
+          left_out = Q.array(wleft.list), items = Q.array(refs)}
+      end
       local ok
       ok, err = Q.S().emit_read_item(ctx, it, index)
       if err then return nil, err end
       items[n] = it
     end
-    res.ids, res.left_out, res.items = Q.array(kept), Q.array(left.list), Q.array(items)
+    res.ids, res.left_out, res.items, res.more_ids = Q.array(kept), Q.array(left.list), Q.array(items), more_ids == true
+    local keys
+    keys, err = Q.sprint_keys(ctx, q, reach, index)
+    if err then return nil, err end
+    res.keys = keys
     return res, nil
   end
 
@@ -1174,12 +1297,39 @@ do
       end
       items[i].stuck = st
     end
+    local counts = q.counts or {}
+    if #counts > 0 and #rows.ids > 0 then
+      -- the counts of the cells named, of every stream listed (2.3 R15), one
+      -- ZCARD a cell; a column the work table does not have is NOCOL
+      for i = 1, #rows.ids do
+        for _, col in ipairs(counts) do
+          if not def.column_set[col] then
+            return nil, Q.fail(ctx, 'NOCOL', index, {table = Q.WORK, cells = {rows.ids[i] .. ':' .. col}})
+          end
+        end
+      end
+      for i = 1, #rows.ids do
+        local cs = {}
+        for _, col in ipairs(counts) do
+          local key = ctx.cell_key(Q.WORK, ctx.request_epoch, rows.ids[i], col)
+          local n
+          n, err = S.read_probe(ctx, {'ZCARD', key}, key, 'zset', 32)
+          if err then return nil, err end
+          cs[#cs + 1] = {col = col, n = n}
+        end
+        items[i].counts = Q.array(cs)
+      end
+    end
     for i = 1, #items do
       local ok
       ok, err = S.emit_read_item(ctx, items[i], index)
       if err then return nil, err end
     end
     res.items, res.left_out = Q.array(items), Q.array(left.list)
+    local keys
+    keys, err = Q.sprint_keys(ctx, q, rows.ids, index)
+    if err then return nil, err end
+    res.keys = keys
     return res, nil
   end
 

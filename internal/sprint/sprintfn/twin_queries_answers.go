@@ -141,6 +141,7 @@ type FrontResult struct {
 	GRecord      *Record      `json:"g_record"`
 	Heads        []HeadResult `json:"heads"`
 	LeftOut      []string     `json:"left_out"`
+	Keys         []KeyResult  `json:"keys,omitempty"`
 }
 
 // WaiterRef is one waiter of a need: its record.
@@ -149,10 +150,16 @@ type WaiterRef struct {
 	Record Record `json:"record"`
 }
 
-// WaitHead is the head of wait:n up to the query's limit.
+// WaitHead is the head of wait:n up to the query's limit, after the query's
+// cursor: the ids kept, whether wait:n has more beyond the head, the ids left
+// out (quarantined), and Last, the last member the head read, kept or left out
+// ("" when it read none). Last is where the next head starts (the cursor of
+// sprint.SprintQ.WaiterAfter), so a head whose members were all left out still
+// moves it past them (2.3 R4).
 type WaitHead struct {
 	IDs     []string    `json:"ids"`
 	HasMore bool        `json:"has_more"`
+	Last    string      `json:"last"`
 	LeftOut []string    `json:"left_out"`
 	Items   []WaiterRef `json:"items"`
 }
@@ -174,8 +181,21 @@ type WaitersResult struct {
 	LeftOut []string     `json:"left_out"`
 	Items   []WaiterItem `json:"items"`
 	// MoreIDs says a source that is a line has ids beyond the window read
-	// (sprint.Answer.MoreIDs). The twin reports it and the wire does not carry it.
-	MoreIDs bool `json:"-"`
+	// (sprint.Answer.MoreIDs); a list and an index head say none.
+	MoreIDs bool `json:"more_ids"`
+	// Keys are the sprint keys the query also read (sprint.SprintQ.Keys).
+	Keys []KeyResult `json:"keys,omitempty"`
+}
+
+// KeyResult is one sprint key a composite query also read, in the one
+// snapshot (sprint.SprintQ.Keys; the errata's seam of E6): for dropping, the
+// streams among those the query reached that {p}dropping@e marks, in the order
+// reached; for next.streams, N, {p}next@e.streams as an exact decimal ("0"
+// when unset). The field of the other key is empty.
+type KeyResult struct {
+	Key     string   `json:"key"`
+	Streams []string `json:"streams"`
+	N       string   `json:"n"`
 }
 
 // StuckIDs are the first ids of a stopped stream's stuck cell.
@@ -193,6 +213,9 @@ type StreamItem struct {
 	Control *Record   `json:"control"`
 	Need    *Record   `json:"need"`
 	Stuck   *StuckIDs `json:"stuck"`
+	// Counts are the counts of the stream's cells of the work table the query
+	// named (sprint.SprintQ.Counts), in its order; absent when it named none.
+	Counts []CellN `json:"counts,omitempty"`
 }
 
 // StreamsResult is the answer of `streams`: the rows of the work table, up to
@@ -204,6 +227,7 @@ type StreamsResult struct {
 	HasMore bool         `json:"has_more"`
 	LeftOut []string     `json:"left_out"`
 	Items   []StreamItem `json:"items"`
+	Keys    []KeyResult  `json:"keys,omitempty"`
 }
 
 // CellN is the count of the cards in one cell of a row.
@@ -392,17 +416,33 @@ func (r FrontResult) Project(q sprint.SprintQ) sprint.Answer {
 			a.Records = append(a.Records, itemCards(sprint.Work, it)...)
 		}
 	}
+	a.Keys = projectKeys(r.Keys)
 	return a
+}
+
+// projectKeys is the sprint keys a query read as IT08's KeyAnswer, one for each
+// in order (rules_position_read.go's loadKeys).
+func projectKeys(keys []KeyResult) []sprint.KeyAnswer {
+	var out []sprint.KeyAnswer
+	for _, k := range keys {
+		ka := sprint.KeyAnswer{Key: k.Key, Streams: append([]string(nil), k.Streams...)}
+		if k.N != "" {
+			ka.N, _ = strconv.ParseUint(k.N, 10, 64)
+		}
+		out = append(out, ka)
+	}
+	return out
 }
 
 // Project is `waiters` as IT05's Answer: each id's record and its waiters', and
 // one NeedAnswer for each id of the source, in order (IT08's alignment,
 // loadPosition): the id's place (its column, "" when it has no record), whether
 // it has a score in {p}missing@e, the head of wait:n read (after the query's
-// WaiterAfter, up to its Limit) and whether wait:n has more beyond it. An id of
-// a list that the query left out (quarantined) is answered with no place and no
-// waiters, since the list names it and the answer must answer every id it
-// names. MoreIDs is the twin's: a line has ids beyond the window.
+// WaiterAfter, up to its Limit), whether wait:n has more beyond it and the last
+// member the head read. An id of a list that the query left out (quarantined)
+// is answered with no place and no waiters, since the list names it and the
+// answer must answer every id it names. MoreIDs says a line has ids beyond the
+// window, and Keys are the sprint keys read.
 func (r WaitersResult) Project(q sprint.SprintQ) sprint.Answer {
 	a := sprint.Answer{Kind: r.Kind, IDs: sourceNamed(q.Source, r.IDs), MoreIDs: r.MoreIDs}
 	byID := make(map[string]WaiterItem, len(r.Items))
@@ -426,16 +466,18 @@ func (r WaitersResult) Project(q sprint.SprintQ) sprint.Answer {
 			n.Missing = it.Missing != nil
 			n.Waiters = append([]string(nil), it.Wait.IDs...)
 			n.More = it.Wait.HasMore
+			n.Last = it.Wait.Last
 		}
 		a.Needs = append(a.Needs, n)
 	}
+	a.Keys = projectKeys(r.Keys)
 	return a
 }
 
 // Project is `streams` as IT05's Answer: the rows, whether there were more, the
 // control cards and need cards read, and the stuck ids of each stream stopped on
-// a cross need (IT08 reads them, loadPosition). The counts and the sprint keys a
-// query may ask beside are not read by the twin.
+// a cross need (IT08 reads them, loadPosition), each stream's counts of the
+// cells the query named, and the sprint keys it read.
 func (r StreamsResult) Project(q sprint.SprintQ) sprint.Answer {
 	a := sprint.Answer{Kind: r.Kind, Rows: append([]string(nil), r.Rows...), HasMore: r.HasMore}
 	for _, it := range r.Items {
@@ -448,7 +490,11 @@ func (r StreamsResult) Project(q sprint.SprintQ) sprint.Answer {
 		if it.Stuck != nil {
 			a.Stuck = append(a.Stuck, sprint.StuckAnswer{Stream: it.Stream, IDs: append([]string(nil), it.Stuck.IDs...), More: it.Stuck.HasMore})
 		}
+		for _, c := range it.Counts {
+			a.Counts = append(a.Counts, sprint.CellCount{Row: it.Stream, Col: c.Col, N: c.N})
+		}
 	}
+	a.Keys = projectKeys(r.Keys)
 	return a
 }
 

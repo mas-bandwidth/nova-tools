@@ -66,15 +66,21 @@ type HeadAnswer struct {
 // in the work table ("" when it has none), whether it has a score in
 // {p}missing@e, and the head of wait:n after the query's WaiterAfter, up to its
 // Limit, in the order of wait:n's members (by id), whose records are in the
-// answer's Records. More says wait:n has members beyond the head, and a head
-// that is empty has none. A query that reads only the ids in {p}missing@e
-// (Missing) leaves Waiters empty for the others.
+// answer's Records. More says wait:n has members beyond the head. Last is the
+// last member of wait:n the head read, a waiter left out (quarantined) or not,
+// "" when it read none: the place after which the next head starts, so that a
+// head whose members were all left out still moves the cursor past them (2.3
+// R4: the offset moves past n once its set is empty of quarantined ids, which it
+// leaves out). A head that is empty and says More names its Last. A query that
+// reads only the ids in {p}missing@e (Missing) leaves Waiters empty for the
+// others.
 type NeedAnswer struct {
 	ID      string
 	Place   string
 	Missing bool
 	Waiters []string
 	More    bool
+	Last    string
 }
 
 // StuckAnswer is the first ids of a stream's stuck cell, by score, that a
@@ -198,8 +204,8 @@ func (p *Partial) loadPosition(s *Snapshot, i int, q SprintQ, a Answer) error {
 			if n.ID != ids[j] || len(n.Waiters) > q.Limit {
 				return misaligned("composite query %d: need %d is %q with %d waiters, the id is %q and the head is %d", i, j, n.ID, len(n.Waiters), ids[j], q.Limit)
 			}
-			if n.More && len(n.Waiters) == 0 {
-				return misaligned("composite query %d: %s has more waiters and none were given", i, n.ID)
+			if n.More && len(n.Waiters) == 0 && n.Last == "" {
+				return misaligned("composite query %d: %s has more waiters and names none it read", i, n.ID)
 			}
 			// the cursor is a place in the order of wait:n's members, so a head that
 			// is not after it, in that order, is not the head that was asked
@@ -212,6 +218,11 @@ func (p *Partial) loadPosition(s *Snapshot, i int, q SprintQ, a Answer) error {
 					return misaligned("composite query %d: %q waits for %s and its record is not in the answer", i, w, n.ID)
 				}
 				last = w
+			}
+			// the last member read is after the cursor and at or after every waiter
+			// the head gives (2.3 R4; the design's cursor, 1.0 waiters)
+			if n.Last != "" && (n.Last < last || n.Last <= q.WaiterAfter) {
+				return misaligned("composite query %d: the head of wait:%s ends at %q, before what it read", i, n.ID, n.Last)
 			}
 		}
 		if key := posQueryKey(q); key != "" {
@@ -447,6 +458,7 @@ type posNeed struct {
 	Missing bool
 	Waiters []*Card
 	More    bool
+	Last    string
 }
 
 // posKeyView is the answer of waiters for one key: the needs of the window it
@@ -472,7 +484,7 @@ func posKeyViewOf(s *Snapshot, k AgendaKey) (posKeyView, bool) {
 	a := s.Partial.Answer.Sprint[i]
 	v := posKeyView{MoreIDs: a.MoreIDs}
 	for j, n := range a.Needs {
-		nv := posNeed{Index: p.offset + j, Need: n.ID, Place: n.Place, Missing: n.Missing, More: n.More}
+		nv := posNeed{Index: p.offset + j, Need: n.ID, Place: n.Place, Missing: n.Missing, More: n.More, Last: n.Last}
 		for _, w := range n.Waiters {
 			nv.Waiters = append(nv.Waiters, s.Work.Card(w))
 		}

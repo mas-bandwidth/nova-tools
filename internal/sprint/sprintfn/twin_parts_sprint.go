@@ -230,27 +230,32 @@ func checkQuarantine(qs []Quarantined) *Refusal {
 	return nil
 }
 
-// quarantineCarried says every card the body quarantines is also quarantined
-// by the sprint part, which owns the records: a body that names a quarantine no
-// part writes would have X act on a card whose record is lost, since a part
-// runs only when its field is set.
+// quarantineCarried says the body and the sprint part quarantine the same
+// cards, in both directions (errata 2, item 6: the sprint part holds the
+// quarantine): a body that names a quarantine no part writes would have X act on
+// a card whose record is lost, since a part runs only when its field is set, and
+// a part that writes a quarantine the body does not name would leave the card
+// in the indexes X keeps, since X acts on the body's quarantine alone.
 func quarantineCarried(req *Request) bool {
-	if len(req.Body.Quarantine) == 0 {
+	var part []Quarantined
+	if req.Sprint != nil {
+		part = req.Sprint.Quarantine
+	}
+	if len(req.Body.Quarantine) == 0 && len(part) == 0 {
 		return true
 	}
-	if req.Sprint == nil {
-		return false
-	}
-	carried := make(map[string]bool, len(req.Sprint.Quarantine))
-	for _, q := range req.Sprint.Quarantine {
+	carried := make(map[string]bool, len(part))
+	for _, q := range part {
 		carried[q.ID] = true
 	}
+	named := make(map[string]bool, len(req.Body.Quarantine))
 	for _, q := range req.Body.Quarantine {
 		if !carried[q.ID] {
 			return false
 		}
+		named[q.ID] = true
 	}
-	return true
+	return len(named) == len(carried)
 }
 
 // parkedValue is the record of a parked key in {p}parked@e (1.1, 1.3.5): the

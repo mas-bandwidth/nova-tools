@@ -823,28 +823,38 @@ do
     end
     return nil
   end
-  -- Every card the body quarantines is also quarantined by the sprint part,
-  -- which owns the records: the core checks it in its static phase, since a part
-  -- runs only when its field is set. That phase runs before any validation, on
-  -- whatever JSON the caller sent, so this answers false (the core refuses
-  -- REQUEST) to a shape that is not a list of cards with string ids, and never
-  -- raises: a script error would reach the caller in place of a refusal. When the
-  -- body quarantines anything, a card of the part without a string id is refused
-  -- here too, where the part's own check would refuse it later.
+  -- The body and the sprint part quarantine the same cards, in both
+  -- directions (errata 2, item 6): a body quarantine no part writes would have
+  -- X act on a card whose record is lost, since a part runs only when its field
+  -- is set, and a part quarantine the body does not name would leave the card
+  -- in the indexes X keeps, since X acts on the body's alone. The core checks it
+  -- in its static phase, which runs before any validation, on whatever JSON the
+  -- caller sent, so this answers false (the core refuses REQUEST) to a shape
+  -- that is not a list of cards with string ids, and never raises: a script
+  -- error would reach the caller in place of a refusal. When neither quarantines
+  -- anything it holds, and a part's quarantine that is no list is left to the
+  -- part's own check.
   function SP.quarantine_carried(sp)
     local body = sp.quarantine
-    if body == nil then return true end
-    if type(body) ~= 'table' then return false end
-    if #body == 0 then return true end
+    if body ~= nil and type(body) ~= 'table' then return false end
+    body = body or {}
     local p = sp.sprint
-    if type(p) ~= 'table' or type(p.quarantine) ~= 'table' then return false end
-    local carried = {}
-    for _, q in ipairs(p.quarantine) do
-      if type(q) ~= 'table' or type(q.id) ~= 'string' then return false end
-      carried[q.id] = true
+    local part = type(p) == 'table' and p.quarantine or nil
+    if #body == 0 and (type(part) ~= 'table' or #part == 0) then return true end
+    if type(part) ~= 'table' then return false end
+    local function ids_of(list)
+      local set, n = {}, 0
+      for _, q in ipairs(list) do
+        if type(q) ~= 'table' or type(q.id) ~= 'string' then return nil, 0 end
+        if not set[q.id] then set[q.id] = true; n = n + 1 end
+      end
+      return set, n
     end
-    for _, q in ipairs(body) do
-      if type(q) ~= 'table' or type(q.id) ~= 'string' or not carried[q.id] then return false end
+    local named, nb = ids_of(body)
+    local carried, np = ids_of(part)
+    if not named or not carried or nb ~= np then return false end
+    for id in pairs(named) do
+      if not carried[id] then return false end
     end
     return true
   end

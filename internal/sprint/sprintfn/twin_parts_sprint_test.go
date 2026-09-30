@@ -15,7 +15,13 @@ func sprintReq(sp *SprintPart, qs ...Quarantined) *Request {
 	if len(qs) != 0 {
 		sp.Quarantine = qs
 	}
-	return &Request{Epoch: "0", Meta: Meta{Verb: "sprint"}, Sprint: sp}
+	r := &Request{Epoch: "0", Meta: Meta{Verb: "sprint"}, Sprint: sp}
+	// the body names the cards the part quarantines, as every step that
+	// quarantines does: X acts on the same cards (quarantineCarried)
+	if sp != nil && len(sp.Quarantine) > 0 {
+		r.Body.Quarantine = append([]Quarantined(nil), sp.Quarantine...)
+	}
+	return r
 }
 
 // sprintCmds is the command list the sprint part builds for a request, as the
@@ -343,13 +349,15 @@ func TestQuarantinePartWritesNoEntry(t *testing.T) {
 	}
 }
 
-// TestQuarantineIsTheSprintPartsAlone (the read of IT16, finding 5; decided): the
-// records of a quarantine ride in the sprint part's own request, so a request
-// that quarantines carries the part. A body that names a quarantine no sprint
-// part carries would have X act on a card whose record is lost, since a part
-// runs only when its field is set: it is refused REQUEST before anything runs,
-// on the twin and on the client of the store, and so is a body that names a
-// card the part does not.
+// TestQuarantineIsTheSprintPartsAlone (the read of IT16, finding 5; decided;
+// both directions since the cold read of PR 4788, L1): the records of a
+// quarantine ride in the sprint part's own request, so a request that
+// quarantines carries the part. A body that names a quarantine no sprint part
+// carries would have X act on a card whose record is lost, since a part runs
+// only when its field is set; a part that quarantines a card the body does not
+// name would write its record and leave it in the indexes, since X acts on the
+// body's alone. Each is refused REQUEST before anything runs, on the twin and
+// on the client of the store.
 func TestQuarantineIsTheSprintPartsAlone(t *testing.T) {
 	t.Parallel()
 	tw, _, _, _ := partsTwin(t)
@@ -374,18 +382,27 @@ func TestQuarantineIsTheSprintPartsAlone(t *testing.T) {
 		t.Fatalf("encodeStep: %v", ref)
 	}
 
-	// Carried by the part, in the body as well: applied, and the record is the part's.
+	// The part quarantines a card the body does not name.
+	more := sprintReq(&SprintPart{Quarantine: []Quarantined{card, {ID: "p2", Code: "DRIFT"}}})
+	more.Body.Quarantine = []Quarantined{card}
+	if ref := refusedStep(t, tw, more); ref.Code != CodeRequest {
+		t.Fatalf("a part that quarantines a card the body does not: %v, want REQUEST", ref)
+	}
+	// Carried by the part, the same cards in the body: applied, and the record is the part's.
 	ok := sprintReq(&SprintPart{Quarantine: []Quarantined{card, {ID: "p2", Code: "DRIFT"}}})
-	ok.Body.Quarantine = []Quarantined{card}
 	mustStep(t, tw, ok)
 	if h := tw.SprintKeys()[ek("quarantine")].Hash; h["p1"] != "DRIFT\tdeal\ts1" || h["p2"] != "DRIFT\t\t" {
 		t.Fatalf("quarantine %q", h)
 	}
-	// Carried by the part alone: X has nothing to act on, the record is written.
+	// Carried by the part alone, the body naming nothing: refused, and nothing
+	// is written.
 	alone := sprintReq(&SprintPart{Quarantine: []Quarantined{{ID: "p3", Code: "MISSING"}}})
-	mustStep(t, tw, alone)
-	if _, ok := tw.SprintKeys()[ek("quarantine")].Hash["p3"]; !ok {
-		t.Fatal("the part's own quarantine was not written")
+	alone.Body.Quarantine = nil
+	if ref := refusedStep(t, tw, alone); ref.Code != CodeRequest {
+		t.Fatalf("a part's quarantine alone: %v, want REQUEST", ref)
+	}
+	if _, ok := tw.SprintKeys()[ek("quarantine")].Hash["p3"]; ok {
+		t.Fatal("a refused quarantine was written")
 	}
 	// A fence carries no sprint field, the quarantine included.
 	fence := &Request{Epoch: "0", Fence: true, Body: Body{Op: &Op{ID: "f1", Intent: "x"}}, Sprint: &SprintPart{Quarantine: []Quarantined{card}}}

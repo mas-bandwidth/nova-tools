@@ -83,8 +83,11 @@ type Phases struct {
 	Query func(st *State, q SprintQuery) (json.RawMessage, *Refusal)
 }
 
-// defaultPhases are the write path's phases, filled by the inits of IT13,
-// IT14, IT15 and IT30's files. A Twin takes a copy when it is made.
+// defaultPhases are the write path's phases, filled by the inits of IT13's
+// (X), IT14's (Derive) and IT15's (J) files. A Twin takes a copy when it is
+// made. IT30's queries are not among them: a twin answers sprint queries once
+// UseQueries installs them, and plans the intents' X commands once UseIntents
+// does. IT16's parts are in defaultParts.
 var defaultPhases Phases
 
 // beforeRecordsMax is the most distinct records one write observes across

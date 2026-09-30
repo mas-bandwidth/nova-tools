@@ -181,6 +181,7 @@ var partCases = []partCase{
 			r.Sprint = &SprintPart{Counter: &CounterChange{Read: map[string]string{"score": ""}, Set: map[string]string{"score": "5"}},
 				Dropping: map[string]string{"s1": "op-1"}, Park: []ParkedKey{{Key: "deal", Rule: "deal", Code: "LIMIT"}}, Coordinator: "boss",
 				Quarantine: []Quarantined{{ID: "p1", Code: "DRIFT", Stream: "s1", Rule: "deal", Cells: []string{"s1:ready"}}}}
+			r.Body.Quarantine = r.Sprint.Quarantine // X acts on the same card
 		},
 		keys: func(sk, ek func(string) string) []typedKey {
 			return []typedKey{{ek("next"), kindHash}, {ek("dropping"), kindHash}, {ek("parked"), kindHash}, {ek("agenda"), kindZSet},

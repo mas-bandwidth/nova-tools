@@ -1378,6 +1378,7 @@ func TestPositionKeysSplit(t *testing.T) {
 		{"made:n1+w150", posKey{rule: "made", subject: "n1", after: "w150"}},
 		{"made:n1+c-w.3", posKey{rule: "made", subject: "n1", after: "c-w.3"}},
 		{"made:n1+7", posKey{rule: "made", subject: "n1", after: "7"}},
+		{"needs:n1+w3", posKey{rule: "needs", subject: "n1", after: "w3"}},
 	}
 	for _, g := range good {
 		got, ok := posSplitKey(AgendaKey{Key: g.key})
@@ -1386,7 +1387,7 @@ func TestPositionKeysSplit(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"", "needs:", "needs@", "needs@x", "needs@0", "needs@5+", "needs@5+-1", "needs@5+x",
-		"made:n+", "made:+w3", "made:n+w+1", "made:n+a:b", "made:n+a@b", "needs:n+w3", "resolve:s1+w2", "pullback:s1+w1"} {
+		"made:n+", "made:+w3", "made:n+w+1", "made:n+a:b", "made:n+a@b", "needs:n+", "needs:n+w+1", "resolve:s1+w2", "pullback:s1+w1"} {
 		if _, ok := posSplitKey(AgendaKey{Key: bad}); ok {
 			t.Fatalf("%q was read as a key", bad)
 		}
@@ -1397,7 +1398,7 @@ func TestPositionKeysSplit(t *testing.T) {
 			t.Fatalf("%v put back together as %v", k, again)
 		}
 	}
-	for _, k := range []AgendaKey{{Key: "needs:n", Seq: 9}, {Key: "made:n", Seq: 9}, {Key: "made:n+w3", Seq: 9}} {
+	for _, k := range []AgendaKey{{Key: "needs:n", Seq: 9}, {Key: "needs:n+w3", Seq: 9}, {Key: "made:n", Seq: 9}, {Key: "made:n+w3", Seq: 9}} {
 		p, _ := posSplitKey(k)
 		if again := posNeedKey(p.rule, p.subject, p.after, k.Seq); again != k {
 			t.Fatalf("%v put back together as %v", k, again)
@@ -2320,4 +2321,92 @@ func BenchmarkReadNeeds5000Keys(b *testing.B) {
 		keys[i] = AgendaKey{Key: "needs:n" + strconv.Itoa(i), Seq: uint64(i + 1)}
 	}
 	benchRead(b, ruleNeeds, keys)
+}
+
+// A head of wait:n whose members were all left out (quarantined), with more
+// waiters behind them, moves the key's cursor past them: the same head read
+// again would find the same ids, and R4 would never reach the waiters behind
+// (2.3 R4: the offset moves past quarantined ids, which it leaves out). The head
+// is one member here (the most halvings), so one quarantined member fills it.
+func TestNeedsMovesPastAQuarantinedHead(t *testing.T) {
+	t.Parallel()
+	tw := newPosTwin("s1")
+	tw.card("n", "s1", Landed, 0)
+	for i, w := range []string{"w1", "w2", "w3"} {
+		tw.card(w, "s1", Waiting, float64(i+1), "open", "1", "needs", "n")
+	}
+	tw.waiter("n", "w1", "w2", "w3")
+	tw.quar["w1"] = true
+	k := posKeyOf("needs:n")
+	tw.agenda[k.Key] = k.Seq
+	p, out := tw.run(t, "needs", posMaxHalvings, k)
+	if out.refused != "" || len(p.Intents) != 0 || !posHas(p.Done, "needs:n") || !posHas(p.Requeue, "needs:n+w1") {
+		t.Fatalf("a head all quarantined: intents %+v done %v requeue %v %+v", p.Intents, p.Done, p.Requeue, out)
+	}
+	if runs := tw.drain(t, "needs", posMaxHalvings, 5); runs != 2 {
+		t.Fatalf("the waiters behind the quarantined head took %d runs", runs)
+	}
+	if tw.work["w2"].f["open"] != "0" || tw.work["w3"].f["open"] != "0" {
+		t.Fatalf("the waiters behind were not served: w2 %s w3 %s", tw.work["w2"].f["open"], tw.work["w3"].f["open"])
+	}
+	if !tw.wait["n"]["w1"] || tw.work["w1"].f["open"] != "1" {
+		t.Fatal("the quarantined waiter was served")
+	}
+}
+
+// The same for a made need: the head after the cursor is all quarantined, and
+// the key's cursor moves past it to the waiters behind.
+func TestMadeMovesPastAQuarantinedHead(t *testing.T) {
+	t.Parallel()
+	tw := newPosTwin("s1", "s2")
+	for i, w := range []string{"w1", "w2"} {
+		tw.card(w, "s1", Waiting, float64(i+1), "open", "1", "needs", "n")
+		tw.judge(NMissingNeed, "n", w)
+	}
+	tw.waiter("n", "w1", "w2")
+	tw.missing["n"] = true
+	tw.card("n", "s2", Waiting, 1)
+	tw.quar["w1"] = true
+	k := posKeyOf("made:n")
+	tw.agenda[k.Key] = k.Seq
+	p, out := tw.run(t, "needs", posMaxHalvings, k)
+	if out.refused != "" || len(p.Notes) != 0 || len(p.Intents) != 0 || !posHas(p.Requeue, "made:n+w1") {
+		t.Fatalf("a made head all quarantined: notes %+v intents %+v requeue %v %+v", p.Notes, p.Intents, p.Requeue, out)
+	}
+	if runs := tw.drain(t, "needs", posMaxHalvings, 5); runs != 1 {
+		t.Fatalf("the waiter behind the quarantined head took %d runs", runs)
+	}
+	if tw.missing["n"] || tw.opened(NMissingNeed, "n", "w2") || !tw.opened(NMissingNeed, "n", "w1") {
+		t.Fatalf("missing %v judged %v", tw.missing, tw.judged)
+	}
+}
+
+// An answer that says a need has more waiters and names neither a waiter nor
+// the last member its head read cannot move the cursor, and is refused; one
+// whose Last is before a waiter it gives, or not after the cursor, is not the
+// head that was asked.
+func TestWaitersLastIsCheckedAtTheRead(t *testing.T) {
+	t.Parallel()
+	q := SprintQ{Kind: QueryWaiters, Source: IDSource{Kind: SourceIDs, IDs: []string{"n"}}, Limit: 2, Fields: []string{"open"}, WaiterAfter: "w1"}
+	rec := func(id string) TableCard { return TableCard{Work, &Card{ID: id, Row: "s1", Col: Waiting}} }
+	for _, c := range []struct {
+		name string
+		need NeedAnswer
+		recs []TableCard
+		ok   bool
+	}{
+		{"all left out, Last named", NeedAnswer{ID: "n", More: true, Last: "w3"}, nil, true},
+		{"all left out, no Last", NeedAnswer{ID: "n", More: true}, nil, false},
+		{"Last after the waiters", NeedAnswer{ID: "n", Waiters: []string{"w2"}, More: true, Last: "w3"}, []TableCard{rec("w2")}, true},
+		{"Last the last waiter", NeedAnswer{ID: "n", Waiters: []string{"w2"}, Last: "w2"}, []TableCard{rec("w2")}, true},
+		{"Last before a waiter", NeedAnswer{ID: "n", Waiters: []string{"w3"}, Last: "w2"}, []TableCard{rec("w3")}, false},
+		{"Last at the cursor", NeedAnswer{ID: "n", More: true, Last: "w1"}, nil, false},
+	} {
+		rp := ReadPlan{Sprint: []SprintQ{q}}
+		_, err := LoadPartial(rp, ReadAnswer{Epoch: "0", ActiveEpoch: "0", TimeMS: "1790000000123",
+			Sprint: []Answer{{Kind: QueryWaiters, Needs: []NeedAnswer{c.need}, Records: c.recs}}})
+		if (err == nil) != c.ok {
+			t.Errorf("%s: loads %v, want %v (%v)", c.name, err == nil, c.ok, err)
+		}
+	}
 }

@@ -118,6 +118,10 @@ func TestPositionAnswersThatDoNotAnswerTheirReadAreRefused(t *testing.T) {
 		{"more waiters and none given", waiters, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
 			a.Sprint[0].Needs[0].Waiters = nil
 			a.Sprint[0].Needs[0].More = true
+			a.Sprint[0].Needs[0].Last = ""
+		}},
+		{"a head that ends before its waiters", waiters, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Needs[0].Last = "w0"
 		}},
 		{"stuck ids of a stream the query does not list", streams, func() *posTwin { return posDoneTwin(2, false) }, func(rp *ReadPlan, a *ReadAnswer) {
 			a.Sprint[0].Stuck = []StuckAnswer{{Stream: "elsewhere", IDs: nil}}

@@ -19,16 +19,21 @@ import (
 // implicit whole record):
 //
 //	related   {"kind","t","src","follow","fields"}
-//	front     {"kind","stream","heads":[{"index","limit","follow"}],"fields"}
-//	waiters   {"kind","src","limit","fields"}
-//	streams   {"kind","limit","units","fields"}
+//	front     {"kind","stream","heads":[{"index","limit","follow"}],"fields","keys"?}
+//	waiters   {"kind","src","limit","fields","after"?,"missing"?,"keys"?}
+//	streams   {"kind","limit","units","fields","counts"?,"keys"?}
 //	fleet     {"kind","units","fields"}          readers the same
 //	needchain {"kind","src","limit","fields"}
 //	jnote     {"kind","src","subjects","fields"}
 //
 // An id source "src" is {"kind":"ids","ids":[...]}, {"kind":"head","key","limit"}
 // or {"kind":"line","seq","about","offset","limit"}; a line's seq is an exact
-// decimal string, like every seq and time on the wire. Lua's validate(q,
+// decimal string, like every seq and time on the wire. The keys marked "?" are
+// IT08's extensions of 1.0's queries and are written only when set: "after" is
+// the cursor of a waiters query of one id (sprint.SprintQ.WaiterAfter),
+// "missing" reads the head of wait:n only for the ids in {p}missing@e,
+// "counts" are the work table's columns a streams query counts for every
+// stream, and "keys" the sprint keys a query also reads (queryKeys). Lua's validate(q,
 // index) checks the same shapes, and a test holds the two equal once a store
 // runs the Lua (TestTwinEqualsLuaQueries).
 
@@ -204,6 +209,42 @@ func validSource(s sprint.IDSource, kinds ...string) bool {
 	return false
 }
 
+// queryKeys are the sprint keys a composite query may also read, by the kinds
+// that may name them (sprint.SprintQ.Keys; rules_position_read.go): the
+// dropping marks of the streams the query reaches, and {p}next@e.streams. The
+// jopen keys (jopen:G, jopen:sprint) give the types of the judgments open on a
+// subject, which only an enumeration of its jopen hash finds, and Layer 1's
+// checked probes admit none (S.read_probe has no HKEYS or HGETALL): a query
+// naming one is REQUEST until Layer 1 has such a probe.
+var queryKeys = map[string]bool{sprint.KeyDropping: true, sprint.KeyNextStreams: true}
+
+// keysKinds are the composite kinds whose answer reaches streams, and so may
+// name sprint keys.
+var keysKinds = map[string]bool{sprint.QueryFront: true, sprint.QueryWaiters: true, sprint.QueryStreams: true}
+
+// validExtensions checks IT08's extensions of a query (the "?" keys above):
+// Keys only of a kind that reaches streams, each a key of queryKeys named once;
+// Counts only of `streams`, distinct column names, at most a table's columns;
+// WaiterAfter and Missing only of `waiters`, and a cursor only of a list of one
+// id, the cursor itself an id.
+func validExtensions(q sprint.SprintQ) bool {
+	if len(q.Keys) > 0 {
+		if !keysKinds[q.Kind] || !distinctNames(q.Keys, func(k string) bool { return queryKeys[k] }) {
+			return false
+		}
+	}
+	if len(q.Counts) > 0 && (q.Kind != sprint.QueryStreams || len(q.Counts) > maxTableColumns || !distinctNames(q.Counts, validName)) {
+		return false
+	}
+	if q.Missing && q.Kind != sprint.QueryWaiters {
+		return false
+	}
+	if q.WaiterAfter != "" && (q.Kind != sprint.QueryWaiters || q.Source.Kind != sprint.SourceIDs || len(q.Source.IDs) != 1 || !validName(q.WaiterAfter)) {
+		return false
+	}
+	return true
+}
+
 // ValidateSprintQ checks a composite query's shape and its declared cost
 // against Layer 1's read bounds, before any store is touched: a REQUEST for a
 // malformed query (E6: no implicit whole-record projection, so a nil Fields
@@ -272,6 +313,9 @@ func ValidateSprintQ(q sprint.SprintQ) *Refusal {
 			}
 		}
 	default:
+		return queryRequestRefusal()
+	}
+	if !validExtensions(q) {
 		return queryRequestRefusal()
 	}
 	// The sizes, after every shape. A list longer than a read may return is past
@@ -377,10 +421,19 @@ func EncodeSprintQ(q sprint.SprintQ) (SprintQuery, *Refusal) {
 		m["stream"], m["heads"] = q.Stream, heads
 	case sprint.QueryWaiters:
 		m["src"], m["limit"] = sourceObject(q.Source), q.Limit
+		if q.WaiterAfter != "" {
+			m["after"] = q.WaiterAfter
+		}
+		if q.Missing {
+			m["missing"] = true
+		}
 	case sprint.QueryStreams:
 		m["limit"] = q.Limit
 		if q.Units > 0 {
 			m["units"] = q.Units
+		}
+		if len(q.Counts) > 0 {
+			m["counts"] = q.Counts
 		}
 	case sprint.QueryFleet, sprint.QueryReaders:
 		if q.Units > 0 {
@@ -393,6 +446,9 @@ func EncodeSprintQ(q sprint.SprintQ) (SprintQuery, *Refusal) {
 		if q.Subjects > 0 {
 			m["subjects"] = q.Subjects
 		}
+	}
+	if len(q.Keys) > 0 {
+		m["keys"] = q.Keys
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -549,11 +605,13 @@ func DecodeSprintQ(q SprintQuery) (sprint.SprintQ, *Refusal) {
 	case sprint.QueryRelated:
 		m, ref = wireObject(q.Query, "t", "src", "follow")
 	case sprint.QueryFront:
-		m, ref = wireObject(q.Query, "stream", "heads")
-	case sprint.QueryWaiters, sprint.QueryNeedchain:
+		m, ref = wireObject(q.Query, "stream", "heads", "keys")
+	case sprint.QueryWaiters:
+		m, ref = wireObject(q.Query, "src", "limit", "after", "missing", "keys")
+	case sprint.QueryNeedchain:
 		m, ref = wireObject(q.Query, "src", "limit")
 	case sprint.QueryStreams:
-		m, ref = wireObject(q.Query, "limit", "units")
+		m, ref = wireObject(q.Query, "limit", "units", "counts", "keys")
 	case sprint.QueryFleet, sprint.QueryReaders:
 		m, ref = wireObject(q.Query, "units")
 	case sprint.QueryJnote:
@@ -614,6 +672,14 @@ func DecodeSprintQ(q SprintQuery) (sprint.SprintQ, *Refusal) {
 		if out.Limit, ok1 = wireInt(m, "limit"); !ok1 {
 			return bad()
 		}
+		if _, present := m["after"]; present {
+			if out.WaiterAfter, ok = wireString(m, "after"); !ok {
+				return bad()
+			}
+		}
+		if raw, present := m["missing"]; present && (isNull(raw) || json.Unmarshal(raw, &out.Missing) != nil) {
+			return bad()
+		}
 	case sprint.QueryStreams:
 		var ok2 bool
 		_, present := m["limit"] // the stuck ids asked for is required, and may be 0
@@ -621,6 +687,11 @@ func DecodeSprintQ(q SprintQuery) (sprint.SprintQ, *Refusal) {
 		out.Units, ok2 = wireInt(m, "units")
 		if !present || !ok || !ok2 {
 			return bad()
+		}
+		if _, present := m["counts"]; present {
+			if out.Counts, ok = wireList(m, "counts"); !ok {
+				return bad()
+			}
 		}
 	case sprint.QueryFleet, sprint.QueryReaders:
 		if out.Units, ok = wireInt(m, "units"); !ok {
@@ -632,6 +703,11 @@ func DecodeSprintQ(q SprintQuery) (sprint.SprintQ, *Refusal) {
 			return bad()
 		}
 		if out.Subjects, ok1 = wireInt(m, "subjects"); !ok1 {
+			return bad()
+		}
+	}
+	if _, present := m["keys"]; present {
+		if out.Keys, ok = wireList(m, "keys"); !ok {
 			return bad()
 		}
 	}

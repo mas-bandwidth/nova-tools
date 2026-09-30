@@ -42,9 +42,9 @@ func TestProjectedWaitersAnswerEveryNeed(t *testing.T) {
 		t.Parallel()
 		a := loadAnswered(t, w, sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost", "nothing", "n2"), Limit: 1, Fields: []string{"open"}})
 		want := []sprint.NeedAnswer{
-			{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w1"}, More: true},
+			{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w1"}, More: true, Last: "w1"},
 			{ID: "nothing"},
-			{ID: "n2", Place: "waiting", Waiters: []string{"w2"}},
+			{ID: "n2", Place: "waiting", Waiters: []string{"w2"}, Last: "w2"},
 		}
 		if !reflect.DeepEqual(a.Needs, want) {
 			t.Fatalf("needs %+v, want %+v", a.Needs, want)
@@ -57,7 +57,7 @@ func TestProjectedWaitersAnswerEveryNeed(t *testing.T) {
 		t.Parallel()
 		q := sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost"), Limit: 5, Fields: []string{"open"}, WaiterAfter: "w1"}
 		a := loadAnswered(t, w, q)
-		if want := []sprint.NeedAnswer{{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w2"}}}; !reflect.DeepEqual(a.Needs, want) {
+		if want := []sprint.NeedAnswer{{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w2"}, Last: "w2"}}; !reflect.DeepEqual(a.Needs, want) {
 			t.Fatalf("after w1: %+v", a.Needs)
 		}
 		q.WaiterAfter = "w2"
@@ -68,8 +68,40 @@ func TestProjectedWaitersAnswerEveryNeed(t *testing.T) {
 		// a head of one after the cursor has more beyond it
 		q.WaiterAfter, q.Limit = "", 1
 		a = loadAnswered(t, w, q)
-		if want := []sprint.NeedAnswer{{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w1"}, More: true}}; !reflect.DeepEqual(a.Needs, want) {
+		if want := []sprint.NeedAnswer{{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w1"}, More: true, Last: "w1"}}; !reflect.DeepEqual(a.Needs, want) {
 			t.Fatalf("head of one: %+v", a.Needs)
+		}
+	})
+	t.Run("a cursor with more beyond it", func(t *testing.T) {
+		t.Parallel()
+		// three waiters: a head of one after the first has the third beyond it
+		w3 := standard(t)
+		w3.cards(card{sprint.Work, "s1", "waiting", "w3", "90", fields("kind", "work", "open", "1", "needs", "ghost")})
+		w3.seed(w3.zadd("wait:ghost", "0", "w3"))
+		q := sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost"), Limit: 1, Fields: []string{"open"}, WaiterAfter: "w1"}
+		a := loadAnswered(t, w3, q)
+		if want := []sprint.NeedAnswer{{ID: "ghost", Missing: true, Waiters: []string{"w2"}, More: true, Last: "w2"}}; !reflect.DeepEqual(a.Needs, want) {
+			t.Fatalf("after w1, a head of one: %+v, want %+v", a.Needs, want)
+		}
+		q.WaiterAfter = "w2"
+		if a = loadAnswered(t, w3, q); !reflect.DeepEqual(a.Needs, []sprint.NeedAnswer{{ID: "ghost", Missing: true, Waiters: []string{"w3"}, Last: "w3"}}) {
+			t.Fatalf("after w2, the last head: %+v", a.Needs)
+		}
+	})
+	t.Run("a head all quarantined with more behind", func(t *testing.T) {
+		t.Parallel()
+		// w1 heads wait:ghost and is quarantined: the head of one is left out
+		// whole, and names w1 as the last member read, so the cursor moves past it
+		// (M1; 2.3 R4) and the next head finds w2
+		qw := newQuarantined(t)
+		q := sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost"), Limit: 1, Fields: []string{"open"}}
+		a := loadAnswered(t, qw, q)
+		if want := []sprint.NeedAnswer{{ID: "ghost", Missing: true, More: true, Last: "w1"}}; !reflect.DeepEqual(a.Needs, want) {
+			t.Fatalf("a quarantined head: %+v, want %+v", a.Needs, want)
+		}
+		q.WaiterAfter = a.Needs[0].Last
+		if a = loadAnswered(t, qw, q); !reflect.DeepEqual(a.Needs, []sprint.NeedAnswer{{ID: "ghost", Missing: true, Waiters: []string{"w2"}, Last: "w2"}}) {
+			t.Fatalf("after the quarantined head: %+v", a.Needs)
 		}
 	})
 	t.Run("the made needs", func(t *testing.T) {
@@ -77,7 +109,7 @@ func TestProjectedWaitersAnswerEveryNeed(t *testing.T) {
 		// only an id with a score in {p}missing@e has its head read
 		a := loadAnswered(t, w, sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("ghost", "p1"), Limit: 5, Fields: []string{"open"}, Missing: true})
 		want := []sprint.NeedAnswer{
-			{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w1", "w2"}},
+			{ID: "ghost", Place: "waiting", Missing: true, Waiters: []string{"w1", "w2"}, Last: "w2"},
 			{ID: "p1", Place: "waiting"},
 		}
 		if !reflect.DeepEqual(a.Needs, want) {
@@ -110,7 +142,7 @@ func TestProjectedWaitersAnswerEveryNeed(t *testing.T) {
 		a := loadAnswered(t, q, sprint.SprintQ{Kind: sprint.QueryWaiters, Source: ids("p2", "ghost"), Limit: 5, Fields: []string{"open"}})
 		// p2 is left out of the read and still answered, with nothing; w1 is
 		// left out of ghost's head.
-		want := []sprint.NeedAnswer{{ID: "p2"}, {ID: "ghost", Missing: true, Waiters: []string{"w2"}}}
+		want := []sprint.NeedAnswer{{ID: "p2"}, {ID: "ghost", Missing: true, Waiters: []string{"w2"}, Last: "w2"}}
 		if !reflect.DeepEqual(a.Needs, want) {
 			t.Fatalf("needs %+v, want %+v", a.Needs, want)
 		}

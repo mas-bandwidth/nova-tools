@@ -1203,6 +1203,39 @@ func followProbes(follow []string) (perRecord, targets int) {
 // addendum). The twin's own count is held to it (TestQueryCostHolds), and the
 // Lua makes the same probes.
 func QueryProbes(q sprint.SprintQ) int {
+	return queryProbes(q) + extensionProbes(q)
+}
+
+// extensionProbes are the probes of IT08's extensions of a query: a name for
+// each stream the dropping marks are read of (the most a query reaches: its
+// stream, the waiters it may return, or the streams it lists), one for
+// {p}next@e.streams, and a ZCARD for each cell a `streams` query counts.
+func extensionProbes(q sprint.SprintQ) int {
+	total := 0
+	for _, k := range q.Keys {
+		switch k {
+		case sprint.KeyDropping:
+			switch q.Kind {
+			case sprint.QueryFront:
+				total++
+			case sprint.QueryWaiters:
+				n, _ := sourceSize(q.Source)
+				total += n * q.Limit
+			case sprint.QueryStreams:
+				total += unitsOf(q)
+			}
+		case sprint.KeyNextStreams:
+			total++
+		}
+	}
+	if q.Kind == sprint.QueryStreams {
+		total += unitsOf(q) * len(q.Counts)
+	}
+	return total
+}
+
+// queryProbes are the probes of the query itself, as 1.0 has it.
+func queryProbes(q sprint.SprintQ) int {
 	n, found := sourceSize(q.Source)
 	switch q.Kind {
 	case sprint.QueryRelated:

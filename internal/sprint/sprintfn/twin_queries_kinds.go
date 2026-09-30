@@ -209,7 +209,66 @@ func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 		res.Heads = append(res.Heads, hr)
 	}
 	res.LeftOut = left.ids()
+	keys, ref := e.sprintKeys(q, []string{q.Stream})
+	if ref != nil {
+		return res, ref
+	}
+	res.Keys = keys
 	return res, nil
+}
+
+// sprintKeys reads the sprint keys a composite query names beside its answer
+// (sprint.SprintQ.Keys; the errata's seam of E6), in the query's snapshot and
+// after everything else it read, in the order named: the dropping marks of the
+// streams the query reached (reach, in order: for `front` its stream, for
+// `waiters` the streams of the waiters it returned, for `streams` every stream
+// it lists; 1.3.5), one HMGET of {p}dropping@e naming each stream once and none
+// when it reached none; and {p}next@e.streams, one HMGET of one field (2.3 R15).
+// The jopen keys are refused before any read (ValidateSprintQ).
+func (e *qeval) sprintKeys(q sprint.SprintQ, reach []string) ([]KeyResult, *Refusal) {
+	var out []KeyResult
+	for _, k := range q.Keys {
+		kr := KeyResult{Key: k, Streams: []string{}}
+		switch k {
+		case sprint.KeyDropping:
+			seen := map[string]bool{}
+			var names []string
+			for _, st := range reach {
+				if st != "" && !seen[st] {
+					seen[st] = true
+					names = append(names, st)
+				}
+			}
+			if len(names) > 0 {
+				marks, ref := e.hmget(e.key(keyDropping), names, hashFieldBytes)
+				if ref != nil {
+					return nil, ref
+				}
+				for i, st := range names {
+					if marks[i] != nil {
+						kr.Streams = append(kr.Streams, st)
+					}
+				}
+			}
+		case sprint.KeyNextStreams:
+			v, ref := e.hmget(e.key(keyNext), []string{xFieldNextStream}, hashFieldBytes)
+			if ref != nil {
+				return nil, ref
+			}
+			kr.N = "0"
+			if v[0] != nil {
+				n, err := strconv.ParseUint(*v[0], 10, 64)
+				if err != nil || strconv.FormatUint(n, 10) != *v[0] {
+					return nil, e.fail(codeDrift, tset.RefusalDetail{})
+				}
+				kr.N = *v[0]
+			}
+		default:
+			return nil, queryRequestRefusal()
+		}
+		out = append(out, kr)
+	}
+	return out, nil
 }
 
 // openBefore is the count of the stream's five open cells below sigma: one
@@ -237,6 +296,7 @@ func (e *qeval) openBefore(stream, sigma string) (int, *Refusal) {
 func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 	res := WaitersResult{Kind: q.Kind, IDs: []string{}, LeftOut: []string{}, Items: []WaiterItem{}}
 	var left leftOut
+	var reach []string // the streams of the waiters returned, for the dropping marks
 	if ref := e.ensureTable(sprint.Work); ref != nil {
 		return res, ref
 	}
@@ -274,6 +334,9 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 		if ref != nil {
 			return res, ref
 		}
+		if len(ws) > 0 {
+			it.Wait.Last = ws[len(ws)-1]
+		}
 		var wleft leftOut
 		wk, ref := e.leave(ws, &wleft)
 		if ref != nil {
@@ -290,9 +353,17 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 		it.Wait.IDs, it.Wait.HasMore = wk, more
 		for _, w := range wrecs {
 			it.Wait.Items = append(it.Wait.Items, WaiterRef{ID: w.ID, Record: w})
+			if w.Place != nil {
+				reach = append(reach, w.Place.Row)
+			}
 		}
 		res.Items = append(res.Items, it)
 	}
+	keys, ref := e.sprintKeys(q, reach)
+	if ref != nil {
+		return res, ref
+	}
+	res.Keys = keys
 	return res, nil
 }
 
@@ -300,7 +371,11 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 // "" from the first), up to the limit, in the order of wait:n's members: a
 // place in that order, so a waiter that has left the set moves nothing. It is
 // one probe, as rangeHead is, and says whether the set has members beyond the
-// head.
+// head. Its last id is the last member read (WaitHead.Last), before the
+// quarantined are left out. The store's half answers no cursor yet: wait:n's
+// members are all scored 0, Layer 1's checked head is by score only, and the Lua
+// refuses a cursor CONFIG until Layer 1 has a lexicographic head
+// (TestLuaWaitersCursorAwaitsALexHead).
 func (e *qeval) waitHead(n, after string, limit int) (ids []string, more bool, ref *Refusal) {
 	key := e.key(sprint.IndexWait + ":" + n)
 	if after == "" {
@@ -420,7 +495,44 @@ func (e *qeval) streams(q sprint.SprintQ) (StreamsResult, *Refusal) {
 		}
 		items[c.i].Stuck = st
 	}
+	if len(q.Counts) > 0 && len(rows) > 0 {
+		// the counts of the cells named, of every stream listed (2.3 R15): a
+		// column the work table does not have is NOCOL, as Layer 1's own count
+		// refuses it, and each cell is one ZCARD
+		cols, ref := e.columnsOf(sprint.Work)
+		if ref != nil {
+			return res, ref
+		}
+		has := map[string]bool{}
+		for _, c := range cols {
+			has[c] = true
+		}
+		cells := make([]string, 0, len(rows)*len(q.Counts))
+		for _, r := range rows {
+			for _, c := range q.Counts {
+				if !has[c] {
+					return res, e.fail("NOCOL", tset.RefusalDetail{Table: sprint.Work, Cells: []string{r + ":" + c}})
+				}
+				cells = append(cells, r+":"+c)
+			}
+		}
+		counts, ref := e.cellCounts(sprint.Work, cells)
+		if ref != nil {
+			return res, ref
+		}
+		for i := range rows {
+			items[i].Counts = make([]CellN, 0, len(q.Counts))
+			for j, c := range q.Counts {
+				items[i].Counts = append(items[i].Counts, CellN{Col: c, N: counts[i*len(q.Counts)+j]})
+			}
+		}
+	}
 	res.Items, res.LeftOut = items, left.ids()
+	keys, ref := e.sprintKeys(q, rows)
+	if ref != nil {
+		return res, ref
+	}
+	res.Keys = keys
 	return res, nil
 }
 
