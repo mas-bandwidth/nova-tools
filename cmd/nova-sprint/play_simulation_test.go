@@ -222,11 +222,12 @@ func movedLine(l string) (verb, as string, n int) {
 	return f[1], f[3], n
 }
 
-// The simulation batches (the owner's ruling of 2026-09-30: "we don't move
-// one or two cards a turn like this. we batch."): in a world tick each
-// machine takes its whole ready queue in one call, and in the next finishes
-// all it took in one call, the failed in a second.
-func TestPlaySimulationBatchesOneCallAMachineATick(t *testing.T) {
+// The simulation batches (the owner's rulings of 2026-09-30: "we don't move
+// one or two cards a turn like this. we batch."; "you should update each row
+// in workers in fleet table, per-tick"): in a world tick one take moves every
+// machine's whole ready queue, and in the next one finish (the failed in a
+// second) moves all they took, each call naming every machine it acts for.
+func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 	t.Parallel()
 	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 	ta := newTestApp(t)
@@ -255,37 +256,36 @@ func TestPlaySimulationBatchesOneCallAMachineATick(t *testing.T) {
 	ta.live = nil // from here the driver's machines beat
 	out := ta.ok("play --simulation --down 0 --seed 1 --ticks 2")
 	one, two, _ := strings.Cut(out, "\ntick 2 ")
-	takes, taken := map[string]int{}, map[string]int{}
+	all := strings.Join(members, ",")
+	takes, taken := 0, 0
 	for _, l := range strings.Split(one, "\n") {
 		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "take" {
-			takes[as]++
-			taken[as] += n
+			takes++
+			taken += n
+			if as != all {
+				t.Errorf("the take names %s, want every machine, %s:\n%s", as, all, l)
+			}
 		} else if verb != "" {
 			t.Errorf("the first world tick ran %s before anything was taken:\n%s", verb, l)
 		}
 	}
-	finishes, finished, batched := map[string]int{}, map[string]int{}, 0
+	finishes, finished := 0, 0
 	for _, l := range strings.Split(two, "\n") {
 		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "finish" {
-			finishes[as]++
-			finished[as] += n
-			if n > 1 {
-				batched++
+			finishes++
+			finished += n
+			if as != all {
+				t.Errorf("a finish names %s, want every machine, %s:\n%s", as, all, l)
 			}
 		} else if verb == "take" {
 			t.Errorf("a machine took with its queue taken:\n%s", l)
 		}
 	}
-	for _, m := range members {
-		if takes[m] != 1 || taken[m] != ready[m] {
-			t.Errorf("%s: %d take calls moving %d of its %d ready, want one moving all\n%s", m, takes[m], taken[m], ready[m], out)
-		}
-		if finishes[m] < 1 || finishes[m] > 2 || finished[m] != taken[m] {
-			t.Errorf("%s: %d finish calls moving %d of the %d it took, want one or two moving all\n%s", m, finishes[m], finished[m], taken[m], out)
-		}
+	if takes != 1 || taken != total {
+		t.Errorf("%d take calls moving %d of the %d ready, want one moving all\n%s", takes, taken, total, out)
 	}
-	if batched == 0 {
-		t.Errorf("no finish moved more than one card:\n%s", out)
+	if finishes < 1 || finishes > 2 || finished != taken {
+		t.Errorf("%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
 	}
-	t.Logf("%d ready over %d machines, one take each; finishes %v", total, len(members), finished)
+	t.Logf("%d ready over %d machines: one take, %d finishes", total, len(members), finishes)
 }

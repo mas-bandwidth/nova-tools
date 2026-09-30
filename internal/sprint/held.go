@@ -182,12 +182,12 @@ type held struct {
 	judged map[string][]string
 	memo   map[string]Hold
 	on     map[string]bool
-	// turn is each ready primary's place in the deal's order (dealTurns),
+	// turn is each ready primary's place in the deal's order (streamTurns),
 	// computed once on first use.
 	turn map[string]int
 }
 
-// dealTurn is the ready primary's place in the deal's order (dealTurns over the
+// dealTurn is the ready primary's place in the deal's order (streamTurns over the
 // ready primaries, sentinels aside): how many the deal takes before it.
 func (c *held) dealTurn(id string) int {
 	if c.turn == nil {
@@ -198,7 +198,7 @@ func (c *held) dealTurn(id string) int {
 			}
 		}
 		c.turn = map[string]int{}
-		for i, x := range dealTurns(ready, nil) {
+		for i, x := range streamTurns(ready, streamRound(c.s, PropStreamIndex)) {
 			c.turn[x.ID] = i
 		}
 	}

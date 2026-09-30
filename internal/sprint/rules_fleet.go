@@ -96,10 +96,14 @@ const (
 	// ⌊10,000 / 3s⌋), the room the sum over the members of each one's width
 	// less its ready and working cards, the step bound TickMaxDeal).
 	dealMaxL = TickMaxDeal
-	// levelHeadLimit is the most ready cards of a member R7 reads a pass (2.3
-	// R7: two): a queue longer than the read keeps R7's key, and the next pass
+	// levelHeadLimit is the most ready cards of a member R7 reads a pass: the
+	// widest a member may be (MaxWidth), so one pass reads every card a queue
+	// can give and levels the whole fleet in the one plan (the owner's rule,
+	// errata 3 amendment 10: every row of every table moves every tick; the
+	// design's two, 2.3 R7, moved at most a card or two a tick). A queue longer
+	// than the read (a spill past the width) keeps R7's key, and the next pass
 	// reads its head again.
-	levelHeadLimit = 2
+	levelHeadLimit = MaxWidth
 	// seenRecords is what one key of R1 may return: the member's control card.
 	seenRecords = 1
 	// R6's read of one stream (2.3 R6): front(s)'s σ record, and three heads of

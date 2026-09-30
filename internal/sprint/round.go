@@ -49,6 +49,16 @@ const (
 	// PropAskIndex is the readers table's property: the reader the last read
 	// was asked of round the readers.
 	PropAskIndex = "ask_index"
+	// PropStreamIndex is the work table's property of the deal: the stream of
+	// the last primary dealt (streamTurns). PropAskStreamIndex and
+	// PropAcceptStreamIndex are the ask's and the accept's: each step that
+	// takes cards across the streams keeps its own, so that one step's move
+	// never resets another's rotation (a shared index moved by an ask of one
+	// stream's card sends the next deal back to the stream after it, every
+	// tick, and a third stream waits).
+	PropStreamIndex       = "stream_index"
+	PropAskStreamIndex    = "stream_index_ask"
+	PropAcceptStreamIndex = "stream_index_accept"
 )
 
 // round is a rolling index into names, in name order: the next name is the
@@ -228,6 +238,109 @@ func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s
 
 // askRound is the ask's rolling index over the readers.
 func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s.Readers.Rows()) }
+
+// The streams take turns (the owner's ruling of 2026-09-30, errata 3
+// amendment 10: "we should deal fairly from each work stream, perhaps with
+// ... another index in that table"): every step that takes cards across the
+// streams (the deal, and the withdrawn card dealt again with it; the ask; the
+// accept) takes one card from each stream in turn, starting at the stream
+// past its rolling index on the work table (stream_index for the deal,
+// stream_index_ask and stream_index_accept), wrapping, within a stream by
+// work order, and moves its index past the stream of the last card it took,
+// written with its cards and guarded on the value it read, as the deal's and
+// the ask's member and reader indexes are. A stream with nothing to take for that
+// step is skipped and costs no turn. So consecutive steps do not always start
+// at the first stream: a step that takes k cards over n streams gives each
+// k/n, give or take one, and the one a step gives the extra card to is the
+// last served, so the next step starts past it. The index survives a stop and
+// a start of the machine; a clear starts the next epoch at the first stream.
+
+// streamRound is a step's rolling index over the streams (the work table's
+// rows), the work table's property name.
+func streamRound(s *Snapshot, name string) *round {
+	if s.Work == nil {
+		return newRound(nil, "")
+	}
+	return tableRound(s.Work, name, s.Work.Rows())
+}
+
+// streamTurns is the cards in stream turns from the index: one card of each
+// stream in turn, the streams from the first past the index, wrapping, a
+// stream with no card left skipped; within a stream in work order (SortCards).
+// A card of a stream the index does not name takes its turn after them, its
+// streams in name order. It neither moves the index nor counts a card: the
+// step that takes them moves the index past the last it took (streamMoves).
+func streamTurns(cards []*Card, r *round) []*Card {
+	by := map[string][]*Card{}
+	known := map[string]bool{}
+	var order []string
+	n := len(r.order)
+	for i := 0; i < n; i++ {
+		st := r.order[(r.at+i)%n]
+		order = append(order, st)
+		known[st] = true
+	}
+	var extra []string
+	for _, c := range cards {
+		if !known[c.Row] {
+			known[c.Row] = true
+			extra = append(extra, c.Row)
+		}
+		by[c.Row] = append(by[c.Row], c)
+	}
+	slices.Sort(extra)
+	order = append(order, extra...)
+	for _, st := range order {
+		SortCards(by[st])
+	}
+	out := make([]*Card, 0, len(cards))
+	for turn := 0; len(out) < len(cards); turn++ {
+		for _, st := range order {
+			if turn < len(by[st]) {
+				out = append(out, by[st][turn])
+			}
+		}
+	}
+	return out
+}
+
+// eligibleTurns is the cards a step may take, in stream turns from the index:
+// the ones eligible says nothing against, so a card the step cannot take
+// costs its stream no turn.
+func eligibleTurns(cards []*Card, eligible func(*Card) string, r *round) []*Card {
+	var ok []*Card
+	for _, c := range cards {
+		if eligible(c) == "" {
+			ok = append(ok, c)
+		}
+	}
+	return streamTurns(ok, r)
+}
+
+// streamMoves is the stream each unit of a plan took its card from, by the
+// unit's key: the plan's kept units move the index past the stream of the last
+// of them (roundWrites).
+func streamMoves(p Plan, streamOf func(key string) string) roundMoves {
+	moves := roundMoves{}
+	for _, u := range p.Units {
+		if st := streamOf(u.Key); st != "" {
+			moves[u.Key] = st
+		}
+	}
+	return moves
+}
+
+// streamIndexWrite moves the work table's stream index past the stream of the
+// last kept unit of the plan that took a primary across the streams: primary
+// is the primary a unit's key names (nil when it names none).
+func streamIndexWrite(p *Plan, r *round, primary func(key string) *Card) {
+	roundWrites(p, r, streamMoves(*p, func(key string) string {
+		if c := primary(key); c != nil {
+			return c.Row
+		}
+		return ""
+	}))
+}
 
 // roundMoves are the names the units of a plan moved an index past, by unit
 // key ("" when the unit did not move it: an ask of the readers the primary

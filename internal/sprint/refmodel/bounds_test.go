@@ -10,8 +10,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
 
-// Today's bounds, stated as numbers: one part of the tick moves at most 200
-// units and writes at most 50 judgments, and what is left is due, a count in
+// Today's bounds, stated as numbers: one part of the tick moves at most 2,000
+// units (one Layer 1 write's candidates, errata 3 amendment 10) and writes at
+// most 50 judgments, and what is left is due, a count in
 // one move. The fixtures do not read the constants of the tick, so a change to
 // one of them is a change of what the reference says, and fails here.
 
@@ -28,15 +29,15 @@ func countKinds(ms []refmodel.Move, kind string) (n int, due []refmodel.Move) {
 	return n, due
 }
 
-func TestResolveMovesTwoHundredAndLeavesTheRestDue(t *testing.T) {
+func TestResolveMovesTwoThousandAndLeavesTheRestDue(t *testing.T) {
 	t.Parallel()
 	for waiters, want := range map[int]struct {
 		moved int
 		due   string // the attr of the due move, "" for none
 	}{
-		200: {200, ""},
-		201: {200, "due=1"},
-		230: {200, "due=30"},
+		2000: {2000, ""},
+		2001: {2000, "due=1"},
+		2030: {2000, "due=30"},
 	} {
 		w := sprintOf(t, "m1")
 		w.add(t, "s1", 1)
@@ -56,7 +57,7 @@ func TestResolveMovesTwoHundredAndLeavesTheRestDue(t *testing.T) {
 		// the oldest are the ones moved: the last waiter is left for the next tick
 		last := fmt.Sprintf("s2-%d", waiters)
 		left := !slices.ContainsFunc(got, func(m refmodel.Move) bool { return m.Card == last })
-		if left != (waiters > 200) {
+		if left != (waiters > 2000) {
 			t.Errorf("%d waiters: %s left for the next tick is %v", waiters, last, left)
 		}
 	}

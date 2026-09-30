@@ -173,6 +173,15 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 	if res.Halted != "" {
 		fmt.Fprintf(stdout, "HALTED %s\n", oneline.Escape(res.Halted))
 	}
+	if len(res.Tables) > 0 {
+		// every table, every tick (errata 3 amendment 10): the rows the tick
+		// changed in each, none when it had nothing to do
+		words := make([]string, len(res.Tables))
+		for i, tb := range res.Tables {
+			words[i] = fmt.Sprintf("%s=%d", tb.Table, len(tb.Rows))
+		}
+		fmt.Fprintf(stdout, "TABLES rows changed: %s\n", strings.Join(words, " "))
+	}
 	if res.Due > 0 {
 		fmt.Fprintf(stdout, "DUE %d moves past the tick's bounds: the next ticks catch up\n", res.Due)
 	}
@@ -220,9 +229,10 @@ const (
 // fleet up, start) is ticked on, and its room dealt, at most TickFloor after
 // the tick before began; a quiet log ticks it TickEvery after the tick before
 // began (the sweep, the presence, the lateness). A wake costs the blocked
-// read alone. A tick of a RUNNING machine that moved something, wrote a
-// notification or failed is printed; an error is printed always and the loop
-// goes on, waiting longer after each failure in a row, up to TickBackoffCap.
+// read alone. Every tick of a RUNNING machine is printed, naming every table
+// and the rows it changed in each (errata 3 amendment 10), and every tick that
+// failed; an error is printed always and the loop goes on, waiting longer
+// after each failure in a row, up to TickBackoffCap.
 func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer) {
 	failures := 0
 	was := ""
@@ -239,7 +249,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
 			was = res.State
 		}
-		if err != nil || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" || res.Halted != "" {
+		if err != nil || res.State == store.Running || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" || res.Halted != "" {
 			fmt.Fprintf(stdout, "%s tick\n", a.now().Format("15:04:05"))
 			a.printTick(res, err, max, stdout, stderr)
 			if line := sprintLine(ctx, st); line != "" {

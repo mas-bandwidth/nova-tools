@@ -319,6 +319,7 @@ func Start(s State, p, m string, limit int) (State, error) {
 	n := s.Clone()
 	n.DealLast = m
 	pr := n.Primaries[p]
+	n.StreamLast = pr.Stream // the deal's stream index moves past it (errata 3 amendment 10)
 	id := WC(p, pr.Attempt)
 	if w, ok := n.Work[id]; ok {
 		if w.Place != FWithdrawn {
@@ -437,6 +438,7 @@ func Ask(s State, p string, two []string) (State, error) {
 	if len(next) == 2 {
 		n.AskLast = next[1]
 	}
+	n.AskStreamLast = pr.Stream // the ask's stream index moves past it (errata 3 amendment 10)
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
@@ -570,6 +572,11 @@ func Accept(s State, set []string) (State, error) {
 		}
 	}
 	n := s.Clone()
+	// the accept's stream index moves past the stream of the last in stream
+	// turns (errata 3 amendment 10)
+	if turns := s.streamTurns(set, s.AcceptStreamLast); len(turns) > 0 {
+		n.AcceptStreamLast = s.Primaries[turns[len(turns)-1]].Stream
+	}
 	for _, p := range set {
 		for _, id := range n.OutOf(p) {
 			rc := n.Reads[id]

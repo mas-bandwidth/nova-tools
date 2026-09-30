@@ -264,7 +264,7 @@ func (s *sel) register(fs flagSet, withCol bool) {
 	if withCol {
 		fs.StringVar(&s.col, "col", "", "the cards in one column (a state)")
 	}
-	fs.IntVar(&s.limit, "limit", 0, "at most n cards, in work order")
+	fs.IntVar(&s.limit, "limit", 0, "at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index")
 	fs.StringVar(&s.group, "group", "", "the members of the inbox group of this id (the id inbox prints; a group number is refused)")
 	fs.IntVar(&s.expect, "expect", 0, "with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes")
 }
@@ -840,8 +840,8 @@ func cardGens(words []string) ([]string, map[string]int, error) {
 
 func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("take")
-	as := fs.String("as", "", "the fleet member taking its cards")
-	limit := fs.Int("limit", 0, "take the first n of its ready queue (default 1)")
+	as := fs.String("as", "", "the fleet member taking its cards; several, comma separated, each take from their own ready queue in one step")
+	limit := fs.Int("limit", 0, "take the first n of its ready queue (default 1); with several members, n of each")
 	words, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "take", err.Error())
@@ -862,7 +862,7 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 	if len(ids) > 0 {
 		name = "take by id" // a report on named cards
 	}
-	member := *as
+	members := sprint.Split(*as)
 	c.packets = func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet {
 		taken := map[string]bool{}
 		for _, m := range res.Moved {
@@ -870,14 +870,16 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 				taken[f[0]] = true
 			}
 		}
-		cs, err := st.ReadCells(ctx, sprint.Fleet, member, sprint.Working)
-		if err != nil {
-			return nil
-		}
 		var mine []*sprint.Card
-		for _, x := range cs {
-			if taken[x.ID] {
-				mine = append(mine, x)
+		for _, member := range members {
+			cs, err := st.ReadCells(ctx, sprint.Fleet, member, sprint.Working)
+			if err != nil {
+				return nil
+			}
+			for _, x := range cs {
+				if taken[x.ID] {
+					mine = append(mine, x)
+				}
 			}
 		}
 		ps, _ := st.Packets(ctx, mine)
@@ -888,7 +890,7 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("finish")
-	as := fs.String("as", "", "the fleet member finishing its cards")
+	as := fs.String("as", "", "the fleet member finishing its cards; several, comma separated, each finishing its own named cards in one step")
 	failed := fs.Bool("failed", false, "the work failed (default: ok)")
 	head := fs.String("head", "", "the head the work finished at (default: the card's id)")
 	report := fs.String("report", "", "the worker's report")
@@ -927,7 +929,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("read")
-	as := fs.String("as", "", "the reader")
+	as := fs.String("as", "", "the reader; several, comma separated, each reporting its own named cards in one step")
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")

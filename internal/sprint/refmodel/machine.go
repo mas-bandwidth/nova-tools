@@ -114,7 +114,9 @@ func (n *State) tickResume() {
 }
 
 // tickDeal is T3: ready primaries in stream turns (one from each stream in
-// turn, streams in name order, each stream's oldest first by score), each to the up
+// turn, the streams from the first past the deal's stream index, a stream with none
+// skipped, each stream's oldest first by score; Start moves the index past
+// each primary's stream, errata 3 amendment 10), each to the up
 // next member round the fleet (NextMember), no member holding more work
 // cards, ready and working, than its Width (errata 3 amendment 9); with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
@@ -130,7 +132,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 			ready = append(ready, id)
 		}
 	}
-	ready = n.streamTurns(ready)
+	ready = n.streamTurns(ready, n.StreamLast)
 	// the bound's judgment: once per primary at its bound, closed when it
 	// is no longer there (reworked, dropped)
 	for j := range n.Open {
@@ -181,7 +183,8 @@ func (n *State) tickDeal(choice map[string]string) error {
 }
 
 // tickAsk is T2: two different readers for each primary in review with no
-// read card, whose work did not fail, in work order.
+// read card, whose work did not fail, in stream turns from the ask's stream
+// index.
 func (n *State) tickAsk(choice map[string][]string) error {
 	var review []string
 	for id, p := range n.Primaries {
@@ -189,7 +192,9 @@ func (n *State) tickAsk(choice map[string][]string) error {
 			review = append(review, id)
 		}
 	}
-	n.sortByScore(review)
+	// in stream turns from the ask's stream index (errata 3 amendment 10);
+	// Ask moves it past each primary's stream
+	review = n.streamTurns(review, n.AskStreamLast)
 	for _, p := range review {
 		two := choice[p]
 		if two == nil {

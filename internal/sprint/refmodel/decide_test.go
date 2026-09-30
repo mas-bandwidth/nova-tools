@@ -225,6 +225,7 @@ func TestDealDealsTheOldestReadyToTheMembersWithRoom(t *testing.T) {
 		"move work s1-4 s1:ready>s1:working",
 		"move work s1-5 s1:ready>s1:working",
 		"move work s1-6 s1:ready>s1:working",
+		"prop work stream_index=s1",
 		"prop fleet deal_index=m2",
 		"create fleet s1-1.w1 >m1:ready",
 		"create fleet s1-2.w1 >m2:ready",
@@ -305,6 +306,7 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got,
 		"set work s1-1 asked=reader-a,reader-b",
+		"prop work stream_index_ask=s1",
 		"prop readers ask_index=reader-b",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
 		"create readers s1-1.r1.reader-b >reader-b:asked")

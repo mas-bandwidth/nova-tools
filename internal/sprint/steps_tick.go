@@ -23,10 +23,13 @@ const MachineActor = "machine"
 // The bounds of one tick, and the one queue length the dealing keeps.
 const (
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
-	// due, and the next tick reads the whole sprint and moves them. The deal's
-	// own bound is TickMaxDeal (width.go): it fills every member to its width
-	// in one step.
-	TickMaxMoves = 200
+	// due, and the next tick moves them. It is the deal's bound, TickMaxDeal
+	// (width.go): one Layer 1 write's member candidates, which the step
+	// builder cuts into parts under the table layer's entry bounds, so a
+	// part plans every row that needs it in the one tick and never lags its
+	// own work (the owner's rule, errata 3 amendment 10: every row of every
+	// table moves every tick, never a row at a time).
+	TickMaxMoves = TickMaxDeal
 	// TickMaxNotes bounds the judgments one part of a tick writes; the rest
 	// are due, and the next tick writes them.
 	TickMaxNotes = 50
@@ -190,9 +193,13 @@ func bound(p Plan) (Plan, int) {
 // behind it stays waiting until the coordinator releases it. No flag says a
 // scan is due: what is due is read from the state, so a tick that did not
 // finish leaves it due for the next.
+//
+// The waiting primaries go in stream turns (dealTurns: one from each stream
+// in turn, within a stream by work order), so a bound that cuts the plan
+// cuts every stream alike (errata 3 amendment 10).
 func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
-	for _, c := range s.Work.Column(Waiting) {
+	for _, c := range dealTurns(s.Work.Column(Waiting), nil) {
 		ids = append(ids, c.ID)
 	}
 	var p Plan
@@ -240,8 +247,11 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 	return p, due
 }
 
-// T3. TickDeal deals ready primaries in stream turns (dealTurns: one from each
-// stream in turn, each stream's oldest first by score), each to the next up
+// T3. TickDeal deals ready primaries in stream turns (streamTurns: one from
+// each stream in turn from the deal's stream index on the work table, a stream with no
+// ready card skipped, each stream's oldest first by score; Deal moves the
+// index past the stream of the last card dealt, errata 3 amendment 10), each
+// to the next up
 // member round the fleet with room (Deal: the rolling index of round.go,
 // errata 3 amendment 5), every member filled up to its width, its ready and
 // working cards together (width.go, errata 3 amendment 9): every ready card
@@ -263,7 +273,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			ready = append(ready, c)
 		}
 	}
-	ready = dealTurns(ready, nil)
+	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
 	up := s.UpMembers()
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
@@ -308,17 +318,25 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 // T2. TickAsk asks two different readers of every primary in review whose
 // work did not fail and that has no read card at its attempt (the readers
 // named on the primary first). One that cannot be asked, for want of two
-// different readers, is a judgment once (N1), closed when it is asked.
+// different readers, is a judgment once (N1), closed when it is asked. The
+// primaries go in stream turns from the ask's stream index on the work table
+// (streamTurns, as the deal's; Ask moves the index), so the readers
+// serve every stream alike and no stream's backlog waits behind another's
+// (errata 3 amendment 10).
 func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
-	for _, c := range s.Work.Column(Review) {
+	askable := func(c *Card) string {
 		if c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
-			if len(ids) < TickMaxMoves {
-				ids = append(ids, c.ID)
-			} else {
-				due++
-			}
+			return ""
+		}
+		return "asked, or its work failed"
+	}
+	for _, c := range eligibleTurns(s.Work.Column(Review), askable, streamRound(s, PropAskStreamIndex)) {
+		if len(ids) < TickMaxMoves {
+			ids = append(ids, c.ID)
+		} else {
+			due++
 		}
 	}
 	var p Plan

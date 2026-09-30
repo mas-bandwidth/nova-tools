@@ -162,7 +162,7 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	ta.ok("add --stream s2 --count 3")
 	ta.deal(4)
 	ta.ok("take --as m1 --limit 2")
-	ta.ok("finish --as m1 s1-3.w1@1 --failed --report red")
+	ta.ok("finish --as m1 s1-2.w1@1 --failed --report red") // the deal takes the streams in turns: m1 holds s1-1 and s1-2
 	g := ta.group(sprint.NWorkFailed, "s1")
 	img := ta.epochImage(0)
 	lines := []string{"inbox --read", "wait " + g.Notes[0] + " --for 1h", "clear --confirm sprint"}

@@ -135,6 +135,16 @@ func (d *Driver) batch(words []string, cards []string) (int, string) {
 	return d.exec(false, words, cards)
 }
 
+// batches runs one verb over a set of cards in calls of at most Most cards
+// each (one call when the set is at most Most), none when the set is empty.
+func (d *Driver) batches(words []string, cards []string) {
+	for len(cards) > 0 {
+		n := min(len(cards), Most)
+		d.batch(words, cards[:n])
+		cards = cards[n:]
+	}
+}
+
 func (d *Driver) exec(quiet bool, args, cards []string) (int, string) {
 	if coordinatorVerbs[args[0]] {
 		panic("the driver never runs the coordinator's verb " + args[0])
@@ -277,7 +287,9 @@ func (d *Driver) Loop() (string, error) {
 	if !d.read(&first, "where") {
 		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
 	}
-	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") {
+	// running, running and catching up ("machine: running (catching up: n
+	// moves due)"), or running with its last tick failed
+	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") && !strings.HasPrefix(first.Machine, "machine: running (") {
 		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	d.held = first.Epoch
@@ -416,12 +428,20 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			next[m] = false // a silent machine's worker does no work
 		}
 	}
-	// Workers, a batch each (the owner's ruling of 2026-09-30: a machine
-	// moves its cards in batches, never one or two a tick): one finish of
-	// every card it took last tick (a card's simulated work is one tick), the
-	// failed ones in a second call, then one take of its ready queue, up to
-	// its width. Every card finished is named <card>@<gen>, the generation
-	// from the queue.
+	// The workers and the readers move in one batch a world tick, all of them
+	// at once (the owner's rulings of 2026-09-30: "we batch"; "you should
+	// update each row in workers in fleet table, per-tick"; errata 3
+	// amendment 10): one finish of every card every member took last tick (a
+	// card's simulated work is one tick), the failed in one call for each
+	// report, then one take of every member's ready queue, up to each one's
+	// width; one report of every read begun last tick, then one begin of every
+	// read asked. Each call names every member (reader) it acts for, so every
+	// row of the table moves in the one step, never one member's after
+	// another's. A batch larger than Most is cut at it.
+	var finishers []string
+	var good []string
+	bad := map[string][]string{}
+	takers := map[int][]string{} // by take limit, the members with a ready queue
 	for _, m := range members {
 		if !next[m] {
 			continue
@@ -431,8 +451,6 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			continue
 		}
 		ready, done := 0, 0
-		var good []string
-		bad := map[string][]string{}
 		for _, card := range q.Cards {
 			switch {
 			case card.Col == "ready":
@@ -447,51 +465,62 @@ func (d *Driver) tick(tick int, c Config, w where) {
 				}
 			}
 		}
-		if len(good) > 0 {
-			d.batch(append([]string{"finish", "--as", m}, held...), good)
-		}
-		for _, report := range sortedKeys(bad) {
-			d.batch(append([]string{"finish", "--as", m, "--failed", "--report", report}, held...), bad[report])
+		if done > 0 {
+			finishers = append(finishers, m)
 		}
 		if ready > 0 {
 			n := min(takeLimit(c, fleet[m]), Most)
-			d.run(false, append([]string{"take", "--as", m, "--limit", strconv.Itoa(n)}, held...)...)
+			takers[n] = append(takers[n], m)
 		}
 	}
-	// Readers, a batch each: one report of every card begun last tick (a
-	// read's simulated time is one tick), ok and broken at most two calls,
-	// then one begin of every card asked.
+	as := strings.Join(finishers, ",")
+	d.batches(append([]string{"finish", "--as", as}, held...), good)
+	for _, report := range sortedKeys(bad) {
+		d.batches(append([]string{"finish", "--as", as, "--failed", "--report", report}, held...), bad[report])
+	}
+	var limits []int
+	for n := range takers {
+		limits = append(limits, n)
+	}
+	sort.Ints(limits)
+	for _, n := range limits {
+		d.run(false, append([]string{"take", "--as", strings.Join(takers[n], ","), "--limit", strconv.Itoa(n)}, held...)...)
+	}
+	var reporters, beginners []string
+	var begin, ok []string
+	broken := map[string][]string{}
 	for _, r := range sortedRows(w.Tables["readers"]) {
 		var q queue
 		if !d.read(&q, "queue", "--as", r) {
 			continue
 		}
-		var begin, good []string
-		broken := map[string][]string{}
-		reported := 0
+		asked, reported := 0, 0
 		for _, card := range q.Cards {
 			switch {
-			case card.Col == "asked" && len(begin) < c.ReadLimit:
+			case card.Col == "asked" && asked < c.ReadLimit:
+				asked++
 				begin = append(begin, card.ID)
 			case card.Col == "reading" && reported < c.ReadLimit:
 				reported++
-				if ok, finding := d.Facts.Read(card.ID); ok {
-					good = append(good, card.ID)
+				if good, finding := d.Facts.Read(card.ID); good {
+					ok = append(ok, card.ID)
 				} else {
 					broken[finding] = append(broken[finding], card.ID)
 				}
 			}
 		}
-		if len(good) > 0 {
-			d.batch(append([]string{"read", "--as", r, "--ok"}, held...), good)
+		if reported > 0 {
+			reporters = append(reporters, r)
 		}
-		for _, f := range sortedKeys(broken) {
-			d.batch(append([]string{"read", "--as", r, "--broken", "--finding", f}, held...), broken[f])
-		}
-		if len(begin) > 0 {
-			d.batch(append([]string{"read", "--as", r, "--begin"}, held...), begin)
+		if asked > 0 {
+			beginners = append(beginners, r)
 		}
 	}
+	d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, held...), ok)
+	for _, f := range sortedKeys(broken) {
+		d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, held...), broken[f])
+	}
+	d.batches(append([]string{"read", "--as", strings.Join(beginners, ","), "--begin"}, held...), begin)
 	// Each stream's merge step, with its facts. A stream's queue is read just
 	// before its step, and the other streams' queues only when a fact needs
 	// them, after every step before it has run.
