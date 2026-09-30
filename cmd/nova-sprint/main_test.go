@@ -363,8 +363,18 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	if code, _, _ := ta.do("where"); code == 0 {
 		t.Fatalf("the tables are still there")
 	}
-	if code, _, errs := ta.do("where --prefix x"); code != 2 || !strings.Contains(errs, "prefix") {
-		t.Fatalf("a prefix flag is refused: %d %s", code, errs)
+	if code, _, errs := ta.do("where --prefix x"); code != 2 || !strings.Contains(errs, "there is no prefix") {
+		t.Fatalf("a prefix flag is refused, saying there is none: %d %s", code, errs)
+	}
+	get := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == "NOVA_SPRINT_PREFIX" {
+			return "dev-"
+		}
+		return get(k)
+	}
+	if code, _, errs := ta.do("where"); code != 2 || !strings.Contains(errs, "NOVA_SPRINT_PREFIX is set: there is no prefix") || !strings.Contains(errs, "unset it") {
+		t.Fatalf("a set NOVA_SPRINT_PREFIX is refused: %d %s", code, errs)
 	}
 }
 

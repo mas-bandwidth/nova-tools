@@ -63,7 +63,7 @@ func TestReminderPushesAtStartAndEveryFiveMinutesOfRunning(t *testing.T) {
 	if got := reminded(res); len(got) != 1 || !strings.HasPrefix(got[0], "REMINDER 1 to friend-a") {
 		t.Fatalf("the first tick after start: %v", got)
 	}
-	want := "REMINDER 1 to friend-a at " + t0.Format(time.RFC3339) + ", sprint t-sprint, epoch 0\nkeep the queue full\nand say what you did\n"
+	want := "REMINDER 1 to friend-a at " + t0.Format(time.RFC3339) + ", epoch 0\nkeep the queue full\nand say what you did\n"
 	if got := readFile(t, path); got != want {
 		t.Fatalf("file:\n%q\nwant\n%q", got, want)
 	}

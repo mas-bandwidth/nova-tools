@@ -177,6 +177,9 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
 	}
+	if a.getenv("NOVA_SPRINT_PREFIX") != "" {
+		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
+	}
 	names := sprint.Names{}
 	b, err := a.backend(ctx, c.redis, names)
 	if err != nil {
@@ -222,6 +225,10 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 }
 
 // refuse is a usage refusal: exit 2.
+// noPrefix is what a --prefix flag or a NOVA_SPRINT_PREFIX variable is refused
+// with.
+const noPrefix = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
+
 func refuse(stderr io.Writer, verb, what string) int {
 	where := prog
 	if verb != "" {
