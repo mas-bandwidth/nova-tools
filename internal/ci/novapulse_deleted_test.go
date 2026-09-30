@@ -58,13 +58,23 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, script := range []string{"tools/bench-standard.sh", "tools/bench-standard_test.sh"} {
-		b, err := os.ReadFile(filepath.Join(root, script))
+	// The bench standard's witness does not install or check nova-pulse either:
+	// every line of its Go, tests included, that is not a comment.
+	witness, err := filepath.Glob(filepath.Join(root, "tools", "benchstandard", "*.go"))
+	if err != nil || len(witness) == 0 {
+		t.Fatalf("no Go files in tools/benchstandard: %v", err)
+	}
+	for _, path := range witness {
+		script, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for n, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
 			if strings.Contains(line, "nova-pulse") {
