@@ -236,6 +236,41 @@ func TestWatchOutputFailureStopsWithSinkRemedy(t *testing.T) {
 	})
 }
 
+// publish is the one-shot watch output path. A failed sink must report a
+// publication failure, not a usage refusal after a successful read.
+func TestWatchOnceOutputFailureUsesWatchSinkResult(t *testing.T) {
+	t.Parallel()
+	t.Run("stdout", func(t *testing.T) {
+		var stderr bytes.Buffer
+		if code := publish("", "frame\n", brokenWatchOutput{}, &stderr, "watch"); code != 1 {
+			t.Fatalf("exit %d, want output failure 1", code)
+		}
+		for _, want := range []string{"stdout: broken pipe", "--out <file>"} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
+			}
+		}
+	})
+	t.Run("out file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "missing-directory", "table.txt")
+		var stdout, stderr bytes.Buffer
+		if code := publish(out, "frame\n", &stdout, &stderr, "watch"); code != 1 {
+			t.Fatalf("exit %d, want output failure 1", code)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("--out wrote to stdout: %q", stdout.String())
+		}
+		for _, want := range []string{"--out:", out, "next: make --out"} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
+			}
+		}
+		if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed publication left target: %v", err)
+		}
+	})
+}
+
 // TestRenderAllJoinsTablesWithOneBlankLine: the view's title first, every
 // table as a block headed by its name (Glenn 2026-09-27: "tables need a
 // title"), one blank line between blocks, and an empty table a block too,
