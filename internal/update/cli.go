@@ -159,7 +159,7 @@ func help(name string, w io.Writer) {
 // which to reach for. The two are one build (update.Main, given its name), so the manifest
 // reader and report are the same under either.
 func oneBinary(name string) string {
-	const same = "nova-update and nova-version are ONE binary under two names: the same build, the same manifest reader and the same report (report prints the same thing under either name); only the verbs each name offers differ. "
+	const same = "ONE binary under two names, nova-update and nova-version: the same build, the same manifest reader and the same report (report prints the same thing under either name); only the verbs each name offers differ. "
 	if name == "nova-version" {
 		return "\n" + same + "Use nova-version to RECORD and COMPARE what is installed: snapshot (inventory a bin directory, or count how many of the manifest's tools answer), diff (two snapshots), moved (the note of what two revisions' binaries changed) and report or send (what this box runs, as a report or a bus note). It never asks what is latest and never installs; nova-update's check, apply, watch, adoption and release are the other name's.\n"
 	}
