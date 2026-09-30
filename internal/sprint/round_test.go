@@ -126,8 +126,9 @@ func TestR6GoesRoundTheFleet(t *testing.T) {
 func TestTheDealSkipsAFullMemberAndTheQueueDoesNotChoose(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, "reader-a")
-	for _, m := range []string{"m1", "m2", "m3"} {
-		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
+	// m1 and m2 at width 2, m3 at width 3
+	for i, m := range []string{"m1", "m2", "m3"} {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: []int{2, 2, 3}[i]}))
 	}
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 8}))
 	deal := func(id string) string {
@@ -142,8 +143,8 @@ func TestTheDealSkipsAFullMemberAndTheQueueDoesNotChoose(t *testing.T) {
 	if want := []string{"m1", "m2", "m3", "m1"}; !slices.Equal(got, want) {
 		t.Fatalf("deals %v, want %v", got, want)
 	}
-	// m1 two ready (full), m2 one, m3 none once it takes its card: the index is
-	// past m1, so m2, though m3's queue is shorter
+	// m1 two ready (at its width), m2 one, m3 none ready once it takes its card
+	// (one working): the index is past m1, so m2, though m3's queue is shorter
 	w.must(Take(w.s, TakeReq{As: "m3", Sel: Sel{IDs: []string{"s1-3.w1"}}, Gens: gensOf(w.s, "s1-3.w1")}))
 	if m := deal("s1-5"); m != "m2" {
 		t.Fatalf("s1-5 went to %s, want m2 (the index, not m3's shorter queue)", m)
@@ -151,7 +152,8 @@ func TestTheDealSkipsAFullMemberAndTheQueueDoesNotChoose(t *testing.T) {
 	if m := deal("s1-6"); m != "m3" {
 		t.Fatalf("s1-6 went to %s, want m3", m)
 	}
-	// past m3: m1 and m2 are full, skipped, and m3 has room
+	// past m3: m1 and m2 are at their width, skipped, and m3 (one working, one
+	// ready) is below its width of three
 	if m := deal("s1-7"); m != "m3" {
 		t.Fatalf("s1-7 went to %s, want m3: m1 and m2 are full", m)
 	}

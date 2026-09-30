@@ -22,12 +22,10 @@ const MachineActor = "machine"
 
 // The bounds of one tick, and the one queue length the dealing keeps.
 const (
-	// MaxReadyPerMember is the longest ready queue the tick deals a member:
-	// work is dealt late and little, so a member going down takes little
-	// with it and a later primary never waits behind a long queue.
-	MaxReadyPerMember = 2
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
-	// due, and the next tick reads the whole sprint and moves them.
+	// due, and the next tick reads the whole sprint and moves them. Levelling
+	// moves are not counted in it. The deal's own bound is TickMaxDeal (width.go):
+	// it fills every member to its width in one step.
 	TickMaxMoves = 200
 	// TickMaxNotes bounds the judgments one part of a tick writes; the rest
 	// are due, and the next tick writes them.
@@ -245,9 +243,10 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 // T3. TickDeal deals ready primaries in stream turns (dealTurns: one from each
 // stream in turn, each stream's oldest first by score), each to the next up
 // member round the fleet with room (Deal: the rolling index of round.go,
-// errata 3 amendment 5), keeping every ready queue no longer than
-// MaxReadyPerMember; a withdrawn card is dealt again at a new
-// generation. With no member up and primaries waiting to be dealt, the
+// errata 3 amendment 5), every member filled up to its width, its ready and
+// working cards together (width.go, errata 3 amendment 9): every ready card
+// the fleet has room for goes in the one plan, one step, up to TickMaxDeal;
+// a withdrawn card is dealt again at a new generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
@@ -271,11 +270,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
 	}
 	if len(up) > 0 {
-		room := 0
-		for _, m := range up {
-			room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
-		}
-		n := min(room, TickMaxMoves, len(ready))
+		room := widthRoom(s, up)
+		n := min(room, TickMaxDeal, len(ready))
 		due = min(room, len(ready)) - n
 		if n > 0 {
 			ids := make([]string, n)
@@ -303,7 +299,8 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 }
 
 // T4. TickLevel evens the up members' ready queues when two differ by more
-// than one: the newest cards go to the shortest queue.
+// than one: the newest cards of the longest queue go round the fleet from the
+// deal's index (level, round.levelTo).
 func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }

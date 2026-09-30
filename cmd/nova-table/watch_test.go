@@ -178,9 +178,8 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 
 // TestRenderAllJoinsTablesWithOneBlankLine: the view's title first, every
 // table as a block headed by its name (Glenn 2026-09-27: "tables need a
-// title"), one blank line between blocks, and an empty table no block at
-// all and no gap (Glenn 2026-09-27: "When a table has no rows, it should
-// automatically hide. When it has rows again, it should show").
+// title"), one blank line between blocks, and an empty table a block too,
+// its header and footer (the owner's ruling, 2026-09-30).
 func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	t.Parallel()
 
@@ -188,14 +187,15 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	b.Name = "other"
 	empty := ntable.Table{Name: "empty", Columns: a.Columns}
 	ra, rb := ntable.Render(a, ntable.RenderOpts{Title: "demo"}), ntable.Render(b, ntable.RenderOpts{Title: "other"})
-	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\n"+rb {
+	re := ntable.Render(empty, ntable.RenderOpts{Title: "empty"})
+	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\n"+re+"\n"+rb {
 		t.Fatalf("two tables and an empty one:\n%q", got)
 	}
 	if got := renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{}); got != "SPRINT\n\n"+ra {
 		t.Fatalf("with a title:\n%q", got)
 	}
-	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != "" {
-		t.Fatalf("an empty table alone renders %q, want nothing", got)
+	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != re || re == "" {
+		t.Fatalf("an empty table alone renders %q, want its header and footer %q", got, re)
 	}
 	if strings.Contains(ra, "\n\n") {
 		t.Fatal("a render holds a blank line")
@@ -403,23 +403,22 @@ func TestAppendStalls(t *testing.T) {
 	}
 }
 
-// A stored view's HideZero reaches the frame: the named table hides a row whose
-// counts are all zero, and a table the view does not name keeps it.
-func TestViewReaderHidesZeroRowsOfTheTablesTheViewNames(t *testing.T) {
+// A stored view's frame draws every table and every row, all-zero or not.
+func TestViewReaderDrawsZeroRowsOfEveryTable(t *testing.T) {
 	t.Parallel()
-	hidden, kept := demoTable(0), demoTable(0)
+	zero, kept := demoTable(0), demoTable(0)
 	kept.Name = "kept"
 	viewGet := func(context.Context, redis.Cmdable, string) (ntable.View, error) {
-		return ntable.View{Name: "v", Tables: []string{"demo", "kept"}, HideZero: []string{"demo"}}, nil
+		return ntable.View{Name: "v", Tables: []string{"demo", "kept"}}, nil
 	}
 	snapshotter := func(redis.Cmdable, []string) func(context.Context) ([]ntable.Table, error) {
-		return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{hidden, kept}, nil }
+		return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{zero, kept}, nil }
 	}
 	got, err := viewReaderWith(nil, "v", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(got, "demo") || !strings.Contains(got, "kept") || !strings.Contains(got, "build") {
-		t.Fatalf("demo (all zero) is not drawn, kept is:\n%s", got)
+	if !strings.Contains(got, "demo") || !strings.Contains(got, "kept") || !strings.Contains(got, "build") {
+		t.Fatalf("demo (all zero) and kept are both drawn:\n%s", got)
 	}
 }

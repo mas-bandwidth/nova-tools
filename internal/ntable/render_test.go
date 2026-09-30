@@ -23,22 +23,22 @@ func counts(cols []string, rows map[string][]int64, order []string) ntable.Table
 	return t
 }
 
-// TestRenderEmptyTableIsTheEmptyString: no rows, and no visible row under
-// HideZeroRows, print nothing at all: not a header, not a newline (Glenn
-// 2026-09-26: the empty stream table is hidden with no extra newline).
-func TestRenderEmptyTableIsTheEmptyString(t *testing.T) {
+// TestRenderEmptyTableShowsItsHeaderAndFooter: a table with no row, and a
+// table whose rows are all zero, render with their header and footer (the
+// owner's ruling, 2026-09-30: tables and rows always show, empty or not).
+func TestRenderEmptyTableShowsItsHeaderAndFooter(t *testing.T) {
 	t.Parallel()
 
 	empty := counts([]string{"a"}, nil, nil)
-	if got := ntable.Render(empty, ntable.RenderOpts{}); got != "" {
-		t.Fatalf("empty table rendered %q, want \"\"", got)
+	want := "row | a\n" +
+		"----+--\n" +
+		"----+--\n" +
+		"    | 0\n"
+	if got := ntable.Render(empty, ntable.RenderOpts{}); got != want {
+		t.Fatalf("empty table rendered:\n%s\nwant:\n%s", got, want)
 	}
 	zeros := counts([]string{"a", "b"}, map[string][]int64{"x": {0, 0}, "y": {0, 0}}, []string{"x", "y"})
-	if got := ntable.Render(zeros, ntable.RenderOpts{HideZeroRows: true}); got != "" {
-		t.Fatalf("all-zero rows hidden rendered %q, want \"\"", got)
-	}
-	// without HideZeroRows the zero rows show
-	want := "row | a | b\n" +
+	want = "row | a | b\n" +
 		"----+---+--\n" +
 		"x   | 0 | 0\n" +
 		"y   | 0 | 0\n" +
@@ -67,24 +67,26 @@ func TestRenderOneRowAndTotal(t *testing.T) {
 }
 
 // TestRenderWidthsAndHiddenRows: a fixed width pads the label column; a
-// hidden zero row still counts in the footer (it is the column's fold, not
+// row hidden with row hide still counts in the footer (it is the column's fold, not
 // the screen's); an unread cell prints ? and so does its fold.
 func TestRenderWidthsAndHiddenRows(t *testing.T) {
 	t.Parallel()
 
 	tb := counts([]string{"n"}, map[string][]int64{"a": {2}, "b": {0}, "c": {3}}, []string{"a", "b", "c"})
 	tb.Rows[2].Cells[0].Unread = true
+	tb.Rows[1].Hidden = true
 	want := "row        | n\n" +
 		"-----------+--\n" +
 		"a          | 2\n" +
 		"c          | ?\n" +
 		"-----------+--\n" +
 		"           | ?\n"
-	got := ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10, HideZeroRows: true})
+	got := ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10})
 	if got != want {
 		t.Fatalf("widths and hidden rows:\n%s\nwant:\n%s", got, want)
 	}
 	tb.Rows[2].Cells[0].Unread = false
+	tb.Rows[1].Hidden = false
 	tb.Columns[0].Width = 4
 	tb.FooterLabel = "all"
 	want = "row        |    n\n" +
@@ -191,7 +193,7 @@ func TestParseColumnsAndWidths(t *testing.T) {
 			t.Errorf("column %d = %+v, want %+v", i, cols[i], want[i])
 		}
 	}
-	for _, bad := range []string{"", "a b", "a:rows", "a:count:union", "a:text:sum", "a:members:sum", "a,a", "-a"} {
+	for _, bad := range []string{"", "a b", "a:rows", "a:count:union", "a:text:avg", "a:members:sum", "a,a", "-a"} {
 		if _, err := ntable.ParseColumns(bad); err == nil {
 			t.Errorf("ParseColumns(%q) accepted", bad)
 		}
@@ -210,7 +212,7 @@ func TestParseColumnsAndWidths(t *testing.T) {
 // strange"; "tables need a title"): a definition whose first column is a
 // count column gets the row-label column in front, the footer label under
 // it and every fold in its own column; the title is the top-left cell, the
-// header of that column; an empty table hides, title or not.
+// header of that column; an empty table shows, title or not.
 func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	t.Parallel()
 	tb := counts([]string{"waiting", "ready"}, map[string][]int64{"alpha": {2, 1}, "beta": {0, 0}}, []string{"alpha", "beta"})
@@ -223,11 +225,11 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"}); got != want {
 		t.Fatalf("row label first and a title:\n%s\nwant:\n%s", got, want)
 	}
-	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); got != "" {
-		t.Fatalf("an empty table with a title hides too (Glenn 2026-09-27): %q", got)
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); !strings.HasPrefix(got, "empty\n") {
+		t.Fatalf("an empty table with a title shows its header: %q", got)
 	}
-	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); got != "" {
-		t.Fatalf("an empty table without a title stays hidden: %q", got)
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); !strings.HasPrefix(got, "row\n") {
+		t.Fatalf("an empty table without a title shows its header: %q", got)
 	}
 }
 
@@ -379,26 +381,58 @@ func TestSummaryLineIsTheStateAloneWhileThereIsOne(t *testing.T) {
 	}
 }
 
-// TestRenderTablesHidesZeroRowsOnlyInTheNamedTables: a view's HideZero names
-// the tables that hide a row whose counts are all zero; a row with a card in
-// any column stays, and the other tables keep every row. A named table with no
-// visible row prints nothing and leaves no gap.
-func TestRenderTablesHidesZeroRowsOnlyInTheNamedTables(t *testing.T) {
+// TestRenderTablesShowsEveryTableAndEveryRow: every table of a frame shows,
+// empty or not, and every row in it, zero or not; a table drawn never (set
+// --hidden) leaves no gap.
+func TestRenderTablesShowsEveryTableAndEveryRow(t *testing.T) {
 	t.Parallel()
 	work := counts([]string{"waiting", "landed"}, map[string][]int64{"a": {0, 0}, "b": {0, 1}}, []string{"a", "b"})
 	work.Name = "work"
 	readers := counts([]string{"asked"}, map[string][]int64{"r": {0}}, []string{"r"})
 	readers.Name = "readers"
-	got := ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{}, []string{"work"})
-	if strings.Contains(got, "\na ") || !strings.Contains(got, "\nb ") || !strings.Contains(got, "\nr ") {
-		t.Fatalf("b (a card in the last column) and the reader show, a does not:\n%s", got)
+	got := ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{})
+	if !strings.Contains(got, "\na ") || !strings.Contains(got, "\nb ") || !strings.Contains(got, "\nr ") {
+		t.Fatalf("a, b and r all show:\n%s", got)
 	}
-	work.Rows = work.Rows[:1]
-	got = ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{}, []string{"work"})
-	if strings.Contains(got, "work") || !strings.HasPrefix(got, "readers ") {
-		t.Fatalf("work has no visible row: it prints nothing and readers opens the frame:\n%s", got)
+	work.Rows = nil
+	got = ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{})
+	if !strings.HasPrefix(got, "work ") || !strings.Contains(got, "\n\nreaders ") {
+		t.Fatalf("work has no row: it shows its header and footer, then a blank line, then readers:\n%s", got)
 	}
-	if got := ntable.RenderTables("", []ntable.Table{work}, ntable.RenderOpts{}, nil); !strings.Contains(got, "\na ") {
-		t.Fatalf("without HideZero the zero row shows:\n%s", got)
+	work.HiddenTable = true
+	if got := ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{}); !strings.HasPrefix(got, "readers ") {
+		t.Fatalf("a table set hidden is not drawn and leaves no gap:\n%s", got)
+	}
+
+}
+
+// TestATextColumnOfWholeNumbersFoldsSumAndMax: a text column with a sum or
+// max fold prints right-aligned and totals its cells in the footer; a blank
+// cell is 0 and a cell that is no whole number makes the fold "?".
+func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ fold, want string }{{ntable.Sum, "72"}, {ntable.Max, "64"}} {
+		cols, err := ntable.ParseColumns("n:count,w:text:" + tc.fold)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tab := ntable.Table{Name: "t", Columns: cols}
+		for k, v := range map[string]string{"a": "64", "b": "8", "c": ""} {
+			r := ntable.NewRow(tab, k)
+			r.Texts = map[string]string{"w": v}
+			tab.Rows = append(tab.Rows, r)
+		}
+		out := ntable.Render(tab, ntable.RenderOpts{})
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if last := lines[len(lines)-1]; !strings.HasSuffix(last, "| "+tc.want) {
+			t.Errorf("fold %s: footer %q wants %s", tc.fold, last, tc.want)
+		}
+		if !strings.Contains(out, "| 64\n") || !strings.Contains(out, "|  8\n") {
+			t.Errorf("fold %s: cells are not right-aligned:\n%s", tc.fold, out)
+		}
+		tab.Rows[0].Texts["w"] = "many"
+		if out := ntable.Render(tab, ntable.RenderOpts{}); !strings.Contains(out, "?") {
+			t.Errorf("fold %s: a cell that is no number leaves the fold known:\n%s", tc.fold, out)
+		}
 	}
 }

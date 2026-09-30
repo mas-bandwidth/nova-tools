@@ -371,7 +371,7 @@ func eventful() *world {
 	return &world{where: []string{where},
 		queue: map[string]string{
 			"m1": cards, "m2": cards, "m3": cards,
-			"reader-a": `{"cards":[{"id":"s1-1.r1.reader-a","col":"asked"},{"id":"s1-2.r1.reader-a","col":"asked"},{"id":"s1-3.r1.reader-a","col":"asked"}]}`,
+			"reader-a": `{"cards":[{"id":"s1-1.r1.reader-a","col":"asked"},{"id":"s1-2.r1.reader-a","col":"reading"},{"id":"s1-3.r1.reader-a","col":"reading"}]}`,
 			"s1":       `{"cards":[{"id":"s1-5","col":"queued"},{"id":"s1-6","col":"queued"}]}`,
 			"s2":       `{"cards":[{"id":"s2-5","col":"queued"},{"id":"s2-6","col":"queued"}]}`,
 		}, inbox: `{"groups":[]}`}

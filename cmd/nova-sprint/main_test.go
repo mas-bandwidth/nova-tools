@@ -36,6 +36,8 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
+	// run's wait on a quiet log steps the clock by the time it may take
+	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
 	return ta
 }

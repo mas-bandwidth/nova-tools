@@ -229,16 +229,18 @@ func TestResumeWaitsForANeedOnlyAfterACross(t *testing.T) {
 // The reference model's redeal bound is the engine's.
 func TestTheModelsRedealBoundIsTheEngines(t *testing.T) {
 	t.Parallel()
-	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.MaxReadyPerMember != sprint.MaxReadyPerMember {
-		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.MaxReadyPerMember, sprint.MaxRedeals, sprint.MaxReadyPerMember)
+	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.Width != sprint.DefaultWidth {
+		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.Width, sprint.MaxRedeals, sprint.DefaultWidth)
 	}
 }
 
 // The deal takes one card from each stream's front in turn (2.3 R6, the
 // model's tickDeal and tla/SprintEvents.tla's TurnSorted): with two streams of
-// four ready cards, two members and room for four, the engine deals two of
-// each stream and the model agrees with the same choice; the order of the whole
-// table would deal one stream's four.
+// four ready cards and two members at the default width, the engine deals all
+// eight in one tick (errata 3 amendment 9), in turns a1 b1 a2 b2 ..., round the
+// fleet m1 m2 m1 m2 ..., so every card of s1 goes to m1 and every card of s2 to
+// m2, and the model agrees with the same choice; the order of the whole table
+// would give each member two of each stream.
 func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 	t.Parallel()
 	h := newDHarness(t)
@@ -261,12 +263,12 @@ func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 	var dealt []string
 	for id, p := range s.Primaries {
 		if p.State == refmodel.Working {
-			dealt = append(dealt, id)
+			dealt = append(dealt, id+">"+s.Work[refmodel.WC(id, p.Attempt)].Member)
 		}
 	}
 	slices.Sort(dealt)
-	if want := []string{"a1", "a2", "b1", "b2"}; !slices.Equal(dealt, want) {
-		t.Fatalf("the tick dealt %v, want %v: two from each stream's front", dealt, want)
+	if want := []string{"a1>m1", "a2>m1", "a3>m1", "a4>m1", "b1>m2", "b2>m2", "b3>m2", "b4>m2"}; !slices.Equal(dealt, want) {
+		t.Fatalf("the tick dealt %v, want %v: each stream's front in turn, round the fleet", dealt, want)
 	}
 }
 
@@ -321,5 +323,80 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 	}
 	if s.DealLast != "m2" || s.AskLast != "r1" {
 		t.Fatalf("the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
+	}
+}
+
+// Every placement of a card on a member goes round the fleet and moves the
+// index (errata 3, amendment 5: first attempts and redeals and levelling alike;
+// the model's PlaceOn, ReworkChoice and levelRound): a rework, a down member's
+// card dealt again and a card levelled each go to the next member past the
+// index, where the shortest queue with its ties by name gives another. Red when
+// either the engine's choice or the model's is put back to the shortest queue.
+func TestTheRedealsAndTheLevelGoRoundAsTheModelDoes(t *testing.T) {
+	t.Parallel()
+	up := func(ms ...string) []dAction {
+		var out []dAction
+		for _, m := range ms {
+			out = append(out, dAction{Kind: "fleet", Op: "up", Member: m})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name    string
+		actions []dAction
+		card    string
+		want    string // the member round the fleet
+	}{
+		// a1 on m1 and a2 on m2, the index past m2; a1 fails on m1: its rework
+		// goes to m3, where the shortest queue gives m1
+		{"rework", append(up("m1", "m2", "m3"),
+			dAction{Kind: "start"},
+			dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2"}},
+			dAction{Kind: "tick"},
+			dAction{Kind: "take", Member: "m1", Card: "a1.w1", Gen: 1},
+			dAction{Kind: "finish", Member: "m1", Card: "a1.w1", Gen: 1, OK: false},
+			dAction{Kind: "rework", IDs: []string{"a1"}}),
+			"a1.w2", "m3"},
+		// a1..a3 on m1..m3, the index past m3; m2 takes its card and m3 goes
+		// down: a3 goes to m1, where the shortest queue gives m2
+		{"down", append(up("m1", "m2", "m3"),
+			dAction{Kind: "start"},
+			dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3"}},
+			dAction{Kind: "tick"},
+			dAction{Kind: "take", Member: "m2", Card: "a2.w1", Gen: 1},
+			dAction{Kind: "fleet", Op: "down", Member: "m3"}),
+			"a3.w1", "m1"},
+		// a1..a5 dealt m1 m2 m3 m1 m2, the index past m2; m1 takes both its
+		// cards and m3 its one: the queues are 0 2 0, and the level moves a5
+		// from m2 to m3, where the shortest queue gives m1
+		{"level", append(up("m1", "m2", "m3"),
+			dAction{Kind: "start"},
+			dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3", "a4", "a5"}},
+			dAction{Kind: "tick"},
+			dAction{Kind: "take", Member: "m1", Card: "a1.w1", Gen: 1},
+			dAction{Kind: "take", Member: "m1", Card: "a4.w1", Gen: 1},
+			dAction{Kind: "take", Member: "m3", Card: "a3.w1", Gen: 1},
+			dAction{Kind: "fleet", Op: "level"}),
+			"a5.w1", "m3"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			h := newDHarness(t)
+			for _, a := range c.actions {
+				h.do(a)
+			}
+			for _, f := range h.findings {
+				if _, known := dClassify(f); !known {
+					t.Fatalf("a difference between the engine and the model:\n%s", f)
+				}
+			}
+			s := h.observe()
+			if w := s.Work[c.card]; w.Member != c.want {
+				t.Fatalf("%s is on %q, want %s: round the fleet from the index", c.card, w.Member, c.want)
+			}
+			if s.DealLast != c.want {
+				t.Fatalf("the store's deal index is past %q, want %s: the placement moves it", s.DealLast, c.want)
+			}
+		})
 	}
 }

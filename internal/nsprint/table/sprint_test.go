@@ -245,9 +245,14 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An empty sprint shows the title and the worker table alone: no
-	// headline, no stream table, no extra blank line (Glenn 2026-09-26).
+	// An empty sprint shows the title, the stream table with no row, and the
+	// worker table with no row: a table always shows, empty or not.
 	want := "SPRINT TABLE\n\n" +
+		"stream                    | waiting | ready | working | review | merging | landed\n" +
+		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
+		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
+		"total                     |       0 |     0 |       0 |      0 |       0 |      0\n" +
+		"\n" +
 		"worker                    | ready | working |  done |  ok% | status | load\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +

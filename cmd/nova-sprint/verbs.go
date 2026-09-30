@@ -29,7 +29,7 @@ var verbs []verb
 
 func init() {
 	verbs = []verb{
-		{"init", "[--readers <a,b,...>] [--members <m1,m2,...>] [--coordinator <name>]", "init --readers reader-a,reader-b,reader-c --members m1,m2", (*app).cmdInit},
+		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
@@ -53,7 +53,7 @@ func init() {
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
-		{"fleet up", "<member>", "fleet up m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
+		{"fleet up", "<member> [--width <n>]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
@@ -596,7 +596,7 @@ func tookSince(ctx context.Context, st *store.Store) string {
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
-	members := fs.String("members", "", "fleet members to bring up, comma separated")
+	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it holds at once, ready and working (default %d)", sprint.DefaultWidth))
 	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -606,6 +606,10 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "init", "takes no words, found "+pos[0])
 	}
 	c.coordinator = *coordinator
+	specs, err := sprint.ParseMembers(*members)
+	if err != nil {
+		return refuse(stderr, "init", "--members: "+err.Error())
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
@@ -634,8 +638,8 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "INIT OK tables=%s view=%s\n", strings.Join([]string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers), st.Names.Table(sprint.Merge), st.Names.Table(sprint.Fleet)}, ","), st.Names.View())
-	for _, m := range sprint.Split(*members) {
-		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m, c.actor), stdout, stderr); code != 0 {
+	for _, m := range specs {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width), stdout, stderr); code != 0 {
 			return code
 		}
 	}
@@ -1107,12 +1111,22 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	name := "fleet " + op
 	fs, c := a.verbSetup(name)
+	var width *string
+	if op == "up" {
+		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it holds at once, ready and working, 1 to %d (default: as it is, %d for a new member)", sprint.MaxWidth, sprint.DefaultWidth))
+	}
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
 	if (op == "level") != (len(pos) == 0) || len(pos) > 1 {
 		return refuse(stderr, name, "wants one member (level takes none)")
+	}
+	w := 0
+	if width != nil && *width != "" {
+		if w, err = sprint.ParseWidth(*width); err != nil {
+			return refuse(stderr, name, "--width: "+err.Error())
+		}
 	}
 	member := ""
 	if len(pos) == 1 {
@@ -1122,7 +1136,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor), stdout, stderr)
+	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w), stdout, stderr)
 }
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {

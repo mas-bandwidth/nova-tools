@@ -14,13 +14,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The stored view hides a stream with no cards in any column from the work and
-// merge tables, as docs/SPEC-SPRINT.md says of the view: after init, an add of
-// three streams and a clear, the drawn view has no work table and no merge
-// table and still has the readers and the fleet; a stream that has a card is
-// drawn again. The frame is the one `nova-table watch --view sprint` draws
-// (ntable.RenderTables over the view's own HideZero).
-func TestTheViewHidesAStreamWithNoCardsAndKeepsReadersAndFleet(t *testing.T) {
+// The stored view shows a stream with no cards in any column: after init, an
+// add of three streams and a clear, the drawn view still has the work and merge
+// tables with their three stream rows at zero, and the readers and the fleet. The
+// frame is the one `nova-table watch --view sprint` draws (ntable.RenderTables).
+func TestTheViewShowsAStreamWithNoCards(t *testing.T) {
 	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
@@ -53,7 +51,7 @@ func TestTheViewHidesAStreamWithNoCardsAndKeepsReadersAndFleet(t *testing.T) {
 			}
 			tables = append(tables, tb)
 		}
-		return ntable.RenderTables("", tables, ntable.RenderOpts{}, v.HideZero)
+		return ntable.RenderTables("", tables, ntable.RenderOpts{})
 	}
 	has := func(text, table string) bool {
 		for _, line := range strings.Split(text, "\n") {
@@ -71,15 +69,19 @@ func TestTheViewHidesAStreamWithNoCardsAndKeepsReadersAndFleet(t *testing.T) {
 	}
 	run("clear", "--confirm", "sprint")
 	got := frame()
-	if has(got, "work") || has(got, "merge") {
-		t.Fatalf("after a clear, no stream has a card: the work and merge tables are not drawn:\n%s", got)
+	for _, table := range []string{"work", "merge", "readers", "fleet"} {
+		if !has(got, table) {
+			t.Fatalf("after a clear the %s table is drawn:\n%s", table, got)
+		}
 	}
-	if !has(got, "readers") || !has(got, "fleet") {
-		t.Fatalf("readers and fleet keep their rows after a clear:\n%s", got)
+	for _, stream := range []string{"\na ", "\nb ", "\nc "} {
+		if strings.Count(got, stream) < 2 {
+			t.Fatalf("after a clear the stream row %q is in the work and merge tables, at zero:\n%s", stream, got)
+		}
 	}
 	run("add", "--stream", "b", "--count", "1")
 	got = frame()
-	if !has(got, "work") || strings.Contains(got, "\na ") || !strings.Contains(got, "\nb ") {
-		t.Fatalf("one stream with a card is drawn, the others are not:\n%s", got)
+	if !has(got, "work") || !strings.Contains(got, "\na ") || !strings.Contains(got, "\nb ") || !strings.Contains(got, "\nc ") {
+		t.Fatalf("every stream is drawn, with a card or none:\n%s", got)
 	}
 }

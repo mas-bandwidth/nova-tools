@@ -68,6 +68,10 @@ type app struct {
 	sprintClient func(ctx context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error)
 	configRows   func(ctx context.Context, dsn string) (spverbs.ConfigRows, func() error, error)
 	np           *newPathState
+	// ticked, when set, is told of each tick run begins: its count, when it
+	// began, and why (the loop's start, a line on the log, the clock of a
+	// quiet log, a retry).
+	ticked func(n int, began time.Time, why string)
 }
 
 func newApp(getenv func(string) string) *app {

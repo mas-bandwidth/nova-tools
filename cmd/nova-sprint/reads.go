@@ -201,15 +201,6 @@ func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
 	return 2
 }
 
-// whereRender is how each table of the view is drawn, by its logical name. A
-// table whose rows are streams (work, merge) does not show a stream with no
-// cards in any column; the stream shows again when it has cards. The other
-// tables show every row.
-var whereRender = map[string]ntable.RenderOpts{
-	sprint.Work:  {HideZeroRows: true},
-	sprint.Merge: {HideZeroRows: true},
-}
-
 // whereView is the view, for a program.
 type whereView struct {
 	At          time.Time                               `json:"at"`
@@ -362,11 +353,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			// the machine keeps a stream's since; the view does not show it
 			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
 		}
-		opts := whereRender[logical]
-		opts.Title = logical
-		if out := ntable.Render(t, opts); out != "" {
-			parts = append(parts, out)
-		}
+		// every table shows, every stream row in it, empty or not
+		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
 	}
 	b.WriteString(strings.Join(parts, "\n"))
 	a.goalsView(ctx, st, &v)

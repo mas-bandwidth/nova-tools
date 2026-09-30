@@ -520,12 +520,6 @@ type WhereMachine struct {
 	DropCount int               `json:"dropping_count"`
 }
 
-// whereRender is how each table of the view is drawn, as the command draws
-// it: a table of streams hides a stream with no cards.
-var whereRender = map[string]ntable.RenderOpts{
-	sprint.Work:  {HideZeroRows: true},
-	sprint.Merge: {HideZeroRows: true},
-}
 
 // The fields the view reads of a control card: a stream's (merge's text
 // columns) and a member's (fleet's).
@@ -831,11 +825,8 @@ func whereView(names sprint.Names, rd *sprintfn.ReadReply, rows WhereRows) (Wher
 			cells[r.Key] = row
 		}
 		v.Tables[logical] = cells
-		opts := whereRender[logical]
-		opts.Title = logical
-		if out := ntable.Render(t, opts); out != "" {
-			parts = append(parts, out)
-		}
+		// every table shows, every stream row in it, empty or not
+		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
 	}
 	v.Frame = v.At.Local().Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + viewLine(v.Summary, v.Machine) + "\n\n" + strings.Join(parts, "\n")
 	return v, nil

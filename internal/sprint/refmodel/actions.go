@@ -291,8 +291,8 @@ func Waive(s State, p string, qs []string) (State, error) {
 // card of the attempt is dealt to m, which must be the next member round the
 // fleet (NextMember, errata 3 amendment 5; the rolling index moved past it): cut at generation 1, or, when it was withdrawn, the
 // same card dealt again at a new generation (G1, D3). limit, when above zero,
-// is the tick's MaxReadyPerMember (spec section 5): only members whose ready
-// queue is shorter are dealt to.
+// is the tick's Width (errata 3 amendment 9): only members holding fewer work
+// cards, ready and working, are dealt to.
 func Start(s State, p, m string, limit int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -304,7 +304,7 @@ func Start(s State, p, m string, limit int) (State, error) {
 	if limit > 0 {
 		var room []string
 		for _, x := range up {
-			if s.RL(x) < limit {
+			if s.Held(x) < limit {
 				room = append(room, x)
 			}
 		}
@@ -1023,29 +1023,35 @@ func (s State) level(moves map[string]string) (State, error) {
 			return s, badChoice("level moves %v, not round the fleet: the round (past %q) moves %v", moves, s.DealLast, want)
 		}
 	}
-	lo, hi := -1, -1
-	for _, x := range n.Up() {
+	// after levelling no two queues differ by more than one, save where every
+	// member below its Width at or below the mean is gone: the rest are at
+	// their Width and take no more (amendment 9)
+	lo, hi, total := -1, -1, 0
+	up := n.Up()
+	for _, x := range up {
 		l := n.RL(x)
-		if lo < 0 || l < lo {
+		total += l
+		if n.Held(x) < Width && (lo < 0 || l < lo) {
 			lo = l
 		}
 		if l > hi {
 			hi = l
 		}
 	}
-	if hi-lo > 1 {
+	if len(up) > 1 && lo >= 0 && lo <= total/len(up) && hi-lo > 1 {
 		return s, badChoice("the ready queues differ by %d after levelling", hi-lo)
 	}
 	return n, nil
 }
 
 // levelRound levels (spec section 14, T4, with errata 3 amendment 5: the
-// levelling goes round the fleet and moves the index): while two up queues
-// differ by more than one, the newest ready card of the first longest queue
-// goes to the next member round the fleet past DealLast whose queue is below
-// the up members' mean rounded down, or, when none is below, at it, at a new
-// generation, and DealLast moves past it. It returns the member each card it
-// moved ended on.
+// levelling goes round the fleet and moves the index; amendment 9: a member
+// at its Width takes no more): while the first longest up queue and the
+// shortest of the up members below their Width differ by more than one, the
+// newest ready card of the longest goes to the next member round the fleet
+// past DealLast below its Width whose queue is below the up members' mean
+// rounded down, or, when none such is below, at it, at a new generation, and
+// DealLast moves past it. It returns the member each card it moved ended on.
 func (n *State) levelRound() map[string]string {
 	out := map[string]string{}
 	for {
@@ -1053,22 +1059,25 @@ func (n *State) levelRound() map[string]string {
 		if len(up) < 2 {
 			return out
 		}
-		lo, hi, total := up[0], up[0], 0
+		lo, hi, total := "", up[0], 0
 		for _, x := range up {
 			total += n.RL(x)
-			if n.RL(x) < n.RL(lo) {
+			if n.Held(x) < Width && (lo == "" || n.RL(x) < n.RL(lo)) {
 				lo = x
 			}
 			if n.RL(x) > n.RL(hi) {
 				hi = x
 			}
 		}
-		if n.RL(hi)-n.RL(lo) <= 1 {
+		if lo == "" || n.RL(hi)-n.RL(lo) <= 1 {
 			return out
 		}
 		mean := total / len(up)
 		var below, at []string
 		for _, x := range up {
+			if n.Held(x) >= Width {
+				continue
+			}
 			if n.RL(x) < mean {
 				below = append(below, x)
 			}
@@ -1079,6 +1088,9 @@ func (n *State) levelRound() map[string]string {
 		to := n.NextMember(below)
 		if to == "" {
 			to = n.NextMember(at)
+		}
+		if to == "" {
+			return out
 		}
 		newest := ""
 		for _, id := range Keys(n.Work) {

@@ -1159,10 +1159,6 @@ type View struct {
 	Tables  []string
 	Title   string
 	Summary string // the count column of the first table the summary line counts as done ("" for no line)
-	// HideZero names the tables of the view that hide a row whose count cells
-	// are all zero when the view is drawn, each one of Tables (the sprint view
-	// sets its work and merge tables: a stream with no cards is not shown).
-	HideZero []string
 	// State, when set, is the summary line, alone, in place of the counts:
 	// the state of whatever fills the view ("STOPPED"). ViewState writes it;
 	// ViewSet leaves it as it is.
@@ -1223,7 +1219,7 @@ func ViewStateResult(name string, cmd *redis.Cmd) error {
 
 // ViewSet writes a view; every table must exist.
 func ViewSet(ctx context.Context, c redis.Cmdable, v View) error {
-	_, err := (operation{table: v.Name, view: true}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary, strings.Join(v.HideZero, ","))
+	_, err := (operation{table: v.Name, view: true}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary)
 	return err
 }
 
@@ -1243,9 +1239,6 @@ func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
 	v := View{Name: name, Title: h["title"], Summary: h["summary"], State: h["state"]}
 	if t := strings.TrimSpace(h["tables"]); t != "" {
 		v.Tables = strings.Split(t, ",")
-	}
-	if t := strings.TrimSpace(h["hide_zero"]); t != "" {
-		v.HideZero = strings.Split(t, ",")
 	}
 	return v, nil
 }

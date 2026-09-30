@@ -360,7 +360,7 @@ internal/nsprint/table/live_fixture.go:johnny 1
 internal/nsprint/table/live_fixture.go:rowan 2
 internal/nsprint/table/live_fixture.go:stella 2
 internal/nsprint/table/sprint.go:emma 1
-internal/nsprint/table/sprint.go:glenn 16
+internal/nsprint/table/sprint.go:glenn 15
 internal/nsprint/table/sprint.go:hetzner 1
 internal/nsprint/table/sprint.go:studio 2
 internal/nsprint/table/sprint_fixture.go:batman 1

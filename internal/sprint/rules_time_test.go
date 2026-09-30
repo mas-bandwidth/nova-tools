@@ -1640,6 +1640,9 @@ func TestLateReplacementsSpreadOverMembers(t *testing.T) {
 	t.Parallel()
 	w := newTimeWorld(t)
 	w.member("m3", true)
+	for _, m := range []string{"m2", "m3"} { // both at width 2 (width.go)
+		w.put(w.s.Fleet, CtlID(m), m, Ctl, map[string]string{"status": Up, FieldWidth: "2"})
+	}
 	w.workCard("x.w1", "m2", Ready, nil) // m2 has one ready card, m3 none
 	for _, id := range []string{"p1", "p2", "p3"} {
 		w.primary(id, Working, nil)
@@ -1651,9 +1654,9 @@ func TestLateReplacementsSpreadOverMembers(t *testing.T) {
 		to = append(to, ch.Entry.Move.Row)
 	}
 	// round the fleet from the deal's index (errata 3 amendment 5; none yet, so
-	// from the first member), m1 the cards' own member skipped: m2 (room at 1),
-	// m3, then m2 is full at 2 and m3 takes the third; a queue's length does not
-	// choose. The index is written past m3, guarded on its absence.
+	// from the first member), m1 the cards' own member skipped: m2 (below its
+	// width at 1), m3, then m2 is at its width of 2 and m3 takes the third; a
+	// queue's length does not choose. The index is written past m3, guarded on its absence.
 	want(t, "receivers", to, []string{"m2", "m3", "m3"})
 	if len(p.Plan.Props) != 1 || p.Plan.Props[0] != (PropWrite{Table: Fleet, Name: PropDealIndex, Value: "m3", WasAbsent: true}) {
 		t.Fatalf("the deal's index: %+v, want it moved past m3", p.Plan.Props)

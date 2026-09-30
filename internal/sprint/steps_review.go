@@ -551,7 +551,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		return inState(c, Review)
 	}, s.primaryCard)
 	up := s.UpMembers()
-	q := readyQueues(s, up)
+	// the room of each member is its width (width.go, errata 3 amendment 9)
+	q, room := memberLoads(s, up), memberWidths(s, up)
 	rr := dealRound(s)
 	moves := roundMoves{}
 	orphans := map[string]bool{}
@@ -600,7 +601,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		var u Unit
 		if len(up) > 0 {
 			var why string
-			m := rr.next(up, q, MaxReadyPerMember, reworkAvoid(s, c), true)
+			m := rr.next(up, q, room, reworkAvoid(s, c), true)
 			u, why = deal(s, c, fix, m, q, set, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)

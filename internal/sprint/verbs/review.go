@@ -1318,10 +1318,10 @@ var reworkFields = []string{sprint.PrimaryField, "attempt", "result", "asked", "
 var reworkFollow = []string{sprint.FollowRCards, sprint.FollowWork, sprint.FollowWithdrawn}
 
 // reworkBeside are the listings ReworkAt reads beside the primaries: the
-// fleet's rows, counts and members' status, which it deals the next attempt
+// fleet's rows, counts and members' status and width, which it deals the next attempt
 // from, and the readers' rows, which the judgment of a primary it refuses
 // reads.
-var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status"}, Props: []string{sprint.PropDealIndex}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
+var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status", sprint.FieldWidth}, Props: []string{sprint.PropDealIndex}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
 
 // reworkEach is the most members one primary's rework changes: the primary,
 // its read cards (at most 15), its withdrawn work card and the new one.

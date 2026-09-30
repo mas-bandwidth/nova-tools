@@ -1975,10 +1975,10 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
 | `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages, then one `TABLE PROP table= <name>=<value>` line for each of the table's properties (values a batch manifest writes with its members, such as a rolling index), in name order; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
-| `render <table>` | Prints a text table; an empty table prints nothing |
+| `render <table>` | Prints a text table; an empty table prints its header and footer |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
-| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>] [--hide-zero <tables>]` | Stores a view, replacing its title, summary and hide-zero together; summary uses the first table; hide-zero names tables of the view that hide all-zero rows |
+| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view, replacing its title and summary together; summary uses the first table |
 | `view state <name> (<text> \| --clear)` | Sets the view's state: while set, the summary line is that text alone, in place of the counts; `--clear` shows the counts again |
 | `view show <name>` | Prints view configuration, including summary and state |
 | `view list` | Lists view names |
@@ -2180,7 +2180,7 @@ other is refused at `create`, `set --columns` and `col add`. For example
 divide the summed numerators by the summed denominators, not the row
 percentages. Known-empty percentages are `0.0%`; an unread dependency is `?`.
 `--footer <label>` names the otherwise blank footer label. `--width col=n,...`
-sets column widths; render/watch also accept `--label-width` and `--hide-zero-rows`.
+sets column widths; render/watch also accept `--label-width`.
 Hidden rows and columns continue contributing to formulas and folds.
 
 One member has one owned placement per table. A duplicate add names its current

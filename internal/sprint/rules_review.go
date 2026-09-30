@@ -82,9 +82,6 @@ const (
 // Where they differ from today's the pull request lists it as a question for
 // the switch: today's MaxRedeals is 3 and the design's is 5 (R2, R11).
 const (
-	// reviewMaxReady is the longest ready queue a reworked attempt is dealt into
-	// (2.3 R6: the cap of two ready cards a member).
-	reviewMaxReady = 2
 	// reviewMaxRedeals is how many times one attempt's work card is dealt again
 	// before its primary is at the redeal bound, where the coordinator's rework
 	// takes it in ready (2.3 R2 and R11: "redeals below 5"; 2.2 "a card reached
@@ -156,8 +153,9 @@ type reviewRule struct {
 }
 
 // reviewMemberFields is what R10 reads of a member's control card: whether it
-// is up.
-var reviewMemberFields = []string{"status"}
+// is up, and its width (the rework deals to a member below its width, width.go,
+// errata 3 amendment 9).
+var reviewMemberFields = []string{"status", FieldWidth}
 
 // reviewNoFields is the projection of no field, the summary of a record (a list
 // that is not nil and has no field: Layer 1 reads a nil list as every field):
@@ -991,7 +989,7 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	var p Plan
 	x := newReviewCtx(s)
 	var up []string
-	var q map[string]int // the fleet's, read when a primary is due, so a read of none reads no fleet
+	var q, room map[string]int // the fleet's, read when a primary is due, so a read of none reads no fleet
 	var rr *round
 	moves := roundMoves{}
 	dealt := map[string]string{}
@@ -1009,7 +1007,7 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			continue
 		}
 		if q == nil {
-			up, q = reviewMembers(s)
+			up, q, room = reviewMembers(s)
 			rr = dealRound(s)
 		}
 		fix := reviewOwnFix(x, c)
@@ -1020,7 +1018,7 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		if fix == "" {
 			fix = reviewFixWhenSilent[tag]
 		}
-		u, member, why := reworkUnit(x, c, fix, up, q, rr, now)
+		u, member, why := reworkUnit(x, c, fix, up, q, room, rr, now)
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue
@@ -1073,14 +1071,15 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	return rp
 }
 
-// reviewMembers is the up members and each one's ready queue, the queues a
-// dealing reworked attempt joins.
-func reviewMembers(s *Snapshot) ([]string, map[string]int) {
+// reviewMembers is the up members, each one's work cards held (ready and
+// working), and each one's width: the room a dealing reworked attempt takes
+// (width.go, errata 3 amendment 9).
+func reviewMembers(s *Snapshot) ([]string, map[string]int, map[string]int) {
 	if s.Fleet == nil {
-		return nil, map[string]int{}
+		return nil, map[string]int{}, map[string]int{}
 	}
 	up := s.UpMembers()
-	return up, readyQueues(s, up)
+	return up, memberLoads(s, up), memberWidths(s, up)
 }
 
 // reviewOwnFix is a primary's own fix: the findings of its broken reads at its
@@ -1109,11 +1108,12 @@ func reviewOwnFix(x *reviewCtx, c *Card) string {
 // its redeal bound), the fields of the next attempt set (fix, reworks,
 // broken_reads, rereads 0, avoid, the readers it names kept, bound unset), and
 // the next attempt's work card dealt to the next member round the fleet
-// (round.next: from the deal's rolling index, the first up with room that is
-// not avoid, avoid only when no other has room; the index moved past it), or
+// (round.next: from the deal's rolling index, the first up below its width,
+// width.go, errata 3 amendment 9, that is not avoid, avoid only when no other
+// is below its width; the index moved past it), or
 // the primary moved to ready with avoid when none can take it. It returns the
 // member dealt to, "" when none, and a reason when it cannot be done.
-func reworkUnit(x *reviewCtx, c *Card, fix string, up []string, q map[string]int, rr *round, now Now) (Unit, string, string) {
+func reworkUnit(x *reviewCtx, c *Card, fix string, up []string, q, room map[string]int, rr *round, now Now) (Unit, string, string) {
 	s := x.s
 	attempt := c.Int("attempt")
 	avoid := ""
@@ -1157,7 +1157,7 @@ func reworkUnit(x *reviewCtx, c *Card, fix string, up []string, q map[string]int
 	} else {
 		unset = append(unset, "avoid")
 	}
-	member := rr.next(up, q, reviewMaxReady, avoid, false)
+	member := rr.next(up, q, room, avoid, false)
 	if member == "" {
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, unset...)))}
 		u.Moved = fmt.Sprintf("%s %s -> ready (rework, avoiding %s; no up member has room: the deal takes it)", c.ID, c.Col, orDash(avoid))
@@ -1235,7 +1235,7 @@ func ReworkAt(s *Snapshot, r ReworkReq, now Now) Plan {
 		return inState(c, Review)
 	}, s.primaryCard)
 	x := newReviewCtx(s)
-	up, q := reviewMembers(s)
+	up, q, room := reviewMembers(s)
 	rr := dealRound(s)
 	moves := roundMoves{}
 	for _, c := range chosen {
@@ -1254,7 +1254,7 @@ func ReworkAt(s *Snapshot, r ReworkReq, now Now) Plan {
 				continue
 			}
 		}
-		u, member, why := reworkUnit(x, c, fix, up, q, rr, now)
+		u, member, why := reworkUnit(x, c, fix, up, q, room, rr, now)
 		if why != "" {
 			p.refuse(c.ID, why)
 			stays()
