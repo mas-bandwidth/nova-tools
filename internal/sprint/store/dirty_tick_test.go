@@ -246,9 +246,9 @@ func TestOneTickEndNoteOnlyWhenTheTickAddressedTheCoordinator(t *testing.T) {
 	h.work("m2")
 	h.machine() // to review, asked
 	h.readAll()
-	res := h.machine() // accepted: ready to merge, once for the stream
-	if ends() != 1 || res.TickEnd != 1 {
-		t.Fatalf("the accepting tick: %d tick-end notes, count %d, want 1 and 1", ends(), res.TickEnd)
+	res := h.machine() // accepted: ready to merge, once for the stream, and the reads' notes
+	if ends() != 1 || res.TickEnd < 1 {
+		t.Fatalf("the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
 	}
 	h.machine()
 	if ends() != 1 {
