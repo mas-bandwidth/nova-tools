@@ -85,7 +85,7 @@ func main() {
 	keep := flag.Bool("keep", false, "leave the sprint on the store for a look")
 	tsetOwned := flag.Bool("tset-owned-container", false, "opt in to the L1 size run on a disposable Redis container you own")
 	tsetRedis := flag.String("tset-redis", "", "explicit direct Redis host:port for the L1 size run; no default")
-	tsetProxy := flag.String("tset-proxy-redis", "", "optional 128ms-each-way proxy host:port for the same owned Redis container")
+	tsetProxy := flag.String("tset-proxy-redis", "", "optional ~128ms-per-trip proxy host:port for the same owned Redis container")
 	tsetSpace := flag.String("tset-space", "", "fresh dev- namespace ending in ':' for the L1 size run")
 	tsetMemoryOnly := flag.Bool("tset-memory-only", false, "separate L1 memory diagnostic; loads a test-only GC function, never times gates")
 	tsetMemoryCards := flag.Int("tset-memory-cards", 0, "required with --tset-memory-only: exactly 100000 or 1000000 cards on a fresh owned container")

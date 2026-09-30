@@ -19,8 +19,11 @@ func TestTSetPendingRowsNeverClaimPass(t *testing.T) {
 		}
 	}
 	var report bytes.Buffer
-	if err := tsetReport(&report, rows); err != nil {
+	if err := tsetReport(&report, "composed", rows); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(report.String(), "L1 composed profile;") {
+		t.Fatalf("unexpected header prefix: %s", report.String())
 	}
 	if got := strings.Count(report.String(), "NOT MEASURED"); got != len(rows) {
 		t.Fatalf("report has %d unmeasured rows, want %d", got, len(rows))
@@ -306,5 +309,51 @@ func TestTSetMemoryGrowthAddsFunctionVMOnce(t *testing.T) {
 	after.VMFunctions = 23
 	if _, err := tsetMemoryGrowth(before, after); err == nil {
 		t.Fatal("decreasing Functions VM heap invented a positive delta")
+	}
+}
+
+func TestTSetReportProfileHeader(t *testing.T) {
+	t.Parallel()
+	rows := tsetPendingRows(false)
+	var reportL1, reportComposed bytes.Buffer
+	if err := tsetReport(&reportL1, "l1_only", rows); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(reportL1.String(), "L1 l1_only profile;") {
+		t.Fatalf("want L1 l1_only profile; got: %s", reportL1.String())
+	}
+	if err := tsetReport(&reportComposed, "composed", rows); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(reportComposed.String(), "L1 composed profile;") {
+		t.Fatalf("want L1 composed profile; got: %s", reportComposed.String())
+	}
+}
+
+func TestTSetL1_19VerdictRequiresTwoSamples(t *testing.T) {
+	t.Parallel()
+	row := tsetSizeResult{
+		row:             "L1-19",
+		cards:           100_000,
+		scenario:        "local",
+		limit:           10 * time.Millisecond,
+		correct:         true,
+		complete:        true,
+		requireCounters: true,
+		samples:         []tsetSizeSample{{store: 2 * time.Millisecond, wall: 3 * time.Millisecond, costOK: true}},
+	}
+	// With only 1 sample, verdict is NOT MEASURED (Stella's audit stella-22f1e487f378).
+	if got := row.verdict(); got != "NOT MEASURED" {
+		t.Fatalf("1 sample verdict=%s, want NOT MEASURED", got)
+	}
+	// With 2 samples totaling <= 10ms, verdict is INSIDE.
+	row.samples = append(row.samples, tsetSizeSample{store: 2 * time.Millisecond, wall: 3 * time.Millisecond, costOK: true})
+	if got := row.verdict(); got != "INSIDE" {
+		t.Fatalf("2 samples sum 4ms verdict=%s, want INSIDE", got)
+	}
+	// With 2 samples totaling > 10ms, verdict is OVER.
+	row.samples[1].store = 9 * time.Millisecond
+	if got := row.verdict(); got != "OVER" {
+		t.Fatalf("2 samples sum 11ms verdict=%s, want OVER", got)
 	}
 }
