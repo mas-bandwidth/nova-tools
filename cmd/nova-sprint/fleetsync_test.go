@@ -9,9 +9,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -513,8 +515,11 @@ func TestFleetSyncReleasesItsOwnHoldAndNotTheCoordinators(t *testing.T) {
 	if code != 2 || !strings.Contains(out, "DRIFT release m2 was held by the sync and is back in the inventory: release it") || !strings.Contains(out, "DRIFT width m2") {
 		t.Fatalf("check: exit %d\n%s", code, out)
 	}
+	if strings.Contains(out, "NOTE") {
+		t.Fatalf("a hold the sync made is listed as the coordinator's:\n%s", out)
+	}
 	out = ta.ok("fleet sync")
-	if !strings.Contains(out, "MOVED m2 released, down until it beats, width=6 (was 4)") {
+	if !strings.Contains(out, "MOVED m2 released, down until it beats, width=6 (was 4)") || strings.Contains(out, "NOTE") {
 		t.Fatalf("sync:\n%s", out)
 	}
 	ta.ok("tick")
@@ -544,7 +549,7 @@ func TestFleetSyncCheckIsThreeWhenTheStoreIsMissing(t *testing.T) {
 	ta, inv := syncApp(t)
 	inv.set("m1", 4)
 	code, _, errs := ta.do("fleet sync --check --redis=")
-	if code != 3 || !strings.Contains(errs, "the sprint store cannot be read") {
+	if code != 3 || !strings.Contains(errs, "--redis <addr> is required") || strings.Count(errs, "nothing was changed") != 1 {
 		t.Fatalf("--check with no store: exit %d %q", code, errs)
 	}
 	if code, _, _ := ta.do("fleet sync --redis="); code != 2 {
@@ -597,5 +602,79 @@ func TestAClearKeepsWhoMadeAHold(t *testing.T) {
 	code, out, _ := ta.do("fleet sync --check")
 	if code != 2 || !strings.Contains(out, "DRIFT release m2") {
 		t.Fatalf("after the clear: exit %d\n%s", code, out)
+	}
+}
+
+// TestFleetSyncJSONWithARefusalKeepsTheRefusedKey: a machine the fleet
+// refuses is named in refused, in the same shape.
+func TestFleetSyncJSONWithARefusalKeepsTheRefusedKey(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	inv.set("m2", sprint.MaxWidth+1)
+	code, out, _ := ta.do("fleet sync --json")
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &raw); err != nil || code != 1 {
+		t.Fatalf("exit %d %v\n%s", code, err, out)
+	}
+	var rep syncReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["refused"]; !ok || len(rep.Refused) != 1 || !strings.Contains(rep.Refused[0], "m2") {
+		t.Fatalf("the refusal is not in the report:\n%s", out)
+	}
+	if len(rep.Moved) != 0 || len(ta.fleetRows()) != 0 {
+		t.Fatalf("a refused sync wrote: %s", out)
+	}
+}
+
+// TestFleetSyncCheckIsUsageWhenNoOneActs: a missing actor is a usage refusal,
+// said once, never the store's 3.
+func TestFleetSyncCheckIsUsageWhenNoOneActs(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	code, _, errs := ta.do("fleet sync --check --actor=")
+	if code != 2 || !strings.Contains(errs, "--actor <name> is required") || strings.Count(errs, "nothing was changed") != 1 || strings.Contains(errs, "cannot be read") {
+		t.Fatalf("exit %d %q", code, errs)
+	}
+}
+
+// shapesDown is a backend whose reads of the tables fail while down is set.
+type shapesDown struct {
+	store.Backend
+	down *atomic.Bool
+}
+
+func (b shapesDown) Shapes(ctx context.Context, tables []string) ([]ntable.Table, error) {
+	if b.down.Load() {
+		return nil, errors.New("the store did not answer")
+	}
+	return b.Backend.Shapes(ctx, tables)
+}
+
+// TestFleetSyncCheckIsThreeWhenTheTablesCannotBeRead: the read of the fleet
+// table under --check is 3, where a sync's is 2; nothing is written.
+func TestFleetSyncCheckIsThreeWhenTheTablesCannotBeRead(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	var down atomic.Bool
+	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) {
+		return shapesDown{Backend: ta.m, down: &down}, nil
+	}
+	ta.ok("fleet sync")
+	down.Store(true)
+	writes := ta.applies()
+	code, _, errs := ta.do("fleet sync --check")
+	if code != 3 || !strings.Contains(errs, "the store did not answer") || strings.Count(errs, "nothing was changed") != 1 {
+		t.Fatalf("--check: exit %d %q", code, errs)
+	}
+	if code, _, _ := ta.do("fleet sync"); code != 2 {
+		t.Fatalf("sync: exit %d, want 2", code)
+	}
+	if ta.applies() != writes {
+		t.Fatal("a sync that could not read wrote")
 	}
 }

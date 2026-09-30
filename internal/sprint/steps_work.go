@@ -1136,7 +1136,8 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		n = statusNote(s, r, NMemberDown, "down")
 	}
 	var unset []string
-	if r.Op == "hold" && ctl.F("held") == "" {
+	switch {
+	case r.Op == "hold" && ctl.F("held") == "":
 		set["held"] = stamp(s.Now)
 		line = r.Member + " held down"
 		// who made the hold: the sync marks its own, so that it alone releases
@@ -1147,6 +1148,11 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		} else {
 			unset = append(unset, FieldHeldBy)
 		}
+	case r.Op == "hold" && r.HeldBy == "":
+		// the coordinator holds a member that is already held (the sync's hold
+		// included): the hold is now the coordinator's, and the sync's mark
+		// goes, so the sync never releases it
+		unset = append(unset, FieldHeldBy)
 	}
 	var head []Change
 	if len(set) > 0 || len(unset) > 0 {

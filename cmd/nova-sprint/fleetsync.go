@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -125,12 +126,16 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	if len(pos) > 0 {
 		return refuse(stderr, name, "takes no words, found "+oneline.Escape(pos[0]))
 	}
+	// who acts is the verb's usage, before any store is read
+	if why := needsActor(*c); why != "" {
+		return refuse(stderr, name, why)
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		if *check {
-			// under --check exit 2 is drift alone: a store that is missing or
-			// does not answer is the family's 3
-			fmt.Fprintf(stderr, "%s %s: the sprint store cannot be read: %s; nothing was changed\n", prog, name, oneline.Escape(err.Error()))
+			// under --check exit 2 is drift alone: a sprint store that is
+			// missing or does not answer is the family's 3
+			fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, nothingChanged(err))
 			return exitCannotRead
 		}
 		return refuse(stderr, name, err.Error())
@@ -152,13 +157,22 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	sort.Slice(want, func(i, j int) bool { return want[i].Name < want[j].Name })
-	if why := sprint.ValidSync(want); why != "" {
-		fmt.Fprintf(stderr, "%s %s: %s; fix the machine row in nova-config; nothing was changed\n", prog, name, oneline.Escape(why))
+	if problems := sprint.SyncProblems(want); len(problems) > 0 {
+		if c.json {
+			rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: []string{}, Moved: []string{}, Refused: []string{}}
+			for _, p := range problems {
+				rep.Refused = append(rep.Refused, p.Key+": "+p.Why)
+			}
+			b, _ := json.Marshal(rep)
+			fmt.Fprintln(stdout, string(b))
+			return 1
+		}
+		fmt.Fprintf(stderr, "%s %s: %s; fix the machine row in nova-config; nothing was changed\n", prog, name, oneline.Escape(problems[0].Why))
 		return 1
 	}
 	snap, err := st.Load(ctx, []string{sprint.Fleet, sprint.Work}, nil)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, nothingChanged(err))
 		if *check {
 			return exitCannotRead
 		}
@@ -190,6 +204,16 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return code
+}
+
+// nothingChanged is an error as one line ending in "nothing was changed",
+// once.
+func nothingChanged(err error) string {
+	msg := oneline.Escape(err.Error())
+	if strings.Contains(msg, "nothing was changed") {
+		return msg
+	}
+	return msg + "; nothing was changed"
 }
 
 // syncCheck prints the drift and writes nothing: exit 0 when there is none,

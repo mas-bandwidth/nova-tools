@@ -42,6 +42,7 @@ func TestSelfNameIsTheTailnetNameWhenThereIsATailnet(t *testing.T) {
 		{"stopped tailnet", nil, "box.local", tsReturns(`{"BackendState":"Stopped","Self":{"DNSName":"m1.x.ts.net."}}`), "box", SelfHostname},
 		{"not json", nil, "box.local", tsReturns(`nope`), "box", SelfHostname},
 		{"the program fails", nil, "box.local", func(context.Context) ([]byte, error) { return nil, errors.New("exit 1") }, "box", SelfHostname},
+		{"an invalid tailnet name falls to the hostname", nil, "box.local", tsReturns(`{"BackendState":"Running","Self":{"DNSName":"m_1.x.ts.net."}}`), "box", SelfHostname},
 		{"hostname label when no dns name", nil, "box.local", tsReturns(`{"BackendState":"Running","Self":{"HostName":"M5"}}`), "m5", SelfTailnet},
 	} {
 		got, how, err := SelfName(ctx, selfSrc(c.env, c.host, c.ts))
@@ -59,6 +60,17 @@ func TestSelfNameRefusesAnInvalidNovaMachine(t *testing.T) {
 		env := map[string]string{EnvMachine: bad}
 		if n, _, err := SelfName(context.Background(), selfSrc(env, "box.local", nil)); err == nil || n != "" {
 			t.Errorf("%q: %q %v", bad, n, err)
+		}
+	}
+}
+
+// TestSelfNameValidatesTheHostname: a hostname that is no machine name is
+// refused, not passed on.
+func TestSelfNameValidatesTheHostname(t *testing.T) {
+	t.Parallel()
+	for _, h := range []string{"bad_host.local", "-x.local"} {
+		if n, _, err := SelfName(context.Background(), selfSrc(nil, h, nil)); err == nil || n != "" {
+			t.Errorf("%q: %q %v", h, n, err)
 		}
 	}
 }

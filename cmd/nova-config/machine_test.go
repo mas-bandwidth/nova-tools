@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -122,5 +123,26 @@ func TestMachineWidthWithNoFriendsNeedsNoRedis(t *testing.T) {
 	}
 	if h.redis.opens != 0 {
 		t.Fatal("opened Redis with no friend to charge")
+	}
+}
+
+// getDown is a store whose row reads fail.
+type getDown struct{ *memStore }
+
+func (getDown) Get(context.Context, string, string) (config.Row, bool, error) {
+	return config.Row{}, false, errors.New("postgres: connection reset")
+}
+
+// TestMachineSelfCheckIsThreeWhenTheRowCannotBeRead: the read of the machine
+// row failing is 3, never the 2 of "no such row".
+func TestMachineSelfCheckIsThreeWhenTheRowCannotBeRead(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.tailnet = tailnetOf
+	h.machine(t, "m1", "4")
+	h.override = getDown{h.store}
+	code, out, errs := h.run(t, "machine", "self", "--check", "--pg", dsn)
+	if code != 3 || out != "" || !strings.Contains(errs, "the config cannot be read: postgres: connection reset") {
+		t.Fatalf("%d %q %q", code, out, errs)
 	}
 }

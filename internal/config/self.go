@@ -58,7 +58,7 @@ func SelfName(ctx context.Context, src SelfSource) (name, how string, err error)
 		raw, terr := src.Tailscale(ctx)
 		switch {
 		case terr == nil:
-			if n, ok := tailnetName(raw); ok {
+			if n, ok := tailnetName(raw); ok && ValidateName(n) == nil {
 				return n, SelfTailnet, nil
 			}
 		case !errors.Is(terr, ErrNoTailnet):
@@ -68,7 +68,7 @@ func SelfName(ctx context.Context, src SelfSource) (name, how string, err error)
 	}
 	if src.Hostname != nil {
 		if h, herr := src.Hostname(); herr == nil {
-			if n := firstLabel(h); n != "" {
+			if n := firstLabel(h); n != "" && ValidateName(n) == nil {
 				return n, SelfHostname, nil
 			}
 		}
