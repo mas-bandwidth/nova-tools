@@ -567,6 +567,76 @@ func TestARowRenameIsPlacedAsTheAddsTheMovesAndTheDeletes(t *testing.T) {
 	}
 }
 
+// The notes of a rows entry that was split follow its last piece, whichever of
+// the two the order places last. Here the input is split because entries 3 and 4
+// are a rename; entry 1 adds s, which entry 0 deletes first and a move (entry 2)
+// has to leave before that, so its adds wait for all of them while its deletes
+// are free: the deletes are placed first, and its notes go with the adds, placed
+// after them.
+func TestTheNotesOfASplitRowsEntryFollowItsLastPiece(t *testing.T) {
+	t.Parallel()
+	mixed := rowsEntry("t", []string{"s"}, []string{"r"})
+	mixed.Notes = []Note{{Meta: map[string]string{"n": "1"}}}
+	in := []Entry{
+		rowsEntry("t", nil, []string{"s"}),
+		mixed,
+		moveTo("t", "s:c", "q:c", "x"),
+		rowsEntry("t", []string{"n"}, []string{"p"}),
+		moveTo("t", "p:c", "n:c", "y"),
+	}
+	want := []int{1, 2, 0, 1, 3, 4, 3}
+	steps := must(t, entriesBound(1), in)
+	if got := placed(steps); !reflect.DeepEqual(got, want) {
+		t.Fatalf("placed %v, want %v", got, want)
+	}
+	// The one note is in the step of entry 1's adds, the fourth: the piece
+	// placed last of the two.
+	for k, s := range steps {
+		wantNotes := 0
+		if k == 3 {
+			wantNotes = 1
+		}
+		if len(s.Notes) != wantNotes {
+			t.Errorf("step %d holds %d notes, want %d", k+1, len(s.Notes), wantNotes)
+		}
+	}
+	if s := steps[3]; len(s.Entries) != 1 || s.Entries[0].Source != 1 || s.Entries[0].Add == nil || s.Entries[0].Del != nil {
+		t.Fatalf("the fourth step: %v %+v", kinds(s), s.Entries)
+	}
+	// At the contract's bounds the same order, the note after both pieces.
+	steps = must(t, cfg(), in)
+	if got := placed(steps); !reflect.DeepEqual(got, want) {
+		t.Fatalf("placed %v, want %v", got, want)
+	}
+	seen, at := 0, -1
+	for k, s := range steps {
+		for _, p := range s.Entries {
+			if p.Source == 1 && p.Add != nil {
+				at = k
+			}
+		}
+		if len(s.Notes) > 0 {
+			if at != k {
+				t.Fatalf("the note is in step %d, the adds of entry 1 in step %d", k+1, at+1)
+			}
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("%d notes", seen)
+	}
+	// The reference order agrees.
+	parts, split, ok := refPlacement(in)
+	if !ok || !split || len(parts) != len(want) {
+		t.Fatalf("the reference order: %v split %v ok %v", parts, split, ok)
+	}
+	for i, p := range parts {
+		if p.entry != want[i] {
+			t.Fatalf("the reference order places %v, want entries %v", parts, want)
+		}
+	}
+}
+
 // A rows entry that deletes a row, and after it a member entry whose destination
 // is that row: the whole is ROWCONFLICT (a delete with an incoming member), and
 // however the bounds cut it the outcome is the same: the delete lands, and the

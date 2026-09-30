@@ -1007,6 +1007,29 @@ func propertyRandomBounds(t *testing.T, inputs, shards int, every uint64) {
 	}
 }
 
+// randomBounds reaches the low end of each range it draws from: a bound of one
+// row name or one ID a line is the bound that closes a step at every member,
+// and the property must be held there as well as above it.
+func TestRandomBoundsReachTheirLowEnds(t *testing.T) {
+	t.Parallel()
+	low := map[string]bool{}
+	for seed := uint64(1); seed <= 3000; seed++ {
+		bd := randomBounds(rand.New(rand.NewPCG(seed, 0xb0d5)), false)
+		for name, v := range map[string]int{
+			"RowPairs": bd.RowPairs, "LineIDs": bd.LineIDs, "Candidates": bd.Candidates, "Notes": bd.Notes,
+		} {
+			if v == 1 {
+				low[name] = true
+			}
+		}
+	}
+	for _, name := range []string{"RowPairs", "LineIDs", "Candidates", "Notes"} {
+		if !low[name] {
+			t.Errorf("no random bound set has %s of 1", name)
+		}
+	}
+}
+
 func TestPropertyEveryBoundAtRandom(t *testing.T) {
 	t.Parallel()
 	propertyRandomBounds(t, 1000, 4, sampleEvery)
