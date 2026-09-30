@@ -1,0 +1,125 @@
+//go:build functional
+
+package ntable_test
+
+// A receipt is bounded twice: a value over ReceiptValueBytes is recorded as its
+// length and SHA-1 wherever a receipt is kept, and the receipt as a whole is at
+// most LimitReceiptBytes, checked before the first write.
+
+import (
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+)
+
+func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	const members, fields, size = 128, 1000, 256
+	var creates []string
+	for i := 0; i < members; i++ {
+		creates = append(creates, fmt.Sprintf(`{"id":"m%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, i))
+	}
+	if ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "seed", strings.Join(creates, ","))); err != nil || ans[0] != "OK" {
+		t.Fatalf("seed: %.200v %v", ans, err)
+	}
+	value := strings.Repeat("v", size)
+	pipe := c.Pipeline()
+	for i := 0; i < members; i++ {
+		f := map[string]any{}
+		for j := 0; j < fields; j++ {
+			f[fmt.Sprintf("f%d", j)] = value
+		}
+		pipe.HSet(ctx, ntable.MemberKey(fmt.Sprintf("m%d", i)), f)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, fields)
+	for j := range names {
+		names[j] = fmt.Sprintf(`"f%d"`, j)
+	}
+	unset := func(from, to int) string {
+		var ents []string
+		for i := from; i < to; i++ {
+			ents = append(ents, fmt.Sprintf(`{"id":"m%d","expect":{},"unset":[%s]}`, i, strings.Join(names, ",")))
+		}
+		return strings.Join(ents, ",")
+	}
+
+	// the manifest is under its own bound, the receipt it would make is not
+	raw := manifestWith(probeRev(ctx, c), "big-unset", unset(0, members))
+	if len(raw) > ntable.LimitManifestBytes {
+		t.Fatalf("the manifest is %d bytes, over its bound", len(raw))
+	}
+	before := storeImage(t, c)
+	ans, err := rawApply(ctx, c, raw)
+	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "receipt bytes" ||
+		fmt.Sprint(ans[3]) != fmt.Sprint(ntable.LimitReceiptBytes) {
+		t.Fatalf("a receipt over its bound: %.200v %v", ans, err)
+	}
+	var computed int
+	if _, err := fmt.Sscan(fmt.Sprint(ans[4]), &computed); err != nil || computed <= ntable.LimitReceiptBytes {
+		t.Errorf("the refusal names the computed size %v, want more than %d", ans[4], ntable.LimitReceiptBytes)
+	}
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("a batch refused for its receipt changed the store")
+	}
+
+	// through the library: the same refusal, says changed=no
+	_, err = ntable.ApplyBatch(ctx, c, mustManifest(t, raw))
+	if err == nil || !strings.Contains(err.Error(), "receipt bytes") || !strings.Contains(err.Error(), "changed=no") {
+		t.Errorf("ApplyBatch of a receipt over its bound: %v", err)
+	}
+	if !reflect.DeepEqual(before, storeImage(t, c)) {
+		t.Errorf("ApplyBatch refused for its receipt changed the store")
+	}
+
+	// fewer members in one manifest is a batch the store takes, and its receipt is
+	// within the bound
+	small := manifestWith(probeRev(ctx, c), "small-unset", unset(0, 4))
+	ans, err = rawApply(ctx, c, small)
+	if err != nil || ans[0] != "OK" {
+		t.Fatalf("four members: %.200v %v", ans, err)
+	}
+	ev := c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()
+	if got := len(fmt.Sprint(ev[0].Values["batch_delta"])); got > ntable.LimitReceiptBytes {
+		t.Errorf("an accepted batch left a delta of %d bytes, over %d", got, ntable.LimitReceiptBytes)
+	}
+}
+
+func TestBatchReceiptDigestsALongValueInEveryRecordOfIt(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	seedTwo(t, ctx, c)
+	at := strings.Repeat("A", ntable.ReceiptValueBytes)
+	over := strings.Repeat("O", ntable.ReceiptValueBytes+1)
+	if err := c.HSet(ctx, ntable.MemberKey("a"), "at", at, "over", over).Err(); err != nil {
+		t.Fatal(err)
+	}
+	raw := manifestWith(probeRev(ctx, c), "digests", `{"id":"a","expect":{},"unset":["at","over"]}`)
+	ans, err := rawApply(ctx, c, raw)
+	if err != nil || ans[0] != "OK" {
+		t.Fatalf("apply: %.200v %v", ans, err)
+	}
+	sum := sha1.Sum([]byte(over))
+	digest := hex.EncodeToString(sum[:])
+	event := fmt.Sprint(c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values["batch_delta"])
+	record := c.HGet(ctx, ntable.DefKey("demo")+":ops", "0:digests").Val()
+	for what, text := range map[string]string{"the receipt": fmt.Sprint(ans), "the change event": event, "the operation record": record} {
+		if strings.Contains(text, over) {
+			t.Errorf("%s holds a %d-byte value in full", what, len(over))
+		}
+		if !strings.Contains(text, digest) {
+			t.Errorf("%s does not hold the SHA-1 of the long value", what)
+		}
+		if !strings.Contains(text, at) {
+			t.Errorf("%s does not hold a %d-byte value in full", what, len(at))
+		}
+	}
+}

@@ -106,6 +106,10 @@ var checkWaitsDirs = []string{"internal", "cmd"}
 // that is not there is not an error: a checkout without cmd/ is still checked
 // for the part it has.
 func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
+	return walkCITestFilesWith(root, defaultSourceSeams(), fn)
+}
+
+func walkCITestFilesWith(root string, seams SourceSeams, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkWaitsDirs {
 		base := filepath.Join(root, dir)
 		if _, statErr := os.Stat(base); statErr != nil {
@@ -114,7 +118,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := seams.walk(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -128,7 +132,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			if !strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			raw, readErr := readSourceFile(path)
+			raw, readErr := seams.readFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -151,6 +155,11 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 // repository; testdata directories are skipped so the fixtures are never read
 // as offenders.
 func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
+	return checkWaitsWith(root, allowlistPath, defaultSourceSeams())
+}
+
+// checkWaitsWith is CheckWaits reading the tree through seams.
+func checkWaitsWith(root, allowlistPath string, seams SourceSeams) (WaitsResult, error) {
 	var res WaitsResult
 	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
@@ -158,9 +167,9 @@ func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = walkCITestFiles(root, func(rel string, raw []byte) error {
+	err = walkCITestFilesWith(root, seams, func(rel string, raw []byte) error {
 		res.Tests++
-		findings, ok := scanWaitFile(rel, raw)
+		findings, ok := scanWaitFileWith(rel, raw, seams)
 		if ok {
 			res.Findings = append(res.Findings, findings...)
 		}
@@ -288,7 +297,11 @@ func matchWaitAllow(entries []waitAllow, used []bool, f WaitFinding) int {
 // cannot carry the shapes this check reads, and a fixture deliberately holding
 // a broken literal is not the offender itself.
 func scanWaitFile(rel string, src []byte) ([]WaitFinding, bool) {
-	fset, file, err := parseSource(rel, src, 0)
+	return scanWaitFileWith(rel, src, defaultSourceSeams())
+}
+
+func scanWaitFileWith(rel string, src []byte, seams SourceSeams) ([]WaitFinding, bool) {
+	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

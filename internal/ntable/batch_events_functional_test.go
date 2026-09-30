@@ -10,7 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,12 +96,21 @@ func TestBatchScoresAreTheExactDecimalStringsTheStoreHolds(t *testing.T) {
 	c, ctx := probeTable(t)
 	scores := []string{"0.30000000000000004", "0.3", "123456789012345678", "-2.5e-7", "1e21", "5"}
 	var members []string
+	inputByID := map[string]string{}
 	for i, sc := range scores {
-		members = append(members, fmt.Sprintf(`{"id":"s%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":%s}}`, i, sc))
+		id := fmt.Sprintf("s%d", i)
+		members = append(members, fmt.Sprintf(`{"id":%q,"expect":{"absent":true},"create":{"row":"build","col":"ready","score":%s}}`, id, sc))
+		inputByID[id] = sc
 	}
 	r, err := ntable.ApplyBatch(ctx, c, mustManifest(t, manifestWith(probeRev(ctx, c), "exact", strings.Join(members, ","))))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if r.BatchDelta == nil {
+		t.Fatal("receipt has no batch delta")
+	}
+	if len(r.BatchDelta.Members) != len(scores) {
+		t.Fatalf("receipt has %d members, want %d: %+v", len(r.BatchDelta.Members), len(scores), r.BatchDelta)
 	}
 	set, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"s0", "s1", "s2", "s3", "s4", "s5"})
 	if err != nil {
@@ -115,14 +125,34 @@ func TestBatchScoresAreTheExactDecimalStringsTheStoreHolds(t *testing.T) {
 	if err := json.Unmarshal([]byte(events[len(events)-1]["members"]), &eventMembers); err != nil {
 		t.Fatal(err)
 	}
+	if len(eventMembers) != len(scores) {
+		t.Fatalf("event has %d members, want %d", len(eventMembers), len(scores))
+	}
 	byID := map[string]string{}
 	for _, m := range eventMembers {
 		byID[m["id"]] = m["score"]
 	}
-	for i, m := range r.BatchDelta.Members {
+	if len(byID) != len(scores) {
+		t.Fatalf("event has repeated member IDs: %v", eventMembers)
+	}
+	seenIDs := map[string]bool{}
+	for _, m := range r.BatchDelta.Members {
+		input, expected := inputByID[m.ID]
+		if !expected || seenIDs[m.ID] {
+			t.Fatalf("unexpected or repeated receipt member %q", m.ID)
+		}
+		seenIDs[m.ID] = true
 		text, err := resp2.Do(ctx, "ZSCORE", ntable.CellKey("demo", "build", "ready"), m.ID).Text()
 		if err != nil {
 			t.Fatal(err)
+		}
+		wantFloat, err := strconv.ParseFloat(input, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotFloat, err := strconv.ParseFloat(text, 64)
+		if err != nil || math.Float64bits(gotFloat) != math.Float64bits(wantFloat) {
+			t.Errorf("%s: store score %q does not round-trip input %q: %v", m.ID, text, input, err)
 		}
 		if m.AfterScoreText == nil || *m.AfterScoreText != text {
 			t.Errorf("%s: the receipt says %v, the store holds %q", m.ID, m.AfterScoreText, text)
@@ -135,25 +165,13 @@ func TestBatchScoresAreTheExactDecimalStringsTheStoreHolds(t *testing.T) {
 			t.Errorf("%s: read set says %q, the store holds %q", m.ID, sm.ScoreText, text)
 		}
 		if other, dup := seen[text]; dup {
-			t.Errorf("scores %s and %s both render as %q", scores[i], other, text)
+			t.Errorf("scores %s and %s both render as %q", input, other, text)
 		}
-		seen[text] = scores[i]
+		seen[text] = input
 	}
-	if got := seen["0.30000000000000004"]; got != "0.30000000000000004" {
-		t.Errorf("0.30000000000000004 did not survive: %v", seen)
+	if len(seenIDs) != len(inputByID) {
+		t.Fatalf("receipt omitted members: got %v, want %v", seenIDs, inputByID)
 	}
-	if strings.Contains(fmt.Sprint(keysOf(seen)), "e+17") {
-		t.Errorf("a score was rendered as a lossy exponent: %v", keysOf(seen))
-	}
-}
-
-func keysOf(m map[string]string) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func mustManifest(t *testing.T, raw string) ntable.BatchManifest {

@@ -226,6 +226,16 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 	if _, err := ntable.CellAdd(ctx, writer, "demo", "r", "ready", "job", 7); err != nil {
 		t.Fatal(err)
 	}
+	// the coordinator row runs a batch as it is written in source; the reader row does not
+	batch := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: writer.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val(), OperationID: "acl-1", Members: []ntable.BatchMemberEntry{
+		{ID: "bm", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r", Col: "working", Score: 1}, Set: map[string]string{"k": "v"}, Unset: []string{"gone"}}}}
+	if _, err := ntable.ApplyBatch(ctx, writer, batch); err != nil {
+		t.Fatalf("batch as ns-coordinator: %v", err)
+	}
+	batch.OperationID = "acl-2"
+	if _, err := ntable.ApplyBatch(ctx, reader, batch); err == nil || !strings.Contains(err.Error(), "NOPERM") && !strings.Contains(err.Error(), "no permissions") {
+		t.Fatalf("batch as the reader: %v", err)
+	}
 	if tb, err := ntable.Read(ctx, reader, "demo"); err != nil || len(tb.Rows) != 1 || tb.Rows[0].Cells[0].Unread || tb.Rows[0].Cells[0].Count != 1 {
 		t.Fatalf("reader snapshot: %+v %v", tb, err)
 	}
