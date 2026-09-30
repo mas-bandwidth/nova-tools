@@ -235,7 +235,9 @@ func TestL1ExactLineCapabilityAuthorityAndAccounting(t *testing.T) {
 			t.Errorf("%s answer = %+v", tc.mode, reply)
 		} else if tc.xrange == 1 &&
 			(reply.Answers[0].CellDelta != 1 || reply.Answers[0].StoreDelta != 2 ||
-				reply.Answers[0].FetchedDelta <= 0 || reply.Answers[0].FetchedDelta > 256) {
+				(tc.count == 0 && reply.Answers[0].FetchedDelta != 0) ||
+				(tc.count > 0 && (reply.Answers[0].FetchedDelta <= 0 ||
+					reply.Answers[0].FetchedDelta > 256))) {
 			t.Errorf("%s raw XRANGE cost = %+v", tc.mode, reply.Answers[0])
 		}
 		if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
