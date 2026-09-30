@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -684,3 +685,121 @@ func (r *Redis) Coordinator(ctx context.Context) (string, error) {
 func (r *Redis) SetCoordinator(ctx context.Context, name string) error {
 	return r.C.Set(ctx, r.Names.Key(keyCoordinator), name, 0).Err()
 }
+
+// changeEvent is the part of a table change stream's event the twin reads
+// (twin.go): the revisions it moved the table between, the epoch, the verb,
+// and the records it names.
+type changeEvent struct {
+	epoch, verb         string
+	before, after       uint64
+	members, batchDelta string
+}
+
+// changePage is how many events one read of a change stream takes.
+const changePage = 64
+
+// twinVerbs are the table writes whose events name every record they changed
+// (a batch's account names each of its entries; a row's texts and rows name
+// none): any other write in the span makes the twin read the table whole.
+var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true}
+
+// TableChanges reads the table's change stream from its newest event back to
+// the one that left revision from, and says the records the writes between
+// from and to named (twin.go). ok is false when the events do not chain from
+// from to to at the pinned epoch, or one is a write that does not name its
+// records.
+func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64) ([]string, bool, error) {
+	if to < from {
+		return nil, false, nil
+	}
+	if to == from {
+		return nil, true, nil
+	}
+	key := ntable.DefKey(table) + ":changes"
+	epoch := strconv.FormatUint(r.Pinned, 10)
+	need := to
+	var ids []string
+	end := "+"
+	for page := 0; page < 64; page++ {
+		evs, err := r.C.XRevRangeN(ctx, key, end, "-", changePage).Result()
+		if err != nil && strings.Contains(err.Error(), "NOPERM") {
+			// a user not granted the stream's read: the twin reads the
+			// tables whole
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if len(evs) == 0 {
+			return nil, false, nil
+		}
+		for _, x := range evs {
+			ev := readChange(x.Values)
+			if ev.epoch != epoch || ev.after > to {
+				// another epoch's, or written after the shape was read (the
+				// read of the records sees it, and refuses the revision)
+				continue
+			}
+			if ev.after != need || !twinVerbs[ev.verb] {
+				return nil, false, nil
+			}
+			named, err := changeIDs(ev)
+			if err != nil {
+				return nil, false, nil
+			}
+			ids = append(ids, named...)
+			need = ev.before
+			if need == from {
+				return ids, true, nil
+			}
+			if need < from {
+				return nil, false, nil
+			}
+		}
+		end = "(" + evs[len(evs)-1].ID
+	}
+	return nil, false, nil
+}
+
+func readChange(v map[string]any) changeEvent {
+	str := func(k string) string { s, _ := v[k].(string); return s }
+	ev := changeEvent{epoch: str("epoch"), verb: str("verb"), members: str("members"), batchDelta: str("batch_delta")}
+	ev.before, _ = strconv.ParseUint(str("rev_before"), 10, 64)
+	ev.after, _ = strconv.ParseUint(str("rev_after"), 10, 64)
+	return ev
+}
+
+// changeIDs is the records an event names: the members it moved and every
+// entry of its batch's account.
+func changeIDs(ev changeEvent) ([]string, error) {
+	var out []string
+	var moved []struct {
+		ID string `json:"id"`
+	}
+	if ev.members != "" && ev.members != "[]" {
+		if err := json.Unmarshal([]byte(ev.members), &moved); err != nil {
+			return nil, err
+		}
+	}
+	for _, m := range moved {
+		out = append(out, m.ID)
+	}
+	if ev.batchDelta != "" {
+		var d struct {
+			Members []struct {
+				ID string `json:"id"`
+			} `json:"members"`
+		}
+		if err := json.Unmarshal([]byte(ev.batchDelta), &d); err != nil {
+			return nil, err
+		}
+		for _, m := range d.Members {
+			out = append(out, m.ID)
+		}
+	} else if ev.verb == "apply" {
+		return nil, fmt.Errorf("a batch event without its account")
+	}
+	return out, nil
+}
+
+var _ TableChanger = (*Redis)(nil)

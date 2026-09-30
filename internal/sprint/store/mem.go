@@ -91,6 +91,16 @@ type memTable struct {
 	rev     uint64
 	members map[string]*memMember
 	ops     map[string]memOp
+	// changes is the table's change stream: each write's revisions, epoch,
+	// verb and the records it named (TableChanges).
+	changes []memChange
+}
+
+// memChange is one event of a table's change stream.
+type memChange struct {
+	epoch, before, after uint64
+	verb                 string
+	ids                  []string
 }
 
 // memEpoch is a table's rows, text cells and properties at one epoch.
@@ -318,6 +328,9 @@ func (m *Mem) ReadSet(_ context.Context, table string, ids []string) (ntable.Rea
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Calls["readset"]++
+	if err := m.fail("readset " + table); err != nil {
+		return ntable.ReadSetResult{}, err
+	}
 	if len(ids) == 0 || len(ids) > ntable.LimitReadSetMembers {
 		return ntable.ReadSetResult{}, refusal("LIMIT", fmt.Sprintf("read set members: bound %d, observed %d", ntable.LimitReadSetMembers, len(ids)))
 	}
@@ -470,6 +483,11 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	before := t.rev
 	t.rev++
 	t.wrote[active] = true
+	ids := make([]string, len(man.Members))
+	for i, e := range man.Members {
+		ids[i] = e.ID
+	}
+	t.changes = append(t.changes, memChange{epoch: active, before: before, after: t.rev, verb: "apply", ids: ids})
 	outcome := "changed"
 	if delta.ChangedCount == 0 && len(changedProps) == 0 {
 		outcome = "noop"
@@ -629,6 +647,7 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	}
 	t.rev++
 	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "rows_add"})
 	return nil
 }
 
@@ -669,6 +688,7 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 	}
 	t.rev++
 	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_set"})
 	return nil
 }
 
@@ -1027,3 +1047,31 @@ func (m *Mem) Revision(table string) uint64 {
 	}
 	return 0
 }
+
+// TableChanges is the records the table's writes between two revisions
+// named, from its change stream, as the table layer's (twin.go).
+func (m *Mem) TableChanges(_ context.Context, table string, from, to uint64) ([]string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t := m.tables[table]
+	if t == nil || to < from {
+		return nil, false, nil
+	}
+	active := m.active(t)
+	need := to
+	var ids []string
+	for i := len(t.changes) - 1; i >= 0 && need > from; i-- {
+		c := t.changes[i]
+		if c.epoch != active || c.after > to {
+			continue
+		}
+		if c.after != need {
+			return nil, false, nil
+		}
+		ids = append(ids, c.ids...)
+		need = c.before
+	}
+	return ids, need == from, nil
+}
+
+var _ TableChanger = (*Mem)(nil)

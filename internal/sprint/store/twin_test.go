@@ -6,20 +6,24 @@ package store
 // against a fresh read of the same generation (checkTwin, store_test.go).
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// A tick of a busy sprint reads the store once: its first read. Every part
-// after it plans on the twin (checked against a fresh read at every part),
-// and nothing it read was stale, since no other writer wrote during it.
+// A busy sprint is read whole once: the first tick reads the four tables,
+// and every tick after reads only the records the world's writes between
+// changed (each table caught up from its change stream, counted stale),
+// never a table whole. Every read of the twin is checked against a fresh
+// read (checkTwin).
 func TestATickReadsTheSprintOnce(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(200)
 	h.startMachine()
+	caught := int64(0)
 	for i := 0; i < 8; i++ {
 		res := h.machine()
 		if res.State != Running || res.Done != "" {
@@ -29,14 +33,17 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 			break
 		}
 		c := res.Cost()
+		// the first tick tells of the harness's machines that beat before
+		// they were brought up: a step of its own, before the tick's read
+		c.Reads -= res.Times[0].Reads
+		want := int64(0)
 		if i == 0 {
-			// the first tick tells of the harness's machines that beat before
-			// they were brought up: a step of its own, before the tick's read
-			c.Reads -= res.Times[0].Reads
+			want = int64(len(All))
 		}
-		if c.Reads != 1 || c.Stale != 0 {
-			t.Fatalf("tick %d: %d whole reads, %d stale; want 1 and 0: %s", i+1, c.Reads, c.Stale, res.TimesLine())
+		if c.Reads != want {
+			t.Fatalf("tick %d: %d tables read whole, want %d: %s", i+1, c.Reads, want, res.TimesLine())
 		}
+		caught += c.Stale
 		if i == 0 && len(res.Parts) == 0 {
 			t.Fatal("the first tick did nothing: the sprint is not busy")
 		}
@@ -44,6 +51,9 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 		h.work("m2")
 		h.readAll()
 		h.landAll("s1")
+	}
+	if caught == 0 {
+		t.Fatal("no tick caught a table up from its change stream: the world's writes were not read")
 	}
 	if st := h.stats().twin.Load(); st == 0 {
 		t.Fatal("no part planned on the twin")
@@ -53,10 +63,11 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 // stats is the harness store's counters.
 func (h *harness) stats() *Stats { return h.st.stats() }
 
-// A write by another writer between two parts of a tick makes the next part
-// read the store again (counted as stale), and it plans on what that writer
-// wrote: the finish during the tick is queued, not lost, and the tick after
-// drains it.
+// A write by another writer between two parts of a tick is caught up by the
+// next part (counted stale) from the table's change stream: only the records
+// it changed are read, never a table whole, and the part plans on what that
+// writer wrote: the finish during the tick is queued, not lost, and the tick
+// after drains it.
 func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -85,8 +96,8 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 	}}}}, sprint.TickTables[2], sprint.TickTables[3]}
 	res := h.machine()
 	c := res.Cost()
-	if c.Stale == 0 || c.Reads < 2 {
-		t.Fatalf("a finish during the tick: %d whole reads, %d stale; want a second read, counted stale: %s", c.Reads, c.Stale, res.TimesLine())
+	if c.Stale == 0 || c.Reads != 0 || c.Rows > int64(4*len(ids)+8) {
+		t.Fatalf("a finish during the tick: %d tables read whole, %d caught up, %d records read; want none whole, one or more caught up, a few records: %s", c.Reads, c.Stale, c.Rows, res.TimesLine())
 	}
 	h.st.Updates = nil
 	h.machine()
@@ -121,4 +132,45 @@ func TestATwinThatDriftsIsCaught(t *testing.T) {
 		t.Fatalf("a scribbled twin was not caught: %v", err)
 	}
 	t.Logf("caught: %v", err)
+}
+
+// A read of the twin cut short (the store failed as it read a table whole)
+// leaves no table half read: the next read reads it whole, and the twin is
+// the state a fresh read gives. The mutation this pins: a table put in the
+// twin before its records were read stays empty at its revision for good.
+func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(6)
+	h.startMachine()
+	h.machine()
+	h.work("m1")
+	h.readAll()
+	failed := false
+	h.m.Fail = func(point string) error {
+		if point == "readset t-merge" && !failed {
+			failed = true
+			return errors.New("the store went away")
+		}
+		return nil
+	}
+	tw := NewTwin()
+	if _, _, err := h.st.twinRead(h.ctx, tw, tickExtras, nil); err == nil || !failed {
+		t.Fatalf("the cut read: %v (failed %v)", err, failed)
+	}
+	h.m.Fail = nil
+	snap, gen, err := h.st.twinRead(h.ctx, tw, tickExtras, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, at, err := h.st.Fenced(h.ctx, All, tickExtras, nil)
+	if err != nil || at != gen.Gen {
+		t.Fatalf("fresh read: %v at %d, twin at %d", err, at, gen.Gen)
+	}
+	if d := TwinDiff(snap, fresh); d != "" {
+		t.Fatalf("the twin after a cut read: %s", d)
+	}
+	if len(snap.Merge.LoadedCards()) == 0 {
+		t.Fatal("the merge table is empty: the check shows nothing")
+	}
 }

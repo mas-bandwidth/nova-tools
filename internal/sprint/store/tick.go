@@ -584,6 +584,7 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	began := time.Now()
 	st.stats()
+	st.twin() // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()
 	st, err = st.repin(ctx)
 	if err != nil {
@@ -806,8 +807,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err != nil {
 		return last, err
 	}
+	// The tick's one read of the sprint: its twin brought up to date
+	// (twin.go), which every part then plans on; the run loop keeps it from
+	// one tick to the next.
+	twin := st.twin()
 	read := st.meter()
-	snap, gen, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	snap, _, err := pinned.twinRead(withBudget(ctx), twin, tickExtras, nil)
 	res.Times = append(res.Times, read.part("", "first read"))
 	unfinished := seen
 	unfinished.Full = time.Time{}
@@ -821,10 +826,6 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	at := snap.Epoch
 	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
-	// the tick's one read of the sprint: every part plans on its twin
-	// (twin.go), and reads the store again only when another writer wrote
-	twin := NewTwin()
-	twin.seed(snap, gen)
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: snap, queues: map[string]int{}, twin: twin}
 	updates := st.Updates
 	if updates == nil {

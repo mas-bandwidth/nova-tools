@@ -80,6 +80,7 @@ type Store struct {
 	// from the tick's twin with a fresh read of the same generation: an error
 	// fails the step (twin.go).
 	CheckTwin func(twin, fresh *sprint.Snapshot) error
+	tw        *Twin     // the store's twin (twin.go): kept from one tick to the next
 	root      Backend   // the backend before pinning
 	epoch     uint64    // the epoch the store is pinned to
 	cleared   time.Time // when the pinned epoch began
