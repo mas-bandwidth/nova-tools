@@ -84,7 +84,7 @@ func fairStreams(t *testing.T, count, width int) {
 		if tick == 3 {
 			before := ta.streamIndexes()
 			ta.ok("stop")
-			if after := ta.streamIndexes(); after != before || !strings.Contains(before, sprint.PropStreamIndex+"=s") {
+			if after := ta.streamIndexes(); after != before || !strings.HasPrefix(before, sprint.PropStreamIndex+"=") || strings.HasPrefix(before, sprint.PropStreamIndex+"= ") {
 				t.Fatalf("the indexes across a stop: %s, then %s", before, after)
 			}
 			ta.ok("start")

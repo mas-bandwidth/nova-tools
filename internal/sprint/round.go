@@ -3,6 +3,8 @@ package sprint
 import (
 	"math"
 	"slices"
+	"strconv"
+	"strings"
 )
 
 // The deal goes round the fleet and the ask goes round the readers (errata 3,
@@ -33,24 +35,25 @@ import (
 // The index is a property of the fleet table (the deal's, deal_index) and of
 // the readers table (the ask's, ask_index), the owner's ruling ("a property
 // of the reader table and the fleet table respectively; not a property of the
-// work stream"): the name the index is past, read with the table and written
+// work stream"): the index's counter (round), read with the table and written
 // by the step that deals (asks) in the same atomic batch as its cards, guarded
 // on the value the step read (Plan.Props; the table layer's properties, L1
 // contract amendment of 2026-09-30). So it is atomic with the deal and
 // survives a stop and a start of the machine and a new loop, and a clear
-// starts the next epoch at the first name. The model is
+// starts the next epoch at counter 0, the first name. The model is
 // tla/SprintEvents.tla: dcur and acur, moved by the deal's and the ask's
 // effects, and PlanDeal's and PlanAsk's choice from them (RoundAssign,
 // RoundTwo).
 const (
-	// PropDealIndex is the fleet table's property: the member the last card
-	// was dealt to.
+	// PropDealIndex is the fleet table's property: the deal's counter, a
+	// decimal uint64 (round).
 	PropDealIndex = "deal_index"
-	// PropAskIndex is the readers table's property: the reader the last read
-	// was asked of round the readers.
+	// PropAskIndex is the readers table's property: the ask's counter round
+	// the readers, a decimal uint64 (round).
 	PropAskIndex = "ask_index"
-	// PropStreamIndex is the work table's property of the deal: the stream of
-	// the last primary dealt (streamTurns). PropAskStreamIndex and
+	// PropStreamIndex is the work table's property of the deal: its counter
+	// round the streams, moved past the stream of each primary dealt
+	// (streamTurns). PropAskStreamIndex and
 	// PropAcceptStreamIndex are the ask's and the accept's: each step that
 	// takes cards across the streams keeps its own, so that one step's move
 	// never resets another's rotation (a shared index moved by an ask of one
@@ -63,38 +66,74 @@ const (
 
 // round is a rolling index into names, in name order: the next name is the
 // first from the index, wrapping, that is acceptable.
+//
+// The index is a counter (the owner's form, errata 3 amendment 5: "The modulo
+// index can and does start at zero, it's just that past that point it can be
+// a uint64 that increments with each step, and then is modulo by count"): a
+// uint64 that starts at 0 with the epoch and goes up with every placement, the
+// place a scan starts at the counter modulo the number of names. A placement
+// on a name moves the counter past it: by one when the name is the one at the
+// counter, and past each name skipped before it (a member down or full), so a
+// skipped name's turn is not given to its neighbour twice. The counter is
+// never a name: it is written as a decimal with the step that moves it,
+// persists across plans, parts, ticks, stops and loops, and only a clear, which
+// starts the next epoch's table with no property, resets it. The model is
+// tla/SprintEvents.tla, dcur and acur: the counter modulo the number of names
+// is the model's place in the ring.
 type round struct {
 	order []string
-	at    int    // the index: the place in order the next scan starts at
+	count uint64 // the counter: placements made, and the names skipped before them
 	table string // the table whose property holds it
 	name  string // the property
 	read  string // the value the step read
 	had   bool   // whether the table had the property
-	last  string // the name the index moved past in this plan, "" when none
 }
 
-// newRound is the index over the names just past last (the first name above
-// it in name order, so a name since removed still places it).
-func newRound(names []string, last string) *round {
+// newRound is the index over names at the counter a table's property holds.
+// A property that is not a counter (a name, as a store written before the
+// counter holds it) places the index just past that name (the first name above
+// it in name order, so a name since removed still places it), at the counter
+// of that place.
+func newRound(names []string, value string) *round {
 	order := append([]string(nil), names...)
 	slices.Sort(order)
-	r := &round{order: order}
-	if last != "" {
-		i, found := slices.BinarySearch(order, last)
-		if found {
-			i++
-		}
-		r.at = i
-	}
-	return r
+	return &round{order: order, count: roundCount(order, value)}
 }
+
+// roundCount is the counter a property's value holds over order: its decimal,
+// 0 when it has none, and for a name the place just past it.
+func roundCount(order []string, value string) uint64 {
+	if value == "" {
+		return 0
+	}
+	if n, err := strconv.ParseUint(value, 10, 64); err == nil {
+		return n
+	}
+	i, found := slices.BinarySearch(order, value)
+	if found {
+		i++
+	}
+	return uint64(i)
+}
+
+// start is the place in order the next scan starts at: the counter modulo the
+// number of names.
+func (r *round) start() int {
+	if len(r.order) == 0 {
+		return 0
+	}
+	return int(r.count % uint64(len(r.order)))
+}
+
+// value is the counter as the table's property holds it.
+func (r *round) value() string { return strconv.FormatUint(r.count, 10) }
 
 // scan is the first name from the index, wrapping, that ok accepts; "" when
 // none does.
 func (r *round) scan(ok func(string) bool) string {
 	n := len(r.order)
 	for i := 0; i < n; i++ {
-		if x := r.order[(r.at+i)%n]; ok(x) {
+		if x := r.order[(r.start()+i)%n]; ok(x) {
 			return x
 		}
 	}
@@ -107,7 +146,7 @@ func (r *round) scan(ok func(string) bool) string {
 // moves it past each (moved), in order.
 func (r *round) picks(k int, taken []string, ok func(string) bool) []string {
 	var out []string
-	at := r.at
+	at := r.start()
 	n := len(r.order)
 	for len(out) < k {
 		pick := -1
@@ -127,11 +166,13 @@ func (r *round) picks(k int, taken []string, ok func(string) bool) []string {
 	return out
 }
 
-// moved moves the index past name: the next scan starts at the name after it.
+// moved moves the index past name: the counter goes up by one for the
+// placement and by one for each name it passed over to reach name, so the next
+// scan starts at the name after it (errata 3 amendment 5, the owner's form).
 func (r *round) moved(name string) {
 	if i, found := slices.BinarySearch(r.order, name); found {
-		r.at = i + 1
-		r.last = name
+		n := len(r.order)
+		r.count += uint64((i-r.start()+n)%n) + 1
 	}
 }
 
@@ -218,7 +259,7 @@ func (r *round) levelTo(up []string, n, held, widths map[string]int) string {
 func dealRoundWith(s *Snapshot, extra ...string) *round {
 	names := append([]string(nil), s.Fleet.Rows()...)
 	for _, x := range extra {
-		if !contains(names, x) {
+		if x != "" && !contains(names, x) {
 			names = append(names, x)
 		}
 	}
@@ -227,9 +268,9 @@ func dealRoundWith(s *Snapshot, extra ...string) *round {
 
 // tableRound is the rolling index a table's property holds over names.
 func tableRound(t *Table, name string, names []string) *round {
-	last, had := t.Prop(name)
-	r := newRound(names, last)
-	r.table, r.name, r.read, r.had = t.Name, name, last, had
+	value, had := t.Prop(name)
+	r := newRound(names, value)
+	r.table, r.name, r.read, r.had = t.Name, name, value, had
 	return r
 }
 
@@ -276,7 +317,7 @@ func streamTurns(cards []*Card, r *round) []*Card {
 	var order []string
 	n := len(r.order)
 	for i := 0; i < n; i++ {
-		st := r.order[(r.at+i)%n]
+		st := r.order[(r.start()+i)%n]
 		order = append(order, st)
 		known[st] = true
 	}
@@ -343,22 +384,42 @@ func streamIndexWrite(p *Plan, r *round, primary func(key string) *Card) {
 }
 
 // roundMoves are the names the units of a plan moved an index past, by unit
-// key ("" when the unit did not move it: an ask of the readers the primary
-// names).
+// key, in the order the unit moved it past them, joined by commas ("" when the
+// unit did not move it: an ask of the readers the primary names).
 type roundMoves map[string]string
 
-// roundWrites writes where a plan's kept units left an index: the table's
-// property set to the name the last kept unit that moved it moved it past,
-// guarded on the value the step read, in the step's batch of that table.
+// roundWrites writes where a plan's kept units left an index: the counter the
+// step read moved past the names of each kept unit, in the plan's order, so it
+// goes up with every placement the step makes (a unit the plan dropped moves
+// it no more), written as the table's property, guarded on the value the step
+// read, in the step's batch of that table (errata 3 amendment 5, the owner's
+// form; tla/SprintEvents.tla dcur and acur).
 func roundWrites(p *Plan, r *round, moves roundMoves) {
-	last := ""
-	for _, u := range p.Units {
-		if m := moves[u.Key]; m != "" {
-			last = m
-		}
-	}
-	if last == "" {
+	if r == nil || len(moves) == 0 {
 		return
 	}
-	p.Props = append(p.Props, PropWrite{Table: r.table, Name: r.name, Value: last, Was: r.read, WasAbsent: !r.had})
+	w := &round{order: r.order, count: roundCount(r.order, r.read)}
+	moved := false
+	for _, u := range p.Units {
+		m := moves[u.Key]
+		if m == "" {
+			continue
+		}
+		for _, x := range strings.Split(m, ",") {
+			w.moved(x)
+		}
+		moved = true
+	}
+	if !moved {
+		return
+	}
+	p.Props = append(p.Props, PropWrite{Table: r.table, Name: r.name, Value: w.value(), Was: r.read, WasAbsent: !r.had})
+}
+
+// joinMoves is a unit's moves with one more name it moved an index past.
+func joinMoves(moves, name string) string {
+	if moves == "" {
+		return name
+	}
+	return moves + "," + name
 }

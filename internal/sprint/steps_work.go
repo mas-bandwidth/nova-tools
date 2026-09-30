@@ -610,7 +610,8 @@ type DealReq struct {
 // amendment 5): the first from the rolling index, wrapping, that is up and
 // holds fewer work cards, ready and working, than its width (width.go, errata
 // 3 amendment 9), or, when none has room, the first up; the index (the fleet
-// table's deal_index) moves past the member dealt to, written with the deal.
+// table's deal_index, a counter) moves past the member dealt to, written with
+// the deal.
 // Every card of the selection is dealt in the one plan, one card at a time
 // round the fleet. A card withdrawn because no member was up is the
 // same card dealt again at a new generation, its attempt unchanged; otherwise

@@ -29,6 +29,7 @@ package refmodel
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -214,11 +215,12 @@ type State struct {
 	// Coordinator is the one actor who releases sentinels.
 	Coordinator string
 	// DealLast and AskLast are the rolling indexes of the deal and the ask
-	// (errata 3, amendment 5; tla/SprintEvents.tla dcur and acur): the member
-	// the last card was dealt to and the reader the last read was asked of
-	// round the readers, this epoch. The next member is the first up with
-	// room past DealLast in name order, wrapping; the next readers the first
-	// able past AskLast.
+	// (errata 3, amendment 5; tla/SprintEvents.tla dcur and acur): each a
+	// counter, as the table's property holds it (a decimal uint64 from 0 this
+	// epoch, up by one with every placement and by one for every name passed
+	// over, roundPast). The next member is the first up with room from
+	// DealLast modulo the members in name order, wrapping; the next readers
+	// the first able from AskLast modulo the readers.
 	DealLast, AskLast string
 	// StreamLast, AskStreamLast and AcceptStreamLast are the work table's
 	// stream indexes of the deal, the ask and the accept (errata 3 amendment
@@ -416,17 +418,56 @@ func (s State) RL(m string) int {
 	return n
 }
 
-// roundFrom is where a rolling index past last starts in order (sorted): the
-// first name above last, 0 when last is "".
-func roundFrom(order []string, last string) int {
-	if last == "" {
+// roundFrom is where a rolling index starts in order (sorted): its counter
+// modulo the number of names (errata 3 amendment 5, the owner's form: a uint64
+// from 0 that goes up with every placement, modulo the count); a value that is
+// not a counter (a name) starts just past that name.
+func roundFrom(order []string, value string) int {
+	if len(order) == 0 {
 		return 0
 	}
-	i := sort.SearchStrings(order, last)
-	if i < len(order) && order[i] == last {
+	return int(roundCount(order, value) % uint64(len(order)))
+}
+
+// roundCount is the counter a rolling index's value holds over order: its
+// decimal, 0 when it is empty, and for a name the place just past it.
+func roundCount(order []string, value string) uint64 {
+	if value == "" {
+		return 0
+	}
+	if n, err := strconv.ParseUint(value, 10, 64); err == nil {
+		return n
+	}
+	i := sort.SearchStrings(order, value)
+	if i < len(order) && order[i] == value {
 		i++
 	}
-	return i
+	return uint64(i)
+}
+
+// roundPast is the counter value moved past name by a placement on it: up by
+// one for the placement and by one for each name passed over from where the
+// index starts to reach it (SprintEvents.tla Past, on the counter).
+func roundPast(order []string, value, name string) string {
+	c := roundCount(order, value)
+	i := sort.SearchStrings(order, name)
+	if len(order) > 0 && i < len(order) && order[i] == name {
+		n := len(order)
+		c += uint64((i-int(c%uint64(n))+n)%n) + 1
+	}
+	return strconv.FormatUint(c, 10)
+}
+
+// streamOrder is the streams in name order: the ones the sprint has and extra.
+func (s State) streamOrder(extra ...string) []string {
+	names := s.StreamNames()
+	for _, st := range extra {
+		if _, ok := s.Streams[st]; !ok && !has(names, st) {
+			names = append(names, st)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // NextMember is the deal's choice (errata 3, amendment 5; SprintEvents.tla
@@ -646,13 +687,7 @@ func (s State) streamTurns(ids []string, last string) []string {
 		}
 	}
 	sort.Strings(names)
-	at := 0
-	if last != "" {
-		at = sort.SearchStrings(names, last)
-		if at < len(names) && names[at] == last {
-			at++
-		}
-	}
+	at := roundFrom(names, last)
 	var streams []string
 	for i := range names {
 		streams = append(streams, names[(at+i)%len(names)])

@@ -786,7 +786,7 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, rd := range rotated {
 			rr.moved(rd)
-			moves[c.ID] = rd
+			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for i, rd := range chosen {
 			u.Changes = append(u.Changes, change(Readers, createEntry(ids[i], rd, Asked, c.Score, map[string]string{
