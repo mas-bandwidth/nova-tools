@@ -31,7 +31,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -81,7 +80,9 @@ usage:
   nova-redis spill  --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text>
   nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
   nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
+                      (load registers functions onto Redis; write)
   nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
+                      (check evaluates registered functions read-only; read)
   nova-redis version
   nova-redis help
 
@@ -103,12 +104,13 @@ is lost after the store took it is SPILL UNCONFIRMED (exit 1): the write may
 have committed, so read it back with recall before spilling again.
 fn load puts the nova_sprint function library this binary embeds on the store
 unless the store holds exactly its code (LOADED, UNCHANGED or REPLACED, with
-its digest). fn check changes nothing: OK (exit 0), STALE or MISSING (exit 1)
-with the store's digest and this binary's. A failure of either is one FAILED
-line on stderr with the remedy for its cause: exit 1 when the store answered
-with a refusal (NOPERM, a library it would not take), exit 2 when no answer
-came or the login was refused. fn load is for the one place that deploys: it
-replaces other code under the library's name.
+its digest); load registers functions onto Redis (write). fn check changes
+nothing: OK (exit 0), STALE or MISSING (exit 1) with the store's digest and
+this binary's; check evaluates registered functions read-only (read). A
+failure of either is one FAILED line on stderr with the remedy for its cause:
+exit 1 when the store answered with a refusal (NOPERM, a library it would not
+take), exit 2 when no answer came or the login was refused. fn load is for the
+one place that deploys: it replaces other code under the library's name.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -130,6 +132,15 @@ example:
   nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
   nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
 `
+
+// fnHelpExtra provides extra subverbs explanation with read/write distinction
+// for `fn -h` / `fn --help`.
+func fnHelpExtra(verb string) string {
+	if verb == "fn" {
+		return "subverbs:\n  load   registers functions onto Redis (write)\n  check  evaluates registered functions read-only (read)\n"
+	}
+	return ""
+}
 
 // deps are the seams run() reaches the world through: the clock and the
 // environment. main() passes the real ones; tests pass a controlled clock and
@@ -166,7 +177,7 @@ func refuse(stderr io.Writer, where, what string) int {
 func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is dialed, launched or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-redis", usage, &code)
+	defer verbflag.RecoverWith(stdout, "nova-redis", usage, &code, fnHelpExtra)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library")
 	}
@@ -197,30 +208,23 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	}
 }
 
-// parse runs a verb's flag set and reports every required flag that was not
-// GIVEN, not only the first, so one run teaches the whole invocation.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) bool {
+// parse runs a verb's flag set and returns the set of flags that were given
+// on the command line. A flag syntax error (unknown flag, missing flag argument)
+// or an unexpected positional argument is refused at once.
+func parse(fs *flag.FlagSet, args []string, stderr io.Writer) (map[string]bool, bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), err.Error())
-		return false
+		return nil, false
 	}
 	if fs.NArg() > 0 {
 		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		return false
+		return nil, false
 	}
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	sort.Strings(required)
-	ok := true
-	for _, name := range required {
-		if !given[name] {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
-			ok = false
-		}
-	}
-	return ok
+	return given, true
 }
 
 func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
@@ -230,23 +234,48 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	name := fs.String("name", "", "key name")
 	ttlText := fs.String("ttl", "", "time to live")
 	value := fs.String("value", "", "value to spill")
-	if !parse(fs, args, stderr, "addr", "owner", "name", "ttl", "value") {
+	given, ok := parse(fs, args, stderr)
+	if !ok {
 		return 2
 	}
-	if err := validAddr(*store.addr); err != nil {
-		return refuse(stderr, " spill", err.Error())
+	var errs []string
+	for _, req := range []string{"addr", "name", "owner", "ttl", "value"} {
+		if !given[req] {
+			errs = append(errs, fmt.Sprintf("--%s is required; refusing to guess", req))
+		}
 	}
-	ttl, err := time.ParseDuration(*ttlText)
-	if err != nil {
-		return refuse(stderr, " spill", fmt.Sprintf("--ttl %q is not a duration (try 10m)", *ttlText))
+	errs = append(errs, store.validateFlags()...)
+	if given["owner"] {
+		if *owner == "" || strings.ContainsAny(*owner, ": \t\r\n") {
+			errs = append(errs, errNoOwner.Error())
+		}
 	}
-	// Refused before the dial: a write with no owner or no TTL never reaches
-	// the instance.
-	if err := validKey(*owner, *name, ttl); err != nil {
-		return refuse(stderr, " spill", err.Error())
+	if given["name"] {
+		if *name == "" || strings.ContainsAny(*name, " \t\r\n") {
+			errs = append(errs, errNoName.Error())
+		}
 	}
-	if err := store.check(d); err != nil {
-		return refuse(stderr, " spill", err.Error())
+	var ttl time.Duration
+	if given["ttl"] {
+		var err error
+		ttl, err = time.ParseDuration(*ttlText)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("--ttl %q is not a duration (try 10m)", *ttlText))
+		} else if ttl <= 0 {
+			errs = append(errs, errNoTTL.Error())
+		}
+	}
+	if len(errs) > 0 {
+		for _, e := range errs {
+			refuse(stderr, " spill", e)
+		}
+		return 2
+	}
+	if envErrs := store.validateEnv(d); len(envErrs) > 0 {
+		for _, e := range envErrs {
+			refuse(stderr, " spill", e)
+		}
+		return 2
 	}
 	ctx := context.Background()
 	conn, err := connect(ctx, store, d)
@@ -277,17 +306,38 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	store := loginFlags(fs)
 	owner := fs.String("owner", "", "owner prefix")
 	name := fs.String("name", "", "key name")
-	if !parse(fs, args, stderr, "addr", "owner", "name") {
+	given, ok := parse(fs, args, stderr)
+	if !ok {
 		return 2
 	}
-	if err := validAddr(*store.addr); err != nil {
-		return refuse(stderr, " recall", err.Error())
+	var errs []string
+	for _, req := range []string{"addr", "name", "owner"} {
+		if !given[req] {
+			errs = append(errs, fmt.Sprintf("--%s is required; refusing to guess", req))
+		}
 	}
-	if err := validKey(*owner, *name, time.Hour); err != nil {
-		return refuse(stderr, " recall", err.Error())
+	errs = append(errs, store.validateFlags()...)
+	if given["owner"] {
+		if *owner == "" || strings.ContainsAny(*owner, ": \t\r\n") {
+			errs = append(errs, errNoOwner.Error())
+		}
 	}
-	if err := store.check(d); err != nil {
-		return refuse(stderr, " recall", err.Error())
+	if given["name"] {
+		if *name == "" || strings.ContainsAny(*name, " \t\r\n") {
+			errs = append(errs, errNoName.Error())
+		}
+	}
+	if len(errs) > 0 {
+		for _, e := range errs {
+			refuse(stderr, " recall", e)
+		}
+		return 2
+	}
+	if envErrs := store.validateEnv(d); len(envErrs) > 0 {
+		for _, e := range envErrs {
+			refuse(stderr, " recall", e)
+		}
+		return 2
 	}
 	key := *owner + ":" + *name
 	ctx := context.Background()
@@ -307,7 +357,7 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 		fmt.Fprintf(stdout, "RECALL EXPIRED key=%s\n", oneline.Field(key))
 		return 1
 	case errors.Is(err, errUnbounded):
-		fmt.Fprintf(stdout, "RECALL UNBOUNDED key=%s remedy=%q\n", oneline.Field(key), "an unbounded key is a bug; it was not written by nova-redis spill")
+		fmt.Fprintf(stdout, "RECALL UNBOUNDED key=%s remedy=%q\n", oneline.Field(key), "recreate the key with nova-redis spill from its producer; an unbounded key is a bug and was not written by nova-redis spill")
 		return 1
 	case err != nil:
 		// A read has no side effect, so a reply that never came leaves the
@@ -368,15 +418,27 @@ func (l login) from(flagName, env string) string {
 // letters, digits and underscores, not starting with a digit.
 var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// check fills in the login flags that were not given from the environment
-// (--user from UserEnv; --password-env from PasswordEnvEnv, else
-// PasswordEnv) and refuses, before anything is dialled, a login the verb
-// could not make. Each refusal names where the bad value came from. It is
-// the first read of the environment a verb makes.
-func (l login) check(d deps) error {
-	if err := validAddr(*l.addr); err != nil {
-		return err
+// validateFlags checks login flags given directly on the CLI without touching the environment.
+func (l login) validateFlags() []string {
+	var errs []string
+	if l.given("addr") {
+		if err := validAddr(*l.addr); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
+	if l.given("password-env") && !envName.MatchString(*l.passwordEnv) {
+		errs = append(errs, fmt.Sprintf("--password-env %q is not a variable name; name the variable that holds the password (default %s)", *l.passwordEnv, PasswordEnv))
+	}
+	if l.given("user") && strings.ContainsAny(*l.user, " \t\r\n") {
+		errs = append(errs, fmt.Sprintf("--user %q holds whitespace; give the ACL user's name", *l.user))
+	}
+	return errs
+}
+
+// validateEnv checks the environment defaults and credentials.
+// It is called only after CLI flags are valid, so a refused invocation reads no login.
+func (l login) validateEnv(d deps) []string {
+	var errs []string
 	if !l.given("user") {
 		*l.user = d.getenv(UserEnv)
 	}
@@ -386,16 +448,33 @@ func (l login) check(d deps) error {
 			*l.passwordEnv = PasswordEnv
 		}
 	}
+	badEnv := false
 	if !envName.MatchString(*l.passwordEnv) {
-		return fmt.Errorf("%s %q is not a variable name; name the variable that holds the password (default %s)", l.from("password-env", PasswordEnvEnv), *l.passwordEnv, PasswordEnv)
+		errs = append(errs, fmt.Sprintf("%s %q is not a variable name; name the variable that holds the password (default %s)", l.from("password-env", PasswordEnvEnv), *l.passwordEnv, PasswordEnv))
+		badEnv = true
 	}
-	switch {
-	case *l.user == "":
-		return nil
-	case strings.ContainsAny(*l.user, " \t\r\n"):
-		return fmt.Errorf("%s %q holds whitespace; give the ACL user's name", l.from("user", UserEnv), *l.user)
-	case d.getenv(*l.passwordEnv) == "":
-		return fmt.Errorf("user %s (from %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, l.from("user", UserEnv), *l.passwordEnv, *l.passwordEnv)
+	if strings.ContainsAny(*l.user, " \t\r\n") {
+		errs = append(errs, fmt.Sprintf("%s %q holds whitespace; give the ACL user's name", l.from("user", UserEnv), *l.user))
+	} else if *l.user != "" && !badEnv && d.getenv(*l.passwordEnv) == "" {
+		errs = append(errs, fmt.Sprintf("user %s (from %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, l.from("user", UserEnv), *l.passwordEnv, *l.passwordEnv))
+	}
+	return errs
+}
+
+// check fills in the login flags that were not given from the environment
+// (--user from UserEnv; --password-env from PasswordEnvEnv, else
+// PasswordEnv) and refuses, before anything is dialled, a login the verb
+// could not make. Each refusal names where the bad value came from. It is
+// the first read of the environment a verb makes.
+func (l login) check(d deps) error {
+	if err := validAddr(*l.addr); err != nil {
+		return err
+	}
+	if errs := l.validateFlags(); len(errs) > 0 {
+		return errors.New(errs[0])
+	}
+	if errs := l.validateEnv(d); len(errs) > 0 {
+		return errors.New(errs[0])
 	}
 	return nil
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
@@ -70,17 +71,33 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 	if len(args) == 0 {
 		return refuse(stderr, " fn", "no subverb given; load puts this binary's function library on the store, check compares the store's with it")
 	}
+	verbflag.HelpIfAsked(args[:1], "fn")
 	sub := args[0]
 	if sub != "load" && sub != "check" {
 		return refuse(stderr, " fn", fmt.Sprintf("unknown subverb %q; want load or check", sub))
 	}
 	fs := flag.NewFlagSet("fn "+sub, flag.ContinueOnError)
 	store := loginFlags(fs)
-	if !parse(fs, args[1:], stderr, "addr") {
+	given, ok := parse(fs, args[1:], stderr)
+	if !ok {
 		return 2
 	}
-	if err := store.check(d); err != nil {
-		return refuse(stderr, " fn "+sub, err.Error())
+	var errs []string
+	if !given["addr"] {
+		errs = append(errs, "--addr is required; refusing to guess")
+	}
+	errs = append(errs, store.validateFlags()...)
+	if len(errs) > 0 {
+		for _, e := range errs {
+			refuse(stderr, " fn "+sub, e)
+		}
+		return 2
+	}
+	if envErrs := store.validateEnv(d); len(envErrs) > 0 {
+		for _, e := range envErrs {
+			refuse(stderr, " fn "+sub, e)
+		}
+		return 2
 	}
 	lib := library()
 	want, err := lib.Digest()
