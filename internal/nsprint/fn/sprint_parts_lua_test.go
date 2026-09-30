@@ -128,6 +128,14 @@ func TestSprintStaticPhaseRefusesALostQuarantine(t *testing.T) {
 		{"the body and an empty part", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{}}`, true},
 		{"another card in the part", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":[{"id":"p2","code":"DRIFT"}]}}`, true},
 		{"the same card in the part", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":[{"id":"p1","code":"DRIFT"}]}}`, false},
+		// A hand-made request, which the Go client cannot send: the static phase
+		// refuses it REQUEST and does not raise a script error (the call would
+		// fail the test), since it runs before any validation of the sprint half.
+		{"a card of the part with no id", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":[{"code":"DRIFT"}]}}`, true},
+		{"a card of the part whose id is a number", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":[{"id":7,"code":"DRIFT"}]}}`, true},
+		{"a card of the body with no id", `{"meta":{},"quarantine":[{"code":"DRIFT"}],"sprint":{"quarantine":[{"id":"p1","code":"DRIFT"}]}}`, true},
+		{"the part's list is an object", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":{"p1":{"id":"p1"}}}}`, true},
+		{"the body's list is a string", `{"meta":{},"quarantine":"p1","sprint":{"quarantine":[{"id":"p1","code":"DRIFT"}]}}`, true},
 	} {
 		reply := h.step(c.sprint)
 		if got := refusalCode(reply) == "REQUEST"; got != c.refused {

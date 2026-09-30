@@ -162,7 +162,7 @@ func edges() []edge {
 	}
 	// the clock at the top of the exact range, where until_ms must stay exact
 	topOfTime := func(t *testing.T, tw *Twin, clk *stepClock) { setClock(clk, maxExactMS-5) }
-	return []edge{
+	bounds := []edge{
 		{name: "lease hold at the cap", ok: lease("t", "n", LeaseHoldMaxMS, nil), bad: lease("t", "n", LeaseHoldMaxMS+1, nil)},
 		{name: "lease hold at one ms", ok: lease("t", "n", 1, nil), bad: lease("t", "n", 0, nil)},
 		{name: "lease hold that stays exact", setup: topOfTime, ok: lease("t", "n", 5, nil), bad: lease("t", "n", 6, nil)},
@@ -200,6 +200,22 @@ func edges() []edge {
 			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: rep(257, "c")}}})},
 		{name: "parked size is a decimal", ok: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Actual: "18446744073709551615"}}}),
 			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Actual: "18446744073709551616"}}})},
+		{name: "parked limit is a decimal", ok: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Limit: "18446744073709551615"}}}),
+			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Limit: "18446744073709551616"}}})},
+		{name: "parked size has no leading zero", ok: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Actual: "10"}}}),
+			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Actual: "010"}}})},
+		{name: "parked limit has no leading zero", ok: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Limit: "10"}}}),
+			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Limit: "010"}}})},
+		// The parked key's rule and budget: each a name, at most one name long (the
+		// recheck of IT16, finding 1; the mutations that removed either check
+		// passed the suite). A record is at most ParkedValueBytesMax because each of
+		// its text fields is bounded here, so a check that goes makes every later
+		// pop and ingest read of {p}parked@e refuse DRIFT.
+		{name: "parked rule bytes", ok: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Rule: rep(256, "r")}}}),
+			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Rule: rep(257, "r")}}})},
+		{name: "parked budget bytes", ok: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Budget: rep(256, "b")}}}),
+			bad: sp(&SprintPart{Park: []ParkedKey{{Key: "k", Code: "C", Budget: rep(257, "b")}}})},
+		{name: "unparked key bytes", ok: sp(&SprintPart{Unpark: []string{rep(256, "k")}}), bad: sp(&SprintPart{Unpark: []string{rep(257, "k")}})},
 		{name: "quarantined cards", ok: sp(&SprintPart{Quarantine: quarantinedN(QuarantineMax)}),
 			bad: sp(&SprintPart{Quarantine: quarantinedN(QuarantineMax + 1)})},
 		{name: "quarantine record bytes", ok: func() *Request {
@@ -209,6 +225,14 @@ func edges() []edge {
 		}},
 		{name: "quarantine id bytes", ok: sp(&SprintPart{Quarantine: []Quarantined{{ID: rep(256, "p"), Code: "D"}}}),
 			bad: sp(&SprintPart{Quarantine: []Quarantined{{ID: rep(257, "p"), Code: "D"}}})},
+		{name: "quarantine code bytes", ok: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: rep(256, "c")}}}),
+			bad: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: rep(257, "c")}}})},
+		{name: "quarantine rule bytes", ok: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D", Rule: rep(256, "r")}}}),
+			bad: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D", Rule: rep(257, "r")}}})},
+		{name: "quarantine stream bytes", ok: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D", Stream: rep(256, "s")}}}),
+			bad: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D", Stream: rep(257, "s")}}})},
+		{name: "quarantine cell bytes", ok: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D", Cells: []string{rep(256, "c")}}}}),
+			bad: sp(&SprintPart{Quarantine: []Quarantined{{ID: "p1", Code: "D", Cells: []string{rep(257, "c")}}}})},
 		{name: "counter fields read", ok: sp(&SprintPart{Counter: counterOf(CounterFieldsMax, 1)}),
 			bad: sp(&SprintPart{Counter: counterOf(CounterFieldsMax+1, 1)})},
 		{name: "counter fields set", ok: sp(&SprintPart{Counter: counterOf(CounterFieldsMax, CounterFieldsMax)}),
@@ -217,6 +241,83 @@ func edges() []edge {
 		{name: "tick end backlog", ok: sp(&SprintPart{TickEnd: &TickEnd{Backlog: "18446744073709551615"}}),
 			bad: sp(&SprintPart{TickEnd: &TickEnd{Backlog: "18446744073709551616"}})},
 	}
+	return append(bounds, textEdges()...)
+}
+
+// textField is one place a part stores text: the Go part holds it to partText
+// and the Lua part to valid_text, which is one name long, valid UTF-8 and free
+// of control characters, so that the delimiters of a stored record (a tab
+// between the fields, a line between records) can never be part of a value.
+// req builds the request of a single part whose field holds v.
+type textField struct {
+	name  string
+	setup func(t *testing.T, tw *Twin, clk *stepClock)
+	req   func(v string) *Request
+}
+
+// textFields is every place the Lua reads with valid_text or optional_text,
+// each with its Go twin: one entry per call site, so a check dropped at one of
+// them is found at that one.
+func textFields() []textField {
+	leased := func(t *testing.T, tw *Twin, clk *stepClock) { mustStep(t, tw, leaseReq("tok", "run", 600000, nil)) }
+	park := func(k ParkedKey) *Request { return sprintReq(&SprintPart{Park: []ParkedKey{k}}) }
+	quarantine := func(q Quarantined) *Request { return sprintReq(&SprintPart{Quarantine: []Quarantined{q}}) }
+	return []textField{
+		{name: "lease owner", req: func(v string) *Request { return leaseReq(v, "n", 5000, nil) }},
+		{name: "lease name", req: func(v string) *Request { return leaseReq("t", v, 5000, nil) }},
+		{name: "ingest key", setup: leased, req: func(v string) *Request {
+			return ingestReq(1, "0", "1", sprint.AgendaKey{Key: v, Seq: 1})
+		}},
+		{name: "quarantine id", req: func(v string) *Request { return quarantine(Quarantined{ID: v, Code: "D"}) }},
+		{name: "quarantine code", req: func(v string) *Request { return quarantine(Quarantined{ID: "p1", Code: v}) }},
+		{name: "quarantine rule", req: func(v string) *Request { return quarantine(Quarantined{ID: "p1", Code: "D", Rule: v}) }},
+		{name: "quarantine stream", req: func(v string) *Request { return quarantine(Quarantined{ID: "p1", Code: "D", Stream: v}) }},
+		{name: "quarantine cell", req: func(v string) *Request {
+			return quarantine(Quarantined{ID: "p1", Code: "D", Cells: []string{"c1", v}})
+		}},
+		{name: "parked key", req: func(v string) *Request { return park(ParkedKey{Key: v, Code: "C"}) }},
+		{name: "parked code", req: func(v string) *Request { return park(ParkedKey{Key: "k", Code: v}) }},
+		{name: "parked rule", req: func(v string) *Request { return park(ParkedKey{Key: "k", Code: "C", Rule: v}) }},
+		{name: "parked budget", req: func(v string) *Request { return park(ParkedKey{Key: "k", Code: "C", Budget: v}) }},
+		{name: "unparked key", req: func(v string) *Request { return sprintReq(&SprintPart{Unpark: []string{v}}) }},
+		{name: "dropping op", req: func(v string) *Request { return sprintReq(&SprintPart{Dropping: map[string]string{"s": v}}) }},
+		{name: "undropping op", req: func(v string) *Request { return sprintReq(&SprintPart{Undrop: map[string]string{"s": v}}) }},
+		{name: "coordinator", req: func(v string) *Request { return sprintReq(&SprintPart{Coordinator: v}) }},
+	}
+}
+
+// controlCases are the bytes a stored text refuses, each with the nearest byte
+// it accepts: the record's delimiters (tab, newline), the carriage return and
+// NUL, and the two edges of the control range, 0x1f (the last under the space,
+// which is accepted) and 0x7f (DEL, the one past the last printable byte 0x7e,
+// which is accepted). The byte stands in the middle of the value.
+var controlCases = []struct{ name, bad, ok string }{
+	{"a tab", "\t", " "},
+	{"a newline", "\n", " "},
+	{"a carriage return", "\r", " "},
+	{"a NUL", "\x00", " "},
+	{"byte 0x1f", "\x1f", " "},
+	{"byte 0x7f", "\x7f", "~"},
+}
+
+// textEdges is an edge for each text field and each control case, and a tab at
+// the start and at the end of each field (a check that reads all but the first or
+// the last byte passes the middle one). Both halves are run on them.
+func textEdges() []edge {
+	var out []edge
+	for _, f := range textFields() {
+		f := f
+		add := func(what, ok, bad string) {
+			out = append(out, edge{name: f.name + " with " + what, setup: f.setup,
+				ok: func() *Request { return f.req(ok) }, bad: func() *Request { return f.req(bad) }})
+		}
+		for _, c := range controlCases {
+			add(c.name, "a"+c.ok+"b", "a"+c.bad+"b")
+		}
+		add("a tab first", " ab", "\tab")
+		add("a tab last", "ab ", "ab\t")
+	}
+	return out
 }
 
 func (e edge) twin(t *testing.T) (*Twin, *stepClock) {
@@ -261,19 +362,42 @@ func TestPartBoundsAtTheirEdges(t *testing.T) {
 // TestPartsLuaMatchesTwinAtTheEdges (finding 2; probe 7): the two halves, run
 // on the requests of every edge above and on the state the twin has, give the
 // same reply, the same commands and the same refusal, so a constant that is
-// wrong in the Lua half only is found even where the walk never goes.
+// wrong in the Lua half only is found even where the walk never goes. The
+// request at the bound is planned, and the one past it is refused with the
+// code of the edge by the two halves: the Lua half is seen to refuse, not only
+// to do what the Go half does.
 func TestPartsLuaMatchesTwinAtTheEdges(t *testing.T) {
 	t.Parallel()
 	for _, e := range edges() {
 		t.Run(e.name, func(t *testing.T) {
 			t.Parallel()
 			h := newLuaParts(t)
-			for _, side := range []func() *Request{e.ok, e.bad} {
-				tw, clk := e.twin(t)
-				diffParts(t, h, tw, clk, side(), nil)
+			want := e.code
+			if want == "" {
+				want = CodeRequest
+			}
+			tw, clk := e.twin(t)
+			out, _ := diffParts(t, h, tw, clk, e.ok(), nil)
+			if ref := firstRefusal(out); ref != nil {
+				t.Fatalf("at the bound the parts refused %s %q", ref.Code, ref.Message)
+			}
+			tw, clk = e.twin(t)
+			out, _ = diffParts(t, h, tw, clk, e.bad(), nil)
+			if ref := firstRefusal(out); ref == nil || ref.Code != want {
+				t.Fatalf("past the bound the parts gave %v, want a refusal %s", ref, want)
 			}
 		})
 	}
+}
+
+// firstRefusal is the refusal of the first part, in part order, that refused.
+func firstRefusal(out map[string]luaResult) *Refusal {
+	for _, name := range PartOrder {
+		if r, ok := out[name]; ok && r.refusal != nil {
+			return r.refusal
+		}
+	}
+	return nil
 }
 
 // diffParts runs every part the request carries through the Go part and the Lua
@@ -791,6 +915,56 @@ func TestQuarantineCarriedLuaMatchesGo(t *testing.T) {
 		h.L.Pop(1)
 		if want := quarantineCarried(req); got != want {
 			t.Errorf("%s: Lua says %v, Go says %v", name, got, want)
+		}
+	}
+}
+
+// TestQuarantineCarriedLuaTakesAnyShape (the recheck of IT16, probe N1): the
+// Lua core's static check runs in decode_sprint before any validation, on
+// whatever JSON a caller sent, so it answers REQUEST (false) to a shape the Go
+// client cannot send and never raises a script error. The Go client always
+// sends an id, which is why quarantineCarried, typed, has no such cases: these
+// are hand-made. A raise here would reach the caller as a script error.
+func TestQuarantineCarriedLuaTakesAnyShape(t *testing.T) {
+	t.Parallel()
+	h := newLuaParts(t)
+	SP := h.L.GetGlobal("NS").(*lua.LTable).RawGetString("SP").(*lua.LTable)
+	for _, c := range []struct {
+		name, sprint string
+		want         bool
+	}{
+		{"no quarantine", `{"meta":{}}`, true},
+		{"an empty body list", `{"meta":{},"quarantine":[]}`, true},
+		{"the same card", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":"p1"}]}}`, true},
+
+		{"a card of the part with no id", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"code":"DRIFT"}]}}`, false},
+		{"a card of the part with no id beside the body's card", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":"p1"},{"code":"DRIFT"}]}}`, false},
+		{"a card of the part whose id is a number", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":7}]}}`, false},
+		{"a card of the part whose id is a list", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":[{"id":["p1"]}]}}`, false},
+		{"a card of the part that is a string", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":["p1"]}}`, false},
+		{"a card of the body with no id", `{"quarantine":[{"code":"DRIFT"}],"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"a card of the body whose id is a number", `{"quarantine":[{"id":7}],"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"a card of the body that is a string", `{"quarantine":["p1"],"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"the part's list is an object", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":{"p1":{"id":"p1"}}}}`, false},
+		{"the part's list is a string", `{"quarantine":[{"id":"p1"}],"sprint":{"quarantine":"p1"}}`, false},
+		{"the part is a string", `{"quarantine":[{"id":"p1"}],"sprint":"p1"}`, false},
+		{"the part is a list", `{"quarantine":[{"id":"p1"}],"sprint":[]}`, false},
+		{"the body's list is a string", `{"quarantine":"p1","sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"the body's list is a number", `{"quarantine":7,"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+		{"the body's list is true", `{"quarantine":true,"sprint":{"quarantine":[{"id":"p1"}]}}`, false},
+	} {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(c.sprint), &decoded); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if err := h.L.CallByParam(lua.P{Fn: SP.RawGetString("quarantine_carried"), NRet: 1, Protect: true}, luaValueOf(h.L, decoded)); err != nil {
+			t.Errorf("%s: the check raised %v, want an answer", c.name, err)
+			continue
+		}
+		got := h.L.Get(-1) == lua.LTrue
+		h.L.Pop(1)
+		if got != c.want {
+			t.Errorf("%s: carried %v, want %v", c.name, got, c.want)
 		}
 	}
 }

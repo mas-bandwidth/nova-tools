@@ -825,18 +825,26 @@ do
   end
   -- Every card the body quarantines is also quarantined by the sprint part,
   -- which owns the records: the core checks it in its static phase, since a part
-  -- runs only when its field is set.
+  -- runs only when its field is set. That phase runs before any validation, on
+  -- whatever JSON the caller sent, so this answers false (the core refuses
+  -- REQUEST) to a shape that is not a list of cards with string ids, and never
+  -- raises: a script error would reach the caller in place of a refusal. When the
+  -- body quarantines anything, a card of the part without a string id is refused
+  -- here too, where the part's own check would refuse it later.
   function SP.quarantine_carried(sp)
     local body = sp.quarantine
-    if body == nil or #body == 0 then return true end
+    if body == nil then return true end
+    if type(body) ~= 'table' then return false end
+    if #body == 0 then return true end
     local p = sp.sprint
     if type(p) ~= 'table' or type(p.quarantine) ~= 'table' then return false end
     local carried = {}
     for _, q in ipairs(p.quarantine) do
-      if type(q) == 'table' then carried[q.id] = true end
+      if type(q) ~= 'table' or type(q.id) ~= 'string' then return false end
+      carried[q.id] = true
     end
     for _, q in ipairs(body) do
-      if type(q) ~= 'table' or not carried[q.id] then return false end
+      if type(q) ~= 'table' or type(q.id) ~= 'string' or not carried[q.id] then return false end
     end
     return true
   end
