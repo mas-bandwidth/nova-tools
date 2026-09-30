@@ -59,10 +59,22 @@ func TestStartStopMachineState(t *testing.T) {
 		t.Fatalf("after init: clock %v, running %v; want a STOPPED clock", has, running(c))
 	}
 
+	sf := &faulty{c: w.cc}
+	w.env.C = sf
 	if _, err := Start(ctx, w.env, ClockReq{}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
+	w.env.C = w.cc
 	atMostTwo(t, w, "start")
+	// The model's start (VEff "start") closes "the machine is STOPPED and
+	// moves are due"; its notice's line queues deal (2.1).
+	closes := false
+	for _, n := range sf.sent[0].Body.Notes {
+		closes = closes || n.Op == sprintfn.JOpClose && n.Type == sprint.NStoppedWithDue && n.Cause == stoppedCause
+	}
+	if !closes || !lineWith(w, "0", sprint.NMachineStarted) {
+		t.Fatalf("start's step: notes %+v; want the stopped judgment closed and the started notice", sf.sent[0].Body.Notes)
+	}
 	if c, _ := w.clock(0); !running(c) {
 		t.Fatal("start: the machine does not run")
 	}
@@ -284,8 +296,10 @@ func TestClearCreatesControlCards(t *testing.T) {
 }
 
 // TestSizeBoundsRefused: members and streams together at most 250, members +
-// readers + 2 x streams at most 1,024 (section 3); clear refuses a sprint past
-// either, and past a step's 256 entries, before any write.
+// readers + 2 x streams at most 1,024 (section 3). clear refuses a sprint past
+// the rows bound, the one its first part needs, before any write; past a
+// step's 256 entries it goes in parts (TestClearInParts), and at the edge in
+// one part.
 func TestSizeBoundsRefused(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -315,14 +329,15 @@ func TestSizeBoundsRefused(t *testing.T) {
 		}
 	}
 	for _, c := range []struct {
-		name             string
-		members, streams int
-	}{{"past 250 members and streams", 200, 51}, {"past a step's entries", 240, 8}} {
+		name                      string
+		members, readers, streams int
+	}{{"past the rows bound", 100, 775, 75}, {"past the rows bound in readers", 0, 1025, 0}} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			w := newWorld(t)
 			w.initSprint()
 			grow(w, sprint.Fleet, names("m", c.members))
+			grow(w, sprint.Readers, names("r", c.readers))
 			grow(w, sprint.Work, names("s", c.streams))
 			w.cc.Reset()
 			_, err := Clear(ctx, w.env, ClearReq{Confirm: testPrefix})
@@ -340,8 +355,13 @@ func TestSizeBoundsRefused(t *testing.T) {
 		w.initSprint()
 		grow(w, sprint.Fleet, names("m", 240))
 		grow(w, sprint.Work, names("s", 7))
-		if _, err := Clear(ctx, w.env, ClearReq{Confirm: testPrefix}); err != nil {
+		w.cc.Reset()
+		res, err := Clear(ctx, w.env, ClearReq{Confirm: testPrefix})
+		if err != nil {
 			t.Fatalf("a clear of 247 members and streams: %v", err)
+		}
+		if res.Parts != 1 || w.cc.Trips() != 2 || len(res.Moved) != 247 {
+			t.Fatalf("parts %d, trips %d, control cards %d; want one part, 2 trips, 247 cards", res.Parts, w.cc.Trips(), len(res.Moved))
 		}
 	})
 }
@@ -377,10 +397,16 @@ func TestInitCoordinatorFromConfig(t *testing.T) {
 	}
 	w.env.Actor = "f2"
 	w.cc.Reset()
+	f := &faulty{c: w.cc}
+	w.env.C = f
 	if _, err := InitCoordinator(ctx, w.env, InitReq{Config: w.cfg}); err != nil {
 		t.Fatalf("init --coordinator by f2: %v", err)
 	}
+	w.env.C = w.cc
 	atMostTwo(t, w, "init --coordinator")
+	if got := f.sent[0].Meta.Verb; got != "init --coordinator" {
+		t.Fatalf("init --coordinator's step is logged as %q", got)
+	}
 	if got := w.tw.SprintKeys()[coordKey].String; got != "f2" {
 		t.Fatalf("the coordinator is %q, want f2", got)
 	}
@@ -478,5 +504,139 @@ func TestMissingTSetLogFragmentClassifier(t *testing.T) {
 				t.Errorf("missingTSetLogFragment(%v) = %t, want %t", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// bigSprint grows a sprint of members and streams at epoch 0 by raw steps,
+// past what one clear step holds (the verbs' own size bound is 250 members
+// and streams; clear holds only the rows bound).
+func bigSprint(w *world, members, streams int) {
+	w.t.Helper()
+	add := func(table, p string, n int) {
+		for i := 0; i < n; i += 100 {
+			var rows []string
+			for j := i; j < min(i+100, n); j++ {
+				rows = append(rows, fmt.Sprintf("%s%03d", p, j))
+			}
+			w.step(&sprintfn.Request{Epoch: "0", Meta: sprintfn.Meta{Verb: "setup", Actor: "coord"}, Body: sprintfn.Body{Entries: []tset.Entry{
+				{Kind: "rows", Table: table, Add: rows}}}})
+		}
+	}
+	add(sprint.Fleet, "m", members)
+	add(sprint.Work, "s", streams)
+}
+
+// ctlCount is how many control cards of each table epoch 1 holds, each read
+// by its id and checked as clear makes it.
+func ctlCount(t *testing.T, w *world, members, streams int) {
+	t.Helper()
+	var mids, sids []string
+	for i := 0; i < members; i++ {
+		mids = append(mids, sprint.StoredID(sprint.CtlID(fmt.Sprintf("m%03d", i)), 1))
+	}
+	for i := 0; i < streams; i++ {
+		sids = append(sids, sprint.StoredID(sprint.CtlID(fmt.Sprintf("s%03d", i)), 1))
+	}
+	rd := w.read(&sprintfn.ReadRequest{Epoch: "1", Tset: []tset.ReadQuery{
+		{Kind: "ids", Table: sprint.Fleet, IDs: mids, Fields: []string{"status"}},
+		{Kind: "ids", Table: sprint.Merge, IDs: sids, Fields: []string{"state"}}}})
+	for _, r := range rd.Tset[0].Records {
+		if !r.Exists || r.Fields["status"].Value != sprint.Down {
+			t.Fatalf("member control card %s: %+v, want status down", r.ID, r)
+		}
+	}
+	for _, r := range rd.Tset[1].Records {
+		if !r.Exists || r.Fields["state"].Value != sprint.StreamWaiting {
+			t.Fatalf("stream control card %s: %+v, want waiting", r.ID, r)
+		}
+	}
+}
+
+// TestClearInParts: a clear larger than one step's 256 entries goes in
+// parts under one op, n + 1 round trips: part 1 advances and makes the
+// control cards that fit, part 2 the rest at the new epoch, and the notice is
+// the last part's. Killed after part 1 and resumed under its op, it goes on
+// at the new epoch and makes each card once.
+func TestClearInParts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const members, streams = 250, 10
+	t.Run("in two parts", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t)
+		w.initSprint()
+		bigSprint(w, members, streams)
+		w.cc.Reset()
+		res, err := Clear(ctx, w.env, ClearReq{Confirm: testPrefix})
+		if err != nil {
+			t.Fatalf("clear of %d members and %d streams: %v", members, streams, err)
+		}
+		if res.Parts != 2 || w.cc.Trips() != 3 || len(res.Moved) != members+streams || res.EpochAfter != 1 || w.env.Epoch != 1 {
+			t.Fatalf("parts %d, trips %d, cards %d, epoch after %d, env %d; want 2, 3, %d, 1, 1",
+				res.Parts, w.cc.Trips(), len(res.Moved), res.EpochAfter, w.env.Epoch, members+streams)
+		}
+		ctlCount(t, w, members, streams)
+		n := 0
+		for _, l := range w.log.Lines(testPrefix, "1") {
+			if strings.Contains(string(l), noticeCleared) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("%d notices at epoch 1, want 1", n)
+		}
+	})
+	t.Run("killed after part 1, resumed under its op", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t)
+		w.initSprint()
+		bigSprint(w, members, streams)
+		w.env.C = &faulty{c: w.tw, kill: func(k int) killMode {
+			if k == 1 {
+				return killAfter
+			}
+			return killNone
+		}}
+		if _, err := Clear(ctx, w.env, ClearReq{Op: "c1", Confirm: testPrefix}); !errors.Is(err, tset.ErrOutcomeUnknown) {
+			t.Fatalf("err %v, want part 1's unknown outcome", err)
+		}
+		res, err := Clear(ctx, w.at(1), ClearReq{Op: "c1", Confirm: testPrefix})
+		if err != nil || res.Resumed != 1 || res.Parts != 1 || res.Epoch != 0 || res.EpochAfter != 1 {
+			t.Fatalf("resume: %+v, %v; want part 2 applied at epoch 1 after part 1", res, err)
+		}
+		ctlCount(t, w, members, streams)
+		again, err := Clear(ctx, w.at(0), ClearReq{Op: "c1", Confirm: testPrefix})
+		if err != nil || !again.Replay || again.Resumed != 2 {
+			t.Fatalf("a repeat of the finished clear: %+v, %v; want its finished mark", again, err)
+		}
+		if got := activeEpoch(w); got != "1" {
+			t.Fatalf("the sprint is at %s, want 1", got)
+		}
+	})
+}
+
+// TestClearRacedByStart: a start that applies between clear's read and
+// its step leaves the machine running, and the clock part refuses the clear
+// MACHINESTATE at apply (IT16); not a race, it is not retried, and nothing is
+// cleared.
+func TestClearRacedByStart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	w.initSprint()
+	f := &faulty{c: w.tw, before: func(n int) {
+		if n == 1 {
+			if _, err := Start(ctx, w.at(0), ClockReq{}); err != nil {
+				t.Errorf("the other start: %v", err)
+			}
+		}
+	}}
+	w.env.C = f
+	_, err := Clear(ctx, w.env, ClearReq{Confirm: testPrefix})
+	if code, local := refusedCode(t, err); code != sprintfn.CodeMachineState || local {
+		t.Fatalf("a clear raced by a start: %s (local %v), want MACHINESTATE from the clock part", code, local)
+	}
+	if f.steps != 1 || activeEpoch(w) != "0" || w.env.Epoch != 0 {
+		t.Fatalf("steps %d, sprint at %s, env at %d; want 1 step and nothing cleared", f.steps, activeEpoch(w), w.env.Epoch)
 	}
 }

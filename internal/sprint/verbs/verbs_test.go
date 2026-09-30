@@ -131,29 +131,52 @@ func (w *world) clock(epoch uint64) (sprintfn.ClockResult, bool) {
 	return c, has
 }
 
+// activeEpoch is the sprint's active epoch as a read names it.
+func activeEpoch(w *world) tset.Decimal {
+	w.t.Helper()
+	return w.read(clockRead("0")).ActiveEpoch
+}
+
+// at is an Env of the world at an epoch.
+func (w *world) at(epoch uint64) *Env {
+	return &Env{C: w.tw, Names: testNames, Actor: "coord", Epoch: epoch, noWait: true}
+}
+
 // killMode is where a faulty client loses a step.
 type killMode int
 
 const (
 	killNone   killMode = iota
-	killBefore          // the step is never sent; the caller cannot know
-	killAfter           // the step applies and its reply is lost
+	killBefore          // the step is never sent, and the connection drops
+	killAfter           // the step applies, its reply is lost, and the connection drops
+	killReply           // the step applies and its reply is lost; the connection stays
 )
 
 // faulty stands between a verb and the twin: it refuses a step as the store
 // would on a race or a bug, loses a step before or after it applies, or runs
-// another writer just before a step, by the step's number (from 1).
+// another writer just before a step, by the step's number (from 1). A fence
+// is a step too. After killBefore or killAfter the connection is down: every
+// later call fails, until the test sets dead back to false.
 type faulty struct {
 	c      sprintfn.Client
 	mu     sync.Mutex
 	steps  int
+	dead   bool
 	refuse func(n int, req *sprintfn.Request) *sprintfn.Refusal
 	kill   func(n int) killMode
 	before func(n int)
 	sent   []*sprintfn.Request // every step that reached the twin
 }
 
+var errDown = &sprintfn.OutcomeUnknownError{Cause: errors.New("the connection is down")}
+
 func (f *faulty) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintfn.Result, error) {
+	f.mu.Lock()
+	dead := f.dead
+	f.mu.Unlock()
+	if dead {
+		return nil, errDown
+	}
 	out := make([]sprintfn.Result, 0, len(items))
 	for _, it := range items {
 		if it.Step == nil {
@@ -173,6 +196,9 @@ func (f *faulty) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintf
 			mode = f.kill(n)
 		}
 		if mode == killBefore {
+			f.mu.Lock()
+			f.dead = true
+			f.mu.Unlock()
 			return nil, &sprintfn.OutcomeUnknownError{Cause: errors.New("the connection dropped before the step was sent")}
 		}
 		if f.refuse != nil {
@@ -191,7 +217,10 @@ func (f *faulty) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintf
 		f.mu.Lock()
 		f.sent = append(f.sent, it.Step)
 		f.mu.Unlock()
-		if mode == killAfter {
+		if mode == killAfter || mode == killReply {
+			f.mu.Lock()
+			f.dead = mode == killAfter
+			f.mu.Unlock()
 			return nil, &sprintfn.OutcomeUnknownError{Cause: errors.New("the connection dropped after the step was sent")}
 		}
 		out = append(out, r...)
@@ -402,7 +431,7 @@ func makeCards(n, chunk int) PartsPlan {
 				entries = append(entries, tset.Entry{Kind: "rows", Table: sprint.Readers, Add: []string{"r1"}})
 			}
 			entries = append(entries, tset.Entry{Kind: "create", Table: sprint.Readers, To: "r1:asked", IDs: fresh, About: fresh, Scores: scores})
-			return Part{Req: &sprintfn.Request{Body: sprintfn.Body{Entries: entries}}, Next: strconv.Itoa(j), Last: j == n}, nil
+			return Part{Req: &sprintfn.Request{Body: sprintfn.Body{Entries: entries}}, Moved: fresh, Next: strconv.Itoa(j), Last: j == n}, nil
 		}}
 }
 
@@ -568,7 +597,7 @@ func TestPartsLimitResumesAtHalfChunk(t *testing.T) {
 	if !errors.As(err, &u) {
 		t.Fatalf("err %v, want the kill's unknown outcome", err)
 	}
-	f.kill = nil
+	f.kill, f.dead = nil, false
 	res, err := w.env.Parts(ctx, "op-half", makeCards(n, 4))
 	if err != nil {
 		t.Fatal(err)

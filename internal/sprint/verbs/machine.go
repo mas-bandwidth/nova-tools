@@ -14,13 +14,16 @@ import (
 )
 
 // The machine's verbs (section 3's table): init, init --coordinator, start,
-// stop, clear and goal. Each is one step through Do, two round trips: its
-// read, then its step.
+// stop and goal are each one step through Do, two round trips: its read, then
+// its step. clear runs in parts through Parts, n + 1 round trips, one part
+// for a sprint of at most 247 members and streams.
 
 // The size of the sprint (section 3, "Size of the sprint"; F1-20): members
 // and streams together at most MembersAndStreamsMax, and members + readers +
-// 2 x streams at most RowsMax, so that clear, which cannot be split, restores
-// every row and creates every control card in one step.
+// 2 x streams at most RowsMax. clear restores every row in its first part,
+// inside RowsMax, and creates the control cards in as many parts as they
+// need, so any sprint the verbs can build can be cleared (one step at 250 members
+// and streams would be 259 entries, over 256).
 const (
 	MembersAndStreamsMax = sprintfn.SprintMembersMax // 250
 	RowsMax              = tset.MaxRowsWithAdvance   // 1,024 rows in a step with advance (L1 6)
@@ -29,15 +32,10 @@ const (
 // EntriesMax is a step's entries (L1 6; 1.0's bounds table).
 const EntriesMax = 256
 
-// clearFixedEntries are the entries of a clear beside the control cards: a
-// rowset guard for each of the four tables (AL3), the advance, and a rows
-// entry for each of the four tables.
-const clearFixedEntries = 4 + 1 + 4
-
 // SizeBounds refuses a sprint of members, readers and streams past either
 // bound of section 3, naming the bound. fleet up, reader add and an add that
-// creates a stream refuse with it (items IT19, IT20); clear refuses a sprint
-// already past it, which only a write outside the verbs can make.
+// creates a stream refuse with it (items IT19, IT20). clear holds a sprint to
+// the rows bound alone (clearRows), the one its first part needs.
 func SizeBounds(members, readers, streams int) error {
 	if members+streams > MembersAndStreamsMax {
 		return fmt.Errorf("members and streams together are %d, over the sprint's %d (members %d, streams %d)",
@@ -105,16 +103,16 @@ func Init(ctx context.Context, e *Env, req InitReq) (Result, error) {
 	}
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"coordinator": who},
 		Read: clockRead,
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			_, has, err := clockOf(rd, 0)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			if has {
-				return nil, refuseLocal(verb, sprintfn.CodeMachineState, "the sprint is already initialised")
+				return Part{}, refuseLocal(verb, sprintfn.CodeMachineState, "the sprint is already initialised")
 			}
-			return &sprintfn.Request{Clock: &sprintfn.ClockPart{Verb: sprintfn.ClockInit},
-				Sprint: &sprintfn.SprintPart{Coordinator: who}}, nil
+			return Part{Req: &sprintfn.Request{Clock: &sprintfn.ClockPart{Verb: sprintfn.ClockInit},
+				Sprint: &sprintfn.SprintPart{Coordinator: who}}}, nil
 		}})
 	if err == nil && !res.Replay {
 		res.Said = fmt.Sprintf("init: the sprint is made, STOPPED, with coordinator %s", who)
@@ -140,14 +138,16 @@ func InitCoordinator(ctx context.Context, e *Env, req InitReq) (Result, error) {
 	}
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"coordinator": who},
 		Read: clockRead,
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if _, has, err := clockOf(rd, 0); err != nil || !has {
 				if err != nil {
-					return nil, err
+					return Part{}, err
 				}
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
+				return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
 			}
-			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: "init"}, Sprint: &sprintfn.SprintPart{Coordinator: who}}, nil
+			// Meta.Verb is the verb's own name, so the log says
+			// "init --coordinator", not init.
+			return Part{Req: &sprintfn.Request{Sprint: &sprintfn.SprintPart{Coordinator: who}}}, nil
 		}})
 	if err == nil && !res.Replay {
 		res.Said = "init --coordinator: the coordinator is " + who
@@ -160,10 +160,13 @@ type ClockReq struct{ Op string }
 
 // The notices of start, stop and clear (2.5), each on the sprint.
 const (
-	noticeStarted = "the machine started"
+	noticeStarted = sprint.NMachineStarted
 	noticeStopped = "the machine stopped"
 	noticeCleared = "the sprint was cleared, and is STOPPED"
 	sprintSubject = "sprint"
+	// stoppedCause is the cause R17 opens "the machine is STOPPED and moves
+	// are due" with (internal/sprint's StoppedLook), which start closes.
+	stoppedCause = "stopped"
 )
 
 // know is a KNOW note on the sprint (2.5).
@@ -173,9 +176,15 @@ func know(typ, cause string) sprintfn.NoteReq {
 
 // Start runs the machine (section 3, start; 1.2): R moves again from where it
 // stood. Refused MACHINESTATE when it runs already, from the read, and by the
-// clock part at apply (A2). KNOW "the machine started". The design's start
-// also enters each goal's remind at R; the write path carries no goal yet
-// (IT16's sprint part refuses goals), so this start enters none.
+// clock part at apply (A2). As the model's start does (tla/SprintEvents.tla,
+// VEff "start", applied by VerbApply), it closes the judgment "the machine is
+// STOPPED and moves are due" on the sprint, and its KNOW "the machine
+// started" is the line whose ingest queues deal, askwait, level and done
+// (2.1, "machine started"; internal/sprint's lineRows): askwait asks again for
+// each primary a "cannot ask" judgment holds, the model's ask keys. A requeue
+// of deal in the step itself is refused by X, since deal is not queued and
+// names no line. Owed: each goal's remind at R, which waits for the write path
+// to carry goals (IT16's sprint part refuses them).
 func Start(ctx context.Context, e *Env, req ClockReq) (Result, error) {
 	return clockVerb(ctx, e, req, "start", sprintfn.ClockStart, noticeStarted)
 }
@@ -192,22 +201,27 @@ func clockVerb(ctx context.Context, e *Env, req ClockReq, verb, clockVerb, notic
 	wantRunning := clockVerb == sprintfn.ClockStart
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op,
 		Read: clockRead,
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			c, has, err := clockOf(rd, 0)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			if !has {
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
+				return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
 			}
 			if running(c) == wantRunning {
 				if wantRunning {
-					return nil, refuseLocal(verb, sprintfn.CodeMachineState, "the machine is already running")
+					return Part{}, refuseLocal(verb, sprintfn.CodeMachineState, "the machine is already running")
 				}
-				return nil, refuseLocal(verb, sprintfn.CodeMachineState, "the machine is already stopped, since %s", *c.Clock.StoppedSinceMS)
+				return Part{}, refuseLocal(verb, sprintfn.CodeMachineState, "the machine is already stopped, since %s", *c.Clock.StoppedSinceMS)
 			}
-			return &sprintfn.Request{Clock: &sprintfn.ClockPart{Verb: clockVerb},
-				Body: sprintfn.Body{Notes: []sprintfn.NoteReq{know(notice, verb)}}}, nil
+			req := &sprintfn.Request{Clock: &sprintfn.ClockPart{Verb: clockVerb},
+				Body: sprintfn.Body{Notes: []sprintfn.NoteReq{know(notice, verb)}}}
+			if wantRunning {
+				req.Body.Notes = append(req.Body.Notes, sprintfn.NoteReq{Op: sprintfn.JOpClose, Type: sprint.NStoppedWithDue,
+					Cause: stoppedCause, Subjects: []string{sprintSubject}})
+			}
+			return Part{Req: req}, nil
 		}})
 	if err == nil && !res.Replay {
 		if wantRunning {
@@ -220,9 +234,9 @@ func clockVerb(ctx context.Context, e *Env, req ClockReq, verb, clockVerb, notic
 }
 
 // ClearReq is clear's request: the op, and --confirm, which must name the
-// deployment's prefix. A clear with --op keeps its receipt at the epoch it
-// ran at (L1 5: the receipt across advances), so a repeat runs at that epoch
-// (Env.Epoch as it was) to find it.
+// deployment's prefix. A clear with --op keeps its parts' receipts at the
+// epoch it ran at and the one after (L1 5: the receipt across advances), so a
+// repeat finds them from either (Parts, resumeRead).
 type ClearReq struct {
 	Op      string
 	Confirm string
@@ -231,49 +245,44 @@ type ClearReq struct {
 // The tables whose rows clear restores, in the order it guards and adds them.
 var clearTables = []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}
 
-// Clear clears the sprint (section 3, clear; errata 1): in one step, the rows
-// of the four tables guarded as read (AL3's rowset), the advance to the next
-// epoch, the rows added again there, each member's control card with status
-// down (so its next beat brings it up, 1.4.4, R1), each stream's control card,
-// and KNOW "the sprint was cleared, and is STOPPED" at the new epoch. It runs
-// only while the machine is STOPPED (errata 1; the clock part refuses a
-// running one, IT16). The step always has an op, the caller's or one it
-// makes, since Layer 1 refuses an advance without one (L1 5). The design's table reads "the clock STOPPED (when
-// RUNNING)", and the stack reads it the narrower way, so a running machine is
-// refused here naming stop. A sprint past the size bounds is refused before
-// any write. The size bound keeps the rows inside 1,024, but four rowset
-// guards, the advance and four rows entries beside 250 control cards are 259
-// entries, over 256: a clear of more than 247 members and streams is refused
-// LIMIT, naming the entries (a finding for the design).
+// Clear clears the sprint (section 3, clear; errata 1) in parts under one op
+// (1.5.4), the caller's or one it makes, since Layer 1 refuses an advance
+// without one (L1 5). Part 1, at the old epoch: the rows of the four tables
+// guarded as read (AL3's rowset), the advance to the next epoch, the rows
+// added again there, the clock STOPPED, and as many control cards as fit in
+// the step's 256 entries: each stream's, then each member's with status down
+// (so its next beat brings it up, 1.4.4, R1). Each part after it, at the new
+// epoch, creates the next control cards, up to 256 a part. The last part
+// writes KNOW "the sprint was cleared, and is STOPPED" at the new epoch. A
+// sprint of at most 247 members and streams clears in one part, two round
+// trips. It runs only while the machine is STOPPED (errata 1; the clock part
+// refuses a running one, IT16): the design's table reads "the clock STOPPED
+// (when RUNNING)", and the stack reads it the narrower way, so a running
+// machine is refused here naming stop. The design's table puts clear in one
+// step; it goes in parts so that any sprint the verbs can build can be
+// cleared; a finding for the design names it.
+//
+// No model action covers clear: tla/SprintEvents.tla leaves clear, epochs
+// and remove out (its header's list of what is not modelled), so this cites
+// the design's section, the errata and L1 5 alone.
 func Clear(ctx context.Context, e *Env, req ClearReq) (Result, error) {
 	const verb = "clear"
 	if req.Confirm != e.Names.Prefix {
 		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "--confirm %q does not name this sprint's prefix %q", req.Confirm, e.Names.Prefix)
 	}
-	op := req.Op
-	if op == "" {
-		op = NewOp() // L1 5: every advance carries an op identity
-	}
-	res, err := e.Do(ctx, Planned{Verb: verb, Op: op, Args: map[string]any{"confirm": req.Confirm},
-		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest {
+	res, err := e.Parts(ctx, req.Op, PartsPlan{Verb: verb, Args: map[string]any{"confirm": req.Confirm},
+		Read: func(epoch tset.Decimal, _ string, _ int) *sprintfn.ReadRequest {
 			rr := clockRead(epoch)
 			for _, t := range clearTables {
 				rr.Tset = append(rr.Tset, tset.ReadQuery{Kind: "rows", Table: t})
 			}
 			return rr
 		},
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
-			c, has, err := clockOf(rd, 0)
-			if err != nil {
-				return nil, err
+		Plan: func(rd *sprintfn.ReadReply, cont string, chunk int) (Part, error) {
+			if cont == "" {
+				return clearFirst(rd, chunk)
 			}
-			if !has {
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
-			}
-			if running(c) {
-				return nil, refuseLocal(verb, sprintfn.CodeMachineState, "a clear runs only while the machine is STOPPED: run stop first")
-			}
-			return clearStep(rd)
+			return clearRest(rd, cont, chunk)
 		}})
 	if err == nil && !res.Replay {
 		res.Said = fmt.Sprintf("clear: the sprint is at epoch %d, STOPPED", res.EpochAfter)
@@ -281,19 +290,29 @@ func Clear(ctx context.Context, e *Env, req ClearReq) (Result, error) {
 	return res, err
 }
 
-// clearStep is clear's one step from its read: the rows of each table as read
-// (Tset slots 0..3, clearTables' order) and the epoch it read at.
-func clearStep(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
-	const verb = "clear"
-	epoch, ok := undec(rd.Epoch)
-	if !ok {
-		return nil, fmt.Errorf("clear: the read's epoch %q is not a number", rd.Epoch)
+// clearCont is clear's continuation: of the streams and members part 1
+// restored (SN, MN), how many control cards are made (S, M).
+type clearCont struct{ S, SN, M, MN int }
+
+func (c clearCont) String() string { return fmt.Sprintf("%d,%d,%d,%d", c.S, c.SN, c.M, c.MN) }
+
+func parseClearCont(s string) (clearCont, error) {
+	var c clearCont
+	if _, err := fmt.Sscanf(s, "%d,%d,%d,%d", &c.S, &c.SN, &c.M, &c.MN); err != nil ||
+		c.S < 0 || c.S > c.SN || c.M < 0 || c.M > c.MN {
+		return c, fmt.Errorf("clear: the continuation %q is not one", s)
 	}
-	next := epoch + 1
+	return c, nil
+}
+
+// clearRowsOf is the rows of each table as read (Tset slots 0..3,
+// clearTables' order), by rank, and the members, readers and streams they
+// name: a stream is a row of the work table or the merge table.
+func clearRowsOf(rd *sprintfn.ReadReply) (rows map[string][]tset.RowRank, members, readers, streams []string, err error) {
 	if len(rd.Tset) < len(clearTables) {
-		return nil, fmt.Errorf("clear: the read answered %d row queries, asked %d", len(rd.Tset), len(clearTables))
+		return nil, nil, nil, nil, fmt.Errorf("clear: the read answered %d row queries, asked %d", len(rd.Tset), len(clearTables))
 	}
-	rows := map[string][]tset.RowRank{}
+	rows = map[string][]tset.RowRank{}
 	for i, t := range clearTables {
 		rs := append([]tset.RowRank{}, rd.Tset[i].Rows...)
 		sort.SliceStable(rs, func(a, b int) bool { return compareRank(rs[a].Rank, rs[b].Rank) < 0 })
@@ -306,18 +325,71 @@ func clearStep(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 		}
 		return out
 	}
-	members, readers := names(sprint.Fleet), names(sprint.Readers)
-	streams := names(sprint.Work)
+	members, readers, streams = names(sprint.Fleet), names(sprint.Readers), names(sprint.Work)
 	for _, s := range names(sprint.Merge) {
 		if !contains(streams, s) {
 			streams = append(streams, s)
 		}
 	}
-	if err := SizeBounds(len(members), len(readers), len(streams)); err != nil {
-		return nil, refuseLocal(verb, sprintfn.CodeLimit, "%v", err)
+	return rows, members, readers, streams, nil
+}
+
+// clearRows refuses a sprint past the rows bound (section 3): part 1 adds
+// every row again beside the advance, at most RowsMax (L1 6).
+func clearRows(members, readers, streams int) error {
+	if rows := members + readers + 2*streams; rows > RowsMax {
+		return fmt.Errorf("members + readers + 2 x streams is %d, over the sprint's %d (members %d, readers %d, streams %d)",
+			rows, RowsMax, members, readers, streams)
 	}
-	if n := clearFixedEntries + len(members) + len(streams); n > EntriesMax {
-		return nil, refuseLocal(verb, sprintfn.CodeLimit, "the clear is %d entries (%d members and streams, and %d fixed), over a step's %d", n, len(members)+len(streams), clearFixedEntries, EntriesMax)
+	return nil
+}
+
+// ctlCards appends the control cards of streams[from:to] and then of
+// members[from2:to2] at epoch e (their stored ids), at most room entries,
+// and returns how many of each it made.
+func ctlCards(entries []tset.Entry, moved []ID, e uint64, streams, members []string, c clearCont, room int) ([]tset.Entry, []ID, clearCont) {
+	for ; c.S < c.SN && room > 0; c.S, room = c.S+1, room-1 {
+		s := streams[c.S]
+		id := sprint.StoredID(sprint.CtlID(s), e)
+		entries = append(entries, tset.Entry{Kind: "create", Table: sprint.Merge, To: s + ":" + sprint.Ctl,
+			IDs: []string{id}, About: []string{id}, Scores: []string{"0"},
+			Set: map[string]string{"kind": "stream", "state": sprint.StreamWaiting}})
+		moved = append(moved, id)
+	}
+	for ; c.M < c.MN && room > 0; c.M, room = c.M+1, room-1 {
+		m := members[c.M]
+		id := sprint.StoredID(sprint.CtlID(m), e)
+		entries = append(entries, tset.Entry{Kind: "create", Table: sprint.Fleet, To: m + ":" + sprint.Ctl,
+			IDs: []string{id}, About: []string{id}, Scores: []string{"0"},
+			Set: map[string]string{"kind": "member", "status": sprint.Down}})
+		moved = append(moved, id)
+	}
+	return entries, moved, c
+}
+
+// clearFirst is clear's part 1 from its read at the old epoch.
+func clearFirst(rd *sprintfn.ReadReply, chunk int) (Part, error) {
+	const verb = "clear"
+	c, has, err := clockOf(rd, 0)
+	if err != nil {
+		return Part{}, err
+	}
+	if !has {
+		return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
+	}
+	if running(c) {
+		return Part{}, refuseLocal(verb, sprintfn.CodeMachineState, "a clear runs only while the machine is STOPPED: run stop first")
+	}
+	epoch, ok := undec(rd.Epoch)
+	if !ok {
+		return Part{}, fmt.Errorf("clear: the read's epoch %q is not a number", rd.Epoch)
+	}
+	rows, members, readers, streams, err := clearRowsOf(rd)
+	if err != nil {
+		return Part{}, err
+	}
+	if err := clearRows(len(members), len(readers), len(streams)); err != nil {
+		return Part{}, refuseLocal(verb, sprintfn.CodeLimit, "%v", err)
 	}
 	var entries []tset.Entry
 	for _, t := range clearTables { // AL3: the rows as read, or nothing is written
@@ -330,20 +402,44 @@ func clearStep(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			entries = append(entries, tset.Entry{Kind: "rows", Table: t, Add: restore[t]})
 		}
 	}
-	for _, s := range streams {
-		id := sprint.StoredID(sprint.CtlID(s), next)
-		entries = append(entries, tset.Entry{Kind: "create", Table: sprint.Merge, To: s + ":" + sprint.Ctl,
-			IDs: []string{id}, About: []string{id}, Scores: []string{"0"},
-			Set: map[string]string{"kind": "stream", "state": sprint.StreamWaiting}})
+	room := min(EntriesMax-len(entries), chunk)
+	entries, moved, cc := ctlCards(entries, nil, epoch+1, streams, members, clearCont{SN: len(streams), MN: len(members)}, room)
+	last := cc.S == cc.SN && cc.M == cc.MN
+	req := &sprintfn.Request{Clock: &sprintfn.ClockPart{Verb: sprintfn.ClockClear}, Body: sprintfn.Body{Entries: entries}}
+	if last {
+		req.Body.Notes = []sprintfn.NoteReq{know(noticeCleared, verb)}
 	}
-	for _, m := range members {
-		id := sprint.StoredID(sprint.CtlID(m), next)
-		entries = append(entries, tset.Entry{Kind: "create", Table: sprint.Fleet, To: m + ":" + sprint.Ctl,
-			IDs: []string{id}, About: []string{id}, Scores: []string{"0"},
-			Set: map[string]string{"kind": "member", "status": sprint.Down}})
+	return Part{Req: req, Moved: moved, Next: cc.String(), Last: last}, nil
+}
+
+// clearRest is a later part of clear from its read at the new epoch: the next
+// control cards of the streams and members part 1 restored, in part 1's
+// order (the rows it added, by rank).
+func clearRest(rd *sprintfn.ReadReply, cont string, chunk int) (Part, error) {
+	const verb = "clear"
+	cc, err := parseClearCont(cont)
+	if err != nil {
+		return Part{}, err
 	}
-	return &sprintfn.Request{Clock: &sprintfn.ClockPart{Verb: sprintfn.ClockClear},
-		Body: sprintfn.Body{Entries: entries, Notes: []sprintfn.NoteReq{know(noticeCleared, verb)}}}, nil
+	epoch, ok := undec(rd.Epoch)
+	if !ok {
+		return Part{}, fmt.Errorf("clear: the read's epoch %q is not a number", rd.Epoch)
+	}
+	_, members, _, streams, err := clearRowsOf(rd)
+	if err != nil {
+		return Part{}, err
+	}
+	if len(streams) < cc.SN || len(members) < cc.MN {
+		return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "the rows clear restored changed under it: %d streams and %d members at epoch %d, it restored %d and %d",
+			len(streams), len(members), epoch, cc.SN, cc.MN)
+	}
+	entries, moved, cc := ctlCards(nil, nil, epoch, streams, members, cc, min(EntriesMax, chunk))
+	last := cc.S == cc.SN && cc.M == cc.MN
+	req := &sprintfn.Request{Body: sprintfn.Body{Entries: entries}}
+	if last {
+		req.Body.Notes = []sprintfn.NoteReq{know(noticeCleared, verb)}
+	}
+	return Part{Req: req, Moved: moved, Next: cc.String(), Last: last}, nil
 }
 
 // compareRank orders two exact decimal ranks.
@@ -404,14 +500,14 @@ func GoalDrop(ctx context.Context, e *Env, req GoalReq) (Result, error) {
 func goalStep(ctx context.Context, e *Env, verb string, req GoalReq, goal string) (Result, error) {
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"person": req.Person, "goal": goal},
 		Read: clockRead,
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if _, has, err := clockOf(rd, 0); err != nil || !has {
 				if err != nil {
-					return nil, err
+					return Part{}, err
 				}
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
+				return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "there is no sprint: run init")
 			}
-			return &sprintfn.Request{Sprint: &sprintfn.SprintPart{Goals: map[string]string{req.Person: goal}}}, nil
+			return Part{Req: &sprintfn.Request{Sprint: &sprintfn.SprintPart{Goals: map[string]string{req.Person: goal}}}}, nil
 		}})
 	if rf, ok := err.(*Refused); ok && rf.Code() == sprintfn.CodeRequest && !rf.Local {
 		rf.Hint = "the write path does not carry goals yet: the sprint part refuses them (IT16)"
