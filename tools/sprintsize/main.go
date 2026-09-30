@@ -7,7 +7,8 @@
 //
 // It runs the nova-sprint binary it is given, as a person does, against the
 // store given, which is the sprint's alone: it tears the sprint down first and
-// at the end unless --keep, so it refuses a store that is not local.
+// at the end unless --keep, so it refuses a store that is not local, and a store that already holds a
+// sprint unless --replace.
 //
 //	example:
 //	  go build -o /tmp/nova-sprint ./cmd/nova-sprint
@@ -60,6 +61,17 @@ func run() []step {
 	)
 }
 
+// sprintExists says the store already holds a sprint: nova-sprint where reads
+// it (exit 0) and refuses when there is none. Any non-zero exit counts as no
+// sprint, so a store that cannot be read fails open here; the guard is for a
+// local store only (localStore), and the teardown that follows fails loudly on
+// a store that cannot be reached.
+func sprintExists(bin string, env []string) bool {
+	cmd := exec.Command(bin, "where")
+	cmd.Env = env
+	return cmd.Run() == nil
+}
+
 // localStore says the address is on this machine.
 func localStore(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
@@ -69,6 +81,7 @@ func localStore(addr string) bool {
 func main() {
 	bin := flag.String("bin", "", "the nova-sprint binary to measure")
 	redis := flag.String("redis", "127.0.0.1:6401", "the store, host:port (a local one: the limits are for a local store)")
+	replace := flag.Bool("replace", false, "tear down a sprint that already exists on the store, which the run does first")
 	keep := flag.Bool("keep", false, "leave the sprint on the store for a look")
 	tsetOwned := flag.Bool("tset-owned-container", false, "opt in to the L1 size run on a disposable Redis container you own")
 	tsetRedis := flag.String("tset-redis", "", "explicit direct Redis host:port for the L1 size run; no default")
@@ -105,6 +118,10 @@ func main() {
 		os.Exit(2)
 	}
 	env := append(os.Environ(), "NOVA_SPRINT_REDIS="+*redis, "NOVA_SPRINT_ACTOR=sizerun")
+	if !*replace && sprintExists(*bin, env) {
+		fmt.Fprintln(os.Stderr, "sprintsize: a sprint already exists on "+*redis+"; the run tears it down first. Pass --replace to tear it down")
+		os.Exit(2)
+	}
 	steps := run()
 	if !*keep {
 		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "sprint"}, nil})

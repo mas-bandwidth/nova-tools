@@ -120,17 +120,16 @@ func (st *Store) ResetGoalPushes(ctx context.Context) error {
 // Reminder is one push: which one it is, to whom, when, the sprint it is
 // for, and the goal text.
 type Reminder struct {
-	N      int
-	To     string
-	At     time.Time
-	Sprint string // the sprint's name: its view, sprint or <prefix>sprint
-	Epoch  uint64
-	Text   string
+	N     int
+	To    string
+	At    time.Time
+	Epoch uint64
+	Text  string
 }
 
 // Header is the one line that precedes the text.
 func (r Reminder) Header() string {
-	return fmt.Sprintf("REMINDER %d to %s at %s, sprint %s, epoch %d", r.N, r.To, r.At.Format(time.RFC3339), r.Sprint, r.Epoch)
+	return fmt.Sprintf("REMINDER %d to %s at %s, epoch %d", r.N, r.To, r.At.Format(time.RFC3339), r.Epoch)
 }
 
 // Deliverer delivers one reminder down one route.
@@ -233,7 +232,7 @@ func (st *Store) remind(ctx context.Context, m Machine, res *TickResult) error {
 				return err
 			}
 		}
-		r := Reminder{N: p.Count + 1, To: p.Name, At: now, Sprint: st.Names.View(), Epoch: epoch, Text: p.Text}
+		r := Reminder{N: p.Count + 1, To: p.Name, At: now, Epoch: epoch, Text: p.Text}
 		d, derr := NewDeliverer(p.Route)
 		if derr == nil {
 			derr = d.Deliver(r)

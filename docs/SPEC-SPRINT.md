@@ -851,7 +851,7 @@ RUNNING the tick pushes each person's goal down its route once every five
 minutes of running time (RemindEvery), and at once when the goal or its route
 is set or the machine starts; nothing is pushed while it is STOPPED. The file
 route replaces one file with a header line (`REMINDER <n> to <name> at <time>,
-sprint <name>, epoch <n>`, where `<name>` is the sprint's view, `sprint`) and the text, whole, so a watcher of the file sees
+epoch <n>`) and the text, whole, so a watcher of the file sees
 one current reminder. A route that fails is one judgment, "a reminder could not
 be delivered", closed when a later delivery arrives. `goal show` shows each
 person's last push (`where --json` carries it). The people and their goals are the sprint's, not the

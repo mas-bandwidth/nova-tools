@@ -37,7 +37,7 @@ func TestGoalVerbsSetShowDropAndTheTickDelivers(t *testing.T) {
 	if !strings.Contains(out, "MOVED remind: REMINDER 1 to friend-a over "+route) {
 		t.Fatalf("tick: %s", out)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "reminder-a.txt")); !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", sprint sprint, epoch 0\nkeep going\n") {
+	if b, _ := os.ReadFile(filepath.Join(dir, "reminder-a.txt")); !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", epoch 0\nkeep going\n") {
 		t.Fatalf("file: %s", b)
 	}
 	// the frame holds the tables and no line about the people; goal show
@@ -129,8 +129,9 @@ func TestGoalSetDefaultRouteIsPrintedAndHelpNamesGoal(t *testing.T) {
 	}
 }
 
-// The reminder header names the sprint by its view, sprint.
-func TestReminderHeaderNamesTheSprint(t *testing.T) {
+// The reminder header names the person, the time and the epoch, and no sprint:
+// a store holds one.
+func TestReminderHeaderNamesNoSprint(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	dir := t.TempDir()
@@ -143,7 +144,7 @@ func TestReminderHeaderNamesTheSprint(t *testing.T) {
 	ta.ok("start")
 	ta.ok("tick")
 	b, _ := os.ReadFile(filepath.Join(dir, "r.txt"))
-	if !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", sprint sprint, epoch 0\nkeep going\n") {
+	if !strings.HasPrefix(string(b), "REMINDER 1 to friend-a at "+t0.Format(time.RFC3339)+", epoch 0\nkeep going\n") {
 		t.Fatalf("file: %s", b)
 	}
 }
