@@ -2089,13 +2089,23 @@ jobs:
         # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
         # so this step must run there too; a guard that names no event lets ci-ok
         # report success over red needs (read of #766).
-        if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
+        # The verdict is this tree's Go, so a fork's pull request never runs it on this
+        # runner: the step below states a fork's ci-ok red without running anything of
+        # the fork's (its self-hosted jobs are all skipped, so it is red either way).
+        # internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
         shell: bash
         run: |
           go run ./tools/ci aggregate --event "${{ github.event_name }}" \
             --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
             lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
+      - name: a fork's pull request is red here
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        shell: bash
+        run: |
+          echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
+          exit 1
       - name: every CL-tier job succeeded (push to main)
         if: always() && github.event_name == 'push'
         shell: bash
