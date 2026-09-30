@@ -257,13 +257,19 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}()
 	<-first
 
-	// a stall watchdog: the landed count not moving for a minute ends the drive
-	// with the tables, the inbox and the check printed
+	// a stall watchdog: the landed count not moving for a minute of polls ends
+	// the drive with the tables, the inbox and the check printed
 	stalled := make(chan string, 1)
 	go func() {
-		last, at := -1, time.Now()
-		for ctx.Err() == nil {
-			time.Sleep(time.Second)
+		poll := time.NewTicker(time.Second)
+		defer poll.Stop()
+		last, still := -1, 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-poll.C:
+			}
 			n := 0
 			if snap, err := st.Load(ctx, store.All, nil); err == nil {
 				for _, s := range streams {
@@ -271,9 +277,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 				}
 			}
 			if n != last {
-				last, at = n, time.Now()
+				last, still = n, 0
 			}
-			if n < total && time.Since(at) > time.Minute {
+			if still++; n < total && still > 60 {
 				var b strings.Builder
 				for _, args := range [][]string{{"where"}, {"inbox"}, {"check"}} {
 					var out, errb bytes.Buffer
@@ -302,13 +308,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		t.Fatalf("the sprint did not land in 12 minutes")
 	}
 	wall := time.Since(began)
-	// let the loop's last ticks say the sprint is done, then stop it
-	for i := 0; i < 100; i++ {
-		select {
-		case <-loopDone:
-			i = 100
-		case <-time.After(50 * time.Millisecond):
-		}
+	// let the loop's last tick say the sprint is done, then stop it
+	select {
+	case <-loopDone:
+	case <-time.After(30 * time.Second):
 	}
 	cancel()
 	<-loopDone
