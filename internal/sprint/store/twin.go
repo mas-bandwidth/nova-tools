@@ -2,92 +2,195 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// The tick's twin: one read of the sprint per tick (the owner's requirement
-// of 2026-09-30, "the whole intent is sub-second ticks"). The tick's first
-// read builds it; every later part of the tick plans on it instead of reading
-// the four tables again, and each part's own writes are applied to it from
-// their receipts (the store's own account of what each batch changed).
+// The tick's twin: the sprint read once and kept (the owner's requirement
+// of 2026-09-30, "the whole intent is sub-second ticks"). The first read
+// builds it; every later read of a step that loads the four tables brings it
+// up to date instead of reading them whole, and each step's own writes are
+// applied to it from their receipts (the store's own account of what each
+// batch changed). The run loop keeps it from one tick to the next.
 //
-// Why it is the same state a fresh read gives. Every write of a record or a
-// table property is a step's operation, and every operation takes the fence
-// at the generation its plan read (Acquire, WATCH + MULTI/EXEC), so the
-// fence's generation names the state of every record, property and the work
-// table's queue: while it is the generation the twin holds, no writer has
-// changed any of them since. A part's step reads the fence first; at the
-// twin's generation it plans on the twin, and its Acquire at that generation
-// is the same guard it is after a fresh read (no model changes:
-// tla/DirtyTick.tla and the engine's fence are as they were; a read of an
-// unchanged state twice gives the same state). What changes outside the fence
-// (the display cells, the rows a step declares, a judgment's review time) is
-// read again for every part: the tables' shapes (rows, texts, properties,
-// revisions) in one exchange, the open judgments and the coordinator. At any
-// other generation, or a pending operation, the step reads the store whole
-// and the twin is built again from that read (counted: Stats.stale).
+// Why it is the state a fresh read gives. Every write of a record or a table
+// property is a step's operation, and every operation takes the fence at the
+// generation its plan read (Acquire, WATCH + MULTI/EXEC). A read from the
+// twin reads the fence, then each table's shape (its rows, texts, properties
+// and revision), then brings each table whose revision moved since the twin
+// last saw it up to date: the records its writes since then changed, named by
+// the table layer's change stream (every write of a table appends its event
+// there, with the members it moved and the batch's account of every entry),
+// read again from the store; a table whose stream does not account for every
+// revision between is read whole. It reads the open judgments and the
+// coordinator every time, and the fence again last: a generation that moved
+// during the read, or an operation in flight, is read again, as a fresh read
+// is. So each step plans on the state at the generation its Acquire guards,
+// as it does after a fresh read (no model changes: tla/DirtyTick.tla and the
+// engine's fence are as they were; a state read twice gives the same state).
 //
-// After a part commits, the twin is the state its plan read with the
+// After a step commits, the twin is the state its plan read with the
 // operation's receipts applied: each record's place, score and revision as
 // the store left them, its fields as the entry set and unset them, each
 // table's revision and changed properties, the queue as the commit trimmed and
 // pushed it, at the generation its Acquire set. Anything else (a lost or cut
-// operation, a receipt without its account, a refusal) drops the twin, and
-// the next part reads the store. A test build checks the twin against a
-// fresh read at every part (Store.CheckTwin).
+// operation, a receipt without its account, a refusal) drops the twin's
+// records of every table, and the next read reads them whole. A test build
+// checks every read of the twin against a fresh read (Store.CheckTwin).
 
-// Twin is a tick's copy of the sprint (see above). The zero value is empty:
-// the first step that uses it reads the store.
+// TableChanger is a store that says which records a table's writes changed
+// between two of its revisions: the table layer's change stream. ok is false
+// when the stream does not account for every revision between (a gap,
+// another epoch, a write it cannot name the records of): the caller reads the
+// table whole.
+type TableChanger interface {
+	TableChanges(ctx context.Context, table string, from, to uint64) (ids []string, ok bool, err error)
+}
+
+// Twin is a copy of the sprint (see above). The zero value is empty: its
+// first read reads the four tables whole.
 type Twin struct {
-	valid  bool
+	// mu is held by the step that reads and writes through the twin, from
+	// its read to its commit: a step that finds it held (a step run inside
+	// another's, or another goroutine's) reads the store itself.
+	mu     sync.Mutex
+	valid  bool   // gen and queue are known
 	gen    uint64 // the fence's generation the twin is the state at
 	epoch  uint64
-	tables map[string]*sprint.Table // by logical name: its placed records, and the kept ones a part's extras named
-	// kept is the records read that are on no cell (an extra a part named),
+	tables map[string]*sprint.Table // by logical name: its placed records, and the kept ones a step's extras named
+	// kept is the records read that are on no cell (an extra a step named),
 	// absent the ids read and not found, and shown the kept records put in a
-	// table for the part in flight, each by logical table and id.
+	// table for the step in flight, each by logical table and id.
 	kept, shown map[string]map[string]*sprint.Card
 	absent      map[string]map[string]bool
 	queue       []sprint.QueuedChange
 	queueKnown  bool
 }
 
-// NewTwin is an empty twin: its first step reads the store.
+// NewTwin is an empty twin: its first read reads the store whole.
 func NewTwin() *Twin { return &Twin{} }
 
-func (tw *Twin) drop() { tw.valid, tw.queue, tw.queueKnown = false, nil, false }
+// drop forgets the twin's records: the next read reads every table whole.
+func (tw *Twin) drop() {
+	tw.valid, tw.tables, tw.queue, tw.queueKnown = false, nil, nil, false
+}
 
-// seed makes the twin the state a whole read of the four tables at gen found.
-func (tw *Twin) seed(s *sprint.Snapshot, gen uint64) {
-	tw.valid, tw.gen, tw.epoch = true, gen, s.Epoch
+// reset is an empty twin of the epoch.
+func (tw *Twin) reset(epoch uint64) {
+	tw.drop()
+	tw.epoch = epoch
 	tw.tables = map[string]*sprint.Table{}
 	tw.kept, tw.shown, tw.absent = map[string]map[string]*sprint.Card{}, map[string]map[string]*sprint.Card{}, map[string]map[string]bool{}
-	tw.queue, tw.queueKnown = nil, false
 	for _, name := range All {
-		t := s.T(name)
-		tw.tables[name] = t
 		tw.kept[name], tw.shown[name], tw.absent[name] = map[string]*sprint.Card{}, map[string]*sprint.Card{}, map[string]bool{}
-		for _, c := range t.LoadedCards() {
-			if !c.Placed() {
-				tw.kept[name][c.ID] = c
-				tw.shown[name][c.ID] = c
-			}
-		}
 	}
 }
 
-// view is the twin as a part's snapshot: the records it holds, the tables'
-// shapes read now, the open judgments and the coordinator read now, and the
-// records the step's extras name (read once, then kept).
-func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	stored := make([]string, len(All))
-	for i, t := range All {
+// ShareTwin has the store read and write through the twin (a process's
+// one twin of a store: every step it runs, a verb's or a tick's part, reads
+// only what changed since the last); nil is none.
+func (st *Store) ShareTwin(tw *Twin) { st.tw = tw }
+
+// twin is the store's twin, made on first use; its pinned copies share it.
+func (st *Store) twin() *Twin {
+	if st.tw == nil {
+		st.tw = NewTwin()
+	}
+	return st.tw
+}
+
+// twinRead is the sprint as a fresh fenced read of the four tables gives it,
+// from the twin brought up to date (see above): the snapshot and the fence it
+// was read at. A pending operation is finished first, as fencedRead finishes
+// it.
+func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+	r := st.retry(ctx)
+	for r.next(st.attempts()) {
+		f, err := st.B.ReadFence(ctx)
+		if err != nil {
+			return nil, Fence{}, err
+		}
+		if f.Pending != nil {
+			res, err := st.finish(ctx, *f.Pending)
+			if err != nil {
+				return nil, Fence{}, err
+			}
+			if res.Done == "open" {
+				if st.now().Sub(f.Pending.At) < st.grace() {
+					continue // in flight: its writer is at it
+				}
+				return nil, Fence{}, &PendingError{Op: res.Op, Why: res.Detail}
+			}
+			if repaired != nil {
+				*repaired = append(*repaired, res.Op+" "+res.Done)
+			}
+			continue
+		}
+		if tw.tables == nil || tw.epoch != st.epoch {
+			tw.reset(st.epoch)
+		}
+		snap, err := st.twinView(ctx, tw, load, extras)
+		var moved *movedError
+		if errors.As(err, &moved) {
+			continue
+		}
+		if err != nil {
+			return nil, Fence{}, err
+		}
+		f2, err := st.B.ReadFence(ctx)
+		if err != nil {
+			return nil, Fence{}, err
+		}
+		if f2.Pending != nil || f2.Gen != f.Gen {
+			continue
+		}
+		if !tw.valid || tw.gen != f.Gen {
+			// another writer's commit pushed to the queue or took from it
+			tw.queue, tw.queueKnown = nil, false
+		}
+		tw.valid, tw.gen = true, f.Gen
+		snap.QueueLen, snap.Running = f2.Queued, f2.Running
+		f2.Gen = f.Gen
+		if st.CheckTwin != nil {
+			if err := st.checkTwin(ctx, snap, f.Gen, load, extras); err != nil {
+				return nil, Fence{}, err
+			}
+		}
+		return snap, f2, nil
+	}
+	return nil, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+}
+
+// checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
+// same generation (its own read, not counted).
+func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, extras func(*sprint.Snapshot) map[string][]string) error {
+	chk := *st
+	chk.Stats, chk.CheckTwin, chk.tw = &Stats{}, nil, nil
+	fresh, at, err := chk.Fenced(ctx, load, extras, nil)
+	if err != nil || at != gen {
+		return err
+	}
+	if err := st.CheckTwin(snap, fresh); err != nil {
+		return fmt.Errorf("the tick's twin differs from a fresh read at generation %d: %w", gen, err)
+	}
+	return nil
+}
+
+// twinView brings the twin up to date with the store as it is now (the
+// tables' shapes, the records written since, the open judgments, the
+// coordinator, the records the step's extras name) and is it as a step's
+// snapshot. A table that moved while it was read is a movedError.
+func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+	stored := make([]string, len(load))
+	for i, t := range load {
 		stored[i] = st.Names.Table(t)
 	}
 	shapes, err := st.shapes(ctx, stored)
@@ -95,12 +198,47 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 		return nil, err
 	}
 	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Actor: st.Actor}
-	for i, shape := range shapes {
+	for _, shape := range shapes {
 		if shape.Epoch != st.epoch {
 			return nil, errCleared
 		}
-		t := tw.tables[All[i]]
-		t.Epoch, t.Revision = shape.Epoch, shape.Revision
+	}
+	// Each table is brought to its shape's revision, or read whole; a table
+	// is in the twin only once its records are the ones at the revision it
+	// holds, so a read cut short leaves no table half read.
+	var whole []ntable.Table
+	for i, shape := range shapes {
+		t := tw.tables[load[i]]
+		switch {
+		case t == nil:
+			whole = append(whole, shape)
+		case t.Revision != shape.Revision:
+			if err := st.catchUp(ctx, tw, load[i], shape); err != nil {
+				return nil, err
+			}
+			tw.tables[load[i]].Revision = shape.Revision
+		}
+	}
+	if len(whole) > 0 {
+		ids, err := st.B.CellIDs(ctx, whole)
+		if err != nil {
+			return nil, err
+		}
+		for _, shape := range whole {
+			name := st.Names.Logical(shape.Name)
+			fresh := sprint.NewTable(name)
+			fresh.Revision = shape.Revision
+			st.stats().reads.Add(1)
+			if err := st.readInto(ctx, fresh, ids[shape.Name], true); err != nil {
+				return nil, err
+			}
+			tw.tables[name] = fresh
+			tw.kept[name], tw.shown[name], tw.absent[name] = map[string]*sprint.Card{}, map[string]*sprint.Card{}, map[string]bool{}
+		}
+	}
+	for i, shape := range shapes {
+		t := tw.tables[load[i]]
+		t.Epoch = shape.Epoch
 		t.SetProps(shape.Props)
 		rows := make([]string, 0, len(shape.Rows))
 		texts := map[string]map[string]string{}
@@ -112,15 +250,17 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 		}
 		t.SetRows(rows)
 		t.Texts = texts
-		switch All[i] {
+	}
+	for _, name := range load {
+		switch name {
 		case sprint.Work:
-			s.Work = t
+			s.Work = tw.tables[name]
 		case sprint.Readers:
-			s.Readers = t
+			s.Readers = tw.tables[name]
 		case sprint.Merge:
-			s.Merge = t
+			s.Merge = tw.tables[name]
 		case sprint.Fleet:
-			s.Fleet = t
+			s.Fleet = tw.tables[name]
 		}
 	}
 	open, err := st.B.OpenNotes(ctx)
@@ -131,6 +271,90 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 	if s.Coordinator, err = st.B.Coordinator(ctx); err != nil {
 		return nil, err
 	}
+	if err := st.showExtras(ctx, tw, s, load, extras); err != nil {
+		return nil, err
+	}
+	st.stats().twin.Add(1)
+	return s, nil
+}
+
+// catchUp brings one table of the twin from the revision it holds to the
+// shape's: the records the writes between changed, named by the table's
+// change stream and read again; the table read whole when the stream does not
+// account for every revision between.
+func (st *Store) catchUp(ctx context.Context, tw *Twin, name string, shape ntable.Table) error {
+	t := tw.tables[name]
+	tc, ok := st.B.(TableChanger)
+	var ids []string
+	if ok {
+		var err error
+		if ids, ok, err = tc.TableChanges(ctx, shape.Name, t.Revision, shape.Revision); err != nil {
+			return err
+		}
+	}
+	if !ok {
+		delete(tw.tables, name)
+		return st.wholeTable(ctx, tw, name, shape)
+	}
+	st.stats().stale.Add(1)
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var cards []string
+	for _, id := range ids {
+		if c := sprint.CardID(id); !seen[c] {
+			seen[c] = true
+			cards = append(cards, c)
+		}
+	}
+	found := sprint.NewTable(name)
+	found.Revision = shape.Revision
+	if err := st.readInto(ctx, found, st.sids(cards), false); err != nil {
+		return err
+	}
+	for _, id := range cards {
+		c := found.Card(id)
+		delete(tw.shown[name], id)
+		switch {
+		case c == nil:
+			t.Drop(id)
+			delete(tw.kept[name], id)
+			tw.absent[name][id] = true
+		case c.Placed():
+			t.Put(c)
+			delete(tw.kept[name], id)
+			delete(tw.absent[name], id)
+		default:
+			t.Drop(id)
+			tw.kept[name][id] = c
+			delete(tw.absent[name], id)
+		}
+	}
+	return nil
+}
+
+// wholeTable reads one table of the twin whole.
+func (st *Store) wholeTable(ctx context.Context, tw *Twin, name string, shape ntable.Table) error {
+	ids, err := st.B.CellIDs(ctx, []ntable.Table{shape})
+	if err != nil {
+		return err
+	}
+	t := sprint.NewTable(name)
+	t.Revision = shape.Revision
+	st.stats().reads.Add(1)
+	if err := st.readInto(ctx, t, ids[shape.Name], true); err != nil {
+		return err
+	}
+	tw.tables[name] = t
+	tw.kept[name], tw.shown[name], tw.absent[name] = map[string]*sprint.Card{}, map[string]*sprint.Card{}, map[string]bool{}
+	return nil
+}
+
+// showExtras puts in each table the kept records the step's extras name, read
+// once (a fresh read reads them with its tables), and takes out the ones it
+// does not name.
+func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, load []string, extras func(*sprint.Snapshot) map[string][]string) error {
 	// The extras are named over the placed records (a fresh read names them
 	// before it reads any), which the kept ones shown do not change.
 	want := map[string]map[string]bool{}
@@ -139,9 +363,12 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 			if want[table] == nil {
 				want[table] = map[string]bool{}
 			}
+			t := s.T(table)
+			if t == nil {
+				continue // an extra of a table the step does not load: a fresh read reads none
+			}
 			var missing []string
 			for _, id := range ids {
-				t := tw.tables[table]
 				if t.Placed(id) != nil {
 					continue
 				}
@@ -152,9 +379,9 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 			}
 			if len(missing) > 0 {
 				found := sprint.NewTable(table)
-				found.Revision = tw.tables[table].Revision
+				found.Revision = t.Revision
 				if err := st.readInto(ctx, found, st.sids(missing), false); err != nil {
-					return nil, err
+					return err
 				}
 				for _, id := range missing {
 					if c := found.Card(id); c != nil {
@@ -166,7 +393,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 			}
 		}
 	}
-	for _, table := range All {
+	for _, table := range load {
 		t := tw.tables[table]
 		for id := range tw.shown[table] {
 			if !want[table][id] {
@@ -181,8 +408,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 			}
 		}
 	}
-	st.stats().twin.Add(1)
-	return s, nil
+	return nil
 }
 
 // twinQueue is the work table's queue at the generation the step read: the
@@ -220,6 +446,9 @@ func (st *Store) twinCommitted(tw *Twin, op OpRecord, receipts []receipt, gen ui
 		return
 	}
 	for _, r := range receipts {
+		if tw.tables[st.Names.Logical(r.man.Table)] == nil {
+			continue // a table the twin does not hold: its first read reads it whole
+		}
 		if err := tw.apply(st.Names.Logical(r.man.Table), r.man, r.rc); err != nil {
 			tw.drop()
 			return
@@ -303,61 +532,40 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 	return nil
 }
 
-// fencedStep is the step's read: from the tick's twin while the fence is at
-// its generation with nothing pending, else the store read whole (fenced),
-// which the twin is built again from.
-func (st *Store) fencedStep(ctx context.Context, step Step, repaired *[]string) (*sprint.Snapshot, Fence, error) {
-	tw := step.Twin
-	if tw == nil || !slices.Equal(step.Load, All) {
+// fencedStep is the step's read: from the twin when the step has one and
+// loads the four tables (twinRead), else fenced.
+func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
 		return st.fenced(ctx, step.Load, step.Extras, repaired)
 	}
-	if tw.valid && tw.epoch == st.epoch {
-		snap, f, ok, err := st.fromTwin(ctx, tw, step.Extras)
-		if err != nil || ok {
-			return snap, f, err
-		}
-		st.stats().stale.Add(1)
-		tw.drop()
-	}
-	snap, f, err := st.fenced(ctx, step.Load, step.Extras, repaired)
-	if err == nil {
-		tw.seed(snap, f.Gen)
-	}
-	return snap, f, err
+	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired)
 }
 
-// fromTwin is the twin's view at the fence's generation, the fence read
-// before and after it; ok is false when the fence is at another generation
-// or holds an operation.
-func (st *Store) fromTwin(ctx context.Context, tw *Twin, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, Fence, bool, error) {
-	f, err := st.B.ReadFence(ctx)
-	if err != nil || f.Pending != nil || f.Gen != tw.gen {
-		return nil, Fence{}, false, err
-	}
-	snap, err := st.twinView(ctx, tw, extras)
-	if err != nil {
-		return nil, Fence{}, false, err
-	}
-	f2, err := st.B.ReadFence(ctx)
-	if err != nil || f2.Pending != nil || f2.Gen != f.Gen {
-		return nil, Fence{}, false, err
-	}
-	snap.QueueLen = f2.Queued
-	if st.CheckTwin != nil {
-		// the check's read is its own: it is not the step's, and not counted
-		chk := *st
-		chk.Stats, chk.CheckTwin = &Stats{}, nil
-		fresh, gen, err := chk.Fenced(ctx, All, extras, nil)
-		if err != nil {
-			return nil, Fence{}, false, err
+// twinTables says the tables are the sprint's, each once.
+func twinTables(load []string) bool {
+	seen := map[string]bool{}
+	for _, t := range load {
+		if seen[t] || !slices.Contains(All, t) {
+			return false
 		}
-		if gen == f.Gen {
-			if err := st.CheckTwin(snap, fresh); err != nil {
-				return nil, Fence{}, false, fmt.Errorf("the tick's twin differs from a fresh read at generation %d: %w", gen, err)
-			}
-		}
+		seen[t] = true
 	}
-	return snap, f2, true, nil
+	return true
+}
+
+// stepTwin is the twin a step reads and writes through, held for it: the
+// step's own, else the store's; nil when there is none or it is held (a
+// step inside another, or another goroutine's), and the step reads the
+// store itself. The release is to be called when the step ends.
+func (st *Store) stepTwin(step Step) (*Twin, func()) {
+	tw := step.Twin
+	if tw == nil {
+		tw = st.tw
+	}
+	if tw == nil || !tw.mu.TryLock() {
+		return nil, func() {}
+	}
+	return tw, tw.mu.Unlock
 }
 
 // TwinDiff is how a snapshot planned on from the twin differs from a fresh
@@ -368,17 +576,30 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 	var out []string
 	for _, name := range All {
 		a, b := twin.T(name), fresh.T(name)
-		if a.Revision != b.Revision || a.Epoch != b.Epoch {
-			out = append(out, fmt.Sprintf("%s: revision %d/%d epoch %d/%d", name, a.Revision, b.Revision, a.Epoch, b.Epoch))
+		if a == nil || b == nil {
+			if (a == nil) != (b == nil) {
+				out = append(out, name+": loaded in one read and not the other")
+			}
+			continue
 		}
-		if !slices.Equal(a.Rows(), b.Rows()) {
-			out = append(out, fmt.Sprintf("%s: rows %v, fresh %v", name, a.Rows(), b.Rows()))
+		if a.Epoch != b.Epoch {
+			out = append(out, fmt.Sprintf("%s: epoch %d/%d", name, a.Epoch, b.Epoch))
+		}
+		// A table's revision, rows and texts move with the writes outside the
+		// fence too (the display cells, the rows a step declares), which the
+		// fresh read, made after, may see and the twin's read not: they are
+		// compared when the two reads saw the same revision. The records and
+		// properties are written only under the fence: always compared.
+		if a.Revision == b.Revision {
+			if !slices.Equal(a.Rows(), b.Rows()) {
+				out = append(out, fmt.Sprintf("%s: rows %v, fresh %v", name, a.Rows(), b.Rows()))
+			}
+			if fmt.Sprint(a.Texts) != fmt.Sprint(b.Texts) {
+				out = append(out, fmt.Sprintf("%s: texts %v, fresh %v", name, a.Texts, b.Texts))
+			}
 		}
 		if fmt.Sprint(a.Props()) != fmt.Sprint(b.Props()) {
 			out = append(out, fmt.Sprintf("%s: props %v, fresh %v", name, a.Props(), b.Props()))
-		}
-		if fmt.Sprint(a.Texts) != fmt.Sprint(b.Texts) {
-			out = append(out, fmt.Sprintf("%s: texts %v, fresh %v", name, a.Texts, b.Texts))
 		}
 		ac, bc := a.LoadedCards(), b.LoadedCards()
 		byID := map[string]*sprint.Card{}
@@ -401,6 +622,9 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 	}
 	if fmt.Sprint(twin.Open) != fmt.Sprint(fresh.Open) || fmt.Sprint(twin.Acked) != fmt.Sprint(fresh.Acked) {
 		out = append(out, "the open judgments differ")
+	}
+	if twin.QueueLen != fresh.QueueLen || twin.Running != fresh.Running {
+		out = append(out, fmt.Sprintf("the queue %d/%d, running %v/%v", twin.QueueLen, fresh.QueueLen, twin.Running, fresh.Running))
 	}
 	if twin.Coordinator != fresh.Coordinator {
 		out = append(out, "the coordinator differs")

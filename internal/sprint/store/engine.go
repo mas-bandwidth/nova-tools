@@ -80,6 +80,7 @@ type Store struct {
 	// from the tick's twin with a fresh read of the same generation: an error
 	// fails the step (twin.go).
 	CheckTwin func(twin, fresh *sprint.Snapshot) error
+	tw        *Twin     // the store's twin (twin.go): kept from one tick to the next
 	root      Backend   // the backend before pinning
 	epoch     uint64    // the epoch the store is pinned to
 	cleared   time.Time // when the pinned epoch began
@@ -329,15 +330,17 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	plans := st.retry(ctx)
 	// a twin the step does not leave as the state it committed is dropped:
 	// the next step reads the store (twin.go)
+	tw, release := st.stepTwin(step)
+	defer release()
 	twinKept := true
 	defer func() {
-		if step.Twin != nil && !twinKept {
-			step.Twin.drop()
+		if tw != nil && !twinKept {
+			tw.drop()
 		}
 	}()
 	for res.Attempts < st.attempts() {
 		res.Attempts++
-		snap, fence, err := st.fencedStep(ctx, step, &res.Repaired)
+		snap, fence, err := st.fencedStep(ctx, tw, step, &res.Repaired)
 		gen := fence.Gen
 		if errors.Is(err, errCleared) && step.Epoch == nil {
 			// The sprint was cleared while this step read it: read the new
@@ -384,7 +387,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		var held map[string]bool // work cards a queued change names: a pump part leaves them
 		if step.Drain || fence.Queued > 0 {
-			q, err := st.twinQueue(ctx, step.Twin, fence.Queued)
+			q, err := st.twinQueue(ctx, tw, fence.Queued)
 			if err != nil {
 				return res, err
 			}
@@ -540,7 +543,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// the twin is the state this plan read with the operation applied, at
 		// the generation its Acquire set
-		st.twinCommitted(step.Twin, op, receipts, gen+1)
+		st.twinCommitted(tw, op, receipts, gen+1)
 		twinKept = true
 		return st.after(ctx, step, res)
 	}

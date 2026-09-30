@@ -256,7 +256,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		}
 	}
 	now := st.now()
-	wrote := false
+	diffs := map[string]map[string]string{}
 	for _, row := range shape.Rows {
 		m, _ := rs.Member(pinned.sid(sprint.CtlID(row.Key)))
 		ctl := &sprint.Card{Fields: m.Fields}
@@ -265,13 +265,11 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 			b := beats[row.Key]
 			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
 		}
-		w, err := syncRow(ctx, pinned, shape, row, want)
-		wrote = wrote || w
-		if err != nil {
-			return wrote, err
+		if d := rowDiff(row, want); len(d) > 0 {
+			diffs[row.Key] = d
 		}
 	}
-	return wrote, nil
+	return len(diffs) > 0, pinned.setRows(ctx, shape.Name, diffs)
 }
 
 // fleetBeats is the fleet's shape, from the shapes a tick read or else read
@@ -317,8 +315,7 @@ func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []
 // held: a hold is set and released only by a verb, whose step brings every
 // cell up to date (SyncFleet). It says whether it wrote.
 func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[string]sprint.Beat, now time.Time) (bool, error) {
-	var pinned *Store
-	wrote := false
+	diffs := map[string]map[string]string{}
 	for _, row := range shape.Rows {
 		b := beats[row.Key]
 		want := map[string]string{sprint.Load: sprint.LoadText(b, now)}
@@ -328,41 +325,55 @@ func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[st
 				want[sprint.Status] = sprint.Up
 			}
 		}
-		if pinned == nil && differs(row, want) {
-			var err error
-			if pinned, err = st.pin(ctx); err != nil {
-				return wrote, err
-			}
-		}
-		w, err := syncRow(ctx, pinned, shape, row, want)
-		wrote = wrote || w
-		if err != nil {
-			return wrote, err
+		if d := rowDiff(row, want); len(d) > 0 {
+			diffs[row.Key] = d
 		}
 	}
-	return wrote, nil
-}
-
-func differs(row ntable.Row, want map[string]string) bool {
-	for k, v := range want {
-		if row.Texts[k] != v {
-			return true
-		}
+	if len(diffs) == 0 {
+		return false, nil
 	}
-	return false
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return false, err
+	}
+	return true, pinned.setRows(ctx, shape.Name, diffs)
 }
 
-// syncRow writes the display cells of a row that differ from want, and says
-// whether it wrote.
-func syncRow(ctx context.Context, st *Store, shape ntable.Table, row ntable.Row, want map[string]string) (bool, error) {
+// rowDiff is the display cells of a row that differ from want.
+func rowDiff(row ntable.Row, want map[string]string) map[string]string {
 	diff := map[string]string{}
 	for k, v := range want {
 		if row.Texts[k] != v {
 			diff[k] = v
 		}
 	}
-	if len(diff) == 0 {
-		return false, nil
+	return diff
+}
+
+// RowsSetter is a store that writes the display cells of many rows of a
+// table in one exchange.
+type RowsSetter interface {
+	RowsSet(ctx context.Context, table string, rows map[string]map[string]string) error
+}
+
+// setRows writes the display cells of every row that differs, in one exchange
+// where the store can (the owner's rule: never a row at a time).
+func (st *Store) setRows(ctx context.Context, table string, rows map[string]map[string]string) error {
+	if len(rows) == 0 {
+		return nil
 	}
-	return true, st.B.RowSet(ctx, shape.Name, row.Key, diff)
+	if rs, ok := st.B.(RowsSetter); ok {
+		return rs.RowsSet(ctx, table, rows)
+	}
+	keys := make([]string, 0, len(rows))
+	for k := range rows {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := st.B.RowSet(ctx, table, k, rows[k]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

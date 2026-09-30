@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime/pprof"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -225,6 +227,15 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "run", "--cpuprofile: "+err.Error())
 		}
 		defer stop()
+		// a run stopped before its last profiled tick (a signal) still
+		// writes the profile of the ticks it made
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			<-sigs
+			stop()
+			os.Exit(0)
+		}()
 		a.profiled = func(n int) {
 			if n == profileTicks {
 				stop()

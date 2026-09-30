@@ -233,6 +233,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		diffs := map[string]map[string]string{}
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			want := map[string]string{
@@ -240,9 +241,12 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 				sprint.StateCol: dash(ctl.Fields["state"]),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
-			if _, err := syncRow(ctx, st, shape, row, want); err != nil {
-				return err
+			if d := rowDiff(row, want); len(d) > 0 {
+				diffs[row.Key] = d
 			}
+		}
+		if err := st.setRows(ctx, shape.Name, diffs); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -27,6 +27,7 @@ func TestTickProfile(t *testing.T) {
 		t.Skip("the tick's profile is run by hand: -args -cpuprofile-ticks <file>")
 	}
 	ta := newTestApp(t)
+	ta.a.checkTwin = nil // the bench measures the tick, not the check's fresh reads
 	ta.live = []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 	ta.ok("init --readers reader-a,reader-b,reader-c,reader-d --members m1:64,m2:64,m3:64,m4:64,m5:64,m6:64,m7:64,m8:64")
 	for _, s := range []string{"a", "b", "c"} {
@@ -55,9 +56,11 @@ func TestTickProfile(t *testing.T) {
 		began := time.Now()
 		var err error
 		var line string
+		done := false
 		pprof.Do(context.Background(), pprof.Labels("part", "tick"), func(ctx context.Context) {
 			res, e := st.Tick(ctx)
 			err = e
+			done = res.Done != ""
 			var parts []string
 			for _, p := range res.Times {
 				parts = append(parts, fmt.Sprintf("%s/%s=%s", p.Table, p.Name, p.Took.Round(time.Millisecond)))
@@ -70,6 +73,10 @@ func TestTickProfile(t *testing.T) {
 		t.Logf("tick %d %s %s", i+1, took.Round(time.Millisecond), line)
 		if err != nil {
 			t.Fatalf("tick %d: %v", i+1, err)
+		}
+		if done {
+			t.Logf("done at tick %d", i+1)
+			break
 		}
 		out := ta.ok("play --ticks 1 --every 10ms --broken 0 --fail 0 --stuck 0 --cross 0 --down 0 --up 1")
 		_ = out

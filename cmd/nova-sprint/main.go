@@ -72,6 +72,8 @@ type app struct {
 	// checkTwin, when set (a test), is every store's CheckTwin: each part a
 	// tick plans on its twin is checked against a fresh read (store/twin.go).
 	checkTwin func(twin, fresh *sprint.Snapshot) error
+	// twins is the process's twin of each store, by address.
+	twins map[string]*store.Twin
 }
 
 func newApp(getenv func(string) string) *app {
@@ -209,6 +211,15 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		return nil, err
 	}
 	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin}
+	// every verb this process runs on the store reads through one twin: a
+	// verb after the first reads only what changed (store/twin.go)
+	if a.twins == nil {
+		a.twins = map[string]*store.Twin{}
+	}
+	if a.twins[c.redis] == nil {
+		a.twins[c.redis] = store.NewTwin()
+	}
+	st.ShareTwin(a.twins[c.redis])
 	if st, err = st.Pinned(ctx); err != nil {
 		return nil, err
 	}

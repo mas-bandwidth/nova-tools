@@ -266,6 +266,33 @@ func (t *Table) Put(c *Card) {
 	t.cells, t.byPrimary = nil, nil
 }
 
+// Frozen is a copy of the table as it is now that later changes to the
+// table leave as it was: its own map of the same cards (a card is replaced
+// whole, never changed in place, by the store's twin), rows, texts and
+// properties. The tick's first read keeps one while the twin it was read
+// from moves on.
+func (t *Table) Frozen() *Table {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	c.cards = make(map[string]*Card, len(t.cards))
+	for id, card := range t.cards {
+		c.cards[id] = card
+	}
+	c.props = make(map[string]string, len(t.props))
+	for k, v := range t.props {
+		c.props[k] = v
+	}
+	c.Texts = make(map[string]map[string]string, len(t.Texts))
+	for k, v := range t.Texts {
+		c.Texts[k] = v
+	}
+	c.rows = append([]string(nil), t.rows...)
+	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
+	return &c
+}
+
 // Drop takes a card out of the table's cards: a record the table no longer
 // holds as a read would find it (store's twin, twin.go).
 func (t *Table) Drop(id string) {
