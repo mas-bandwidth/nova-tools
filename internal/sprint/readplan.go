@@ -367,6 +367,21 @@ type SprintQ struct {
 	// MaxReaders). Subjects bounds the subjects a note of `jnote` has; 0 is
 	// MaxAboutIDs.
 	Units, Subjects int
+	// Keys are the sprint keys the query also reads, in the one snapshot (the
+	// Key constants, rules_position_read.go): a plan that reads a sprint key
+	// its query did not name is refused as it is for a cell it did not load
+	// (Snapshot.Unloaded). Counts are the columns of the work table whose count
+	// a `streams` query gives for every stream it lists (the rows are the
+	// query's own, AL3).
+	Keys, Counts []string
+	// WaiterAfter is where `waiters` starts the head of wait:n, for a source of
+	// one id: after the waiter of that id, in the order of wait:n's members (by
+	// id); "" starts at the first. It is a place in that order and not a count:
+	// a waiter that has left wait:n since the last head, the one WaiterAfter names
+	// included, moves nothing. Missing says the head of wait:n is read only for
+	// the ids that have a score in {p}missing@e (a made need, 2.3 R4).
+	WaiterAfter string
+	Missing     bool
 }
 
 // ReadPlan is what one read asks the store (1.5.1): the records of ids by
@@ -486,7 +501,7 @@ func recordsCost(records, rangeIDs int, fields []string) Cost {
 // refuses a plan that names it.
 func QueryCost(q SprintQ) Cost {
 	if f, ok := queryCosts[q.Kind]; ok {
-		return f(q)
+		return f(q).Add(sprintKeysCost(q))
 	}
 	return Cost{Records: MaxReadRecords, RangeIDs: MaxReadRangeIDs, Bytes: MaxReadBytes}
 }
