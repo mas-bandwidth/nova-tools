@@ -223,25 +223,19 @@ place of what the file held, so a watcher of the file sees one current
 reminder. The text is at most 8 KiB and is set from a file, and can be
 different for each person. A route that fails is one judgment on the inbox
 (goal set <name> --to <route> changes it, goal drop <name> removes the
-person), closed when a delivery arrives. nova-sprint where and goal show say
-each person's last push and whether it failed. A clear keeps the people and
-their goals.`) + "\n"
+person), closed when a delivery arrives. nova-sprint goal show says each
+person's last push and whether it failed (where --json carries them). A clear
+keeps the people and their goals.`) + "\n"
 }
 
-// goalsFrame sets the people in the view and is the frame's lines about
-// them: each person's last push and whether the route failed; nothing when
-// there are none.
-func (a *app) goalsFrame(ctx context.Context, st *store.Store, v *whereView) string {
+// goalsView sets the people in the view: each person's last push and whether
+// the route failed. The frame does not show them; goal show does.
+func (a *app) goalsView(ctx context.Context, st *store.Store, v *whereView) {
 	g, err := st.Goals(ctx)
-	if err != nil || len(g.People) == 0 {
-		return ""
+	if err != nil {
+		return
 	}
-	var b strings.Builder
-	b.WriteString("\nREMINDERS\n")
 	for _, p := range g.People {
-		gv := viewOf(p, false)
-		v.Goals = append(v.Goals, gv)
-		b.WriteString("  " + gv.line() + "\n")
+		v.Goals = append(v.Goals, viewOf(p, false))
 	}
-	return b.String()
 }

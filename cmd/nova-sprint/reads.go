@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -192,6 +195,15 @@ func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
 	return 2
 }
 
+// whereRender is how each table of the view is drawn, by its logical name. A
+// table whose rows are streams (work, merge) does not show a stream with no
+// cards in any column; the stream shows again when it has cards. The other
+// tables show every row.
+var whereRender = map[string]ntable.RenderOpts{
+	sprint.Work:  {HideZeroRows: true},
+	sprint.Merge: {HideZeroRows: true},
+}
+
 // whereView is the view, for a program.
 type whereView struct {
 	At          time.Time                               `json:"at"`
@@ -209,40 +221,77 @@ type whereView struct {
 	Goals       []goalView                              `json:"goals,omitempty"`
 }
 
+// whereRun is what one where was asked, its flags read.
+type whereRun struct {
+	c       common
+	watch   bool
+	every   time.Duration
+	stale   time.Duration
+	atEpoch int64
+}
+
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("where")
-	watch := fs.Bool("watch", false, "redraw every --every until interrupted")
-	every := fs.Duration("every", time.Second, "the redraw interval with --watch")
-	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
+	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
+	every := fs.Duration("every", time.Second, "the redraw interval with --watch, between 1ms and 1h")
+	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", fmt.Sprint("takes no words ", err))
 	}
+	ctx := context.Background()
+	if *watch {
+		if *every < time.Millisecond || *every > time.Hour {
+			return refuse(stderr, "where", "--every wants a duration between 1ms and 1h, got "+every.String())
+		}
+		// an interrupt ends the watch, and the cursor comes back with it
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+	}
+	return a.whereLoop(ctx, whereRun{c: *c, watch: *watch, every: *every, stale: *stale, atEpoch: *atEpoch}, stdout, stderr)
+}
+
+// whereLoop shows the view: once, or with --watch every --every until ctx is
+// done. A watch of the text redraws in place (watchWriter); --json prints
+// one object a frame.
+func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer) int {
+	var w *watchWriter
+	if r.watch && !r.c.json {
+		w = newWatchWriter(stdout)
+		w.hideCursor()
+		defer w.showCursor()
+	}
 	for {
 		// every frame reads the sprint's epoch again: a clear while it
 		// watches shows the new epoch
-		st, err := a.storeAt(*c, *atEpoch)
+		st, err := a.storeAt(r.c, r.atEpoch)
 		if err != nil {
 			return refuse(stderr, "where", err.Error())
 		}
-		v, frame, err := a.where(context.Background(), st, *stale)
+		v, frame, err := a.where(ctx, st, r.stale)
 		if err != nil {
+			if ctx.Err() != nil {
+				return 0 // an interrupt cut the read short: the watch is over, not failed
+			}
 			return a.readFailed("where", err, stderr)
 		}
-		if c.json {
+		switch {
+		case r.c.json:
 			b, _ := json.Marshal(v)
 			fmt.Fprintln(stdout, string(b))
-		} else {
-			if *watch {
-				fmt.Fprint(stdout, "\x1b[H\x1b[2J")
+		case w != nil:
+			if err := w.frame(frame); err != nil {
+				fmt.Fprintf(stderr, "%s where: stdout: %s\n", prog, oneline.Escape(err.Error()))
+				return 1
 			}
+		default:
 			fmt.Fprint(stdout, frame)
 		}
-		if !*watch {
+		if !r.watch || !a.pause(ctx, r.every) {
 			return 0
 		}
-		a.sleep(*every)
 	}
 }
 
@@ -304,20 +353,18 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			// the machine keeps a stream's since; the view does not show it
 			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
 		}
-		if out := ntable.Render(t, ntable.RenderOpts{Title: logical}); out != "" {
+		opts := whereRender[logical]
+		opts.Title = logical
+		if out := ntable.Render(t, opts); out != "" {
 			parts = append(parts, out)
 		}
 	}
 	b.WriteString(strings.Join(parts, "\n"))
-	b.WriteString(a.goalsFrame(ctx, st, &v))
+	a.goalsView(ctx, st, &v)
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
 			v.Stalled = append(v.Stalled, c.Stream)
-			fmt.Fprintf(&b, "\nstalled: stream %s: no progress for %s (state %s)\n", c.Stream, now.Sub(c.Progress).Round(time.Second), c.State)
 		}
-	}
-	if f.Pending != nil {
-		fmt.Fprintf(&b, "\npending: operation %s (%s, since %s); run: nova-sprint repair\n", f.Pending.ID, f.Pending.Verb, f.Pending.At.Local().Format("15:04:05"))
 	}
 	return v, b.String(), nil
 }

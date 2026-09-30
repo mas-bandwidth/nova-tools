@@ -29,8 +29,21 @@ The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED (no tick for Ns)`. The coordinator is not printed in the view
-(`where --json` carries it). Every count cell is an ordered set.
+`STOPPED (no tick for Ns)`. Every count cell is an ordered set.
+
+A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
+tables, and nothing else: no pending operation, no stalled stream, no line about
+the people and no coordinator (`where --json` carries them; `check`, `inbox` and
+`goal show` say the same in their own words). The merge table has no `since`
+column. A table with no rows is not shown, and a stream with no cards in any
+column is not shown in the work and merge tables; each shows again when it has
+a row. A row's first cell is its identity. `where --watch` redraws the frame in
+place once a second (`--every`, from 1ms to 1h): the cursor is hidden while it
+watches and restored when it ends or is interrupted; each frame is built whole
+and written with one write, from the top of the screen, every line cleared to
+its end and the screen below the frame cleared, so a shorter frame leaves
+nothing behind and nothing scrolls. `where` without `--watch` prints one
+frame; `where --json --watch` prints one object a second and draws nothing.
 
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. One deployment's tables,
@@ -447,7 +460,7 @@ machine was STOPPED is not counted, so a sprint stopped for hours shows
 nothing overdue because of those hours. Each stream has `since` (the last change of its state) and `progress`
 (the last change of its state or of any of its counts); a stream that has not
 landed and whose progress is older than its deadline is shown as stalled by
-inbox and where. A stream with nothing on the table (every primary dropped,
+inbox (and by `where --json`). A stream with nothing on the table (every primary dropped,
 or restored empty by a clear) is waiting with no `since` and is never stale.
 This is pull visibility; nothing claims to detect a dead process.
 
@@ -562,7 +575,7 @@ epoch's record of results; teardown removes those records with the epoch. A
 writer whose operation another writer finished (the tick, another verb,
 repair) reports the recorded result, as a replay, and is never told it was
 cut. A step that loses every attempt to other writers says so and applied
-nothing. `check` and `where` show a pending operation. The model
+nothing. `check` shows a pending operation (`where --json` carries it). The model
 includes the cut between every two phases. A multi-table batch in the table
 layer retires this section.
 
@@ -634,7 +647,7 @@ command that loads it.
 | queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<prefix><card>`, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
-| where | the view, once or `--watch`, with a pending operation and stalled streams |
+| where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm <prefix>` |
@@ -806,8 +819,8 @@ is set or the machine starts; nothing is pushed while it is STOPPED. The file
 route replaces one file with a header line (`REMINDER <n> to <name> at <time>,
 sprint <prefix>, epoch <n>`) and the text, whole, so a watcher of the file sees
 one current reminder. A route that fails is one judgment, "a reminder could not
-be delivered", closed when a later delivery arrives. `where` shows each
-person's last push. The people and their goals are the sprint's, not the
+be delivered", closed when a later delivery arrives. `goal show` shows each
+person's last push (`where --json` carries it). The people and their goals are the sprint's, not the
 epoch's: a clear keeps them and resets their pushes.
 
 ## 16. Sentinel cards
