@@ -875,6 +875,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain = table == sprint.Work, drain
 		r, err := t.st.Run(t.ctx, step)
+		for _, d := range r.Drained {
+			// a drain the part's step made before it planned is the tick's
+			// move too: named in its report, never silent
+			t.res.Parts = append(t.res.Parts, PartResult{Name: sprint.PartDrain, Result: d})
+		}
 		for i := 1; drain && err == nil && i < MaxDrains && len(planned.Requeue) > 0; i++ {
 			// a card created and taken off the table in one queue: its
 			// removal was left for the next drain, which runs now, so the
