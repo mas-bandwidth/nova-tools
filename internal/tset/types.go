@@ -228,10 +228,15 @@ type DoneIdentity struct {
 	IntentDigest string  `json:"intent_digest"`
 }
 
+// CardCursorPosition is one primary's place in a cardlines page chain: the
+// pair (list index, item index within that line). NextItem is present only
+// when a page ended inside a line (L1 10, item 4); its name is Layer 2's
+// revision-2 wire choice.
 type CardCursorPosition struct {
 	About        string `json:"about"`
 	NextIndex    int64  `json:"next_index"`
 	ThroughIndex int64  `json:"through_index"`
+	NextItem     int64  `json:"next_item,omitempty"`
 }
 
 type CardCursor struct {
@@ -383,7 +388,12 @@ type ReadAnswer struct {
 	Done    []DoneSlot        `json:"slots,omitempty"`
 	LastSeq Decimal           `json:"last_seq,omitempty"`
 	Lines   []json.RawMessage `json:"lines,omitempty"`
-	Raw     json.RawMessage   `json:"-"`
+	// Next and Through are an atomic lines answer's coverage: the first seq
+	// not returned and the last seq returned (L1 7). Raw keeps them as the
+	// store wrote them.
+	Next    json.RawMessage `json:"next,omitempty"`
+	Through json.RawMessage `json:"through,omitempty"`
+	Raw     json.RawMessage `json:"-"`
 }
 
 func (a ReadAnswer) MarshalJSON() ([]byte, error) {
@@ -431,6 +441,12 @@ func (a ReadAnswer) MarshalJSON() ([]byte, error) {
 			m["lines"] = []json.RawMessage{}
 		} else {
 			m["lines"] = a.Lines
+		}
+		if len(a.Next) != 0 {
+			m["next"] = a.Next
+		}
+		if len(a.Through) != 0 {
+			m["through"] = a.Through
 		}
 	}
 	return json.Marshal(m)

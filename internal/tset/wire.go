@@ -1398,13 +1398,14 @@ func ValidateReadPlan(p ReadPlan) error {
 					}
 				}
 				for _, position := range q.Cursor.Positions {
-					if position.NextIndex > 9007199254740991 || position.ThroughIndex > 9007199254740991 {
+					if position.NextIndex > 9007199254740991 || position.ThroughIndex > 9007199254740991 ||
+						position.NextItem > 9007199254740991 {
 						return fail("OVERFLOW")
 					}
 					if code := idCode(position.About); code != "" {
 						return fail(code)
 					}
-					if position.NextIndex < 0 || position.ThroughIndex < -1 {
+					if position.NextIndex < 0 || position.ThroughIndex < -1 || position.NextItem < 0 {
 						return fail("REQUEST")
 					}
 				}
@@ -1614,12 +1615,19 @@ func (d *DoneIdentity) UnmarshalJSON(data []byte) error {
 }
 
 func (p *CardCursorPosition) UnmarshalJSON(data []byte) error {
-	m, err := strictObject(data, "about", "next_index", "through_index")
+	m, err := strictObject(data, "about", "next_index", "through_index", "next_item")
 	if err != nil {
 		return err
 	}
 	if err := unmarshalRequired(m, "about", &p.About); err != nil {
 		return err
+	}
+	if raw, ok := m["next_item"]; ok {
+		n, err := integralJSON(raw, math.MinInt64, math.MaxInt64)
+		if err != nil {
+			return fmt.Errorf("invalid next_item: %w", err)
+		}
+		p.NextItem = n
 	}
 	for name, target := range map[string]*int64{"next_index": &p.NextIndex, "through_index": &p.ThroughIndex} {
 		raw, ok := m[name]
