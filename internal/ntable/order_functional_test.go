@@ -81,7 +81,8 @@ func storeImage(t *testing.T, c *redis.Client) map[string]string {
 	require.NoError(t, err)
 	out := map[string]string{}
 	for _, key := range keys {
-		out[key], _ = imageOf(ctx, c, key)
+		out[key], err = imageOf(ctx, c, key)
+		require.NoError(t, err, "image of %s", key)
 	}
 	return out
 }

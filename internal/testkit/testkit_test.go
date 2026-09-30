@@ -74,6 +74,15 @@ func TestReadFailsTheTestOnAMissingOrBadFile(t *testing.T) {
 	require.Contains(t, rec.msg, "decode "+bad)
 }
 
+func TestWriteFileFailsTheTestWhenItCannotWrite(t *testing.T) {
+	t.Parallel()
+	blocker := filepath.Join(t.TempDir(), "a-file")
+	testkit.WriteFile(t, blocker, "x")
+	rec := &recorder{TB: t}
+	runs(rec, func() { testkit.WriteFile(rec, filepath.Join(blocker, "under", "it"), "y") })
+	assert.True(t, rec.failed, "WriteFile passed a path whose parent is a file")
+}
+
 // recorder is the test's own testing.TB with the failure calls replaced: it
 // records a failure instead of failing the test, so a helper's failure path
 // can be asserted on.

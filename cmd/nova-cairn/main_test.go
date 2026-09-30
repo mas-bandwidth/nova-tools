@@ -3,6 +3,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -54,7 +55,8 @@ func (c *rig) path(elem ...string) string {
 // no entry file for the id and no pointer line in the session file.
 func (c *rig) wroteNothing(session, entry string) {
 	c.t.Helper()
-	require.NoFileExists(c.t, c.path("entries", session, entry+".json"), "a refused append left an entry file")
+	_, err := os.Lstat(c.path("entries", session, entry+".json"))
+	require.ErrorIs(c.t, err, fs.ErrNotExist, "a refused append left an entry file")
 	require.NotContains(c.t, testkit.ReadFile(c.t, c.path("sessions", session+".md")), "ENTRY "+entry+" ", "a refused append left a pointer line")
 }
 
@@ -136,7 +138,8 @@ func TestExistingDirtyWorkIsUntouched(t *testing.T) {
 	c.ok("append", "--session", "s", "--entry", "e", "--text", "a checkpoint alongside dirty work", "--publish", "never")
 	c.ok("index")
 	require.Equal(t, before, testkit.ReadFile(t, dirty), "dirty work changed")
-	require.NoDirExists(t, c.path(".git"), "tool must not init or touch version control in the store")
+	_, err := os.Lstat(c.path(".git"))
+	require.ErrorIs(t, err, fs.ErrNotExist, "tool must not init or touch version control in the store")
 }
 
 func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
@@ -174,7 +177,10 @@ func TestMissingFlagsAreRefusedNeverGuessed(t *testing.T) {
 		"append without words":             {"append", "--store", "x", "--session", "s", "--entry", "e", "--publish", "never"},
 		"append without --entry/--publish": {"append", "--store", "x", "--session", "s"},
 	} {
-		assert.Equal(t, 2, cli.Run(args...).Code, name)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 2, cli.Run(args...).Code)
+		})
 	}
 }
 
@@ -218,7 +224,8 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 	}
 	out = c.ok("receipt", "--session", "s1", "--entry", "inherits")
 	require.Contains(t, out, " source="+field+" ", "receipt printed %q, want source=%s", out, field)
-	require.NoFileExists(t, ptr, "the source pointer was created or opened")
+	_, err := os.Lstat(ptr)
+	require.ErrorIs(t, err, fs.ErrNotExist, "the source pointer was created or opened")
 
 	// A session opened with no pointer: the entry has none, and says so.
 	c.ok("open", "--session", "s2", "--publish", "manual")
