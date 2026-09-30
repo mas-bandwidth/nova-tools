@@ -1607,7 +1607,7 @@ jobs:
     # cores shared by the store, the loop and the world driver holding the fence are not the
     # store the bound is about.
     #
-    # ON A SPACE BENCH, as ci.yml's functional legs run, with the machine's cores and not a
+    # ON A BENCH, as ci.yml's functional legs run, with the machine's cores and not a
     # leg's share: a wall clock measured on two cores of eight shared runners measures the
     # neighbours. The drive takes about 25 s and its build under a minute warm, inside the
     # two-minute cap; a cold cache that puts it over is read in the morning, not a CL gate.
@@ -1628,7 +1628,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
-        # ci.yml's toolchain pick for the space benches: the toolchain go.mod names under
+        # ci.yml's toolchain pick for the benches: the toolchain go.mod names under
         # ~/sdk, else ~/go/bin.
         shell: bash
         run: |

@@ -1648,7 +1648,7 @@ func ApplyBatches(ctx context.Context, c redis.Cmdable, manifests []BatchManifes
 	for i, body := range bodies {
 		cmds[i] = tx.FCall(ctx, FnApply, []string{DefKey(manifests[i].Table)}, manifests[i].Table, body)
 	}
-	_, _ = tx.Exec(ctx) // each command's reply, or the exchange's error, is read with it
+	_, _ = tx.Exec(ctx) // ignored: each command's reply, or the exchange's error, is read with it (batchReceipt)
 	for i, cmd := range cmds {
 		rcs[i], errs[i] = batchReceipt(manifests[i], cmd)
 	}

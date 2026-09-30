@@ -236,19 +236,27 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, "run", "--cpuprofile: "+err.Error())
 		}
-		defer stop()
+		stopped := func() {
+			if err := stop(); err != nil {
+				fmt.Fprintf(stderr, "PROFILE not written whole to %s: %v; run again with --cpuprofile\n", profile, err)
+			}
+		}
+		defer stopped()
 		// a run stopped before its last profiled tick (a signal) still
 		// writes the profile of the ticks it made
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
 			<-sigs
-			stop()
+			stopped()
 			os.Exit(0)
 		}()
 		a.profiled = func(n int) {
 			if n == profileTicks {
-				stop()
+				if err := stop(); err != nil {
+					fmt.Fprintf(stderr, "PROFILE not written whole to %s: %v; run again with --cpuprofile\n", profile, err)
+					return
+				}
 				fmt.Fprintf(stdout, "PROFILE %d ticks written to %s; run: go tool pprof -top %s\n", n, profile, profile)
 			}
 		}
@@ -259,22 +267,25 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 }
 
 // startProfile begins a CPU profile to the file; its stop, which may be
-// called more than once, ends it and closes the file.
-func startProfile(path string) (func(), error) {
+// called more than once, ends it and closes the file, and says (once) if the
+// file was not closed whole.
+func startProfile(path string) (func() error, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, err
 	}
 	if err := pprof.StartCPUProfile(f); err != nil {
-		_ = f.Close()
+		_ = f.Close() // ignored: nothing was written to it, and the start's error is the one returned
 		return nil, err
 	}
 	var once sync.Once
-	return func() {
+	return func() error {
+		var err error
 		once.Do(func() {
 			pprof.StopCPUProfile()
-			_ = f.Close()
+			err = f.Close()
 		})
+		return err
 	}, nil
 }
 
