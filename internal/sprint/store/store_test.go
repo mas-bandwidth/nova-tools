@@ -373,7 +373,11 @@ func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 		t.Fatalf("a member changed under a later table: %v", err)
 	}
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 1 || !strings.Contains(rr[0].Skipped[0], "s1-1") {
+	// the card skipped, and the work table's stream index its deal would have
+	// moved (a manifest none of whose member changes applied leaves its
+	// properties where they were)
+	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 2 || !strings.Contains(rr[0].Skipped[0], "s1-1") ||
+		!strings.Contains(rr[0].Skipped[1], "table property "+sprint.PropStreamIndex) {
 		t.Fatalf("repair of a cut operation: %+v %v", rr, err)
 	}
 	if h.m.Pending() != nil {

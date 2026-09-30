@@ -9,9 +9,7 @@ nova-sprint + merge + bus |     310 |     6 |       0 |      2 |       1 |      
 nova sprint migration     |      14 |     0 |       0 |      0 |       0 |      0
 fleet, ci, secrets, jev   |       0 |     0 |       2 |      2 |       0 |      1
 redis: store + bus        |      81 |     0 |       0 |      0 |       0 |      0
-nova-work                 |       0 |     0 |       0 |      0 |       0 |      0
 landing: streams + lander |       3 |     0 |       0 |      0 |       2 |      0
-docs                      |       0 |     0 |       0 |      0 |       0 |      0
 rowan-tools               |       1 |     0 |       0 |      0 |       0 |      3
 harvest                   |       0 |     4 |       0 |      0 |       0 |      0
 --------------------------+---------+-------+---------+--------+---------+-------

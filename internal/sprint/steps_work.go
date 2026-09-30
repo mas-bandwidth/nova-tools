@@ -620,13 +620,17 @@ func Deal(s *Snapshot, r DealReq) Plan {
 	p, moves := dealPlan(s, r, rr)
 	p = Lawful(p)
 	roundWrites(&p, rr, moves)
+	// the streams take turns from the work table's stream index (round.go,
+	// errata 3 amendment 10): it moves past the stream of the last card dealt
+	streamIndexWrite(&p, streamRound(s, PropStreamIndex), s.Work.Placed)
 	return p
 }
 
 func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 	var p Plan
 	moves := roundMoves{}
-	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
+	ready := func(c *Card) string { return inState(c, Ready) }
+	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
 	up := s.UpMembers()
 	if len(up) == 0 {
 		for _, c := range chosen {
@@ -738,8 +742,37 @@ func liveGen(verb string, c *Card, gens map[string]int) string {
 	return ""
 }
 
-// Take moves the member's work cards fleet ready -> working.
+// Take moves the member's work cards fleet ready -> working. As may name
+// several members, comma separated: each takes from its own ready queue, up
+// to the limit, in the one plan (the world's workers move in one batch a
+// tick, every member's row at once: errata 3 amendment 10); a take by id
+// names one member.
 func Take(s *Snapshot, r TakeReq) Plan {
+	members := Split(r.As)
+	if len(members) <= 1 {
+		return takeOne(s, r)
+	}
+	var p Plan
+	if named(r.Sel) {
+		for _, id := range r.Sel.IDs {
+			p.refuse(id, "a take by id names one member: --as <member>")
+		}
+		return p
+	}
+	for _, m := range members {
+		q := r
+		q.As = m
+		if q.Who == r.As {
+			q.Who = m
+		}
+		one := takeOne(s, q)
+		p.Units = append(p.Units, one.Units...)
+		p.Refused = append(p.Refused, one.Refused...)
+	}
+	return p
+}
+
+func takeOne(s *Snapshot, r TakeReq) Plan {
 	var p Plan
 	sel := r.Sel
 	if !named(sel) && sel.Limit == 0 {
@@ -797,7 +830,9 @@ type FinishReq struct {
 // review. Fixed work that comes back ok is asked of the same readers again.
 // A finish always names the generation it holds for every card it finishes:
 // a card without one is refused, naming the live generation, and a finish
-// by selection without --as is refused outright.
+// by selection without --as is refused outright. As may name several
+// members, comma separated: every card named is on one of them, each
+// finished as its own member's, in the one plan (errata 3 amendment 10).
 func Finish(s *Snapshot, r FinishReq) Plan { return Lawful(finishPlan(s, r)) }
 
 func finishPlan(s *Snapshot, r FinishReq) Plan {
@@ -806,9 +841,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		p.refuse("finish", "a finish by selection names its member: --as <member>; better, name each card: finish <card>@<gen>")
 		return p
 	}
+	members := Split(r.As)
 	var all []*Card
-	if r.As != "" {
-		all = s.Fleet.Cell(r.As, Working)
+	if len(members) > 0 {
+		for _, m := range members {
+			all = append(all, s.Fleet.Cell(m, Working)...)
+		}
 	} else {
 		all = s.Fleet.Column(Working)
 	}
@@ -822,7 +860,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if !c.Placed() || c.Col != Working {
 			return "not working (it is " + placeWord(c) + ")"
 		}
-		if r.As != "" && c.Row != r.As {
+		if len(members) > 0 && !contains(members, c.Row) {
 			return "dealt to " + c.Row + ", not " + r.As
 		}
 		if pr := s.Work.Placed(c.F("primary")); pr == nil || pr.Col != Working || pr.F("work") != c.ID {
@@ -838,11 +876,16 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		chosen = append(chosen, c)
 	}
-	who := r.As
-	if who == "" {
-		who = r.Who
-	}
 	for _, c := range chosen {
+		// the member that finished it: the one --as names, each card's own
+		// when it names several
+		who := r.As
+		switch {
+		case len(members) > 1:
+			who = c.Row
+		case who == "":
+			who = r.Who
+		}
 		pr := s.Work.Placed(c.F("primary"))
 		head := r.Head
 		if head == "" {
@@ -1044,65 +1087,78 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
-		ctl := s.MemberCtl(r.Member)
-		if ctl == nil {
-			p.refuse(r.Member, "no fleet member "+r.Member)
-			return p
-		}
-		set := map[string]string{}
-		var n *Note
-		line := r.Member + " down"
-		if ctl.F("status") != Down {
-			set["status"], set["since"] = Down, stamp(s.Now)
-			n = statusNote(s, r, NMemberDown, "down")
-		}
-		if r.Op == "hold" && ctl.F("held") == "" {
-			set["held"] = stamp(s.Now)
-			line = r.Member + " held down"
-		}
-		var head []Change
-		if len(set) > 0 {
-			head = append(head, change(Fleet, setEntry(ctl, set)))
-		}
-		up := liveFor(s, r)
-		cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
-		SortCards(cards)
 		// the room of each receiver is its width (width.go, errata 3 amendment
 		// 9): its work cards held, ready and working, under it
-		q, widths := memberLoads(s, up), memberWidths(s, up)
-		for _, c := range cards {
-			if len(up) > 0 && c.Int("redeals") < MaxRedeals {
-				// the next member round the fleet below its width, else the next
-				// up (round.go), the index moved past it
-				m := rr.next(up, q, widths, "", true)
-				rr.moved(m)
-				moves[c.ID] = m
-				q[m]++
-				set := nextGen(c, m, s.Now)
-				set["redeals"] = itoa(c.Int("redeals") + 1)
-				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
-					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
-				continue
-			}
-			set := nextGen(c, "", s.Now)
-			set["withdrawn"] = stamp(s.Now)
-			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
-				Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
-			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
-				u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
-				u.Moved += "; " + pr.ID + " working -> ready"
-				w := happened(NWithdrawn, pr.Row, s.Now, pr.ID)
-				w.Who = r.Who
-				u.Notes = append(u.Notes, w)
-			}
-			p.Units = append(p.Units, u)
-		}
-		headOf(&p, r.Member, head, n, line)
+		up := liveFor(s, r)
+		return downPlan(s, r, up, rr, moves, memberLoads(s, up), memberWidths(s, up))
 	case "level":
 		level(s, &p, s.UpMembers(), rr, moves)
 	default:
 		p.refuse(r.Op, "fleet wants up, down, level, hold or release")
 	}
+	return p
+}
+
+// downPlan is one member going down (or held): its control card, and its
+// unfinished work cards, ready and working, dealt round the members of up
+// below their width (else the next up) at a new generation, or withdrawn when
+// none is up or a card is at its redeal bound. q and widths are the
+// receivers' loads and widths, counted on as cards are dealt: a tick that
+// takes several members down in one plan (presence) shares them, so every
+// down member's cards go round the fleet together (the owner's rule: every
+// row of every table moves every tick, errata 3 amendment 10).
+func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves, q, widths map[string]int) Plan {
+	var p Plan
+	ctl := s.MemberCtl(r.Member)
+	if ctl == nil {
+		p.refuse(r.Member, "no fleet member "+r.Member)
+		return p
+	}
+	set := map[string]string{}
+	var n *Note
+	line := r.Member + " down"
+	if ctl.F("status") != Down {
+		set["status"], set["since"] = Down, stamp(s.Now)
+		n = statusNote(s, r, NMemberDown, "down")
+	}
+	if r.Op == "hold" && ctl.F("held") == "" {
+		set["held"] = stamp(s.Now)
+		line = r.Member + " held down"
+	}
+	var head []Change
+	if len(set) > 0 {
+		head = append(head, change(Fleet, setEntry(ctl, set)))
+	}
+	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
+	SortCards(cards)
+	for _, c := range cards {
+		if len(up) > 0 && c.Int("redeals") < MaxRedeals {
+			// the next member round the fleet below its width, else the next
+			// up (round.go), the index moved past it
+			m := rr.next(up, q, widths, "", true)
+			rr.moved(m)
+			moves[c.ID] = m
+			q[m]++
+			set := nextGen(c, m, s.Now)
+			set["redeals"] = itoa(c.Int("redeals") + 1)
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
+				Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
+			continue
+		}
+		set := nextGen(c, "", s.Now)
+		set["withdrawn"] = stamp(s.Now)
+		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
+			Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
+		if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
+			u.Moved += "; " + pr.ID + " working -> ready"
+			w := happened(NWithdrawn, pr.Row, s.Now, pr.ID)
+			w.Who = r.Who
+			u.Notes = append(u.Notes, w)
+		}
+		p.Units = append(p.Units, u)
+	}
+	headOf(&p, r.Member, head, n, line)
 	return p
 }
 

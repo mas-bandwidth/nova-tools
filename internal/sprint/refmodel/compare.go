@@ -124,6 +124,9 @@ func Compare(e, m State) []Difference {
 	add("pending", "", "verb", e.Pending, m.Pending)
 	add("round", "", "deal", e.DealLast, m.DealLast)
 	add("round", "", "ask", e.AskLast, m.AskLast)
+	add("round", "", "stream deal", e.StreamLast, m.StreamLast)
+	add("round", "", "stream ask", e.AskStreamLast, m.AskStreamLast)
+	add("round", "", "stream accept", e.AcceptStreamLast, m.AcceptStreamLast)
 	return out
 }
 

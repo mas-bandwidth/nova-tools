@@ -436,7 +436,7 @@ func TestASilenceEndsWithTheSeededFacts(t *testing.T) {
 // finish of what it took, the failed in a second, one read --begin and one
 // report; a batch over three cards prints its count and first three, never
 // a line per card.
-func TestEachMachineMovesItsCardsInOneBatchATick(t *testing.T) {
+func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	t.Parallel()
 	var working, ready, asked, reading []string
 	for i := 1; i <= 40; i++ {
@@ -473,7 +473,7 @@ func TestEachMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 			continue
 		}
 		calls[verb]++
-		if strings.HasPrefix(l, "finish --as m1 ") {
+		if strings.HasPrefix(l, "finish --as m1,m2 ") {
 			for _, x := range a {
 				if strings.HasSuffix(x, "@1") {
 					finished++
@@ -481,17 +481,19 @@ func TestEachMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 			}
 		}
 	}
-	for _, verb := range []string{"take --as m1 --limit 128", "take --as m2 --limit 64", "finish --as m1", "finish --as m1 --failed", "finish --as m2", "finish --as m2 --failed",
+	// one finish of every member's cards (the failed in a second call), one
+	// take for each width, one of each read: every member's row in one step
+	for _, verb := range []string{"take --as m1 --limit 128", "take --as m2 --limit 64", "finish --as m1,m2", "finish --as m1,m2 --failed",
 		"read --as reader-a --begin --epoch", "read --as reader-a --ok --epoch", "read --as reader-a --broken --finding"} {
 		if calls[verb] != 1 {
 			t.Errorf("%q ran %d times in a tick, want once", verb, calls[verb])
 		}
 	}
-	if len(calls) != 9 {
+	if len(calls) != 7 {
 		t.Errorf("the calls of a tick: %v", calls)
 	}
-	if finished != 40 {
-		t.Errorf("m1 finished %d of its 40 working cards in its two calls", finished)
+	if finished != 80 {
+		t.Errorf("m1 and m2 finished %d of their 80 working cards in the two calls", finished)
 	}
 	text := out.String()
 	if !strings.Contains(text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a s1-2.r1.reader-a s1-3.r1.reader-a ...]") {

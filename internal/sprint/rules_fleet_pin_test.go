@@ -506,10 +506,9 @@ func TestDealKeepsTheKeyWhenTheRoomIsUsedAndAStreamWasSkipped(t *testing.T) {
 
 // R7 takes the lengths of the queues from the cells' counts, not from the cards
 // the read loaded of them, and guards each member it touches at the count it
-// read. R2 puts no cap on a receiver, so a queue can be longer than the two cards
-// a read loads: the plan moves the newest of the cards it has (not the newest of
-// the queue, open question 11), and the guard says what the cell really held, so
-// a step whose queue has grown since is refused.
+// read. The read loads every card a queue can give (levelHeadLimit, the widest a
+// member may be), so the plan moves the newest of the queue, and the guard says
+// what the cell really held, so a step whose queue has grown since is refused.
 func TestLevelUsesTheCellCountsAndGuardsTheRealCount(t *testing.T) {
 	t.Parallel()
 	f := newFleetT(t, 0, "m1", "m2")
@@ -518,8 +517,8 @@ func TestLevelUsesTheCellCountsAndGuardsTheRealCount(t *testing.T) {
 	}
 	f.partialOnly = true
 	rp := f.plan(ruleLevel, "level")
-	// 4/0: p2 (the newest of the two loaded) goes, then p1: 2/2
-	if len(rp.Plan.Units) != 2 || rp.Plan.Units[0].Key != "p2.w1" || rp.Plan.Units[1].Key != "p1.w1" {
+	// 4/0: p4 (the newest) goes, then p3: 2/2
+	if len(rp.Plan.Units) != 2 || rp.Plan.Units[0].Key != "p4.w1" || rp.Plan.Units[1].Key != "p3.w1" {
 		t.Fatalf("moves: %+v", rp.Plan.Units)
 	}
 	cg := guardsOf(rp, guardCount)
@@ -539,32 +538,37 @@ func TestLevelUsesTheCellCountsAndGuardsTheRealCount(t *testing.T) {
 	}
 }
 
-// A queue longer than the cards its read loaded is levelled a read at a time: the
-// plan moves what it has and leaves its key, and a plan on the next read moves
-// more, until the queues are level and the next plan writes nothing.
+// A queue longer than the cards its read loaded (a spill past the widest a
+// member may be) is levelled a read at a time: the plan moves what it has and
+// leaves its key, and a plan on the next read moves more, until the queues are
+// level and the next plan writes nothing. A queue the read holds whole is
+// levelled in the one plan (errata 3 amendment 10).
 func TestLevelConvergesOnAQueueLongerThanItsRead(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 0, "m1", "m2")
-	for i := 1; i <= 6; i++ {
+	// three members at the widest width: m1's spill of n cards goes to the two
+	// others, a read of levelHeadLimit at a time, until the three hold n/3 each
+	f := newFleetW(t, 0, MaxWidth, "m1", "m2", "m3")
+	n := 2*levelHeadLimit + 4
+	for i := 1; i <= n; i++ {
 		readyCard(f, "p"+itoa(i), "m1", "s1", float64(i), nil)
 	}
 	f.partialOnly = true
 	moves := 0
 	for round := 1; ; round++ {
 		if round > 5 {
-			t.Fatalf("the queues are not level after %d reads: %d and %d", round-1, f.snap().Fleet.Count("m1", Ready), f.snap().Fleet.Count("m2", Ready))
+			t.Fatalf("the queues are not level after %d reads: %d, %d and %d", round-1, f.snap().Fleet.Count("m1", Ready), f.snap().Fleet.Count("m2", Ready), f.snap().Fleet.Count("m3", Ready))
 		}
 		rp := f.run(ruleLevel, "level")
 		moves += len(rp.Plan.Units)
-		if round == 1 && (keyTexts(rp.Requeue) != "level" || len(rp.Plan.Units) != 2) {
-			t.Fatalf("the first read holds two of six: %d moves, done %s requeue %s", len(rp.Plan.Units), keyTexts(rp.Done), keyTexts(rp.Requeue))
+		if round == 1 && (keyTexts(rp.Requeue) != "level" || len(rp.Plan.Units) != levelHeadLimit) {
+			t.Fatalf("the first read holds %d of %d: %d moves, done %s requeue %s", levelHeadLimit, n, len(rp.Plan.Units), keyTexts(rp.Done), keyTexts(rp.Requeue))
 		}
 		if keyTexts(rp.Done) == "level" {
 			break
 		}
 	}
-	if a, b := f.snap().Fleet.Count("m1", Ready), f.snap().Fleet.Count("m2", Ready); a != 3 || b != 3 || moves != 3 {
-		t.Fatalf("queues %d and %d after %d moves", a, b, moves)
+	if a, b, c := f.snap().Fleet.Count("m1", Ready), f.snap().Fleet.Count("m2", Ready), f.snap().Fleet.Count("m3", Ready); a != n/3 || b != n/3 || c != n/3 || moves != n-n/3 {
+		t.Fatalf("queues %d, %d and %d after %d moves", a, b, c, moves)
 	}
 	f.partialOnly = false
 	quiet(t, "level", f.plan(ruleLevel, "level"), "level")

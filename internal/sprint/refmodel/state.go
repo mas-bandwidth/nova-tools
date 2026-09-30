@@ -220,6 +220,13 @@ type State struct {
 	// room past DealLast in name order, wrapping; the next readers the first
 	// able past AskLast.
 	DealLast, AskLast string
+	// StreamLast, AskStreamLast and AcceptStreamLast are the work table's
+	// stream indexes of the deal, the ask and the accept (errata 3 amendment
+	// 10; sprint.PropStreamIndex, PropAskStreamIndex, PropAcceptStreamIndex):
+	// the stream of the last primary each took. Each takes the streams in
+	// turn from the first past its own, in name order, wrapping, a stream with
+	// nothing to take skipped.
+	StreamLast, AskStreamLast, AcceptStreamLast string
 }
 
 // New is an empty sprint with its readers and members, every member down,
@@ -622,21 +629,34 @@ func (s State) sortByScore(ids []string) {
 	})
 }
 
-// streamTurns is the deal's order (the engine's dealTurns, 2.3 R6's front per
-// stream): one primary from each stream in turn, streams in name order, each
-// stream's in work order, so every stream with a ready primary is dealt to in
-// parallel.
-func (s State) streamTurns(ids []string) []string {
+// streamTurns is the ids in stream turns from a stream index, last (errata 3
+// amendment 10; sprint.streamTurns): one of each stream in turn, the streams
+// from the first past last in name order, wrapping, a stream with none
+// skipped at no cost of a turn; within a stream by score.
+func (s State) streamTurns(ids []string, last string) []string {
 	by := map[string][]string{}
-	var streams []string
 	for _, id := range ids {
 		st := s.Primaries[id].Stream
-		if _, ok := by[st]; !ok {
-			streams = append(streams, st)
-		}
 		by[st] = append(by[st], id)
 	}
-	sort.Strings(streams)
+	names := s.StreamNames()
+	for st := range by {
+		if _, ok := s.Streams[st]; !ok {
+			names = append(names, st)
+		}
+	}
+	sort.Strings(names)
+	at := 0
+	if last != "" {
+		at = sort.SearchStrings(names, last)
+		if at < len(names) && names[at] == last {
+			at++
+		}
+	}
+	var streams []string
+	for i := range names {
+		streams = append(streams, names[(at+i)%len(names)])
+	}
 	for _, st := range streams {
 		s.sortByScore(by[st])
 	}

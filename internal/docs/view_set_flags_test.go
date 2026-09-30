@@ -23,8 +23,8 @@ func TestTheViewSetUsageLinesNameEveryFlag(t *testing.T) {
 	}
 	block, _, _ = strings.Cut(block, "\n\t}\n")
 	flags := regexp.MustCompile(`fs\.StringVar\(&\w+, "([a-z-]+)"`).FindAllStringSubmatch(block, -1)
-	if len(flags) < 3 {
-		t.Fatalf("read %d flags of view set, want at least 3", len(flags))
+	if len(flags) < 4 {
+		t.Fatalf("read %d flags of view set, want at least 4", len(flags))
 	}
 	for _, doc := range []string{"../../docs/nova-table/README.md", "../../docs/CLI.md", "../../docs/SPEC-NOVA-TABLE.md"} {
 		text, err := os.ReadFile(doc)

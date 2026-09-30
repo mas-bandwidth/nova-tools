@@ -37,7 +37,11 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
-	chosen := pick(&p, r.Sel, s.Work.Column(Review), rowOf, func(c *Card) string {
+	// in stream turns from the ask's stream index on the work table
+	// (streamTurns), so a limit asks of every stream alike, and the index moves
+	// past the stream of the last primary asked
+	srr := streamRound(s, PropAskStreamIndex)
+	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
 		}
@@ -52,7 +56,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			return "asked already"
 		}
 		return ""
-	}, s.primaryCard)
+	}
+	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
 	moves := roundMoves{}
 	for _, c := range chosen {
@@ -119,6 +124,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	roundWrites(&p, rr, moves)
+	streamIndexWrite(&p, srr, s.Work.Placed)
 	answered(&p, s, r.Answers, r.Who)
 	return p
 }
@@ -154,27 +160,36 @@ type ReadReq struct {
 // with the finding (a report on a card still asked is the begin and the report
 // in one step, begun stamped with it). A broken read is a judgment; the second different reader's
 // ok at the primary's head is the judgment ready to accept, which accept,
-// rework and drop close.
+// rework and drop close. As may name several readers, comma separated: every
+// card named is one of theirs, each read as its own reader's, in the one plan
+// (errata 3 amendment 10); a read by selection names one reader.
 func Read(s *Snapshot, r ReadReq) Plan {
 	var p Plan
 	sel := r.Sel
 	if len(sel.IDs) == 0 && sel.Only == nil && sel.Limit == 0 {
 		sel.Limit = 1
 	}
+	readers := Split(r.As)
+	if len(readers) > 1 && !named(sel) {
+		p.refuse("read", "a read by selection names one reader: --as <reader>; several readers name their cards")
+		return p
+	}
 	from := []string{Asked, Reading}
 	if r.Begin {
 		from = []string{Asked}
 	}
 	var all []*Card
-	for _, col := range from {
-		all = append(all, s.Readers.Cell(r.As, col)...)
+	for _, rd := range readers {
+		for _, col := range from {
+			all = append(all, s.Readers.Cell(rd, col)...)
+		}
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
 		if !c.Placed() && c.F("retired") != "" {
 			return "retired at " + c.F("retired") + " by " + orDash(c.F("retired_by")) + ": the primary was sent back; its next attempt is read on a new card"
 		}
-		if !c.Placed() || c.Row != r.As {
+		if !c.Placed() || !contains(readers, c.Row) {
 			return "not " + r.As + "'s to read (it is " + placeWord(c) + ")"
 		}
 		if !contains(from, c.Col) {
@@ -182,16 +197,24 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		return ""
 	}, s.Readers.Card)
+	col := OK
+	if r.Verdict == "broken" {
+		col = Broken
+	}
+	// every report of the plan, by primary: two readers' reports of one
+	// primary in the one step (several readers, errata 3 amendment 10) are
+	// judged together, the primary's judgment after the last of them
+	moved := map[string]map[string]string{}
+	last := map[string]int{}
+	lastReader := map[string]string{}
+	written := map[string][]Note{}
+	broken := map[string]int{}
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Begin {
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, map[string]string{"begun": stamp(s.Now)}))},
 				Moved: c.ID + " asked -> reading"})
 			continue
-		}
-		col := OK
-		if r.Verdict == "broken" {
-			col = Broken
 		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
 		if c.Col == Asked { // a report on a card never begun is the begin and the report in one step
@@ -204,21 +227,31 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}
 		if pr != nil {
 			if col == Broken {
-				before := pr.Int("broken_reads")
+				before := pr.Int("broken_reads") + broken[pr.ID]
 				for _, o := range s.Readers.Of(pr.ID) {
 					if o.Col == Broken && o.ID != c.ID {
 						before++
 					}
 				}
+				broken[pr.ID]++
 				n := judgment(NReadBroken, pr.Row, s.Now, before, pr.ID)
-				n.Who, n.Attempt, n.What = r.As, c.Int("attempt"), r.Finding
+				n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), r.Finding
 				u.Notes = append(u.Notes, n)
 			}
-			if j, ok := reviewJudgment(s, pr, reviewStep{moved: map[string]string{c.ID: col}, writes: u.Notes, who: r.As}); ok {
-				u.Notes = append(u.Notes, j)
+			if moved[pr.ID] == nil {
+				moved[pr.ID] = map[string]string{}
 			}
+			moved[pr.ID][c.ID] = col
+			last[pr.ID], lastReader[pr.ID] = len(p.Units), c.Row
+			written[pr.ID] = append(written[pr.ID], u.Notes...)
 		}
 		p.Units = append(p.Units, u)
+	}
+	for id, i := range last {
+		pr := s.Work.Card(id)
+		if j, ok := reviewJudgment(s, pr, reviewStep{moved: moved[id], writes: written[id], who: lastReader[id]}); ok {
+			p.Units[i].Notes = append(p.Units[i].Notes, j)
+		}
 	}
 	return p
 }
@@ -381,7 +414,12 @@ func ReadCardAgrees(c *Card) bool {
 // group) moves the eligible and lists the rest with the reason.
 func Accept(s *Snapshot, r AcceptReq) Plan {
 	var p Plan
-	chosen := pick(&p, r.Sel, s.Work.Column(Review), rowOf, func(c *Card) string {
+	// in stream turns from the accept's stream index on the work table
+	// (streamTurns, as the deal's), so a limit accepts of every stream alike
+	// and the merge queues fill together; the index moves past the stream of
+	// the last accepted (errata 3 amendment 10)
+	srr := streamRound(s, PropAcceptStreamIndex)
+	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
 		}
@@ -399,7 +437,8 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			return "stream " + c.Row + " has no merge row"
 		}
 		return ""
-	}, s.primaryCard)
+	}
+	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	if len(r.IDs) > 0 && len(p.Refused) > 0 {
 		for _, c := range chosen {
 			p.refuse(c.ID, "eligible, not moved: the named set is all or nothing and another card of it was refused")
@@ -446,7 +485,9 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		}
 	}
 	answered(&p, s, r.Answers, r.Who)
-	return Lawful(p)
+	p = Lawful(p)
+	streamIndexWrite(&p, srr, s.Work.Placed)
+	return p
 }
 
 // unitStreams is the streams of the plan's units, in order.

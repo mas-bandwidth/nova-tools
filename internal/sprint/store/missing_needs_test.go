@@ -71,7 +71,7 @@ func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 				h.startMachine()
 				for i := 0; i < 3; i++ {
 					if i == 2 {
-						h.tick(TickFullEvery + time.Second)
+						h.tick(time.Minute + time.Second)
 					}
 					h.machine()
 				}

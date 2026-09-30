@@ -155,7 +155,7 @@ func viewReaderWith(
 			b.WriteString(line)
 			b.WriteString("\n\n")
 		}
-		b.WriteString(ntable.RenderTables("", tables, opts))
+		b.WriteString(ntable.RenderTables("", tables, opts, v.HideZero))
 		if check && checker != nil {
 			var stalls []string
 			for _, t := range tables {
@@ -262,9 +262,9 @@ func isReplyError(err error) bool {
 }
 
 // renderAll is the title line, then every table's render, one blank line
-// between two; an empty table prints its header and footer.
+// between two that print; an empty table prints nothing and leaves no gap.
 func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) string {
-	return ntable.RenderTables(title, tables, opts)
+	return ntable.RenderTables(title, tables, opts, nil)
 }
 
 // watchLoop draws once per tick until ctx ends (a signal: exit 0): in

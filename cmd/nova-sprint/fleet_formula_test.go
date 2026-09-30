@@ -32,10 +32,10 @@ func TestFleetDoneAndOkPctAreTableFormulas(t *testing.T) {
 	}
 	want := "fleet | ready | working | width | done | ok%   | status | load\n" +
 		"------+-------+---------+-------+------+-------+--------+-----\n" +
-		"m1    |     0 |       0 |    64 |    4 | 75.0% | up     | 0.0%\n" +
-		"m2    |     0 |       0 |    64 |    0 | 0.0%  | up     | 0.0%\n" +
+		"m1    |     0 |       0 | 64    |    4 | 75.0% | up     | 0.0%\n" +
+		"m2    |     0 |       0 | 64    |    0 | 0.0%  | up     | 0.0%\n" +
 		"------+-------+---------+-------+------+-------+--------+-----\n" +
-		"      |     0 |       0 |   128 |    4 | 75.0% |        |\n"
+		"      |     0 |       0 |       |    4 | 75.0% |        |\n"
 	if fleet != want {
 		t.Fatalf("the fleet table:\n%s\nwant:\n%s", fleet, want)
 	}

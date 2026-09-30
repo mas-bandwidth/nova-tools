@@ -48,9 +48,6 @@ const (
 	MachineSilence = 15 * time.Second
 	// MaxStopSpans bounds the STOPPED spans the state record keeps.
 	MaxStopSpans = 1000
-	// TickFullEvery is how often a tick reads the whole sprint when nothing
-	// changed since the last tick: the deadlines and the check run on time.
-	TickFullEvery = time.Minute
 )
 
 // KV is the part of a store the machine keeps its records in.
@@ -121,8 +118,8 @@ type Heartbeat struct {
 	// bounds: the next ticks catch up on them.
 	Due int `json:"due,omitempty"`
 	// What the last tick saw: the tables' revisions, the landed and all
-	// primaries, and when it last read the whole sprint. An idle tick reads
-	// the tables' shapes, finds them unchanged, and does nothing else.
+	// primaries, and when it last read the whole sprint (every tick of a
+	// RUNNING machine does).
 	Revisions [4]uint64 `json:"revisions"`
 	Landed    int64     `json:"landed"`
 	All       int64     `json:"all"`
@@ -358,7 +355,8 @@ type PartResult struct {
 }
 
 // TickResult is what a tick did: the state it found, whether it was idle
-// (nothing changed since the last tick), the pending operation it finished,
+// (every table read and planned, and none had anything to do), the pending
+// operation it finished,
 // its parts that wrote, why it stopped short (the sprint's epoch changed
 // under it, or the machine was stopped), and how many moves and judgments it
 // left due past its bounds.
@@ -370,14 +368,43 @@ type TickResult struct {
 	Stale    string         `json:"stale,omitempty"`
 	Halted   string         `json:"halted,omitempty"`
 	Due      int            `json:"due,omitempty"`
+	// Tables is each of the four tables, in the store's order, with the rows
+	// the tick's parts changed in it: every tick reads and plans every table
+	// (errata 3 amendment 10: "each table should be updated per-tick at least
+	// once"), and a table with nothing to do shows no rows.
+	Tables []TableRows `json:"tables"`
 	// Done is the words of "the sprint is done" when this tick's done part
 	// found the sprint done and stopped the machine (errata 3 amendment 6),
 	// and Hint what to do next.
 	Done string `json:"done,omitempty"`
 	Hint string `json:"hint,omitempty"`
-	// Epoch is the epoch the tick ran at: the log the run loop waits on
-	// after it (waitlog.go).
-	Epoch uint64 `json:"-"`
+}
+
+// TableRows is one table of a tick and the rows its parts changed in it.
+type TableRows struct {
+	Table string   `json:"table"`
+	Rows  []string `json:"rows"`
+}
+
+// newTables is the four tables, none changed yet.
+func newTables() []TableRows {
+	out := make([]TableRows, len(All))
+	for i, t := range All {
+		out[i] = TableRows{Table: t, Rows: []string{}}
+	}
+	return out
+}
+
+// addRows adds the rows a part's plan changed to the tick's tables.
+func (r *TickResult) addRows(rows map[string][]string) {
+	for i := range r.Tables {
+		for _, row := range rows[r.Tables[i].Table] {
+			if !slices.Contains(r.Tables[i].Rows, row) {
+				r.Tables[i].Rows = append(r.Tables[i].Rows, row)
+			}
+		}
+		slices.Sort(r.Tables[i].Rows)
+	}
 }
 
 // Moved is every line the tick's parts moved.
@@ -474,7 +501,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	res := TickResult{State: m.StateWord(), Epoch: st.epoch}
+	res := TickResult{State: m.StateWord()}
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is
@@ -570,12 +597,11 @@ func (st *Store) look(ctx context.Context) (Heartbeat, []ntable.Table, error) {
 	return seen, shapes, nil
 }
 
-// tick finishes a pending operation past its grace (T5), then, when a table
-// changed since the last tick, this is the first tick after start, a full
-// read is due, a fleet member's beat came or went, or TickFullEvery has
-// passed, runs each part that has something
-// to do as its own operation on a fresh read, the presence part with the
-// beats read. A part is skipped when it has
+// tick finishes a pending operation past its grace (T5), then reads the whole
+// sprint and plans every part over all four tables, every tick (errata 3
+// amendment 10), each part that has something to do run as its own operation
+// on a fresh read, the presence part with the beats read. A part is not run
+// when it has
 // nothing to do on the tick's first read and nothing has moved before it in
 // this tick. Before each part it reads the machine's state: STOPPED halts the
 // tick there. It returns what it saw, for the heartbeat; a tick that did not
@@ -646,23 +672,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	now := st.now()
 	seen.Fresh = freshOf(fleet, beats, now)
-	first := last.At.Before(m.Since)
-	seen.Full = last.Full
-	if !first && slices.Equal(seen.Fresh, last.Fresh) && len(res.Repaired) == 0 && seen.Revisions == last.Revisions && now.Sub(last.Full) < TickFullEvery {
-		res.Idle = true
-		// The loads move with every beat: their cells are written here, and
-		// the revisions they leave are what this tick saw.
-		wrote, err := st.showFleet(ctx, fleet, beats, now)
-		if err != nil && st.clearedUnder(ctx, res) {
-			return last, nil
-		}
-		if err != nil || !wrote {
-			return seen, err
-		}
-		again, _, err := st.look(ctx)
-		seen.Revisions = again.Revisions
-		return seen, err
-	}
+	// Every tick reads and plans every table, whatever changed since the last
+	// (errata 3 amendment 10: "each table should be updated per-tick at least
+	// once"): no tick is skipped because nothing changed, and no part waits for
+	// a full read due every so often.
 	seen.Full = now
 	// Every fleet cell up to date before the parts, the control cards read:
 	// the revisions it leaves are what this tick saw.
@@ -698,6 +711,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		return last, err
 	}
 	at := snap.Epoch
+	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
 	dirty := false // something ran: every later part runs on a fresh read
 	for _, part := range sprint.TickParts {
@@ -712,19 +726,21 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 			return unfinished, nil
 		}
 		due := 0
-		fn := part.Fn
 		var done *sprint.Note
-		if part.Name == sprint.PartDone {
-			// the note of the plan the step applied: the last one planned
-			fn = func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
-				p, d := part.Fn(s, r)
+		var planned sprint.Plan
+		// the plan the step applied: the last one planned, its rows named on
+		// the tick's tables, and the done part's note
+		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
+			p, d := part.Fn(s, r)
+			planned = p
+			if part.Name == sprint.PartDone {
 				done = nil
 				if len(p.Notes) > 0 {
 					n := p.Notes[0]
 					done = &n
 				}
-				return p, d
 			}
+			return p, d
 		}
 		r, err := st.Run(ctx, TickPartStep(part.Name, fn, req, &at, nil, &due))
 		dirty = true
@@ -744,6 +760,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		if err != nil {
 			return last, fmt.Errorf("tick %s: %w", part.Name, err)
 		}
+		if !r.Lost && len(r.Moved) > 0 {
+			res.addRows(sprint.PlanRows(planned))
+		}
 		if done != nil && r.Notes > 0 && !r.Lost {
 			// The sprint is done: the machine stops itself as the part's step
 			// commits, and the tick ends here (errata 3 amendment 6).
@@ -762,6 +781,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if res.Due > 0 {
 		seen.Full = time.Time{}
 	}
+	res.Idle = len(res.Parts) == 0 && len(res.Repaired) == 0
 	if f.Pending != nil {
 		// An operation in flight at the tick's start may have finished during
 		// it (its writer, or a part that repaired it): its fleet cells are

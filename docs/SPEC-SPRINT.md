@@ -1,9 +1,9 @@
 # nova-sprint: the sprint table
 
 Four tables on nova-table, the mechanical moves between them, the machine that
-makes them as soon as a line comes on the log, the notifications that bring
-the coordinator its decisions, and the verbs. The coordinator decides; the
-system moves cards without mistakes and tells the coordinator what needs it.
+makes them once a second, the notifications that bring the coordinator its
+decisions, and the verbs. The coordinator decides; the system moves cards
+without mistakes and tells the coordinator what needs it.
 
 ## 1. The tables
 
@@ -15,7 +15,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
-fleet | ready | working | width | done | ok% | status | load
+fleet | ready | working | done | ok% | status | load
 ```
 
 | table | rows | members | bookkeeping for |
@@ -46,9 +46,10 @@ A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
 tables, and nothing else: no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
-column. Every table is shown, with its header and footer, empty or not, and every
-stream row is shown in the work and merge tables, at zero when it has no cards.
-A row's first cell is its identity. `where --watch` redraws the frame in
+column. A table with no rows is not shown, and a stream with no cards in any
+column is not shown in the work and merge tables (the stored view names them in
+its `hide_zero`; readers and fleet show every row); each shows again when it has
+a row. A row's first cell is its identity. `where --watch` redraws the frame in
 place once a second (`--every`, any duration above 0): the cursor is hidden
 while it watches and restored when it ends or is interrupted (SIGINT or
 SIGTERM: exit 0); each frame is built whole and written with one write, however
@@ -168,8 +169,7 @@ and it is the coordinator's decision, receipted.
 - A member is a fleet machine with a width: the most work cards it holds at
   once, ready and working together (its child cap; `init --members m1:64` or
   `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
-  column beside working; the footer row sums the widths, the fleet's total
-  width (eight machines of 64 total 512).
+  column beside working.
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
@@ -658,7 +658,7 @@ command that loads it.
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
-| run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet |
+| run | ticks once a second while the machine is RUNNING |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>` |
@@ -791,13 +791,8 @@ The machine has two states, RUNNING and STOPPED, held in one record in the
 store; a new sprint is STOPPED. `start` sets RUNNING, `stop` sets STOPPED;
 setting the state it has changes nothing and says so; each change is a
 happened notification (who, when), and the store keeps every STOPPED span and
-their total. `run` is the process that ticks: it blocks on the epoch's log
-(XREAD BLOCK from the last line it has seen, pipelined with a read of the
-log's last id: one round trip a wait), and a line wakes it, so a step that
-frees room or makes cards ready (a finish, a merge, a drop, a release, fleet
-up, start) is ticked on at most TickFloor (100 ms) after the tick before
-began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
-moves nothing while STOPPED; `tick` is one tick by hand. The state
+their total. `run` is the process that ticks once a second (TickEvery) while
+RUNNING and does nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. `inbox` says `machine: running`,

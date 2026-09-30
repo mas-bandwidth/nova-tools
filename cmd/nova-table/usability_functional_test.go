@@ -150,9 +150,10 @@ func TestViewStateVerb(t *testing.T) {
 	}
 }
 
-// A drawn view shows every table and every row of it, all-zero or not; a
-// table with no row shows its header and footer.
-func TestViewDrawsEveryTableAndRow(t *testing.T) {
+// A view's --hide-zero names tables of the view: `view show` prints it, a drawn
+// view hides the all-zero rows of those tables, `view set` without it clears it,
+// and a table the view does not hold is refused.
+func TestViewHideZeroIsStoredDrawnAndCleared(t *testing.T) {
 	t.Parallel()
 	addr := throwaway(t)
 	success := func(args ...string) string {
@@ -164,16 +165,22 @@ func TestViewDrawsEveryTableAndRow(t *testing.T) {
 		return out
 	}
 	success("create", "work", "--columns", "todo,done")
-	success("create", "bare", "--columns", "todo,done")
 	success("row", "add", "work", "idle")
-	success("view", "set", "v", "--tables", "work,bare")
-	if out := success("view", "show", "v"); strings.Contains(out, "hide") {
+	if code, _, errout := runTable(at(addr, "view", "set", "v", "--tables", "work", "--hide-zero", "other")...); code == 0 || errout == "" {
+		t.Fatalf("a --hide-zero table the view does not hold is refused: %d %q", code, errout)
+	}
+	success("view", "set", "v", "--tables", "work", "--hide-zero", "work")
+	if out := success("view", "show", "v"); !strings.Contains(out, ` hide_zero=work trips=1`) {
 		t.Errorf("view show: %s", out)
 	}
-	out := success("watch", "--view", "v", "--once")
-	for _, want := range []string{"\nidle ", "\nwork ", "\nbare "} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the frame lacks %q:\n%s", want, out)
-		}
+	if out := success("watch", "--view", "v", "--once"); strings.Contains(out, "idle") {
+		t.Errorf("the all-zero row is drawn:\n%s", out)
+	}
+	success("view", "set", "v", "--tables", "work")
+	if out := success("view", "show", "v"); strings.Contains(out, "hide_zero") {
+		t.Errorf("view set without --hide-zero clears it: %s", out)
+	}
+	if out := success("watch", "--view", "v", "--once"); !strings.Contains(out, "idle") {
+		t.Errorf("the row is drawn again:\n%s", out)
 	}
 }

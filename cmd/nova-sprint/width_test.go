@@ -39,28 +39,3 @@ func TestTheWidthIsSetByInitAndFleetUpAndShown(t *testing.T) {
 		t.Errorf("init --members m1:0: exit %d, %s", code, errs)
 	}
 }
-
-// The fleet table's footer sums the width column, the fleet's total width:
-// eight machines of 64 total 512; a machine whose width changes moves the
-// total, and a machine added adds its width.
-func TestTheFleetFooterTotalsTheWidths(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b --members m1,m2,m3,m4,m5,m6,m7,m8")
-	footer := func() string {
-		out := ta.ok("where")
-		i := strings.Index(out, "fleet |")
-		if i < 0 {
-			t.Fatalf("where has no fleet table:\n%s", out)
-		}
-		lines := strings.Split(strings.TrimRight(strings.SplitN(out[i:], "\n\n", 2)[0], "\n"), "\n")
-		return lines[len(lines)-1]
-	}
-	if f := footer(); !strings.Contains(f, "|   512 |") {
-		t.Fatalf("eight machines of 64 do not total 512 in the footer: %q", f)
-	}
-	ta.ok("fleet up m1 --width 8")
-	if f := footer(); !strings.Contains(f, "|   456 |") {
-		t.Fatalf("the footer after m1 narrows to 8: %q", f)
-	}
-}

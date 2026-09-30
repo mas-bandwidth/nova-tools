@@ -1632,7 +1632,9 @@ func (st *Store) withSkips(op OpRecord, skips []Skip) OpRecord {
 	seen := map[string]bool{}
 	for _, k := range skips {
 		lines = append(lines, k.String())
-		if !seen[k.Primary] {
+		// a table property's skip has no primary: it is a line of the
+		// judgment, and no subject of it
+		if k.Primary != "" && !seen[k.Primary] {
 			seen[k.Primary] = true
 			prims = append(prims, k.Primary)
 		}

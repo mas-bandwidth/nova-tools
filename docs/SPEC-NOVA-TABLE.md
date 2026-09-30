@@ -54,9 +54,7 @@ backed by Redis data structures.
   Folds: a count or `sum(...)` column folds `sum` (the default), `max` or `avg`;
   a percentage folds `pooled` (the default): the numerators summed over the rows
   divided by the denominators summed over the rows, never a mean of the rows'
-  percentages. A `text` column holding whole numbers folds `sum` or `max` too
-  (`width:text:sum`): its cells print right-aligned, a blank cell is 0, and a
-  cell that is no whole number makes the fold `?`. Hidden rows count in every fold.
+  percentages. Hidden rows count in every fold.
 - **Row**: A declared horizontal entity identified by a row key. Holds an optional
   display label, an optional member exclusion (`--exclude`), an optional owner
   verb (`--owner`), an array of cells matching the table's declared columns, and
@@ -146,9 +144,9 @@ nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <nam
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
-nova-table render <table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
-nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
-nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table render <table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
+nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>] [--hide-zero <tables>]
 nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list

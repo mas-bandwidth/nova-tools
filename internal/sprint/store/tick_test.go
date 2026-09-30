@@ -192,7 +192,11 @@ func TestACrossStreamNeedIsDealtWhenItLands(t *testing.T) {
 	}
 }
 
-func TestAnIdleTickReadsLittleAndChangesNothing(t *testing.T) {
+// Every tick reads and plans every table, whatever changed since the last
+// (errata 3 amendment 10: "each table should be updated per-tick at least
+// once"): a tick with nothing to do reads the four tables, names each of them
+// on its result with no rows, and changes nothing.
+func TestAnIdleTickReadsEveryTableAndChangesNothing(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
@@ -216,13 +220,16 @@ func TestAnIdleTickReadsLittleAndChangesNothing(t *testing.T) {
 			t.Fatalf("an idle tick changed %s", tb)
 		}
 	}
-	for k, v := range h.m.Calls {
-		if d := v - before[k]; d > 0 && k != "shapes" && k != "fence" {
-			t.Errorf("an idle tick called %s %d times", k, d)
+	if len(res.Tables) != len(All) {
+		t.Fatalf("an idle tick names %d tables, want every one: %+v", len(res.Tables), res.Tables)
+	}
+	for i, tb := range res.Tables {
+		if tb.Table != All[i] || len(tb.Rows) != 0 {
+			t.Errorf("an idle tick's table %d: %+v", i, tb)
 		}
 	}
-	if h.m.Calls["shapes"]-before["shapes"] != 1 || h.m.Calls["fence"]-before["fence"] != 1 {
-		t.Errorf("an idle tick: shapes %d, fence %d", h.m.Calls["shapes"]-before["shapes"], h.m.Calls["fence"]-before["fence"])
+	if h.m.Calls["cells"]-before["cells"] == 0 && h.m.Calls["readset"]-before["readset"] == 0 {
+		t.Errorf("an idle tick read no cards: %v", h.m.Calls)
 	}
 }
 
