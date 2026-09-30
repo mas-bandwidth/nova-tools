@@ -1420,6 +1420,9 @@ func TestTimeRulesTwiceSecondEmpty(t *testing.T) {
 		{"mergeidle and idle of one stream", "late", []string{"late:mergeidle:s1", "late:idle:s1"}, func(w *timeWorld) {
 			w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, due("mergeidle"): msText(timeR0), due("idle"): msText(timeR0)})
 		}, false},
+		{"cut whose entry was popped", "late", []string{"late:cut:op-1"}, func(w *timeWorld) {
+			w.f.Cuts["op-1"] = CutFact{}
+		}, false},
 		{"a hold on part of a note's subjects", "hold", []string{"hold:n1"}, func(w *timeWorld) {
 			w.f.Notes["n1"] = NoteFact{Type: NBound, Cause: "held", Open: []string{"p1", "p2"}, Holds: []string{"p1"}}
 			w.j["p1|"+NBound+"|held"] = "hn1"
