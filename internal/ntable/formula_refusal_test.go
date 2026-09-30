@@ -1,6 +1,11 @@
 package ntable
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 // TestFormulaRefusalRemedies keeps each raw formula refusal paired with its
 // specific recovery command.
@@ -20,12 +25,8 @@ func TestFormulaRefusalRemedies(t *testing.T) {
 			t.Parallel()
 			err := (operation{table: "fleet"}).refused(tc.wire)
 			r, ok := err.(*Refusal)
-			if !ok {
-				t.Fatalf("raw refusal: %T %v", err, err)
-			}
-			if r.Next != tc.want {
-				t.Errorf("next = %q, want %q", r.Next, tc.want)
-			}
+			require.True(t, ok, "raw refusal: %T %v", err, err)
+			assert.Equal(t, tc.want, r.Next, "next = %q, want %q", r.Next, tc.want)
 		})
 	}
 }

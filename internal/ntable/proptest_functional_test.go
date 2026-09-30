@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
 
@@ -203,9 +204,7 @@ var rapidTreeOnce sync.Once
 func rapidKeepsTheTreeClean(t *testing.T) {
 	t.Helper()
 	rapidTreeOnce.Do(func() {
-		if err := flag.Set("rapid.nofailfile", "true"); err != nil {
-			t.Fatalf("rapid.nofailfile: %v", err)
-		}
+		require.NoError(t, flag.Set("rapid.nofailfile", "true"), "rapid.nofailfile")
 	})
 }
 
@@ -758,9 +757,7 @@ func TestTableVerbsAgainstModel(t *testing.T) {
 func storeHasFunction(t *testing.T, ctx context.Context, c *redis.Client, name string) bool {
 	t.Helper()
 	libs, err := c.FunctionList(ctx, redis.FunctionListQuery{}).Result()
-	if err != nil {
-		t.Fatalf("FUNCTION LIST: %v", err)
-	}
+	require.NoError(t, err, "FUNCTION LIST")
 	for _, lib := range libs {
 		for _, fn := range lib.Functions {
 			if fn.Name == name {
