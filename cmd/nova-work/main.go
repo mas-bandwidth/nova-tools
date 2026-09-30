@@ -149,7 +149,7 @@ func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		}
 		fmt.Fprint(stdout, banner)
 		return 0
-	case "version":
+	case "version", "--version":
 		fmt.Fprintln(stdout, buildinfo.Line("nova-work", version))
 		return 0
 	case "import":

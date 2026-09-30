@@ -36,8 +36,7 @@ import (
 //
 // A wait that goes through an injected clock seam is not a wall-clock wait
 // and is not found: the test calls the seam, never package time. The seams the
-// tree already has: internal/wake.Clock (a fake that advances on Sleep),
-// internal/bus lockClock, internal/swarm batchClock and pullClock,
+// tree already has: internal/bus lockClock, internal/swarm batchClock and pullClock,
 // internal/log.Clock, and the injected `Sleep func(time.Duration)` /
 // `now func() time.Time` fields of internal/swarm.
 //
@@ -303,7 +302,7 @@ func TestNoUnitTestWaitsOnTheWallClock(t *testing.T) {
 	}
 	t.Logf("unit-tier test files=%d wall-clock waits=%d in functions=%d unledgered=%d (the waits the tree owes; SPEC-CI's ratchet row)", files, len(waits), len(keys), len(left))
 	for _, w := range left {
-		t.Errorf("%s:%d: %s in %s waits on the wall clock and %s has no row %s %s; inject a clock (internal/wake.Clock, an injected Sleep func) or tag the file //go:build functional (the ledger only shrinks)",
+		t.Errorf("%s:%d: %s in %s waits on the wall clock and %s has no row %s %s; inject a clock (an injected Sleep func) or tag the file //go:build functional (the ledger only shrinks)",
 			w.Rel, w.Line, w.What, w.Func, sleepsLedger, path.Dir(w.Rel), w.Func)
 	}
 }

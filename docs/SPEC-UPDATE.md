@@ -197,16 +197,15 @@ directory of `nova-*` executables as a four-column TSV, and
 15. **A broken pin between two of our own tools is a bug, reported the same day by the
     entry's owner.** `kind=pin` entries print first and the count line's `pins=<n>` is the
     number of **DIFFERENT** pins, a subset of `differ=`, never the number of pin entries.
-    The comparison is `internal/wake`'s `AcceptBus(tool, found)`: a depender accepts
-    exactly the `nova-bus` whose `version` equals its own, `tool != "" && found == tool`,
+    The comparison is `installed != "" && latest == installed`: a depender accepts
+    exactly the `nova-bus` whose `version` equals its own,
     string equality behind a non-empty guard, no parse, no range, no order. The pin is
     **derived**, so the depender's side is the depender's own `version`, no `--pin` verb;
     both sides are local commands, only `latest` carrying a scheme, `local:`; no network;
     for this kind alone both reads are the **second token of the first line, whole** —
     `BusVersion`'s own read; fewer than two tokens is UNKNOWN, reason `BusVersion`'s own
-    error, wrap-it remedy — and the comparison is `wake.AcceptBus(installed, latest)`, the
-    depender's read then the bus's, **imported, never copied**, so this tool and the
-    depender cannot disagree about a pair: EQUAL or DIFFERENT, never an order: two tools
+    error, wrap-it remedy — and the comparison is the one above, the
+    depender's read then the bus's: EQUAL or DIFFERENT, never an order: two tools
     have none between them. A DIFFERENT pin means the depender refuses the bus the estate
     runs: the fix is there.
 16. **Bounded output, per SPEC.md.** `--max <n>`, default 20, `0` means all, a negative is
@@ -769,7 +768,7 @@ install` or `npm install`.
     identity — `v0.12.0` twice, then one pseudo-version twice, then `devel` twice — are
     EQUAL and current; `v0.12.0` against `v0.10.3` is DIFFERENT; two pseudo-versions
     differing only in the commit, `…-0459069` against `…-88f0b0d`, are DIFFERENT; each
-    verdict equals `wake.AcceptBus` on the same two strings; `STALE` appears on no pin line.
+    verdict is string equality of the same two strings; `STALE` appears on no pin line.
 16. `TestUpdateOutputIsBoundedAtTheLargestPlausibleState`: 200 entries, 60 stale, 30 newer,
     30 differ and 60 unknown, print at most `4 * --max + 8` lines over both streams; each of
     the four verdicts gets a `MORE` line with its true total; `--max 0` prints all 180;

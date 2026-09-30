@@ -23,7 +23,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -88,24 +87,13 @@ func (u Usage) Known() bool { return u.HasInput || u.HasOutput }
 
 // Client talks to one Jev endpoint with one key the caller named.
 //
-// One client's Decide is handed around as a decideFunc and called from several
-// goroutines at once (internal/swarm's task decider does exactly that), so the
-// per-call bookkeeping the receipt needs -- the row source and what the
-// decisions table did with the row -- is guarded. The fields set once before
-// any call, and read-only during them, are not.
+// The fields are set once before any call and read-only during them, so one
+// client's Decide is called from several goroutines at once.
 type Client struct {
 	baseURL   string
 	key       string
 	http      *http.Client
-	decisions DecisionDriver
-	floor     float64
 	constrain func(map[string]Answer) (map[string]Answer, error)
-
-	mu               sync.Mutex
-	rowSource        string
-	rowHasConfidence bool
-	recorded         int
-	recordErr        error
 }
 
 // Constrain installs the machinery that stands over a provider's answers. It
@@ -245,9 +233,8 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 		return nil, usage, err
 	}
 	// Machinery the caller installed stands OVER the answer, and it stands
-	// here: before the row is recorded and before the caller can print it, so
-	// what is persisted and what is read are the constrained decision and not
-	// the provider's advice (Stella, 2026-09-19, r2 of the #1925 hold).
+	// here: before the caller can print it, so what is read is the constrained
+	// decision and not the provider's advice.
 	if c.constrain != nil {
 		constrained, err := c.constrain(answers)
 		if err != nil {
@@ -255,7 +242,6 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 		}
 		answers = constrained
 	}
-	c.record(state, qs, answers)
 	return answers, usage, nil
 }
 

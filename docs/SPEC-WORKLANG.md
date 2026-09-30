@@ -12,9 +12,9 @@ specifies that attribution rule. `nova-work` also uses this package's restricted
 reader through `workfile.Decode`: it calls `worklang.Read` for the tree file's
 syntax, then applies the stricter record schema in [SPEC-WORK-V1.md](SPEC-WORK-V1.md).
 
-The package also holds a plan form (`ParsePlan`, `ExpandPlan`, `Plan.Graph`), a checker
-(`WorkSet.Check`, `Ready`, `Blocked`), an attempt writer (`Record`, `Take`) and an admission
-request (`Unit.Request`). No living tool calls them, and this page does not specify them.
+The package also holds a plan form (`ParsePlan`, `Plan.Graph`), a checker
+(`WorkSet.Check`, `Ready`, `Blocked`) and an attempt writer (`Record`, `Take`). No living
+tool calls them, and this page does not specify them.
 
 ## 1. The reader
 

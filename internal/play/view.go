@@ -1,5 +1,5 @@
-// Companion view for nova-tools #223: browse shared moments without
-// rewriting the record.
+// Package play is the read-only timeline view behind `nova-memory view`
+// (nova-tools #223): browse shared moments without rewriting the record.
 //
 // View renders an explicitly selected sample of Markdown records into a
 // static, chronological timeline on one machine. It is read-only: it opens
