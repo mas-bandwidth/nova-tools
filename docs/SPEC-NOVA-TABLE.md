@@ -309,8 +309,18 @@ list or separate implementation of the transaction is permitted.
 
 A version-1 manifest contains table, epoch, expected_table_revision, operation_id,
 actor and a members array. Epoch/revision counters are decimal strings bounded as
-uint64; they never traverse floating-point numbers. A manifest names at least one member: an empty `members` array refuses, so a request
-that does nothing cannot advance the table revision. Members have unique IDs across
+uint64; they never traverse floating-point numbers. A manifest names at least one member or table property: an empty `members`
+array with no property refuses, so a request that names nothing cannot advance the table revision.
+
+A manifest may also carry the table's properties (L1 contract amendment, table
+properties): `props` (name -> value, the values it sets), `prop_expect` (name ->
+value, each present and equal) and `prop_absent` (names, each absent). Names are
+identifiers, values strings of at most 64 KiB, at most 64 of each in a manifest and
+64 properties in a table at an epoch. The expectations are checked before any write
+and refuse the whole batch as `PROPGUARD`, naming the property; the properties are
+written in the same atomic call as the members, a property whose value differs is a
+change (the batch's outcome is `changed`, its delta lists it under `props`), and an
+epoch starts with none. `show` prints them as `TABLE PROP` lines. Members have unique IDs across
 the entire array. Each entry has an `expect` record and zero or more compatible
 changes. Read-only guard entries have no changes. All referenced rows/columns must
 be declared and owned. Unknown schema fields and duplicate JSON keys refuse. Every value has one JSON
@@ -414,6 +424,8 @@ compares them with this table:
 | read set members | 1024 |
 | columns per table | 1000 |
 | rows per table | 100000 |
+| properties per manifest | 64 |
+| properties per table | 64 |
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row

@@ -203,6 +203,8 @@ func carried(rp sprint.RulePlan) error {
 		return errors.New("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
 	case !reflect.DeepEqual(rp.Sprint, sprint.TimeWrites{}):
 		return errors.New("the time rules' writes to the sprint's own keys have no wire in the sprint part yet")
+	case len(p.Props) != 0:
+		return errors.New("the plan's table properties (tset/1 prop entries) have no wire in the sprint part yet")
 	}
 	for _, u := range p.Units {
 		if len(u.Bumps)+len(u.Notes)+len(u.Closes) != 0 {
