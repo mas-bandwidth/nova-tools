@@ -69,10 +69,14 @@ type VolatileField struct {
 	Name string
 	// What a reader of a failing test is told is not compared.
 	What string
-	// NeedsPath is true for the one kind of value a pattern must not guess at: a
-	// path, whose two spellings the test supplies. A pattern broad enough to
-	// match any path would swallow the documented paths a reader types.
+	// NeedsPath is true for the kinds of value a pattern must not guess at: a
+	// path, or a recorded name, whose two spellings the test supplies. A pattern
+	// broad enough to match any path would swallow the documented paths a reader
+	// types.
 	NeedsPath bool
+	// Repeatable is true for an entry a transcript may name more than once, once
+	// per documented spelling: a recorded fixture carries more than one name.
+	Repeatable bool
 
 	// norm builds the normalisation applied to both sides of the comparison.
 	norm func(f Field) Norm
@@ -83,9 +87,9 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The six entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names: `at=`,
-// `took=`, `created=`, a temporary directory, a fresh sha, and the stamp on a
-// `branch=` nova-secrets seals on.
+// The seven entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names:
+// `at=`, `took=`, `created=`, a temporary directory, a fresh sha, a name a
+// recorded fixture carries, and the stamp on a `branch=` nova-secrets seals on.
 //
 // FIVE OF THE SIX ARE TOKEN-ANCHORED, and the sixth says why it is not. A norm
 // that names a field replaces only a whitespace-delimited token spelled
@@ -157,6 +161,20 @@ var Volatile = []VolatileField{
 		},
 	},
 	{
+		Name:       "recorded",
+		What:       "a name a recorded fixture carries, written in the document as the variable the reader sets",
+		NeedsPath:  true,
+		Repeatable: true,
+		// A transcript run against a RECORDING (nova-work's GitHub fixture, a
+		// public repository of the project's own organization) prints the names
+		// the recording carries, and the reader's run prints theirs: the document
+		// writes the shell variable the reader sets ($ORG), the test names the
+		// recorded spelling. Only that whole name is replaced -- at a word
+		// boundary before it, and before `/`, a blank, `,` or the end after it --
+		// so a longer name that merely contains it is compared as written.
+		norm: func(f Field) Norm { return Recorded(f.Doc, f.Run) },
+	},
+	{
 		Name: "branch",
 		What: "branch= (the seal branch this run stamped with its instant)",
 		// nova-secrets carries a change on `seal/<seat>-<NAMES>-<stamp>` and names
@@ -224,13 +242,17 @@ func volatileNorms(fields []Field) ([]Norm, []Problem) {
 				f.Name, strings.Join(VolatileNames(), ", "))})
 			continue
 		}
-		if seen[f.Name] {
+		key := f.Name
+		if entry.Repeatable {
+			key += "\x00" + f.Doc
+		}
+		if seen[key] {
 			refusals = append(refusals, Problem{Message: fmt.Sprintf(
 				"the transcript names %q from the onboarding.Volatile table twice; one declaration is the whole of what is not compared for that value",
 				f.Name)})
 			continue
 		}
-		seen[f.Name] = true
+		seen[key] = true
 		switch {
 		case entry.NeedsPath && (f.Doc == "" || f.Run == ""):
 			refusals = append(refusals, Problem{Message: fmt.Sprintf(

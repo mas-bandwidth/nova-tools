@@ -157,7 +157,10 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	// `branch` joined on 2026-09-27 with `nova-secrets seat inject`, whose OK line
 	// names the seal branch it committed on, stamped with the run's instant
 	// (SPEC-TOOLWORK.md documents rule 2 names it with the other five).
-	want := []string{"at", "took", "created", "tmpdir", "sha", "branch"}
+	// `recorded` joined on 2026-09-30 with nova-work's first run, which runs
+	// against a recording of a public repository and whose document writes the
+	// reader's $ORG and $REPO where the recording's names are printed.
+	want := []string{"at", "took", "created", "tmpdir", "sha", "recorded", "branch"}
 	got := VolatileNames()
 	if len(got) != len(want) {
 		t.Fatalf("onboarding.Volatile holds %v, want %v", got, want)
@@ -372,5 +375,33 @@ func TestTookAcceptsEveryGoDuration(t *testing.T) {
 				t.Fatalf("a duration accepted by time.ParseDuration drew %d problem(s):\n%s", len(problems), joinProblems(problems))
 			}
 		})
+	}
+}
+
+// `recorded` replaces the recorded name whole and nothing longer, needs both
+// spellings, and may be named once per documented spelling -- a recording
+// carries an organization and a repository -- but never twice for one.
+func TestTheRecordedEntryReplacesTheWholeNameOnly(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{
+		"$ nova-bus read --org $ORG --repo $ORG/$REPO",
+		"REPO OK org=$ORG repo=$ORG/$REPO other=xacme/widget",
+	}
+	fields := []Field{{Name: "recorded", Doc: "$ORG", Run: "acme"}, {Name: "recorded", Doc: "$REPO", Run: "widget"}}
+	run := []Result{{Stdout: "REPO OK org=acme repo=acme/widget other=xacme/widget\n"}}
+	if problems := CompareTranscript(parse(t, doc), run, fields); len(problems) != 0 {
+		t.Fatalf("the recorded names were not written as the reader's variables: %d problem(s):\n%s", len(problems), joinProblems(problems))
+	}
+	longer := []Result{{Stdout: "REPO OK org=acme repo=acme/widget other=xacme/widgets\n"}}
+	if problems := CompareTranscript(parse(t, doc), longer, fields); len(problems) != 1 {
+		t.Fatalf("a longer name containing the recorded one was swallowed: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
+	}
+	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "recorded", Doc: "$ORG"}}); len(problems) != 1 || !strings.Contains(problems[0].Message, "BOTH spellings") {
+		t.Fatalf("a recorded name without its run spelling was not refused: %s", joinProblems(problems))
+	}
+	twice := append(fields, Field{Name: "recorded", Doc: "$ORG", Run: "other"})
+	if problems := CompareTranscript(parse(t, doc), run, twice); len(problems) != 1 || !strings.Contains(problems[0].Message, "twice") {
+		t.Fatalf("one documented spelling named twice was not refused: %s", joinProblems(problems))
 	}
 }

@@ -1,79 +1,95 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
-// TestHelpExamplesRunThroughTheComparator: the help's `example:` block is a
-// first run (docs/ONBOARDING.md point 6), and each of its lines runs, in order,
-// against the recorded conversation with GitHub the other tests use
-// (internal/workgh/testdata/reliable: one public repository of twenty issues,
-// read at fifteen a page), and prints what is written here.
+// TestMain fixes the clock for every test of this package before any runs, so
+// the tree an import writes records one instant and the transcript's sha256 and
+// seconds= reproduce. No test here reads the real time.
+func TestMain(m *testing.M) {
+	fixed := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	now = func() time.Time { return fixed }
+	os.Exit(m.Run())
+}
+
+// TestTESTSFirstRunIsWhatTheToolPrints: the `### First run` block of
+// docs/TESTS.md is EXECUTED, every command in order, against the recorded
+// conversation with GitHub the other tests use (internal/workgh/testdata/
+// reliable: one public repository of twenty issues, read at fifteen a page), and
+// the whole output is compared by the one comparator. The banner's `example:`
+// block is the same three commands (docs/ONBOARDING.md point 6), so one sitting
+// keeps both promises.
 //
-// $ORG and $REPO are the reader's. Here they stand for the recorded
-// organization and repository, both on the command line and where the tool
-// prints them back; ./tree.lisp stands for a file of this test's own; seconds=
-// and the tree's sha256 (the tree records the instant of its import) are the
-// other values not compared.
-func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
+// $ORG and $REPO are the reader's: the test stands them for the recording's
+// names on the command line, and the comparator's `recorded` entry writes the
+// recording's names back as $ORG and $REPO where the tool prints them.
+// ./tree.lisp is a file in a directory of the test's own.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 
-	sitting := []onboarding.Step{
-		{Line: "$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run", Want: []string{
-			"PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15",
-			"REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2",
-			"IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=10586ae9aa4a3eaa5fbd2b5278461fc61979db7110637f007d8d3a811b91aec6 calls=3 points=3 rest=0 seconds=0.0 dry_run=true",
-		}},
-		{Line: "$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp", Want: []string{
-			"PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15",
-			"REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2",
-			"IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=10586ae9aa4a3eaa5fbd2b5278461fc61979db7110637f007d8d3a811b91aec6 calls=3 points=3 rest=0 seconds=0.0 dry_run=false",
-		}},
-		{Line: "$ nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15", Want: []string{
-			"VERIFY OK tree=./tree.lisp sha256=10586ae9aa4a3eaa5fbd2b5278461fc61979db7110637f007d8d3a811b91aec6 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0",
-		}},
+	// The banner's example lines, named in this test's own body so the
+	// pasted-examples rule (internal/ci, SPEC-TOOLWORK.md documents rule 6) reads
+	// the command text here; the transcript holds the same lines.
+	documentedExamples := []string{
+		"nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run",
+		"nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp",
+		"nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15",
 	}
 	examples, err := onboarding.ExampleLines(banner, "nova-work")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var want []string
-	for _, s := range sitting {
-		want = append(want, strings.TrimPrefix(s.Line, "$ "))
+	if strings.Join(examples, "\n") != strings.Join(documentedExamples, "\n") {
+		t.Fatalf("the banner's examples are %q, this test names %q", examples, documentedExamples)
 	}
-	if strings.Join(examples, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s", strings.Join(examples, "\n  "), strings.Join(want, "\n  "))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-work", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	for _, s := range steps {
+		commands = append(commands, "nova-work "+strings.Join(s.Args, " "))
+	}
+	if strings.Join(commands, "\n") != strings.Join(documentedExamples, "\n") {
+		t.Fatalf("the transcript runs %q and the banner's examples are %q; they are one list", commands, documentedExamples)
 	}
 
 	const org, repo = "mas-bandwidth", "reliable" // the recording's
-	tree := filepath.Join(t.TempDir(), "tree.lisp")
-	stand := strings.NewReplacer("$ORG", org, "$REPO", repo, "./tree.lisp", tree)
-	elide := func(name, pattern, as string) onboarding.Norm {
-		n, err := onboarding.Elide(name, pattern, as)
-		if err != nil {
-			t.Fatal(err)
+	dir := t.TempDir()
+	stand := strings.NewReplacer("$ORG", org, "$REPO", repo, "./", dir+"/")
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		args := make([]string, len(s.Args))
+		for i, a := range s.Args {
+			args[i] = stand.Replace(a)
 		}
-		return n
-	}
-	norms := []onboarding.Norm{
-		onboarding.Path("./tree.lisp", tree),
-		elide("the recorded organization, written $ORG", org, "$ORG"),
-		elide("the recorded repository, written $REPO", `\b`+repo+`\b`, "$REPO"),
-		elide("the seconds the run took", `seconds=\S+`, "seconds=-"),
-		elide("the tree's hash, which covers the instant it was imported", `sha256=[0-9a-f]{64}`, "sha256=-"),
-	}
-	for _, s := range sitting {
-		args := strings.Fields(stand.Replace(strings.TrimPrefix(s.Line, "$ nova-work ")))
 		code, out, errs := do(t, replay(t), args...)
 		if code != 0 {
-			t.Errorf("the example %s exits %d; stderr: %s", s.Line, code, errs)
+			t.Errorf("the documented command %s exits %d; stderr: %s", s.Line, code, errs)
 		}
-		for _, p := range onboarding.Compare(s, onboarding.Result{Code: code, Stdout: out, Stderr: errs}, norms) {
-			t.Error(p)
-		}
+		got = append(got, onboarding.Result{Code: code, Stdout: out, Stderr: errs})
+	}
+	volatile := []onboarding.Field{
+		{Name: "tmpdir", Doc: ".", Run: dir},
+		{Name: "recorded", Doc: "$ORG", Run: org},
+		{Name: "recorded", Doc: "$REPO", Run: repo},
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, volatile) {
+		t.Error(p)
 	}
 }
