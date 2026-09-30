@@ -412,7 +412,7 @@ func TestRevertOnRedReusesAPullRequestThatAlreadyExists(t *testing.T) {
 }
 
 // The law: a GitHub API call that fails is never read as "nothing found". The
-// verb exits red and files ONE needs-glenn issue, and for every lookup (which
+// verb exits red and files ONE needs-owner issue, and for every lookup (which
 // all come before the revert) it has pushed nothing to main and opened no PR.
 func TestRevertOnRedAnAPIFailureIsRedAndFilesTheIssueAndPushesNothing(t *testing.T) {
 	t.Parallel()
@@ -441,7 +441,7 @@ func TestRevertOnRedAnAPIFailureIsRedAndFilesTheIssueAndPushesNothing(t *testing
 			assert.Contains(t, errb, tc.want)
 			assert.Contains(t, errb, "not deciding for a person")
 			assert.NotContains(t, out, "skipping", "a failed lookup must never read as a skip")
-			assert.Equal(t, 1, countPrefix(r, "gh issue create"), "one needs-glenn issue: %q", r.lines())
+			assert.Equal(t, 1, countPrefix(r, "gh issue create"), "one needs-owner issue: %q", r.lines())
 			for _, forbidden := range []string{"git revert", "git push", "git branch", "gh pr create", "gh api repos/o/r/issues/"} {
 				assert.False(t, r.ran(forbidden), "%s ran after a failed lookup: %q", forbidden, r.lines())
 			}
@@ -449,7 +449,7 @@ func TestRevertOnRedAnAPIFailureIsRedAndFilesTheIssueAndPushesNothing(t *testing
 				if c.Name == "gh" && len(c.Args) > 1 && c.Args[0] == "issue" {
 					line := strings.Join(c.Args, " ")
 					assert.Contains(t, line, "--repo o/r")
-					assert.Contains(t, line, "needs-glenn: revert-on-red could not decide on aaaaaaaaaaaa")
+					assert.Contains(t, line, "needs-owner: revert-on-red could not decide on aaaaaaaaaaaa")
 					assert.Contains(t, line, tc.want)
 				}
 			}
@@ -496,7 +496,7 @@ func TestRevertOnRedIsStillRedWhenTheIssueCannotBeFiledEither(t *testing.T) {
 	w.issueCode = 1
 	code, _, errb, r := runRevert(t, w, "--run-attempt", "2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errb, "gh issue create exited 1; no needs-glenn issue was filed")
+	assert.Contains(t, errb, "gh issue create exited 1; no needs-owner issue was filed")
 	assert.False(t, r.ran("git revert"))
 }
 
@@ -513,13 +513,13 @@ func TestRevertOnRedByDefaultOpensAPullRequestAndPushesNothingToMain(t *testing.
 	assert.True(t, r.ran("git branch -f revert/aaaaaaaaaaaa HEAD"))
 	assert.True(t, r.ran("git push origin revert/aaaaaaaaaaaa"))
 	assert.True(t, r.ran("gh pr create --base main --head revert/aaaaaaaaaaaa"), "%q", r.lines())
-	assert.Equal(t, 1, countPrefix(r, "gh issue create"), "one needs-glenn issue for the open revert PR: %q", r.lines())
+	assert.Equal(t, 1, countPrefix(r, "gh issue create"), "one needs-owner issue for the open revert PR: %q", r.lines())
 	assert.Contains(t, out, "revert PR #9 open on revert/aaaaaaaaaaaa")
 	assert.Contains(t, out, "commented on #5 naming revert cccccccccccc")
 	for _, c := range r.calls {
 		if c.Name == "gh" && len(c.Args) > 1 && c.Args[0] == "issue" {
 			line := strings.Join(c.Args, " ")
-			assert.Contains(t, line, "needs-glenn: main is red at aaaaaaaaaaaa; revert PR #9 awaits landing")
+			assert.Contains(t, line, "needs-owner: main is red at aaaaaaaaaaaa; revert PR #9 awaits landing")
 			assert.Contains(t, line, "--repo o/r")
 		}
 		if c.Name == "gh" && len(c.Args) > 1 && c.Args[0] == "pr" && c.Args[1] == "create" {
@@ -541,7 +541,7 @@ func TestRevertOnRedWithPushRevertPushesToMain(t *testing.T) {
 	assert.False(t, r.ran("gh issue create"))
 }
 
-// A needs-glenn issue that cannot be filed for the open revert PR is red: the
+// A needs-owner issue that cannot be filed for the open revert PR is red: the
 // open pull request with nobody told is exactly the silence the issue prevents.
 func TestRevertOnRedIsRedWhenTheIssueForTheRevertPRCannotBeFiled(t *testing.T) {
 	t.Parallel()
@@ -549,7 +549,7 @@ func TestRevertOnRedIsRedWhenTheIssueForTheRevertPRCannotBeFiled(t *testing.T) {
 	w.issueCode = 1
 	code, _, errb, r := runRevert(t, w, "--run-attempt", "2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errb, "no needs-glenn issue was filed")
+	assert.Contains(t, errb, "no needs-owner issue was filed")
 	assert.True(t, r.ran("gh pr create"))
 }
 

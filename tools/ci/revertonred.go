@@ -28,7 +28,7 @@ not ask):
                                                  same: no green baseline)
 Then it reverts the push (git revert -m 1 for a merge commit, a plain revert
 otherwise) and, BY DEFAULT, opens a revert/<sha> pull request against main, LEAVES
-IT OPEN, and files ONE needs-glenn issue naming it. It pushes nothing to main, enables
+IT OPEN, and files ONE needs-owner issue naming it. It pushes nothing to main, enables
 no auto-merge and lands nothing on its own: CI lands nothing by itself, a person
 or a batch does. It posts ONE comment on the merged pull request, naming the
 revert.
@@ -40,7 +40,7 @@ only after the pull request form has fired correctly once on a real red push.
 
 A GitHub API call that fails (the parent's run lookup, the failed run's job
 list, the merged pull request lookup, the comment, the rerun) is never a skip:
-the verb exits 1 and files ONE needs-glenn issue naming the call, before any
+the verb exits 1 and files ONE needs-owner issue naming the call, before any
 revert is pushed when the call comes before the revert (every lookup does), so
 a person decides what a blind verb could not.
 
@@ -48,8 +48,8 @@ Environment: GITHUB_REPOSITORY, GITHUB_TOKEN, HEAD_SHA, RUN_ID (all required).
 git and gh run in the working directory, which is the checkout of HEAD_SHA.
 
 exit 0  reverted, or skipped by a guard, or rerun once
-exit 1  a git or gh step failed (a gh failure also files the needs-glenn issue),
-        or the needs-glenn issue for an open revert PR could not be filed
+exit 1  a git or gh step failed (a gh failure also files the needs-owner issue),
+        or the needs-owner issue for an open revert PR could not be filed
 exit 2  usage, or a required variable is unset
 `,
 		do: func(e env, args []string) int { return revertOnRed(e, osCmdRunner{}, args) },
@@ -147,13 +147,13 @@ func (v *reverter) fail(format string, a ...any) int {
 }
 
 // undecided is the exit of a verb that could not ask GitHub something it had to
-// know: it is red (exit 1), and it files ONE needs-glenn issue (the way
+// know: it is red (exit 1), and it files ONE needs-owner issue (the way
 // nightly-report files its issue: gh issue create on the repository) naming the
 // call, so a person decides. It never reads the failure as "skip". If the issue
 // cannot be filed either, that is said on stderr and the exit is still 1.
 func (v *reverter) undecided(what string) int {
-	fmt.Fprintf(v.e.stderr, "revert-on-red: %s; not deciding for a person, exiting red and filing a needs-glenn issue\n", what)
-	title := fmt.Sprintf("needs-glenn: revert-on-red could not decide on %s", shortSHA(v.head))
+	fmt.Fprintf(v.e.stderr, "revert-on-red: %s; not deciding for a person, exiting red and filing a needs-owner issue\n", what)
+	title := fmt.Sprintf("needs-owner: revert-on-red could not decide on %s", shortSHA(v.head))
 	body := fmt.Sprintf("revert-on-red ran for ci run %s at %s on main and could not ask GitHub something it had to know:\n\n%s\n\nIt did not skip and it opened no revert for this failure. Decide by hand whether main at %s is to be reverted.", v.runID, v.head, what, shortSHA(v.head))
 	v.fileIssue(title, body)
 	return 1
@@ -167,7 +167,7 @@ func (v *reverter) fileIssue(title, body string) bool {
 		fmt.Fprintln(v.e.stdout, out)
 	}
 	if code != 0 {
-		fmt.Fprintf(v.e.stderr, "revert-on-red: gh issue create exited %d; no needs-glenn issue was filed\n", code)
+		fmt.Fprintf(v.e.stderr, "revert-on-red: gh issue create exited %d; no needs-owner issue was filed\n", code)
 		return false
 	}
 	return true
@@ -287,7 +287,7 @@ func (v *reverter) revert() int {
 	if pr != "" {
 		comment := fmt.Sprintf("Main was red on %s. Reverted by %s (mechanical revert-on-red); fix forward on a branch.", failing, shortSHA(newSHA))
 		if _, code := v.gh("api", fmt.Sprintf("repos/%s/issues/%s/comments", v.repo, pr), "-f", "body="+comment); code != 0 {
-			return v.undecided(fmt.Sprintf("commenting on #%s exited %d; the revert is already landed (see the run's log)", pr, code))
+			return v.undecided(fmt.Sprintf("commenting on #%s exited %d; the revert is already pushed or its pull request opened (see the run's log)", pr, code))
 		}
 		fmt.Fprintf(v.e.stdout, "commented on #%s naming revert %s\n", pr, shortSHA(newSHA))
 	} else {
@@ -299,7 +299,7 @@ func (v *reverter) revert() int {
 // land puts the revert where a person can land it. By default that is a
 // revert/<sha> pull request against main, LEFT OPEN, deliberately (auto-merge is
 // not an enqueue at all but a standing instruction the forge executes later with
-// nobody in the room), and one needs-glenn issue naming it: CI lands nothing by
+// nobody in the room), and one needs-owner issue naming it: CI lands nothing by
 // itself, and the issue is what makes a red main something a person sees. Only
 // with pushRevert does it first push the revert commit to main; a direct push the
 // ruleset refuses falls back to the pull request.
@@ -339,7 +339,7 @@ func (v *reverter) land(msg, newSHA string) int {
 	}
 	fmt.Fprintf(v.e.stdout, "revert PR #%s open on %s\n", num, branch)
 	v.notice("revert PR #%s is OPEN on %s and lands nothing by itself: main is red until somebody lands it -- merge it by hand.", num, branch)
-	title := fmt.Sprintf("needs-glenn: main is red at %s; revert PR #%s awaits landing", short, num)
+	title := fmt.Sprintf("needs-owner: main is red at %s; revert PR #%s awaits landing", short, num)
 	body := fmt.Sprintf("revert-on-red reverted the push that turned main red (ci run %s at %s) and opened pull request #%s on %s. It pushed nothing to main and merges nothing: merge the pull request to land the revert, or close it and fix forward.", v.runID, v.head, num, branch)
 	if !v.fileIssue(title, body) {
 		return 1

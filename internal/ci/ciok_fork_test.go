@@ -104,6 +104,7 @@ func TestCanFireOnPullRequestIsConservative(t *testing.T) {
 		{"pull_request_target", "github.event_name == 'pull_request_target'", true},
 		{"a != hiding behind an == on another event", "github.event_name == 'push' || github.event_name != 'schedule'", true},
 		{"spaces around the operator", "github.event_name   !=   'push'", true},
+		{"an event test with no == or != on the event name", "contains(fromJSON('[\"push\"]'), github.event_name)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
