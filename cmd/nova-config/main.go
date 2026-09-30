@@ -74,9 +74,9 @@ usage:
       ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
       env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on (an empty value counts as unset), matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
       this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)
-  nova-config <kind> add <name> --<field> <value> ... --as <friend>
-  nova-config <kind> set <name> --<field> <value> ... --as <friend>
-  nova-config <kind> remove <name> --as <friend>
+  nova-config <kind> add <name> --<field> <value> ... --as <friend> [--dry-run]
+  nova-config <kind> set <name> --<field> <value> ... --as <friend> [--dry-run]
+  nova-config <kind> remove <name> --as <friend> [--dry-run]
   nova-config <kind> list
   nova-config <kind> show <name>
   nova-config <kind> history <name>
@@ -84,8 +84,8 @@ usage:
   nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
   nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
   nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
-  nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
-  nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
+  nova-config fleet set --<field> <value> ... --as <friend> [--dry-run]    the one fleet row (store, coordinator machine): no name, no add, remove or list
+  nova-config sprint set --coordinator <friend> --as <friend> [--dry-run]  the one sprint row: who coordinates; set it to hand over
   nova-config fleet|sprint show
   nova-config fleet|sprint history
 
@@ -95,7 +95,8 @@ password on the line: the password is read from the variable
 NOVA_PG_PASSWORD_ENV names (NOVA_PG_PASSWORD when unset). --redis is host:port
 (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --as is
 the friend making the change (env NOVA_FRIEND); every write is a row in
-config.history with it (omitted on apply --check).
+config.history with it (omitted on apply --check). --dry-run on add, set and remove
+prints the row and revision that would be written and writes nothing.
 
 A machine's row is the declared facts something reads (user, seat, slots,
 runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
@@ -409,6 +410,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	fs := verbflag.New(verb)
 	pg, _, as := connFlags(fs, false, true)
+	dryRun := fs.Bool("dry-run", false, "print the row and revision that would be written and write nothing")
 	values := map[string]*string{}
 	for _, f := range k.Fields {
 		values[f.Name] = fs.String(f.Name, "", f.Help)
@@ -457,11 +459,66 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	defer st.Close()
 	if add {
+		if *dryRun {
+			if _, found, err := st.Get(ctx, k.Name, name); err != nil {
+				return refuse(stderr, verb, err.Error())
+			} else if found {
+				return storeErr(stderr, verb, &config.RefusedError{Err: config.ErrExists, Detail: fmt.Sprintf("%s %s exists", k.Name, name)}, tool+" "+k.Name+" set "+name+" --<field> <value>")
+			}
+			if err := config.CheckRefs(ctx, st, k, row); err != nil {
+				return storeErr(stderr, verb, err, tool+" "+k.Name+" set "+name+" --<field> <value>")
+			}
+			targetRev, err := nextTargetRev(ctx, st)
+			if err != nil {
+				return refuse(stderr, verb, err.Error())
+			}
+			fmt.Fprintf(stdout, "DRY-RUN ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), targetRev)
+			fmt.Fprintln(stdout, config.RowLine(k, row))
+			fmt.Fprintf(stdout, "CONFIG DRY-RUN kind=%s op=add name=%s rev=%d nothing written\n", k.Name, config.Value(name), targetRev)
+			return 0
+		}
 		id, err := st.Insert(ctx, k.Name, row, actor)
 		if err != nil {
 			return storeErr(stderr, verb, err, tool+" "+k.Name+" set "+name+" --<field> <value>")
 		}
 		fmt.Fprintf(stdout, "CONFIG ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
+		return 0
+	}
+	if *dryRun {
+		cur, found, err := st.Get(ctx, k.Name, name)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		if !found {
+			next := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
+			if k.Singleton {
+				next = tool + " " + k.Name + " show"
+			}
+			return storeErr(stderr, verb, &config.RefusedError{Err: config.ErrNotFound, Detail: fmt.Sprintf("%s %s not found", k.Name, name)}, next)
+		}
+		next := cur.Clone()
+		for f, v := range changes {
+			next.Fields[f] = v
+		}
+		if err := config.CheckRefs(ctx, st, k, next); err != nil {
+			nextCmd := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
+			if k.Singleton {
+				nextCmd = tool + " " + k.Name + " show"
+			}
+			return storeErr(stderr, verb, err, nextCmd)
+		}
+		targetRev, err := nextTargetRev(ctx, st)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		fields := make([]string, 0, len(changes))
+		for f := range changes {
+			fields = append(fields, f)
+		}
+		sort.Strings(fields)
+		fmt.Fprintf(stdout, "DRY-RUN SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), targetRev, config.Value(strings.Join(fields, ",")))
+		fmt.Fprintln(stdout, config.RowLine(k, next))
+		fmt.Fprintf(stdout, "CONFIG DRY-RUN kind=%s op=set name=%s rev=%d changed=%s nothing written\n", k.Name, config.Value(name), targetRev, config.Value(strings.Join(fields, ",")))
 		return 0
 	}
 	_, id, err := st.Update(ctx, k.Name, name, changes, actor)
@@ -485,6 +542,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
 	pg, _, as := connFlags(fs, false, true)
+	dryRun := fs.Bool("dry-run", false, "print the row and revision that would be removed and write nothing")
 	name, rest := nameAndRest(k, args)
 	if err := fs.Parse(rest); err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -514,12 +572,46 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	if *dryRun {
+		cur, found, err := st.Get(ctx, k.Name, name)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		if !found {
+			return storeErr(stderr, verb, &config.RefusedError{Err: config.ErrNotFound, Detail: fmt.Sprintf("%s %s not found", k.Name, name)}, tool+" "+k.Name+" list")
+		}
+		if err := config.CheckReferenced(ctx, st, k.Name, name); err != nil {
+			return storeErr(stderr, verb, err, tool+" "+k.Name+" list")
+		}
+		targetRev, err := nextTargetRev(ctx, st)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		fmt.Fprintf(stdout, "DRY-RUN REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), targetRev)
+		fmt.Fprintln(stdout, config.RowLine(k, cur))
+		fmt.Fprintf(stdout, "CONFIG DRY-RUN kind=%s op=remove name=%s rev=%d nothing written\n", k.Name, config.Value(name), targetRev)
+		return 0
+	}
 	id, err := st.Delete(ctx, k.Name, name, actor)
 	if err != nil {
 		return storeErr(stderr, verb, err, tool+" "+k.Name+" list")
 	}
 	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
 	return 0
+}
+
+func nextTargetRev(ctx context.Context, st config.Store) (int64, error) {
+	var maxRev int64
+	for _, kn := range config.KindNames() {
+		r, err := st.Rev(ctx, kn)
+		if err != nil {
+			return 0, err
+		}
+		if r > maxRev {
+			maxRev = r
+		}
+	}
+	return maxRev + 1, nil
 }
 
 // live is true for the kind whose rows have a beat to read: a machine.

@@ -1259,3 +1259,216 @@ func TestInventoryOnAStoreMigratedAheadOfTheBinaryRefuses(t *testing.T) {
 		t.Fatalf("a store at the binary's version: exit %d", code)
 	}
 }
+
+func TestDryRunOnMachineAndFriendMutations(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "rowan"
+
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+
+	// 1. machine add --dry-run: validates, computes proposed row and target revision (1), writes nothing.
+	out, errs := step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut := "DRY-RUN ADD kind=machine name=studio rev=1\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1\nCONFIG DRY-RUN kind=machine op=add name=studio rev=1 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("machine add --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+
+	// Verify nothing was written to the store.
+	if _, found, _ := h.store.Get(context.Background(), "machine", "studio"); found {
+		t.Fatal("machine studio was written to store during --dry-run")
+	}
+	if rev, _ := h.store.Rev(context.Background(), "machine"); rev != 0 {
+		t.Fatalf("machine rev moved during --dry-run: %d", rev)
+	}
+	if counts, _ := h.store.Counts(context.Background()); counts["machine"] != 0 {
+		t.Fatalf("machine count moved during --dry-run: %d", counts["machine"])
+	}
+
+	// Arguments and preconditions validate on the exact same code path:
+	// a) missing required fields
+	_, errs = step(2, "machine", "add", "studio", "--slots", "64", "--dry-run")
+	if !strings.Contains(errs, "--user is required") || !strings.Contains(errs, "--seat is required") {
+		t.Fatalf("machine add --dry-run missing flags refusal:\n%s", errs)
+	}
+	// b) missing actor (--as / NOVA_FRIEND)
+	delete(h.env, "NOVA_FRIEND")
+	_, errs = step(2, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--dry-run")
+	if !strings.Contains(errs, "--as is required: the friend making the change") {
+		t.Fatalf("machine add --dry-run missing actor refusal:\n%s", errs)
+	}
+	h.env["NOVA_FRIEND"] = "rowan"
+
+	// Now do the real add of studio.
+	out, _ = step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
+	if out != "CONFIG ADD kind=machine name=studio rev=1\n" {
+		t.Fatalf("real machine add: %q", out)
+	}
+
+	// Duplicate add --dry-run refuses identically to real add:
+	_, errs = step(1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--dry-run")
+	if errs != "nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>\n" {
+		t.Fatalf("duplicate add --dry-run refusal:\n%q", errs)
+	}
+
+	// 2. machine set --dry-run: validates, computes proposed row and target revision (2), writes nothing.
+	out, errs = step(0, "machine", "set", "studio", "--slots", "80", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN SET kind=machine name=studio rev=2 changed=slots\nMACHINE name=studio user=glenn seat=studio slots=80 runners=1\nCONFIG DRY-RUN kind=machine op=set name=studio rev=2 changed=slots nothing written\n"
+	if out != wantOut {
+		t.Fatalf("machine set --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	// Verify store was not changed.
+	row, _, _ := h.store.Get(context.Background(), "machine", "studio")
+	if row.Fields["slots"] != "64" {
+		t.Fatalf("machine slots changed during --dry-run: %q", row.Fields["slots"])
+	}
+	if rev, _ := h.store.Rev(context.Background(), "machine"); rev != 1 {
+		t.Fatalf("machine rev moved during set --dry-run: %d", rev)
+	}
+
+	// Preconditions: set on unknown row refuses with remedy:
+	_, errs = step(1, "machine", "set", "nosuch", "--slots", "80", "--dry-run")
+	if errs != "nova-config machine set: machine nosuch not found; run: nova-config machine add nosuch --<field> <value> ...\n" {
+		t.Fatalf("set unknown --dry-run refusal:\n%q", errs)
+	}
+
+	// 3. friend add --dry-run: validates, target rev is 2 (since machine is at 1), writes nothing.
+	out, errs = step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro", "--roles", "builder", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN ADD kind=friend name=stella rev=2\nFRIEND name=stella slots=32 tiers=frontier,pro roles=builder\nCONFIG DRY-RUN kind=friend op=add name=stella rev=2 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("friend add --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	if _, found, _ := h.store.Get(context.Background(), "friend", "stella"); found {
+		t.Fatal("friend stella was written during --dry-run")
+	}
+
+	// Now real friend add of stella.
+	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro", "--roles", "builder")
+
+	// 4. friend set --dry-run: target rev is 3.
+	out, errs = step(0, "friend", "set", "stella", "--roles", "builder,reader", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN SET kind=friend name=stella rev=3 changed=roles\nFRIEND name=stella slots=32 tiers=frontier,pro roles=builder,reader\nCONFIG DRY-RUN kind=friend op=set name=stella rev=3 changed=roles nothing written\n"
+	if out != wantOut {
+		t.Fatalf("friend set --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	fRow, _, _ := h.store.Get(context.Background(), "friend", "stella")
+	if fRow.Fields["roles"] != "builder" {
+		t.Fatalf("friend roles changed during set --dry-run: %q", fRow.Fields["roles"])
+	}
+
+	// 5. machine remove --dry-run with referenced machine:
+	// Set fleet coordinator to studio.
+	step(0, "fleet", "set", "--coordinator", "studio")
+	// Try remove studio --dry-run -> refuses referenced by fleet:
+	_, errs = step(1, "machine", "remove", "studio", "--dry-run")
+	if errs != "nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list\n" {
+		t.Fatalf("remove referenced machine --dry-run refusal:\n%q", errs)
+	}
+
+	// Clear fleet coordinator so studio can be removed.
+	step(0, "fleet", "set", "--coordinator", "")
+
+	// 6. machine remove --dry-run: target rev is 5 (machine 1, friend 2, fleet 3 & 4).
+	out, errs = step(0, "machine", "remove", "studio", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN REMOVE kind=machine name=studio rev=5\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1\nCONFIG DRY-RUN kind=machine op=remove name=studio rev=5 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("machine remove --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	// Verify machine still in store.
+	if _, found, _ := h.store.Get(context.Background(), "machine", "studio"); !found {
+		t.Fatal("machine studio was deleted during --dry-run")
+	}
+
+	// Preconditions: remove on unknown machine refuses:
+	_, errs = step(1, "machine", "remove", "nosuch", "--dry-run")
+	if errs != "nova-config machine remove: machine nosuch not found; run: nova-config machine list\n" {
+		t.Fatalf("remove unknown --dry-run refusal:\n%q", errs)
+	}
+
+	// 7. friend remove --dry-run with coordinator:
+	step(0, "sprint", "set", "--coordinator", "stella")
+	_, errs = step(1, "friend", "remove", "stella", "--dry-run")
+	if errs != "nova-config friend remove: friend stella is the --coordinator of the sprint; run: nova-config friend list\n" {
+		t.Fatalf("remove coordinating friend --dry-run refusal:\n%q", errs)
+	}
+	step(0, "sprint", "set", "--coordinator", "")
+
+	out, errs = step(0, "friend", "remove", "stella", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN REMOVE kind=friend name=stella rev=7\nFRIEND name=stella slots=32 tiers=frontier,pro roles=builder\nCONFIG DRY-RUN kind=friend op=remove name=stella rev=7 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("friend remove --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	if _, found, _ := h.store.Get(context.Background(), "friend", "stella"); !found {
+		t.Fatal("friend stella was deleted during --dry-run")
+	}
+
+	// 8. fleet set --dry-run and sprint set --dry-run:
+	// Missing ref on fleet set --dry-run refuses identically to real set:
+	_, errs = step(1, "fleet", "set", "--coordinator", "nosuch", "--dry-run")
+	if !strings.Contains(errs, "--coordinator nosuch names no machine row") {
+		t.Fatalf("fleet set unknown ref --dry-run refusal:\n%s", errs)
+	}
+	out, errs = step(0, "fleet", "set", "--coordinator", "studio", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN SET kind=fleet name=fleet rev=7 changed=coordinator\nFLEET name=fleet store=- coordinator=studio\nCONFIG DRY-RUN kind=fleet op=set name=fleet rev=7 changed=coordinator nothing written\n"
+	if out != wantOut {
+		t.Fatalf("fleet set --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+
+	// Missing ref on sprint set --dry-run refuses identically to real set:
+	_, errs = step(1, "sprint", "set", "--coordinator", "nosuch", "--dry-run")
+	if !strings.Contains(errs, "--coordinator nosuch names no friend row") {
+		t.Fatalf("sprint set unknown ref --dry-run refusal:\n%s", errs)
+	}
+	out, errs = step(0, "sprint", "set", "--coordinator", "stella", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut = "DRY-RUN SET kind=sprint name=sprint rev=7 changed=coordinator\nSPRINT name=sprint coordinator=stella\nCONFIG DRY-RUN kind=sprint op=set name=sprint rev=7 changed=coordinator nothing written\n"
+	if out != wantOut {
+		t.Fatalf("sprint set --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+
+	// 9. Read-only verbs refuse --dry-run with exit 2:
+	for _, verb := range []string{"list", "show"} {
+		for _, k := range []string{"machine", "friend"} {
+			args := []string{k, verb, "--dry-run"}
+			if verb == "show" {
+				args = []string{k, verb, "studio", "--dry-run"}
+			}
+			_, errs = step(2, args...)
+			if !strings.Contains(errs, "flag provided but not defined: -dry-run") {
+				t.Errorf("%v --dry-run did not fail with unknown flag:\n%s", args, errs)
+			}
+		}
+	}
+}

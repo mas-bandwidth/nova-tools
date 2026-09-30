@@ -50,9 +50,9 @@ A kind is one registry: one table under schema `config`, one Go descriptor
 grammar is one for every kind:
 
 ```
-nova-config <kind> add <name> --<field> <value> ... --as <friend>
-nova-config <kind> set <name> --<field> <value> ... --as <friend>
-nova-config <kind> remove <name> --as <friend>
+nova-config <kind> add <name> --<field> <value> ... --as <friend> [--dry-run]
+nova-config <kind> set <name> --<field> <value> ... --as <friend> [--dry-run]
+nova-config <kind> remove <name> --as <friend> [--dry-run]
 nova-config <kind> list
 nova-config <kind> show <name>
 nova-config <kind> history <name>
@@ -322,6 +322,8 @@ prints as `-`.
 CONFIG ADD kind=<k> name=<n> rev=<id>
 CONFIG SET kind=<k> name=<n> rev=<id> changed=<f,g>
 CONFIG REMOVE kind=<k> name=<n> rev=<id>
+DRY-RUN ADD|SET|REMOVE kind=<k> name=<n> rev=<id> [changed=<f,g>]
+CONFIG DRY-RUN kind=<k> op=<op> name=<n> rev=<id> [changed=<f,g>] nothing written
 <KIND> name=<n> <field>=<v> ...                          (list: one per row)
 MACHINE name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
 MACHINE name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)

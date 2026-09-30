@@ -550,3 +550,92 @@ func TestAnsibleInventoryFailsLoudlyWithTheVariableTheHelpPrints(t *testing.T) {
 		t.Fatalf("with the variable ansible exits 0 on a failing inventory script: %s", out)
 	}
 }
+
+func TestDryRunAgainstPostgres(t *testing.T) {
+	t.Parallel()
+
+	r := newReal(t, false)
+	r.run(t, 0, "migrate")
+
+	// 1. machine add --dry-run
+	out, errs := r.run(t, 0, "machine", "add", "bench-01", "--user", "glenn", "--seat", "studio", "--slots", "32", "--runners", "0", "--dry-run")
+	if errs != "" {
+		t.Fatalf("unexpected stderr: %q", errs)
+	}
+	wantOut := "DRY-RUN ADD kind=machine name=bench-01 rev=1\nMACHINE name=bench-01 user=glenn seat=studio slots=32 runners=0\nCONFIG DRY-RUN kind=machine op=add name=bench-01 rev=1 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("machine add --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+
+	// Verify nothing was written to Postgres config.machines
+	ctx := context.Background()
+	st, err := config.OpenPG(ctx, r.env["NOVA_PG_DSN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, found, err := st.Get(ctx, config.KindMachine, "bench-01"); err != nil || found {
+		t.Fatalf("postgres machine bench-01 after dry-run: found=%v, err=%v", found, err)
+	}
+	if rev, err := st.Rev(ctx, config.KindMachine); err != nil || rev != 0 {
+		t.Fatalf("postgres machine rev after dry-run: %d, err: %v", rev, err)
+	}
+
+	// Real machine add
+	r.run(t, 0, "machine", "add", "bench-01", "--user", "glenn", "--seat", "studio", "--slots", "32", "--runners", "0")
+
+	// 2. machine set --dry-run
+	out, _ = r.run(t, 0, "machine", "set", "bench-01", "--slots", "64", "--dry-run")
+	wantOut = "DRY-RUN SET kind=machine name=bench-01 rev=2 changed=slots\nMACHINE name=bench-01 user=glenn seat=studio slots=64 runners=0\nCONFIG DRY-RUN kind=machine op=set name=bench-01 rev=2 changed=slots nothing written\n"
+	if out != wantOut {
+		t.Fatalf("machine set --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	mRow, found, err := st.Get(ctx, config.KindMachine, "bench-01")
+	if err != nil || !found || mRow.Fields["slots"] != "32" {
+		t.Fatalf("postgres machine slots after dry-run: row=%+v, err: %v", mRow, err)
+	}
+
+	// 3. friend add --dry-run
+	out, _ = r.run(t, 0, "friend", "add", "rowan", "--slots", "16", "--tiers", "frontier", "--roles", "builder", "--dry-run")
+	wantOut = "DRY-RUN ADD kind=friend name=rowan rev=2\nFRIEND name=rowan slots=16 tiers=frontier roles=builder\nCONFIG DRY-RUN kind=friend op=add name=rowan rev=2 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("friend add --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	if _, found, err := st.Get(ctx, config.KindFriend, "rowan"); err != nil || found {
+		t.Fatalf("postgres friend rowan after dry-run: found=%v, err=%v", found, err)
+	}
+
+	// Real friend add
+	r.run(t, 0, "friend", "add", "rowan", "--slots", "16", "--tiers", "frontier", "--roles", "builder")
+
+	// 4. friend set --dry-run
+	out, _ = r.run(t, 0, "friend", "set", "rowan", "--slots", "32", "--dry-run")
+	wantOut = "DRY-RUN SET kind=friend name=rowan rev=3 changed=slots\nFRIEND name=rowan slots=32 tiers=frontier roles=builder\nCONFIG DRY-RUN kind=friend op=set name=rowan rev=3 changed=slots nothing written\n"
+	if out != wantOut {
+		t.Fatalf("friend set --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	fRow, found, err := st.Get(ctx, config.KindFriend, "rowan")
+	if err != nil || !found || fRow.Fields["slots"] != "16" {
+		t.Fatalf("postgres friend slots after dry-run: row=%+v, err: %v", fRow, err)
+	}
+
+	// 5. machine remove --dry-run
+	out, _ = r.run(t, 0, "machine", "remove", "bench-01", "--dry-run")
+	wantOut = "DRY-RUN REMOVE kind=machine name=bench-01 rev=3\nMACHINE name=bench-01 user=glenn seat=studio slots=32 runners=0\nCONFIG DRY-RUN kind=machine op=remove name=bench-01 rev=3 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("machine remove --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	if _, found, err := st.Get(ctx, config.KindMachine, "bench-01"); err != nil || !found {
+		t.Fatalf("postgres machine missing after remove dry-run: found=%v, err=%v", found, err)
+	}
+
+	// 6. friend remove --dry-run
+	out, _ = r.run(t, 0, "friend", "remove", "rowan", "--dry-run")
+	wantOut = "DRY-RUN REMOVE kind=friend name=rowan rev=3\nFRIEND name=rowan slots=16 tiers=frontier roles=builder\nCONFIG DRY-RUN kind=friend op=remove name=rowan rev=3 nothing written\n"
+	if out != wantOut {
+		t.Fatalf("friend remove --dry-run:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	if _, found, err := st.Get(ctx, config.KindFriend, "rowan"); err != nil || !found {
+		t.Fatalf("postgres friend missing after remove dry-run: found=%v, err=%v", found, err)
+	}
+}

@@ -86,9 +86,9 @@ func Refused(err error) bool {
 	return errors.As(err, &r)
 }
 
-// checkRefs is the cross-row validation every store runs before a write:
+// CheckRefs is the cross-row validation every store runs before a write:
 // a ref field must name a row of its kind (an optional one may be empty).
-func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
+func CheckRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 	for _, f := range k.Fields {
 		if f.Type != TypeRef || (row.Fields[f.Name] == "" && !f.Required) {
 			continue
@@ -102,9 +102,13 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 	return nil
 }
 
-// checkReferenced refuses removing a row that a ref field of another kind
+func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
+	return CheckRefs(ctx, st, k, row)
+}
+
+// CheckReferenced refuses removing a row that a ref field of another kind
 // names.
-func checkReferenced(ctx context.Context, st Store, kind, name string) error {
+func CheckReferenced(ctx context.Context, st Store, kind, name string) error {
 	for _, other := range Kinds {
 		for _, f := range other.Fields {
 			if f.Type != TypeRef || f.Ref != kind {
@@ -129,6 +133,10 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 		}
 	}
 	return nil
+}
+
+func checkReferenced(ctx context.Context, st Store, kind, name string) error {
+	return CheckReferenced(ctx, st, kind, name)
 }
 
 // Mem is the in-memory Store the unit tests use. It is strict like PG: the
