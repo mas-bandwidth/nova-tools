@@ -872,6 +872,91 @@ func TestJReviewWaitMovesOverdue(t *testing.T) {
 	}
 }
 
+// TestJReviewWaitFindsTheReviewTimeAlready (E7): a wait on a judgment the tick
+// does not keep moves the overdue entry of its note to the review time, once:
+// run again at the same time it finds the entry there and writes nothing, not
+// even its line, and run at another time it moves the entry again. A wait naming
+// two subjects of one note reads the entry once, and the read is a probe that
+// JCost counts.
+func TestJReviewWaitFindsTheReviewTimeAlready(t *testing.T) {
+	t.Parallel()
+	r := newJRig(t)
+	r.step(jReq(JOpOpen, jtBlocked, "n0", "w1", "w2"))
+	review := r.wall() + 3_600_000
+	wait := func(at int64, subjects ...string) *StepReply {
+		r.t.Helper()
+		return r.step(jHold(jtBlocked, "n0", at, subjects...))
+	}
+	if reply := wait(review, "w1", "w2"); reply.Reply.Lines != 1 {
+		t.Fatalf("the first wait wrote %d lines, want its one", reply.Reply.Lines)
+	}
+	r.wantZSet(jk("due"), map[string]float64{"overdue:n1": float64(review)})
+	img := r.img()
+	if reply := wait(review, "w1", "w2"); reply.Reply.Lines != 0 || r.img() != img {
+		t.Fatalf("the second wait wrote %d lines or changed the twin", reply.Reply.Lines)
+	}
+	// One of the note's subjects alone names the same note, and finds the same time.
+	if reply := wait(review, "w2"); reply.Reply.Lines != 0 || r.img() != img {
+		t.Fatalf("a wait on one subject of the note wrote %d lines or changed the twin", reply.Reply.Lines)
+	}
+	// Another time is another wait: the entry moves.
+	later := review + 60_000
+	if reply := wait(later, "w1", "w2"); reply.Reply.Lines != 1 {
+		t.Fatalf("a wait at another time wrote %d lines, want its one", reply.Reply.Lines)
+	}
+	r.wantZSet(jk("due"), map[string]float64{"overdue:n1": float64(later)})
+
+	// What the read costs: one probe for the entry of a note, however many of its
+	// subjects the wait names, and a probe in JCost.
+	st := jUnitState(r.wall(),
+		Command("HSET", jk("jopen:w1"), kindHash, jField(jtBlocked, "n0"), "n1"),
+		Command("HSET", jk("jopen:w2"), kindHash, jField(jtBlocked, "n0"), "n1"),
+		Command("HSET", jk("jn"), kindHash, "n1", "2"))
+	one, ref := JCost(st, []NoteReq{jHold(jtBlocked, "n0", later, "w1")}, nil, nil)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	both, ref := JCost(st, []NoteReq{jHold(jtBlocked, "n0", later, "w1", "w2")}, nil, nil)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	if one.Probes != 2 || both.Probes != 3 { // the field of each subject, and the one entry
+		t.Fatalf("a wait on one subject costs %d probes, on two %d; want 2 and 3", one.Probes, both.Probes)
+	}
+}
+
+// TestJWaitOnANeverOverdueTypeWritesOnlyItsLine: the one wait that cannot find
+// its own earlier run is the wait on "the sprint is done", which is never overdue
+// and so has no entry to move: it changes no state, and writes its line, and the
+// list of note lines that holds it, each time it is run. It is a verb's event,
+// which the verb layer deduplicates by op and intent, and it is outside E7; the
+// head of twin_j.go says so, and this holds it to that.
+func TestJWaitOnANeverOverdueTypeWritesOnlyItsLine(t *testing.T) {
+	t.Parallel()
+	r := newJRig(t)
+	r.step(jReq(JOpOpen, jtDone, "d", "sprint"))
+	at := r.wall() + 3_600_000
+	before := r.keys()
+	for run := 1; run <= 2; run++ {
+		if reply := r.step(jHold(jtDone, "d", at, "sprint")); reply.Reply.Lines != 1 {
+			t.Fatalf("run %d wrote %d lines, want its one", run, reply.Reply.Lines)
+		}
+	}
+	after := r.keys()
+	notes := jk("notes")
+	if got := after[notes].List; len(got) != 3 {
+		t.Fatalf("the notes list is %v, want the open and the two waits", got)
+	}
+	for key, want := range before {
+		if key != notes && !reflect.DeepEqual(after[key], want) {
+			t.Errorf("a wait on the done judgment changed %s: %+v, was %+v", key, after[key], want)
+		}
+	}
+	if len(after) != len(before) {
+		t.Errorf("a wait on the done judgment made %d keys, had %d", len(after), len(before))
+	}
+}
+
 // TestJStoppedWaitSetsStophold (1.3.4): a wait on the STOPPED judgment holds it
 // as any tick-kept one is held, but enters no hold entry: it sets stophold_ms
 // to its wall time, since R does not move while STOPPED.
@@ -910,8 +995,10 @@ func TestJAskwaitFollowsCannotAsk(t *testing.T) {
 }
 
 // TestJSecondRunWritesNothing (E7, ReplayNoop): the requests of a step run a
-// second time, with nothing changed between, write nothing: open, close, hold
-// and unhold each find their field already as the first run left it.
+// second time, with nothing changed between, write nothing: open, close, hold,
+// unhold and the wait on a judgment the tick does not keep (a review wait, which
+// finds the overdue entry already at its review time) each find their state
+// already as the first run left it.
 func TestJSecondRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t)
@@ -926,7 +1013,11 @@ func TestJSecondRunWritesNothing(t *testing.T) {
 		{"hold", []NoteReq{jHold(jtCannotAsk, "c", until, "p1")}, nil},
 		{"unhold", []NoteReq{jReq(JOpUnhold, jtCannotAsk, "c", "p1")}, nil},
 		{"close", []NoteReq{jReq(JOpClose, jtCannotAsk, "c", "p2")}, nil},
+		{"review wait", []NoteReq{jHold(jtBlocked, "n0", until, "w1")}, []NoteReq{jReq(JOpOpen, jtBlocked, "n0", "w1")}},
 	} {
+		if tc.prep != nil {
+			r.step(tc.prep...)
+		}
 		first := r.step(tc.step...)
 		if first.Reply.Lines != 1 {
 			t.Fatalf("%s: the first run wrote %d lines, want 1", tc.name, first.Reply.Lines)
@@ -993,6 +1084,9 @@ func TestJRefusals(t *testing.T) {
 			[]NoteReq{{Op: JOpUpdate, Type: jtCannotAsk, Cause: "c", Subjects: []string{"p1"}, Text: "x"}}, CodeWrongType},
 		{"a quarantine key of another type", []Cmd{Command("ZADD", jk("quarantine"), kindZSet, "1", "m")},
 			[]NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}, CodeWrongType},
+		{"a due key of another type under a review wait", []Cmd{Command("HSET", jopen("p1"), kindHash, jtBlocked+"|c", "n1"),
+			Command("HSET", jk("jn"), kindHash, "n1", "1"), Command("HSET", jk("due"), kindHash, "overdue:n1", "1")},
+			[]NoteReq{jHold(jtBlocked, "c", 1_790_000_000_000, "p1")}, CodeWrongType},
 	}
 	for _, tc := range cases {
 		r := newJRig(t)
@@ -1150,7 +1244,10 @@ func jCard(table, id, row, col string, fields map[string]string) tset.MemberReco
 // move to another column, or for a kind keyed by row to another row; a move that
 // unsets the due field or sets it empty, shared or for that card; not a move
 // within the column of a kind keyed by card (a level), not a change of other
-// fields, and not a card that is not in the state or has no due field.
+// fields, and not a card that is not in the state or has no due field. The
+// close names the subject R11 raises the judgment on: the card's id, from a
+// stored id that carries an epoch suffix too, and for the stream's judgment
+// sprint.StreamSubject, not the bare row.
 func TestJEnds(t *testing.T) {
 	t.Parallel()
 	due := map[string]string{"due_untaken": "5000"}
@@ -1175,8 +1272,10 @@ func TestJEnds(t *testing.T) {
 			jCard(sprint.Fleet, "w1", "m1", "ready", nil), "", ""},
 		{"a card in another column", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:working", To: "m1:ok", IDs: []string{"w1"}},
 			jCard(sprint.Fleet, "w1", "m1", "working", due), "", ""},
-		{"a stream keyed by row changing row", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", To: "s2:ctl", IDs: []string{"s1ctl"}}, stream, "s1", "stream no longer merging"},
-		{"a stream's due field unset", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", IDs: []string{"s1ctl"}, Unset: []string{"due_mergeidle"}}, stream, "s1", "stream no longer merging"},
+		{"a stream keyed by row changing row", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", To: "s2:ctl", IDs: []string{"s1ctl"}}, stream, sprint.StreamSubject("s1"), "stream no longer merging"},
+		{"a stream's due field unset", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", IDs: []string{"s1ctl"}, Unset: []string{"due_mergeidle"}}, stream, sprint.StreamSubject("s1"), "stream no longer merging"},
+		{"a stream's control card removed", tset.Entry{Kind: "remove", Table: sprint.Merge, From: "s1:ctl", IDs: []string{"s1ctl"}}, stream, sprint.StreamSubject("s1"), "removed"},
+		{"a take of a card stored at epoch one", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:working", IDs: []string{"w1~1"}}, untaken, sprint.CardID("w1~1"), "taken"},
 		{"an untaken card replaced", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:withdrawn", IDs: []string{"w1"}}, untaken, "w1", "replaced"},
 		{"an untaken card moved where no reason names", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:ok", IDs: []string{"w1"}}, untaken, "w1", "state ended"},
 		{"an unfinished card finishing ok", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:working", To: "m1:ok", IDs: []string{"w1"}}, jCard(sprint.Fleet, "w1", "m1", "working", map[string]string{"due_unfinished": "7000"}), "w1", "finished"},
@@ -1207,6 +1306,88 @@ func TestJEnds(t *testing.T) {
 	named := map[[3]string]bool{{jTypeWorkLate, "untaken", "w1"}: true}
 	if got := jEndings([]tset.Entry{cases[0].entry}, jObs(jCard(sprint.Fleet, "w1", "m1", "ready", due)), named); len(got) != 0 {
 		t.Errorf("a close was added beside the caller's own: %+v", got)
+	}
+}
+
+// jMergeLateRaise is the raise of "a stream has had no merge step past its
+// deadline" on a stream, made from the sprint package's own names and none of
+// J's: the type it is raised under, the cause R11 gives it (the due kind keyed
+// by row), and the subjects of a stream-level judgment (Note.Subjects). R11 is
+// on sprint/foundation (IT10) and not on this stack's base; it raises
+// NoteReq{Op: open, Type: NMergeLate, Cause: kind, Subjects: {StreamSubject(s)}},
+// which is what the tick it replaces raises the same judgment as. When the stack
+// sits on a base that has R11, this is the place to take the request from its
+// plan instead.
+func jMergeLateRaise(t *testing.T, stream string) NoteReq {
+	t.Helper()
+	kind := ""
+	for _, k := range sprint.DueKinds {
+		if k.OfRow {
+			kind = k.Kind
+		}
+	}
+	if kind == "" {
+		t.Fatal("no due kind is keyed by row")
+	}
+	n := sprint.Note{Kind: sprint.Judgment, Type: sprint.NMergeLate, Stream: stream, StreamLevel: true}
+	return NoteReq{Op: JOpOpen, Type: n.Type, Cause: kind, Subjects: n.Subjects()}
+}
+
+// TestJClosesTheStreamJudgmentOnTheSubjectItIsRaisedOn (1.3.4, 2.2): a raise of
+// the stream's lateness judgment and J's close of it meet. The judgment is raised
+// on the stream's subject ("stream:s1", sprint.StreamSubject), and the steps that
+// end the stream's timed state (its control card leaves the row, loses its due
+// field, or is removed) close it on the twin composed as it runs: its jopen
+// field, its count, its note's place in jnotes and its overdue entry go, with the
+// reason, and the line is about the stream's subject. A close on the bare row
+// would leave the judgment open after the state that caused it.
+func TestJClosesTheStreamJudgmentOnTheSubjectItIsRaisedOn(t *testing.T) {
+	t.Parallel()
+	ends := []struct {
+		name   string
+		entry  tset.Entry
+		reason string
+	}{
+		{"the control card leaves for another row", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", To: "s2:ctl", IDs: []string{"s1ctl"}, About: []string{"s1"}}, "stream no longer merging"},
+		{"the due field is unset", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", To: "s1:ctl", IDs: []string{"s1ctl"}, Unset: []string{"due_mergeidle"}, About: []string{"s1"}}, "stream no longer merging"},
+		{"the control card is removed", tset.Entry{Kind: "remove", Table: sprint.Merge, From: "s1:ctl", IDs: []string{"s1ctl"}, About: []string{"s1"}}, "removed"},
+	}
+	for _, tc := range ends {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newJRig(t)
+			r.send(&Request{Epoch: "0", Meta: Meta{Verb: "add", Actor: "coordinator"}, Body: Body{Entries: []tset.Entry{
+				{Kind: "rows", Table: sprint.Merge, Add: []string{"s1", "s2"}},
+				{Kind: "create", Table: sprint.Merge, To: "s1:ctl", IDs: []string{"s1ctl"}, Scores: []string{"1"},
+					Set: map[string]string{"due_mergeidle": "9000"}, About: []string{"s1"}},
+			}}})
+			raise := jMergeLateRaise(t, "s1")
+			if want := []string{sprint.StreamSubject("s1")}; !reflect.DeepEqual(raise.Subjects, want) {
+				t.Fatalf("the raise is on %v, want the stream's subject %v", raise.Subjects, want)
+			}
+			subject := raise.Subjects[0]
+			field := raise.Type + "|" + raise.Cause
+			r.step(raise)
+			note := r.hash(jk("jopen:" + subject))[field]
+			if note == "" {
+				t.Fatalf("the raise left no judgment on %s: %v", subject, r.keys())
+			}
+			r.wantHash(jk("jn"), map[string]string{note: "1"})
+
+			reply := r.send(&Request{Epoch: "0", Meta: Meta{Rule: "j", Tick: true}, Body: Body{Entries: []tset.Entry{tc.entry}}})
+			if reply.Reply.Lines != 2 {
+				t.Fatalf("the ending wrote %d lines, want its own and the close J added", reply.Reply.Lines)
+			}
+			r.wantHash(jk("jopen:"+subject), nil)
+			r.wantHash(jk("jn"), nil)
+			r.wantZSet(jk("jnotes"), nil)
+			r.wantZSet(jk("due"), nil)
+			closeLine := r.line(len(r.log.Lines(testPrefix, "0")))
+			if closeLine.Meta["op"] != "close" || closeLine.Meta["type"] != raise.Type || closeLine.Meta["cause"] != raise.Cause ||
+				closeLine.Meta["note"] != note || closeLine.Meta["text"] != tc.reason || !reflect.DeepEqual(closeLine.About, []string{subject}) {
+				t.Fatalf("the close line is %+v, want the close of %s on %s for %q", closeLine, note, subject, tc.reason)
+			}
+		})
 	}
 }
 

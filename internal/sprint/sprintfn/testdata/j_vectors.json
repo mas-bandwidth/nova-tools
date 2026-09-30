@@ -1780,7 +1780,7 @@
      "overdue:n3"
     ]
    ],
-   "probes": 1
+   "probes": 2
   }
  },
  {
@@ -1837,6 +1837,341 @@
     ]
    ],
    "probes": 1
+  }
+ },
+ {
+  "name": "hold_review_already_at_the_time",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ],
+    "text": "after the standup",
+    "until": "1790773200000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790773200000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [],
+   "commands": [],
+   "probes": 2
+  }
+ },
+ {
+  "name": "hold_review_at_another_time",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ],
+    "text": "after the standup",
+    "until": "1790773200000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "note": "n3",
+      "op": "review",
+      "text": "after the standup",
+      "type": "a primary is blocked on something dropped",
+      "until": "1790773200000"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790773200000",
+     "overdue:n3"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
+  "name": "hold_review_of_two_subjects_of_one_note_reads_the_entry_once",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1",
+     "w2"
+    ],
+    "text": "after the standup",
+    "until": "1790773200000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "2"
+    }
+   },
+   "t:sprint:jopen:w2@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1",
+      "w2"
+     ],
+     "meta": {
+      "cause": "n0",
+      "note": "n3",
+      "op": "review",
+      "text": "after the standup",
+      "type": "a primary is blocked on something dropped",
+      "until": "1790773200000"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790773200000",
+     "overdue:n3"
+    ]
+   ],
+   "probes": 3
+  }
+ },
+ {
+  "name": "hold_review_of_one_note_at_two_times_reads_the_entry_once",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ],
+    "text": "after the standup",
+    "until": "1790773200000"
+   },
+   {
+    "op": "hold",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w2"
+    ],
+    "text": "after the standup",
+    "until": "1790776800000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "2"
+    }
+   },
+   "t:sprint:jopen:w2@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:due@0": {
+    "zset": {
+     "overdue:n3": "1790770200000"
+    }
+   }
+  },
+  "note_seqs": [
+   "9",
+   "10"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "n0",
+      "note": "n3",
+      "op": "review",
+      "text": "after the standup",
+      "type": "a primary is blocked on something dropped",
+      "until": "1790773200000"
+     }
+    },
+    {
+     "about": [
+      "w2"
+     ],
+     "meta": {
+      "cause": "n0",
+      "note": "n3",
+      "op": "review",
+      "text": "after the standup",
+      "type": "a primary is blocked on something dropped",
+      "until": "1790776800000"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9",
+     "10"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790773200000",
+     "overdue:n3"
+    ],
+    [
+     "ZADD",
+     "t:sprint:due@0",
+     "1790776800000",
+     "overdue:n3"
+    ]
+   ],
+   "probes": 3
+  }
+ },
+ {
+  "name": "refuse_review_wait_on_a_due_key_of_another_type",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "hold",
+    "type": "a primary is blocked on something dropped",
+    "cause": "n0",
+    "subjects": [
+     "w1"
+    ],
+    "text": "after the standup",
+    "until": "1790773200000"
+   }
+  ],
+  "keys": {
+   "t:sprint:jopen:w1@0": {
+    "hash": {
+     "a primary is blocked on something dropped|n0": "n3"
+    }
+   },
+   "t:sprint:jn@0": {
+    "hash": {
+     "n3": "1"
+    }
+   },
+   "t:sprint:due@0": {
+    "hash": {
+     "overdue:n3": "1"
+    }
+   }
+  },
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "WRONGTYPE",
+   "notes": null,
+   "commands": null
   }
  },
  {
@@ -2610,12 +2945,109 @@
   }
  },
  {
+  "name": "lateness_take_of_a_card_stored_at_epoch_one",
+  "epoch": "1",
+  "now_ms": "1790769600000",
+  "requests": [],
+  "keys": {
+   "t:sprint:jopen:w1@1": {
+    "hash": {
+     "a work card is past its deadline|untaken": "n7~1"
+    }
+   },
+   "t:sprint:jn@1": {
+    "hash": {
+     "n7~1": "1"
+    }
+   }
+  },
+  "records": [
+   {
+    "table": "fleet",
+    "id": "w1~1",
+    "row": "m1",
+    "col": "ready",
+    "fields": {
+     "due_untaken": "5000"
+    }
+   }
+  ],
+  "entries": [
+   {
+    "kind": "move",
+    "table": "fleet",
+    "ids": [
+     "w1~1"
+    ],
+    "from": "m1:ready",
+    "to": "m1:working",
+    "unset": [
+     "due_untaken"
+    ]
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "w1"
+     ],
+     "meta": {
+      "cause": "untaken",
+      "kind": "decided",
+      "note": "n7~1",
+      "op": "close",
+      "text": "taken",
+      "type": "a work card is past its deadline"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@1",
+     "9"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jopen:w1@1",
+     "a work card is past its deadline|untaken"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jn@1",
+     "n7~1"
+    ],
+    [
+     "ZREM",
+     "t:sprint:jnotes@1",
+     "n7~1"
+    ],
+    [
+     "ZREM",
+     "t:sprint:due@1",
+     "overdue:n7~1"
+    ],
+    [
+     "HDEL",
+     "t:sprint:jtext@1",
+     "n7~1"
+    ]
+   ],
+   "probes": 2
+  }
+ },
+ {
   "name": "lateness_stream_changing_row",
   "epoch": "0",
   "now_ms": "1790769600000",
   "requests": [],
   "keys": {
-   "t:sprint:jopen:s1@0": {
+   "t:sprint:jopen:stream:s1@0": {
     "hash": {
      "a stream has had no merge step past its deadline|mergeidle": "n7"
     }
@@ -2656,7 +3088,7 @@
    "notes": [
     {
      "about": [
-      "s1"
+      "stream:s1"
      ],
      "meta": {
       "cause": "mergeidle",
@@ -2676,7 +3108,7 @@
     ],
     [
      "HDEL",
-     "t:sprint:jopen:s1@0",
+     "t:sprint:jopen:stream:s1@0",
      "a stream has had no merge step past its deadline|mergeidle"
     ],
     [
@@ -7318,7 +7750,7 @@
   "now_ms": "1790769600000",
   "requests": [],
   "keys": {
-   "t:sprint:jopen:s1@0": {
+   "t:sprint:jopen:stream:s1@0": {
     "hash": {
      "a stream has had no merge step past its deadline|mergeidle": "n7"
     }
@@ -7361,7 +7793,7 @@
    "notes": [
     {
      "about": [
-      "s1"
+      "stream:s1"
      ],
      "meta": {
       "cause": "mergeidle",
@@ -7381,7 +7813,7 @@
     ],
     [
      "HDEL",
-     "t:sprint:jopen:s1@0",
+     "t:sprint:jopen:stream:s1@0",
      "a stream has had no merge step past its deadline|mergeidle"
     ],
     [

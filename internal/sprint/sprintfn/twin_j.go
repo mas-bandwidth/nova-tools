@@ -28,8 +28,9 @@ import (
 // that a close or an unhold may take out of askwait (another cause of "cannot
 // ask" keeps it there); {p}jn@e and {p}jh@e for each note a close, a hold or an
 // unhold would change the counts of; {p}jtext@e for the note an update
-// rewrites; {p}quarantine@e for the primaries a "cannot ask" opens on; {p}clock
-// for R, when a note opens. What J writes (X.plan, commands only):
+// rewrites; {p}due@e for the overdue entry of the note a review wait moves;
+// {p}quarantine@e for the primaries a "cannot ask" opens on; {p}clock for R,
+// when a note opens. What J writes (X.plan, commands only):
 // {p}jopen:<subject>@e, {p}jnotes@e, {p}jn@e, {p}jh@e, {p}jtext@e, {p}notes@e,
 // {p}askwait@e, and in {p}due@e the overdue:<note> and hold:<note> entries, and
 // {p}clock's stophold_ms for a wait on the STOPPED judgment. The note ids are
@@ -66,7 +67,15 @@ import (
 //	         entered at Until (R + d). The STOPPED judgment enters no hold entry
 //	         and sets stophold_ms to Until, a wall time, instead. Open, and any
 //	         other type: the overdue entry moves to Until and the note stays
-//	         open (a review wait). Held or absent: nothing.
+//	         open (a review wait), and with the entry at Until already, which
+//	         one read of {p}due@e for the note finds, nothing at all: a second
+//	         run writes nothing (E7). The one review wait that has no entry to
+//	         find is the wait on the type that is never overdue, which writes
+//	         its line and nothing else every time it is run: it changes no
+//	         state, so a second run cannot be told from a first, and it is a
+//	         verb's event, which the verb layer deduplicates by op and intent,
+//	         outside E7 (TestJWaitOnANeverOverdueTypeWritesOnlyItsLine pins it).
+//	         Held or absent: nothing.
 //	unhold   held (R13): the field leaves jopen, jh falls as a close's does, an
 //	         unheld line is written.
 //	know     a notice (Notices[type]): its line, and nothing else.
@@ -95,13 +104,14 @@ import (
 // carries to JCmds are in the plan, which JCmds reads nothing beside.
 //
 // A step that ends a timed state closes the lateness judgment of that kind on
-// the card without being asked (1.3.4): J reads the step's combined entries from
-// State.Entries, the twin calls J for any step that carries entries as well as
-// for one that carries a note request (Phases.JOnEntries, which the defaults
-// set, and the Lua core does the same once j_decide is registered), and
-// Phases.JBefore names the fields that takes. LatenessJudgment is the type and
-// cause R11 must raise it with. JCost counts what a step's J costs, as the step
-// builder does (8.0: Coster).
+// the subject R11 raised it on (the card; for the stream's, sprint.StreamSubject
+// of the stream, jLateSubject) without being asked (1.3.4): J reads the step's
+// combined entries from State.Entries, the twin calls J for any step that
+// carries entries as well as for one that carries a note request
+// (Phases.JOnEntries, which the defaults set, and the Lua core does the same
+// once j_decide is registered), and Phases.JBefore names the fields that takes.
+// LatenessJudgment is the type and cause R11 must raise it with. JCost counts
+// what a step's J costs, as the step builder does (8.0: Coster).
 //
 // Where the design is silent or contradicts itself, the narrower reading is
 // taken, and the rest is left to ask. What the reading took:
@@ -491,11 +501,19 @@ func jMerge(reqs []NoteReq) []NoteReq {
 
 // jDecider is one call of J's pre stage: what it has read, counted as probes.
 type jDecider struct {
-	st     *State
-	epoch  tset.Decimal
-	probes int
-	cells  map[string]jRead // by key, NUL, field
-	all    map[string]map[string]bool
+	st      *State
+	epoch   tset.Decimal
+	probes  int
+	cells   map[string]jRead // by key, NUL, field
+	all     map[string]map[string]bool
+	overdue map[string]jScore // by note: the score of its overdue entry
+}
+
+// jScore is the score of a member of the due set: its value, and whether it was
+// there.
+type jScore struct {
+	score   float64
+	present bool
 }
 
 // jRead is one key J read: its value, and whether it was there.
@@ -629,6 +647,25 @@ func (d *jDecider) textDigest(note string) (string, *Refusal) {
 		return jEmptyDigest, nil
 	}
 	return r.val, nil
+}
+
+// overdueScore is the score of overdue:<note> in {p}due@e, read once a call for
+// each note: a review wait finds the review time already there and writes
+// nothing (E7). A key of another type is WRONGTYPE.
+func (d *jDecider) overdueScore(note string) (jScore, *Refusal) {
+	if r, ok := d.overdue[note]; ok {
+		return r, nil
+	}
+	d.probes++
+	key := d.at(jKeyDue)
+	switch d.st.Keys.Type(key) {
+	case kindNone, kindZSet:
+	default:
+		return jScore{}, refuse(PhaseJ, CodeWrongType, RefusalDetail{})
+	}
+	score, ok := d.st.Keys.ZScore(key, jMemberOverdue+note)
+	d.overdue[note] = jScore{score, ok}
+	return d.overdue[note], nil
 }
 
 // quarantined reads {p}quarantine@e over the subjects, in pieces of at most
@@ -777,6 +814,17 @@ func (d *jDecider) decide(r NoteReq) ([]jGroup, *Refusal) {
 				continue // already held
 			}
 			if !tickKept {
+				if r.Type != jTypeDone {
+					// A review wait moves the overdue entry to the review time: with the
+					// entry already there, the wait was run before on this state.
+					od, ref := d.overdueScore(b.state.id)
+					if ref != nil {
+						return nil, ref
+					}
+					if od.present && od.score == float64(r.Until) {
+						continue
+					}
+				}
 				g.req.Op = jOpReview
 			}
 		case JOpUnhold:
@@ -837,12 +885,27 @@ func jNoteOf(existing string) string {
 	return existing
 }
 
+// jLateSubject is the subject R11 raises the lateness judgment of a due kind on
+// (1.3.4, 2.2), which J's close must name for the two to meet: the card's id
+// (sprint.CardID of the stored id) for a kind keyed by card, and for a kind
+// keyed by row the subject of a stream-level judgment, sprint.StreamSubject of
+// the row, the form every reader of the stream's judgments uses (notes.go,
+// check.go, held.go). The Lua half gets the prefix from the generated block
+// (SP.j_stream_prefix), so that a change to StreamSubject is a changed block.
+func jLateSubject(k sprint.DueKind, stored, row string) string {
+	if k.OfRow {
+		return sprint.StreamSubject(row)
+	}
+	return sprint.CardID(stored)
+}
+
 // jEndings are the requests that close the lateness judgments of the timed
 // states the step's entries end (1.3.4): for each entry that moves or removes a
 // card out of a due kind's state, or clears its due field, one close on the
-// card (the stream for a kind keyed by row), by the type and cause R11 raises
-// it under. Only cards obs holds are seen; a request that already names a
-// (type, cause, subject) is not added a second time.
+// subject R11 raised it on (jLateSubject: the card, or the stream for a kind
+// keyed by row), by the type and cause R11 raises it under. Only cards obs holds
+// are seen; a request that already names a (type, cause, subject) is not added
+// a second time.
 func jEndings(entries []tset.Entry, obs *Before, named map[[3]string]bool) []NoteReq {
 	type key struct{ kind, reason string }
 	var order []key
@@ -868,10 +931,7 @@ func jEndings(entries []tset.Entry, obs *Before, named map[[3]string]bool) []Not
 				if !ends {
 					continue
 				}
-				subject := sprint.CardID(id)
-				if k.OfRow {
-					subject = rec.Place.Row
-				}
+				subject := jLateSubject(k, id, rec.Place.Row)
 				typ, cause, _ := LatenessJudgment(k.Kind)
 				if named[[3]string{typ, cause, subject}] {
 					continue
@@ -1103,7 +1163,7 @@ func jRun(st *State, in []NoteReq, obs *Before, entries []tset.Entry) (jOutcome,
 		reqs = append(reqs, jEndings(entries, obs, named)...)
 	}
 	reqs = jMerge(reqs)
-	d := &jDecider{st: st, epoch: epoch, cells: map[string]jRead{}, all: map[string]map[string]bool{}}
+	d := &jDecider{st: st, epoch: epoch, cells: map[string]jRead{}, all: map[string]map[string]bool{}, overdue: map[string]jScore{}}
 	var out jOutcome
 	about := 0
 	opens := false
@@ -1374,8 +1434,9 @@ func JCmds(st *State, jp JPlan, lp LogPlan) []Cmd {
 // Probes are the typed reads the Lua half issues: one for each subject and
 // field, one for each jn or jh count, one for each jtext digest, an HLEN and an
 // HKEYS for each subject whose askwait a close may end, one for each piece of
-// 1,000 primaries whose quarantine a "cannot ask" reads, and one for the clock
-// when a note opens.
+// 1,000 primaries whose quarantine a "cannot ask" reads, one for the overdue
+// entry of each note a review wait moves, and one for the clock when a note
+// opens.
 type JCounts struct {
 	Commands, ArgvBytes, Probes, Notes int
 }

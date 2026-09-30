@@ -1,13 +1,13 @@
 -- J, the judgments of a step: the upper design (EVENT-DRIVEN-TICK version 2.1)
 -- 1.3.4 and 2.2, as errata 1 to 3 correct them; item IT15. NS.SP.j_decide is J's
 -- pre stage (note requests to the step's notes, from the real state of jopen, jn,
--- jh, jtext, the quarantine and the clock) and NS.SP.j_cmds is its X.plan (the
--- keys that follow, with note ids from the seqs Layer 2 gave the lines). Written
--- to the interfaces of sprint_00_core.lua and sprint_zz_fn.lua and parsed, and
--- run under gopher-lua against stubs of Layer 1's S in internal/nsprint/fn; no
--- store loads it before gate G0. Its Go twin is internal/sprint/sprintfn/twin_j.go,
--- whose comments state the ops and the readings the design left to take; both
--- halves are held to the vectors in
+-- jh, jtext, the quarantine, the clock and the overdue entry of a review wait)
+-- and NS.SP.j_cmds is its X.plan (the keys that follow, with note ids from the
+-- seqs Layer 2 gave the lines). Written to the interfaces of sprint_00_core.lua
+-- and sprint_zz_fn.lua and parsed, and run under gopher-lua against stubs of
+-- Layer 1's S in internal/nsprint/fn; no store loads it before gate G0. Its Go
+-- twin is internal/sprint/sprintfn/twin_j.go, whose comments state the ops and
+-- the readings the design left to take; both halves are held to the vectors in
 -- internal/sprint/sprintfn/testdata/j_vectors.json.
 --
 -- J runs for a step that carries a note request and for any step that carries
@@ -89,6 +89,7 @@ do
     ['the sprint was cleared, and is STOPPED'] = true,
     ['work came back ok'] = true,
   }
+  SP.j_stream_prefix = 'stream:'
   SP.j_late = {
     {kind = 'untaken', table = 'fleet', col = 'ready', field = 'due_untaken', of_row = false,
       type = 'a work card is past its deadline', moved = {withdrawn = 'replaced', working = 'taken'},
@@ -306,6 +307,21 @@ do
     if v == nil then return empty_digest(d), nil end
     return v, nil
   end
+  -- overdue_score is the score of overdue:<note> in {p}due@e, nil when absent,
+  -- read once a call for each note: a review wait finds the review time already
+  -- there and writes nothing (sprintfn overdueScore).
+  local function overdue_score(d, note)
+    local memo = d.overdue[note]
+    if memo then return memo.v, nil end
+    local k = jkey(d.ctx, 'due')
+    local v, err = d.S.readcmd(d.ctx, {argv = {'ZSCORE', k, 'overdue:' .. note},
+      access = {{key = k, kind = 'zset', mode = 'read'}}}, 32, 'cell')
+    if err then return nil, err end
+    local score = nil
+    if v ~= false and v ~= nil then score = tonumber(v) end
+    d.overdue[note] = {v = score}
+    return score, nil
+  end
   -- quarantined reads {p}quarantine@e over the subjects in pieces of at most
   -- B.piece: a read for each piece and never one for each subject.
   local function quarantined(d, subjects, into)
@@ -427,7 +443,17 @@ do
         end
       elseif r.op == 'hold' then
         skip = held
-        if not skip and not tick_kept then g.req.op = 'review' end
+        if not skip and not tick_kept then
+          -- A review wait moves the overdue entry to the review time: with the
+          -- entry already there, the wait was run before on this state. The type
+          -- that is never overdue has no entry, and writes its line every time.
+          if r.type ~= DONE then
+            local at, err = overdue_score(d, b.state.id)
+            if err then return nil, err end
+            skip = at ~= nil and at == r['until']
+          end
+          if not skip then g.req.op = 'review' end
+        end
       elseif r.op == 'unhold' then
         skip = not held
       end
@@ -508,7 +534,8 @@ do
   end
 
   -- endings are the requests that close the lateness judgments of the timed
-  -- states the step's entries end (sprintfn jEndings).
+  -- states the step's entries end (sprintfn jEndings), each on the subject R11
+  -- raised it on: the card's id, or for a kind keyed by row the stream's subject.
   local function cell_of(ref)
     local row, col = string.match(ref, '^(.*):([^:]*)$')
     if row then return row, col end
@@ -573,7 +600,7 @@ do
                   local reason, yes = ends(e, i, k, rec)
                   if yes then
                     local subject = card_id(id)
-                    if k.of_row then subject = rec.place.row end
+                    if k.of_row then subject = SP.j_stream_prefix .. rec.place.row end
                     if not named[k.type .. '\0' .. k.kind .. '\0' .. subject] then
                       local key = k.kind .. '\0' .. reason
                       if not groups[key] then groups[key] = {kind = k.kind, reason = reason, type = k.type, subjects = {}}; order[#order + 1] = key end
@@ -655,7 +682,7 @@ do
   -- half, and those derive made) to the step's notes and J's plan.
   function SP.j_decide(ctx, reqs, obs)
     local S = layer_one()
-    local d = {S = S, ctx = ctx, cells = {}, all = {}}
+    local d = {S = S, ctx = ctx, cells = {}, all = {}, overdue = {}}
     local list = {}
     for i, r in ipairs(reqs) do
       list[i] = normalize(r)

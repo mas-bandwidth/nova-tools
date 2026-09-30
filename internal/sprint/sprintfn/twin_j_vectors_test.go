@@ -249,7 +249,8 @@ func jLuaQuote(s string) string {
 
 // jLuaBlock is the block of sprint_j.lua between its BEGIN and END markers as
 // the Go tables say it: the bounds, the judgment types and whether the tick
-// keeps each, the notice types, and the lateness judgment of each due kind.
+// keeps each, the notice types, the prefix of a stream's subject, and the
+// lateness judgment of each due kind.
 func jLuaBlock() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  SP.j_bounds = {subjects = %d, notes = %d, about = %d, name = %d, piece = %d,\n    overdue_ms = %d, digits = %d}\n",
@@ -274,6 +275,9 @@ func jLuaBlock() string {
 		fmt.Fprintf(&b, "    [%s] = true,\n", jLuaQuote(typ))
 	}
 	b.WriteString("  }\n")
+	// The subject of a stream-level judgment is its prefix and the stream's name:
+	// sprint.StreamSubject, which R11 raises the stream's lateness judgment on.
+	fmt.Fprintf(&b, "  SP.j_stream_prefix = %s\n", jLuaQuote(sprint.StreamSubject("")))
 	b.WriteString("  SP.j_late = {\n")
 	for _, k := range sprint.DueKinds {
 		typ, _, ok := LatenessJudgment(k.Kind)
@@ -296,6 +300,42 @@ func jLuaBlock() string {
 	}
 	b.WriteString("  }\n")
 	return b.String()
+}
+
+// TestJStreamVectorsNameTheStreamSubject: the golden vectors of the stream's
+// lateness close name the subject R11 raises that judgment on,
+// sprint.StreamSubject, in the judgment's jopen key, the note's about and the
+// close's commands; the Lua half is held to the same file, and to the prefix
+// (SP.j_stream_prefix) by TestJTablesMatchLua. A vector that names the bare row
+// fails here, in both halves' suites at once.
+func TestJStreamVectorsNameTheStreamSubject(t *testing.T) {
+	t.Parallel()
+	subject := sprint.StreamSubject("s1")
+	seen := 0
+	for _, v := range loadJVectors(t) {
+		if !strings.HasPrefix(v.Name, "lateness_stream_") {
+			continue
+		}
+		seen++
+		jopen := jk("jopen:" + subject)
+		if _, ok := v.Keys[jopen]; !ok {
+			t.Errorf("%s: no key %s: the judgment is not open on %s", v.Name, jopen, subject)
+		}
+		if v.Expect == nil || len(v.Expect.Notes) != 1 || !reflect.DeepEqual(v.Expect.Notes[0].About, []string{subject}) {
+			t.Errorf("%s: the close is not about %s: %+v", v.Name, subject, v.Expect)
+			continue
+		}
+		closed := false
+		for _, c := range v.Expect.Commands {
+			closed = closed || (c[0] == "HDEL" && c[1] == jopen)
+		}
+		if !closed {
+			t.Errorf("%s: no command takes the field out of %s", v.Name, jopen)
+		}
+	}
+	if seen != 2 {
+		t.Errorf("%d stream vectors, want the two of the close", seen)
+	}
 }
 
 // TestJTablesMatchLua: the block of sprint_j.lua that renders the judgment and

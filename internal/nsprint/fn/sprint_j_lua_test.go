@@ -199,6 +199,16 @@ type jvExpect struct {
 	// Probes is how many typed reads the pre stage made: the readcmd calls the
 	// stub counted, held to what the twin's JCost counts for the same vector.
 	Probes int `json:"probes,omitempty"`
+	// Reads is each typed read the pre stage made, in order, for the tests of the
+	// bounds a vector does not reach. It is not part of a vector's expectation.
+	Reads []jvRead `json:"-"`
+}
+
+// jvRead is one typed read the stub saw: the command, its key, and how many
+// arguments it had, the command and the key among them.
+type jvRead struct {
+	Cmd, Key string
+	Argc     int
 }
 
 type jvVector struct {
@@ -247,6 +257,7 @@ function S.readcmd(ctx, d, reserve, probe)
   T.probes = T.probes + 1
   local a = d.argv
   local cmd, key = a[1], a[2]
+  T.reads[#T.reads + 1] = {cmd = cmd, key = key, argc = #a}
   local kind = d.access[1] and d.access[1].kind
   local v = T.keys[key]
   if v and kind and v.kind ~= kind then return nil, S.refuse('WRONGTYPE', {}) end
@@ -270,6 +281,10 @@ function S.readcmd(ctx, d, reserve, probe)
     if v then for k in pairs(v.hash) do out[#out + 1] = k end end
     table.sort(out)
     return out, nil
+  elseif cmd == 'ZSCORE' then
+    local x = v and v.zset[a[3]]
+    if x == nil then return false, nil end
+    return x, nil
   end
   error('stub: no ' .. tostring(cmd))
 end
@@ -301,7 +316,11 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 			}
 			keys[k] = map[string]any{"kind": "hash", "hash": h}
 		case val.ZSet != nil:
-			keys[k] = map[string]any{"kind": "zset", "zset": map[string]any{}}
+			z := map[string]any{}
+			for m, score := range val.ZSet {
+				z[m] = score // a score is read as a string, as Redis replies with one
+			}
+			keys[k] = map[string]any{"kind": "zset", "zset": z}
 		case val.List != nil:
 			keys[k] = map[string]any{"kind": "list"}
 		}
@@ -323,6 +342,7 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	T.RawSetString("keys", luaValue(L, keys))
 	T.RawSetString("records", luaValue(L, records))
 	T.RawSetString("probes", lua.LNumber(0))
+	T.RawSetString("reads", L.NewTable())
 	L.SetGlobal("T", T)
 	// redis.sha1hex, which Redis gives a function and J digests a note's text with.
 	redisT := L.NewTable()
@@ -409,6 +429,7 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 			RESULT.refusal = err.code
 		else
 			RESULT.probes = T.probes
+			RESULT.reads = T.reads
 			for i, n in ipairs(notes) do RESULT.notes[i] = n end
 			local plan = NS.SP.j_cmds(CTX, jp, {note_seqs = SEQS})
 			for i, c in ipairs(plan.commands) do RESULT.commands[i] = c.argv end
@@ -420,6 +441,13 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	out := jvExpect{Refusal: lua.LVAsString(res.RawGetString("refusal")), Notes: []jvNote{}, Commands: [][]string{}}
 	if p, ok := res.RawGetString("probes").(lua.LNumber); ok {
 		out.Probes = int(p)
+	}
+	if reads, ok := res.RawGetString("reads").(*lua.LTable); ok {
+		for i := 1; i <= reads.Len(); i++ {
+			r := reads.RawGetInt(i).(*lua.LTable)
+			argc, _ := r.RawGetString("argc").(lua.LNumber)
+			out.Reads = append(out.Reads, jvRead{Cmd: lua.LVAsString(r.RawGetString("cmd")), Key: lua.LVAsString(r.RawGetString("key")), Argc: int(argc)})
+		}
 	}
 	notes := res.RawGetString("notes").(*lua.LTable)
 	for i := 1; i <= notes.Len(); i++ {
@@ -532,10 +560,13 @@ func jvElements(argv []string) int {
 
 // TestSprintJLuaPiecesAreAtMostAThousand: the Lua half writes askwait for a note
 // of more than 1,000 primaries in pieces of at most 1,000 pairs, and takes more
-// than 1,000 out in pieces of at most 1,000 members, so that no command passes
-// Layer 1's bound of 1,000 elements; the pieces are full, as the twin's are. No
+// than 1,000 out in pieces of at most 1,000 members, and reads the quarantine of
+// the primaries of an open in pieces of at most 1,000 fields, so that no command
+// passes Layer 1's bound of 1,000 elements; the pieces are full, as the twin's
+// are, and the reads are what the twin's JCost counts (a read of the field of
+// each primary, one of the quarantine for each piece, and one of the clock). No
 // golden vector is so large, so the cases are made here from the vector shape and
-// held to what the twin's test of the same sizes expects.
+// held to what the twin's tests of the same sizes expect.
 func TestSprintJLuaPiecesAreAtMostAThousand(t *testing.T) {
 	t.Parallel()
 	req := func(op string, subjects []string) map[string]json.RawMessage {
@@ -562,6 +593,24 @@ func TestSprintJLuaPiecesAreAtMostAThousand(t *testing.T) {
 			got := runJLua(t, tc.v)
 			if got.Refusal != "" {
 				t.Fatalf("%s of %d: refused %s", tc.name, n, got.Refusal)
+			}
+			var quarantine []int
+			for _, rd := range got.Reads {
+				if f := rd.Argc - 2; rd.Cmd == "HMGET" && f > 1000 {
+					t.Errorf("%s of %d: %s %s reads %d fields, over 1,000", tc.name, n, rd.Cmd, rd.Key, f)
+				}
+				if rd.Cmd == "HMGET" && rd.Key == "t:sprint:quarantine@0" {
+					quarantine = append(quarantine, rd.Argc-2)
+				}
+			}
+			if tc.name == "an open" {
+				if want := jvPieces(n); !reflect.DeepEqual(quarantine, want) {
+					t.Errorf("an open of %d: the quarantine read in pieces %v, want %v", n, quarantine, want)
+				}
+				// A read of the field of each primary, of the quarantine for each piece, and of the clock.
+				if want := n + len(jvPieces(n)) + 1; got.Probes != want {
+					t.Errorf("an open of %d: %d reads, want %d", n, got.Probes, want)
+				}
 			}
 			var pieces []int
 			for _, argv := range got.Commands {
