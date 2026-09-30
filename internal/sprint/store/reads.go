@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -15,6 +18,26 @@ func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...str
 	if err != nil {
 		return nil, err
 	}
+	// The row's cells are read at one revision of the table: a write between
+	// the shape and the records (another step, a display cell) is read again,
+	// after a jittered wait, as Load reads its tables again, never handed to
+	// the caller as a failure (the tick's writes come every part now).
+	var last *movedError
+	r := st.retry(ctx)
+	for r.next(LoadTries) {
+		out, err := st.readCellsOnce(ctx, logical, row, cols...)
+		var moved *movedError
+		if errors.As(err, &moved) {
+			last = moved
+			continue
+		}
+		return out, err
+	}
+	return nil, fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
+		last.table, r.tries, r.slept().Round(time.Millisecond))
+}
+
+func (st *Store) readCellsOnce(ctx context.Context, logical, row string, cols ...string) ([]*sprint.Card, error) {
 	name := st.Names.Table(logical)
 	shapes, err := st.B.Shapes(ctx, []string{name})
 	if err != nil {
