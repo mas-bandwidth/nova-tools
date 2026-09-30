@@ -479,15 +479,7 @@ func relBelow(root, abs string) (string, bool) {
 }
 
 func sparseGit(dir string, args ...string) (string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{Dir: dir, Env: sparseGitEnv()}, args...)
-	if err != nil {
-		msg := strings.TrimSpace(string(res.Stderr))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
-	}
-	return strings.TrimSpace(string(res.Stdout)), nil
+	return gitrun.Output(context.Background(), gitrun.Options{Dir: dir, Env: sparseGitEnv(), Timeout: subproc.GitLongBudget}, args...)
 }
 
 // sparseGitEnv is the environment of every sparse-checkout git: secrets removed, no

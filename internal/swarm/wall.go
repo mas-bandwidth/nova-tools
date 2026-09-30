@@ -312,11 +312,8 @@ func wallBaseRef(repoDir string) string {
 // empty string, because every caller here treats a missing answer as "no answer" and never
 // as zero.
 func gitOut(dir string, args ...string) string {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir, Env: append(os.Environ(), "GIT_TERMINAL_PROMPT=0")}, args...)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(res.Stdout))
+	out, _ := gitrun.Output(context.Background(), gitrun.Options{C: dir, Env: append(os.Environ(), "GIT_TERMINAL_PROMPT=0")}, args...)
+	return out
 }
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER

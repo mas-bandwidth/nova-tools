@@ -288,9 +288,23 @@ func treeClean(path string) bool {
 }
 
 func addWorktree(repo, path, head string) error {
-	_, _ = worktreeGit(repo, "fetch", "origin", head)
+	if err := fetchHead(worktreeGit, repo, head); err != nil {
+		return err
+	}
 	_, err := worktreeGit(repo, "worktree", "add", "--detach", path, head)
 	return err
+}
+
+// fetchHead is the best-effort fetch before a worktree is added (the head may already be
+// here), except that a fetch that hit its deadline is reported: the add would otherwise
+// fail with only an "invalid reference" and no word that the network was the cause.
+func fetchHead(run gitRunner, repo, head string) error {
+	_, err := run(repo, "fetch", "origin", head)
+	var timedOut *subproc.TimeoutError
+	if errors.As(err, &timedOut) {
+		return fmt.Errorf("fetching %s from origin: %w", head, err)
+	}
+	return nil
 }
 
 // removeWorktree takes the registration and the directory out, in that order,

@@ -117,3 +117,47 @@ func TestACallersPassedDeadlineIsATimeoutThatNamesNoBudget(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// Output trims stdout, and a failure carries the command, the cause and git's stderr, and
+// unwraps to the cause.
+func TestOutputTrimsAndReportsAFailureWithStderr(t *testing.T) {
+	t.Parallel()
+
+	ok := fakeGit(t, "echo '  hello  '\n")
+	got, err := gitrun.Output(context.Background(), gitrun.Options{Bin: ok}, "x")
+	if err != nil || got != "hello" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	bad := fakeGit(t, "echo boom >&2\nexit 4\n")
+	_, err = gitrun.Output(context.Background(), gitrun.Options{Bin: bad}, "frob", "--now")
+	var ge *gitrun.Error
+	var ee *exec.ExitError
+	if !errors.As(err, &ge) || !errors.As(err, &ee) || ee.ExitCode() != 4 {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.HasPrefix(err.Error(), "git frob --now: exit status 4: boom") {
+		t.Fatalf("the message is %q", err.Error())
+	}
+}
+
+// A network command line gets the long budget by default and a local one the short; an
+// explicit Timeout wins.
+func TestTheDefaultBudgetFollowsTheCommandLine(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		args []string
+		o    gitrun.Options
+		want time.Duration
+	}{
+		{[]string{"fetch", "origin"}, gitrun.Options{}, subproc.GitLongBudget},
+		{[]string{"status"}, gitrun.Options{}, subproc.GitBudget},
+		{[]string{"fetch"}, gitrun.Options{Timeout: time.Minute}, time.Minute},
+	} {
+		b := gitrun.Prepare(context.Background(), c.o, c.args...)
+		b.Cancel()
+		if b.Budget != c.want {
+			t.Errorf("%v %+v: budget %s, want %s", c.args, c.o, b.Budget, c.want)
+		}
+	}
+}

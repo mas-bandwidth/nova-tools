@@ -570,14 +570,7 @@ func sortedLegs(l FleetLegs) []string {
 
 // baseGit runs one git command in repo and returns its trimmed stdout.
 func baseGit(repo string, args ...string) (string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repo}, args...)
-	if err != nil {
-		if msg := strings.TrimSpace(string(res.Stderr)); msg != "" {
-			return "", fmt.Errorf("%v: %s", err, msg)
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(res.Stdout)), nil
+	return gitrun.Output(context.Background(), gitrun.Options{C: repo}, args...)
 }
 
 // pathsMissingAt lists the tree at sha once, and returns every entry that names

@@ -45,7 +45,7 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	every := fs.Duration("every", time.Second, "the tick, a duration (1s)")
-	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place")
+	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place (the file and its directory must not be symlinks)")
 	title := fs.String("title", "", "a title line above the tables")
 	view := fs.String("view", "", "a stored view: its tables and title, read every frame (view set <name> --tables ...)")
 	once := fs.Bool("once", false, "render once and exit, with no clear")

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Card is the affinity facts a card carries: its kind ("go", "lisp", "docs",
@@ -272,21 +273,15 @@ func warmCopyFile(src, dst string) error {
 	return os.WriteFile(dst, raw, 0o644)
 }
 
-// warmGitOut runs git in dir and returns its trimmed standard output, or the error with
-// git's own stderr when git could not run or exited non-zero.
+// warmGitOut runs git in dir and returns its trimmed standard output. Every call here is on
+// a worktree (add, checkout, reset, clean), which can be a large tree, so the budget is
+// subproc.GitLongBudget.
 func warmGitOut(dir string, args ...string) (string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, args...)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(res.Stderr)), err)
-	}
-	return strings.TrimSpace(string(res.Stdout)), nil
+	return gitrun.Output(context.Background(), gitrun.Options{C: dir, Timeout: subproc.GitLongBudget}, args...)
 }
 
-// warmGitRun runs git in dir, discarding standard output, and returns any error.
+// warmGitRun is warmGitOut discarding standard output.
 func warmGitRun(dir string, args ...string) error {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, args...)
-	if err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(res.Stderr)), err)
-	}
-	return nil
+	_, err := warmGitOut(dir, args...)
+	return err
 }

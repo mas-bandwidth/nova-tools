@@ -302,11 +302,7 @@ func fullHexSHA(s string) bool {
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
-	out, err := gitrun.Combined(context.Background(), gitrun.Options{Dir: dir, Env: append(goenv.WithoutSecrets(os.Environ()), "GIT_TERMINAL_PROMPT=0")}, args...)
-	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return strings.TrimSpace(string(out)), nil
+	return gitrun.Output(context.Background(), gitrun.Options{Dir: dir, Env: append(goenv.WithoutSecrets(os.Environ()), "GIT_TERMINAL_PROMPT=0"), Timeout: subproc.GitLongBudget}, args...)
 }
 
 func prewarmEnv(root, checkout string) []string {

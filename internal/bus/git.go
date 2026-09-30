@@ -46,8 +46,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 		return "", false, fmt.Errorf("git output limit must be positive")
 	}
 	full := append([]string{"-C", dir}, args...)
-	cmd, ctx, cancel := gitrun.Prepare(context.Background(), busGit(dir), args...)
-	defer cancel()
+	bounded := gitrun.Prepare(context.Background(), busGit(dir), args...)
+	defer bounded.Cancel()
+	cmd, ctx := bounded.Cmd, bounded.Ctx
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", false, err
@@ -82,8 +83,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 // A consumer error stops Git before returning the parser's explicit refusal.
 func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) error {
 	full := append([]string{"-C", dir}, args...)
-	cmd, ctx, cancel := gitrun.Prepare(context.Background(), busGit(dir), args...)
-	defer cancel()
+	bounded := gitrun.Prepare(context.Background(), busGit(dir), args...)
+	defer bounded.Cancel()
+	cmd, ctx := bounded.Cmd, bounded.Ctx
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

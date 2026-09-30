@@ -27,7 +27,7 @@ type execCommand func(stdin io.Reader, env []string, dir, name string, args ...s
 func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 	// The deadline is the kind of the program named: git, gh, sops and the rest each have
 	// their own default (subproc.KindOf).
-	cmd, cancel := subproc.Command(context.Background(), subproc.KindOf(name), name, args...)
+	cmd, cancel := subproc.CommandFor(context.Background(), subproc.BudgetOf(name, args), name, args...)
 	defer cancel()
 	cmd.Env = env
 	cmd.Dir = dir

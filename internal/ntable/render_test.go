@@ -437,22 +437,23 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 	}
 }
 
-// TestRenderNonASCIICellsAlignByRunes: cell width is counted in runes, so a
-// row key with multibyte characters lines up with its ASCII neighbours and the
-// separators stay in one column.
-func TestRenderNonASCIICellsAlignByRunes(t *testing.T) {
+// TestRenderCellsAlignByTerminalColumns: cell width is counted in terminal columns, so a
+// wide East Asian row key (2 columns a rune) and one with a combining mark (0 columns) line
+// up with their ASCII neighbours and the separators stay in one column.
+func TestRenderCellsAlignByTerminalColumns(t *testing.T) {
 	t.Parallel()
 
-	tbl := counts([]string{"a", "b"}, map[string][]int64{"café": {1, 2}, "abcd": {3, 4}, "日本語": {5, 6}}, []string{"café", "abcd", "日本語"})
-	want := "row  | a |  b\n" +
-		"-----+---+---\n" +
-		"café | 1 |  2\n" +
-		"abcd | 3 |  4\n" +
-		"日本語  | 5 |  6\n" +
-		"-----+---+---\n" +
-		"     | 9 | 12\n"
+	keys := []string{"cafe\u0301", "abcd", "日本語"}
+	tbl := counts([]string{"a", "b"}, map[string][]int64{keys[0]: {1, 2}, keys[1]: {3, 4}, keys[2]: {5, 6}}, keys)
+	want := "row    | a |  b\n" +
+		"-------+---+---\n" +
+		"cafe\u0301   | 1 |  2\n" +
+		"abcd   | 3 |  4\n" +
+		"日本語 | 5 |  6\n" +
+		"-------+---+---\n" +
+		"       | 9 | 12\n"
 	got := ntable.Render(tbl, ntable.RenderOpts{})
 	if got != want {
-		t.Fatalf("non-ASCII rows rendered:\n%s\nwant:\n%s", got, want)
+		t.Fatalf("wide and combining rows rendered:\n%s\nwant:\n%s", got, want)
 	}
 }

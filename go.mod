@@ -9,6 +9,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0
 )
@@ -22,5 +23,4 @@ require (
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
 )

@@ -90,11 +90,11 @@ func TestKindOfNamesTheProgram(t *testing.T) {
 	}
 }
 
-func TestBoundIsTheKindsBudgetUnlessTheCallerIsSooner(t *testing.T) {
+func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 	t.Parallel()
 
 	for _, k := range []subproc.Kind{subproc.Git, subproc.GH, subproc.SSH, subproc.Go, subproc.Tool} {
-		ctx, cancel := subproc.Bound(context.Background(), k)
+		ctx, cancel := subproc.BoundFor(context.Background(), k.Budget())
 		d, ok := ctx.Deadline()
 		cancel()
 		if !ok {
@@ -107,7 +107,7 @@ func TestBoundIsTheKindsBudgetUnlessTheCallerIsSooner(t *testing.T) {
 		// A caller whose own deadline is sooner than the budget keeps it.
 		sooner := time.Now().Add(k.Budget() / 2)
 		parent, stop := context.WithDeadline(context.Background(), sooner)
-		ctx, cancel = subproc.Bound(parent, k)
+		ctx, cancel = subproc.BoundFor(parent, k.Budget())
 		d, _ = ctx.Deadline()
 		cancel()
 		stop()
@@ -118,7 +118,7 @@ func TestBoundIsTheKindsBudgetUnlessTheCallerIsSooner(t *testing.T) {
 		// A caller whose deadline is later is cut to the budget.
 		later := time.Now().Add(2 * k.Budget())
 		parent, stop = context.WithDeadline(context.Background(), later)
-		ctx, cancel = subproc.Bound(parent, k)
+		ctx, cancel = subproc.BoundFor(parent, k.Budget())
 		d, _ = ctx.Deadline()
 		cancel()
 		stop()
@@ -161,28 +161,28 @@ func TestEveryKindEndsASlowChildAndDoesNotHangOnItsPipe(t *testing.T) {
 	}
 }
 
-func TestWrapNamesADeadlineKillAndLeavesOtherErrorsAlone(t *testing.T) {
+func TestBoundedWrapNamesADeadlineKillAndLeavesOtherErrorsAlone(t *testing.T) {
 	t.Parallel()
 
 	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
 	defer stop()
 	boom := errors.New("signal: killed")
 	var te *subproc.TimeoutError
-	if err := subproc.Wrap(expired, "git status", time.Minute, boom); !errors.As(err, &te) || !errors.Is(err, boom) {
+	if err := (subproc.Bounded{Ctx: expired, Budget: time.Minute}).Wrap("git status", boom); !errors.As(err, &te) || !errors.Is(err, boom) {
 		t.Fatalf("a deadline kill was reported as %v", err)
 	}
 	if !strings.Contains(te.Error(), "git status did not finish within 1m0s and was killed") {
 		t.Fatalf("the message is %q", te.Error())
 	}
-	if err := subproc.Wrap(context.Background(), "git status", time.Minute, boom); err != boom {
+	if err := (subproc.Bounded{Ctx: context.Background(), Budget: time.Minute}).Wrap("git status", boom); err != boom {
 		t.Fatalf("an error with no deadline was changed to %v", err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := subproc.Wrap(cancelled, "git status", time.Minute, boom); err != boom {
+	if err := (subproc.Bounded{Ctx: cancelled, Budget: time.Minute}).Wrap("git status", boom); err != boom {
 		t.Fatalf("a cancellation was reported as a deadline: %v", err)
 	}
-	if err := subproc.Wrap(expired, "git status", time.Minute, nil); err != nil {
+	if err := (subproc.Bounded{Ctx: expired, Budget: time.Minute}).Wrap("git status", nil); err != nil {
 		t.Fatalf("nil became %v", err)
 	}
 }
@@ -227,5 +227,55 @@ func TestContextKeepsTheCallersContextAndSetsWaitDelay(t *testing.T) {
 	cmd := subproc.Context(context.Background(), "git")
 	if cmd.WaitDelay != subproc.WaitDelay {
 		t.Fatalf("WaitDelay is %s", cmd.WaitDelay)
+	}
+}
+
+// Any git that goes to the network, or moves a whole repository, gets the long budget;
+// the rest get the git budget; leading options are skipped.
+func TestGitBudgetForTheCommandLine(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		args []string
+		want time.Duration
+	}{
+		{[]string{"clone", "--local", "a", "b"}, subproc.GitLongBudget},
+		{[]string{"-C", "/repo", "fetch", "origin", "x"}, subproc.GitLongBudget},
+		{[]string{"-c", "core.sshCommand=ssh", "pull", "--ff-only"}, subproc.GitLongBudget},
+		{[]string{"--no-pager", "push", "-u", "origin", "b"}, subproc.GitLongBudget},
+		{[]string{"ls-remote", "origin"}, subproc.GitLongBudget},
+		{[]string{"status", "--porcelain"}, subproc.GitBudget},
+		{[]string{"-C", "/fetch", "rev-parse", "HEAD"}, subproc.GitBudget},
+		{[]string{"ls-files", "-z"}, subproc.GitBudget},
+		{nil, subproc.GitBudget},
+	} {
+		if got := subproc.GitBudgetFor(c.args); got != c.want {
+			t.Errorf("GitBudgetFor(%v) = %s, want %s", c.args, got, c.want)
+		}
+	}
+	if got := subproc.BudgetOf("/usr/bin/git", []string{"push"}); got != subproc.GitLongBudget {
+		t.Errorf("BudgetOf(git push) = %s", got)
+	}
+	if got := subproc.BudgetOf("sops", []string{"-d", "x"}); got != subproc.ToolBudget {
+		t.Errorf("BudgetOf(sops) = %s", got)
+	}
+}
+
+// Prepare names the budget it gave, and names none when the caller's own deadline was the
+// sooner one.
+func TestPrepareNamesTheBudgetOnlyWhenItApplied(t *testing.T) {
+	t.Parallel()
+
+	b := subproc.Prepare(context.Background(), time.Minute, "git", "status")
+	defer b.Cancel()
+	if b.Budget != time.Minute || b.Cmd.WaitDelay != subproc.WaitDelay {
+		t.Fatalf("budget %s, WaitDelay %s", b.Budget, b.Cmd.WaitDelay)
+	}
+	parent, stop := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
+	defer stop()
+	sooner := subproc.Prepare(parent, 2*time.Hour, "git", "status")
+	defer sooner.Cancel()
+	if sooner.Budget != 0 {
+		t.Fatalf("the caller's sooner deadline still named a budget: %s", sooner.Budget)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+	"unicode"
+
+	"golang.org/x/text/width"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -163,9 +165,23 @@ func Render(t Table, opts RenderOpts) string {
 	return b.String()
 }
 
-// cellWidth is the display width of a cell in runes, so a non-ASCII cell
-// aligns with its neighbours; a byte count would widen it.
-func cellWidth(s string) int { return utf8.RuneCountInString(s) }
+// cellWidth is the width of a cell in terminal columns, so a cell aligns with its
+// neighbours on screen: an East Asian wide or fullwidth rune is 2 columns, a combining
+// mark 0, every other rune 1. A byte or rune count would misalign `日本語`, which is 6
+// columns.
+func cellWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case unicode.In(r, unicode.Mn, unicode.Me):
+		case width.LookupRune(r).Kind() == width.EastAsianWide || width.LookupRune(r).Kind() == width.EastAsianFullwidth:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
+}
 
 // pad writes s in a field of width w, right- or left-aligned; a
 // left-aligned last field is written as it is.

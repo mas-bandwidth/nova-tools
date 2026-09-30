@@ -133,7 +133,7 @@ func genKey(t *testing.T, ageKeygen, path string) string {
 
 func run(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd, cancel := subproc.Command(t.Context(), subproc.KindOf(name), name, args...)
+	cmd, cancel := subproc.CommandFor(t.Context(), subproc.BudgetOf(name, args), name, args...)
 	defer cancel()
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {

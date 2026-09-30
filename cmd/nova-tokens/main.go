@@ -111,6 +111,9 @@ not the Date, not the filename, not the directory listing, not the git history. 
 are TOKENS CONFLICT, nothing folds for that lane-day, and the remedy names every tip; one
 note whose predecessor set names them all clears it.
 
+--note <path> is written whole through atomicfile: the file and its directory must not be
+symlinks.
+
 This tool removes nothing. There is no month file, sum writes nothing, check names a
 stray and leaves it, and no verb deletes, truncates or trims any file.
 

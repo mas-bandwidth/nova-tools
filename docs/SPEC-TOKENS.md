@@ -325,7 +325,8 @@ near the end, and the sections below say how each is met.
     where the OK line leaves stdout, because stdout is the artifact, and
     this sentence is the exception SPEC.md's Conventions allow when a spec
     says so. `--note <path>` writes exactly the stdout bytes to that file, through
-    `<path>.tmp` and one rename, and only on `REPORT OK`: a `REPORT FAIL`
+    `internal/atomicfile` (a unique temporary beside it, fsync, one rename; the
+    file and its directory must not be symlinks), and only on `REPORT OK`: a `REPORT FAIL`
     writes nothing and leaves an existing `--note` file byte-unchanged.
     `--supersedes <note-id>`, repeatable, puts `supersedes=<id>[,<id>…]` on
     the subject — the ids sorted ascending, a repeated id refused — which is
