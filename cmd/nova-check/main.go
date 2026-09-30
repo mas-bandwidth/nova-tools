@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 const usage = `nova-check: record-layer checks, for a nova self repo and for this family's own tools (see docs/SPEC.md)
@@ -336,6 +338,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to check (required)")
 	failMax := addFailMax(fs)
+	asJSON := verbflag.JSON(fs)
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
@@ -349,9 +352,19 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// uncapped it answered with 1,400 lines for two lines of verdict. A first run should
 	// cost about forty.
 	max := fmt.Sprintf("%d", *failMax)
-	fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
-	linksCode := cmdLinks(append([]string{"--dir", *dir, "--fail-max", max}, excludeFlags(exclude)...), stdout, stderr)
-	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
+	var (
+		linksCode  int
+		nocodeCode int
+	)
+	if *asJSON {
+		var linksOut, nocodeOut bytes.Buffer
+		linksCode = cmdLinks(append([]string{"--dir", *dir, "--fail-max", max, "--json"}, excludeFlags(exclude)...), &linksOut, &linksOut)
+		nocodeCode = cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, &nocodeOut, &nocodeOut)
+	} else {
+		fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
+		linksCode = cmdLinks(append([]string{"--dir", *dir, "--fail-max", max}, excludeFlags(exclude)...), stdout, stderr)
+		nocodeCode = cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
+	}
 	worst := 0
 	var failed []string
 	for _, c := range []struct {
@@ -370,10 +383,27 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// IS A CLAIM THAT BOTH CHECKS PASSED, so it is printed only then: a run with
 	// a failed check closes with FAIL and the names of the checks that failed
 	// (a cold rating of the tools, 2026-09-30: `QUICKSTART OK` over two failures).
+	var out *verbout.Value
 	if len(failed) == 0 {
-		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
+		out = verbout.OK("quickstart")
+		out.FactInt("done", 2)
+		out.FactInt("worst-exit", worst)
+		out.Fact("next", "kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)")
 	} else {
-		fmt.Fprintf(stdout, "QUICKSTART FAIL checks=2 failed=%s worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", oneline.Field(strings.Join(failed, ",")), worst)
+		out = verbout.Failed("quickstart", worst)
+		out.FactInt("checks", 2)
+		out.Fact("failed", strings.Join(failed, ","))
+		out.FactInt("worst-exit", worst)
+		out.Fact("next", "kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)")
+	}
+	if *asJSON {
+		_ = out.RenderJSON(stdout)
+	} else {
+		if len(failed) == 0 {
+			fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
+		} else {
+			fmt.Fprintf(stdout, "QUICKSTART FAIL checks=2 failed=%s worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", oneline.Field(strings.Join(failed, ",")), worst)
+		}
 	}
 	return worst
 }
@@ -410,6 +440,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("links", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to scan for markdown links (required)")
 	failMax := addFailMax(fs)
+	asJSON := verbflag.JSON(fs)
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
 	var files repeatable
@@ -433,27 +464,36 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " links", oneline.Err(err))
 	}
 	if len(res.Broken) > 0 {
-		list := bounded.Capped(stderr, *failMax, "LINKS", "broken", failMaxRemedy)
-		for _, b := range res.Broken {
-			if b.Line == 0 && b.Target == "" {
+		out := verbout.Failed("links", 1)
+		out.StatusLast = true
+		out.FactInt("files", res.MDFiles)
+		out.FactInt("links", res.Checked)
+		b := out.Bounded(*failMax, "broken", failMaxRemedy)
+		for _, item := range res.Broken {
+			if item.Line == 0 && item.Target == "" {
 				// A whole-file finding: the .md itself could not be read, so there
 				// is no line and no target — `LINKS FAIL <file>: unreadable (<why>)`.
 				// A named failure like any other, per SPEC; not a refusal.
-				list.Line(fmt.Sprintf("LINKS FAIL %s: %s", oneline.Escape(b.File), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
+				b.Line("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(item.File), oneline.Escape(oneline.Cap(item.Reason, oneline.TailBytes))))
 				continue
 			}
-			list.Line(fmt.Sprintf("LINKS FAIL %s:%d: %s (%s)", oneline.Escape(b.File), b.Line,
-				oneline.Escape(oneline.Cap(b.Target, oneline.TailBytes)), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
+			b.Line("FAIL", fmt.Sprintf("%s:%d: %s (%s)", oneline.Escape(item.File), item.Line,
+				oneline.Escape(oneline.Cap(item.Target, oneline.TailBytes)), oneline.Escape(oneline.Cap(item.Reason, oneline.TailBytes))))
 		}
-		list.More()
+		b.Finish()
 		// The count line prints on FAILURE too. It did not, so a failing run gave N lines
 		// and never N: the one number a reader wanted was the one thing they had to
 		// derive by counting the output.
-		fmt.Fprintf(stderr, "LINKS FAIL files=%d links=%d broken=%d shown=%d excluded=%d\n", res.MDFiles, res.Checked, list.Total(), list.Shown(), res.Excluded)
-		return 1
+		out.FactInt("broken", b.Total())
+		out.FactInt("shown", b.Shown())
+		out.FactInt("excluded", res.Excluded)
+		return out.Emit(stdout, stderr, *asJSON)
 	}
-	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d excluded=%d\n", res.MDFiles, res.Checked, res.Excluded)
-	return 0
+	out := verbout.OK("links")
+	out.FactInt("files", res.MDFiles)
+	out.FactInt("links", res.Checked)
+	out.FactInt("excluded", res.Excluded)
+	return out.Emit(stdout, stderr, *asJSON)
 }
 
 func cmdKernel(args []string, stdout, stderr io.Writer) int {

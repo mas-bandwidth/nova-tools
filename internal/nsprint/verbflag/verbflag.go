@@ -132,6 +132,11 @@ func Insert(help, lines string) string {
 // IsHelp reports whether one argument asks for help.
 func IsHelp(a string) bool { return a == "-h" || a == "-help" || a == "--help" || a == "--h" }
 
+// JSON registers the standard --json flag on fs and returns a pointer to its value.
+func JSON(fs *flag.FlagSet) *bool {
+	return fs.Bool("json", false, "print the result as one JSON object instead of the lines")
+}
+
 // Verb is the verb a flag set is named for, with the tool's name taken off
 // the front: some sets are named "<tool> <verb>", most "<verb>".
 func Verb(prog string, fs *flag.FlagSet) string {

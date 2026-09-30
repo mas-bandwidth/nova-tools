@@ -125,6 +125,11 @@ var checkAudit = audit.Config{
 		// The matched text of a secret finding is not in any field it returns (its own
 		// TestHygieneRejectsAKeyShapeAndNeverPrintsIt searches every field for it).
 		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
+		// verbout is the shared output structure and encoder (docs/SPEC.md,
+		// docs/CLI-STYLE.md). Every fact and token it renders passes
+		// through internal/oneline.Field and internal/oneline.Escape, and its JSON encoder
+		// escapes all control characters as \u, so nothing it writes can bypass the escape.
+		`"github.com/mas-bandwidth/nova-tools/internal/verbout"`,
 	},
 	MinClassified: 30,
 }
