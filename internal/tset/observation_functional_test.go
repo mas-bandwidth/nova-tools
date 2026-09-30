@@ -22,11 +22,17 @@ redis.register_function('ns_tset_observation_probe', function(keys,args)
   if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
   local original=S.readcmd
   local open_trace=S.array()
+  local clock_fetched=0
   S.readcmd=function(c,d,reserve,kind)
     local argv=S.array()
     for i,v in ipairs(d.argv) do argv[i]=v end
     open_trace[#open_trace+1]=argv
-    return original(c,d,reserve,kind)
+    local before=c.budget.fetched_bytes
+    local value,problem=original(c,d,reserve,kind)
+    if d.argv[1]=='TIME' then
+      clock_fetched=clock_fetched+c.budget.fetched_bytes-before
+    end
+    return value,problem
   end
   local opened_ok,ctx,err=pcall(S.open,args[1],args[2])
   S.readcmd=original
@@ -34,6 +40,7 @@ redis.register_function('ns_tset_observation_probe', function(keys,args)
   if err then return S.json.encode(err) end
   if ctx.replay then return S.json.encode(S.refuse('REQUEST')) end
   local opened=ctx.budget.store_commands
+  local open_fetched=ctx.budget.fetched_bytes
   local trace=S.array()
   S.readcmd=function(c,d,reserve,kind)
     local argv=S.array()
@@ -46,7 +53,9 @@ redis.register_function('ns_tset_observation_probe', function(keys,args)
   if not ok then error(plan,0) end
   if problem then return S.json.encode(problem) end
   return S.json.encode({status='trace',trace=trace,open_trace=open_trace,
-    open_commands=opened,plan_store_commands=ctx.budget.store_commands-opened,
+    open_commands=opened,open_fetched_bytes=open_fetched,
+    clock_fetched_bytes=clock_fetched,
+    plan_store_commands=ctx.budget.store_commands-opened,
     field=ctx.budget.field,record=ctx.budget.record,cell=ctx.budget.cell,
     fetched_bytes=ctx.budget.fetched_bytes,changed=plan.changed,
     guarded=plan.guarded,planned_commands=ctx.budget.planned_commands})
@@ -59,6 +68,8 @@ type observationTrace struct {
 	Trace             [][]string `json:"trace"`
 	OpenTrace         [][]string `json:"open_trace"`
 	OpenCommands      int        `json:"open_commands"`
+	OpenFetchedBytes  int        `json:"open_fetched_bytes"`
+	ClockFetchedBytes int        `json:"clock_fetched_bytes"`
 	PlanStoreCommands int        `json:"plan_store_commands"`
 	Field             int        `json:"field"`
 	Record            int        `json:"record"`
@@ -206,10 +217,15 @@ func TestNoHiddenPlacementScan(t *testing.T) {
 	}
 	// The subtests above run in parallel. Their comparison is done by the
 	// parent after t.Run returns and the Go test runner has joined them.
+	// TIME can return different-width seconds/microseconds strings. Subtract
+	// only its measured payload, preserving exact coverage of all other open
+	// reads as well as planner reads. Both traces and command counts must match.
 	t.Cleanup(func() {
-		if !reflect.DeepEqual(small.Trace, large.Trace) || small.PlanStoreCommands != large.PlanStoreCommands ||
+		if !reflect.DeepEqual(small.OpenTrace, large.OpenTrace) ||
+			!reflect.DeepEqual(small.Trace, large.Trace) ||
+			small.OpenCommands != large.OpenCommands || small.PlanStoreCommands != large.PlanStoreCommands ||
 			small.Record != large.Record || small.Field != large.Field || small.Cell != large.Cell ||
-			small.FetchedBytes != large.FetchedBytes {
+			small.FetchedBytes-small.ClockFetchedBytes != large.FetchedBytes-large.ClockFetchedBytes {
 			t.Errorf("fixed member work grew with rows: 10=%+v 1000=%+v", small, large)
 		}
 	})
