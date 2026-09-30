@@ -256,14 +256,26 @@ const (
 	keyCursor   = "cursor"   // STRING, the coordinator's last read stream id
 	keyProgress = "progress" // HASH stream -> RFC3339 time of its last progress
 	keyDone     = "done"     // HASH caller operation id -> result
+	keyQueue    = "queue"    // LIST of the work table's queued changes (sprint.QueuedChange, JSON), oldest first
 )
 
 func (r *Redis) ReadFence(ctx context.Context) (Fence, error) {
-	vals, err := r.C.MGet(ctx, r.key(keyFence), r.key(keyGen)).Result()
+	p := r.C.Pipeline()
+	mget := p.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine))
+	llen := p.LLen(ctx, r.key(keyQueue))
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return Fence{}, err
+	}
+	vals, err := mget.Result()
 	if err != nil {
 		return Fence{}, err
 	}
 	var f Fence
+	f.Queued = int(llen.Val())
+	if s, ok := vals[2].(string); ok {
+		var m Machine
+		f.Running = json.Unmarshal([]byte(s), &m) == nil && m.Running()
+	}
 	if s, ok := vals[1].(string); ok {
 		f.Gen, _ = strconv.ParseUint(s, 10, 64)
 	}
@@ -405,6 +417,16 @@ func released(op OpRecord, commit bool, held string, recorded bool) bool {
 }
 
 func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) error {
+	if op.Drain > 0 {
+		p.LTrim(ctx, r.key(keyQueue), int64(op.Drain), -1)
+	}
+	for _, x := range op.Queue {
+		body, err := json.Marshal(x)
+		if err != nil {
+			return err
+		}
+		p.RPush(ctx, r.key(keyQueue), string(body))
+	}
 	for _, line := range op.Log {
 		body, err := json.Marshal(line)
 		if err != nil {
@@ -457,6 +479,21 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.HSet(ctx, r.key(keyDone), op.CallerOp, op.Result)
 	}
 	return nil
+}
+
+// QueueRead is LRANGE over the whole queue: one exchange.
+func (r *Redis) QueueRead(ctx context.Context) ([]sprint.QueuedChange, error) {
+	raw, err := r.C.LRange(ctx, r.key(keyQueue), 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sprint.QueuedChange, len(raw))
+	for i, b := range raw {
+		if err := json.Unmarshal([]byte(b), &out[i]); err != nil {
+			return nil, fmt.Errorf("the work table's queue holds an unreadable entry: %w", err)
+		}
+	}
+	return out, nil
 }
 
 func (r *Redis) Done(ctx context.Context, callerOp string) (string, bool, error) {

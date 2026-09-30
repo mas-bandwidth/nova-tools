@@ -57,7 +57,8 @@ func TestAddBriefFileOnTheStore(t *testing.T) {
 	run("add", "--stream", "s1", "--count", "1", "--brief-file", path)
 	run("fleet", "beat", "m1")
 	run("start")
-	run("tick")
+	run("tick") // the fleet update, last in the tick, brings m1 up
+	run("tick") // the pump deals to it
 	var q struct{ Cards []queueCard }
 	if err := json.Unmarshal([]byte(run("queue", "--as", "m1", "--json")), &q); err != nil {
 		t.Fatal(err)

@@ -207,7 +207,7 @@ func (c *held) dealTurn(id string) int {
 
 // heldParts is the tick's parts the rule asks what the next tick does: every
 // part but the check, whose duty the rule is.
-var heldParts = []TickPartFn{TickResolve, TickResume, TickDeal, TickLevel, TickAsk, TickDeadlines, TickOverdue}
+var heldParts = []TickPartFn{TickResolve, TickResume, TickDeal, TickAccept, TickLevel, TickAsk, TickDeadlines, TickOverdue}
 
 func newHeld(h HeldState, now time.Time) *held {
 	s := *h.Snap

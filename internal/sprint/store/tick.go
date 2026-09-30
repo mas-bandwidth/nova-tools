@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -384,6 +385,20 @@ type TickResult struct {
 	// Epoch is the epoch the tick ran at: the log the run loop waits on
 	// after it (waitlog.go).
 	Epoch uint64 `json:"-"`
+	// Order is the tables the tick updated, in the order it updated them:
+	// work, readers, merge and fleet, then each table another update wrote,
+	// in the order written, then "end" (errata 3 amendment 12).
+	Order []string `json:"order,omitempty"`
+	// Times is how long each part the tick ran took, in order, its drains
+	// before it included: what a tick spends its time on.
+	Times []PartTime `json:"times,omitempty"`
+}
+
+// PartTime is one part of a tick and the time its step took.
+type PartTime struct {
+	Table string        `json:"table,omitempty"`
+	Name  string        `json:"name"`
+	Took  time.Duration `json:"took_ns"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -474,8 +489,65 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			if due != nil {
 				*due = d
 			}
-			return p
+			return unchangedNotWritten(s, p)
 		}}
+}
+
+// unchangedNotWritten is the plan of a part with the writes that change no
+// row taken out: an entry that only sets fields to the values the card holds
+// is no write (it keeps the guard of the card it names), and a unit that held
+// nothing else is passed over. A table's queue holds an entry only when a
+// write changed a row, so an update that finds nothing to change leaves every
+// queue as it was and the tick ends (tla/DirtyTick.tla, W13: an update that
+// queues an entry each time it runs, changed or not, never ends the tick). An
+// entry that changes a row in any field is written as the part planned it.
+func unchangedNotWritten(s *sprint.Snapshot, p sprint.Plan) sprint.Plan {
+	var units []sprint.Unit
+	for i, u := range p.Units {
+		var changes []sprint.Change
+		had, kept := false, false
+		for _, ch := range u.Changes {
+			e, c := ch.Entry, s.T(ch.Table).Card(ch.Entry.ID)
+			if c != nil && c.Placed() && e.Create == nil && e.Move == nil && !e.Remove && len(e.Unset) == 0 && len(e.Set) > 0 {
+				same := true
+				for k, v := range e.Set {
+					same = same && c.Has(k) && c.F(k) == v
+				}
+				if same {
+					if units == nil {
+						units = slices.Clone(p.Units)
+					}
+					had = true
+					e.Set = nil
+					ch.Entry = e
+				}
+			}
+			kept = kept || changesRow(ch.Entry)
+			changes = append(changes, ch)
+		}
+		if !had {
+			continue
+		}
+		u.Changes = changes
+		if !kept && len(u.Notes) == 0 && len(u.Closes) == 0 && len(u.Bumps) == 0 {
+			u.Changes, u.Moved = nil, ""
+		}
+		units[i] = u
+	}
+	if units == nil {
+		return p
+	}
+	p.Units = slices.DeleteFunc(units, func(u sprint.Unit) bool {
+		return u.Changes == nil && u.Moved == "" && len(u.Notes) == 0 && len(u.Closes) == 0 && len(u.Bumps) == 0
+	})
+	return p
+}
+
+// changesRow says a batch entry changes the row it names: it creates, moves
+// or removes the card, or sets or unsets a field. An entry that only guards
+// the card (its revision and place) changes none.
+func changesRow(e ntable.BatchMemberEntry) bool {
+	return e.Create != nil || e.Move != nil || e.Remove || len(e.Set) > 0 || len(e.Unset) > 0
 }
 
 // staleRefusal says a step holding epoch at was refused because the sprint
@@ -540,7 +612,9 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the
 		// clear overtook writes nothing more
+		ended := time.Now()
 		res.TickEnd, err = st.tickEnd(ctx)
+		res.Times = append(res.Times, PartTime{Name: "tick end", Took: time.Since(ended)})
 	}
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
@@ -690,7 +764,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	seen.Full = now
 	// Every fleet cell up to date before the parts, the control cards read:
 	// the revisions it leaves are what this tick saw.
+	synced := time.Now()
 	wrote, err := st.SyncFleet(ctx)
+	res.Times = append(res.Times, PartTime{Name: "fleet display", Took: time.Since(synced)})
 	if err != nil && st.clearedUnder(ctx, res) {
 		return last, nil
 	}
@@ -711,7 +787,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err != nil {
 		return last, err
 	}
+	read := time.Now()
 	snap, _, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	res.Times = append(res.Times, PartTime{Name: "first read", Took: time.Since(read)})
 	unfinished := seen
 	unfinished.Full = time.Time{}
 	if errors.Is(err, errCleared) {
@@ -724,70 +802,45 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	at := snap.Epoch
 	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
-	dirty := false // something ran: every later part runs on a fresh read
-	for _, part := range sprint.TickParts {
-		if !dirty {
-			if p, due := part.Fn(snap, req); p.Empty() && due == 0 {
-				continue
-			}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: snap, queues: map[string]int{}}
+	updates := st.Updates
+	if updates == nil {
+		updates = sprint.TickTables
+	}
+	byTable := map[string]sprint.TableUpdate{}
+	for _, u := range updates {
+		byTable[u.Table] = u
+	}
+	// 1-2. The first pass: every table's update once, in the owner's order
+	// ("1. work streams, 2. readers, 3. merge, 4. fleet"); the work table's is
+	// the pump, and it runs only here.
+	for _, u := range updates {
+		if out := t.update(u); out != tickOn {
+			return t.end(out, last, unfinished, seen)
 		}
-		if halted, err := st.halted(ctx, res, part.Name); err != nil {
-			return last, err
-		} else if halted {
-			return unfinished, nil
+	}
+	// 3. "dirty bits are acted on IMMEDIATELY", and "the tick doesn't end
+	// until all dirty bits are cleared": a table another update wrote is
+	// updated next, in the order the tables were written, until no queue
+	// holds anything. The work table's queue waits for the next tick's pump.
+	for n := 0; len(t.dirtied) > 0; n++ {
+		if n == MaxSettle {
+			return last, fmt.Errorf("the tick did not settle: after %d updates past the first pass the tables %s are still written by each other's updates", MaxSettle, strings.Join(t.dirtied, ", "))
 		}
-		due := 0
-		var done *sprint.Note
-		var planned sprint.Plan
-		// the plan the step applied: the last one planned, its rows named on
-		// the tick's tables, and the done part's note
-		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
-			p, d := part.Fn(s, r)
-			planned = p
-			if part.Name == sprint.PartDone {
-				done = nil
-				if len(p.Notes) > 0 {
-					n := p.Notes[0]
-					done = &n
-				}
-			}
-			return p, d
+		if out := t.update(byTable[t.dirtied[0]]); out != tickOn {
+			return t.end(out, last, unfinished, seen)
 		}
-		r, err := st.Run(ctx, TickPartStep(part.Name, fn, req, &at, nil, &due))
-		dirty = true
-		var cleared *ClearedError
-		if errors.As(err, &cleared) {
-			// the clear finished this part at the epoch it closed
-			res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d) as the part %s finished: the tick stops here", at, part.Name)
-			return last, nil
-		}
-		if len(r.Moved) > 0 || len(r.Refused) > 0 || r.Notes > 0 || len(r.Repaired) > 0 {
-			res.Parts = append(res.Parts, PartResult{Name: part.Name, Result: r})
-		}
-		if err == nil && staleRefusal(r.Refused, at) {
-			res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d): the part %s was refused as stale and the tick stops here", at, part.Name)
-			return unfinished, nil
-		}
-		if err != nil {
-			return last, fmt.Errorf("tick %s: %w", part.Name, err)
-		}
-		if !r.Lost && len(r.Moved) > 0 {
-			res.addRows(sprint.PlanRows(planned))
-		}
-		if done != nil && r.Notes > 0 && !r.Lost {
-			// The sprint is done: the machine stops itself as the part's step
-			// commits, and the tick ends here (errata 3 amendment 6).
-			if err := st.stopDone(ctx, *done, res); err != nil {
-				return last, fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
-			}
-			break // the last part: nothing runs after it
-		}
-		res.Due += due
-		if r.Lost {
-			// The part lost every attempt to other writers: what it had to do
-			// stays due, and the next tick reads it.
-			seen.Full = time.Time{}
-		}
+	}
+	// 4. The end: the checks, the deadlines, the overdue judgments and the
+	// done part, once the tables are settled.
+	t.res.Order = append(t.res.Order, "end")
+	if out := t.parts("", sprint.TickEnd); out != tickOn && out != tickDone {
+		return t.end(out, last, unfinished, seen)
+	}
+	// 5. The tick-end note, the coordinator's one wake, is Tick's last step
+	// (tickend.go).
+	if t.lost {
+		seen.Full = time.Time{}
 	}
 	if res.Due > 0 {
 		seen.Full = time.Time{}
@@ -804,6 +857,177 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// What it saw is the read before its own moves: a change by anyone after
 	// that read, its own moves included, makes the next tick read the whole
 	// sprint again, so nothing that happens during a tick is missed.
+	return seen, nil
+}
+
+// MaxSettle bounds the updates a tick makes past its first pass while the
+// readers', merge's and fleet's updates write each other's tables: a tick
+// past it fails, naming the tables still written, so it never spins. Only
+// the pump creates new work, so the chain ends (tla/DirtyTick.tla).
+const MaxSettle = 64
+
+// tickOutcome is how a table update or a part of a tick ended.
+type tickOutcome int
+
+const (
+	tickOn      tickOutcome = iota // go on
+	tickDone                       // the sprint is done and the machine stopped itself: the end is written
+	tickHalted                     // the machine was stopped during the tick
+	tickStale                      // the sprint was cleared during the tick
+	tickCleared                    // the sprint was cleared as a part finished
+	tickFailed                     // a part failed: err
+)
+
+// tickRun is one tick's updates as they run: the queue of each table other
+// than the work table (the entries the tick's other updates wrote to it,
+// which its update drains), and the order the tables were written in.
+type tickRun struct {
+	st      *Store
+	ctx     context.Context
+	res     *TickResult
+	req     sprint.TickReq
+	at      uint64
+	snap    *sprint.Snapshot // the tick's first read
+	ran     bool             // a part ran: every later part plans on a fresh read
+	queues  map[string]int
+	dirtied []string
+	lost    bool
+	err     error
+}
+
+// update is one table's update: its queue drained (the entries other updates
+// wrote to it), then its parts in order.
+func (t *tickRun) update(u sprint.TableUpdate) tickOutcome {
+	t.res.Order = append(t.res.Order, u.Table)
+	t.queues[u.Table] = 0
+	t.dirtied = slices.DeleteFunc(t.dirtied, func(x string) bool { return x == u.Table })
+	return t.parts(u.Table, u.Parts)
+}
+
+// parts runs parts of the table's update ("" for the end) in order, each as
+// its own operation on a fresh read. A part is passed over when nothing has
+// run yet in the tick and its plan on the tick's first read is empty.
+func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
+	for _, part := range parts {
+		drain := part.Name == sprint.PartDrain && part.Fn == nil
+		if !t.ran {
+			if drain && t.snap.QueueLen == 0 {
+				continue
+			}
+			if !drain {
+				if p, due := part.Fn(t.snap, t.req); p.Empty() && due == 0 {
+					continue
+				}
+			}
+		}
+		if halted, err := t.st.halted(t.ctx, t.res, part.Name); err != nil {
+			t.err = err
+			return tickFailed
+		} else if halted {
+			return tickHalted
+		}
+		due := 0
+		var done *sprint.Note
+		var planned sprint.Plan
+		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
+			if drain {
+				planned = sprint.Drain(s, s.Queue, sprint.MachineActor)
+				return planned, 0
+			}
+			p, d := part.Fn(s, r)
+			planned = p
+			if part.Name == sprint.PartDone {
+				done = nil
+				if len(p.Notes) > 0 {
+					n := p.Notes[0]
+					done = &n
+				}
+			}
+			return p, d
+		}
+		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
+		step.Pump, step.Drain = table == sprint.Work, drain
+		began := time.Now()
+		r, err := t.st.Run(t.ctx, step)
+		for _, d := range r.Drained {
+			// a drain the part's step made before it planned is the tick's
+			// move too: named in its report, never silent
+			t.res.Parts = append(t.res.Parts, PartResult{Name: sprint.PartDrain, Result: d})
+		}
+		for i := 1; drain && err == nil && i < MaxDrains && len(planned.Requeue) > 0; i++ {
+			// a card created and taken off the table in one queue: its
+			// removal was left for the next drain, which runs now and takes
+			// only what the drain before it requeued (a change queued since
+			// waits for the next tick), so the pump's resolve and deal never
+			// see the card
+			again := step
+			again.DrainMax = len(planned.Requeue)
+			var more Result
+			if more, err = t.st.Run(t.ctx, again); err == nil && len(more.Moved) > 0 {
+				t.res.Parts = append(t.res.Parts, PartResult{Name: part.Name, Result: more})
+				t.res.addRows(sprint.PlanRows(planned))
+			}
+		}
+		t.res.Times = append(t.res.Times, PartTime{Table: table, Name: part.Name, Took: time.Since(began)})
+		t.ran = true
+		var cleared *ClearedError
+		if errors.As(err, &cleared) {
+			t.res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d) as the part %s finished: the tick stops here", t.at, part.Name)
+			return tickCleared
+		}
+		if len(r.Moved) > 0 || len(r.Refused) > 0 || r.Notes > 0 || len(r.Repaired) > 0 {
+			t.res.Parts = append(t.res.Parts, PartResult{Name: part.Name, Result: r})
+		}
+		if err == nil && staleRefusal(r.Refused, t.at) {
+			t.res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d): the part %s was refused as stale and the tick stops here", t.at, part.Name)
+			return tickStale
+		}
+		if err != nil {
+			t.err = fmt.Errorf("tick %s: %w", part.Name, err)
+			return tickFailed
+		}
+		if !r.Lost && len(r.Moved) > 0 {
+			t.res.addRows(sprint.PlanRows(planned))
+		}
+		// Each table this part wrote, other than its own and the work table,
+		// holds what it wrote in its queue until its update runs.
+		for _, x := range All {
+			if n := r.Tables[x]; n > 0 && x != table && x != sprint.Work {
+				t.queues[x] += n
+				if !slices.Contains(t.dirtied, x) {
+					t.dirtied = append(t.dirtied, x)
+				}
+			}
+		}
+		if done != nil && r.Notes > 0 && !r.Lost {
+			// The sprint is done: the machine stops itself as the part's step
+			// commits, and the tick ends here (errata 3 amendment 6).
+			if err := t.st.stopDone(t.ctx, *done, t.res); err != nil {
+				t.err = fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
+				return tickFailed
+			}
+			return tickDone
+		}
+		t.res.Due += due
+		if r.Lost {
+			// The part lost every attempt to other writers: what it had to do
+			// stays due, and the next tick reads it.
+			t.lost = true
+		}
+	}
+	return tickOn
+}
+
+// end is what the tick returns when an update or a part ended it early.
+func (t *tickRun) end(out tickOutcome, last, unfinished, seen Heartbeat) (Heartbeat, error) {
+	switch out {
+	case tickFailed:
+		return last, t.err
+	case tickCleared:
+		return last, nil
+	case tickHalted, tickStale:
+		return unfinished, nil
+	}
 	return seen, nil
 }
 

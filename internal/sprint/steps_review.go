@@ -40,7 +40,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	// in stream turns from the ask's stream index on the work table
 	// (streamTurns), so a limit asks of every stream alike, and the index moves
 	// past the stream of the last primary asked
-	srr := streamRound(s, PropAskStreamIndex)
+	srr := askStreamRound(s)
 	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
@@ -299,8 +299,9 @@ func inReview(pr *Card, set map[string]string) *Card {
 // reviewJudgment is the judgment a primary the step leaves in review (pr, as
 // the step leaves it) needs now, so that no primary in review is silent:
 //   - ready to accept, when ok reads from two different readers stand at its
-//     head and no judgment open on it after the step offers accept (ready to
-//     accept, or returned to review with its reads standing);
+//     head, no judgment open on it after the step offers accept (ready to
+//     accept, or returned to review with its reads standing), and the
+//     machine is STOPPED: a RUNNING machine's pump accepts it (TickAccept);
 //   - else, when nothing is open on it after the step and no read is
 //     outstanding: stranded in review when its work came back failed, or when
 //     it was never asked at its attempt and the step closes the last judgment
@@ -355,7 +356,8 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	var typ, why string
 	switch {
 	case len(oks) >= 2:
-		if offers {
+		if offers || s.Running {
+			// a RUNNING machine's pump accepts it: "accept is mechanical"
 			return Note{}, false
 		}
 		typ = NReadyToAccept

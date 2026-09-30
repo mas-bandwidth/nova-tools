@@ -583,6 +583,16 @@ type Snapshot struct {
 	// ({p}dropping@e): what Printed and Answerable leave out the decisions
 	// DROPPING refuses by (errata 3, H8). nil says no stream is dropping.
 	Dropping map[string]string
+	// QueueLen is the length of the work table's queue as the step read it
+	// (queue.go): changes steps planned while the machine ran, which the next
+	// tick's pump applies. Queue is the queue itself, read only by the pump
+	// that drains it.
+	QueueLen int
+	Queue    []QueuedChange
+	// Running says the machine was RUNNING as the step read the sprint: its
+	// pump accepts a primary with two ok reads, so no step opens a "ready to
+	// accept" judgment for it ("accept is mechanical").
+	Running bool
 }
 
 // T is the loaded table by logical name.

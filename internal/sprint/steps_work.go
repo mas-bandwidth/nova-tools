@@ -1162,17 +1162,20 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	SortCards(cards)
 	for _, c := range cards {
 		if len(up) > 0 && c.Int("redeals") < MaxRedeals {
-			// the next member round the fleet below its width, else the next
-			// up (round.go), the index moved past it
-			m := rr.next(up, q, widths, "", true)
-			rr.moved(m)
-			moves[c.ID] = m
-			q[m]++
-			set := nextGen(c, m, s.Now)
-			set["redeals"] = itoa(c.Int("redeals") + 1)
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
-				Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
-			continue
+			// the next member round the fleet below its width (round.go), the
+			// index moved past it; with none below its width the card is
+			// withdrawn, and the next deal places it where there is room: a
+			// member at its width takes no more (errata 3 amendment 9)
+			if m := rr.next(up, q, widths, "", false); m != "" {
+				rr.moved(m)
+				moves[c.ID] = m
+				q[m]++
+				set := nextGen(c, m, s.Now)
+				set["redeals"] = itoa(c.Int("redeals") + 1)
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
+					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
+				continue
+			}
 		}
 		set := nextGen(c, "", s.Now)
 		set["withdrawn"] = stamp(s.Now)

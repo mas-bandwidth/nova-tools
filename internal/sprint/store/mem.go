@@ -71,6 +71,7 @@ type memLog struct {
 	notes    map[string]sprint.Note
 	open     map[string]string
 	cursor   string
+	queue    []sprint.QueuedChange // the work table's queue, oldest first
 }
 
 type memNote struct {
@@ -727,7 +728,11 @@ func (m *Mem) ReadFence(context.Context) (Fence, error) {
 	if err := m.fail("fence"); err != nil {
 		return Fence{}, err
 	}
-	f := Fence{Gen: l.gen}
+	f := Fence{Gen: l.gen, Queued: len(l.queue)}
+	if raw, ok := m.kv[keyMachine]; ok {
+		var mc Machine
+		f.Running = json.Unmarshal([]byte(raw), &mc) == nil && mc.Running()
+	}
 	if l.fence != nil {
 		op := *l.fence
 		f.Pending = &op
@@ -774,6 +779,10 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		return nil
 	}
 	if commit {
+		if op.Drain > 0 {
+			l.queue = append([]sprint.QueuedChange(nil), l.queue[min(op.Drain, len(l.queue)):]...)
+		}
+		l.queue = append(l.queue, op.Queue...)
 		for _, line := range op.Log {
 			m.seq++
 			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
@@ -817,6 +826,17 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 	}
 	l.fence = nil
 	return nil
+}
+
+// QueueRead is the pinned epoch's work-table queue.
+func (m *Mem) QueueRead(context.Context) ([]sprint.QueuedChange, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["queue"]++
+	if err := m.fail("queue"); err != nil {
+		return nil, err
+	}
+	return append([]sprint.QueuedChange(nil), m.log().queue...), nil
 }
 
 func (m *Mem) Done(_ context.Context, callerOp string) (string, bool, error) {
