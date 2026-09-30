@@ -5,6 +5,9 @@ The class tests in `internal/ci` (indexed in [SPEC-CI.md](SPEC-CI.md), under
 Every list only shrinks, and every one is read and written by the one helper,
 `internal/ci/allowlist` (`allowlist.Load` and `allowlist.Check`, nova-tools#4339).
 
+How to run each tier and use the store helpers of `internal/testredis` in a test:
+[FOUNDATION-TESTING.md](FOUNDATION-TESTING.md).
+
 ## The two tiers
 
 Only run the tests the change needs. Unit tests are minimal and frugal.
