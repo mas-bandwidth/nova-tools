@@ -324,6 +324,26 @@ func (b *stepOps) create(table, row, col, id string, score float64, set map[stri
 // entry adds a Layer 1 guard entry (count, rcount) as it is.
 func (b *stepOps) entry(e tset.Entry) { b.raw = append(b.raw, e) }
 
+// unsetRefused unsets refused on every primary the step moves that holds it,
+// and returns their ids (1.3.5, 1.5.3: the builder unsets refused on every
+// card the verb changes; the model's rework, VEff "rework", sets refused
+// FALSE). The one builder (IT04, IT18) owns this for every verb; until it
+// does, rework and return call it here.
+func (b *stepOps) unsetRefused(s *sprint.Snapshot) []string {
+	var out []string
+	for i := range b.ops {
+		op := &b.ops[i]
+		if op.table != sprint.Work || op.kind != "move" || contains(op.unset, "refused") {
+			continue
+		}
+		if c := s.Work.Card(op.id); c != nil && c.Has("refused") {
+			op.unset = append(append([]string(nil), op.unset...), "refused")
+			out = append(out, op.id)
+		}
+	}
+	return out
+}
+
 // presentOf is the unset names a card holds (unsetting an absent field
 // changes nothing, and would name a field the read did not load).
 func presentOf(c *sprint.Card, names []string) []string {
@@ -460,13 +480,13 @@ func changeOp(b *stepOps, table string, e ntable.BatchMemberEntry) error {
 // under (1.3.4: one judgment a type, cause and subject).
 const (
 	typeReturned     = sprint.NReturned // "returned to review"
-	typeCIRed        = "ci red on a primary"
-	typeCIGreen      = sprint.NCIGreen // "ci green"
+	typeCIRed        = sprint.TypeCIRed // 2.2's "ci red on a primary"
+	typeCIGreen      = sprint.NCIGreen  // "ci green"
 	typeStarted      = sprint.NStartedMerging
 	typeBatchLanded  = sprint.NBatchLanded
 	typeStreamLanded = sprint.NStreamLanded
-	causeReturn      = "return"
-	causeCI          = "ci"
+	causeReturn      = sprint.CauseReturn
+	causeCI          = sprint.CauseCI
 	// typeUnfrozen is the request line a drop's last part, or its abort,
 	// writes naming the streams it unfreezes (1.5.4; 2.1: it queues resolve:s,
 	// pullback:s and deal). The design names the line and no type: this is
@@ -503,6 +523,88 @@ func streamSubjects(streams []string) []string {
 		out[i] = sprint.StreamSubject(s)
 	}
 	return out
+}
+
+// ---- judgments on cards (1.3.4)
+
+// closer collects close requests: one a judgment field, naming its subjects
+// in the order added, each (type, cause, subject) once (J refuses one named
+// by two requests of a step). A close of a field a subject does not hold
+// writes nothing (1.3.4: "J closes a subject only when the field is
+// present"), so a verb may close a field it did not read.
+type closer struct {
+	order []sprint.JudgmentField
+	subs  map[sprint.JudgmentField][]string
+	seen  map[[3]string]bool
+}
+
+func (k *closer) add(f sprint.JudgmentField, subjects ...string) {
+	if k.subs == nil {
+		k.subs, k.seen = map[sprint.JudgmentField][]string{}, map[[3]string]bool{}
+	}
+	for _, s := range subjects {
+		key := [3]string{f.Type, f.Cause, s}
+		if k.seen[key] {
+			continue
+		}
+		k.seen[key] = true
+		if _, ok := k.subs[f]; !ok {
+			k.order = append(k.order, f)
+		}
+		k.subs[f] = append(k.subs[f], s)
+	}
+}
+
+// notes are the close requests, in the order their fields were added.
+func (k *closer) notes(text string) []sprintfn.NoteReq {
+	var out []sprintfn.NoteReq
+	for _, f := range k.order {
+		out = append(out, note(sprintfn.JOpClose, f.Type, f.Cause, text, k.subs[f]))
+	}
+	return out
+}
+
+// everyOpen is every judgment field a card can hold (but the blocked ones,
+// sprint.CardJudgmentFields) as open on each of the ids, as the present
+// planners read Snapshot.Open (their words, sprint.PlannerWord), and the field
+// each stands for, by its Open key. A planner given it returns in Unit.Closes
+// the fields its own list answers (IT09's ReworkAt: reviewReworkResolves), and
+// the verb closes them: J closes a field only where the subject holds it at
+// apply (1.3.4), so no read of jopen is needed, and none races the step.
+func everyOpen(ids []string) ([]sprint.Open, map[string]sprint.JudgmentField) {
+	all := sprint.CardJudgmentFields()
+	opens := make([]sprint.Open, 0, len(ids)*len(all))
+	fields := make(map[string]sprint.JudgmentField, len(ids)*len(all))
+	for _, id := range ids {
+		for i, f := range all {
+			o := sprint.Open{Key: sprint.OpenKey("j"+strconv.Itoa(i), id), Note: sprint.Note{Type: sprint.PlannerWord(f.Type)}}
+			opens = append(opens, o)
+			fields[o.Key] = f
+		}
+	}
+	return opens, fields
+}
+
+// resolvesOf are the fields a card can hold whose type is one of a planner's
+// list (its words): the judgments a decision answers.
+func resolvesOf(types []string) []sprint.JudgmentField {
+	var out []sprint.JudgmentField
+	for _, f := range sprint.CardJudgmentFields() {
+		if contains(types, sprint.PlannerWord(f.Type)) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// couldNotMove closes "the machine could not move a card" on the cards, of
+// every rule that raises it (1.3.5, 1.5.3; the model's rework, VEff
+// "rework", closes it with refused), beside the unset of refused
+// (stepOps.unsetRefused).
+func couldNotMove(k *closer, ids []string) {
+	for _, f := range sprint.CouldNotMoveFields() {
+		k.add(f, ids...)
+	}
 }
 
 // ---- common checks
@@ -669,6 +771,7 @@ func planAsk(verb string, va *verbAnswer, ids []string, another bool) (*sprintfn
 	}
 	var b stepOps
 	var refused []sprint.Refusal
+	var asked []string
 	for _, id := range ids {
 		c := primaryOf(s, id)
 		if c == nil || !c.Placed() || c.Col != sprint.Review {
@@ -748,6 +851,7 @@ func planAsk(verb string, va *verbAnswer, ids []string, another bool) (*sprintfn
 			set["asked"] = strings.Join(chosen, ",")
 		}
 		b.move(sprint.Work, c, "", set)
+		asked = append(asked, c.ID)
 	}
 	if len(refused) != 0 {
 		return nil, refusedIDs(verb, refused)
@@ -756,7 +860,18 @@ func planAsk(verb string, va *verbAnswer, ids []string, another bool) (*sprintfn
 	if err != nil {
 		return nil, err
 	}
-	return &sprintfn.Request{Meta: sprintfn.Meta{Verb: "ask"}, Body: sprintfn.Body{Entries: entries}}, nil
+	// The judgments the ask answers on each primary: IT09's lists
+	// (sprint.AskResolves, AskAnotherResolves: R16's stranded and stalled,
+	// and for --another the exhausted and broken reads).
+	resolves := sprint.AskResolves
+	if another {
+		resolves = sprint.AskAnotherResolves
+	}
+	var k closer
+	for _, f := range resolvesOf(resolves) {
+		k.add(f, asked...)
+	}
+	return &sprintfn.Request{Meta: sprintfn.Meta{Verb: "ask"}, Body: sprintfn.Body{Entries: entries, Notes: k.notes("asked by the coordinator")}}, nil
 }
 
 // ---- accept (section 3; 2.3 R9 by the coordinator)
@@ -806,7 +921,7 @@ func Accept(ctx context.Context, e *Env, req AcceptReq) (Result, error) {
 		if len(req.IDs) != 0 {
 			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "names cards and --stream both")
 		}
-		return walkReview(ctx, e, verb, req.Op, req.Streams, req.Chunk, planAcceptOne)
+		return walkReview(ctx, e, acceptWalk(req.Streams), req.Op, req.Streams, req.Chunk)
 	}
 	ids, err := sortedIDs(verb, req.IDs)
 	if err != nil {
@@ -909,10 +1024,6 @@ func (a *acceptance) request(b *stepOps) (*sprintfn.Request, error) {
 	return req, nil
 }
 
-// planAcceptOne is accept's plan for one card a walk examines: accepted, or
-// left in review with the reason.
-func planAcceptOne(a *acceptance, b *stepOps, c *sprint.Card) string { return a.accept(b, c, c.ID) }
-
 // namedParts runs a verb over named ids in parts (1.5.4, "Named ids in
 // parts"): each part reads its slice of the sorted ids (n at a time for the
 // chunk, each changing at most each members) and plans its step; the
@@ -975,10 +1086,51 @@ const walkHeadMax = 256
 // walkWindow is the most cards one part of a walk examines.
 const walkWindow = 64
 
+// walk is one verb's walk of review cells: what its head read reads of each
+// card and beside it, the members one card's change costs, and the plan of the
+// cards one part examines, which returns the part's step and how many of them
+// it left in review.
+type walk struct {
+	verb   string
+	args   map[string]any
+	fields []string
+	follow []string
+	beside []sprint.SprintQ // composite queries read beside the head (rework: the fleet)
+	each   int
+	plan   func(va *verbAnswer, ctl *sprint.Card, cards []*sprint.Card) (*sprintfn.Request, int, error)
+	// advance moves the cursor to the score of the card examined; a test
+	// freezes it to hold the progress bound to a walk that would not end.
+	advance func(wc *walkCont, score float64)
+}
+
+func advanceCursor(wc *walkCont, score float64) { wc.Cursor = scoreText(score) }
+
+// acceptWalk is accept --stream's walk: each card examined accepted as R9 by
+// the coordinator, or left in review.
+func acceptWalk(streams []string) walk {
+	return walk{verb: "accept", args: map[string]any{"streams": append([]string(nil), streams...)},
+		fields: acceptFields, follow: acceptFollow, each: acceptEach, advance: advanceCursor,
+		plan: func(va *verbAnswer, ctl *sprint.Card, cards []*sprint.Card) (*sprintfn.Request, int, error) {
+			var b stepOps
+			acc := newAcceptance(va)
+			left := 0
+			for _, c := range cards {
+				if why := acc.accept(&b, c, c.ID); why != "" {
+					left++
+				}
+			}
+			if len(b.ops) == 0 {
+				b.guard(sprint.Merge, ctl) // a part that accepts nothing still writes its receipt
+			}
+			req, err := acc.request(&b)
+			return req, left, err
+		}}
+}
+
 // walkReview walks the review cells of streams in parts (1.5.4): from a
 // cursor (the last score examined) up to the boundary recorded when the walk
 // began the stream (the highest score in its review cell then), examining at
-// most walkWindow cards a part and planning each through one. The
+// most walkWindow cards a part and planning them through the walk's plan. The
 // ineligible stay in review and the head does not shrink, so each part reads
 // the head of the cell past those it left (Passed) and examines only the
 // cards above the cursor: U1 keeps scores unique, so the cursor is exact. A
@@ -986,10 +1138,13 @@ const walkWindow = 64
 // op's selection. The design records every stream's boundary at part 1; a
 // continuation holds at most 4 KiB, so a walk records each stream's when it
 // begins it (a card that enters a later stream's review cell before the walk
-// reaches it is in the selection). A part that accepts nothing guards the
-// stream's control card, so it writes its receipt and moves the cursor.
-func walkReview(ctx context.Context, e *Env, verb, op string, streams []string, chunk int,
-	one func(a *acceptance, b *stepOps, c *sprint.Card) string) (Result, error) {
+// reaches it is in the selection). A part that does not end its stream must
+// move the cursor up, or it is refused NOPROGRESS before anything is written:
+// every part examines a card above the cursor, so a walk ends. The model's
+// action is PartApply (a part applies once, its receipt holding its
+// continuation), tla/SprintEvents.tla.
+func walkReview(ctx context.Context, e *Env, w walk, op string, streams []string, chunk int) (Result, error) {
+	verb := w.verb
 	for _, s := range streams {
 		if !sprint.ValidID(s) {
 			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "%q is not a stream", s)
@@ -1000,9 +1155,9 @@ func walkReview(ctx context.Context, e *Env, verb, op string, streams []string, 
 		head := min(walkHeadMax, wc.Passed+walkWindow)
 		vr := verbRead{plan: sprint.ReadPlan{
 			IDs: map[string][]string{sprint.Merge: {sprint.CtlID(s)}},
-			Sprint: []sprint.SprintQ{{Kind: sprint.QueryRelated, Table: sprint.Work,
+			Sprint: append([]sprint.SprintQ{{Kind: sprint.QueryRelated, Table: sprint.Work,
 				Source: sprint.IDSource{Kind: sprint.SourceHead, Key: s + ":" + sprint.Review, Limit: head},
-				Fields: acceptFields, Follow: acceptFollow}}}}
+				Fields: w.fields, Follow: w.follow}}, w.beside...)}}
 		if !wc.Started {
 			vr.extra = []tset.ReadQuery{{Kind: "range", Table: sprint.Work, Cell: s + ":" + sprint.Review, Min: "-inf", Max: "+inf", Limit: 1, Desc: true}}
 		}
@@ -1019,7 +1174,7 @@ func walkReview(ctx context.Context, e *Env, verb, op string, streams []string, 
 		return wc, nil
 	}
 	var failed error
-	return e.Parts(ctx, op, PartsPlan{Verb: verb, Args: map[string]any{"streams": append([]string(nil), streams...)}, Chunk: chunk,
+	return e.Parts(ctx, op, PartsPlan{Verb: verb, Args: w.args, Chunk: chunk,
 		Read: func(epoch tset.Decimal, cont string, chunk int) *sprintfn.ReadRequest {
 			wc, err := decode(cont)
 			if err != nil {
@@ -1054,13 +1209,13 @@ func walkReview(ctx context.Context, e *Env, verb, op string, streams []string, 
 			if ctl == nil {
 				return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "stream %s has no control card", s)
 			}
+			from := wc.Cursor
 			boundary, cursor := parseScore(wc.Boundary, negInf), parseScore(wc.Cursor, negInf)
 			head := min(walkHeadMax, wc.Passed+walkWindow) // what this part's read asked
 			ans := va.snap.Partial.Answer.Sprint[0]
-			var b stepOps
-			acc := newAcceptance(va)
-			window := min(walkWindow, perPart(chunk, acceptEach))
-			examined, stopped := 0, ""
+			window := min(walkWindow, perPart(chunk, w.each))
+			var examined []*sprint.Card
+			stopped := ""
 			for _, id := range ans.IDs {
 				c := va.snap.Work.Card(id)
 				if c == nil || c.Score <= cursor {
@@ -1070,15 +1225,12 @@ func walkReview(ctx context.Context, e *Env, verb, op string, streams []string, 
 					stopped = "boundary"
 					break
 				}
-				if examined == window {
+				if len(examined) == window {
 					stopped = "window"
 					break
 				}
-				examined++
-				wc.Cursor = scoreText(c.Score)
-				if why := one(acc, &b, c); why != "" {
-					wc.Passed++
-				}
+				examined = append(examined, c)
+				w.advance(&wc, c.Score)
 			}
 			var done bool
 			switch {
@@ -1088,18 +1240,19 @@ func walkReview(ctx context.Context, e *Env, verb, op string, streams []string, 
 				done = false
 			case len(ans.IDs) < head:
 				done = true // the head held the whole cell
-			case examined == 0:
+			case len(examined) == 0:
 				return Part{}, refuseLocal(verb, sprintfn.CodeLimit, "stream %s holds more than %d cards the walk left in review; name them instead", s, walkHeadMax-walkWindow)
 			default:
 				done = parseScore(wc.Cursor, negInf) >= boundary // the head was full: read again past the cursor
 			}
-			if len(acc.accepted) == 0 && len(b.ops) == 0 {
-				b.guard(sprint.Merge, ctl)
+			if !done && parseScore(wc.Cursor, negInf) <= parseScore(from, negInf) {
+				return Part{}, refuseLocal(verb, "NOPROGRESS", "the walk of stream %s did not move its cursor past %s: a part that does not end the stream moves it up", s, orText(from, "the start"))
 			}
-			req, err := acc.request(&b)
+			req, left, err := w.plan(va, ctl, examined)
 			if err != nil {
 				return Part{}, err
 			}
+			wc.Passed += left
 			req.Meta.Verb = verb
 			last := false
 			if done {
@@ -1132,13 +1285,15 @@ func parseScore(s string, otherwise float64) float64 {
 
 // ---- rework (section 3; 2.3 R10 by the coordinator; IT09's ReworkV21)
 
-// ReworkReq is rework's request: the primaries, the fix (empty: each one's
-// own), and the chunk its parts run at.
+// ReworkReq is rework's request: the primaries, or the streams whose review
+// cells it walks (--stream), the fix (empty: each one's own), and the chunk
+// its parts run at.
 type ReworkReq struct {
-	Op    string
-	IDs   []string
-	Fix   string
-	Chunk int
+	Op      string
+	IDs     []string
+	Streams []string
+	Fix     string
+	Chunk   int
 }
 
 // reworkFields is what IT09's ReworkAt reads of the primaries, their read
@@ -1146,74 +1301,129 @@ type ReworkReq struct {
 var reworkFields = []string{sprint.PrimaryField, "attempt", "result", "asked", "refused", "rcards", "work", "bound", "reworks",
 	"broken_reads", "readers", "avoid", "reader", "finding", "member", "report", "redeals"}
 
+var reworkFollow = []string{sprint.FollowRCards, sprint.FollowWork, sprint.FollowWithdrawn}
+
+// reworkBeside are the listings ReworkAt reads beside the primaries: the
+// fleet's rows, counts and members' status, which it deals the next attempt
+// from, and the readers' rows, which the judgment of a primary it refuses
+// reads.
+var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status"}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
+
 // reworkEach is the most members one primary's rework changes: the primary,
 // its read cards (at most 15), its withdrawn work card and the new one.
 const reworkEach = 1 + sprint.MaxRCards + 2
 
-// reworkCloses are the judgments whose decisions (2.2) list `rework --fix`,
-// by their type and the cause their raisers keep them under: the rework
-// answers them on its primary, and J closes those open (a close of one not
-// open writes nothing).
-var reworkCloses = [][2]string{
-	{sprint.NBound, sprint.BoundAttempts},
-	{sprint.NBound, "redeals"},
-	{"cannot ask", "readers"},
-	{typeReturned, causeReturn},
-	{typeCIRed, causeCI},
-}
-
 // Rework sends primaries back with a fix, as R10 by the coordinator (section
 // 3; IT09's ReworkV21, planned here by ReworkAt at the store's R): accepted
 // for a primary in review at any attempt and for one in ready at its redeal
-// bound (whose withdrawn work card it retires), bound unset, the attempt's read
-// cards retired, and the next attempt dealt at once to the up member with the
-// shortest ready queue other than avoid (XGUARD memberup on it), or the
-// primary to ready when none has room. Named ids go in parts of the sorted
-// list; a primary the planner refuses refuses its part, naming it (1.5.3).
-// n + 1 round trips. `rework --stream` is not built here (its walk is
-// Accept's, over the review cells; the planner's pool also takes ready
-// cards at their bound, which a walk of review does not reach).
+// bound (whose withdrawn work card it retires), bound and refused unset, the
+// attempt's read cards retired, and the next attempt dealt at once to the up
+// member with the shortest ready queue other than avoid (XGUARD memberup on
+// it), or the primary to ready when none has room. It closes what ReworkAt
+// says it answers (Unit.Closes) and "the machine could not move a card" (the
+// model's VEff "rework"). Named ids go in parts of the sorted list; a primary
+// the planner refuses refuses its part, naming it (1.5.3). With Streams it
+// walks each stream's review cell (walkReview): the reworked leave review,
+// the refused stay; a primary in ready at its redeal bound is not in a review
+// cell, and is named instead. n + 1 round trips.
 func Rework(ctx context.Context, e *Env, req ReworkReq) (Result, error) {
 	const verb = "rework"
+	if len(req.Streams) != 0 {
+		if len(req.IDs) != 0 {
+			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "names cards and --stream both")
+		}
+		return walkReview(ctx, e, reworkWalk(e, req), req.Op, req.Streams, req.Chunk)
+	}
 	ids, err := sortedIDs(verb, req.IDs)
 	if err != nil {
 		return Result{Verb: verb}, err
 	}
 	return namedParts(ctx, e, verb, req.Op, ids, req.Chunk, reworkEach, map[string]any{"fix": req.Fix},
 		func(part []string) verbRead {
-			return verbRead{plan: sprint.ReadPlan{Sprint: []sprint.SprintQ{
-				related(part, reworkFields, []string{sprint.FollowRCards, sprint.FollowWork, sprint.FollowWithdrawn}),
-				{Kind: sprint.QueryFleet, Fields: []string{"status"}},
-			}}}
+			return verbRead{plan: sprint.ReadPlan{Sprint: append([]sprint.SprintQ{related(part, reworkFields, reworkFollow)}, reworkBeside...)}}
 		},
 		func(va *verbAnswer, part []string) (*sprintfn.Request, error) {
-			p := sprint.ReworkAt(va.snap, sprint.ReworkReq{Sel: sprint.Sel{IDs: part}, Fix: req.Fix, Who: e.Actor}, va.now)
-			if len(p.Refused) != 0 {
-				return nil, refusedIDs(verb, p.Refused)
-			}
-			var b stepOps
-			if err := planOps(&b, p); err != nil {
-				return nil, err
-			}
-			entries, err := b.entries()
+			r, p, err := planRework(va, part, req.Fix, e.Actor)
 			if err != nil {
 				return nil, err
 			}
-			r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries}}
-			var reworked []string
-			for _, u := range p.Units {
-				reworked = append(reworked, u.Key)
-				for _, ch := range u.Changes {
-					if ch.Table == sprint.Fleet && ch.Entry.Create != nil {
-						r.Body.Guards = append(r.Body.Guards, sprintfn.XGuard{Kind: "memberup", Member: ch.Entry.Create.Row})
-					}
-				}
-			}
-			for _, tc := range reworkCloses {
-				r.Body.Notes = append(r.Body.Notes, note(sprintfn.JOpClose, tc[0], tc[1], "reworked by the coordinator", reworked))
+			if len(p.Refused) != 0 {
+				return nil, refusedIDs(verb, p.Refused)
 			}
 			return r, nil
 		})
+}
+
+// reworkWalk is rework --stream's walk: the cards examined reworked by
+// ReworkAt, those it refuses left in review.
+func reworkWalk(e *Env, req ReworkReq) walk {
+	return walk{verb: "rework", args: map[string]any{"streams": append([]string(nil), req.Streams...), "fix": req.Fix},
+		fields: reworkFields, follow: reworkFollow, beside: reworkBeside, each: reworkEach, advance: advanceCursor,
+		plan: func(va *verbAnswer, ctl *sprint.Card, cards []*sprint.Card) (*sprintfn.Request, int, error) {
+			ids := make([]string, len(cards))
+			for i, c := range cards {
+				ids[i] = c.ID
+			}
+			r, p, err := planRework(va, ids, req.Fix, e.Actor)
+			if err != nil {
+				return nil, 0, err
+			}
+			if r == nil {
+				var b stepOps
+				b.guard(sprint.Merge, ctl) // a part that reworks nothing still writes its receipt
+				entries, err := b.entries()
+				if err != nil {
+					return nil, 0, err
+				}
+				r = &sprintfn.Request{Meta: sprintfn.Meta{Verb: "rework"}, Body: sprintfn.Body{Entries: entries}}
+			}
+			return r, len(cards) - len(p.Units), nil
+		}}
+}
+
+// planRework is the rework of ids on a verb's read: IT09's ReworkAt at the
+// store's R, planned on a snapshot whose Open holds every field a card can hold
+// (everyOpen), so its Unit.Closes are the fields its own list answers; the
+// step closes them with "the machine could not move a card", unsets refused
+// on each primary it moves (stepOps.unsetRefused), and guards memberup on each
+// member it deals to. The request is nil when nothing is reworked; the plan
+// carries the refusals.
+func planRework(va *verbAnswer, ids []string, fix, who string) (*sprintfn.Request, sprint.Plan, error) {
+	opens, fields := everyOpen(ids)
+	va.snap.Open = opens
+	p := sprint.ReworkAt(va.snap, sprint.ReworkReq{Sel: sprint.Sel{IDs: ids}, Fix: fix, Who: who}, va.now)
+	va.snap.Open = nil
+	if len(p.Units) == 0 {
+		return nil, p, nil
+	}
+	var b stepOps
+	if err := planOps(&b, p); err != nil {
+		return nil, p, err
+	}
+	b.unsetRefused(va.snap)
+	entries, err := b.entries()
+	if err != nil {
+		return nil, p, err
+	}
+	r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "rework"}, Body: sprintfn.Body{Entries: entries}}
+	var k closer
+	var reworked []string
+	for _, u := range p.Units {
+		reworked = append(reworked, u.Key)
+		for _, o := range u.Closes {
+			if f, ok := fields[o.Key]; ok {
+				k.add(f, o.Subject())
+			}
+		}
+		for _, ch := range u.Changes {
+			if ch.Table == sprint.Fleet && ch.Entry.Create != nil {
+				r.Body.Guards = append(r.Body.Guards, sprintfn.XGuard{Kind: "memberup", Member: ch.Entry.Create.Row})
+			}
+		}
+	}
+	couldNotMove(&k, reworked)
+	r.Body.Notes = k.notes("reworked by the coordinator")
+	return r, p, nil
 }
 
 // ---- return (section 3)
@@ -1226,8 +1436,9 @@ type ReturnReq struct {
 
 // Return sends merging primaries back to review (section 3): merging ->
 // review, the merge card queued (or stuck) -> returned, and "returned to
-// review" opened on each: the coordinator decides it again. One step, all or
-// nothing. Guard: each primary at merging and its merge card at its cell, each
+// review" opened on each: the coordinator decides it again; refused unset
+// and "the machine could not move a card" closed on each (1.3.5, 1.5.3;
+// stepOps.unsetRefused). One step, all or nothing. Guard: each primary at merging and its merge card at its cell, each
 // with its revision. Two round trips.
 func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 	const verb = "return"
@@ -1235,7 +1446,7 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 	if err != nil {
 		return Result{Verb: verb}, err
 	}
-	vr := verbRead{plan: sprint.ReadPlan{Sprint: []sprint.SprintQ{related(ids, []string{sprint.PrimaryField, "need_card", "need_stream"}, []string{sprint.FollowMerge})}}}
+	vr := verbRead{plan: sprint.ReadPlan{Sprint: []sprint.SprintQ{related(ids, []string{sprint.PrimaryField, "need_card", "need_stream", "refused"}, []string{sprint.FollowMerge})}}}
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids)},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
@@ -1257,13 +1468,17 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 			if len(refused) != 0 {
 				return nil, refusedIDs(verb, refused)
 			}
+			b.unsetRefused(va.snap)
 			entries, err := b.entries()
 			if err != nil {
 				return nil, err
 			}
+			var k closer
+			couldNotMove(&k, ids)
 			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries,
-				Notes: []sprintfn.NoteReq{note(sprintfn.JOpOpen, typeReturned, causeReturn,
-					"returned to review from merging: the coordinator decides it again", ids, decisionsOf(typeReturned)...)}}}, nil
+				Notes: append([]sprintfn.NoteReq{note(sprintfn.JOpOpen, typeReturned, causeReturn,
+					"returned to review from merging: the coordinator decides it again", ids, decisionsOf(typeReturned)...)},
+					k.notes("returned by the coordinator")...)}}, nil
 		}})
 }
 

@@ -589,3 +589,61 @@ func TestCIRedOnMergingRetreats(t *testing.T) {
 		t.Fatalf("the step's lines are %v, want %v", kinds, want)
 	}
 }
+
+// A walk part that does not end its stream moves the cursor up, or it is
+// refused before it writes: with the cursor frozen (the reader's mutation),
+// the walk is refused NOPROGRESS at its first part and does not loop.
+func TestWalkProgressBound(t *testing.T) {
+	t.Parallel()
+	w := newRV(t)
+	w.stream("s1", sprint.StreamWaiting)
+	w.readers("r1", "r2")
+	w.inReview("s1", "p1", 10) // no ok reads: each stays in review, and the
+	w.inReview("s1", "p2", 20) // head never shrinks
+	frozen := acceptWalk([]string{"s1"})
+	frozen.advance = func(*walkCont, float64) {}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := walkReview(ctx, w.env, frozen, "", []string{"s1"}, acceptEach)
+	rf := refusedWith(t, err, "NOPROGRESS")
+	if rf.Part != 1 || w.at(sprint.Work, "p1") != "s1:review" {
+		t.Fatalf("the first part is refused and writes nothing: part %d, p1 at %s", rf.Part, w.at(sprint.Work, "p1"))
+	}
+}
+
+// rework --stream walks the review cell (1.5.4, "Accept, rework --stream"):
+// each primary ReworkAt takes leaves review, one it refuses stays, n + 1
+// round trips.
+func TestReworkStream(t *testing.T) {
+	t.Parallel()
+	w := newRV(t)
+	w.stream("s1", sprint.StreamWaiting)
+	w.member("m1")
+	// p1 and p3 came back failed with a report, their own fix; p2 has none.
+	for _, p := range []struct {
+		id, report string
+		score      int
+	}{{"p1", "tests fail", 10}, {"p3", "lint", 30}} {
+		w.card(sprint.Work, "s1:review", p.id, p.score, "kind", "work", "attempt", "1", "head", "h1", "result", "failed", "work", sprint.WorkCardID(p.id, 1))
+		w.card(sprint.Fleet, "m1:failed", sprint.WorkCardID(p.id, 1), p.score, "kind", "work", sprint.PrimaryField, p.id, "stream", "s1",
+			"attempt", "1", "member", "m1", "report", p.report)
+	}
+	w.card(sprint.Work, "s1:review", "p2", 20, "kind", "work", "attempt", "1", "head", "h1", "result", "ok") // no fix of its own: refused
+	w.openJ(sprint.NStalled, "review", "p3")
+	n := w.trips()
+	res, err := Rework(context.Background(), w.env, ReworkReq{Streams: []string{"s1"}, Chunk: reworkEach})
+	mustOK(t, "rework --stream s1", res, err)
+	wantTrips(t, res, n, res.Parts+1)
+	if res.Parts != 3 {
+		t.Fatalf("one card a part over three cards: %d parts", res.Parts)
+	}
+	for p, want := range map[string]string{"p1": "s1:working", "p2": "s1:review", "p3": "s1:working"} {
+		if got := w.at(sprint.Work, p); got != want {
+			t.Fatalf("%s is at %s, want %s", p, got, want)
+		}
+	}
+	if w.field(sprint.Work, "p1", "attempt") != "2" {
+		t.Fatal("p1's next attempt is dealt")
+	}
+	w.wantNoJ("the walk closes what ReworkAt answers", "p3")
+}
