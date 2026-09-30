@@ -22,8 +22,21 @@ import (
 // as J's one per cause does at apply.
 //
 // The cost is O(c) for the c cards of a plan, at most HeldChunk: one holder is
-// O(1) reads (holder.go), the fleet's room and each stream's front are read
-// once for all of them, and the judgments open are indexed once.
+// O(1) reads (holder.go), the fleet's room is read once for all of them, and
+// the judgments open are indexed once.
+//
+// What the read carries, against what the design lists (2.3 R16): each card's
+// record and its primary (a work or read card's id is read as its primary's,
+// by its shape), the follows the holder uses (`work`, `rcards`, `merge`,
+// `control`, `needs`, `jopen`), and `fleet`. Not the follows `index` and `due`:
+// the holder reads a card's place, score and deadlines off the card, and the
+// index memberships and due entries are derived from those, so a plan that
+// carried them would carry what it does not read. Not `front(s)`: a read plan
+// names its streams in advance and R16's cards are found by id or by line, so
+// no stream is known when the read is planned (IT05 question 3); the holder
+// judges without it (holder.go). Not the backlog, the dropping marks, the cut
+// entries, the quarantine marks nor the judgments open on an op: the partial
+// snapshot has no carrier for them (heldFactsOf).
 
 const (
 	// HeldBacklogBound is the backlog, in lines, above which R16 judges
@@ -33,81 +46,121 @@ const (
 	// HeldChunk is the most cards one tick judges: the held queue's own
 	// budget (1.0 tick budget; 2.3 R16 read).
 	HeldChunk = 2000
-	// PriorityHeld is R16's place in the tick's order (1.4.2), the last: the
-	// eighteenth of R1, R2, R4, R3, R5, R6, R7, R8, R9, R10, R11, R12, R13,
-	// R14, R18, R15, R19 and then R16. The design gives the order, not
-	// numbers; this counts places.
-	PriorityHeld = 18
-	// heldLineIDs is the ids one line names at most (1.0's table of step
-	// bounds: a generated line is 2,000 ids).
-	heldLineIDs = 2000
 	// heldFixedQueries are the queries every R16 read asks besides its lines:
-	// front, fleet, and the related over the cards its keys name by id.
-	heldFixedQueries = 3
+	// fleet, and the related over the cards its keys name by id.
+	heldFixedQueries = 2
 )
+
+// typeVerbStopped is the type of the judgment "a verb in parts stopped before
+// its end" (2.2), which no rule of this tree names yet: IT06's table and IT10's
+// R11 name it in the design's words.
+const typeVerbStopped = "a verb in parts stopped before its end"
 
 // heldFields are the fields R16's read names (every rule read names its
 // fields, 1.0): what the holder table reads off the cards.
 var heldFields = []string{
 	"kind", "open", "refused", "bound", "attempt", "needs", "waived", "result", "head", "ci", "ci_head",
-	"work", "rcards", "primary", "reader", "gen", "status", "state", "cause", "need_card", "other", "outcome",
+	"work", "rcards", "primary", "reader", "gen", "state", "cause", "need_card", "other", "outcome",
 	fieldDueUntaken, fieldDueUnfinished, fieldDueUnbegun, fieldDueUnreported, fieldDueMergeIdle,
 }
 
+// heldFleetFields are the fields of the members' control cards R16 reads.
+var heldFleetFields = []string{"status"}
+
 // heldFollows are what related follows from each card (1.0): its live work
 // card, its read cards, its merge card, its stream's control card, its needs
-// with their places, and jopen of the card. The members' control cards come
-// from fleet, and the first sentinel of each stream from front.
-var heldFollows = []string{"work", "rcards", "merge", "control", "needs", "jopen"}
+// with their places, and jopen of the card. The members' control cards and
+// their ready counts come from fleet.
+var heldFollows = []string{FollowWork, FollowRCards, FollowMerge, FollowControl, FollowNeeds, FollowJOpen}
 
 func init() {
-	RegisterRule(Rule{Name: ruleHeld, Priority: PriorityHeld, MaxSteps: 0, Read: readHeld, Plan: planHeldRule})
-}
-
-// heldReadCards is how many cards one read may name: the chunk, or the records
-// the read may return allow after front and fleet, by the declared cost of each
-// card and its follows (1.4.2), whichever is fewer; halved once for each
-// halving after a BUDGET (1.3.5), down to one.
-func heldReadCards(b ReadBounds, halvings int) int {
-	fixed := QueryCost(frontOfEveryStream()).Records + QueryCost(fleetOf()).Records
-	per := QueryCost(relatedOf([]string{""}, heldFields, heldFollows)).Records
-	n := min(HeldChunk, (b.Records-fixed)/per)
-	for range halvings {
-		n /= 2
+	p, ok := PriorityOf(ruleHeld)
+	if !ok {
+		panic("sprint: RulePriorities has no row for the held rule")
 	}
-	return max(1, n)
+	RegisterRule(Rule{Name: ruleHeld, Priority: p, MaxSteps: 0, Read: readHeld, Plan: planHeldRule})
 }
 
-// readHeld is R16's read: the related query over the cards its keys name (a
-// card by its id, a line by its seq, from the key's offset, for as many ids as
-// the read has room for), the fronts of the streams and the fleet. The keys
-// that do not fit stay queued, in the order they came; a line that names more
-// ids than fit is read to its limit and planHeld requeues it with the offset
-// where the read stopped.
+// heldRelatedIDs is related over primaries by id.
+func heldRelatedIDs(ids []string) SprintQ {
+	return SprintQ{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: ids},
+		Fields: heldFields, Follow: heldFollows}
+}
+
+// heldRelatedLine is related over the ids of a line by seq, from the key's
+// offset, at most limit of them.
+func heldRelatedLine(h heldKey, limit int) SprintQ {
+	return SprintQ{Kind: QueryRelated, Table: Work,
+		Source: IDSource{Kind: SourceLine, Seq: h.Line, Offset: h.Offset, Limit: limit},
+		Fields: heldFields, Follow: heldFollows}
+}
+
+// heldFleet is fleet: every member's control card and its cell counts.
+func heldFleet() SprintQ { return SprintQ{Kind: QueryFleet, Fields: heldFleetFields} }
+
+// heldReadCards is how many cards one read may name: the chunk, or what fits in
+// every bound of the read after fleet, by the declared cost of one card and its
+// follows (1.4.2), whichever is fewer; halved once for each halving after a
+// BUDGET (1.3.5), down to one. The bytes, not the records, bind at layer 1's
+// bounds.
+func heldReadCards(b ReadBounds, halvings int) int {
+	fixed := QueryCost(heldFleet())
+	per := QueryCost(heldRelatedIDs([]string{""}))
+	n := HeldChunk
+	for _, l := range []struct{ bound, fixed, per int }{
+		{b.Records, fixed.Records, per.Records},
+		{b.RangeIDs, fixed.RangeIDs, per.RangeIDs},
+		{b.Bytes, fixed.Bytes, per.Bytes},
+	} {
+		if l.bound > 0 && l.per > 0 {
+			n = min(n, (l.bound-l.fixed)/l.per)
+		}
+	}
+	return max(1, Halved(max(n, 0), halvings))
+}
+
+// readHeld is R16's read: the related query over the primaries its keys name
+// (a card by its id, or its primary's when it is a work or read card; a line by
+// its seq, from the key's offset, for a share of the room) and the fleet. The
+// keys are taken in the order they came, each costing a place of the room, and
+// the ones that do not fit stay queued in that order; a line's ids are read to
+// the share of the room its key has, and planHeld requeues the key at the
+// offset where the read stopped. The room a tick has is shared by the keys it
+// takes, so many line keys at the head are each served a part of their line
+// every tick and none takes the room the others need.
 func readHeld(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	room := heldReadCards(b, halvings)
 	var (
 		ids   []string
-		lines []SprintQ
+		seen  = map[string]bool{}
+		lines []heldKey
 		left  []AgendaKey
 		full  bool
 	)
 	for _, k := range keys {
 		hk, ok := parseHeldKey(k)
 		switch {
-		case !ok || full || room <= 0:
-			full = full || ok
+		case !ok:
+			left = append(left, k)
+		case full:
 			left = append(left, k)
 		case !hk.ByLine:
-			ids = append(ids, hk.Card)
-			room--
-		case heldFixedQueries+len(lines)+1 > b.Queries:
+			p := heldPrimaryID(hk.Card)
+			if seen[p] {
+				continue // read already for an earlier key, at no more cost
+			}
+			if len(ids)+len(lines) >= room {
+				full = true
+				left = append(left, k)
+				continue
+			}
+			seen[p] = true
+			ids = append(ids, p)
+		case len(ids)+len(lines) >= room, b.Queries > 0 && heldFixedQueries+len(lines)+1 > b.Queries:
 			full = true
 			left = append(left, k)
 		default:
-			limit := min(room, heldLineIDs)
-			lines = append(lines, relatedLine(hk, limit, heldFields, heldFollows))
-			room -= limit
+			lines = append(lines, hk)
 		}
 	}
 	var rp ReadPlan
@@ -115,11 +168,52 @@ func readHeld(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 		return rp, left
 	}
 	if len(ids) > 0 {
-		rp.Sprint = append(rp.Sprint, relatedOf(ids, heldFields, heldFollows))
+		rp.Sprint = append(rp.Sprint, heldRelatedIDs(ids))
 	}
-	rp.Sprint = append(rp.Sprint, lines...)
-	rp.Sprint = append(rp.Sprint, frontOfEveryStream(), fleetOf("status"))
+	if len(lines) > 0 {
+		share, extra := (room-len(ids))/len(lines), (room-len(ids))%len(lines)
+		for i, hk := range lines {
+			limit := share
+			if i < extra {
+				limit++
+			}
+			rp.Sprint = append(rp.Sprint, heldRelatedLine(hk, min(limit, MaxLineIDs)))
+		}
+	}
+	rp.Sprint = append(rp.Sprint, heldFleet())
 	return rp, left
+}
+
+// heldFactsOf is what the snapshot carries of the sprint's own keys beside its
+// tables. A snapshot loaded from a plan carries the ids of each line the plan
+// read by its seq (the answer of the `related` query over it), and whether the
+// read stopped at its limit; every snapshot carries the conditions the
+// coordinator acknowledged, which hold a card the way a wait holds a judgment.
+// The partial snapshot carries nothing else the rule reads: not the backlog
+// (L2 last less the tick's cur), the dropping marks and the judgments open on
+// their ops, the cut entries, nor the quarantine marks. Until it does the
+// registered rule sees a backlog of zero, no stream dropping and no card
+// quarantined, and the loop that runs it has to know the backlog itself (the
+// pull request names the ask).
+func heldFactsOf(s *Snapshot) HeldFacts {
+	f := HeldFacts{Held: s.Acked}
+	if s.Partial == nil {
+		return f
+	}
+	for i, q := range s.Partial.Plan.Sprint {
+		if q.Kind != QueryRelated || q.Source.Kind != SourceLine || i >= len(s.Partial.Answer.Sprint) {
+			continue
+		}
+		ids := s.Partial.Answer.Sprint[i].IDs
+		if f.Lines == nil {
+			f.Lines = map[HeldLineAt]HeldLine{}
+		}
+		f.Lines[HeldLineAt{Line: q.Source.Seq, Offset: q.Source.Offset}] = HeldLine{
+			IDs:  ids,
+			More: q.Source.Limit > 0 && len(ids) >= q.Source.Limit && q.Source.Offset+len(ids) < MaxLineIDs,
+		}
+	}
+	return f
 }
 
 // planHeldRule is R16's plan over the snapshot the read built.
@@ -133,6 +227,7 @@ type stallGroup struct {
 	typ, cause, text string
 	decisions        []string
 	ids              []string
+	members          map[string]bool // the members the working cards sit at
 }
 
 // reviewStall is what R16 raises for a primary in review that nothing holds,
@@ -157,7 +252,10 @@ var reviewStalls = map[string]reviewStall{
 // for each card of the keys: held, nothing; not held, one judgment naming it,
 // guarded on the card's place and revision so a change since the read refuses
 // the step and the key comes back. Every key it finished it removes, and a
-// line it read only to a limit it requeues at the offset where it stopped.
+// line it read only to a limit it requeues at the offset where it stopped. A
+// key the snapshot's read did not carry (a line it did not read, a card no
+// query of its plan named) is held back and not put back unchanged, so that it
+// cannot stand at the head of the queue and starve the keys behind it.
 func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 	var rp RulePlan
 	if f.Backlog > HeldBacklogBound {
@@ -165,7 +263,8 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 		return rp
 	}
 	v := newHoldView(s, f, now)
-	seen := map[string]bool{}
+	seen := map[string]bool{}   // the ids judged
+	judged := map[string]bool{} // the primaries a card was judged as
 	groups := map[string]*stallGroup{}
 	raised := map[string]string{} // card -> the type raised on it
 	for _, k := range keys {
@@ -176,15 +275,18 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 		}
 		ids := []string{hk.Card}
 		if hk.ByLine {
-			line, ok := f.Lines[hk.Line]
+			line, ok := f.Lines[HeldLineAt{Line: hk.Line, Offset: hk.Offset}]
 			if !ok {
-				rp.Requeue = append(rp.Requeue, k) // its ids were not read: it stays
+				rp.HeldBack = append(rp.HeldBack, k) // its ids were not read
 				continue
 			}
 			ids = line.IDs
-			if next := hk.Offset + len(ids); len(ids) > 0 && next < line.Total {
-				rp.Requeue = append(rp.Requeue, hk.resumedAt(k, next))
+			if line.More && len(ids) > 0 {
+				rp.Requeue = append(rp.Requeue, hk.resumedAt(k, hk.Offset+len(ids)))
 			}
+		} else if !v.read(hk.Card) {
+			rp.HeldBack = append(rp.HeldBack, k) // its card was not read
+			continue
 		}
 		rp.Done = append(rp.Done, k)
 		for _, id := range ids {
@@ -193,10 +295,11 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 			}
 			seen[id] = true
 			vd := v.verdict(id)
-			if vd.row == nil || vd.Hold.By != "" {
+			if vd.row == nil || vd.Hold.By != "" || judged[vd.ID] {
 				continue
 			}
-			g := stallOf(v, vd)
+			judged[vd.ID] = true // a work card and its primary are one judgment of the primary
+			g, member := stallOf(v, vd)
 			if _, named := v.judgment(vd.ID, g.typ); named {
 				continue
 			}
@@ -205,6 +308,12 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 				groups[key] = g
 			}
 			groups[key].ids = append(groups[key].ids, vd.ID)
+			if member != "" {
+				if groups[key].members == nil {
+					groups[key].members = map[string]bool{}
+				}
+				groups[key].members[member] = true
+			}
 			raised[vd.ID] = g.typ
 		}
 	}
@@ -216,7 +325,13 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 	for _, k := range order {
 		g := groups[k]
 		sort.Strings(g.ids)
-		rp.Notes = append(rp.Notes, NoteReq{Op: "open", Type: g.typ, Cause: g.cause, Subjects: g.ids, Text: g.text, Decisions: g.decisions})
+		members := make([]string, 0, len(g.members))
+		for m := range g.members {
+			members = append(members, m)
+		}
+		sort.Strings(members)
+		rp.Notes = append(rp.Notes, NoteReq{Op: "open", Type: g.typ, Cause: g.cause, Subjects: g.ids, Text: g.text,
+			Decisions: expandDecisions(g.decisions, members)})
 	}
 	guarded := make([]string, 0, len(raised))
 	for id := range raised {
@@ -233,18 +348,26 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 
 // stallOf is the judgment a stalled card gets: for a card in review, the one
 // reviewJudgment says when it says one of the two it keeps; otherwise "stalled"
-// with the words and decisions of the row that found nothing to hold it.
-func stallOf(v *holdView, vd verdict) *stallGroup {
+// with the words and decisions of the row that found nothing to hold it. The
+// second result is the member a working card's work card sits at, for the
+// decision the note offers about it.
+func stallOf(v *holdView, vd verdict) (*stallGroup, string) {
 	p := v.s.Work.Card(vd.ID)
 	if p.Col == Review {
-		if n, ok := reviewJudgment(v.s, p, reviewStep{who: MachineActor}); ok {
-			if rs, ok := reviewStalls[n.Type]; ok {
+		if typ, ok := v.reviewStallType(p); ok {
+			if rs, ok := reviewStalls[typ]; ok {
 				decisions := slices.Clone(rs.Decisions)
 				if p.F("result") == "failed" {
 					decisions = slices.DeleteFunc(decisions, func(d string) bool { return d == "ask" })
 				}
-				return &stallGroup{typ: n.Type, cause: rs.Cause, text: rs.Text, decisions: decisions}
+				return &stallGroup{typ: typ, cause: rs.Cause, text: rs.Text, decisions: decisions}, ""
 			}
+		}
+	}
+	member := ""
+	if p.Col == Working {
+		if wc := v.workCard(p); wc != nil {
+			member = wc.Row
 		}
 	}
 	cause, text := vd.row.Cause, vd.Why
@@ -255,7 +378,7 @@ func stallOf(v *holdView, vd verdict) *stallGroup {
 		text = vd.row.Stall
 	}
 	return &stallGroup{typ: NStalled, cause: cause, text: text,
-		decisions: append(slices.Clone(vd.row.Decisions), stalledTail...)}
+		decisions: append(slices.Clone(vd.row.Decisions), stalledTail...)}, member
 }
 
 // heldKey is a key of the held rule read apart: held:<card>, held@<seq> or

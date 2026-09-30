@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 )
 
@@ -27,10 +28,26 @@ import (
 // and its stream's front. A view of the snapshot (holdView) computes the
 // fleet's room, each stream's front and the judgments open once, for every
 // card it judges: LocalHolder alone pays that once a call.
+//
+// The front of a stream is read only when the snapshot has it (a snapshot built
+// whole, or a partial one whose plan asked front of the stream). Where it has
+// not, a card is judged as if its stream's front were unknown: the states that
+// front tells apart (waiting below the first sentinel or behind it, ready in
+// fresh below it or behind it, a sentinel reached or not) are each held whichever
+// it is, so the verdict "held" or "stalled" does not depend on it, and only the
+// words of the holder do; the one state that does depend on it is a sentinel
+// with nothing before it and needs of its own that nothing holds, which a
+// snapshot without the front cannot tell from a sentinel with cards before it,
+// and is held (never judged spuriously). TestHeldReadWithoutFrontsAgreesWithWhole
+// pins both claims.
 
 // HeldFacts are the sprint's own keys that R16's read carries beside the
 // tables (2.3 R16: jopen of the card, its stream and the sprint, the
-// backlog): what is not a card of a table and not derivable from one.
+// backlog): what is not a card of a table and not derivable from one. A
+// snapshot loaded from a read plan carries the ids of the lines a key names
+// (heldFactsOf reads them off its answers) and the conditions the coordinator
+// acknowledged; the rest has no carrier in the partial snapshot yet (the
+// pull request names what is owed), and planHeld is tested with every fact.
 type HeldFacts struct {
 	// Backlog is the lines not yet ingested (L2 last less the tick's cur).
 	Backlog int
@@ -47,19 +64,37 @@ type HeldFacts struct {
 	Held []Open
 	// Lines is the ids of each line a key of the read names by seq, as the
 	// read's line source returned them from the key's offset.
-	Lines map[uint64]HeldLine
+	Lines map[HeldLineAt]HeldLine
+}
+
+// HeldLineAt names a read of a line: its seq and the offset in its ids the
+// read began at (the key's `+offset`).
+type HeldLineAt struct {
+	Line   uint64
+	Offset int
 }
 
 // HeldLine is what a read of a line by seq returned: the ids from the key's
-// offset on, at most the read's limit, and how many ids the line names.
+// offset on, at most the read's limit, and whether the read stopped at its
+// limit, so that the line may name more.
 type HeldLine struct {
-	IDs   []string
-	Total int
+	IDs  []string
+	More bool
 }
 
-// heldAttemptBound is R10's attempts (2.3 R10): below it a failed or broken
-// primary is reworked, at it R10 sets its bound.
-const heldAttemptBound = 3
+// The numbers the holder takes from the design for the rules whose conditions
+// it copies (2.3). They are the holder's own: the tree's constants
+// (MaxReadyPerMember, MaxRedeals) are today's scanning tick's, which the switch
+// (IT23) moves, and a rule that changes one changes one row here.
+const (
+	// heldReadyPerMember is the ready cards a member holds at most: R6's room is
+	// this less a member's ready count (2.3 R6: "2 less each ready count", "a
+	// constant here").
+	heldReadyPerMember = 2
+	// heldMaxAttempts is R10's attempts (2.3 R10): below it a failed or broken
+	// primary is reworked, at it R10 sets its bound.
+	heldMaxAttempts = 3
+)
 
 // The columns R16 reads off a card's fields, by the fields' names (1.3.1).
 const (
@@ -72,6 +107,12 @@ const (
 
 // crossStop is the cause of a stream stopped on a card of another stream.
 const crossStop = "cross"
+
+// decisionFleetDown is the placeholder of a stalled working card's decision:
+// the member is the one its work card sits at, filled in by the note that names
+// the card (a note has one list of decisions, so it lists one for each member
+// its cards sit at).
+const decisionFleetDown = "fleet down <member>"
 
 // holder is one way a state is held: the holder's letter, the words of the
 // design for it, and the test. Holds returns why the card is held, "" when it
@@ -143,12 +184,18 @@ var holdRows = []holdRow{
 		},
 	},
 	{
-		Name: "a sentinel, not reached",
+		Name:  "a sentinel, not reached",
+		Cause: "sentinel",
+		Stall: "nothing is before it, it waits on needs that are not open on the table, nor missing with a judgment, nor landed or removed and still counted for R4, and no blocked judgment names it",
 		Match: func(v *holdView, c *Card) bool {
 			return IsSentinel(c) && c.Col == Waiting && !v.reached(c)
 		},
 		Holders: []holder{
-			{HeldByWaiting, "cards before it, or needs of its own, still open", sentinelBlocked},
+			{HeldByWaiting, "cards before it are open", cardsBeforeSentinel},
+			{HeldByWaiting, "each need of its own is open on the table, or missing with its judgment", needsHeld},
+			{HeldByTick, "R4, a landed or removed need still counted", needsPending},
+			{HeldByJudgment, "a blocked judgment on it, open or held", onCard(NBlocked, NMissingNeed)},
+			{HeldByWaiting, "its stream's front was not read", frontUnread},
 		},
 	},
 	{
@@ -217,7 +264,7 @@ var holdRows = []holdRow{
 		Name:      "working",
 		Cause:     "working",
 		Stall:     "no live work card of an up member holds it before its deadline, its member is not down, its deadline has not passed, and no judgment names it",
-		Decisions: []string{"fleet down <member>"},
+		Decisions: []string{decisionFleetDown},
 		Match:     func(v *holdView, c *Card) bool { return c.Col == Working },
 		Holders: []holder{
 			{HeldByActor, "its live work card at an up member, before its due", workActor},
@@ -234,20 +281,23 @@ var holdRows = []holdRow{
 		Match:     func(v *holdView, c *Card) bool { return c.Col == Review },
 		Holders: []holder{
 			{HeldByActor, "a read outstanding before its due", readOutstanding},
+			{HeldByTick, "R11, a read's due has passed", readDuePassed},
 			{HeldByTick, "R8, never asked at its attempt", reviewAsks},
 			{HeldByTick, "R9, two different readers said ok", reviewAccepts},
 			{HeldByTick, "R10, failed or broken", reviewReworks},
 			{HeldByJudgment, "a judgment on it, open or held", onCard(NCannotAsk, NCIRed, NReturned, NBound, NReadsExhausted, NStranded)},
+			{HeldByJudgment, "a read's lateness judgment, open or held", readJudged},
 		},
 	},
 	{
 		Name:      "merging",
 		Cause:     "merging",
-		Stall:     "its merge card is not queued in a stream that merges before its deadline, its stream's cross need has not landed, and no judgment names it or its stream",
+		Stall:     "its merge card is not queued in a stream that merges before its deadline, its stream's merge-idle deadline has not passed, its stream's cross need has not landed, and no judgment names it or its stream",
 		Decisions: []string{"return"},
 		Match:     func(v *holdView, c *Card) bool { return c.Col == Merging },
 		Holders: []holder{
 			{HeldByActor, "queued in a stream merging or waiting, before its merge-idle due", mergeQueued},
+			{HeldByTick, "R11, its stream's merge-idle due has passed", mergeIdlePassed},
 			{HeldByTick, "R5, its cross need landed", crossLanded},
 			{HeldByJudgment, "its stream's stop or merge-idle judgment, open or held", mergeJudged},
 		},
@@ -276,15 +326,20 @@ var stoppedRow = holdRow{
 
 // heldJudgment is a judgment open, or held by a wait, on one subject.
 type heldJudgment struct {
-	Type string
-	Held bool
+	Type        string
+	Held        bool
+	StreamLevel bool
+	Accept      bool // its decisions offer accept
 }
 
 // streamFront is front(s) of one stream as R16 uses it (1.0): the first
-// sentinel sigma, and n_before, the open cards of the stream before it.
+// sentinel sigma, and n_before, the open cards of the stream before it. known
+// says the snapshot has it; where it has not, sigma is nil and nothing is said
+// of any position.
 type streamFront struct {
 	sigma  *Card
 	before int
+	known  bool
 }
 
 // holdView is a snapshot read for the local holders of any number of its
@@ -301,6 +356,11 @@ type holdView struct {
 	typed  map[string]bool // a judgment of the type is open or held on some subject
 	fronts map[string]*streamFront
 	needs  map[string]needSummary
+	named  map[string]bool // the ids a partial snapshot's plan named; nil for one built whole
+
+	// probes counts the judgments looked at, so that a test can show that a
+	// card costs the judgments on itself and not those of the sprint.
+	probes int
 }
 
 // needSummary is a waiting primary's needs as its state shows them (2.3 R16,
@@ -327,10 +387,25 @@ func newHoldView(s *Snapshot, f HeldFacts, now Now) *holdView {
 		v.add(o, true)
 	}
 	if s.Fleet != nil {
-		for _, m := range s.Fleet.Rows {
+		for _, m := range s.Fleet.Rows() {
 			if s.MemberCtl(m).F("status") == Up {
 				v.up = append(v.up, m)
-				v.room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
+				v.room += max(0, heldReadyPerMember-s.Fleet.Count(m, Ready))
+			}
+		}
+	}
+	if s.Partial != nil {
+		v.named = map[string]bool{}
+		for i, q := range s.Partial.Plan.Sprint {
+			if q.Kind != QueryRelated {
+				continue
+			}
+			ids := q.Source.IDs
+			if q.Source.Kind != SourceIDs && i < len(s.Partial.Answer.Sprint) {
+				ids = s.Partial.Answer.Sprint[i].IDs
+			}
+			for _, id := range ids {
+				v.named[id] = true
 			}
 		}
 	}
@@ -338,8 +413,38 @@ func newHoldView(s *Snapshot, f HeldFacts, now Now) *holdView {
 }
 
 func (v *holdView) add(o Open, held bool) {
-	v.judged[o.Subject()] = append(v.judged[o.Subject()], heldJudgment{Type: o.Note.Type, Held: held})
+	v.judged[o.Subject()] = append(v.judged[o.Subject()], heldJudgment{Type: o.Note.Type, Held: held,
+		StreamLevel: o.Note.StreamLevel, Accept: contains(o.Note.Decisions, "accept")})
 	v.typed[o.Note.Type] = true
+}
+
+// read says the card's record, or its primary's, is one the snapshot's read
+// asked for: a card of a snapshot built whole always is, and on one loaded from
+// a plan an id that no query of the plan named is not on the table but not
+// read, which a card off the table is not.
+func (v *holdView) read(id string) bool {
+	return v.named == nil || v.named[id] || v.named[heldPrimaryID(id)]
+}
+
+// unread says a card has no record in a snapshot loaded from a plan that did not
+// name it: it is not known to be off the table. A card of a snapshot built whole
+// is always read, and one a query named and got no record of is off the table.
+func (v *holdView) unread(id string) bool {
+	return v.named != nil && !v.named[id] && v.s.Work.Card(id) == nil
+}
+
+// heldPrimaryID is the primary an id belongs to by its shape: a work card
+// (`<primary>.w<n>`) or a read card (`<primary>.r<n>.<reader>`) is a card of
+// its primary, and any other id is a primary's own (ValidID refuses a dot in
+// one, so the shape is exact).
+func heldPrimaryID(id string) string {
+	if p, _, ok := ParseWorkCard(id); ok {
+		return p
+	}
+	if p, _, _, ok := ParseReadCard(id); ok {
+		return p
+	}
+	return id
 }
 
 // LocalHolder is what holds the primary id now, on the state alone (2.3 R16,
@@ -362,10 +467,16 @@ type verdict struct {
 func (v *holdView) hold(id string) Hold { return v.verdict(id).Hold }
 
 // primaryOf is the primary a card is judged as: the card itself when it is one,
-// else the primary its record names (a work, read or merge card).
+// else the primary its id names, else the primary its record names (a work,
+// read or merge card).
 func (v *holdView) primaryOf(id string) *Card {
 	if c := v.s.Work.Card(id); c != nil {
 		return c
+	}
+	if p := heldPrimaryID(id); p != id {
+		if c := v.s.Work.Card(p); c != nil {
+			return c
+		}
 	}
 	for _, t := range []*Table{v.s.Fleet, v.s.Readers, v.s.Merge} {
 		if c := t.Card(id); c != nil {
@@ -425,6 +536,7 @@ func (v *holdView) verdict(id string) verdict {
 // subject; "" and false when none is.
 func (v *holdView) judgment(subject string, types ...string) (string, bool) {
 	for _, j := range v.judged[subject] {
+		v.probes++
 		for _, t := range types {
 			if j.Type != t {
 				continue
@@ -443,6 +555,7 @@ func (v *holdView) judgment(subject string, types ...string) (string, bool) {
 func (v *holdView) count(subject, typ string) int {
 	n := 0
 	for _, j := range v.judged[subject] {
+		v.probes++
 		if j.Type == typ && !j.Held {
 			n++
 		}
@@ -450,50 +563,62 @@ func (v *holdView) count(subject, typ string) int {
 	return n
 }
 
-// front is front(s) of the stream, read once.
+// front is front(s) of the stream, read once: what the snapshot has of it, and
+// nothing said of a position when it has none (known is false).
 func (v *holdView) front(stream string) *streamFront {
 	if f, ok := v.fronts[stream]; ok {
 		return f
 	}
 	f := &streamFront{}
-	if g := FirstSentinel(v.s, stream); g != nil {
-		f.sigma, f.before = g, OpenBefore(v.s, stream, g.Score)
+	if v.s.Partial == nil || hasFront(v.s.Partial, stream) {
+		f.known = true
+		if g := FirstSentinel(v.s, stream); g != nil {
+			f.sigma, f.before = g, OpenBefore(v.s, stream, g.Score)
+		}
 	}
 	v.fronts[stream] = f
 	return f
 }
 
-// behindSigma says the card sorts after the first sentinel of its stream.
+func hasFront(p *Partial, stream string) bool {
+	_, ok := p.Fronts[stream]
+	return ok
+}
+
+// behindSigma says the card sorts after the first sentinel of its stream: false
+// where the snapshot has no front of the stream.
 func (v *holdView) behindSigma(c *Card) bool {
-	g := v.front(c.Row).sigma
-	return g != nil && c.Score > g.Score
+	f := v.front(c.Row)
+	return f.known && f.sigma != nil && c.Score > f.sigma.Score
 }
 
 // nBefore is n_before of a sentinel: the open cards of its stream before it.
 // front(s) gives it for the first sentinel; any later one has that one before
-// it, so at least one.
+// it, so at least one. -1 where the snapshot has no front of the stream.
 func (v *holdView) nBefore(c *Card) int {
 	f := v.front(c.Row)
-	if f.sigma != nil && f.sigma.ID == c.ID {
+	switch {
+	case !f.known:
+		return -1
+	case f.sigma != nil && f.sigma.ID == c.ID:
 		return f.before
 	}
 	return 1
 }
 
 // reached says a sentinel has no open card before it and no need of its own:
-// its stream has come to it (R3, reach).
+// its stream has come to it (R3, reach). False where the snapshot has no front
+// of the stream: the sentinel is judged as not reached, which holds it too.
 func (v *holdView) reached(c *Card) bool { return c.Int("open") == 0 && v.nBefore(c) == 0 }
 
-// reads is the primary's read cards at its attempt, from rcards (1.3.1), in
-// the order rcards names them.
+// reads is the primary's read cards at its attempt: the placed cards of the
+// readers' table that name it, which a `related` query read with the follow
+// rcards (1.3.1).
 func (v *holdView) reads(p *Card) []*Card {
 	var out []*Card
 	attempt := p.Int("attempt")
-	for _, id := range Split(p.F("rcards")) {
-		if _, a, _, ok := ParseReadCard(id); !ok || a != attempt {
-			continue
-		}
-		if c := v.s.Readers.Placed(id); c != nil {
+	for _, c := range v.s.Readers.Of(p.ID) {
+		if _, a, _, ok := ParseReadCard(c.ID); ok && a == attempt {
 			out = append(out, c)
 		}
 	}
@@ -562,6 +687,55 @@ func (v *holdView) needSummary(c *Card) needSummary {
 	return ns
 }
 
+// reviewStallType is the judgment today's reviewJudgment gives a primary the
+// step leaves in review (steps_review.go), decided from the view: the judgments
+// open on the card are its index by subject (not a scan of every judgment of
+// the sprint), and its read cards are its own (not a scan of every reader).
+// Only the machine's own reading is here, no step's moved or closing sets. It
+// says what R16 keeps of it: no judgment, or the type J would open. Where the
+// two disagree the fault is here, and TestHeldReviewStallAgreesWithReviewJudgment
+// pins them equal over every state of a review.
+func (v *holdView) reviewStallType(p *Card) (string, bool) {
+	reads := v.reads(p)
+	oks := map[string]bool{}
+	outstanding := false
+	for _, r := range reads {
+		switch {
+		case r.Col == Asked || r.Col == Reading:
+			outstanding = true
+		case r.Col == OK && r.F("head") == p.F("head") && ReadCardAgrees(r):
+			oks[r.Row] = true
+		}
+	}
+	open := map[string]bool{} // the judgment types open on it
+	offers, before := false, 0
+	for _, j := range v.judged[p.ID] {
+		v.probes++
+		if j.Held || j.StreamLevel {
+			continue
+		}
+		before++
+		open[j.Type] = true
+		offers = offers || j.Accept
+	}
+	switch {
+	case len(oks) >= 2:
+		if offers {
+			return "", false
+		}
+		return NReadyToAccept, true
+	case len(open) > 0 || outstanding:
+		return "", false
+	case p.F("result") == "failed":
+		return NStranded, true
+	case len(reads) == 0 && before == 0:
+		return "", false
+	case len(reads) == 0:
+		return NStranded, true
+	}
+	return NReadsExhausted, true
+}
+
 // onCard is a holder that holds while a judgment of one of the types is open
 // or held on the card.
 func onCard(types ...string) func(*holdView, *Card) string {
@@ -592,10 +766,23 @@ func opJudged(v *holdView, c *Card) string {
 	return why
 }
 
-// sentinelBlocked is (d) of a sentinel not yet reached: the cards before it
-// and its own needs.
-func sentinelBlocked(v *holdView, c *Card) string {
-	return fmt.Sprintf("n_before %d, open %d", v.nBefore(c), c.Int("open"))
+// cardsBeforeSentinel is (d) of a sentinel that is not reached: an open card of its
+// stream is before it, and holds itself (NothingSilent).
+func cardsBeforeSentinel(v *holdView, c *Card) string {
+	if n := v.nBefore(c); n > 0 {
+		return fmt.Sprintf("n_before %d, open %d", n, c.Int("open"))
+	}
+	return ""
+}
+
+// frontUnread holds a sentinel whose stream's front the snapshot does not have,
+// and that nothing else names: it cannot be told from one with cards before it,
+// so it is not judged.
+func frontUnread(v *holdView, c *Card) string {
+	if v.front(c.Row).known {
+		return ""
+	}
+	return "open " + strconv.Itoa(c.Int("open"))
 }
 
 // reachRaises is R3's reach: a reached sentinel with no judgment open on it is
@@ -648,7 +835,7 @@ func dealNoRoom(v *holdView, c *Card) string {
 	if len(v.up) == 0 || v.room > 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d up members, each with %d ready", len(v.up), MaxReadyPerMember)
+	return fmt.Sprintf("%d up members, each with %d ready", len(v.up), heldReadyPerMember)
 }
 
 // noMemberJudged is (c) of a ready primary when no member is up: the
@@ -719,18 +906,52 @@ func workJudged(v *holdView, c *Card) string {
 	return why
 }
 
+// readDue is the deadline of a read card that is asked and not begun, or begun
+// and not reported (1.2), in running ms; false when it is in another cell, has
+// none, or does not agree with its own identity.
+func readDue(r *Card) (int64, bool) {
+	field := fieldDueUnbegun
+	switch r.Col {
+	case Asked:
+	case Reading:
+		field = fieldDueUnreported
+	default:
+		return 0, false
+	}
+	due, ok := dueOf(r, field)
+	return due, ok && ReadCardAgrees(r)
+}
+
 // readOutstanding is (a) of a primary in review: a read at its attempt asked
 // and not begun, or begun and not reported, before its deadline.
 func readOutstanding(v *holdView, c *Card) string {
 	for _, r := range v.reads(c) {
-		field := fieldDueUnbegun
-		if r.Col == Reading {
-			field = fieldDueUnreported
-		} else if r.Col != Asked {
-			continue
-		}
-		if due, ok := dueOf(r, field); ok && ReadCardAgrees(r) && v.now.R < due {
+		if due, ok := readDue(r); ok && v.now.R < due {
 			return fmt.Sprintf("reader %s holds %s (%s) until R %d", r.Row, r.ID, r.Col, due)
+		}
+	}
+	return ""
+}
+
+// readDuePassed is R11's condition on a primary in review: a read at its attempt
+// asked and not begun, or begun and not reported, whose deadline has come. R11
+// replaces it, or below three rereads asks another reader, or raises "a read
+// card is past its deadline" (2.3 R11).
+func readDuePassed(v *holdView, c *Card) string {
+	for _, r := range v.reads(c) {
+		if due, ok := readDue(r); ok && v.now.R >= due {
+			return fmt.Sprintf("%s was due at R %d", r.ID, due)
+		}
+	}
+	return ""
+}
+
+// readJudged is (c) of a primary in review: the lateness judgment on a read card
+// of its attempt, open or held.
+func readJudged(v *holdView, c *Card) string {
+	for _, r := range v.reads(c) {
+		if why, ok := v.judgment(r.ID, NReadLate); ok {
+			return r.ID + ", " + why
 		}
 	}
 	return ""
@@ -766,7 +987,7 @@ func reviewAccepts(v *holdView, c *Card) string {
 }
 
 // reviewReworks is R10's condition: its work came back failed, or a read at its
-// attempt is broken. R10 reworks it below heldAttemptBound and sets its bound
+// attempt is broken. R10 reworks it below heldMaxAttempts and sets its bound
 // at it, so it is R10's either way.
 func reviewReworks(v *holdView, c *Card) string {
 	attempt := c.Int("attempt")
@@ -777,7 +998,7 @@ func reviewReworks(v *holdView, c *Card) string {
 	if c.F("result") != "failed" && !broken {
 		return ""
 	}
-	if attempt >= heldAttemptBound {
+	if attempt >= heldMaxAttempts {
 		return "attempt " + strconv.Itoa(attempt) + " sets its bound"
 	}
 	return "attempt " + strconv.Itoa(attempt) + " is reworked"
@@ -801,6 +1022,23 @@ func mergeQueued(v *holdView, c *Card) string {
 	return ""
 }
 
+// mergeIdlePassed is R11's condition on a merging primary: its stream is merging
+// or waiting and its merge-idle deadline has come (2.3 R11, `mergeidle:s`: the
+// deadline is set only while the stream merges or waits with queued cards, so
+// the stream's state and its deadline are the condition). R11 raises "a stream
+// has had no merge step past its deadline".
+func mergeIdlePassed(v *holdView, c *Card) string {
+	ctl := v.s.StreamCtl(c.Row)
+	state := ctl.F("state")
+	if state != StreamMerging && state != StreamWaiting {
+		return ""
+	}
+	if due, ok := dueOf(ctl, fieldDueMergeIdle); ok && v.now.R >= due {
+		return fmt.Sprintf("stream %s (%s) had no merge step by R %d", c.Row, state, due)
+	}
+	return ""
+}
+
 // crossLanded is R5's condition on a merging primary: its stream stopped on a
 // card of another stream, and that card has landed. The stream's control card
 // names it (need_card, and other where the merge step writes it).
@@ -813,8 +1051,17 @@ func crossLanded(v *holdView, c *Card) string {
 	if need == "" {
 		need = ctl.F("other")
 	}
-	if nc := v.s.Work.Placed(need); need != "" && nc != nil && nc.Col == Landed {
+	if need == "" {
+		return ""
+	}
+	if nc := v.s.Work.Placed(need); nc != nil && nc.Col == Landed {
 		return need + " landed"
+	} else if nc == nil && v.unread(need) {
+		// no follow of a read reaches the card another card's field names, so a
+		// partial snapshot has the need only when the plan named it beside the
+		// card; where it has not, the need is not known to be waiting, and the
+		// stream's own stop judgment or R5 holds the card
+		return need + " was not read"
 	}
 	return ""
 }
@@ -830,4 +1077,22 @@ func mergeJudged(v *holdView, c *Card) string {
 	}
 	why, _ := v.judgment(subject, NMergeLate)
 	return why
+}
+
+// expandDecisions is a row's decisions with the placeholder of a working card
+// replaced by one decision for each member the cards of the note sit at, in name
+// order: a note names many cards, and its one list of decisions has to answer
+// each. With no member to name (a work card is not found) the placeholder goes.
+func expandDecisions(row []string, members []string) []string {
+	out := make([]string, 0, len(row)+len(members))
+	for _, d := range row {
+		if d != decisionFleetDown {
+			out = append(out, d)
+			continue
+		}
+		for _, m := range members {
+			out = append(out, "fleet down "+m)
+		}
+	}
+	return slices.Clip(out)
 }
