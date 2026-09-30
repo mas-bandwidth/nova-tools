@@ -33,6 +33,9 @@ type Unit struct {
 	Notes   []Note
 	Closes  []Open // open judgments this unit answers: recorded as decided
 	Moved   string // what moved, one line
+	// RowDels are rows the unit's part deletes once its changes are applied:
+	// only the last part of a remove has them (Remove).
+	RowDels []RowDel
 }
 
 // Refusal is a card the step did not move, and why.
@@ -68,6 +71,9 @@ type Plan struct {
 	// sentinel. inserting says add inserts a sentinel in front of ready
 	// primaries: the one step that may move a primary ready -> waiting.
 	releasing, inserting bool
+	// removing says remove built the plan: the one step that takes a landed
+	// primary off the table.
+	removing bool
 }
 
 // on records the pre-state the plan was built on (see Plan.pre).
