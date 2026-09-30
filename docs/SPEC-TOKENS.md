@@ -1359,11 +1359,11 @@ seen red before it is trusted.
     and a note built from it folds as the successor of `<id>` (two
     sequential `report`s, the second superseding the first, fold to the
     second's rows and one `SUPERSEDED` line);
-    `report --who emma --day D --provider google:emma=<export>` over the fixture
+    `report --who emma --day D --provider google:g=<export>` over the fixture
     export of per-day totals declaring `America/Los_Angeles` prints lines
     of seven fields, each ending `day_basis=America/Los_Angeles`, and a
     note built from that subject and that `--note` file, folded by
-    `fold --bus`, writes the same rows as `fold --provider google:emma=<export>`
+    `fold --bus`, writes the same rows as `fold --provider google:g=<export>`
     over the export directly, `day_basis=America/Los_Angeles` on each,
     `TOKENS DAY nonutc=` equal between the two folds, `TOKENS SOURCE
     day_basis=America/Los_Angeles` on the bus source line; the Claude

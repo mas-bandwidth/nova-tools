@@ -21,7 +21,7 @@
 # fixture; changing the path changes the record's id, so the fixture is regenerated as a
 # piece, not edited.
 #
-# ceiling: 444
+# ceiling: 442
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
@@ -85,9 +85,9 @@ docs/CLI.md:johnny 2
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
 docs/CLI.md:rowan 29
-docs/CLI.md:space 4
+docs/CLI.md:space 3
 docs/CLI.md:stella 7
-docs/CLI.md:studio 11
+docs/CLI.md:studio 10
 docs/CONTRIBUTING.md:glenn 1
 docs/CONTRIBUTING.md:mas-bandwidth 1
 docs/CONTRIBUTING.md:space 2
@@ -108,11 +108,9 @@ docs/PROPOSAL-TOKENS-RECORDS-185.md:studio 2
 docs/PROPOSAL-TOKENS-RECORDS.md:studio 3
 docs/PROPOSAL-TOKENS-VALIDATORS.md:emma 2
 docs/PROPOSAL-TOKENS-VALIDATORS.md:stella 1
-docs/SPEC-BUS-DELIVERY.md:johnny 3
 docs/SPEC-BUS-DELIVERY.md:rowan 1
 docs/SPEC-BUS-DELIVERY.md:stella 3
 docs/SPEC-BUS-REPLY.md:space 1
-docs/SPEC-BUS.md:johnny 1
 docs/SPEC-CI.md:batman 1
 docs/SPEC-CI.md:hulk 1
 docs/SPEC-CI.md:mas-bandwidth 1
@@ -124,7 +122,7 @@ docs/SPEC-CI.md:superman 1
 docs/SPEC-CI.md:vision 1
 docs/SPEC-CONFIG.md:hulk 1
 docs/SPEC-CONFIG.md:rowan 2
-docs/SPEC-CONFIG.md:space 2
+docs/SPEC-CONFIG.md:space 1
 docs/SPEC-CONFIG.md:stella 2
 docs/SPEC-CONFIG.md:studio 2
 docs/SPEC-RELEASE.md:johnny 4
@@ -143,13 +141,13 @@ docs/SPEC-SECRETS.md:stella 1
 docs/SPEC-SECRETS.md:studio 4
 docs/SPEC-SWARM.md:space 4
 docs/SPEC-TABLE-SET.md:space 10
-docs/SPEC-TOKENS.md:emma 13
+docs/SPEC-TOKENS.md:emma 12
 docs/SPEC-TOKENS.md:freddy 2
 docs/SPEC-TOKENS.md:glenn 2
-docs/SPEC-TOKENS.md:johnny 2
+docs/SPEC-TOKENS.md:johnny 1
 docs/SPEC-TOKENS.md:rowan 2
 docs/SPEC-TOKENS.md:space 2
-docs/SPEC-TOKENS.md:stella 2
+docs/SPEC-TOKENS.md:stella 1
 docs/SPEC-UPDATE.md:emma 1
 docs/SPEC-UPDATE.md:freddy 1
 docs/SPEC-UPDATE.md:glenn 2
