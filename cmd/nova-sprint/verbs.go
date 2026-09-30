@@ -87,9 +87,22 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
+// opening is the banner's first three answers: what the tool does (line 1,
+// the README's sentence), how it works, and the first run (ONBOARDING.md
+// point 6).
+const opening = `nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
+
+how it works: one Redis store holds one sprint as four nova-table tables (work,
+merge, readers, fleet) and the view sprint. A card is one unit of work in a
+stream; each tick deals ready cards to members (machines with a width), sends
+finished work to readers, queues what they pass to merge by stream, and puts
+every judgment it cannot make in the coordinator's inbox with its commands.
+first run: needs a Redis you may write to: --redis 127.0.0.1:6379 (or
+NOVA_SPRINT_REDIS) and --actor <your name>; then init, add, start and inbox.`
+
 func banner() string {
 	var b strings.Builder
-	b.WriteString("nova-sprint: the sprint table: four tables on nova-table, the moves between them, and the coordinator's inbox\n\nusage:\n")
+	b.WriteString(opening + "\n\nusage:\n")
 	for _, v := range verbs {
 		b.WriteString("  nova-sprint " + strings.TrimSpace(v.name+" "+v.syntax) + "\n")
 	}

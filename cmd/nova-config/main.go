@@ -56,7 +56,16 @@ const (
 	envMachine     = "NOVA_MACHINE"
 )
 
-const usageTop = `nova-config: the fleet's permanent configuration, in Postgres, applied into Redis (see docs/CLI.md)
+const usageTop = `nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+
+how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
+row per host ssh reaches (its login, the nova-secrets seat it opens secrets as,
+its card slots), a friend row per AI (slots, tiers, roles), one fleet row and
+one sprint row; every write adds a history row naming who made it. apply copies
+the rows into Redis, where running tools read them; inventory feeds Ansible.
+first run: the lines under example: need no database; the rest needs PostgreSQL:
+export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
+run migrate.
 
 usage:
   nova-config help

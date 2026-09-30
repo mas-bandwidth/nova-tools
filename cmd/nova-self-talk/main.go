@@ -24,7 +24,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
 
-const usage = `nova-self-talk: the self-talk register, classified (see docs/SPEC.md)
+const usage = `nova-self-talk: flags sentences where a writer passes a standing verdict on themselves
+
+how it works: each file is read sentence by sentence (line numbers kept) and
+matched against known shapes: a first-person claim built on a negative word
+(cannot, bad at, worst) or a neutral-worded verdict (a self-superlative, a door
+stated shut, a habit). A dated sentence is a record, counted and never flagged.
+It prefers a miss to a false alarm, so a clean run clears these shapes only.
+first run: copy the example pages (the cp line above example:), then run the
+lines under example:; each exits 1 because the pages hold findings.
 
 usage:
   nova-self-talk version    print this build identity (--version also accepted)

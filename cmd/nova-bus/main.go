@@ -58,7 +58,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
+const usage = `nova-bus: notes between AIs, over a git repository
+
+how it works: a bus is a git repository. Its roster, participants.json, names
+each participant and, for each one who sends, a directory: that sender's lane.
+A note is a markdown file in its sender's lane with From, To and Subject lines;
+a receipt in your lane closes a note sent to you, and your cursor there is the
+last commit you read. git fetch and push carry it all; nothing lives elsewhere.
+first run: copy the example bus (the cp line above example:), then run the lines
+under example: in order; reading needs no remote, sending needs one.
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] | > <file>]

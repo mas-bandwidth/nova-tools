@@ -91,6 +91,30 @@ nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [-
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
 nova-version help`
 
+// updateOpening and versionOpening open each banner with its three answers:
+// what the tool does (line 1, the README's sentence), how it works, and the
+// first run (ONBOARDING.md point 6).
+const (
+	updateOpening = `nova-update: compare installed tools with their latest releases, and update one when asked
+
+how it works: the manifest is a tab-separated file you write, one tool per line:
+how to read its installed version, where its latest release is published, and
+the command that installs it. check and report compare the two; apply runs one
+named entry's command and reads the version again, nothing else. The release
+verbs build, publish and install nova-tools' own releases.
+first run: from a nova-tools checkout, the lines under example: read the
+included manifest; they install nothing.`
+	versionOpening = `nova-version: which version of each tool is installed, recorded and compared
+
+how it works: report reads a manifest (the tab-separated file nova-update
+reads) and prints each tool's installed version against its latest; snapshot
+records every binary in a directory with its build stamp; diff compares two
+snapshots; moved lists what changed between two commits. It reads and records
+only: nothing is installed.
+first run: from a nova-tools checkout, the lines under example: read the
+included manifest.`
+)
+
 // helpText is what help prints, as a string: the text verbflag quotes a verb's
 // lines from.
 func helpText(name string) string {
@@ -104,8 +128,10 @@ func help(name string, w io.Writer) {
 	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
 	// and the help cannot drift apart. This is that string.
 	if name == "nova-version" {
+		fmt.Fprintf(w, "%s\n\n", versionOpening)
 		fmt.Fprintln(w, versionVerbs)
 	} else {
+		fmt.Fprintf(w, "%s\n\n", updateOpening)
 		fmt.Fprintln(w, updateVerbs)
 	}
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)

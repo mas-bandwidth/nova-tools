@@ -41,7 +41,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
-const usage = `nova-tokens: token spend, folded per day, keyed by (day, model, repo) (see docs/SPEC-TOKENS.md)
+const usage = `nova-tokens: token spend per day, model and repository, read from AI session logs
+
+how it works: fold reads the logs you name (Claude Code transcripts, OpenCode
+databases, swarm pools, bus notes) and writes one day file per day into --out,
+one row per (day, model, repo). The repo comes from the --repos file: lines of
+<name><TAB><regexp>, and the first match on a session's path wins. check, sum
+and report read the day files back; a count a source never gave prints as -.
+first run: copy the example bench (the cp line above example:), then run the
+lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>

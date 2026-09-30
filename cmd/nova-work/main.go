@@ -28,7 +28,15 @@ import (
 
 var version string
 
-const banner = `nova-work: every issue of every repository in one tree file, verified field for field (docs/SPEC-WORK-V1.md)
+const banner = `nova-work: every issue of an organization's repositories in one tree file, verified field for field
+
+how it works: import reads issues through your gh login, read-only, and writes
+one tree file: a (work-tree ...) record holding each repository and every field
+of each issue. verify reads GitHub again and prints one MISSING, EXTRA or DRIFT
+line per difference; no lines is the proof. The calls are counted and checked
+against --max-calls before any issue is read.
+first run: needs gh logged in (gh auth status); the lines under example: read
+one public repository.
 
 usage:
   nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]

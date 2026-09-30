@@ -23,7 +23,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-check: record-layer checks, for a nova self repo and for this family's own tools (see docs/SPEC.md)
+const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
+
+how it works: each verb is one check over the files you name; nothing is kept
+between runs and nothing is written except by spelling --write. links, nocode,
+kernel and spelling fit any markdown tree (spelling matches a list of known
+misspellings, not a dictionary); attest, floors, corpus, hygiene, dogfood and
+convergence read a record repository's own manifest, ledgers and receipts.
+first run: copy the example records (the cp lines above example:), then run the
+lines under example: in order.
 
 usage:
   nova-check version    print this build identity (--version also accepted)

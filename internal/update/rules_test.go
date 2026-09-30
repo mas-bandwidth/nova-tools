@@ -374,13 +374,15 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 	var printed bytes.Buffer
 	help("nova-update", &printed)
-	if !strings.HasPrefix(printed.String(), updateVerbs+"\n") {
-		t.Fatalf("help does not open with the verbs block:\n%s", printed.String())
+	// The banner opens with its three answers (ONBOARDING.md point 6), and the
+	// verbs block follows them whole.
+	if !strings.HasPrefix(printed.String(), updateOpening+"\n\n"+updateVerbs+"\n") {
+		t.Fatalf("help does not open with its opening and then the verbs block:\n%s", printed.String())
 	}
 	printed.Reset()
 	help("nova-version", &printed)
-	if !strings.HasPrefix(printed.String(), versionVerbs+"\n") {
-		t.Fatalf("nova-version's help does not open with its two lines:\n%s", printed.String())
+	if !strings.HasPrefix(printed.String(), versionOpening+"\n\n"+versionVerbs+"\n") {
+		t.Fatalf("nova-version's help does not open with its opening and then its lines:\n%s", printed.String())
 	}
 	// The spec says nova-version's lines are the report line's flags under that
 	// name, so every flag the report line offers a plain report must appear.

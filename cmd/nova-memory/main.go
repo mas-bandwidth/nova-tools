@@ -40,7 +40,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/play"
 )
 
-const usage = `nova-memory: membership is a lookup, never a scan (see docs/SPEC.md)
+const usage = `nova-memory: search your own markdown notes, and check a draft against what they already say
+
+how it works: each run reads the --root directories and builds its index in
+memory (bm25 words, trigrams); nothing is written. search prints the k best
+passages with file:line and the quoted text; check names the notes a draft
+repeats; verify gates links and frontmatter. The CAL line is the score a fixed
+unrelated probe gets here: a hit scoring at or below it is no better than noise.
+first run: quickstart --root on any folder of .md files, or copy the included
+corpus (the setup line above example:) and run the lines under example:.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)

@@ -37,7 +37,15 @@ import (
 // after the fact is a promise one platform can keep and the others cannot.
 const readRemedy = "A command that runs OUTSIDE the wall and dies inside it is missing a --read"
 
-const usage = `nova-sandbox: one command, contained by the OS (see docs/SPEC-SANDBOX.md)
+const usage = `nova-sandbox: run one command inside an OS-enforced wall around the directories you name
+
+how it works: the wall is built for one run from your flags and kept nowhere:
+--read directories are readable, --write directories writable, and the kernel
+denies the rest (sandbox-exec on macOS, Landlock on Linux; check says which).
+Paths must exist and be absolute, and HOME must sit inside a --write. The
+command's own exit status comes back; 125 means the wall refused to start it.
+first run: the lines under example:, in order: check the backend, make a scratch
+directory, prove the wall with probe, then run a command inside it.
 
 usage:
   nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]

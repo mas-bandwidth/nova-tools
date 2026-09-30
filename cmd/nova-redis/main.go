@@ -66,7 +66,15 @@ const (
 	fieldExpires = "expires_ms"
 )
 
-const usage = `nova-redis — owns the local Redis instance and its scratch verbs (docs/SPEC-REDIS.md)
+const usage = `nova-redis: run a local Redis store, and keep short-lived named values in it
+
+how it works: serve runs redis-server on loopback or tailnet addresses only,
+with its data in --dir. spill writes a value under <owner>:<name> with a
+required expiry, and recall reads it back (exit 1 once it has expired). fn load
+and fn check install and verify the Redis functions the sprint store runs on.
+Passwords come from an environment variable, never from an argument.
+first run: needs a Redis you may write to; the lines under example: expect one
+at 127.0.0.1:6379 (redis-server --port 6379 in another terminal is enough).
 
 usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>

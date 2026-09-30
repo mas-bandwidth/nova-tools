@@ -39,7 +39,14 @@ import (
 
 var version string
 
-const usage = `nova-cairn: optional checkpoints, no memory lifecycle (see docs/SPEC-CAIRN.md)
+const usage = `nova-cairn: a session's words, kept durably as plain files you can come back to
+
+how it works: a store is a directory you name, plain files only. open starts a
+session; append keeps one entry's exact words as the text field of
+entries/<session>/<entry>.json, synced to disk before it says OK. The same entry
+id with the same words is a duplicate that succeeds; other words are refused.
+--publish records your policy only: nothing is sent, and every line says so.
+first run: the four lines under example:, in order; the open makes ./cairns.
 
 usage:
   nova-cairn version
