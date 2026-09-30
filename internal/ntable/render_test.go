@@ -458,10 +458,12 @@ func TestRenderUnionFooterIsUnknownWhenARowIsUnread(t *testing.T) {
 			return []ntable.Row{a, u}
 		}, "  | ?\n"},
 	} {
-		tb.Rows = c.rows()
-		if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.HasSuffix(got, c.want) {
-			t.Errorf("%s: footer of\n%s\nwant it to end %q", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			tb.Rows = c.rows()
+			if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.HasSuffix(got, c.want) {
+				t.Errorf("%s: footer of\n%s\nwant it to end %q", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -471,9 +473,11 @@ func TestParseColumnEmptyProjectionIsTheCount(t *testing.T) {
 	t.Parallel()
 
 	for _, spec := range []string{"n", "n:", "n::sum", "n::sum:Label"} {
-		c, err := ntable.ParseColumn(spec)
-		if err != nil || c.Projection != ntable.Count || c.Fold != ntable.Sum {
-			t.Errorf("ParseColumn(%q) = %+v, %v; want the count folded by sum", spec, c, err)
-		}
+		t.Run(spec, func(t *testing.T) {
+			c, err := ntable.ParseColumn(spec)
+			if err != nil || c.Projection != ntable.Count || c.Fold != ntable.Sum {
+				t.Errorf("ParseColumn(%q) = %+v, %v; want the count folded by sum", spec, c, err)
+			}
+		})
 	}
 }

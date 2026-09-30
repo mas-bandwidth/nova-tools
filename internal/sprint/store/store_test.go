@@ -678,12 +678,14 @@ func TestCheckReadsTheLogOnlyWhenItHoldsTheLogsRules(t *testing.T) {
 		{"the log's rules left to the caller", false, false},
 		{"the log's rules held", true, true},
 	} {
-		l.n = 0
-		if _, _, err := st.check(h.ctx, 1, c.streams); err != nil {
-			t.Fatal(err)
-		}
-		if (l.n > 0) != c.reads {
-			t.Errorf("%s: the log was read %d times, want reads %v", c.name, l.n, c.reads)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			l.n = 0
+			if _, _, err := st.check(h.ctx, 1, c.streams); err != nil {
+				t.Fatal(err)
+			}
+			if (l.n > 0) != c.reads {
+				t.Errorf("%s: the log was read %d times, want reads %v", c.name, l.n, c.reads)
+			}
+		})
 	}
 }

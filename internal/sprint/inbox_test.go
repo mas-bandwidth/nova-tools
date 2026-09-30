@@ -50,10 +50,12 @@ func TestAGroupsMembersAreCardsAndNeverAStreamOrTheSprint(t *testing.T) {
 		{"a stream", StreamSubject("s1"), nil},
 		{"the sprint", SprintSubject, nil},
 	} {
-		n := Note{ID: "n1", Kind: Judgment, Type: NSprintDone, At: t0}
-		g := Inbox(InboxReq{Now: t0.Add(time.Hour), Open: []Open{{Key: OpenKey(n.ID, c.subject), Note: n}}})
-		if len(g) != 1 || !slices.Equal(g[0].Members, c.want) || g[0].Size != len(c.want) || g[0].Count != 1 {
-			t.Errorf("%s: %+v, want members %v", c.name, g, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			n := Note{ID: "n1", Kind: Judgment, Type: NSprintDone, At: t0}
+			g := Inbox(InboxReq{Now: t0.Add(time.Hour), Open: []Open{{Key: OpenKey(n.ID, c.subject), Note: n}}})
+			if len(g) != 1 || !slices.Equal(g[0].Members, c.want) || g[0].Size != len(c.want) || g[0].Count != 1 {
+				t.Errorf("%s: %+v, want members %v", c.name, g, c.want)
+			}
+		})
 	}
 }

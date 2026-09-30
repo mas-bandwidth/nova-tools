@@ -194,16 +194,18 @@ func TestReworkOfNoNamedCardTakesReviewAndTheBoundedReadyCards(t *testing.T) {
 		{"one primary in review, one at its redeal bound", MaxRedeals, []string{"s1-2", "s1-3"}},
 		{"one primary in review, one a redeal short of its bound", MaxRedeals - 1, []string{"s1-3"}},
 	} {
-		w := stoppedForConflict(t)
-		inOrder(returnCards("s1-2", "s1-3"), reworkCards("s1-2"), atRedealBound("s1-2", c.redeals))(w)
-		p := Rework(w.s, ReworkReq{Fix: "a fix"})
-		var got []string
-		for _, u := range p.Units {
-			got = append(got, u.Key)
-		}
-		slices.Sort(got)
-		if !slices.Equal(got, c.want) || len(p.Refused) != 0 {
-			t.Errorf("%s: reworked %v, refused %v, want %v", c.name, got, p.Refused, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			w := stoppedForConflict(t)
+			inOrder(returnCards("s1-2", "s1-3"), reworkCards("s1-2"), atRedealBound("s1-2", c.redeals))(w)
+			p := Rework(w.s, ReworkReq{Fix: "a fix"})
+			var got []string
+			for _, u := range p.Units {
+				got = append(got, u.Key)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, c.want) || len(p.Refused) != 0 {
+				t.Errorf("%s: reworked %v, refused %v, want %v", c.name, got, p.Refused, c.want)
+			}
+		})
 	}
 }

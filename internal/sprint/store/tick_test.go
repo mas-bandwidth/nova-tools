@@ -1,13 +1,11 @@
 package store
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -772,22 +770,6 @@ func TestAMachineThatNeverTickedIsSilentFromItsStart(t *testing.T) {
 	t.Fatalf("no machine:silent group: %+v", v.Groups)
 }
 
-// refusingMem is refusing over the Mem itself, which keeps the machine's
-// records a tick reads.
-type refusingMem struct {
-	*Mem
-	table string
-	calls int
-}
-
-func (r *refusingMem) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Receipt, error) {
-	if m.Table == r.table {
-		r.calls++
-		return ntable.Receipt{}, &ntable.Refusal{Code: "LIMIT", Location: "store", Sentence: "limit exceeded: changed entries: bound 1, observed 2", Guarded: true}
-	}
-	return r.Mem.Apply(ctx, m)
-}
-
 // A part the store refuses whole on a bound moves nothing, so the tick names no
 // row of the tables as changed: the rows are the rows a part's step moved.
 func TestATickPartRefusedWholeNamesNoRows(t *testing.T) {
@@ -796,7 +778,7 @@ func TestATickPartRefusedWholeNamesNoRows(t *testing.T) {
 	h.setup(2)
 	h.startMachine()
 	st := *h.st
-	r := &refusingMem{Mem: h.m, table: "t-fleet"}
+	r := &refusing{Mem: h.m, table: "t-fleet"}
 	st.B = r
 	res, err := st.Tick(h.ctx)
 	if err != nil {

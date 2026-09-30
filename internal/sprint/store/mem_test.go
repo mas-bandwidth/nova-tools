@@ -58,9 +58,11 @@ func TestTheMemCountsTheCallsThatNameAnEpoch(t *testing.T) {
 		t.Fatalf("an operation nobody ran: %v %v", ok, err)
 	}
 	for e, want := range map[uint64]int{3: 0, 2: 1, 1: 1} {
-		if n := h.m.Touched(e); n != want {
-			t.Errorf("a search before epoch 3 touched epoch %d %d times, want %d", e, n, want)
-		}
+		t.Run(fmt.Sprint("epoch ", e), func(t *testing.T) {
+			if n := h.m.Touched(e); n != want {
+				t.Errorf("a search before epoch 3 touched epoch %d %d times, want %d", e, n, want)
+			}
+		})
 	}
 }
 

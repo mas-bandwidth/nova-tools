@@ -2,6 +2,7 @@ package ntable
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -25,9 +26,11 @@ func TestAnOperationsLocationNamesOnlyWhatItHolds(t *testing.T) {
 		{"a view", operation{table: "v", view: true}, `view "v"`},
 		{"the views", operation{view: true}, `views`},
 	} {
-		if got := c.op.location(); got != c.want {
-			t.Errorf("%s: location %q, want %q", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.op.location(); got != c.want {
+				t.Errorf("%s: location %q, want %q", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -43,9 +46,11 @@ func TestAStringIsANumberTokenOnlyWhenItStartsLikeOne(t *testing.T) {
 		{"", false}, {"-", false}, {"x", false}, {"+1", false}, {".5", false}, {"1x", false},
 		{json.Number("4"), true}, {json.Number("x"), false}, {2.5, true}, {7, true}, {true, false}, {nil, false},
 	} {
-		if got := isNumberToken(c.tok); got != c.want {
-			t.Errorf("isNumberToken(%#v) = %v, want %v", c.tok, got, c.want)
-		}
+		t.Run(fmt.Sprintf("%#v", c.tok), func(t *testing.T) {
+			if got := isNumberToken(c.tok); got != c.want {
+				t.Errorf("isNumberToken(%#v) = %v, want %v", c.tok, got, c.want)
+			}
+		})
 	}
 }
 
@@ -60,9 +65,11 @@ func TestAWordHoldsNoControlCharacter(t *testing.T) {
 		{"a b", true}, {"é", true}, {"~", true},
 		{"", false}, {"a\x00b", false}, {"a\nb", false}, {"a\x1fb", false}, {"a\x7fb", false},
 	} {
-		if got := word(c.s); got != c.want {
-			t.Errorf("word(%q) = %v, want %v", c.s, got, c.want)
-		}
+		t.Run(fmt.Sprintf("%q", c.s), func(t *testing.T) {
+			if got := word(c.s); got != c.want {
+				t.Errorf("word(%q) = %v, want %v", c.s, got, c.want)
+			}
+		})
 	}
 }
 
@@ -78,9 +85,11 @@ func TestABoundedValueIsWholeUpTo64Bytes(t *testing.T) {
 		{64, strings.Repeat("a", 64)},
 		{65, strings.Repeat("a", 32) + "...(65 bytes)"},
 	} {
-		if got := bounded(strings.Repeat("a", c.n)); got != c.want {
-			t.Errorf("bounded of %d bytes = %q, want %q", c.n, got, c.want)
-		}
+		t.Run(fmt.Sprintf("%d bytes", c.n), func(t *testing.T) {
+			if got := bounded(strings.Repeat("a", c.n)); got != c.want {
+				t.Errorf("bounded of %d bytes = %q, want %q", c.n, got, c.want)
+			}
+		})
 	}
 }
 
@@ -95,9 +104,11 @@ func TestAWrongTypeNamesItsPlace(t *testing.T) {
 		{"members[0].id", "id must be a number, found a string"},
 		{"members[0]", "members[0] must be a number, found a string"},
 	} {
-		err := wrongType(c.where, "a number", "x")
-		if got := err.(*ManifestError).Msg; got != c.want {
-			t.Errorf("wrongType at %q: %q, want %q", c.where, got, c.want)
-		}
+		t.Run(c.where, func(t *testing.T) {
+			err := wrongType(c.where, "a number", "x")
+			if got := err.(*ManifestError).Msg; got != c.want {
+				t.Errorf("wrongType at %q: %q, want %q", c.where, got, c.want)
+			}
+		})
 	}
 }

@@ -44,8 +44,10 @@ func TestTreeCPUReadsOnlyAKnownSnapshotsLiveTree(t *testing.T) {
 		{"a live child of a live pid", &procSnapshot{live: map[int]bool{gone: true, self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, true},
 		{"a live child of a pid that is not live", &procSnapshot{live: map[int]bool{self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, false},
 	} {
-		if _, ok := c.snap.TreeCPU(c.pid); ok != c.want {
-			t.Errorf("%s: TreeCPU(%d) ok = %v, want %v", c.name, c.pid, ok, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if _, ok := c.snap.TreeCPU(c.pid); ok != c.want {
+				t.Errorf("%s: TreeCPU(%d) ok = %v, want %v", c.name, c.pid, ok, c.want)
+			}
+		})
 	}
 }

@@ -301,12 +301,14 @@ func TestFlattenAddsSplitsOnlyAdditions(t *testing.T) {
 		{"a + b*c", 2},
 		{"a - b + c", 2},
 	} {
-		e, err := parser.ParseExpr(c.src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := len(flattenAdds(e)); got != c.want {
-			t.Errorf("flattenAdds(%q) has %d operands, want %d", c.src, got, c.want)
-		}
+		t.Run(c.src, func(t *testing.T) {
+			e, err := parser.ParseExpr(c.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(flattenAdds(e)); got != c.want {
+				t.Errorf("flattenAdds(%q) has %d operands, want %d", c.src, got, c.want)
+			}
+		})
 	}
 }

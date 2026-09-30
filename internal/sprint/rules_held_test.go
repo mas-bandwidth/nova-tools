@@ -1676,15 +1676,17 @@ func TestHeldFactsOfCarriesOnlyTheRelatedAboutOfALine(t *testing.T) {
 		{"related over a line's ids", SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9, Limit: 4}}, answered, false},
 		{"related over a line's about, no answer for it", SprintQ{Kind: QueryRelated, Source: line}, nil, false},
 	} {
-		s := &Snapshot{Partial: &Partial{
-			Plan:   ReadPlan{Sprint: []SprintQ{c.q}},
-			Answer: ReadAnswer{Sprint: c.ans},
-		}}
-		lines := heldFactsOf(s).Lines
-		got, ok := lines[HeldLineAt{Line: 9}]
-		if c.want && (!ok || !slices.Equal(got.About, []string{"c0", "c1"})) || !c.want && len(lines) != 0 {
-			t.Errorf("%s: carried %+v, want carried %v", c.name, lines, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			s := &Snapshot{Partial: &Partial{
+				Plan:   ReadPlan{Sprint: []SprintQ{c.q}},
+				Answer: ReadAnswer{Sprint: c.ans},
+			}}
+			lines := heldFactsOf(s).Lines
+			got, ok := lines[HeldLineAt{Line: 9}]
+			if c.want && (!ok || !slices.Equal(got.About, []string{"c0", "c1"})) || !c.want && len(lines) != 0 {
+				t.Errorf("%s: carried %+v, want carried %v", c.name, lines, c.want)
+			}
+		})
 	}
 }
 
@@ -2207,14 +2209,16 @@ func TestHeldAWorkCardAtAMemberNoHolderNamesIsHeldByR11OnlyAtItsDue(t *testing.T
 		{"at its due", hR, false},
 		{"after its due", hR - 1, false},
 	} {
-		w := newHWorld()
-		w.member("m3", "")
-		p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-		w.work(p, "m3", Working, heldDueUnfinished, strconv.FormatInt(c.due, 10))
-		vd := w.verdict("p1")
-		if vd.Stalled() != c.stalled || !c.stalled && (vd.By != HeldByTick || !strings.HasPrefix(vd.Why, "R11, its due has passed")) {
-			t.Errorf("%s: stalled %v, (%s) %s, want stalled %v", c.name, vd.Stalled(), vd.By, vd.Why, c.stalled)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			w := newHWorld()
+			w.member("m3", "")
+			p := w.primary("p1", "s1", Working, 1, "attempt", "1")
+			w.work(p, "m3", Working, heldDueUnfinished, strconv.FormatInt(c.due, 10))
+			vd := w.verdict("p1")
+			if vd.Stalled() != c.stalled || !c.stalled && (vd.By != HeldByTick || !strings.HasPrefix(vd.Why, "R11, its due has passed")) {
+				t.Errorf("%s: stalled %v, (%s) %s, want stalled %v", c.name, vd.Stalled(), vd.By, vd.Why, c.stalled)
+			}
+		})
 	}
 }
 

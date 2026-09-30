@@ -357,8 +357,10 @@ func TestAttachedOrFallbackReadsTheTextToItsEnd(t *testing.T) {
 		{" 2>&1 || true", true},
 		{" ; true || true", false},
 	} {
-		if got := attachedOrFallback(c.rest); got != c.want {
-			t.Errorf("attachedOrFallback(%q) = %v, want %v", c.rest, got, c.want)
-		}
+		t.Run(c.rest, func(t *testing.T) {
+			if got := attachedOrFallback(c.rest); got != c.want {
+				t.Errorf("attachedOrFallback(%q) = %v, want %v", c.rest, got, c.want)
+			}
+		})
 	}
 }
