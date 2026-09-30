@@ -45,7 +45,7 @@ denies the rest (sandbox-exec on macOS, Landlock on Linux; check says which).
 Paths must exist and be absolute, and HOME must sit inside a --write. The
 command's own exit status comes back; 125 means the wall refused to start it.
 first run: the lines under example:, in order: check the backend, make a scratch
-directory, prove the wall with probe, then run a command inside it.
+directory, prove the wall with probe, then run a command that writes inside it.
 
 usage:
   nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
@@ -177,6 +177,9 @@ error).
 
 example:
   nova-sandbox check
+  mkdir -p /tmp/trial/home
+  HOME=/tmp/trial/home nova-sandbox probe --write /tmp/trial
+  HOME=/tmp/trial/home nova-sandbox --write /tmp/trial -- /bin/sh -c 'echo inside > /tmp/trial/out'
 
 macOS job examples (replace /path/to with your own paths):
   HOME=/path/to/pool/jobs/j1/home \

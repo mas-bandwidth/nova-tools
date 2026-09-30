@@ -48,3 +48,6 @@ cmd/nova-sandbox/examples_functional_test.go:TestHelpCheckExampleMatchesTranscri
 cmd/nova-self-talk/firstrun_test.go:TestHelpExamplesAreTheFirstRunThroughTheComparator example: nova-self-talk ./pages/journal.md
 cmd/nova-self-talk/firstrun_test.go:TestHelpExamplesAreTheFirstRunThroughTheComparator example: nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 cmd/nova-self-talk/firstrun_test.go:TestHelpExamplesAreTheFirstRunThroughTheComparator example: nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md
+cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: mkdir -p /tmp/trial/home
+cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: HOME=/tmp/trial/home nova-sandbox probe --write /tmp/trial
+cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: HOME=/tmp/trial/home nova-sandbox --write /tmp/trial -- /bin/sh -c 'echo inside > /tmp/trial/out'
