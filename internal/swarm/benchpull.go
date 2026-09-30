@@ -123,6 +123,7 @@ func pullFromBench(p benchPull) error {
 			return err
 		}
 	}
+	// ignored: usage.tsv is absent on honest runs; its absence is how a failed copy shows (see the comment above)
 	_ = scpFile(p.host, p.remoteJob+"/usage.tsv", filepath.Join(p.localJob, "usage.tsv"))
 	log := filepath.Join(p.localJob, "native.log")
 	// native writes its own log to <slot>/native.log, so the third file comes back from

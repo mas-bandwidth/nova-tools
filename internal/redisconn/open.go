@@ -136,6 +136,7 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		// (its pool's conn.go:1114), so the socket is never closed. hangUp
 		// closes it; without hangUp TestOpenReturnsWhatTheStoreSaid fails with
 		// a connection left open by a failed Open.
+		// ignored: a close on the failure path (see the comment above); the store's answer is the one returned
 		_ = c.client.Close()
 		first.hangUp()
 		return nil, explain(l, c.hide, err, true)
@@ -226,6 +227,7 @@ func (d *firstDial) dialer(ctx context.Context, network, addr string) (net.Conn,
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
+		// ignored: a dial that raced the close; net.ErrClosed is the one returned
 		_ = nc.Close()
 		return nil, net.ErrClosed
 	}
@@ -277,6 +279,7 @@ func (d *firstDial) hangUp() {
 	d.mu.Unlock()
 
 	for _, c := range toClose {
+		// ignored: a hang-up of connections a failed Open made; the Open error is the one returned
 		_ = c.Close()
 	}
 }

@@ -147,7 +147,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
 	go func() { defer copyWG.Done(); _, _ = io.Copy(out, stdoutRead) }()
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
 	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
 
 	if err := cmd.Start(); err != nil {

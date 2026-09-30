@@ -241,6 +241,7 @@ func pathWithin(root, path string) bool {
 
 func treeBytes(dir string) int64 {
 	var n int64
+	// ignored: a size estimate; an unreadable entry is skipped and counts as zero bytes
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil

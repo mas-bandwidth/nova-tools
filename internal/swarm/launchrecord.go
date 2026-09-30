@@ -219,6 +219,7 @@ func scanObjectKeys(dec *json.Decoder, seen map[string]bool) bool {
 			return true
 		}
 	}
+	// ignored: the closing delimiter of an object already read whole; a malformed tail was already refused by the value reads
 	_, _ = dec.Token() // the closing '}'
 	return false
 }
@@ -239,6 +240,7 @@ func scanValueKeys(dec *json.Decoder) bool {
 				return true
 			}
 		}
+		// ignored: the closing delimiter of an array already read whole; a malformed tail was already refused by the value reads
 		_, _ = dec.Token() // the closing ']'
 	}
 	return false

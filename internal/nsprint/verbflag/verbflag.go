@@ -69,6 +69,7 @@ func Parse(fs *flag.FlagSet, args []string) error {
 		panic(Help{FS: fs})
 	}
 	if err != nil {
+		// ignored: the flag package's own message to the set's output; the parse error is the one returned
 		_, _ = out.Write(held.Bytes())
 		if asked {
 			usage()
@@ -142,6 +143,7 @@ func Print(out io.Writer, prog, banner string, fs *flag.FlagSet) {
 	for _, l := range exitCodes(banner, prog) {
 		b.WriteString(l + "\n")
 	}
+	// ignored: help written to stdout; a closed stdout has no reader to tell
 	_, _ = io.WriteString(out, b.String())
 }
 

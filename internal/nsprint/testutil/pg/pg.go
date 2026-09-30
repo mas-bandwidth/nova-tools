@@ -142,6 +142,7 @@ func StartServer(dir string) (*Server, error) {
 		if err == nil {
 			s.Port = port
 			if err := s.ready(); err != nil {
+				// ignored: a test fixture's cleanup on the failure path; the ready error is the one returned
 				_ = s.Stop()
 				return nil, err
 			}

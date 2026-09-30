@@ -51,6 +51,7 @@ func EmitOne(in EmitInput) int {
 	if err != nil {
 		return fail(in.Stderr, "event", err)
 	}
+	// ignored: a deferred close after the event is written and its line printed
 	defer func() { _ = store.Close() }()
 	store.SetClock(func() time.Time { return e.At })
 	id, err := store.Emit(ctx, e)

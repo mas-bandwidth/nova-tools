@@ -706,6 +706,7 @@ func Batch(in BatchInput) int {
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
 			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
 			if err != nil {
+				// ignored: a close on the failure path; the remoteRun error printed below is the one that matters
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
 				return 2
@@ -714,6 +715,7 @@ func Batch(in BatchInput) int {
 			// #636: no runner script, so this binary runs the card through its own `native`.
 			cmd, err = selfNative(c, in, logFile)
 			if err != nil {
+				// ignored: a close on the failure path; the selfNative error printed below is the one that matters
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
 				return 2
@@ -736,11 +738,13 @@ func Batch(in BatchInput) int {
 		// three constructors to trust.
 		ownGroup(cmd)
 		if err := cmd.Start(); err != nil {
+			// ignored: a close on the failure path; the start error printed below is the one that matters
 			_ = logFile.Close()
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: runner %s could not start for %s: %s\n",
 				oneline.Field(in.Runner), oneline.Field(c.label), oneline.Err(err))
 			return 2
 		}
+		// ignored: the child holds its own copy of the log descriptor; this close only drops the parent's
 		_ = logFile.Close()
 		// The group and its identity are RETAINED at launch, the way the supervisor retains
 		// its harness's (`jobPgid := cmd.Process.Pid`, supervise.go:159) and `native` its
@@ -1141,15 +1145,20 @@ func liftResult(job, label string, notes io.Writer) {
 		return
 	}
 	raw, err := readRegular(from)
+	if err == nil {
+		err = os.WriteFile(root, raw, 0o644)
+	}
+	if notes == nil {
+		return
+	}
 	if err != nil {
+		// Never silent: the card is about to be scored no-result, and this line
+		// says why and where the result it did publish is.
+		fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md not copied up from %s: %s; copy it to %s by hand and re-gather\n",
+			oneline.Field(label), oneline.Field(from), oneline.Err(err), oneline.Field(root))
 		return
 	}
-	if err := os.WriteFile(root, raw, 0o644); err != nil {
-		return
-	}
-	if notes != nil {
-		fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(label), oneline.Field(from))
-	}
+	fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(label), oneline.Field(from))
 }
 
 // FindCardResult is THE ONE PLACE a card's published result is looked for: the job root
@@ -2065,6 +2074,7 @@ func takeSlots(root, id string, cards []batchCard, note io.Writer) ([]int, error
 // and on no others: the live lock of a batch that refused one of our cards is never ours.
 func releaseSlots(root string, taken []int) {
 	for _, slot := range taken {
+		// ignored: a best-effort release of this batch's own lock; a lock left behind names a dead pid and is reaped by the next take
 		_ = os.Remove(batchLockPath(root, slot))
 	}
 }
@@ -2329,7 +2339,10 @@ func routeCards(in BatchInput, cards []batchCard) {
 				continue
 			}
 			if in.Route != nil && strings.TrimSpace(in.Route.Log) != "" {
-				_ = decide.AppendEntry(in.Route.Log, decide.SkippedEntry(c.label, in.RouteSkip, now()))
+				if err := decide.AppendEntry(in.Route.Log, decide.SkippedEntry(c.label, in.RouteSkip, now())); err != nil {
+					fmt.Fprintf(in.Stderr, "ROUTE NOTE %s the skipped row was not written to %s: %s\n",
+						oneline.Field(c.label), oneline.Field(in.Route.Log), oneline.Err(err))
+				}
 			}
 		}
 		return
@@ -2366,6 +2379,7 @@ func writeRouteReceipt(jobDir, receipt string) {
 	if strings.TrimSpace(receipt) == "" {
 		return
 	}
+	// ignored: the receipt has already been said on stderr (the function's contract); a missing route.txt is not a reason not to run the card
 	_ = os.WriteFile(filepath.Join(jobDir, "route.txt"), []byte(receipt+"\n"), 0o644)
 }
 

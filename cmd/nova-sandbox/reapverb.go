@@ -190,7 +190,7 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 		return true
 	}
 	if left := killProcesses(procs); left > 0 {
-		fmt.Fprintf(stderr, "SANDBOX NOTE %d process(es) still hold %s open after SIGKILL; the volume cannot be unmounted while they do\n", left, oneline.Field(vol.Mount))
+		fmt.Fprintf(stderr, "SANDBOX NOTE %d process(es) still hold %s open after SIGKILL; the volume cannot be unmounted while they do; run: lsof +D %s to name them, then nova-sandbox reap again\n", left, oneline.Field(vol.Mount), oneline.Field(vol.Mount))
 	}
 	if err := runVolumes.Delete(vol.Disk); err != nil {
 		fmt.Fprintf(stderr, "SANDBOX REAP volume=%s procs=%d deleted=no\n", name, len(procs))
@@ -212,6 +212,7 @@ func killProcesses(pids []int) int {
 		return 0
 	}
 	for _, pid := range pids {
+		// ignored: the process may already be gone; reapAlive below is the check
 		_ = reapSignal(pid, syscall.SIGTERM)
 	}
 	reapGraceSleep()
@@ -222,6 +223,7 @@ func killProcesses(pids []int) int {
 		}
 	}
 	for _, pid := range left {
+		// ignored: the process may already be gone; the survivors are counted and named after the grace
 		_ = reapSignal(pid, syscall.SIGKILL)
 	}
 	if len(left) == 0 {

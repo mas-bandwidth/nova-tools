@@ -585,6 +585,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
 		if proxy != nil {
+			// ignored: a close on the refusal path; the reason printed below is the one reported
 			_ = proxy.Close()
 		}
 		refuseNative(errOut, reason)
@@ -1436,7 +1437,7 @@ func wroteBytes(path string) bool {
 
 // refuseNative writes the one REFUSED line the run owes its caller.
 func refuseNative(w io.Writer, reason string) {
-	fmt.Fprintf(w, "NATIVE REFUSED: %s\n", oneline.Escape(reason))
+	fmt.Fprintf(w, "NATIVE REFUSED: %s\n", oneline.Escape(oneline.WithRemedy(reason, "nova-swarm native -h")))
 }
 
 // sandboxHostRules asks the wall, once, whether it can express a repo allow rule: network
@@ -1873,7 +1874,9 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 			fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
 	}
-	_ = swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
+	if err := swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the slot's usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+	}
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
@@ -2103,8 +2106,11 @@ func copyAuth(src, provider, dataHome string) string {
 		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
 	}
 	ocDir := filepath.Join(dataHome, "opencode")
-	if err := os.MkdirAll(ocDir, 0o755); err == nil {
-		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
+	if err := os.MkdirAll(ocDir, 0o755); err != nil {
+		return fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error()))
+	}
+	if err := os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600); err != nil {
+		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(filepath.Join(ocDir, "auth.json")), oneline.Escape(err.Error()))
 	}
 	return ""
 }
@@ -2207,6 +2213,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			pointed, ok := swarm.PointProviderAtProxy(body, provider, opened.HarnessURL())
 			if !ok {
+				// ignored: a close on the refusal path; the reason returned below is the one reported
 				_ = opened.Close()
 				return "", fmt.Sprintf("the provider %s could not be pointed at the read-deadline proxy", oneline.Field(provider)), nil
 			}
@@ -2221,12 +2228,14 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		if proxy != nil {
+			// ignored: a close on the refusal path; the reason returned below is the one reported
 			_ = proxy.Close()
 		}
 		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
 	}
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
 		if proxy != nil {
+			// ignored: a close on the refusal path; the reason returned below is the one reported
 			_ = proxy.Close()
 		}
 		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error())), nil

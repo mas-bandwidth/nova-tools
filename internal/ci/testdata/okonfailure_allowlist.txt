@@ -1,0 +1,9 @@
+# The print-then-exit pairs in cmd/ whose word and exit code disagree, one
+# file:function:kind per row with why it is left (internal/ci/okonfailure_class_test.go,
+# the no-ok-on-failure rule). A row leaves when the line's word follows the exit
+# (OK only at 0, FAIL or REFUSED only above it) or the pair goes away; it never
+# comes back. This list only shrinks: the class test fails on a row whose pair
+# has left as well as on a pair that is not listed, and NOVA_CI_UPDATE=1 drops a
+# stale row and never adds one.
+# ceiling: 1
+cmd/nova-check/main.go:cmdQuickstart:ok-carried QUICKSTART OK is printed over failed checks; being fixed in a sibling change of 2026-09-30, and this row goes when that lands

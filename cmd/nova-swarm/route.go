@@ -53,7 +53,7 @@ func cmdRoute(args []string, stdout, stderr io.Writer) int {
 	}
 	rows, err := swarm.ParseRoutes(*routes)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm route: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm route: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm route -h"))
 		return 2
 	}
 	result, err := swarm.RouteText(string(raw), *baseURL, *keyEnv, rows, *floor, *def)
@@ -62,7 +62,7 @@ func cmdRoute(args []string, stdout, stderr io.Writer) int {
 		if re, ok := err.(*swarm.RouteError); ok {
 			reason = re.Reason
 		}
-		fmt.Fprintf(stderr, "ROUTE REFUSED reason=%s %s\n", oneline.Field(reason), oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		fmt.Fprintf(stderr, "ROUTE REFUSED reason=%s %s; run: nova-swarm route -h\n", oneline.Field(reason), oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
 	belowWord := "-"

@@ -295,19 +295,24 @@ func writeAtomic(path, text string) error {
 	}
 	tmp := f.Name()
 	if _, err := f.WriteString(text); err != nil {
+		// ignored: a close on the failure path; the write error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the write error is the one returned
 		_ = os.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the close error is the one returned
 		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Chmod(tmp, 0o644); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the chmod error is the one returned
 		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the rename error is the one returned
 		_ = os.Remove(tmp)
 		return err
 	}

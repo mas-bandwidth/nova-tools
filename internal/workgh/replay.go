@@ -55,6 +55,7 @@ func Replay(dir string) (Query, error) {
 		// to are the same variable.
 		var got map[string]any
 		b, _ := json.Marshal(vars)
+		// ignored: a round trip of a value just marshalled from a map; the comparison below judges it
 		_ = json.Unmarshal(b, &got)
 		if !reflect.DeepEqual(got, recs[next].Vars) {
 			return nil, fmt.Errorf("workgh: replay: call %d asked %v, the recording asked %v", next+1, got, recs[next].Vars)

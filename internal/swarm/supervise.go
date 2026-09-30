@@ -332,6 +332,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			// The first observed sample always beats (creating the file), whatever its
 			// turn count; later samples beat only when turns advanced.
 			if !observed || usage.Turns > seen.Turns {
+				// ignored: a missed beat lets the provider lease expire by age, the designed fallback (see the comment above)
 				_ = touchProviderBeat(jobDir, in.Now())
 			}
 			seen = usage
@@ -486,6 +487,7 @@ func abort(in SuperviseInput, jobDir string, cause error) int {
 	if n, ok := GroupMembers(pgidOf(os.Getpid()), os.Getpid()); ok {
 		survivors = n
 	}
+	// ignored: WriteJSON below reports nothing either; the aborted record is best effort on a path that is already failing
 	_ = os.MkdirAll(jobDir, 0o755)
 	_ = WriteJSON(AbortedPath(jobDir), AbortedRecord{
 		Nonce: in.Nonce, Reason: cause.Error(), At: Stamp(in.Now()), Survivors: survivors,

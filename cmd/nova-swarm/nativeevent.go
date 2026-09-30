@@ -120,6 +120,7 @@ func seatEventLogin(opt events.WriterOptions) events.WriterOptions {
 	opt.Lookup = func(name string) string {
 		if name == pwName {
 			v := ""
+			// ignored: Use fails only when its function is nil or fails, and this one does neither
 			_ = c.Password.Use(func(pw string) error { v = pw; return nil })
 			return v
 		}

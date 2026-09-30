@@ -245,6 +245,7 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil {
 		return failed(stderr, "SPILL", *owner+":"+*name, err, store, d)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	key, err := s.spill(ctx, *owner, *name, *value, ttl)
@@ -286,6 +287,7 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil {
 		return failed(stderr, "RECALL", key, err, store, d)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	v, err := s.recall(ctx, *owner, *name)

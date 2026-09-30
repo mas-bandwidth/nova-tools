@@ -1,0 +1,16 @@
+# The script and play lines that throw a failure's words or exit away with no
+# `# ignored: <reason>`, one file:shape per row with why it is left
+# (internal/ci/discarded_class_test.go, TestNoScriptHidesAFailure). Most are
+# probes whose answer is the exit or a fallback with a second spelling; the
+# reason names the lines that hide a failure the operator should see. fleet/ is
+# being reworked (2026-09-30), so its rows wait for that. A row leaves when every
+# line of its shape in its file is reasoned or fixed; it never comes back. This
+# list only shrinks, and NOVA_CI_UPDATE=1 drops a stale row and never adds one.
+# ceiling: 7
+fleet/roles/container-runtime/tasks/main.yml:stderr-null the rootfs probe expects its write to fail and exits 15 if it lands; fleet/ is being reworked, so the reason comment waits for that
+scripts/bench-hygiene.sh:stderr-null seventeen lines, most of them probes (kill -0, readlink of a gone pid, stat with a second spelling, ls -A as an emptiness test); two hide a failure the operator should see: the runner _temp sweep's find -exec rm -rf errors, and `log` on a missing log file printing nothing
+tools/bench-standard.sh:or-true ten lines, most of them captures read on the next line (go version, sbcl --version, readlink with a fallback); two hide a failure: the stray-listener kill that reports every pid killed whether or not the kill landed, and the sandbox canary whose mktemp failure skips the check with no drift line
+tools/bench-standard.sh:stderr-null twenty-three lines, most of them probes and fallbacks; three hide a failure the operator should see: the seat check's `nova-secrets check >/dev/null 2>&1` drops that check's own reason and remedy (three lines), and the plaintext-apiKey grep reads an unreadable file as clean
+tools/bench-wsl2.ps1:stderr-null six lines, each a probe whose empty answer the script reports (go version, id -un, systemctl is-active, tailscale ip, the ssh round trip) or an idempotent `id -u || useradd`
+tools/preflight.sh:or-true `gofmt -l . 2>/dev/null | grep -v deprecated/ || true`: a file gofmt cannot parse reads as formatted; the build step after it is what catches the parse error
+tools/preflight.sh:stderr-null the same gofmt line: its parse errors are sent nowhere

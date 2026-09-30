@@ -1,0 +1,27 @@
+# The discarded errors the living Go still carries without a reason, one
+# file:function:shape per row with why it is left (internal/ci/discarded_class_test.go,
+# the discarded rule). Each row is a failure that goes silent today and wants a
+# change bigger than a comment: a writer the function does not have, a caller
+# that drops what it returns, a design call. A row leaves when its site gains
+# its `// ignored: <reason>` or is fixed; it never comes back. This list only
+# shrinks: the class test fails on a row whose site has left as well as on a
+# site that is not listed, and NOVA_CI_UPDATE=1 drops a stale row and never
+# adds one.
+# ceiling: 17
+cmd/nova-sprint/goal.go:app.goalsView:bare-return a failed goals read leaves the view without its people and says nothing; the frame does not show them, but --json does
+cmd/nova-swarm/member.go:nativeRunner.Start:blank the pid file is how a restart finds the running child; a failed write is found only when the restart cannot
+cmd/nova-swarm/native.go:writeNativeArgvLog:bare-return the argv proof log is lost with no line; writeNativeArgvLog has no writer to say so
+internal/records/coverage.go:Coverage.Body:blank a member the wire-form check refuses is left out of the body with no error; Body has no error return
+internal/sprint/store/presence.go:Store.strangers:blank an unreadable strangers record is read as no strangers, with no error; the teardown then counts nobody from it as beating
+internal/sprint/store/teardown.go:Store.Teardown:blank a view that cannot be deleted is left behind while the teardown reports success
+internal/swarm/quarantine.go:ReconcileQueueLimbo:blank a limbo directory that cannot be removed stays, with no line; ReconcileQueueLimbo has no writer and its caller drops its error
+internal/swarm/quarantine.go:reconcileLimboFile:blank the card is restored to queue/ but its limbo copy stays when the remove fails, and the next reconcile restores it again (a second run); the fix is a rename, not a comment
+internal/swarm/queue.go:QueueCards:blank a failed limbo reconcile is dropped while the queue is listed; returning it would stop the listing, which wants the owner's call
+internal/swarm/routeladder.go:RouteInput.persist:blank the decision log row and the usage row are lost with no line; persist has no writer to say so, and its caller ignores what it returns (see the comment above persist)
+internal/swarm/slots.go:takeSlotLeases:blank a dead worker's card that cannot be returned to queue/ is lost with no line; takeSlotLeases has no writer, and the slot is granted anyway
+internal/swarm/stage.go:StageCard:blank a failed git config leaves commits in the staged checkout without an identity, found only when the model commits
+internal/swarm/supervise.go:Supervise:blank a pid record or a slot update that cannot be written leaves the survivor check and the kill without the job's pid and pgid, with no line
+internal/swarm/supervise.go:abort:blank the aborted record is lost with no line when the write fails, on a path that is already failing
+internal/swarm/supervise.go:watch:blank the PROMPT-DEFECT line is lost with no line when the append fails; the reap still runs
+internal/tablemodel/replay.go:runHarness:blank a TLC error trace that cannot be copied is lost as evidence with no line
+internal/tlc/suite.go:RunSuite:blank a cleanup of the check's own scratch directory, safe to ignore; the reason comment waits for the next TLC re-run, because suite.go is an input every TLC record hashes and a comment there stales them all

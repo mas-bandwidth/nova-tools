@@ -201,8 +201,10 @@ func ReleaseQuarantined(queueDir, reason, cardID string) (string, error) {
 	}
 
 	// Clean up quarantine entry, only ever below the quarantine root.
+	// ignored: the card is already restored to the queue; a leftover quarantine entry is reaped by QuarantineGC
 	_ = safepath.RemoveUnder(QuarantineDir(queueDir), qDir)
 	// Clean up reason dir if empty.
+	// ignored: os.Remove of a directory that may still hold other cards; a non-empty reason dir stays by design
 	_ = os.Remove(QuarantineReasonDir(queueDir, reason))
 
 	return destPath, nil
@@ -547,9 +549,12 @@ func QuarantineGC(queueDir string, maxAttempts int) ([]ReconcileRecord, error) {
 				if err == nil {
 					if ok, _ := tryLockFile(f); ok {
 						unlockFile(f)
+						// ignored: a close after the lock was released; nothing was written through it
 						_ = f.Close()
+						// ignored: a best-effort reap of an unheld lock file; the next GC pass tries again
 						_ = os.Remove(lockPath)
 					} else {
+						// ignored: a close of a lock someone else holds; nothing was written through it
 						_ = f.Close()
 					}
 				}
@@ -565,6 +570,7 @@ func QuarantineGC(queueDir string, maxAttempts int) ([]ReconcileRecord, error) {
 				rDir := filepath.Join(qRoot, e.Name())
 				sub, err := os.ReadDir(rDir)
 				if err == nil && len(sub) == 0 {
+					// ignored: a best-effort reap of an empty reason directory; the next GC pass tries again
 					_ = os.Remove(rDir)
 				}
 			}

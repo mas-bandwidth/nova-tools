@@ -97,7 +97,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {
-			fmt.Fprintf(stderr, "TOKENS PARTIAL day=%s rows=%d: a row already summed over this source and another cannot be taken apart; nothing written (fold that day whole)\n",
+			fmt.Fprintf(stderr, "TOKENS PARTIAL day=%s rows=%d: a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole\n",
 				oneline.Field(d), len(partials))
 			exit = 1
 			continue
@@ -108,7 +108,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Sources: tokens.SourcesOf(rows), Rows: rows,
 		}
 		if err := f.Save(*out); err != nil {
-			fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.Err(err))
+			fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
 			exit = 1
 			continue
 		}

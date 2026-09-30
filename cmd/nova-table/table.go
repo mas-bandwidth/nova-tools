@@ -323,7 +323,7 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 		for j, col := range t.Columns {
 			if j < len(r.Cells) && r.Cells[j].Unread {
 				unread++
-				fmt.Fprintf(stderr, "nova-table show: warning: table %q row %q column %q cannot be read: %s\n", t.Name, oneline.Escape(r.Key), col.Name, oneline.Escape(r.Cells[j].UnreadWhy))
+				fmt.Fprintf(stderr, "nova-table show: warning: table %q row %q column %q cannot be read: %s; run: nova-table set -h, and write the cell again\n", t.Name, oneline.Escape(r.Key), col.Name, oneline.Escape(r.Cells[j].UnreadWhy))
 			}
 		}
 	}

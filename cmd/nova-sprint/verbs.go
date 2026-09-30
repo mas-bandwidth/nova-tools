@@ -827,7 +827,7 @@ func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store,
 			fmt.Fprintln(stdout, string(b))
 			return nil, 1
 		}
-		fmt.Fprintf(stderr, "REFUSED group %s: it has %d now, not %d as printed; nothing changed\n", oneline.Escape(g.ID), len(g.Members), s.expect)
+		fmt.Fprintf(stderr, "REFUSED group %s: it has %d now, not %d as printed; nothing changed; run: %s inbox --open %s and answer the group as it is now\n", oneline.Escape(g.ID), len(g.Members), s.expect, prog, oneline.Escape(g.ID))
 		if ans == nil {
 			listed(stderr, "NOW", g.Members, c.max, "inbox --open "+g.ID)
 		} else {
@@ -1319,7 +1319,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	}
 	rr, err := st.Repair(context.Background())
 	if err != nil {
-		fmt.Fprintf(stderr, "%s repair: %s\n", prog, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s repair: %s\n", prog, oneline.WithRemedy(err.Error(), prog+" repair -h"))
 		return 2
 	}
 	if c.json {
@@ -1391,7 +1391,7 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	res, err := st.Clear(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s clear: %s\n", prog, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s clear: %s\n", prog, oneline.WithRemedy(err.Error(), prog+" clear -h"))
 		return 2
 	}
 	var held []string

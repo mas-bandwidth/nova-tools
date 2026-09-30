@@ -324,6 +324,7 @@ func fsyncDir(dir string) error {
 		return nil
 	}
 	defer d.Close()
+	// ignored: a directory fsync is best effort where the platform does not support it; the rename already landed
 	_ = d.Sync()
 	return nil
 }
