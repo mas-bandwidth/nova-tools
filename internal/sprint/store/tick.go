@@ -532,7 +532,9 @@ func unchangedNotWritten(s *sprint.Snapshot, p sprint.Plan) sprint.Plan {
 	if units == nil {
 		return p
 	}
-	p.Units = slices.DeleteFunc(units, func(u sprint.Unit) bool { return u.Changes == nil && u.Moved == "" && len(u.Notes) == 0 && len(u.Closes) == 0 && len(u.Bumps) == 0 })
+	p.Units = slices.DeleteFunc(units, func(u sprint.Unit) bool {
+		return u.Changes == nil && u.Moved == "" && len(u.Notes) == 0 && len(u.Closes) == 0 && len(u.Bumps) == 0
+	})
 	return p
 }
 

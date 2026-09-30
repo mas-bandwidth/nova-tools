@@ -426,7 +426,8 @@ func TestG1ALapseMidTickEndsTheTickAndTheNextPlacesNothingOnTheMember(t *testing
 	h := newHarness(t)
 	holesUp(h, 8)
 	x := newHoleTick(h)
-	holesRun(x, 8, true, func(round int, res TickResult, _ []holeWrite) {
+	placed := 0
+	holesRun(x, 8, true, func(round int, res TickResult, ws []holeWrite) {
 		if len(res.Order) > 12 {
 			t.Fatalf("round %d: the tick took %d updates: %v", round, len(res.Order), res.Order)
 		}
@@ -435,12 +436,20 @@ func TestG1ALapseMidTickEndsTheTickAndTheNextPlacesNothingOnTheMember(t *testing
 				t.Fatalf("m1 is %s after the tick that found it silent", st)
 			}
 		}
-		if round == 4 {
-			if n := dealtBy(res)["m1"]; n != 0 {
-				t.Fatalf("round 4 dealt %d cards to m1, down in the table", n)
+		for _, w := range ws {
+			for _, e := range w.Members {
+				if w.Table == sprint.Fleet && e.Create != nil && w.Part == "work/deal" && round >= 4 && round <= 5 {
+					placed++
+					if e.Create.Row == "m1" {
+						t.Fatalf("round %d: the deal placed %s on m1, which the fleet table has down", round, e.ID)
+					}
+				}
 			}
 		}
 	})
+	if placed == 0 {
+		t.Fatalf("nothing was dealt while m1 was down: the test saw too little")
+	}
 }
 
 // ---- G2 ----------------------------------------------------------------------
