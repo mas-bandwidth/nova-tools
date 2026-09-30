@@ -638,15 +638,17 @@ func TestAL5PrivateReadCachesResistPublicMutation(t *testing.T) {
 		records   int
 		fields    int
 	}{
-		{mode: "inject", answers: 1, zscores: 2, cellDelta: 2, records: 1, fields: 1},
-		{mode: "detach_before", answers: 1, zscores: 2, cellDelta: 2, records: 2, fields: 2},
-		{mode: "detach_whole", answers: 1, zscores: 2, cellDelta: 2, records: 3, fields: 3},
+		// Callback-only plans load work lazily: definition HLEN/HGETALL and
+		// placement row/member ZSCORE each charge one cell observation.
+		{mode: "inject", answers: 1, zscores: 2, cellDelta: 4, records: 1, fields: 1},
+		{mode: "detach_before", answers: 1, zscores: 2, cellDelta: 4, records: 2, fields: 2},
+		{mode: "detach_whole", answers: 1, zscores: 2, cellDelta: 4, records: 3, fields: 3},
 		{mode: "shared_probe", sharedRow: true, answers: 2, zscores: 2, cellDelta: 1, records: 2, fields: 2},
 		{mode: "inject_cell", answers: 0, zscores: 1},
 		{mode: "refuse", answers: 0, zscores: 2},
-		{mode: "inject", answers: 1, zscores: 2, cellDelta: 2, records: 1, fields: 1},
+		{mode: "inject", answers: 1, zscores: 2, cellDelta: 4, records: 1, fields: 1},
 		{mode: "throw", answers: 0, zscores: 2},
-		{mode: "inject", answers: 1, zscores: 2, cellDelta: 2, records: 1, fields: 1},
+		{mode: "inject", answers: 1, zscores: 2, cellDelta: 4, records: 1, fields: 1},
 	} {
 		statsBefore := readExtensionCommandStats(t, fx.Client)
 		reply := al5PrivateCacheCall(t, fx, tc.mode, tc.sharedRow)

@@ -305,8 +305,22 @@ do
   end
   local function read_cache_state(ctx)
     local saved=ctx==current_ctx and current_seal or nil
-    if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
+    if not saved or saved.fields.operation~='read' or
         saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index then return nil,S.refuse('CONFIG') end
+    if callback_depth>0 then
+      if not original_unchanged(ctx) then return nil,S.refuse('CONFIG') end
+    else
+      -- Dispatch already sealed the full request. Between dispatch and a
+      -- trusted built-in's cache accesses no extension runs; avoid walking
+      -- the entire query array once per record/cell while retaining identity.
+      if ctx.request~=saved.read_request or ctx.active_epoch~=saved.read_active_epoch then return nil,S.refuse('CONFIG') end
+      for _,field in ipairs(sealed_fields) do
+        if ctx[field]~=saved.fields[field] then return nil,S.refuse('CONFIG') end
+      end
+      for _,field in ipairs(request_identity) do
+        if ctx.request[field]~=saved.request[field] then return nil,S.refuse('CONFIG') end
+      end
+    end
     local _,err=budget_monotone(ctx,false);if err then return nil,err end
     return saved,nil
   end
@@ -334,13 +348,19 @@ do
   -- exact-line authority, never the reader's arbitrary-descriptor closure.
   function S.bind_log_helpers(line_raw_reservation,factory)
     S.bind_log_helpers=nil
-    if not bindings_open or log_bound then error('tset log helpers must bind once during initialization',0) end
+    -- FUNCTION LOAD exposes no type/math/error helpers. Deliberately invoke
+    -- a named local guard only when its predicate holds; a rejected binding
+    -- fails load with that guard's native noncallable-local diagnostic.
+    local require_open_log_binding=bindings_open and not log_bound and function() end
+    require_open_log_binding()
     log_bound=true
-    if type(line_raw_reservation)~='number' or line_raw_reservation~=line_raw_reservation or
-        line_raw_reservation<=0 or line_raw_reservation>fetched_cap or
-        line_raw_reservation~=math.floor(line_raw_reservation) or type(factory)~='function' then
-      error('tset log helpers require a bounded positive integer reservation and factory',0)
-    end
+    -- Arithmetic rejects nonnumeric types; strict equality rejects numeric
+    -- strings. The comparisons exclude NaN/infinities, then modulo proves
+    -- integrality without accessing the unavailable load-time math table.
+    local require_valid_log_reservation=line_raw_reservation==line_raw_reservation+0 and
+      line_raw_reservation>0 and line_raw_reservation<=fetched_cap and
+      line_raw_reservation%1==0 and function() end
+    require_valid_log_reservation()
     local function authorize_line(ctx,seq,index)
       local saved=ctx==current_ctx and current_seal or nil
       if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
@@ -364,7 +384,9 @@ do
       return value,err,false
     end
     local cleanup=factory(authorize_line,read_line_raw)
-    if type(cleanup)~='function' then error('tset log helpers require a cleanup function',0) end
+    -- The factory and its assignment-only cleanup must both be callable at
+    -- load time. Validate cleanup before publishing it to the lifecycle.
+    cleanup()
     log_cleanup=cleanup
   end
   function S.read_callback(ctx,fn,q,index)

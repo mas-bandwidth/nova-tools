@@ -5,7 +5,6 @@ package tset
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -374,26 +373,39 @@ func TestL1LineCapabilityCannotBindAfterReadScope(t *testing.T) {
 
 func TestL1LineCapabilityRejectsInvalidLoadTimeReservations(t *testing.T) {
 	t.Parallel()
-	for _, scalar := range []string{"0", "-1", "0.5", "math.huge", "0/0", "8388609"} {
-		t.Run(strings.ReplaceAll(scalar, ".", "_"), func(t *testing.T) {
+	const validFactory = "function() return function() end end"
+	const reservationGuard = "attempt to call local 'require_valid_log_reservation' (a boolean value)"
+	for _, tc := range []struct {
+		name, binding, diagnostic string
+	}{
+		{name: "zero", binding: "S.bind_log_helpers(0," + validFactory + ")", diagnostic: reservationGuard},
+		{name: "negative", binding: "S.bind_log_helpers(-1," + validFactory + ")", diagnostic: reservationGuard},
+		{name: "fraction", binding: "S.bind_log_helpers(0.5," + validFactory + ")", diagnostic: reservationGuard},
+		{name: "positive_infinity", binding: "S.bind_log_helpers(1/0," + validFactory + ")", diagnostic: reservationGuard},
+		{name: "nan", binding: "S.bind_log_helpers(0/0," + validFactory + ")", diagnostic: reservationGuard},
+		{name: "over_cap", binding: "S.bind_log_helpers(8388609," + validFactory + ")", diagnostic: reservationGuard},
+		{name: "numeric_string", binding: `S.bind_log_helpers("256",` + validFactory + ")", diagnostic: reservationGuard},
+		{name: "noncallable_factory", binding: "S.bind_log_helpers(256,1)", diagnostic: "attempt to call local 'factory' (a number value)"},
+		{name: "noncallable_cleanup", binding: "S.bind_log_helpers(256,function() return 1 end)", diagnostic: "attempt to call local 'cleanup' (a number value)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			fx := newTSetFixture(t)
-			extra := fmt.Sprintf(`
+			extra := `
 local S=NS.tset
-S.bind_log_helpers(%s,function() return function() end end)
+` + tc.binding + `
 redis.register_function('ns_tset_l1_invalid_line_bind_probe',function() return 'unexpected' end)
-`, scalar)
+`
 			source := tsetTestSourceWithProbe(t, fn.TSetStandalone, extra,
 				"ns_tset_l1_invalid_line_bind_probe")
-			const want = "tset log helpers require a bounded positive integer reservation and factory"
 			if err := fx.Client.FunctionLoad(context.Background(), source).Err(); err == nil ||
-				!strings.Contains(err.Error(), want) {
-				t.Errorf("invalid line reservation %s returned %v, want binder diagnostic %q", scalar, err, want)
+				!strings.Contains(err.Error(), tc.diagnostic) {
+				t.Errorf("invalid line binding %s returned %v, want binder diagnostic %q", tc.name, err, tc.diagnostic)
 			}
 			libraries, err := fx.Client.FunctionList(context.Background(),
 				redis.FunctionListQuery{LibraryNamePattern: fn.Library}).Result()
 			if err != nil || len(libraries) != 0 {
-				t.Errorf("failed line binding installed a library for %s: %+v err=%v", scalar, libraries, err)
+				t.Errorf("failed line binding installed a library for %s: %+v err=%v", tc.name, libraries, err)
 			}
 		})
 	}
