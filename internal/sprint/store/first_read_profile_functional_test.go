@@ -404,3 +404,176 @@ func TestProfileFirstRead(t *testing.T) {
 	t.Logf("       Baseline (fmt.Sprint): %v", tBase)
 	t.Logf("       Optimized (Type Switch): %v (%.2fx faster)", tFast, float64(tBase)/float64(tFast))
 }
+
+func TestFirstReadProfile(t *testing.T) {
+	st, c := liveStore(t)
+	ctx := context.Background()
+
+	// 1. Setup fleet members
+	for i := 1; i <= 8; i++ {
+		m := fmt.Sprintf("m%d", i)
+		if _, err := st.Run(ctx, FleetStep(sprint.FleetReq{Op: "release", Member: m, Who: "tester"})); err != nil {
+			t.Fatalf("fleet release %s: %v", m, err)
+		}
+	}
+
+	// 2. Add 3000 cards (3 streams x 1000)
+	t.Log("Adding 3,000 cards...")
+	var rs []sprint.AddReq
+	for _, sn := range []string{"a", "b", "c"} {
+		rs = append(rs, sprint.AddReq{Stream: sn, Count: 1000, Who: "tester"})
+	}
+	if _, err := st.Run(ctx, AddEachStep(rs)); err != nil {
+		t.Fatalf("add 3000: %v", err)
+	}
+
+	if _, _, _, err := st.SetMachine(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Baseline sequential fencedRead helper (simulates the old engine.go)
+	fencedReadBaseline := func() (*sprint.Snapshot, uint64, int, time.Duration, error) {
+		r := st.retry(ctx)
+		collisions := 0
+		start := time.Now()
+		for r.next(st.attempts()) {
+			f, err := st.B.ReadFence(ctx)
+			if err != nil {
+				return nil, 0, collisions, time.Since(start), err
+			}
+			if f.Pending != nil {
+				continue
+			}
+			snap, err := st.Load(ctx, All, tickExtras)
+			if err != nil {
+				return nil, 0, collisions, time.Since(start), err
+			}
+			f2, err := st.B.ReadFence(ctx)
+			if err != nil {
+				return nil, 0, collisions, time.Since(start), err
+			}
+			if f2.Pending != nil || f2.Gen != f.Gen {
+				collisions++
+				continue
+			}
+			return snap, f.Gen, collisions, time.Since(start), nil
+		}
+		return nil, 0, collisions, time.Since(start), fmt.Errorf("exhausted tries: %d collisions", collisions)
+	}
+
+	// Pipelined fencedRead helper (calls PipelinedLoadWithFence)
+	fencedReadPipelined := func() (*sprint.Snapshot, uint64, int, time.Duration, error) {
+		r := st.retry(ctx)
+		collisions := 0
+		start := time.Now()
+		for r.next(st.attempts()) {
+			f, err := st.B.ReadFence(ctx)
+			if err != nil {
+				return nil, 0, collisions, time.Since(start), err
+			}
+			if f.Pending != nil {
+				continue
+			}
+			snap, f2, err := pinned.PipelinedLoadWithFence(ctx, All, tickExtras)
+			if err != nil {
+				return nil, 0, collisions, time.Since(start), err
+			}
+			if f2.Pending != nil || f2.Gen != f.Gen {
+				collisions++
+				continue
+			}
+			return snap, f.Gen, collisions, time.Since(start), nil
+		}
+		return nil, 0, collisions, time.Since(start), fmt.Errorf("exhausted tries: %d collisions", collisions)
+	}
+
+	// PART A: Uncontended Comparison
+	t.Log("=== PART A: Uncontended First Read Performance (5 runs each) ===")
+	const runs = 5
+	var baseDurTotal, pipeDurTotal time.Duration
+	for i := 0; i < runs; i++ {
+		_, _, _, dBase, err := fencedReadBaseline()
+		if err != nil {
+			t.Fatalf("baseline run %d: %v", i, err)
+		}
+		baseDurTotal += dBase
+
+		_, _, _, dPipe, err := fencedReadPipelined()
+		if err != nil {
+			t.Fatalf("pipelined run %d: %v", i, err)
+		}
+		pipeDurTotal += dPipe
+	}
+	baseMean := baseDurTotal / runs
+	pipeMean := pipeDurTotal / runs
+	t.Logf("Uncontended Baseline Mean:  %v", baseMean)
+	t.Logf("Uncontended Pipelined Mean: %v (%.2fx faster)", pipeMean, float64(baseMean)/float64(pipeMean))
+
+	// PART B: Contended Performance with Concurrent Writers
+	t.Log("=== PART B: Contended First Read Performance with Concurrent Writers ===")
+	// Background writer that touches the fence generation every 25ms
+	stopWriter := make(chan struct{})
+	writerDone := make(chan struct{})
+	genKey := st.Names.KeyAt("fencegen", pinned.epoch)
+	go func() {
+		defer close(writerDone)
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopWriter:
+				return
+			case <-ticker.C:
+				_ = c.Incr(ctx, genKey).Err()
+			}
+		}
+	}()
+
+	t.Log(">>> Testing Pipelined with Trailing Fence under concurrent writer churn...")
+	pipeContendedCollisions := 0
+	var pipeContendedDur time.Duration
+	pipeSuccess := 0
+	for i := 0; i < runs; i++ {
+		_, _, col, d, err := fencedReadPipelined()
+		if err != nil {
+			t.Logf("   Pipelined Run %d: failed (%v) in %v [collisions: %d]", i+1, err, d, col)
+		} else {
+			pipeSuccess++
+			pipeContendedCollisions += col
+			pipeContendedDur += d
+			t.Logf("   Pipelined Run %d: SUCCESS in %v [collisions: %d]", i+1, d, col)
+		}
+	}
+
+	t.Log(">>> Testing Baseline Sequential under concurrent writer churn...")
+	baseContendedCollisions := 0
+	var baseContendedDur time.Duration
+	baseSuccess := 0
+	for i := 0; i < runs; i++ {
+		_, _, col, d, err := fencedReadBaseline()
+		if err != nil {
+			t.Logf("   Baseline Run %d: FAILED/STALLED (%v) in %v [collisions: %d]", i+1, err, d, col)
+			baseContendedCollisions += col
+			baseContendedDur += d
+		} else {
+			baseSuccess++
+			baseContendedCollisions += col
+			baseContendedDur += d
+			t.Logf("   Baseline Run %d: SUCCESS in %v [collisions: %d]", i+1, d, col)
+		}
+	}
+
+	close(stopWriter)
+	<-writerDone
+
+	t.Logf("=== Contention Summary (3,000 cards, 25ms writer churn, 5 runs each) ===")
+	t.Logf("Baseline Sequential: %d/%d succeeded | Total Collisions: %d | Total Duration: %v",
+		baseSuccess, runs, baseContendedCollisions, baseContendedDur)
+	t.Logf("Pipelined 2-Stage:   %d/%d succeeded | Total Collisions: %d | Total Duration: %v",
+		pipeSuccess, runs, pipeContendedCollisions, pipeContendedDur)
+}

@@ -567,6 +567,10 @@ func (r *Redis) OpenNotes(ctx context.Context) ([]sprint.Open, error) {
 	if err != nil || len(open) == 0 {
 		return nil, err
 	}
+	return r.fetchOpenNotes(ctx, open)
+}
+
+func (r *Redis) fetchOpenNotes(ctx context.Context, open map[string]string) ([]sprint.Open, error) {
 	var ids []string
 	seen := map[string]bool{}
 	for _, nid := range open {

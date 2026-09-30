@@ -290,11 +290,7 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 			}
 			continue
 		}
-		snap, err := st.Load(ctx, tables, extras)
-		if err != nil {
-			return nil, 0, Fence{}, err
-		}
-		f2, err := st.B.ReadFence(ctx)
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, tables, extras)
 		if err != nil {
 			return nil, 0, Fence{}, err
 		}
