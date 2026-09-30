@@ -363,17 +363,28 @@ func (tw *posTwin) answerWaiters(q SprintQ) Answer {
 		}
 		if !q.Missing || na.Missing {
 			// wait:n is read in the order of its members' ids, after the cursor: a
-			// place in that order, which a waiter leaving wait:n does not move
-			var ws []*posRec
+			// place in that order, which a waiter leaving wait:n does not move. The
+			// head is the store's, up to the limit, and its quarantined members are
+			// left out of it after it is read; Last is the last member it read.
+			var head []string
 			for w := range tw.wait[n] {
-				if r := tw.work[w]; r != nil && !tw.quar[w] && w > q.WaiterAfter {
-					ws = append(ws, r)
+				if w > q.WaiterAfter {
+					head = append(head, w)
 				}
 			}
-			sort.Slice(ws, func(i, j int) bool { return ws[i].id < ws[j].id })
-			na.More = len(ws) > q.Limit
+			sort.Strings(head)
+			na.More = len(head) > q.Limit
 			if na.More {
-				ws = ws[:q.Limit]
+				head = head[:q.Limit]
+			}
+			if len(head) > 0 {
+				na.Last = head[len(head)-1]
+			}
+			var ws []*posRec
+			for _, w := range head {
+				if r := tw.work[w]; r != nil && !tw.quar[w] {
+					ws = append(ws, r)
+				}
 			}
 			for _, r := range ws {
 				na.Waiters = append(na.Waiters, r.id)

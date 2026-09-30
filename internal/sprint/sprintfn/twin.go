@@ -60,13 +60,34 @@ type Phases struct {
 	JDecide func(st *State, in []NoteReq, obs *Before) ([]tset.Note, JPlan, *Refusal)
 	XCmds   func(st *State, tp TablePlan, lp LogPlan) []Cmd
 	JCmds   func(st *State, jp JPlan, lp LogPlan) []Cmd
+	// JBefore names what J reads of the cards a step moves or removes, beside
+	// Before's, so that composing X's asks with J's clobbers neither.
+	JBefore func(st *State, req *Request) []BeforeAsk
+	// JOnEntries says JDecide also runs for a step that carries entries and no
+	// note request, since J ends the timed states the entries end (1.3.4); it
+	// reads them from st.Entries. A phase set that leaves it false calls JDecide
+	// for a step's note requests only.
+	JOnEntries bool
+	// QueryCheck is the static phase of one sprint query (IT30; errata E6's
+	// validate): pure, run for every sprint query of a read before TIME and before
+	// any Layer 1 or Layer 2 query, as the store's S.validate runs every validate
+	// before it reads anything. A refusal is the read's, at the query's index.
+	// Nil: no static check of sprint queries.
+	QueryCheck func(q SprintQuery) *Refusal
+	// QueryStart begins the sprint queries of one read over what its Layer 1
+	// and Layer 2 queries charged (one budget a read, L1 6, 7). Nil: each
+	// sprint query is charged alone.
+	QueryStart func(st *State, charged QueryCharge)
 	// Query answers one sprint query in the read's snapshot (IT30). Nil: a
 	// sprint query is a kind the twin does not know, REQUEST.
 	Query func(st *State, q SprintQuery) (json.RawMessage, *Refusal)
 }
 
-// defaultPhases are the write path's phases, filled by the inits of IT13,
-// IT14, IT15 and IT30's files. A Twin takes a copy when it is made.
+// defaultPhases are the write path's phases, filled by the inits of IT13's
+// (X), IT14's (Derive) and IT15's (J) files. A Twin takes a copy when it is
+// made. IT30's queries are not among them: a twin answers sprint queries once
+// UseQueries installs them, and plans the intents' X commands once UseIntents
+// does. IT16's parts are in defaultParts.
 var defaultPhases Phases
 
 // beforeRecordsMax is the most distinct records one write observes across
@@ -120,6 +141,8 @@ type Twin struct {
 	// having no log, and a replay or a done slot must say the seqs the step
 	// wrote (L1 1.4).
 	seqs map[string][2]tset.Decimal
+	// sprintRead is the budget of the read in flight, set by QueryStart.
+	sprintRead *sprintRead
 }
 
 // NewTwin composes a twin over a Mem whose four tables are defined, a log
@@ -287,7 +310,11 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	var notes []tset.Note
 	var jp JPlan
 	ranJ := false
-	if len(noteReqs) != 0 {
+	// J sees the step's combined entries, the caller's and the derived ones
+	// (S.plan takes the same list), for the timed states they end (1.3.4): it
+	// runs for any step with entries as well as for one with note requests.
+	st.Entries = append(append([]tset.Entry{}, enc.step.Entries...), derived...)
+	if len(noteReqs) != 0 || (t.phases.JOnEntries && t.phases.JDecide != nil && len(st.Entries) != 0) {
 		if t.phases.JDecide == nil {
 			return Result{Refusal: refuse(PhaseJ, CodeConfig, RefusalDetail{})}
 		}
@@ -500,7 +527,14 @@ func (t *Twin) before(ctx context.Context, st *State, req *Request) (*Before, *R
 		}
 	}
 	for _, in := range req.Body.Intents {
-		ids := append([]string{in.Card}, in.Needs...)
+		var ids []string
+		// 8.0 gives a needmet and a needgone a Need and its Waiters and no Card:
+		// the empty Card is not an id to read (Layer 1 refuses it REQUEST), and
+		// the need, read below, is the card they are about (IT14).
+		if in.Card != "" || (in.Kind != IntentNeedMet && in.Kind != IntentNeedGone) {
+			ids = append(ids, in.Card)
+		}
+		ids = append(ids, in.Needs...)
 		if in.Need != "" {
 			ids = append(ids, in.Need)
 		}
@@ -508,6 +542,11 @@ func (t *Twin) before(ctx context.Context, st *State, req *Request) (*Before, *R
 	}
 	if t.phases.Before != nil {
 		for _, a := range t.phases.Before(st, req) {
+			add(a.Table, a.IDs, a.Fields)
+		}
+	}
+	if t.phases.JBefore != nil {
+		for _, a := range t.phases.JBefore(st, req) {
 			add(a.Table, a.IDs, a.Fields)
 		}
 	}
@@ -595,6 +634,14 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 	if t.broken != nil {
 		return Result{Err: t.broken}
 	}
+	// The static phase, before TIME and before any query is read (IT30).
+	if t.phases.QueryCheck != nil {
+		for i, q := range rr.Sprint {
+			if ref := t.phases.QueryCheck(q); ref != nil {
+				return Result{Refusal: atQuery(ref, len(rr.Tset)+i)}
+			}
+		}
+	}
 	_, nowMS := t.begin()
 	if compareDecimal(rr.Epoch, t.active) > 0 {
 		return Result{Refusal: refuse(PhaseOpen, CodeEpochAhead, RefusalDetail{RefusalDetail: tset.RefusalDetail{ActiveEpoch: t.active}})}
@@ -609,6 +656,7 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 	// finds before it answers any.
 	var l1 []int
 	var refused *Refusal
+	var charged QueryCharge // what the read's Layer 1 and Layer 2 queries charged, for the sprint queries' budget
 	refusedAt := -1
 	refuseAt := func(ref *Refusal, i int) {
 		if refusedAt < 0 || i < refusedAt {
@@ -631,6 +679,7 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 				continue
 			}
 			out.Tset[i] = rep.Answers[0]
+			charged.addCounters(rep.Counters)
 		default:
 			l1 = append(l1, i)
 		}
@@ -655,12 +704,16 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 			for j, i := range l1 {
 				out.Tset[i] = t.withDoneSeqs(rr.Tset[i], rep.Answers[j])
 			}
+			charged.addCounters(rep.Counters)
 		}
 	}
 	if refused != nil {
 		return Result{Refusal: refused}
 	}
 	st := &State{Prefix: t.prefix, Epoch: rr.Epoch, NowMS: nowMS, Names: t.names, Keys: &Keys{ks: t.keys}}
+	if len(rr.Sprint) != 0 && t.phases.QueryStart != nil {
+		t.phases.QueryStart(st, charged)
+	}
 	for i, q := range rr.Sprint {
 		if t.phases.Query == nil {
 			return Result{Refusal: atQuery(refuse(PhaseOpen, CodeRequest, RefusalDetail{}), len(rr.Tset)+i)}

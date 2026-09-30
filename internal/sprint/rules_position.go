@@ -57,12 +57,17 @@ import (
 //	The cursor is a place in the order of wait:n's members and not a count of the
 //	waiters closed, so a waiter that leaves wait:n between two heads, the one the
 //	cursor names included, skips nobody: n leaves missing only when the cursor
-//	has passed every waiter. A need with a waiter of a dropping stream in its
+//	has passed every waiter. A head whose members were all left out, being
+//	quarantined, with more beyond them moves the cursor past them, in a key of
+//	either rule (needs:n+w or made:n+w, w the last member the head read,
+//	NeedAnswer.Last): 2.3 R4 has the offset move past quarantined ids, which it
+//	leaves out, and the same head read again would find the same ids. A need
+//	with a waiter of a dropping stream in its
 //	head is left out whole (no close, no removal from missing) and its key stays
 //	held, since a close for some of them would be planned again by every run.
 //	A key that names a line cannot carry a cursor: a need of a line that
 //	is not finished, and cannot move on in place, is carried by a key of its own
-//	(needs:n, made:n or made:n+w) and the line's offset moves past it. A need
+//	(needs:n, needs:n+w, made:n or made:n+w) and the line's offset moves past it. A need
 //	whose only remaining waiters are in dropping streams is carried the same
 //	way, held back until the mark clears (2.3 R4, 1.3.5), so the waiters of the
 //	needs after it are served. The key it puts in the agenda for it is in both
@@ -232,9 +237,10 @@ type posKey struct {
 	line   uint64
 	offset int
 	byLine bool
-	// after is the last waiter of wait:n a key of a made need has closed: it
-	// reads the head of wait:n after that id (made:n+w, w the id). No other key
-	// has one.
+	// after is the cursor of a key of one need: the last waiter of wait:n a
+	// made key has closed, or the last member of a head whose members were all
+	// left out (needs:n+w or made:n+w, w the id). It reads the head of wait:n
+	// after that id. No other key has one.
 	after string
 }
 
@@ -247,7 +253,7 @@ func posSplitKey(k AgendaKey) (posKey, bool) {
 	p := posKey{rule: k.Key[:i]}
 	rest := k.Key[i+1:]
 	if k.Key[i] == ':' {
-		if p.rule == posMadeRule {
+		if p.rule == posMadeRule || p.rule == ruleNeeds {
 			if subject, after, has := strings.Cut(rest, "+"); has {
 				// no id has a '+', a ':' or an '@': the cursor is one id
 				if subject == "" || after == "" || strings.ContainsAny(after, "+:@") {
@@ -258,7 +264,7 @@ func posSplitKey(k AgendaKey) (posKey, bool) {
 			}
 		}
 		p.subject = rest
-		return p, rest != "" && !strings.Contains(rest, "+") // no id has a '+': an offset is a made key's
+		return p, rest != "" && !strings.Contains(rest, "+") // no id has a '+': a cursor is a key of one need's
 	}
 	num, off, hasOffset := strings.Cut(rest, "+")
 	seq, err := strconv.ParseUint(num, 10, 64)
@@ -287,11 +293,11 @@ func posLineKey(rule string, line uint64, offset int, order uint64) AgendaKey {
 }
 
 // posNeedKey is the key of a rule for one need from a waiter: rule:n, or
-// made:n+w past the waiter w of wait:n, the last one served. Only a made key has
-// a cursor.
+// rule:n+w past the member w of wait:n (the last one served, or the last one
+// a head left out). Only a key of one need has a cursor.
 func posNeedKey(rule, need, after string, order uint64) AgendaKey {
 	key := rule + ":" + need
-	if after != "" && rule == posMadeRule {
+	if after != "" && (rule == posMadeRule || rule == ruleNeeds) {
 		key += "+" + after
 	}
 	return AgendaKey{Key: key, Seq: order}
@@ -653,9 +659,10 @@ func posNeedsHead(b ReadBounds, ids, chunk int) int {
 }
 
 // readNeeds is R4's read (2.3): waiters for the needs of each key. A key that
-// names one need (needs:n, made:n, made:n+w) reads that one, after its cursor (the
-// last waiter served: only a made key has one); a key that names a line (needs@seq, made@seq, with an offset) names the
-// line by its seq as the id source and reads the next needsLineWindow of its ids
+// names one need (needs:n, needs:n+w, made:n, made:n+w) reads that one, after its
+// cursor (the last waiter a made key served, or the last member of a head whose
+// members were all left out); a key that names a line (needs@seq, made@seq, with
+// an offset) names the line by its seq as the id source and reads the next needsLineWindow of its ids
 // from the offset. Every need is read for the head of wait:n up to the chunk,
 // cut so that the ids of the read at their head fit layer 1's records, range
 // ids and bytes (declared cost 1 + the head an id), and no lower than
@@ -733,9 +740,10 @@ const (
 	// needHeld: what is owed is a waiter of a dropping stream, and nothing
 	// could be planned: the work stays, held back until the mark clears.
 	needHeld
-	// needContinue: a made need's head was closed and its waiters stay in wait:n:
-	// the work resumes after the last of them served (next), a place in wait:n
-	// that a waiter leaving it does not move.
+	// needContinue: a made need's head was closed and its waiters stay in wait:n,
+	// or a head's members were all left out (quarantined) with more beyond them:
+	// the work resumes after the last member the head read (next), a place in
+	// wait:n that a waiter leaving it does not move (2.3 R4).
 	needContinue
 )
 
@@ -877,7 +885,7 @@ func (rp *RulePlan) planNeed(s *Snapshot, made bool, p posKey, nv posNeed) needR
 				Text: nv.Need + " was created; its waiters now wait for it to land"})
 		}
 		if nv.More {
-			return needResult{status: needContinue, next: nv.Waiters[len(nv.Waiters)-1].ID}
+			return needResult{status: needContinue, next: posCursor(nv)}
 		}
 		rp.Intents = append(rp.Intents, Intent{Kind: posMade, Need: nv.Need, Waiters: posIDs(ws)})
 		return needResult{}
@@ -897,8 +905,23 @@ func (rp *RulePlan) planNeed(s *Snapshot, made bool, p posKey, nv posNeed) needR
 		}
 	case len(frozen) > 0:
 		return needResult{status: needHeld}
+	case nv.More:
+		// every member the head read was left out (quarantined), and wait:n has
+		// more: the same head would find them again, so the key moves past them
+		// (2.3 R4: the offset moves past quarantined ids, which it leaves out)
+		return needResult{status: needContinue, next: posCursor(nv)}
 	}
 	return needResult{}
+}
+
+// posCursor is where a need's next head starts: after the last member the head
+// read (NeedAnswer.Last), which is at or after its last waiter, or after that
+// waiter when the answer does not name one.
+func posCursor(nv posNeed) string {
+	if nv.Last != "" {
+		return nv.Last
+	}
+	return nv.Waiters[len(nv.Waiters)-1].ID
 }
 
 // R5 cross.
