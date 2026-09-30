@@ -485,6 +485,13 @@ func (st *Store) finishedElsewhere(ctx context.Context, op OpRecord) bool {
 // an epoch a clear closed as it ran (the clear finished its operation there)
 // is told the sprint was cleared, not what the sync of the display cells met.
 func (st *Store) after(ctx context.Context, step Step, res Result) (Result, error) {
+	if step.Verb == "add" && len(res.Moved) > 0 {
+		// work added to a done sprint: the machine stays STOPPED, no longer
+		// done (errata 3 amendment 6)
+		if err := st.undone(ctx); err != nil {
+			return res, err
+		}
+	}
 	if step.Mirrors {
 		if err := st.SyncMirrors(ctx); err != nil {
 			if es, left, lerr := st.left(ctx); lerr == nil && left {

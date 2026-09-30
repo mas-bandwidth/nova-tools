@@ -29,7 +29,8 @@ func SetMachine(s State, running bool) (State, error) {
 
 // Tick is one tick of the machine (spec section 14): a STOPPED machine moves
 // nothing; a RUNNING one runs its parts in order, each on the state the one
-// before left: resolve (T1), resume (T7), deal (T3), level (T4), ask (T2).
+// before left: resolve (T1), resume (T7), deal (T3), level (T4), ask (T2), and
+// done (R15, errata 3 amendment 6), which stops the machine on a done sprint.
 // The check, deadline and overdue parts write nothing while the rules hold
 // and no clock deadline passes, which the differential test keeps so. From
 // the spec, not yet in the model (the model's Resolve, Start, FleetUp and Ask
@@ -55,7 +56,18 @@ func Tick(s State, ch TickChoices) (State, error) {
 	if err := n.tickAsk(ch.Ask); err != nil {
 		return s, err
 	}
+	n.tickDone()
 	return n, nil
+}
+
+// tickDone is R15 as errata 3 amendment 6 amends it (sprint.TickDone): the
+// tick's last part; a sprint done (sprintDone) stops the machine, its note
+// addressed to the coordinator, and no judgment opens. A stopped machine does
+// not tick, so it says it once for each run that finishes the sprint.
+func (n *State) tickDone() {
+	if n.Machine == Running && n.sprintDone() {
+		n.Machine = Stopped
+	}
 }
 
 // tickResolve is T1: every stream's waiting cards in score order; a primary
@@ -242,7 +254,6 @@ func Release(s State, ids []string, who string) (State, error) {
 			return s, refuse("%s is not a reached sentinel", id)
 		}
 	}
-	doneBefore := s.sprintDone()
 	n := s.Clone()
 	for _, id := range ids {
 		st := n.Primaries[id].Stream
@@ -253,9 +264,6 @@ func Release(s State, ids []string, who string) (State, error) {
 		n.closeOn(id)
 	}
 	n.resolveAll()
-	if !doneBefore && n.sprintDone() {
-		n.open(JDone, SprintSubject)
-	}
 	return n, nil
 }
 

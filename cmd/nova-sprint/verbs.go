@@ -106,7 +106,9 @@ inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
 line: landed/all percent -> ETA (a stopped machine has no ETA: STOPPED, then
-landed/all and the percent when there are cards).
+landed/all and the percent when there are cards; every card landed, no ETA:
+done in <time from the first start> while it runs, and STOPPED ... done once
+the machine has stopped itself).
 
 The tables are work, merge, readers and fleet, and the view is sprint; a store
 holds one sprint (a second sprint is a second store). clear and teardown want
@@ -159,6 +161,12 @@ was added or is gone, and changes nothing. Each decision is its commands, one
 per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
 lists every member of a group, and every need a blocked group names; card <id> is everything about one primary.
 
+The sprint done is no judgment: the tick that finds nothing open says it, one
+HAPPENED line addressed to the coordinator and shown first, and stops the
+machine (DONE):
+  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took 1h2m0s from the first start
+    to continue: add work, then nova-sprint start
+
 one answer to each judgment (every one prints its own, filled in):
   ready to accept             accept --group <id> --expect <n> --answers <notes>
   work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
@@ -176,7 +184,6 @@ one answer to each judgment (every one prints its own, filled in):
   a repeat: stop and look     card <primary>
   overdue: act                a decision above, or wait <note> --for 30m
   a stream not moving: look   where, then queue --stream <s>
-  the sprint is done          clear --confirm sprint, or add --stream <s> for more work
   sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
@@ -545,6 +552,9 @@ func listed(w io.Writer, kind string, lines []string, max int, verbName string) 
 // sprintLine is the summary line: landed / all primaries, percent, ETA. A
 // STOPPED machine has no ETA, so its line is the STOPPED text the header of
 // where shows, then, with cards on the table, landed / all and the percent.
+// Every primary landed, the line has no ETA (errata 3 amendment 6): while the
+// machine runs, "N/N 100.0% done in <duration>" from its first start; once it
+// has stopped because the sprint is done, "STOPPED  N/N 100.0% done".
 func sprintLine(ctx context.Context, st *store.Store) string {
 	if st == nil {
 		return ""
@@ -554,13 +564,33 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 		return ""
 	}
 	machine := st.MachineLine(ctx)
-	if state := strings.TrimPrefix(machine, "machine: "); strings.HasPrefix(state, "STOPPED") {
-		if landed, all := counts(shapes[0]); all == 0 && landed == 0 {
+	landed, all := counts(shapes[0])
+	full := all > 0 && landed == all
+	state := strings.TrimPrefix(machine, "machine: ")
+	switch {
+	case state == store.DoneState:
+		if full {
+			return store.Stopped + "  " + progress(shapes[0]) + " done"
+		}
+		return store.Stopped + "  " + progress(shapes[0])
+	case strings.HasPrefix(state, "STOPPED"):
+		if all == 0 && landed == 0 {
 			return state
 		}
 		return state + "  " + progress(shapes[0])
+	case full:
+		return strings.TrimSpace(progress(shapes[0]) + " done" + tookSince(ctx, st) + "  " + machine)
 	}
 	return strings.TrimSpace(summary(shapes[0]) + "  " + machine)
+}
+
+// tookSince is " in <duration>": the wall time from the machine's first start
+// of the sprint's epoch to now; empty when it is not known.
+func tookSince(ctx context.Context, st *store.Store) string {
+	if d, ok := st.SinceFirstStart(ctx); ok {
+		return " in " + sprint.TookText(d)
+	}
+	return ""
 }
 
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {

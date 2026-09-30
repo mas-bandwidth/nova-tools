@@ -112,15 +112,21 @@ type Group struct {
 	// name, in the order the notes name them, unbounded: what What
 	// previews, listed whole by inbox --open.
 	Needs []string `json:"-"`
+	// To is who the group's happened notes are addressed to (Note.To), and
+	// Hint what to do next: a group addressed to someone is shown first.
+	To   string `json:"to,omitempty"`
+	Hint string `json:"hint,omitempty"`
 }
 
 // StaleGroupID is the id of a stalled stream's group.
 func StaleGroupID(stream string) string { return "stale:" + stream }
 
-// Inbox groups: open judgments first (marked ones, repeats and overdue, first
-// of all, then the longest waiting), then streams that have not moved past
-// their deadline, then what happened and what was decided since the cursor, in
-// time order.
+// Inbox groups: what happened since the cursor addressed to someone first
+// (the coordinator's "the sprint is done", errata 3 amendment 6: no judgment
+// waits on it, and it is the first thing the coordinator reads), then open
+// judgments (marked ones, repeats and overdue, first of all, then the longest
+// waiting), then streams that have not moved past their deadline, then what
+// happened and what was decided since the cursor, in time order.
 func Inbox(r InboxReq) []Group {
 	var judg []Group
 	at := map[string]int{}
@@ -230,15 +236,20 @@ func Inbox(r InboxReq) []Group {
 		if n.Kind == Judgment || n.Kind == Acknowledged {
 			continue // judgments are shown while open, above; an acknowledgement is its decided note
 		}
-		k := n.Kind + "\x00" + n.Type + "\x00" + n.Stream
+		k := n.Kind + "\x00" + n.Type + "\x00" + n.Stream + "\x00" + n.To
 		i, ok := at[k]
 		if !ok {
 			i = len(rest)
 			at[k] = i
-			rest = append(rest, Group{ID: n.ID, Kind: n.Kind, Type: n.Type, Stream: n.Stream, Oldest: n.At, What: n.What})
+			rest = append(rest, Group{ID: n.ID, Kind: n.Kind, Type: n.Type, Stream: n.Stream, Oldest: n.At, What: n.What, To: n.To, Hint: n.Hint})
 			restMembers[i] = map[string]bool{}
 		}
 		g := &rest[i]
+		if n.To != "" {
+			// the latest words of a note addressed to someone are the ones
+			// that stand
+			g.What, g.Hint = n.What, n.Hint
+		}
 		c := n.Count
 		if c == 0 && len(n.Primaries) == 0 {
 			c = 1
@@ -252,11 +263,17 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Notes = append(g.Notes, n.ID)
 	}
+	var top, other []Group
 	for i := range rest {
 		rest[i].Members = sortedSet(restMembers[i])
 		rest[i].Size = len(rest[i].Members)
+		if rest[i].To != "" {
+			top = append(top, rest[i])
+		} else {
+			other = append(other, rest[i])
+		}
 	}
-	return append(out, rest...)
+	return append(append(top, out...), other...)
 }
 
 // FindGroup is the group of the id, if it is in the inbox.
