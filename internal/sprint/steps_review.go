@@ -861,6 +861,12 @@ type RankReq struct {
 	Answers []string
 	Who     string
 	Only    []string
+	// Before or After places the cards in line on the event-driven path (IT19,
+	// section 3's rank): in front of or after this card of their stream, at
+	// scores between it and its neighbour that are not integers (U2). Op is the
+	// verb's --op.
+	Before, After string
+	Op            string
 }
 
 // Rank changes a primary's score, and every copy of it: its placed work

@@ -2,6 +2,7 @@ package sprintfn
 
 import (
 	"container/list"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -108,6 +109,14 @@ const (
 	XGuardClock       = "clock"
 	XGuardCoordinator = "coordinator"
 	XGuardStranger    = "stranger"
+	// XGuardSet is a set guard over a sprint index (IT08's sprint.SetGuard of
+	// kind zguard, its JSON the Key): Layer 1's S.zguard, the count of the
+	// index's members within Min and Max held within AtLeast and AtMost, or
+	// RANGECOUNT (a race). Added by IT19: an add's ready cards are guarded by
+	// S.zguard(sent:s, rcount, -inf, the highest score admitted, atmost 0)
+	// (1.5.4), and R3's release by the same (2.3). A SetGuard of kind rcount is
+	// Layer 1's own entry, never an XGuard.
+	XGuardSet = "setguard"
 )
 
 // XGuardAbsent is the Score of a due or clock guard over an entry or field
@@ -902,6 +911,10 @@ func xCheckShape(req *Request) *Refusal {
 				return bad("a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent", g.Key)
 			}
 		case XGuardCoordinator:
+		case XGuardSet:
+			if _, ok := xSetGuardOf(g); !ok {
+				return bad("a set guard is not a zguard over a sprint index with bounds and a count: %q", g.Key)
+			}
 		default:
 			return bad("%q is not a kind of guard", g.Kind)
 		}
@@ -1026,6 +1039,90 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		if ok && got == xNoticed {
 			return fail("machine %s has been noticed already", g.Member)
 		}
+	case XGuardSet:
+		sg, _ := xSetGuardOf(g)
+		key := r.at(sg.Key)
+		r.probes++
+		if ref := r.wrongType(key, kindZSet); ref != nil {
+			return ref
+		}
+		n := 0
+		for _, p := range r.k.ks.zpairs(key) {
+			if inBounds(p.score, sg.Min, sg.Max) {
+				n++
+			}
+		}
+		if sg.AtLeast != nil && n < *sg.AtLeast || sg.AtMost != nil && n > *sg.AtMost {
+			return xRefuse("RANGECOUNT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Cells: []string{key}}},
+				"RANGECOUNT: %s holds %d members in [%s, %s] since the read", sg.Key, n, sg.Min, sg.Max)
+		}
 	}
 	return nil
+}
+
+// xSetIndexes are the sprint indexes a set guard may count (1.3.1): the four
+// indexes of a stream.
+var xSetIndexes = []string{sprint.IndexSent, sprint.IndexElig, sprint.IndexFresh, sprint.IndexAgain}
+
+// xSetCountMax is the largest count bound of a set guard: 2^53 - 1, the
+// largest integer the Lua's numbers hold exactly.
+const xSetCountMax = 1<<53 - 1
+
+// xSetGuardOf is a set guard's own shape (sprint.SetGuard, kind zguard): a
+// sprint index of a stream, two bounds in the store's grammar, and at least one
+// count bound, the lower not above the upper, each at most 2^53 - 1 (a count
+// the Lua holds exactly). A field beside kind, key, min, max, atleast and
+// atmost (an rcount's table or cells among them) is refused, as the Lua's
+// set_guard_of refuses it.
+func xSetGuardOf(g XGuard) (sprint.SetGuard, bool) {
+	var sg sprint.SetGuard
+	var shape struct {
+		Kind    string `json:"kind"`
+		Key     string `json:"key"`
+		Min     string `json:"min"`
+		Max     string `json:"max"`
+		AtLeast *int   `json:"atleast"`
+		AtMost  *int   `json:"atmost"`
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(g.Key), &fields); err != nil {
+		return sg, false
+	}
+	for f := range fields { // exact names: the Go decoder alone folds case
+		switch f {
+		case "kind", "key", "min", "max", "atleast", "atmost":
+		default:
+			return sg, false
+		}
+	}
+	d := json.NewDecoder(strings.NewReader(g.Key))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&shape); err != nil || d.More() || shape.Kind != sprint.GuardZGuard {
+		return sg, false
+	}
+	sg = sprint.SetGuard{Kind: shape.Kind, Key: shape.Key, Min: shape.Min, Max: shape.Max, AtLeast: shape.AtLeast, AtMost: shape.AtMost}
+	for _, b := range []*int{sg.AtLeast, sg.AtMost} {
+		if b != nil && *b > xSetCountMax {
+			return sg, false
+		}
+	}
+	idx, stream, ok := strings.Cut(sg.Key, ":")
+	if !ok || !sprint.ValidID(stream) {
+		return sg, false
+	}
+	known := false
+	for _, x := range xSetIndexes {
+		known = known || x == idx
+	}
+	if _, _, ok1 := parseBound(sg.Min); !known || !ok1 {
+		return sg, false
+	}
+	if _, _, ok2 := parseBound(sg.Max); !ok2 {
+		return sg, false
+	}
+	if sg.AtLeast == nil && sg.AtMost == nil || sg.AtLeast != nil && *sg.AtLeast < 0 || sg.AtMost != nil && *sg.AtMost < 0 ||
+		sg.AtLeast != nil && sg.AtMost != nil && *sg.AtLeast > *sg.AtMost {
+		return sg, false
+	}
+	return sg, true
 }
