@@ -81,6 +81,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
 	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists, like sparse.go cardPATHS"},
+	{file: "internal/swarm/lintchild.go", fn: "CardChildRules", record: "card-rules", since: "06418a6fd",
+		reason: "the card lint's table of the child rule sentences (#4852): the text of the rules a card must carry, which names PR as a word of prose, not a RESULT parse"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
