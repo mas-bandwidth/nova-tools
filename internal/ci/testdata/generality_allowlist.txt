@@ -99,9 +99,7 @@ internal/ci/slowtests/slowtests.go:superman 2
 internal/ci/source.go:glenn 1
 internal/ci/timing/timing.go:mas-bandwidth 4
 internal/config/kind.go:glenn 4
-internal/config/kind.go:hulk 1
 internal/config/kind.go:space 1
-internal/config/kind.go:studio 1
 internal/config/redis.go:glenn 1
 internal/converge/converge.go:glenn 1
 internal/converge/converge.go:rowan 1

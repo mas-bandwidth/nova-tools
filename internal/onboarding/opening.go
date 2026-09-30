@@ -26,7 +26,7 @@ const HowItWorksWithin = 15
 const MinExampleCommands = 3
 
 // sentenceBreak is a sentence ending inside the line: a full stop, a semicolon,
-// a question or an exclamation mark followed by a space.
+// a question or an exclamation mark with more words after it.
 var sentenceBreak = regexp.MustCompile(`[.;?!] `)
 
 // OpeningSentence returns the sentence of a banner's first line, the part after

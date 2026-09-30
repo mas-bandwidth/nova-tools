@@ -132,6 +132,7 @@ const usageExamples = `
 example:
   nova-config kinds
   nova-config migrate --print
+  nova-config machine add -h
 `
 
 // kindsUsage is the per-kind part of the banner, from the descriptors.

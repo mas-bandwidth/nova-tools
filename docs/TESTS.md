@@ -699,6 +699,19 @@ MIGRATION version=3 file=0003_friend.sql lines=13
 MIGRATION version=4 file=0004_fleet.sql lines=14
 MIGRATION version=5 file=0005_sprint.sql lines=12
 CONFIG MIGRATE print=5 pg=-
+
+$ nova-config machine add -h
+usage: nova-config machine add [flags]
+from `nova-config help`:
+  nova-config machine add -h
+flags:
+  --as <string>  the friend making the change (env NOVA_FRIEND); every write records it in config.history
+  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
+  --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
+  --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
+  --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
+  --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
+exit codes: 0 done, 1 refused, 2 usage
 ```
 
 `kinds` is one line per kind: its table under schema `config`, its fields in
