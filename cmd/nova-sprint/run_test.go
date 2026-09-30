@@ -19,7 +19,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 		t.Fatalf("where: %s", out)
 	}
 	out := ta.ok("stop")
-	if !strings.Contains(out, "STOP OK before=STOPPED after=STOPPED unchanged: the machine is STOPPED already") || !strings.Contains(out, "machine: STOPPED") {
+	if !strings.Contains(out, "STOP OK before=STOPPED after=STOPPED unchanged: the machine is STOPPED already") || !strings.Contains(out, "\nSTOPPED  0/3 0.0%") || strings.Contains(out, "-> ETA") {
 		t.Fatalf("stop when stopped: %s", out)
 	}
 	out = ta.ok("start")
@@ -38,7 +38,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	if out := ta.ok("inbox"); !strings.Contains(out, "machine: STOPPED (no tick for 16s)") {
 		t.Fatalf("inbox with no tick: %s", out)
 	}
-	if out := ta.ok("take --as m1 --limit 1"); !strings.Contains(out, "machine: STOPPED (no tick for 16s)") {
+	if out := ta.ok("take --as m1 --limit 1"); !strings.Contains(out, "STOPPED (no tick for 16s)  ") || strings.Contains(out, "-> ETA") {
 		t.Fatalf("a verb's line with no tick: %s", out)
 	}
 	ta.ok("stop")

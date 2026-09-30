@@ -36,7 +36,7 @@ type step struct {
 // run is the size run: its steps in order.
 func run() []step {
 	s := []step{
-		{"teardown", "-", 0, []string{"teardown", "--confirm", "PREFIX"}, []int{0, 1, 2}},
+		{"teardown", "-", 0, []string{"teardown", "--confirm", "PREFIXsprint"}, []int{0, 1, 2}},
 		{"init", "-", time.Second, []string{"init", "--readers", "reader-a,reader-b,reader-c,reader-d", "--members", "m1,m2,m3,m4,m5,m6,m7,m8"}, nil},
 		{"add 3 streams --sentinel-every 1000", "3 x 30,000", 3 * time.Second, []string{"add", "--stream", "a,b,c", "--count", "30000", "--sentinel-every", "1000"}, nil},
 		{"add --count", "10,000 onto 90,000", time.Second, []string{"add", "--stream", "d", "--count", "10000"}, nil},
@@ -101,7 +101,7 @@ func main() {
 	env := append(os.Environ(), "NOVA_SPRINT_REDIS="+*redis, "NOVA_SPRINT_PREFIX="+*prefix, "NOVA_SPRINT_ACTOR=sizerun")
 	steps := run()
 	if !*keep {
-		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "PREFIX"}, nil})
+		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "PREFIXsprint"}, nil})
 	}
 	var out bytes.Buffer
 	failed := false

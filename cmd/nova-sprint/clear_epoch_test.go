@@ -24,7 +24,7 @@ func TestInboxReadAfterClear(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red'")
 	var before struct{ Cursor string }
 	ta.json("inbox --at-epoch 0", &before)
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	// new epoch: produce a happened notification
 	ta.ok("add --stream s1 --count 2")
 	ta.deal(2)
@@ -55,7 +55,7 @@ func TestReaderAddAfterClear(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	code, out, errs := ta.do("reader add reader-c")
 	if code != 0 {
 		t.Errorf("reader add after clear: exit %d %s%s", code, out, errs)
@@ -74,7 +74,7 @@ func TestWaitAfterClear(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red'")
 	oldg := ta.group(sprint.NWorkFailed, "s1")
 	oldNote := oldg.Notes[0]
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	// an old judgment's wait: must not change the old epoch, must say cleared
 	code, out, errs := ta.do("wait " + oldNote + " --for 1h")
 	t.Logf("wait old judgment after clear: %d %s%s", code, out, errs)
@@ -102,7 +102,7 @@ func TestInboxReadRefusesAnEarlierEpoch(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	if code, _, errs := ta.do("inbox --read --at-epoch 0"); code != 2 || !strings.Contains(errs, "give one of them") {
 		t.Fatalf("inbox --read --at-epoch 0: exit %d %s", code, errs)
 	}
@@ -157,7 +157,7 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report red")
 	ta.ok("inbox --read")
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	ta.ok("add --stream s1 --count 9")
 	ta.ok("add --stream s2 --count 3")
 	ta.deal(4)
@@ -165,7 +165,7 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	ta.ok("finish --as m1 s1-3.w1@1 --failed --report red")
 	g := ta.group(sprint.NWorkFailed, "s1")
 	img := ta.epochImage(0)
-	lines := []string{"inbox --read", "wait " + g.Notes[0] + " --for 1h", "clear --confirm t-"}
+	lines := []string{"inbox --read", "wait " + g.Notes[0] + " --for 1h", "clear --confirm t-sprint"}
 	for _, v := range verbs {
 		switch v.name {
 		case "run":
@@ -179,9 +179,9 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	// the clear last: it reads the epoch it leaves (1), never epoch 0
 	slices.SortStableFunc(lines, func(a, b string) int {
 		switch {
-		case strings.HasPrefix(a, "clear --confirm t-") == strings.HasPrefix(b, "clear --confirm t-"):
+		case strings.HasPrefix(a, "clear --confirm t-sprint") == strings.HasPrefix(b, "clear --confirm t-"):
 			return 0
-		case strings.HasPrefix(a, "clear --confirm t-"):
+		case strings.HasPrefix(a, "clear --confirm t-sprint"):
 			return 1
 		}
 		return -1
@@ -208,7 +208,7 @@ func TestAnOldWorkersFinishIsRefusedAfterAClear(t *testing.T) {
 	ta.ok("add --stream s1 p1")
 	ta.deal(1)
 	ta.ok("take --as m1 p1.w1@1")
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	ta.ok("add --stream s1 p1")
 	ta.deal(1)
 	raw := func(line string) (int, string) {

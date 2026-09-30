@@ -71,7 +71,7 @@ var table22 = []judgmentWant{
 	{"the machine could not move a card", "card", "c", "held:c",
 		[]string{"ack", "drop", "card", "wait"}, true, true, []string{"R3", "R6", "R8", "R9", "R10", "R11"}},
 	{"an invariant is broken", "card", "c", "held:c",
-		[]string{"card", "clear --confirm <prefix>", "drop", "wait"}, true, false, []string{"a lower-layer refusal naming the card", "the sweep"}},
+		[]string{"card", "clear --confirm <sprint>", "drop", "wait"}, true, false, []string{"a lower-layer refusal naming the card", "the sweep"}},
 	{"the machine's step was refused", "rule key", "ask:p", "ask:p",
 		[]string{"log --since", "ack", "stop", "wait"}, true, true, []string{"the tick"}},
 	{"the sprint is done", "sprint", "", "done",
@@ -627,7 +627,7 @@ var seeds = []seeded{
 	{"an invariant is broken", "an invariant is broken", func(t *testing.T) (*world, Open) {
 		w := setup(t, 1)
 		return w, raise(w, "an invariant is broken", "s1-1", nil)
-	}, []string{"card", "clear --confirm <prefix>", "wait"}},
+	}, []string{"card", "clear --confirm <sprint>", "wait"}},
 
 	{"the machine's step was refused", "the machine's step was refused", func(t *testing.T) (*world, Open) {
 		w := setup(t, 1)
@@ -898,7 +898,7 @@ func TestInvariantBrokenOffersClearNotRepair(t *testing.T) {
 	}
 	w, o := seedNamed(t, "an invariant is broken")
 	got := decisionsOf(Printed(w.s, o))
-	if !slices.Contains(got, "clear --confirm <prefix>") || slices.Contains(got, "repair") {
+	if !slices.Contains(got, "clear --confirm <sprint>") || slices.Contains(got, "repair") {
 		t.Fatalf("printed %q", got)
 	}
 	// repair is no verb yet: a row that offered it is caught, by Answerable,

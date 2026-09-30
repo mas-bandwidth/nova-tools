@@ -67,8 +67,8 @@ func init() {
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
-		{"clear", "--confirm <prefix>", "clear --confirm dev-", (*app).cmdClear},
-		{"teardown", "--confirm <prefix>", "teardown --confirm dev-", (*app).cmdTeardown},
+		{"clear", "--confirm <sprint>", "clear --confirm sprint", (*app).cmdClear},
+		{"teardown", "--confirm <sprint>", "teardown --confirm sprint", (*app).cmdTeardown},
 	}
 }
 
@@ -93,8 +93,7 @@ func banner() string {
 	}
 	b.WriteString(`
 Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
-NOVA_REDIS_ADDR), --prefix <p> (else NOVA_SPRINT_PREFIX: every table, view and
-key of this sprint carries it), --actor <name> (else NOVA_SPRINT_ACTOR; no
+NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR; no
 default: a verb that writes wants one), --op <id> (the same id again returns
 the recorded result), --json and --max <n> (listed items; 0 is all). The
 coordinator's verbs are the coordinator's alone (the first init names it:
@@ -106,7 +105,14 @@ ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
-line: landed/all percent -> ETA.
+line: landed/all percent -> ETA (a stopped machine has no ETA: STOPPED, then
+landed/all and the percent when there are cards).
+
+The tables are work, merge, readers and fleet, and the view is sprint: plain
+names, no prefix. --prefix <p> (else NOVA_SPRINT_PREFIX) puts p before every
+table, view and key, to run two sprints on one store (p-work, p-sprint). clear
+and teardown want --confirm <sprint>, the name of the view: sprint with no
+prefix, <p>sprint with one.
 
 A work card is named with its generation, <card>@<gen>: the generation the
 worker holds, from queue --as <member> (--json: "gen"). take by id and finish
@@ -172,7 +178,7 @@ one answer to each judgment (every one prints its own, filled in):
   a repeat: stop and look     card <primary>
   overdue: act                a decision above, or wait <note> --for 30m
   a stream not moving: look   where, then queue --stream <s>
-  the sprint is done          clear --confirm <prefix>, or add --stream <s> for more work
+  the sprint is done          clear --confirm <sprint>, or add --stream <s> for more work
   sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
@@ -535,7 +541,10 @@ func listed(w io.Writer, kind string, lines []string, max int, verbName string) 
 	}
 }
 
-// sprintLine is the summary line: landed / all primaries, percent, ETA.
+// sprintLine is the summary line: landed / all primaries, percent, ETA. A
+// STOPPED machine has no ETA, so its line is STOPPED, and with cards on the
+// table STOPPED then landed / all and the percent; it agrees with the header
+// of where.
 func sprintLine(ctx context.Context, st *store.Store) string {
 	if st == nil {
 		return ""
@@ -544,7 +553,14 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	if err != nil || len(shapes) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(summary(shapes[0]) + "  " + st.MachineLine(ctx))
+	machine := st.MachineLine(ctx)
+	if state := strings.TrimPrefix(machine, "machine: "); strings.HasPrefix(state, "STOPPED") {
+		if landed, all := counts(shapes[0]); all == 0 && landed == 0 {
+			return state
+		}
+		return state + "  " + progress(shapes[0])
+	}
+	return strings.TrimSpace(summary(shapes[0]) + "  " + machine)
 }
 
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
@@ -1217,19 +1233,20 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
+// confirmName is what clear and teardown want after --confirm: the name of the
+// sprint's view, sprint with no prefix and <prefix>sprint with one.
+func confirmName(c *common) string { return sprint.Names{Prefix: c.prefix}.View() }
+
 func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("teardown")
-	confirm := fs.String("confirm", "", "the prefix again, to confirm; 'none' for an empty prefix")
+	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view (sprint, or <prefix>sprint)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "teardown", fmt.Sprint("takes no words ", err))
 	}
-	want := c.prefix
-	if want == "" {
-		want = "none"
-	}
+	want := confirmName(c)
 	if *confirm != want {
-		return refuse(stderr, "teardown", "drops the four tables, the view and every key of the sprint under prefix "+strconv.Quote(c.prefix)+"; wants --confirm "+want)
+		return refuse(stderr, "teardown", "drops the four tables, the view and every key of the sprint "+want+"; wants --confirm "+want+" (the name of the sprint's view)")
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -1240,23 +1257,20 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s teardown: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	fmt.Fprintf(stdout, "TEARDOWN OK prefix=%s keys=%d\n", oneline.Escape(c.prefix), n)
+	fmt.Fprintf(stdout, "TEARDOWN OK sprint=%s prefix=%s keys=%d\n", oneline.Escape(want), oneline.Escape(c.prefix), n)
 	return 0
 }
 
 func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("clear")
-	confirm := fs.String("confirm", "", "the prefix again, to confirm; 'none' for an empty prefix")
+	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view (sprint, or <prefix>sprint)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "clear", fmt.Sprint("takes no words ", err))
 	}
-	want := c.prefix
-	if want == "" {
-		want = "none"
-	}
+	want := confirmName(c)
 	if *confirm != want {
-		return refuse(stderr, "clear", "stops the sprint under prefix "+strconv.Quote(c.prefix)+" and clears all work in it (a new epoch; the old one stays readable with --at-epoch); wants --confirm "+want)
+		return refuse(stderr, "clear", "stops the sprint "+want+" and clears all work in it (a new epoch; the old one stays readable with --at-epoch); wants --confirm "+want+" (the name of the sprint's view)")
 	}
 	st, err := a.store(*c)
 	if err != nil {

@@ -23,12 +23,17 @@ import (
 // summary is the sprint's line: landed / all primaries on the table, percent,
 // ETA (the table layer's view line, which has no rate to give an ETA from).
 func summary(t ntable.Table) string {
+	return progress(t) + " -> ETA"
+}
+
+// progress is landed / all primaries and the percent: "3/10 30.0%".
+func progress(t ntable.Table) string {
 	landed, all := counts(t)
 	pct := "0.0%"
 	if all > 0 {
 		pct = strconv.FormatFloat(100*float64(landed)/float64(all), 'f', 1, 64) + "%"
 	}
-	return fmt.Sprintf("%d/%d %s -> ETA", landed, all, pct)
+	return fmt.Sprintf("%d/%d %s", landed, all, pct)
 }
 
 func counts(t ntable.Table) (landed, all int64) {

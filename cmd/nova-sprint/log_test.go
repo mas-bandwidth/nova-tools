@@ -54,7 +54,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	if len(j.Lines) == 0 || j.Lines[0].Kind != "move" || len(j.Lines[0].Cards) != 2 || j.Lines[0].Cards[1] != "s1-2" {
 		t.Errorf("log --json: %+v", j)
 	}
-	ta.ok("clear --confirm t-")
+	ta.ok("clear --confirm t-sprint")
 	if out := ta.ok("log --at-epoch 0 --card s1-1"); !strings.Contains(out, "m1 finished attempt 1: FAILED") {
 		t.Errorf("the old epoch's log after a clear:\n%s", out)
 	}
