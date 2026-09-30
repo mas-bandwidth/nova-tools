@@ -757,6 +757,13 @@ local function validate_step(req, allow_derived_notes)
         end
         if abouts > cap('about') then return failure('LIMIT') end
     end
+    -- The composed profile's static rules (Layer 2's L.check_step): part of
+    -- this static phase, before any guard (L1 8). The standalone profile does
+    -- not load the log, so NS.tlog is absent there.
+    if NS.tlog then
+        local _, err = NS.tlog.check_step(req)
+        if err then return nil, err end
+    end
     return req, nil
 end
 
@@ -808,6 +815,8 @@ local function query(q, i, kinds, extension)
     if q.kind == 'range' and type(q.limit) == 'number' and q.limit > 2000 then return failure('LIMIT', detail) end
     if q.kind == 'lines' and type(q.limit) == 'number' and q.limit > 5000 then return failure('LIMIT', detail) end
     if q.kind == 'lines' and type(q.ids_limit) == 'number' and q.ids_limit > 200000 then return failure('LIMIT', detail) end
+    -- bytes_limit is bounded by the 8 MiB encoded reply (L1 7; decision 6).
+    if q.kind == 'lines' and type(q.bytes_limit) == 'number' and q.bytes_limit > 8388608 then return failure('LIMIT', detail) end
     if q.kind == 'cardlines' and type(q.limit) == 'number' and q.limit > 500 then return failure('LIMIT', detail) end
     local common = {kind=true,t=true,cell=true,key=true,min=true,max=true,limit=true,desc=true,records=true,fields=true}
     if q.kind == 'range' then
@@ -859,10 +868,11 @@ local function query(q, i, kinds, extension)
     elseif q.kind == 'last' then
         if not only(q,{kind=true}) then return failure('REQUEST', detail) end
     elseif q.kind == 'lines' then
-        if not only(q,{kind=true,after_seq=true,through_seq=true,limit=true,ids_limit=true})
+        if not only(q,{kind=true,after_seq=true,through_seq=true,limit=true,ids_limit=true,bytes_limit=true})
             or not S.uint(q.after_seq) or (q.through_seq ~= nil and not S.uint(q.through_seq))
             or not uint_count(q.limit,5000,true)
-            or (q.ids_limit ~= nil and not uint_count(q.ids_limit,200000)) then return failure('REQUEST', detail) end
+            or (q.ids_limit ~= nil and not uint_count(q.ids_limit,200000))
+            or (q.bytes_limit ~= nil and not uint_count(q.bytes_limit,8388608,true)) then return failure('REQUEST', detail) end
     elseif q.kind == 'cardlines' then
         if not only(q,{kind=true,abouts=true,limit=true,fields=true,include_meta=true,cursor=true})
             or not strings(q.abouts,2000,name,1) or not uint_count(q.limit,500,true)
