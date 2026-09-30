@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 type flagSet = *flag.FlagSet
@@ -673,8 +674,8 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
-	brief := fs.String("brief", "", "the brief")
-	briefFile := fs.String("brief-file", "", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs); not with --brief")
+	brief := fs.String("brief", "", "the brief: a child's whole brief, held to the card lint (every rule the coordinator gives a child; nova-swarm template --name card prints a card that passes, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted")
+	briefFile := fs.String("brief-file", "", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; not with --brief")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
@@ -711,6 +712,15 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if len(streams) > 1 && *count == 0 {
 		return refuse(stderr, "add", "several streams take --count <n>: each gets n cards")
 	}
+	// A BRIEF IS A CHILD'S WHOLE BRIEF, AND THE CARD LINT HOLDS IT TO THE RULES OF ONE: every
+	// rule the coordinator gives a child is a rule of internal/swarm/lintchild.go, checked
+	// here in process, before anything is written. A card with no brief (a --count card, a
+	// sentinel) carries none to check.
+	if *sentinel == "" && *brief != "" {
+		if code := lintBrief(*brief, c.max, stderr); code != 0 {
+			return code
+		}
+	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
 		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
@@ -732,6 +742,28 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		return a.runStep("add", *c, st, store.AddStep(rs[0]), stdout, stderr)
 	}
 	return a.runStep("add", *c, st, store.AddEachStep(rs), stdout, stderr)
+}
+
+// lintBrief holds one brief to the card lint's child rules (swarm.LintCardChild): the
+// findings print on stderr in the lint's own grammar, at most max of them (0 is all)
+// before a MORE line, and a brief with any is refused, exit 2.
+func lintBrief(brief string, max int, stderr io.Writer) int {
+	findings := swarm.LintCardChild([]byte(brief))
+	if len(findings) == 0 {
+		return 0
+	}
+	printed, more := findings, false
+	if max > 0 && len(findings) > max {
+		printed, more = findings[:max], true
+	}
+	for _, f := range printed {
+		fmt.Fprintf(stderr, "LINT DRIFT brief %s: %d: %s remedy=%s\n", oneline.Field(f.Check), f.Line,
+			oneline.Escape(oneline.Cap(f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.CardChildRemedies[f.Check]))
+	}
+	if more {
+		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(findings))
+	}
+	return refuse(stderr, "add", fmt.Sprintf("the brief fails the card lint (%d findings); a brief is a child's whole brief and carries every rule the coordinator gives a child; run: nova-swarm template --name card", len(findings)))
 }
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {

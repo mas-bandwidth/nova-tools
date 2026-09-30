@@ -715,9 +715,10 @@ usage:
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+                       (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]

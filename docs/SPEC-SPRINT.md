@@ -662,7 +662,7 @@ command that loads it.
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor) |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole |
+| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChild`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `nova-swarm template --name card` prints a card that passes |
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |

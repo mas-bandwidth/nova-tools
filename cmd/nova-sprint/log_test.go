@@ -14,7 +14,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	ta := newTestApp(t)
 	ta.a.loc = time.UTC
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 2 --brief 'handle the empty case'")
+	ta.ok("add --stream s1 --count 2 --brief-file " + writeBrief(t, "handle the empty case"))
 	ta.deal(2)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
@@ -72,7 +72,7 @@ func TestCardTellsTheStory(t *testing.T) {
 	ta := newTestApp(t)
 	ta.a.loc = time.UTC
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief 'handle the empty case'")
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
@@ -125,7 +125,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief 'handle the empty case'")
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
 	ta.deal(1)
 	out := ta.ok("take --as m1 s1-1.w1@1")
 	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1", "  brief:\n    handle the empty case", "  notes: none",
@@ -144,7 +144,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 		} `json:"packets"`
 	}
 	ta.json("take --as m1 s1-1.w2@1", &j)
-	if len(j.Packets) != 1 || j.Packets[0].Fix != "check the nil slice too" || j.Packets[0].Base != "feature/empty" || j.Packets[0].Brief != "handle the empty case" {
+	if len(j.Packets) != 1 || j.Packets[0].Fix != "check the nil slice too" || j.Packets[0].Base != "feature/empty" || !strings.HasPrefix(j.Packets[0].Brief, "handle the empty case") {
 		t.Fatalf("take --json packets: %+v", j)
 	}
 	if out := ta.ok("queue --as m1"); !strings.Contains(out, "  fix (this attempt):\n    check the nil slice too") || !strings.Contains(out, "  base: feature/empty") {

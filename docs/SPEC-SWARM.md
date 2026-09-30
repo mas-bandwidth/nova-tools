@@ -46,9 +46,10 @@ usage:
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+                       (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
@@ -68,8 +69,8 @@ usage:
 2. **`doctor`**: Compares `PATH` binary stamp against local build stamp (`~/.local/bin/nova-swarm`). Refuses launch if shadowed or if a compared binary cannot be read; see "The doctor".
 3. **`batch`** (`--id --cards ...`): executes a batch of cards across slots, enforcing token budgets and deadlines. Without `--runner`, batch requires `--slots-store` and `--owner` and starts `native` itself; these are compatibility inputs to `native`, not capacity leases.
 4. **`verify`**: Mechanically verifies `RESULT.md` line 1 against the contract line, checks against failure signatures, and writes a `.receipt` file.
-5. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules.
-6. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping.
+5. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules. Under `--child-rules` the card is also held to every rule the coordinator gives a child: one `rule-<name>` per required sentence and one `step-<what>` per forbidden command (`internal/swarm/lintchild.go`), the rules `nova-sprint add` holds every brief to.
+6. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping. `card` is a whole card: the contract line, the RULES paragraph with every child rule quoted, and the steps; it lints clean as printed.
 7. **`profile`**: Aggregates per-turn timeline TSV files into execution phase durations.
 8. **`native`**: Executes a single card through the harness under sandbox containment with external deadline, idle timer, and token tracking. Takes job and slot directory leases (`.lease`, `.slot-lease`).
 9. **`route`**: Classifies card complexity and kind against a routes table to select an appropriate worker description.

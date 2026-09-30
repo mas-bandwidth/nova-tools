@@ -136,6 +136,7 @@ func TestTemplateThenLintPasses(t *testing.T) {
 		"read-pr":   true,
 		"probe-row": true,
 		"fix-card":  true,
+		"card":      true,
 	}
 	for _, name := range swarm.TemplateNames() {
 		t.Run(name, func(t *testing.T) {
