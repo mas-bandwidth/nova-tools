@@ -16,7 +16,12 @@
 # - A count that falls, or a row with no finding, fails until the row shrinks.
 # - NOVA_CI_UPDATE=1 removes such rows and never adds one.
 #
-# ceiling: 464
+# Rows that stay on purpose, for now: internal/records/testdata/refused/namespace_syntax.json and
+# receipt_field_not_allowlisted.json each carry a /Users/<name> path inside a content-id
+# fixture; changing the path changes the record's id, so the fixture is regenerated as a
+# piece, not edited.
+#
+# ceiling: 458
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
@@ -56,7 +61,6 @@ Makefile:rowan 1
 Makefile:space 1
 Makefile:studio 3
 Makefile:superman 4
-README.md:mas-bandwidth 1
 cmd/nova-check/testdata/example-dogfood/authors.txt:rowan 3
 cmd/nova-check/testdata/example-dogfood/receipts/20260918T090000Z-nova-example-links-stella.json:stella 1
 cmd/nova-check/testdata/example-dogfood/receipts/20260918T101500Z-nova-example-nocode-emma.json:emma 1
@@ -85,7 +89,7 @@ docs/CLI.md:space 4
 docs/CLI.md:stella 7
 docs/CLI.md:studio 11
 docs/CONTRIBUTING.md:glenn 1
-docs/CONTRIBUTING.md:mas-bandwidth 3
+docs/CONTRIBUTING.md:mas-bandwidth 1
 docs/CONTRIBUTING.md:space 2
 docs/CONTRIBUTING.md:studio 1
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:emma 3
@@ -104,9 +108,6 @@ docs/PROPOSAL-TOKENS-RECORDS-185.md:studio 2
 docs/PROPOSAL-TOKENS-RECORDS.md:studio 3
 docs/PROPOSAL-TOKENS-VALIDATORS.md:emma 2
 docs/PROPOSAL-TOKENS-VALIDATORS.md:stella 1
-docs/SECURITY.md:glenn 1
-docs/SECURITY.md:mas-bandwidth 4
-docs/SECURITY.md:rowan 1
 docs/SPEC-BUS-DELIVERY.md:johnny 3
 docs/SPEC-BUS-DELIVERY.md:rowan 1
 docs/SPEC-BUS-DELIVERY.md:stella 3
@@ -136,7 +137,6 @@ docs/SPEC-SECRETS.md:emma 1
 docs/SPEC-SECRETS.md:freddy 1
 docs/SPEC-SECRETS.md:glenn 16
 docs/SPEC-SECRETS.md:johnny 1
-docs/SPEC-SECRETS.md:mas-bandwidth 7
 docs/SPEC-SECRETS.md:rowan 55
 docs/SPEC-SECRETS.md:space 9
 docs/SPEC-SECRETS.md:stella 1
@@ -328,7 +328,6 @@ internal/nsprint/fn/lua/task_claim.lua:rowan 1
 internal/nsprint/fn/lua/task_claim.lua:space 1
 internal/nsprint/fn/lua/unblock_spec.lua:glenn 1
 internal/nsprint/fn/lua/waiting_resolve.lua:glenn 1
-internal/nsprint/fn/lua/waiting_resolve.lua:mas-bandwidth 3
 internal/nsprint/fn/lua/waiting_resolve.lua:space 1
 internal/nsprint/fn/lua/ws.lua:glenn 1
 internal/nsprint/fn/lua/ws.lua:rowan 1

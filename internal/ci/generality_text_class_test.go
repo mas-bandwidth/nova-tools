@@ -32,8 +32,10 @@ import (
 //   - home-path: /Users/<name>, /home/<name> and a drive path C:/Users/<name> whose
 //     <name> is not one of the generic names in genericHomeUsers (a documented
 //     placeholder, a container user this repository defines, or a hosted runner's).
-//   - the repository's own identity, mas-bandwidth/nova-tools (the module path and
-//     issue references), is not a finding; any other reference to that account is.
+//   - the project's own public links are not findings: mas-bandwidth/nova-tools (the
+//     module path and issue references), mas-bandwidth/nova (the seed) and
+//     mas-bandwidth/secrets (the secrets store design), and the @mas-bandwidth.com
+//     contact addresses in docs/SECURITY.md. Any other reference to that account is.
 //
 // What is scanned. Every file the shared walk finds outside deprecated/ whose name is
 // Makefile or Containerfile or ends in one of textScanSuffixes (.lua .tsv .yml .yaml
@@ -80,7 +82,12 @@ var (
 	reTailnetName = regexp.MustCompile(`(?i)[a-z0-9-]+\.ts\.net\b`)
 	reHomePath    = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./}~-])(?:/Users/|/home/)([A-Za-z0-9_.-]+)|[A-Za-z]:[/\\]Users[/\\]([A-Za-z0-9_.-]+)`)
 	rePosixClass  = regexp.MustCompile(`\[:space:\]`)
-	reOwnIdentity = regexp.MustCompile(`(?i)mas-bandwidth/nova-tools`)
+	// The project's own public repositories are its identity, not fleet names: this
+	// repository, the seed it grows from and the store of the secrets design. The
+	// name must end there, so mas-bandwidth/nova-tools-x is not the project's.
+	reOwnIdentity = regexp.MustCompile(`(?i)mas-bandwidth/(?:nova-tools|nova|secrets)([^A-Za-z0-9_-]|$)`)
+	// The project's contact addresses, in the one document that publishes them.
+	reContact = regexp.MustCompile(`(?i)[A-Za-z0-9._+-]+@mas-bandwidth\.com`)
 )
 
 // lineMayContainText is the cheap prefilter: a line with none of these substrings has
@@ -98,9 +105,12 @@ func lineMayContainText(line string) bool {
 	return false
 }
 
+// contactDoc is the document that publishes the project's contact addresses.
+const contactDoc = "docs/SECURITY.md"
+
 // generalityTextFindings returns every finding of one line of a text file, as tokens:
 // forbidden names, and the pattern findings tailnet-address and home-path.
-func generalityTextFindings(line string) []string {
+func generalityTextFindings(rel, line string) []string {
 	if !lineMayContainText(line) {
 		return nil
 	}
@@ -130,7 +140,13 @@ func generalityTextFindings(line string) []string {
 		}
 	}
 	scrubbed := rePosixClass.ReplaceAllString(line, "        ")
-	scrubbed = reOwnIdentity.ReplaceAllStringFunc(scrubbed, func(s string) string { return strings.Repeat(" ", len(s)) })
+	scrubbed = reOwnIdentity.ReplaceAllStringFunc(scrubbed, func(s string) string {
+		tail := len(reOwnIdentity.FindStringSubmatch(s)[1])
+		return strings.Repeat(" ", len(s)-tail) + s[len(s)-tail:]
+	})
+	if rel == contactDoc {
+		scrubbed = reContact.ReplaceAllStringFunc(scrubbed, func(s string) string { return strings.Repeat(" ", len(s)) })
+	}
 	out = append(out, extractTokensFromText(scrubbed)...)
 	return out
 }
@@ -162,7 +178,7 @@ func measureTextGenerality(files []textScanFile) map[string]int {
 	counts := map[string]int{}
 	for _, f := range files {
 		for _, line := range strings.Split(string(f.Src), "\n") {
-			for _, tok := range generalityTextFindings(line) {
+			for _, tok := range generalityTextFindings(f.Rel, line) {
 				counts[f.Rel+":"+tok]++
 			}
 		}
@@ -283,7 +299,16 @@ func TestGeneralityText(t *testing.T) {
 
 	files := livingTextFiles(t)
 	if allowlist.Updating() {
-		counts := measureTextGenerality(files)
+		skip := map[string]bool{}
+		for _, row := range loadAllowlist(t, generalityTextFixturesPath, shrinkOnly).Rows() {
+			skip[strings.Fields(row.Text)[0]] = true
+		}
+		counts := map[string]int{}
+		for k, n := range measureTextGenerality(files) {
+			if !skip[fileOfKey(k)] {
+				counts[k] = n
+			}
+		}
 		p := filepath.Join(repoTree(t).Root, "internal/ci", generalityTextDebtPath)
 		if err := writeGeneralityAllowlist(p, counts); err != nil {
 			t.Fatalf("failed to rewrite the text generality list: %v", err)
@@ -329,17 +354,41 @@ func TestGeneralityTextFindings(t *testing.T) {
 		{"go install github.com/mas-bandwidth/nova-tools/cmd/x@latest", nil},
 		{"see mas-bandwidth/nova-tools#4339", nil},
 		{"see mas-bandwidth/ideas#12", []string{"mas-bandwidth"}},
+		{"[seed](github.com/mas-bandwidth/nova) and [sec](github.com/mas-bandwidth/nova/blob/main/SECURITY.md)", nil},
+		{"the store `mas-bandwidth/secrets`, and repos/mas-bandwidth/secrets/collaborators", nil},
+		{"mas-bandwidth/nova-tools-x and mas-bandwidth/novax and mas-bandwidth/secrets2", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
+		{"mas-bandwidth/nova mas-bandwidth/nova-tools", nil},
+		{"mail ada@mas-bandwidth.com", []string{"mas-bandwidth"}},
 		{"in a namespace, on miniredis, in whitespace", nil},
 		{"the swarm-hulk seat", []string{"hulk"}},
 	}
 	for _, tc := range cases {
-		got := generalityTextFindings(tc.line)
+		got := generalityTextFindings("docs/x.md", tc.line)
 		sort.Strings(got)
 		want := append([]string(nil), tc.want...)
 		sort.Strings(want)
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("generalityTextFindings(%q) = %v, want %v", tc.line, got, want)
 		}
+	}
+}
+
+// TestGeneralityTextContactDoc: the project's contact addresses pass in the one document
+// that publishes them and nowhere else.
+func TestGeneralityTextContactDoc(t *testing.T) {
+	t.Parallel()
+
+	line := "Email <glenn@mas-bandwidth.com>."
+	if got := generalityTextFindings(contactDoc, line); len(got) != 0 {
+		t.Errorf("%s: %v, want none", contactDoc, got)
+	}
+	got := generalityTextFindings("docs/CLI.md", line)
+	sort.Strings(got)
+	if strings.Join(got, ",") != "glenn,mas-bandwidth" {
+		t.Errorf("elsewhere: %v, want the name and the account", got)
+	}
+	if got := generalityTextFindings(contactDoc, "ask rowan or mas-bandwidth/ideas"); len(got) != 2 {
+		t.Errorf("%s: a name and another repository still count, got %v", contactDoc, got)
 	}
 }
 
