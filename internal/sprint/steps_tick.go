@@ -299,7 +299,8 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 }
 
 // T4. TickLevel evens the up members' ready queues when two differ by more
-// than one: the newest cards go to the shortest queue.
+// than one: the newest cards of the longest queue go round the fleet from the
+// deal's index (level, round.levelTo).
 func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }

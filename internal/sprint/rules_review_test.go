@@ -290,6 +290,7 @@ func (tw rvTwin) query(q SprintQ) Answer {
 			}
 			add(Fleet, s.Fleet.Card(CtlID(m)))
 		}
+		a.Props = propsAnswer(s.Fleet, q.Props)
 	case QueryRelated:
 		if q.Table != Work {
 			tw.fail("the review rules read related records of %q", q.Table)
@@ -832,12 +833,12 @@ func TestReworkSetsAvoidResetsRereads(t *testing.T) {
 	w = rvReview(t, 0, 1)
 	worked = w.s.Fleet.Card(w.s.Work.Card("s1-1").F("work")).Row
 	other = map[string]string{"m1": "m2", "m2": "m1"}[worked]
-	rvFillReady(w, other, reviewMaxReady)
+	rvFillReady(w, other, w.s.Width(other)) // at its width (width.go)
 	if c := rvCreates(rvPlanAt(w, ruleRework, now, "rework:s1-1").Plan, Fleet); len(c) != 1 || c[0].Create.Row != worked {
 		t.Errorf("with %s full, dealt to %+v, want %s", other, c, worked)
 	}
 	// nobody has room: the primary goes back to ready with avoid, into again
-	rvFillReady(w, worked, reviewMaxReady)
+	rvFillReady(w, worked, w.s.Width(worked))
 	rp = rvPlanAt(w, ruleRework, now, "rework:s1-1")
 	move = rvEntries(rp.Plan, Work, "s1-1")
 	if len(rvCreates(rp.Plan, Fleet)) != 0 || len(move) != 1 || move[0].Move == nil || move[0].Move.Col != Ready || move[0].Set["avoid"] != worked || move[0].Set["rereads"] != "0" {
@@ -1436,7 +1437,7 @@ func TestReviewReadsFollowTheDesign(t *testing.T) {
 	}{
 		ruleAsk:    {[]string{FollowRCards, FollowJOpen}, QueryReaders, []string{}},
 		ruleAccept: {[]string{FollowRCards, FollowMerge, FollowControl, FollowJOpen}, "", nil},
-		ruleRework: {[]string{FollowRCards, FollowWork}, QueryFleet, []string{"status"}},
+		ruleRework: {[]string{FollowRCards, FollowWork}, QueryFleet, []string{"status", FieldWidth}},
 	} {
 		rp, _ := rvRule(t, name).Read(rvKeys(name+":p"), b, 0)
 		if err := rp.Validate(); err != nil {
@@ -1725,15 +1726,16 @@ func TestReviewALineOf2000CardsIsReadInReadsThatFit(t *testing.T) {
 			}
 		}
 		if kind == ruleRework {
-			// the members' cap holds across the reads: the rest go back to ready for R6
+			// the members' widths hold across the reads (width.go, errata 3
+			// amendment 9): the rest, if any, go back to ready for R6
 			working := 0
 			for i := 1; i <= n; i++ {
 				if w.s.Work.Card(fmt.Sprintf("s1-%d", i)).Col == Working {
 					working++
 				}
 			}
-			if working != MaxMembers*reviewMaxReady {
-				t.Errorf("%s: %d primaries dealt at once, want %d: every member's ready queue filled to its cap and no further", kind, working, MaxMembers*reviewMaxReady)
+			if want := min(n, MaxMembers*DefaultWidth); working != want {
+				t.Errorf("%s: %d primaries dealt at once, want %d: every member filled to its width and no further", kind, working, want)
 			}
 		}
 		if kind == ruleAsk {
@@ -2269,7 +2271,6 @@ func TestReviewRulesTakeTheDesignsNumbers(t *testing.T) {
 		"readers that must agree (R9)":    {AcceptReaders, 2},
 		"read cards of a primary (1.3.1)": {MaxRCards, 15},
 		"askwait's chunk (R8)":            {AskwaitChunk, 2000},
-		"a ready queue's cap (R6)":        {reviewMaxReady, 2},
 		"redeals before the bound (R2)":   {reviewMaxRedeals, 5},
 		"the ids of a line (1.0)":         {MaxLineIDs, 2000},
 	} {

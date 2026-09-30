@@ -590,9 +590,11 @@ func Accept(s State, set []string) (State, error) {
 }
 
 // Rework is SprintTables.tla Rework(p) (line 456): the primary's read cards
-// retire; with a member up the next work card is cut into m, which must be an
-// up member with the shortest ready queue, and the primary goes review ->
-// working; with none up (m is "") review -> ready. The readers are kept (D2);
+// retire; with a member up the next work card is cut into m, which must be the
+// next member round the fleet (ReworkChoice: errata 3 amendment 5, the member
+// of the attempt's work card avoided unless no other has room; the index moved
+// past it), and the primary goes review -> working; with none up (m is "")
+// review -> ready. The readers are kept (D2);
 // its card judgments close.
 func Rework(s State, p, m string) (State, error) {
 	if err := free(s); err != nil {
@@ -603,6 +605,7 @@ func Rework(s State, p, m string) (State, error) {
 		return s, refuse("%s is not in review", p)
 	}
 	up := s.Up()
+	choice := s.ReworkChoice(p)
 	n := s.Clone()
 	if bound != "" {
 		// a primary at its redeal bound: the withdrawn card is taken off and
@@ -619,9 +622,10 @@ func Rework(s State, p, m string) (State, error) {
 	pr := n.Primaries[p]
 	pr.Attempt++
 	if len(up) > 0 {
-		if !s.ShortestIn(m, up) {
-			return s, badChoice("%s reworked into %s, whose ready queue (%d) is not the shortest of %v", p, m, s.RL(m), up)
+		if m != choice {
+			return s, badChoice("%s reworked into %s, not the next member round the fleet, %s (past %q) of %v", p, m, choice, s.DealLast, up)
 		}
+		n.DealLast = m
 		id := WC(p, pr.Attempt)
 		if _, made := n.Work[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
@@ -932,10 +936,9 @@ func (s State) resumed(stream string) State {
 // FleetDown is SprintTables.tla FleetDown(m) (line 603): the member goes
 // down; its unfinished work cards are dealt to up members at a new
 // generation; with no member up they are withdrawn (a new generation) and
-// their primaries return to ready. dest is the choice, card to member: the
-// model deals every card to one member with the shortest ready queue; the
-// spec says "dealt to up members" (section 5), so each card, in work order,
-// must go to an up member whose queue is the shortest at that moment.
+// their primaries return to ready. dest is the choice, card to member: each
+// card, in work order, must go to the next member round the fleet at that
+// moment (PlaceOn: errata 3 amendment 5, every placement moves the index).
 func FleetDown(s State, m string, dest map[string]string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -965,11 +968,12 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 			continue
 		}
 		t := dest[id]
-		if !n.ShortestIn(t, others) {
-			return s, badChoice("%s dealt from %s to %s, whose ready queue (%d) is not the shortest of %v", id, m, t, n.RL(t), others)
+		if next := n.PlaceOn(others, ""); t != next {
+			return s, badChoice("%s dealt from %s to %s, not the next member round the fleet, %s (past %q) of %v", id, m, t, next, n.DealLast, others)
 		}
 		w.Member, w.Place, w.Gen, w.Redeals = t, FReady, w.Gen+1, w.Redeals+1
 		n.Work[id] = w
+		n.DealLast = t
 	}
 	return n, nil
 }
@@ -994,8 +998,8 @@ func FleetUp(s State, m string, moves map[string]string) (State, error) {
 
 // Level is the fleet verb level and the tick's T4 (spec section 14): the
 // up members' ready queues are evened when two differ by more than one, the
-// newest cards going to the shorter queues. From the spec, not yet in the
-// model (whose FleetUp moves half of the longest queue).
+// newest cards going round the fleet (levelRound). From the spec, not yet in
+// the model (whose FleetUp moves half of the longest queue).
 func Level(s State, moves map[string]string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -1003,40 +1007,30 @@ func Level(s State, moves map[string]string) (State, error) {
 	return s.level(moves)
 }
 
+// level levels the queues by levelRound; moves, when given, is the engine's
+// choice, card to the member it ended on, and must be the round's.
 func (s State) level(moves map[string]string) (State, error) {
-	up := s.Up()
 	n := s.Clone()
-	bySource := map[string][]string{}
-	for _, id := range Keys(moves) {
-		w, ok := s.Work[id]
-		to := moves[id]
-		if !ok || w.Place != FReady || !has(up, w.Member) || !has(up, to) || to == w.Member {
-			return s, badChoice("level moves %s to %s: not a ready card of an up member to another", id, to)
-		}
-		if s.RL(to) >= s.RL(w.Member) || s.Held(to) >= Width {
-			return s, badChoice("level moves %s from %s (%d ready) to %s (%d ready)", id, w.Member, s.RL(w.Member), to, s.RL(to))
-		}
-		bySource[w.Member] = append(bySource[w.Member], id)
-		w.Member, w.Gen = to, w.Gen+1
-		n.Work[id] = w
-	}
-	for src, ids := range bySource {
-		for _, id := range ids {
-			for _, other := range Keys(s.Work) {
-				o := s.Work[other]
-				if o.Member == src && o.Place == FReady && moves[other] == "" &&
-					s.Primaries[o.Primary].Score > s.Primaries[s.Work[id].Primary].Score {
-					return s, badChoice("level moves %s off %s and keeps the newer %s", id, src, other)
-				}
+	got := n.levelRound()
+	if len(moves) > 0 {
+		want := map[string]string{}
+		for id, to := range got {
+			if s.Work[id].Member != to {
+				want[id] = to
 			}
 		}
+		if !sameMap(want, moves) {
+			return s, badChoice("level moves %v, not round the fleet: the round (past %q) moves %v", moves, s.DealLast, want)
+		}
 	}
-	if len(moves) == 0 {
-		n.levelDefault()
-	}
-	lo, hi := -1, -1
+	// after levelling no two queues differ by more than one, save where every
+	// member below its Width at or below the mean is gone: the rest are at
+	// their Width and take no more (amendment 9)
+	lo, hi, total := -1, -1, 0
+	up := n.Up()
 	for _, x := range up {
 		l := n.RL(x)
+		total += l
 		if n.Held(x) < Width && (lo < 0 || l < lo) {
 			lo = l
 		}
@@ -1044,24 +1038,30 @@ func (s State) level(moves map[string]string) (State, error) {
 			hi = l
 		}
 	}
-	if lo >= 0 && hi-lo > 1 {
+	if len(up) > 1 && lo >= 0 && lo <= total/len(up) && hi-lo > 1 {
 		return s, badChoice("the ready queues differ by %d after levelling", hi-lo)
 	}
 	return n, nil
 }
 
-// levelDefault levels when no choice was given: the newest card of the
-// first longest queue goes to the first shortest of the members below their
-// Width, until no two differ by more
-// than one.
-func (n *State) levelDefault() {
+// levelRound levels (spec section 14, T4, with errata 3 amendment 5: the
+// levelling goes round the fleet and moves the index; amendment 9: a member
+// at its Width takes no more): while the first longest up queue and the
+// shortest of the up members below their Width differ by more than one, the
+// newest ready card of the longest goes to the next member round the fleet
+// past DealLast below its Width whose queue is below the up members' mean
+// rounded down, or, when none such is below, at it, at a new generation, and
+// DealLast moves past it. It returns the member each card it moved ended on.
+func (n *State) levelRound() map[string]string {
+	out := map[string]string{}
 	for {
 		up := n.Up()
 		if len(up) < 2 {
-			return
+			return out
 		}
-		lo, hi := "", up[0]
+		lo, hi, total := "", up[0], 0
 		for _, x := range up {
+			total += n.RL(x)
 			if n.Held(x) < Width && (lo == "" || n.RL(x) < n.RL(lo)) {
 				lo = x
 			}
@@ -1070,7 +1070,27 @@ func (n *State) levelDefault() {
 			}
 		}
 		if lo == "" || n.RL(hi)-n.RL(lo) <= 1 {
-			return
+			return out
+		}
+		mean := total / len(up)
+		var below, at []string
+		for _, x := range up {
+			if n.Held(x) >= Width {
+				continue
+			}
+			if n.RL(x) < mean {
+				below = append(below, x)
+			}
+			if n.RL(x) <= mean {
+				at = append(at, x)
+			}
+		}
+		to := n.NextMember(below)
+		if to == "" {
+			to = n.NextMember(at)
+		}
+		if to == "" {
+			return out
 		}
 		newest := ""
 		for _, id := range Keys(n.Work) {
@@ -1080,9 +1100,23 @@ func (n *State) levelDefault() {
 			}
 		}
 		w := n.Work[newest]
-		w.Member, w.Gen = lo, w.Gen+1
+		w.Member, w.Gen = to, w.Gen+1
 		n.Work[newest] = w
+		n.DealLast = to
+		out[newest] = to
 	}
+}
+
+func sameMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // ------------------------------------------------------------------ ci, ack

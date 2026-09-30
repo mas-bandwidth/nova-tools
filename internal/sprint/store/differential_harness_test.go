@@ -673,7 +673,7 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 			if w, ok := post.Work[refmodel.WC(a.id(), p.Attempt+1)]; ok {
 				m = w.Member
 			} else if len(s.Up()) > 0 {
-				m = firstShortest(s)
+				m = s.ReworkChoice(a.id())
 			}
 		}
 		next, err = refmodel.Rework(s, a.id(), m)
@@ -755,16 +755,6 @@ func minScore(s refmodel.State, p string) float64 {
 		}
 	}
 	return lo
-}
-
-func firstShortest(s refmodel.State) string {
-	up := s.Up()
-	for _, m := range up {
-		if s.ShortestIn(m, up) {
-			return m
-		}
-	}
-	return ""
 }
 
 func firstUnasked(s refmodel.State, p string) string {

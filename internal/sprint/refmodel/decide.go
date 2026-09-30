@@ -107,8 +107,8 @@ func ResumeMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, Duty
 // (T3).
 func DealMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyDeal) }
 
-// LevelMoves is the newest ready cards moved from the longest queue to the
-// shortest while two queues differ by more than one (T4).
+// LevelMoves is the newest ready cards moved from the longest queue round the
+// fleet while two queues differ by more than one (T4).
 func LevelMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyLevel) }
 
 // AskMoves is the primaries in review asked of two different readers, and the

@@ -126,7 +126,7 @@ var (
 	// workPrimaryFields are a work card's primary: nothing follows from it.
 	workPrimaryFields = []string{"stream", "attempt"}
 	streamCtlFields   = []string{"state", fieldDueMergeIdle, fieldDueIdle}
-	memberCtlFields   = []string{"status"}
+	memberCtlFields   = []string{"status", FieldWidth} // up, and the width a replacement's receiver is below (width.go)
 	readerCtlFields   = []string{"status"}
 	followReadCards   = []string{FollowRCards}
 
@@ -880,14 +880,19 @@ type lateRun struct {
 	f   *TimeFacts
 	now Now
 	b   *timeBuilder
-	// members and readers are the pools the replacements choose from, built
-	// when the first replacement needs them: the up members by the length of
-	// their ready queue, the readers by the length of their asked queue. Each
-	// pick counts against the pool, so replacements spread as the plan fills
-	// them.
-	members, readers *pool
-	primaries        map[string]*primaryRun
-	order            []*primaryRun
+	// readers is the pool a reread chooses from, built when the first needs it:
+	// the readers by the length of their asked queue. Each pick counts against
+	// the pool, so rereads spread as the plan fills them.
+	readers *pool
+	// deal is the deal's rolling index (round.go, errata 3 amendment 5) a
+	// replaced work card goes round the fleet by, built with the members'
+	// queues; moves is the member each replacement moved it past, by unit key.
+	deal      *round
+	queues    map[string]int
+	widths    map[string]int
+	moves     roundMoves
+	primaries map[string]*primaryRun
+	order     []*primaryRun
 	// planned are the keys the run has planned, by kind and id, and whether each
 	// was held back: idle:<stream> and late:idle:<stream> are two texts of one
 	// key, and planned once.
@@ -916,7 +921,11 @@ func planLate(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		}
 	}
 	w.finish()
-	return w.b.result()
+	rp := w.b.result()
+	if w.deal != nil {
+		roundWrites(&rp.Plan, w.deal, w.moves)
+	}
+	return rp
 }
 
 // finish writes the one change each primary that had read cards replaced gets:
@@ -981,14 +990,6 @@ func (w *lateRun) plan(lk lateKey) (heldBack bool) {
 	return false
 }
 
-// memberPool is the up members by the length of their ready queue.
-func (w *lateRun) memberPool() *pool {
-	if w.members == nil {
-		w.members = newPool(w.s.UpMembers(), func(m string) int { return w.s.Fleet.Count(m, Ready) })
-	}
-	return w.members
-}
-
 // readerPool is the readers by the length of their asked queue.
 func (w *lateRun) readerPool() *pool {
 	if w.readers == nil {
@@ -997,11 +998,28 @@ func (w *lateRun) readerPool() *pool {
 	return w.readers
 }
 
-// receiver is the up member other than present with the shortest ready queue,
-// the first in row order on a tie, counted as receiving a card; "" when no
-// other member is up.
-func (w *lateRun) receiver(present string) string {
-	return w.memberPool().pick(func(m string) bool { return m == present }, true)
+// receiver is the next member round the fleet other than present (round.go,
+// errata 3 amendment 5: from the deal's rolling index, the first up below its
+// width, width.go, errata 3 amendment 9, else the first up), counted as receiving a card and the index moved past it
+// for key; "" when no other member is up.
+func (w *lateRun) receiver(present, key string) string {
+	if w.deal == nil {
+		up := w.s.UpMembers()
+		w.deal, w.queues, w.widths, w.moves = dealRound(w.s), memberLoads(w.s, up), memberWidths(w.s, up), roundMoves{}
+	}
+	var others []string
+	for _, m := range w.s.UpMembers() {
+		if m != present {
+			others = append(others, m)
+		}
+	}
+	to := w.deal.next(others, w.queues, w.widths, "", true)
+	if to != "" {
+		w.deal.moved(to)
+		w.queues[to]++
+		w.moves[key] = to
+	}
+	return to
 }
 
 // redeal is a work card dealt again to an up member at the next generation:
@@ -1035,7 +1053,7 @@ func (w *lateRun) judge(typ, cause, subject, text string, decisions []string, ta
 // one replacement is made, or with no other member up, is judged, and stays.
 func (w *lateRun) untaken(lk lateKey, c *Card) {
 	if c.F(fieldUntakenReplaced) == "" {
-		if to := w.receiver(c.Row); to != "" {
+		if to := w.receiver(c.Row, c.F("primary")); to != "" {
 			w.redeal(c, to, map[string]string{
 				fieldUntakenReplaced: "1",
 				fieldDueUntaken:      msText(w.now.R + spanMs(RuleDeadlineUntaken)),
@@ -1065,7 +1083,7 @@ func (w *lateRun) untaken(lk lateKey, c *Card) {
 func (w *lateRun) unfinished(lk lateKey, c *Card) {
 	redeals := c.Int("redeals")
 	if redeals < RuleMaxRedeals {
-		if to := w.receiver(c.Row); to != "" {
+		if to := w.receiver(c.Row, c.F("primary")); to != "" {
 			w.redeal(c, to, map[string]string{
 				"redeals":       itoa(redeals + 1),
 				fieldUntakenR:   msText(w.now.R),
@@ -1217,6 +1235,11 @@ func (w *lateRun) cut(lk lateKey, _ *Card) {
 		Decisions: cutDecisions(lk.id, cf.Verb)})
 }
 
+// lateFleetQuery is R11's read of the fleet: the members' control cards and
+// the deal's rolling index (round.go), which a replaced work card goes round
+// the fleet by and moves.
+var lateFleetQuery = SprintQ{Kind: QueryFleet, Fields: memberCtlFields, Props: []string{PropDealIndex}}
+
 // readLate is R11's read: each card kind's key reads its card and its primary
 // through related (a read card's primary follows rcards, a work card's follows
 // nothing), a stream kind its control card, a work or read card once the fleet
@@ -1226,7 +1249,7 @@ func (w *lateRun) cut(lk lateKey, _ *Card) {
 func readLate(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	fixed := map[string]bool{}
 	fixedCost := map[string]Cost{
-		QueryFleet:    timeQueryCost(SprintQ{Kind: QueryFleet, Fields: memberCtlFields}),
+		QueryFleet:    timeQueryCost(lateFleetQuery),
 		QueryReaders:  timeQueryCost(SprintQ{Kind: QueryReaders, Fields: readerCtlFields}),
 		queryDropping: timeQueryCost(SprintQ{Kind: queryDropping, Fields: droppingFields}),
 	}
@@ -1291,7 +1314,7 @@ func readLate(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 	add(relatedQ(Work, nil, primaryFields, followReadCards), readPrimaries)
 	add(relatedQ(Merge, nil, streamCtlFields, nil), streams)
 	if fleet {
-		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryFleet, Fields: memberCtlFields})
+		rp.Sprint = append(rp.Sprint, lateFleetQuery)
 	}
 	if readers {
 		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryReaders, Fields: readerCtlFields})

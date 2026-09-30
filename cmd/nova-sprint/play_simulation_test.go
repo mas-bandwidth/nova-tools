@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -157,7 +158,7 @@ func landsUnder(t *testing.T, flags string) map[string]int {
 	seen := map[string]int{}
 	for round := 1; round <= 600; round++ {
 		ta.ok("tick")
-		out := ta.ok(fmt.Sprintf("play --simulation %s --seed %d --ticks 5 --batch 5 --take 20 --reads 20", flags, round))
+		out := ta.ok(fmt.Sprintf("play --simulation %s --seed %d --ticks 5 --batch 5", flags, round))
 		for _, l := range strings.Split(out, "\n") {
 			if verb, ok := strings.CutPrefix(l, "  nova-sprint "); ok {
 				switch v := strings.Fields(verb)[0]; v {
@@ -205,4 +206,86 @@ func TestPlaySimulationWithMachinesGoingDownAndComingBackLandsEveryStream(t *tes
 			t.Errorf("no event of %q in the whole run", name)
 		}
 	}
+}
+
+// moved is the count a verb's printed line reports, and the member it ran as.
+func movedLine(l string) (verb, as string, n int) {
+	f := strings.Fields(l)
+	if len(f) < 4 || f[0] != "nova-sprint" || f[2] != "--as" {
+		return "", "", 0
+	}
+	for _, x := range f {
+		if v, ok := strings.CutPrefix(x, "moved="); ok {
+			n, _ = strconv.Atoi(v)
+		}
+	}
+	return f[1], f[3], n
+}
+
+// The simulation batches (the owner's ruling of 2026-09-30: "we don't move
+// one or two cards a turn like this. we batch."): in a world tick each
+// machine takes its whole ready queue in one call, and in the next finishes
+// all it took in one call, the failed in a second.
+func TestPlaySimulationBatchesOneCallAMachineATick(t *testing.T) {
+	t.Parallel()
+	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
+	ta := newTestApp(t)
+	ta.live = members
+	ta.ok("init --readers reader-a,reader-b,reader-c --members " + strings.Join(members, ","))
+	ta.ok("add --stream s1 --count 150")
+	ta.ok("start")
+	ta.ok("tick") // the machine deals the ready queues
+	ready := map[string]int{}
+	total := 0
+	for _, m := range members {
+		var q struct {
+			Cards []struct{ Col string } `json:"cards"`
+		}
+		ta.json("queue --as "+m, &q)
+		for _, c := range q.Cards {
+			if c.Col == "ready" {
+				ready[m]++
+				total++
+			}
+		}
+	}
+	if len(ready) != len(members) {
+		t.Fatalf("the machine dealt %v: every machine wants a ready queue", ready)
+	}
+	ta.live = nil // from here the driver's machines beat
+	out := ta.ok("play --simulation --down 0 --seed 1 --ticks 2")
+	one, two, _ := strings.Cut(out, "\ntick 2 ")
+	takes, taken := map[string]int{}, map[string]int{}
+	for _, l := range strings.Split(one, "\n") {
+		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "take" {
+			takes[as]++
+			taken[as] += n
+		} else if verb != "" {
+			t.Errorf("the first world tick ran %s before anything was taken:\n%s", verb, l)
+		}
+	}
+	finishes, finished, batched := map[string]int{}, map[string]int{}, 0
+	for _, l := range strings.Split(two, "\n") {
+		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "finish" {
+			finishes[as]++
+			finished[as] += n
+			if n > 1 {
+				batched++
+			}
+		} else if verb == "take" {
+			t.Errorf("a machine took with its queue taken:\n%s", l)
+		}
+	}
+	for _, m := range members {
+		if takes[m] != 1 || taken[m] != ready[m] {
+			t.Errorf("%s: %d take calls moving %d of its %d ready, want one moving all\n%s", m, takes[m], taken[m], ready[m], out)
+		}
+		if finishes[m] < 1 || finishes[m] > 2 || finished[m] != taken[m] {
+			t.Errorf("%s: %d finish calls moving %d of the %d it took, want one or two moving all\n%s", m, finishes[m], finished[m], taken[m], out)
+		}
+	}
+	if batched == 0 {
+		t.Errorf("no finish moved more than one card:\n%s", out)
+	}
+	t.Logf("%d ready over %d machines, one take each; finishes %v", total, len(members), finished)
 }

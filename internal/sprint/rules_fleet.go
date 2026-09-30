@@ -183,6 +183,9 @@ var (
 	// The member's control card: status and its hold (isHeld). A fleet member's
 	// `since` is written and never read.
 	memberReadFields = []string{"status", "held"}
+	// The members R2 reads: status, hold, and the width (R2's redeal goes to a
+	// receiver below its width, width.go, errata 3 amendment 9).
+	downMemberFields = []string{"status", "held", FieldWidth}
 	// The members R6 and R7 read: the status (UpMembers) and the width (width.go,
 	// errata 3 amendment 9); they never ask whether a member is held.
 	upReadFields = []string{"status", FieldWidth}
@@ -598,8 +601,10 @@ func readSeen(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // Effect: first chunk: m up, not held, and its beat fresh (a beat raced the
 // pop): nothing, and the key goes. Otherwise m's status goes down, unless m
 // is held: a held member stays held, and only fleet up releases it. Each card
-// is dealt again to the up member with the shortest ready queue, at
-// generation + 1. A card that was ready keeps untaken_r and redeals: it was
+// is dealt again to the next member round the fleet (round.go, errata 3
+// amendment 5: from the deal's rolling index, the first up below its width,
+// width.go, errata 3 amendment 9, else the first up; the index moved past it and written with the step, guarded on the
+// value read), at generation + 1. A card that was ready keeps untaken_r and redeals: it was
 // never taken, so its redeal does not count. A card that was working ended a
 // take without a finish, and its redeal counts: below RuleMaxRedeals it is
 // dealt again with redeals + 1, first_taken_r unset and untaken_r = R; at
@@ -642,12 +647,13 @@ func planDownWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 			receivers = append(receivers, m)
 		}
 	}
-	q := readyQueues(s, receivers)
-	read := map[string]int{}
-	for m, n := range q {
-		read[m] = n
-	}
+	read := readyQueues(s, receivers)
+	// the room of each receiver is its width (width.go, errata 3 amendment 9):
+	// its work cards held, ready and working, under it
+	q, widths := memberLoads(s, receivers), memberWidths(s, receivers)
 	used := map[string]bool{}
+	rr := dealRound(s)
+	moves := roundMoves{}
 	var withdrawnNoMember, atBound []string
 	heads := headCells(s.Fleet, Ready, Working)
 
@@ -688,7 +694,9 @@ func planDownWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 				}
 				withdrawn++
 			case len(receivers) > 0:
-				to := shortest(receivers, q)
+				to := rr.next(receivers, q, widths, "", true)
+				rr.moved(to)
+				moves[c.ID] = to
 				q[to]++
 				used[to] = true
 				units = append(units, redealUnit(c, m, to, now, wall))
@@ -760,6 +768,7 @@ func planDownWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 	}
 	rp.Plan.on(s)
 	rp.Plan = Lawful(rp.Plan)
+	roundWrites(&rp.Plan, rr, moves)
 	return rp
 }
 
@@ -871,7 +880,10 @@ func recordsOf(qs ...SprintQ) int {
 // and working cells with their primaries, and the beat entries and the dropping
 // marks (the facts factBeats and factDropping).
 func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
-	fleet := fleetQuery(memberReadFields)
+	fleet := fleetQuery(downMemberFields)
+	// the fleet with the deal's rolling index (round.go): a card dealt again
+	// goes round the fleet and moves it
+	fleet.Props = []string{PropDealIndex}
 	kept, left, lim := fleetShare(keys, fleetChunk, recordsOf(fleet),
 		func(limit int) int { return recordsOf(downQueries("m", limit)...) }, b, halvings)
 	ks := fleetKeysOf(ruleDown, kept)
@@ -1299,10 +1311,15 @@ func dealStreams(s *Snapshot) (streams, unseen []string) {
 // Guard: each moved card at its place and revision; a count entry on the
 // members whose queues change, each at most what was read; every receiver up
 // (memberup).
-// Effect: while the longest and shortest queues (by the cells' counts) differ
+// Effect: while the longest and the shortest queues (by the cells' counts) differ
 // by more than one, the newest card of the longest that the read loaded moves to
-// the shortest of the members below their width (a member at its width takes
-// no more, errata 3 amendment 9) at generation + 1. A ready card, not taken: untaken_r and redeals
+// the next member round the fleet below its width and below the mean
+// (round.levelTo, errata 3 amendment 5: from the deal's rolling index, the
+// fleet table's deal_index, the first up below its width whose queue is below
+// the up members' mean rounded down, else the first at it; the index moved
+// past it and written with the step, guarded on the value read; a member at
+// its width takes no more, errata 3 amendment 9; the shortest queue is the
+// shortest of the members below their width) at generation + 1. A ready card, not taken: untaken_r and redeals
 // are unchanged. A card of a stream being dropped is not moved (X refuses
 // DROPPING), and the key stays. R2 puts no cap on a receiver's queue, so a
 // queue can hold more than the two cards the read loads: the plan moves what it
@@ -1343,6 +1360,8 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 	}
 	moved, skipped, unreached := 0, 0, false
 	receivers, touched := map[string]bool{}, map[string]bool{}
+	rr := dealRound(s)
+	moves := roundMoves{}
 	for len(up) > 1 {
 		long, short := up[0], ""
 		for _, m := range up {
@@ -1372,16 +1391,21 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 			unreached = true // the queue is longer than the cards the read loaded of it
 			break
 		}
+		to := rr.levelTo(up, queues, held, widths)
+		if to == "" {
+			break
+		}
 		c := cards[long][i]
 		cards[long] = append(cards[long][:i:i], cards[long][i+1:]...)
 		queues[long]--
-		queues[short]++
+		queues[to]++
 		held[long]--
-		held[short]++
+		held[to]++
+		moves[c.ID] = to
 		rp.Plan.Units = append(rp.Plan.Units, Unit{Key: c.ID, Stream: c.F("stream"),
-			Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short, wall)))},
-			Moved:   fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, short, c.Int("gen")+1)})
-		receivers[short], touched[long], touched[short] = true, true, true
+			Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, wall)))},
+			Moved:   fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, to, c.Int("gen")+1)})
+		receivers[to], touched[long], touched[to] = true, true, true
 		moved++
 	}
 	for _, m := range up {
@@ -1406,6 +1430,7 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 		rp.settle(key, fateDone)
 	}
 	rp.Plan = Lawful(rp.Plan)
+	roundWrites(&rp.Plan, rr, moves)
 	return rp
 }
 
@@ -1413,6 +1438,9 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 // head of each member's ready cell, at most levelHeadLimit cards each.
 func levelReadFor(sh fleetShape) ReadPlan {
 	rp := ReadPlan{Sprint: []SprintQ{fleetQuery(upReadFields)}}
+	// the fleet with the deal's rolling index (round.go): a levelled card goes
+	// round the fleet and moves it
+	rp.Sprint[0].Props = []string{PropDealIndex}
 	rp.Sprint[0].Units = sh.units()
 	for _, m := range sh.Members {
 		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryRelated, Table: Fleet,

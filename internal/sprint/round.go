@@ -1,6 +1,9 @@
 package sprint
 
-import "slices"
+import (
+	"math"
+	"slices"
+)
 
 // The deal goes round the fleet and the ask goes round the readers (errata 3,
 // amendment 5): each keeps a rolling index into its names, in name order,
@@ -15,6 +18,17 @@ import "slices"
 // done is within a few of the others; the shortest queue with its ties broken
 // by name, which this replaces, gives every card of an idle fleet to the first
 // members in name order and the tail of the fleet none.
+//
+// Every placement of a card on a member goes through the deal's index and
+// moves it, first attempts and redeals and levelling alike (errata 3,
+// amendment 5): the deal (R6, T3) and the withdrawn card dealt again, the
+// rework of failed or broken work (R10, the coordinator's rework), the cards of
+// a member that goes down (R2, fleet down), the levelling (R7, T4, fleet up
+// and level) and the replacement of a late card (R11). A rework skips the
+// member of the attempt it sends back while another up member has room. The
+// model is tla/SprintEvents.tla: RoundOne from dcur in PlanDeal, PlanDown,
+// PlanRework and PlanLate, and dcur moved by each of their effects; the
+// reference model's PlaceOn, ReworkChoice and levelRound.
 //
 // The index is a property of the fleet table (the deal's, deal_index) and of
 // the readers table (the ask's, ask_index), the owner's ruling ("a property
@@ -112,16 +126,93 @@ func (r *round) moved(name string) {
 }
 
 // member is the member the next card goes to: the first from the index that is
-// up and holds fewer cards (q) than its width (widths; a member with no width
-// there has no room), the avoid member only when no other is; "" when none has
-// room. It does not move the index.
-func (r *round) member(up []string, q, widths map[string]int, avoid string) string {
-	room := func(x string) bool { return contains(up, x) && q[x] < widths[x] }
-	m := r.scan(func(x string) bool { return x != avoid && room(x) })
-	if m == "" && avoid != "" && room(avoid) {
+// up and holds fewer cards (q) than its room (room; a member with none there
+// has no room), the avoid member only when no other is; "" when none has room.
+// It does not move the index. The room of a placement on a member is its
+// width (width.go, errata 3 amendment 9), q its work cards held, ready and
+// working (memberLoads).
+func (r *round) member(up []string, q, room map[string]int, avoid string) string {
+	isUp := make(map[string]bool, len(up))
+	for _, x := range up {
+		isUp[x] = true
+	}
+	ok := func(x string) bool { return isUp[x] && q[x] < room[x] }
+	m := r.scan(func(x string) bool { return x != avoid && ok(x) })
+	if m == "" && avoid != "" && ok(avoid) {
 		m = avoid
 	}
 	return m
+}
+
+// next is the member a card placed on the fleet goes to (errata 3 amendment
+// 5: every placement, first attempts and redeals and levelling alike, goes
+// round the fleet and moves the index): the first from the index that is up
+// and below its room, the avoid member only when no other has room; with
+// spill, when none has room, the first up from the index, the avoid member
+// only when it is the one up. "" when none. It neither moves the index nor
+// counts the card: the caller that places it moves the index past it (moved)
+// and counts it (q).
+func (r *round) next(up []string, q, room map[string]int, avoid string, spill bool) string {
+	m := r.member(up, q, room, avoid)
+	if m == "" && spill {
+		m = r.member(up, q, roomOf(up, math.MaxInt), avoid)
+	}
+	return m
+}
+
+// roomOf is the same room, most, for every member of up.
+func roomOf(up []string, most int) map[string]int {
+	out := make(map[string]int, len(up))
+	for _, x := range up {
+		out[x] = most
+	}
+	return out
+}
+
+// levelTo is where the level moves the newest card of the longest queue, and
+// moves the index past it (errata 3 amendment 5): the next member round the
+// fleet from the index that is below its width (held, the work cards it
+// holds, under widths: a member at its width takes no more, errata 3
+// amendment 9) and whose queue (n) is below the up members' mean rounded
+// down, or, when none such is below it, at it. A member that receives is
+// never the longest while two queues differ by more than one, so no card is
+// moved twice, and every move takes a card from a queue at least two longer
+// than the one it joins. "" when none.
+func (r *round) levelTo(up []string, n, held, widths map[string]int) string {
+	if len(up) == 0 {
+		return ""
+	}
+	total := 0
+	for _, m := range up {
+		total += n[m]
+	}
+	mean := total / len(up)
+	isUp := make(map[string]bool, len(up))
+	for _, x := range up {
+		isUp[x] = true
+	}
+	open := func(x string) bool { return isUp[x] && held[x] < widths[x] }
+	to := r.scan(func(x string) bool { return open(x) && n[x] < mean })
+	if to == "" {
+		to = r.scan(func(x string) bool { return open(x) && n[x] <= mean })
+	}
+	if to != "" {
+		r.moved(to)
+	}
+	return to
+}
+
+// dealRoundWith is the deal's rolling index over the fleet's members and the
+// names given that it has no row of yet (a member added by the step that
+// places cards on it).
+func dealRoundWith(s *Snapshot, extra ...string) *round {
+	names := append([]string(nil), s.Fleet.Rows()...)
+	for _, x := range extra {
+		if !contains(names, x) {
+			names = append(names, x)
+		}
+	}
+	return tableRound(s.Fleet, PropDealIndex, names)
 }
 
 // tableRound is the rolling index a table's property holds over names.

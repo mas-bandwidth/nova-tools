@@ -2,7 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -636,17 +635,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 		return p, moves
 	}
 	q, widths := memberLoads(s, up), memberWidths(s, up)
-	unbounded := map[string]int{}
-	for _, m := range up {
-		unbounded[m] = math.MaxInt
-	}
-	next := func() string {
-		m := rr.member(up, q, widths, "")
-		if m == "" {
-			m = rr.member(up, q, unbounded, "")
-		}
-		return m
-	}
+	next := func() string { return rr.next(up, q, widths, "", true) }
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if wc.Int("redeals") >= MaxRedeals {
@@ -682,8 +671,8 @@ func readyQueues(s *Snapshot, up []string) map[string]int {
 }
 
 // deal cuts the primary's next attempt's work card, carrying the fix and the
-// primary's score, into the ready queue of the up member m (the deal's next
-// round the fleet, a rework's the shortest queue), at generation 1, and moves
+// primary's score, into the ready queue of the up member m (the next round the
+// fleet, a deal's or a rework's), at generation 1, and moves
 // the primary to working with set.
 func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]string, unset ...string) (Unit, string) {
 	attempt := c.Int("attempt") + 1
@@ -719,17 +708,6 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) Unit {
 		change(Fleet, moveEntry(wc, m, Ready, set, "withdrawn")),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
-}
-
-// shortest is the name with the smallest count, the first in order on a tie.
-func shortest(names []string, q map[string]int) string {
-	best := names[0]
-	for _, n := range names[1:] {
-		if q[n] < q[best] {
-			best = n
-		}
-	}
-	return best
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the
@@ -949,7 +927,16 @@ type FleetReq struct {
 // none is up), or levels the ready queues. hold marks a member held and takes
 // it down; release clears the hold, adding a member it does not know, and
 // brings it up when its beat is fresh.
-func FleetStep(s *Snapshot, r FleetReq) Plan { return Lawful(fleetStepPlan(s, r)) }
+func FleetStep(s *Snapshot, r FleetReq) Plan {
+	// every card the step places on a member (a down member's cards dealt
+	// again, the levelling) goes round the fleet from the deal's rolling index
+	// and moves it (round.go, errata 3 amendment 5), written with the step
+	rr := dealRoundWith(s, append([]string{r.Member}, r.Live...)...)
+	moves := roundMoves{}
+	p := Lawful(fleetStepPlan(s, r, rr, moves))
+	roundWrites(&p, rr, moves)
+	return p
+}
 
 // liveFor is the members up for a move of member: r.Live, else the members
 // whose status is up, without member.
@@ -995,7 +982,7 @@ func statusNote(s *Snapshot, r FleetReq, typ, word string) *Note {
 	return &n
 }
 
-func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
+func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 	var p Plan
 	switch r.Op {
 	case "up", "release":
@@ -1053,7 +1040,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			line += " width=" + itoa(r.Width)
 		}
 		if comeUp {
-			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member))
+			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves)
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
@@ -1080,13 +1067,16 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 		up := liveFor(s, r)
 		cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 		SortCards(cards)
-		q := map[string]int{}
-		for _, m := range up {
-			q[m] = s.Fleet.Count(m, Ready)
-		}
+		// the room of each receiver is its width (width.go, errata 3 amendment
+		// 9): its work cards held, ready and working, under it
+		q, widths := memberLoads(s, up), memberWidths(s, up)
 		for _, c := range cards {
 			if len(up) > 0 && c.Int("redeals") < MaxRedeals {
-				m := shortest(up, q)
+				// the next member round the fleet below its width, else the next
+				// up (round.go), the index moved past it
+				m := rr.next(up, q, widths, "", true)
+				rr.moved(m)
+				moves[c.ID] = m
 				q[m]++
 				set := nextGen(c, m, s.Now)
 				set["redeals"] = itoa(c.Int("redeals") + 1)
@@ -1109,18 +1099,20 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "level":
-		level(s, &p, s.UpMembers())
+		level(s, &p, s.UpMembers(), rr, moves)
 	default:
 		p.refuse(r.Op, "fleet wants up, down, level, hold or release")
 	}
 	return p
 }
 
-// level evens the up members' ready queues: the newest cards (the last in
-// work order) of the longest queue move to the shortest of the members below
-// their width (width.go: a member at its width takes no more), until no two
-// differ by more than one.
-func level(s *Snapshot, p *Plan, up []string) {
+// level evens the up members' ready queues: while the longest and the
+// shortest of the members below their width differ by more than one, the
+// newest card (the last in work order) of the longest queue moves to the next
+// member round the fleet below its width and below the mean (round.levelTo,
+// errata 3 amendment 5: the levelling moves the deal's index too; width.go,
+// amendment 9: a member at its width takes no more).
+func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves) {
 	if len(up) < 2 {
 		return
 	}
@@ -1131,7 +1123,9 @@ func level(s *Snapshot, p *Plan, up []string) {
 	}
 	for {
 		long, short := up[0], ""
+		n := map[string]int{}
 		for _, m := range up {
+			n[m] = len(queues[m])
 			if len(queues[m]) > len(queues[long]) {
 				long = m
 			}
@@ -1142,14 +1136,19 @@ func level(s *Snapshot, p *Plan, up []string) {
 		if short == "" || len(queues[long])-len(queues[short]) <= 1 {
 			return
 		}
+		to := rr.levelTo(up, n, held, widths)
+		if to == "" {
+			return
+		}
 		held[long]--
-		held[short]++
+		held[to]++
 		q := queues[long]
 		c := q[len(q)-1]
 		queues[long] = q[:len(q)-1]
-		queues[short] = append(queues[short], c)
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short, s.Now)))},
-			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, short, c.Int("gen")+1)})
+		queues[to] = append(queues[to], c)
+		moves[c.ID] = to
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, s.Now)))},
+			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, to, c.Int("gen")+1)})
 	}
 }
 

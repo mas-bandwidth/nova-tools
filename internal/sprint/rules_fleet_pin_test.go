@@ -62,9 +62,10 @@ func fieldScenarios() []fieldScenario {
 			f.setMember("m4", Down, "2030-01-02T03:04:05Z") // down, and a hold
 			return f
 		}},
-		// m1 holds a card never taken, a taken one, and a taken one at the bound; m2 and m3 receive
+		// m1 holds a card never taken, a taken one, and a taken one at the bound; m2 and m3 receive,
+		// every member at width 1, so m2 (holding r1) is at its width and the width decides
 		{"down, dealt again and at the bound", ruleDown, []string{"down:m1"}, func(t *testing.T) *fleetT {
-			f := newFleetT(t, 1, "m1", "m2", "m3")
+			f := newFleetW(t, 1, 1, "m1", "m2", "m3")
 			putWorkCard(f, "a1", "m1", Ready, 10, map[string]string{"redeals": "2"})
 			putWorkCard(f, "a2", "m1", Working, 11, taken(map[string]string{"redeals": "2"}))
 			putWorkCard(f, "a3", "m1", Working, 12, taken(map[string]string{"redeals": itoa(RuleMaxRedeals)}))
@@ -424,11 +425,13 @@ func TestDownGuardsTheControlCardWhenItMovesCards(t *testing.T) {
 	quiet(t, "held with no cards", h.plan(ruleDown, "down:m1"), "down:m1")
 }
 
-// The cards of a member that went down go to the up member with the shortest
-// ready queue, counting the cards the plan has dealt there already (2.3 R2).
-func TestDownDealsToTheShortestQueue(t *testing.T) {
+// The cards of a member that went down go round the fleet from the deal's
+// rolling index (2.3 R2; errata 3 amendment 5: every placement moves the
+// index), each to the first up member with room, counting the cards the plan
+// has dealt there already.
+func TestDownDealsRoundTheFleet(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 1, "m1", "m2", "m3")
+	f := newFleetW(t, 1, 2, "m1", "m2", "m3") // every member at width 2
 	putWorkCard(f, "r1", "m2", Ready, 1, nil) // m2 holds one, m3 none
 	for i := 1; i <= 3; i++ {
 		putWorkCard(f, "c"+itoa(i), "m1", Ready, float64(10+i), nil)
@@ -442,10 +445,15 @@ func TestDownDealsToTheShortestQueue(t *testing.T) {
 			}
 		}
 	}
-	// m3 (0), then m2 and m3 tie at 1 and the first of them takes it, then m3 (1 < 2)
-	want := map[string]string{"c1.w1": "m3", "c2.w1": "m2", "c3.w1": "m3"}
+	// from the first member (no index yet), m1 going down: m2 (1 < its width 2),
+	// m3, then m2 is at its width and m3 takes the third (1 < 2); the shorter
+	// queue does not choose
+	want := map[string]string{"c1.w1": "m2", "c2.w1": "m3", "c3.w1": "m3"}
 	if !reflect.DeepEqual(to, want) {
 		t.Fatalf("dealt to %v, want %v", to, want)
+	}
+	if len(rp.Plan.Props) != 1 || rp.Plan.Props[0].Name != PropDealIndex || rp.Plan.Props[0].Value != "m3" {
+		t.Fatalf("the deal's index: %+v, want it moved past m3", rp.Plan.Props)
 	}
 	f.apply(rp)
 	if a, b := f.snap().Fleet.Count("m2", Ready), f.snap().Fleet.Count("m3", Ready); a != 2 || b != 2 {
