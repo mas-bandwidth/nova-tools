@@ -7,6 +7,7 @@ package swarm
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -270,7 +272,7 @@ func scratchName(c batchCard) string {
 // remoteRun copies the card to the bench -- the card only, nothing else -- then builds the
 // ssh command that runs native there: ssh <host> [taskset -c <core>] <root>/bin/nova-swarm
 // native ..., with the ssh child in a process group of its own.
-func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore, slotOwner, tokens string, logFile *os.File) (*exec.Cmd, error) {
+func remoteRun(ctx context.Context, c batchCard, b Bench, localRoot string, deadline int, slotsStore, slotOwner, tokens string, logFile *os.File) (*exec.Cmd, error) {
 	// The bench slot lease travels with the launch (nova-tools#1546). The store path is
 	// resolved ON THE BENCH, not here: this argv is what ssh runs there.
 	if slotsStore == "" || slotOwner == "" {
@@ -308,7 +310,7 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore,
 		"--tokens", tokens,
 	)
 	testguard.RefuseHosts(argv[0], argv[1:]...)
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := subproc.Long(ctx, argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+localRoot)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -320,7 +322,8 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore,
 // that crosses before the run.
 func copyCardToBench(local string, b Bench, dest string) error {
 	testguard.RefuseHosts("rsync", local, b.Host+":"+dest)
-	cmd := exec.Command("rsync", local, b.Host+":"+dest)
+	cmd, cancel := subproc.Command(context.Background(), subproc.SSH, "rsync", local, b.Host+":"+dest)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("rsync: %s", strings.TrimSpace(string(out)))

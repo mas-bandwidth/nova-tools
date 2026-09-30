@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // THE SUPERVISOR: the child the runner forks, and the process that owns a job.
@@ -151,7 +154,11 @@ func Supervise(in SuperviseInput) int {
 		// --cwd in the argv above and is the job directory.
 		dir = in.Worker.SlotDir(in.Slot)
 	}
-	cmd := exec.Command(harness, argv...)
+	// The harness is a long-lived child: a cancellable context and no deadline (the
+	// supervisor's own deadline and idle rules end it), released when Supervise returns.
+	ctx, stopHarness := context.WithCancel(context.Background())
+	defer stopHarness()
+	cmd := subproc.Long(ctx, harness, argv...)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	jobRepo := filepath.Join(jobDir, JobRepo)

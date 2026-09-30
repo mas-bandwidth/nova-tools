@@ -3,6 +3,7 @@ package secrets
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // execCommand runs one helper process and returns its stdout. The encrypt step
@@ -23,7 +25,10 @@ import (
 type execCommand func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error)
 
 func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+	// The deadline is the kind of the program named: git, gh, sops and the rest each have
+	// their own default (subproc.KindOf).
+	cmd, cancel := subproc.Command(context.Background(), subproc.KindOf(name), name, args...)
+	defer cancel()
 	cmd.Env = env
 	cmd.Dir = dir
 	cmd.Stdin = stdin
@@ -439,7 +444,8 @@ func disableEcho(tty *os.File) func() {
 }
 
 func runStty(tty *os.File, arg string) error {
-	cmd := exec.Command("stty", arg)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "stty", arg)
+	defer cancel()
 	cmd.Stdin = tty
 	return cmd.Run()
 }

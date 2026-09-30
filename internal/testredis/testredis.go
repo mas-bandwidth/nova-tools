@@ -45,6 +45,7 @@ package testredis
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -56,6 +57,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // CIEnv is set to "1" by the CI workflows. A missing redis-server fails the
@@ -264,10 +267,13 @@ func (l launch) start(t testing.TB, extra []string) *Server {
 func (l launch) run(t testing.TB, bin, dir, port string, extra []string, group int) (*Server, bool) {
 	t.Helper()
 	args := arguments(dir, port, extra)
+	// A long-lived child: a cancellable context and no deadline, released when the wait
+	// returns; Stop is what ends it.
+	ctx, release := context.WithCancel(context.Background())
 	s := &Server{
 		addr:   net.JoinHostPort("127.0.0.1", port),
 		dir:    dir,
-		cmd:    exec.Command(bin, args...),
+		cmd:    subproc.Long(ctx, bin, args...),
 		out:    &tail{ready: make(chan struct{})},
 		exited: make(chan struct{}),
 	}
@@ -277,10 +283,12 @@ func (l launch) run(t testing.TB, bin, dir, port string, extra []string, group i
 	join(s.cmd, group)
 	until := time.Now().Add(l.wait)
 	if err := s.cmd.Start(); err != nil {
+		release()
 		t.Fatalf("testredis: %s did not start: %v\narguments: %s", bin, err, commandLine(redact(args)))
 	}
 	go func() {
 		s.ended = s.cmd.Wait()
+		release()
 		close(s.exited)
 	}()
 	t.Cleanup(s.Stop)

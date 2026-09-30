@@ -27,6 +27,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // egressRemedy is the one remedy line every refusal of these verbs carries.
@@ -69,7 +70,9 @@ type sudoCommand struct{}
 func (sudoCommand) Look(name string) (string, error) { return exec.LookPath(name) }
 
 func (sudoCommand) Run(name string, args ...string) (string, error) {
-	out, err := exec.Command("sudo", append([]string{"-n", name}, args...)...).CombinedOutput()
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "sudo", append([]string{"-n", name}, args...)...)
+	defer cancel()
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 

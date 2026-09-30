@@ -51,6 +51,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // HarvestGateHeading is the fixed PR-body heading the harvest's gate line is written
@@ -108,7 +109,7 @@ func ExecGateRunner(dir string, argv ...string) GateRun {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), GateTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := subproc.Context(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	run := GateRun{Out: string(out)}

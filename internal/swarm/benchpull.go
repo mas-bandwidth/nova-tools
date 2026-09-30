@@ -23,6 +23,7 @@ package swarm
 //     own work. It is its own reason token now: bench-unreachable.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -189,7 +191,8 @@ func findResultUnderRepo(host, job string) (string, error) {
 // recursion, no include filter, nothing that can succeed while copying nothing.
 func scpFile(host, remote, local string) error {
 	testguard.RefuseHosts("scp", host+":"+remote, local)
-	cmd := exec.Command("scp", host+":"+remote, local)
+	cmd, cancel := subproc.Command(context.Background(), subproc.SSH, "scp", host+":"+remote, local)
+	defer cancel()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("scp %s: %s", remote, strings.TrimSpace(string(out)))
 	}
@@ -198,7 +201,8 @@ func scpFile(host, remote, local string) error {
 
 func sshRun(host string, args ...string) error {
 	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
-	cmd := exec.Command("ssh", append([]string{host}, args...)...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.SSH, "ssh", append([]string{host}, args...)...)
+	defer cancel()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
 	}
@@ -207,7 +211,8 @@ func sshRun(host string, args ...string) error {
 
 func sshOutput(host string, args ...string) (string, error) {
 	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
-	cmd := exec.Command("ssh", append([]string{host}, args...)...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.SSH, "ssh", append([]string{host}, args...)...)
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		return string(out), &sshError{code: exitCodeOf(err), err: err}

@@ -169,6 +169,10 @@ var swarmAudit = audit.Config{
 		// path and the bytes of the file and puts no byte on any stream of this binary. The
 		// audit's Write check lets atomicfile.Write by its package name for that reason.
 		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
+		// subproc starts one child under a deadline (Command) or a cancellable context
+		// (Long) and returns the *exec.Cmd to this package, which wires the streams. It
+		// holds no writer of this package's stream and prints nothing itself.
+		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the

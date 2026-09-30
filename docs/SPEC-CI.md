@@ -671,9 +671,11 @@ CI path*.
 
 ### `goenv` — a child `go` never inherits the caller's environment
 
-**The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/` sets
-`cmd.Env` from `goenv.Clean(...)`; a tool that reads the output of a `go` it
-started must not let the caller choose that output's shape.
+**The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/`, and
+every `subproc.Command`, `subproc.CommandFor`, `subproc.Context` and
+`subproc.Long` given the literal `"go"`, sets `cmd.Env` from `goenv.Clean(...)`;
+a tool that reads the output of a `go` it started must not let the caller choose
+that output's shape.
 **The mistake it prevents.** CI's `make test` exports `GOFLAGS=-json`; an
 inner `go test` that inherits it answers in JSON with no `--- PASS:` line, and a
 parser counting those lines reports a green unit as red.
@@ -691,6 +693,30 @@ a helper that sets `Env` one frame away is refused rather than trusted (a false
 positive it accepts), and a `go` spawned through a variable command name or a
 shell is not seen at all. Full section: *The CI class test against a child `go`
 that inherits the environment*.
+
+### `subproc` — every child process has a bound or a cancellable context
+
+**The rule.** Production code under `cmd/`, `internal/` and `tools/` starts a
+child through `internal/subproc` or `internal/gitrun` and never through a bare
+`exec.Command`. A one-shot child (git, gh, ssh, sops, tailscale, go tooling, ps)
+runs under `subproc.Command` or `gitrun`: the caller's own context deadline when
+it is sooner, else the named default of its kind (git 60 s, gh 120 s, ssh 300 s,
+go tooling 300 s, other tools 60 s), and `WaitDelay` of 5 s. A long-lived child (a
+harness run, a member's native child, a server) runs under `subproc.Long`: a
+cancellable context, no deadline. An `exec.CommandContext` outside those two
+packages stands only in a file that also sets `WaitDelay`.
+**The mistake it prevents.** A hung git, ssh or sops blocked its caller for as
+long as the child chose to live; and a killed child whose own child kept the
+pipe open still blocked `Output`, because the kill ends the process and not the
+pipe.
+**The test.** `TestEveryChildProcessGoesThroughTheSubprocDoor`
+(`internal/ci/subprocess_bound_class_test.go`).
+**Its allowlist.** None: every site was converted when the rule landed.
+**Its remedy lines.** The message names the file and the door to use.
+**Its narrowings.** It reads call sites of `exec.Command` and
+`exec.CommandContext` by name, so a child started through `os.StartProcess` or
+an `exec.Cmd` literal is not seen, and it asks only that the file mention
+`WaitDelay`, not that the very command set it.
 
 ### `slowtests` — no package over the per-package time budget
 

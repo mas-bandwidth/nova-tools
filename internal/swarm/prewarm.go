@@ -1,17 +1,19 @@
 package swarm
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 const PrewarmReceiptDir = "prewarm"
@@ -300,10 +302,7 @@ func fullHexSHA(s string) bool {
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(goenv.WithoutSecrets(os.Environ()), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
+	out, err := gitrun.Combined(context.Background(), gitrun.Options{Dir: dir, Env: append(goenv.WithoutSecrets(os.Environ()), "GIT_TERMINAL_PROMPT=0")}, args...)
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -338,7 +337,11 @@ func runPrewarmCommand(c PrewarmCommand) error {
 	if len(c.Argv) == 0 {
 		return fmt.Errorf("empty command")
 	}
-	cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
+	// A long-lived child: a prewarm command (a module download, a build) runs as long as it
+	// runs, under a cancellable context and no deadline.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cmd := subproc.Long(ctx, c.Argv[0], c.Argv[1:]...)
 	cmd.Dir = c.Dir
 	cmd.Env = c.Env
 	cmd.Stdout = os.Stdout

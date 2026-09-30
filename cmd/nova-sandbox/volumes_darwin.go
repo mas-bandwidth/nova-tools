@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // diskutilPath is where macOS ships the tool. It is looked up on the PATH first so a
@@ -48,7 +50,8 @@ func runDiskutil(args ...string) (string, error) {
 	if found, err := exec.LookPath("diskutil"); err == nil {
 		bin = found
 	}
-	cmd := exec.Command(bin, args...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, args...)
+	defer cancel()
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

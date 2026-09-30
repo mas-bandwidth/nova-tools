@@ -2,10 +2,10 @@ package swarm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // JobRepo is the clone under a job directory: <job>/repo, the same name gather
@@ -112,13 +114,11 @@ func normalizeTrackedTimes(repo string) error {
 	if err != nil {
 		return fmt.Errorf("git commit timestamp %q: %w", rawStamp, err)
 	}
-	cmd := exec.Command("git", "ls-files", "-z", "--")
-	cmd.Dir = repo
-	cmd.Env = append(goenv.WithoutSecrets(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
-	raw, err := cmd.Output()
+	lsFiles, err := gitrun.Run(context.Background(), gitrun.Options{Dir: repo, Env: sparseGitEnv()}, "ls-files", "-z", "--")
 	if err != nil {
 		return fmt.Errorf("git ls-files: %w", err)
 	}
+	raw := lsFiles.Stdout
 	stamp := time.Unix(unix, 0)
 	for _, name := range bytes.Split(raw, []byte{0}) {
 		if len(name) == 0 {
@@ -409,7 +409,8 @@ func listDepDirs(src string, patterns []string) ([]string, error) {
 	}
 	args := []string{"list", "-e", "-deps", "-test", "-f", listDepFmt}
 	args = append(args, patterns...)
-	cmd := exec.Command("go", args...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Go, "go", args...)
+	defer cancel()
 	cmd.Dir = src
 	cmd.Env = append(goenv.Clean(os.Environ()), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	var out, errb bytes.Buffer
@@ -478,23 +479,23 @@ func relBelow(root, abs string) (string, bool) {
 }
 
 func sparseGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	cmd.Env = append(goenv.WithoutSecrets(os.Environ()),
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_TERMINAL_PROMPT=0",
-	)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(errb.String())
+	res, err := gitrun.Run(context.Background(), gitrun.Options{Dir: dir, Env: sparseGitEnv()}, args...)
+	if err != nil {
+		msg := strings.TrimSpace(string(res.Stderr))
 		if msg == "" {
 			msg = err.Error()
 		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
 	}
-	return strings.TrimSpace(out.String()), nil
+	return strings.TrimSpace(string(res.Stdout)), nil
+}
+
+// sparseGitEnv is the environment of every sparse-checkout git: secrets removed, no
+// global or system config, no terminal prompt.
+func sparseGitEnv() []string {
+	return append(goenv.WithoutSecrets(os.Environ()),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
 }

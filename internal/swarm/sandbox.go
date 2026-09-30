@@ -1,15 +1,18 @@
 package swarm
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // THE LAUNCH SEAM: every job runs inside nova-sandbox.
@@ -68,6 +71,10 @@ import (
 // the tool's OWN name and not a path: a default PATH lookup of a named command is what this
 // tool already does for the harness, and no directory is guessed.
 const SandboxBinary = "nova-sandbox"
+
+// sandboxProbeBudget is how long the wall's probe (five checks under the real policy)
+// may run before the gate stops waiting and refuses.
+const sandboxProbeBudget = 120 * time.Second
 
 // SandboxJob is one job's wrap, and every field of it is the dispatcher's own.
 type SandboxJob struct {
@@ -199,7 +206,8 @@ func SandboxGate(sandboxPath, poolDir, secret string, notes io.Writer) (reason, 
 	// `check` is a question and exits 0 either way, so the ANSWER is read from its line:
 	// a machine with no backend says backend=none, and that is a refusal of its own,
 	// named apart from a probe that ran and said NO.
-	check := exec.Command(sandboxPath, "check")
+	check, stopCheck := subproc.Command(context.Background(), subproc.Tool, sandboxPath, "check")
+	defer stopCheck()
 	checkOut, err := check.CombinedOutput()
 	line := oneline.Cap(strings.TrimSpace(string(checkOut)), oneline.TailBytes)
 	if err != nil {
@@ -211,7 +219,8 @@ func SandboxGate(sandboxPath, poolDir, secret string, notes io.Writer) (reason, 
 	// The probe itself: five checks under the REAL policy for this platform, run once
 	// before the first task. HOME is the probe's own write set, because rule 9 refuses a
 	// run whose HOME is outside it -- and the dispatcher's own HOME is.
-	probe := exec.Command(sandboxPath, "probe", "--write", probeDir)
+	probe, stopProbe := subproc.CommandFor(context.Background(), sandboxProbeBudget, sandboxPath, "probe", "--write", probeDir)
+	defer stopProbe()
 	// A `--secret` is passed only where the description names a key FILE (issue #881). A
 	// description that names a `secret` -- the key delivered by nova-secrets exec into
 	// the environment -- has no key file on disk, so the probe has no secret file to

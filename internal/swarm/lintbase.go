@@ -3,6 +3,7 @@ package swarm
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
@@ -344,18 +346,15 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 	default:
 		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}
-	args := append([]string{"-C", repo, "grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
-	cmd := exec.Command("git", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	args := append([]string{"grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repo}, args...)
 	if err == nil {
 		return true, nil
 	}
-	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 && strings.TrimSpace(stderr.String()) == "" {
+	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 && strings.TrimSpace(string(res.Stderr)) == "" {
 		return false, nil
 	}
-	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+	if msg := strings.TrimSpace(string(res.Stderr)); msg != "" {
 		return false, fmt.Errorf("%v: %s", err, msg)
 	}
 	return false, err
@@ -571,16 +570,14 @@ func sortedLegs(l FleetLegs) []string {
 
 // baseGit runs one git command in repo and returns its trimmed stdout.
 func baseGit(repo string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repo}, args...)
+	if err != nil {
+		if msg := strings.TrimSpace(string(res.Stderr)); msg != "" {
 			return "", fmt.Errorf("%v: %s", err, msg)
 		}
 		return "", err
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(string(res.Stdout)), nil
 }
 
 // pathsMissingAt lists the tree at sha once, and returns every entry that names

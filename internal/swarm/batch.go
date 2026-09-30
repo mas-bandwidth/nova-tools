@@ -40,6 +40,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -235,6 +236,12 @@ const idleLogDribble int64 = 4096
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
 // not even be read.
 func Batch(in BatchInput) int {
+	// Every card's child (the runner, this binary's own native, the ssh to a bench) and
+	// the follow-on command are long-lived: they run under this batch's cancellable
+	// context and no deadline (the batch's own deadline and idle rules reap them by
+	// group), and the context ends with the batch, so no child outlives the call.
+	ctx, stopBatch := context.WithCancel(context.Background())
+	defer stopBatch()
 	clk := in.clock
 	if clk == nil {
 		clk = realClock{}
@@ -704,7 +711,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
+			cmd, err = remoteRun(ctx, c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -712,7 +719,7 @@ func Batch(in BatchInput) int {
 			}
 		} else if in.Runner == "" {
 			// #636: no runner script, so this binary runs the card through its own `native`.
-			cmd, err = selfNative(c, in, logFile)
+			cmd, err = selfNative(ctx, c, in, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -723,7 +730,7 @@ func Batch(in BatchInput) int {
 			// by index, so the budget word goes AFTER the five that were already there --
 			// label, slot, model, card path, root -- and never among them: every runner
 			// written before this rule is still correct about its first five.
-			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root, in.Tokens)
+			cmd = subproc.Long(ctx, in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root, in.Tokens)
 			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
@@ -1090,7 +1097,7 @@ func Batch(in BatchInput) int {
 	// batch that was not all done (lesson 26).
 	if in.Then != "" {
 		if done == len(cards) && stalled == 0 && idle == 0 {
-			cmd := exec.Command("sh", "-c", in.Then)
+			cmd := subproc.Long(ctx, "sh", "-c", in.Then)
 			cmd.Dir = in.Root
 			cmd.Env = append(os.Environ(),
 				"BATCH_ID="+in.ID,
@@ -1956,7 +1963,7 @@ func swarmSelf(named string) (string, error) {
 // binary's own `native` verb, with the same arguments bin/nova-native-runner.sh passed by
 // hand (issue #636). The slot argument is the SLOT directory, not the job directory: native
 // makes <slot>/jobs/<label> itself.
-func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error) {
+func selfNative(ctx context.Context, c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error) {
 	self, err := swarmSelf(in.Self)
 	if err != nil {
 		return nil, err
@@ -1985,7 +1992,7 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 	if in.Auth != "" {
 		argv = append(argv, "--auth", in.Auth)
 	}
-	cmd := exec.Command(self, argv...)
+	cmd := subproc.Long(ctx, self, argv...)
 	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

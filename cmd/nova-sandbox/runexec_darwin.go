@@ -13,13 +13,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // startInOwnGroup applies the policy, starts the command in a new process group, and
@@ -51,7 +52,11 @@ func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, s
 	argv = append(argv, "--")
 	argv = append(argv, p.Argv...)
 
-	cmd := exec.Command(backend, argv...)
+	// A long-lived child: a cancellable context and no deadline, how long the wrapped
+	// command runs is its own. The context is released when the wait returns; the group
+	// kill below is what ends it early.
+	ctx, release := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, backend, argv...)
 	cmd.Dir = p.Cwd
 	cmd.Env = env
 	cmd.Stdin = stdin
@@ -59,6 +64,7 @@ func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, s
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
+		release()
 		return startedRun{}, sandbox.Refusal{Reason: "sandbox_failed", Text: fmt.Sprintf("%s could not be started: %v", backend, err)}
 	}
 	// Setpgid makes the child the LEADER of a new group, so the group's id is its pid.
@@ -69,6 +75,7 @@ func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, s
 	done := make(chan int, 1)
 	go func() {
 		waitErr := cmd.Wait()
+		release()
 		done <- statusOfRun(waitErr, cmd.ProcessState)
 	}()
 	return startedRun{done: done, kill: killGroup, pid: pgid}, nil

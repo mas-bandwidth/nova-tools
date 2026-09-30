@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Identity is one line at a keyboard: the name and email a commit in this range must
@@ -490,7 +491,7 @@ func diffPath(field string) string {
 }
 
 func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append(append([]string(nil), configOpts...), args...)...)
+	cmd := subproc.Context(ctx, "git", append(append([]string(nil), configOpts...), args...)...)
 	cmd.Dir = dir
 	// A bench's own git config cannot be allowed to change what this reads: the whole
 	// point of the identity check is that the bench's configuration is not evidence.

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // CIEnv is set to "1" by the CI workflows. A missing redis-server fails the
@@ -80,13 +82,17 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 	}
 	t.Cleanup(func() { _ = logf.Close() })
 	args := append([]string{"--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--dir", dir}, extra...)
-	cmd := exec.Command(bin, args...)
+	// A long-lived child: a cancellable context and no deadline, released when the wait
+	// returns; the cleanup below is what ends it.
+	ctx, release := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, bin, args...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	if err := cmd.Start(); err != nil {
+		release()
 		t.Fatalf("redis-server did not start: %v", err)
 	}
 	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
+	go func() { _ = cmd.Wait(); release(); close(exited) }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		<-exited

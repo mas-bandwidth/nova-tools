@@ -13,13 +13,13 @@
 package swarm
 
 import (
-	"bytes"
+	"context"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // Card is the affinity facts a card carries: its kind ("go", "lisp", "docs",
@@ -275,23 +275,18 @@ func warmCopyFile(src, dst string) error {
 // warmGitOut runs git in dir and returns its trimmed standard output, or the error with
 // git's own stderr when git could not run or exited non-zero.
 func warmGitOut(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(errb.String()), err)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, args...)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(res.Stderr)), err)
 	}
-	return strings.TrimSpace(out.String()), nil
+	return strings.TrimSpace(string(res.Stdout)), nil
 }
 
 // warmGitRun runs git in dir, discarding standard output, and returns any error.
 func warmGitRun(dir string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Stdout = io.Discard
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(errb.String()), err)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, args...)
+	if err != nil {
+		return fmt.Errorf("%s: %w", strings.TrimSpace(string(res.Stderr)), err)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -252,7 +254,8 @@ func sshPlaceSecret(sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
 	testguard.RefuseHosts(sshPath, target, remoteCmd)
-	cmd := exec.Command(sshPath, target, remoteCmd)
+	cmd, cancel := subproc.Command(context.Background(), subproc.SSH, sshPath, target, remoteCmd)
+	defer cancel()
 	cmd.Stdin = bytes.NewReader([]byte(value))
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -98,7 +99,9 @@ func StartServer(ctx context.Context, program, tmp string, startup time.Duration
 		return nil, cannotRun(err)
 	}
 	defer log.Close()
-	s.cmd = exec.Command(program, "--port", "0", "--unixsocket", s.Socket, "--unixsocketperm", "700", "--save", "", "--appendonly", "no")
+	// A long-lived child: it runs under the suite's own context, which ends it when it
+	// ends, and has no deadline of its own.
+	s.cmd = subproc.Long(ctx, program, "--port", "0", "--unixsocket", s.Socket, "--unixsocketperm", "700", "--save", "", "--appendonly", "no")
 	s.cmd.Dir = dir
 	s.cmd.Stdout, s.cmd.Stderr = log, log
 	if err := s.cmd.Start(); err != nil {

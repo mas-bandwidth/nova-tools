@@ -24,6 +24,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -41,6 +42,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // runRemedy is the one remedy line every refusal of this verb carries.
@@ -408,7 +410,8 @@ func readGoEnv() (goDirs, error) {
 	if err != nil {
 		return goDirs{}, err
 	}
-	cmd := exec.Command(bin, "env", "GOROOT", "GOMODCACHE")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Go, bin, "env", "GOROOT", "GOMODCACHE")
+	defer cancel()
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {

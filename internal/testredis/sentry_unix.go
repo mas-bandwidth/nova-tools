@@ -5,12 +5,15 @@ package testredis
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // init is the sentry. A copy of the test binary started with the mark never
@@ -38,7 +41,10 @@ func enlist(spec sentrySpec) (*post, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the sentry is a copy of this test binary, which was not found: %w", err)
 	}
-	cmd := exec.Command(exe, spec.args...)
+	// A long-lived child: the sentry stands for the life of the test binary, under a
+	// cancellable context and no deadline, released when it is gone.
+	ctx, release := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, exe, spec.args...)
 	cmd.Env = spec.env
 	// A group of its own, led by the sentry: its id is the sentry's pid.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -47,6 +53,7 @@ func enlist(spec sentrySpec) (*post, error) {
 	in, noIn := cmd.StdinPipe()
 	out, noOut := cmd.StdoutPipe()
 	if err := errors.Join(noIn, noOut, cmd.Start()); err != nil {
+		release()
 		return nil, fmt.Errorf("the sentry %s did not start: %w", exe, err)
 	}
 	stands := make(chan error, 1)
@@ -69,11 +76,13 @@ func enlist(spec sentrySpec) (*post, error) {
 		// behind either. The wait closes the pipe the reader is on.
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		release()
 		return nil, fmt.Errorf("the sentry %s does not stand: %w\n%s", exe, err, said.Bytes())
 	}
 	gone := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
+		release()
 		close(gone)
 	}()
 	return &post{group: cmd.Process.Pid, gone: gone, hold: in}, nil
