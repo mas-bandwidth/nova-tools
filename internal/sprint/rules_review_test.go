@@ -660,6 +660,11 @@ func TestReworkAtAttemptsBound(t *testing.T) {
 	if w.state("s1-1") != Working || pr.Int("attempt") != MaxAttempts+1 || pr.F("bound") != "" || pr.F("fix") != "start from the failing test" || pr.F("rereads") != "0" || pr.F("avoid") == "" {
 		t.Errorf("after the coordinator's rework: %s attempt %d bound %q fix %q avoid %q", w.state("s1-1"), pr.Int("attempt"), pr.F("bound"), pr.F("fix"), pr.F("avoid"))
 	}
+	for _, o := range w.openOn("s1-1") {
+		if o.Note.Type == NBound {
+			t.Errorf("the coordinator's rework left \"a card reached its bound\" open: %+v", o)
+		}
+	}
 	w.clean("rework at the bound")
 	// a coordinator's rework of a primary with no evidence and no fix is refused by name
 	w = rvReview(t, 1, 0)
